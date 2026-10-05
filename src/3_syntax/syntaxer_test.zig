@@ -181,3 +181,7 @@ test "compact syntax views preserve semantic distinctions" {
     const return_node = firstNodeWithTag(&returns, .return_statement);
     try std.testing.expect(returns.returnStatement(return_node).?.value == null);
 }
+
+test "generic type applications retain positional arguments" {
+    try expectTags("tests/feature_tests/types/280_positional_type_arguments/main.rg", &.{ .generic_type_instantiation, .positional_type_field });
+}

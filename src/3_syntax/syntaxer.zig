@@ -445,7 +445,7 @@ pub const Syntaxer = struct {
         if (self.tokenIs(.hash)) {
             const hash_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
             self.advanceOne();
-            const gen_args = try self.parseStructTypeLiteral();
+            const gen_args = try self.parseStructTypeFields(true);
             return try self.addNode(.generic_type_instantiation, hash_token, .{ .node_and_node = .{ .first = base, .second = gen_args } });
         }
         return base;
@@ -560,6 +560,12 @@ pub const Syntaxer = struct {
 
     // ( .field : Type? (= expr)? , ... )
     fn parseStructTypeLiteral(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
+        return self.parseStructTypeFields(false);
+    }
+
+    // Generic type applications share named-field syntax with declarations,
+    // but may supply an ordered positional prefix before any named arguments.
+    fn parseStructTypeFields(self: *Syntaxer, allow_positional: bool) SyntaxerError!syn.NodeIndex {
         if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
         const start_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
         self.advanceOne();
@@ -568,7 +574,39 @@ pub const Syntaxer = struct {
         const scratch_top = self.scratch.items.len;
         defer self.scratch.shrinkRetainingCapacity(scratch_top);
 
+        var has_named = false;
+        var position: u32 = 0;
         while (!self.tokenIs(.close_parenthesis)) {
+            if (allow_positional and !self.tokenIs(.dot)) {
+                if (has_named) {
+                    try self.diags.add(self.tokenLocation(), .syntax, "positional type arguments must appear before named arguments", .{});
+                    return SyntaxerError.ExpectedStructField;
+                }
+                const argument_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
+                var type_node: ?syn.NodeIndex = null;
+                var value_node: ?syn.NodeIndex = null;
+                if (self.currentContent() == .literal or
+                    (self.currentContent() == .binary_operator and self.currentContent().binary_operator == .subtraction))
+                {
+                    value_node = try self.parseExpression();
+                } else {
+                    type_node = try self.parseType();
+                    if (type_node == null) return SyntaxerError.ExpectedIdentifier;
+                }
+                const extra = try self.addExtra(syn.FieldExtra{
+                    .type_node = syn.OptionalNodeIndex.init(type_node),
+                    .default_value = syn.OptionalNodeIndex.init(value_node),
+                });
+                try self.scratch.append(self.allocator, try self.addNode(.positional_type_field, argument_token, .{ .u32_and_extra = .{ .value = position, .extra = extra } }));
+                position += 1;
+                self.skipNewLinesAndComments();
+                if (self.tokenIs(.comma)) {
+                    self.advanceOne();
+                    self.skipNewLinesAndComments();
+                }
+                continue;
+            }
+            has_named = true;
             if (!self.tokenIs(.dot)) {
                 try self.diags.add(self.tokenLocation(), .syntax, "expected struct field, found '{s}'", .{@tagName(self.currentContent())});
                 return SyntaxerError.ExpectedStructField;

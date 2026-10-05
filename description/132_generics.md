@@ -33,8 +33,25 @@ let v : Vec#(.t: Float32, .n = 3) = (1.0, 2.0, 3.0)
 let r := max#(.t: Int)(.a = x, .b = y)
 ```
 
-For now the canonical documented form uses named generic arguments. Positional
-generic arguments may still be considered later for ergonomics.
+Type applications accept positional arguments in declaration order. Positional
+arguments form a prefix; named arguments may follow, but a positional argument
+may not follow a named one. Explicit function specializations also accept
+positional type arguments.
+Each parameter can be supplied only once. Unknown names, excess arguments,
+missing required arguments, and mismatched argument kinds are errors.
+
+```argi
+value: Errable#(Int32, (..unavailable)) = ..ok 42
+pair: Pair#(Int32, .right: Bool) = (.left = 1, .right = true)
+bytes: Array#(4, UInt8) = (0, 0, 0, 0)
+```
+
+A positional type argument is written directly; a named type argument uses
+`.name: Type`. In type applications, positional integer expressions begin with a literal or
+a sign; use the
+named `.name = expression` form for a value identified by a comptime binding.
+`Errable#(Value)` omits the reasons just like `Errable#(.t: Value)` and therefore
+has an inferred error set. Supplying a reasons type retains an explicit set.
 
 
 ### Bounds

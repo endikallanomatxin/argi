@@ -7,7 +7,7 @@ because their fields match. Unnamed structural types may be compared by
 their field structure. See [Structs](11_structs.md) and [Choice](12_choice.md).
 
 Types are values that can be passed as compile-time parameters. For example,
-`Array#(.n = 4, .t = Int32)` selects an array type using a length and an
+`Array#(4, Int32)` selects an array type using a length and an
 element type. See [Compile-time parameters](132_generics.md).
 
 ## Type queries

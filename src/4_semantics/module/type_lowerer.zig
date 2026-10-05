@@ -1,3 +1,4 @@
+const type_arguments = @import("type_arguments.zig");
 const std = @import("std");
 const syn = @import("../../3_syntax/syntax_tree.zig");
 const graph_mod = @import("graph.zig");
@@ -157,6 +158,7 @@ pub const Context = struct {
     fn lowerGeneric(self: *Context, owner: syn.NodeIndex, generic: syn.GenericType) anyerror!entities.ModuleTypeId {
         const arguments_literal = self.tree.structTypeLiteral(generic.arguments) orelse return error.InvalidGenericArguments;
         const base = self.tree.syntaxType(generic.base) orelse return error.InvalidGenericBase;
+        const base_name = if (base == .name and base.name.qualifier_token == null) self.tree.tokenTextFromSource(self.source, base.name.name_token) else "";
         if (base == .name and base.name.qualifier_token == null and
             std.mem.eql(u8, self.tree.tokenTextFromSource(self.source, base.name.name_token), "Array"))
         {
@@ -164,7 +166,7 @@ pub const Context = struct {
             var element: ?entities.ModuleTypeId = null;
             for (arguments_literal.fields) |field_node| {
                 const field = self.tree.structTypeField(field_node) orelse return error.InvalidArrayArguments;
-                const name = self.tree.tokenTextFromSource(self.source, field.name_token);
+                const name = type_arguments.name(self.tree, self.source, field, base_name);
                 if (std.mem.eql(u8, name, "n")) {
                     if (length != null or field.default_value == null) return error.InvalidArrayArguments;
                     length = std.math.cast(u64, try self.evalComptimeInt(field.default_value.?)) orelse return error.InvalidArrayLength;
@@ -181,15 +183,19 @@ pub const Context = struct {
         {
             var result_type: ?entities.ModuleTypeId = null;
             var has_reasons = false;
+            if (arguments_literal.fields.len > 2) return error.TooManyGenericArguments;
             for (arguments_literal.fields) |field_node| {
                 const field = self.tree.structTypeField(field_node) orelse return error.InvalidGenericArgument;
-                const name = self.tree.tokenTextFromSource(self.source, field.name_token);
+                const name = type_arguments.name(self.tree, self.source, field, base_name);
                 if (std.mem.eql(u8, name, "t")) {
-                    if (result_type != null or field.type_node == null) return error.InvalidGenericArgument;
+                    if (result_type != null) return error.DuplicateGenericArgument;
+                    if (field.type_node == null) return error.InvalidGenericArgument;
                     result_type = try self.lower(field.type_node.?);
                 } else if (std.mem.eql(u8, name, "reasons")) {
+                    if (has_reasons) return error.DuplicateGenericArgument;
+                    if (field.type_node == null) return error.InvalidGenericArgument;
                     has_reasons = true;
-                }
+                } else return error.UnknownGenericArgument;
             }
             // Omitting `.reasons` is the explicit spelling of an open error
             // set. Keep it as sugar until GlobalSema materializes and grows it.
@@ -198,7 +204,7 @@ pub const Context = struct {
         if (isRuntimeVirtualType(self.tree, self.source, generic)) {
             if (arguments_literal.fields.len != 1) return error.InvalidVirtualArguments;
             const field = self.tree.structTypeField(arguments_literal.fields[0]) orelse return error.InvalidVirtualArguments;
-            if (!std.mem.eql(u8, self.tree.tokenTextFromSource(self.source, field.name_token), "abstract")) return error.InvalidVirtualArguments;
+            if (!std.mem.eql(u8, type_arguments.name(self.tree, self.source, field, base_name), "abstract")) return error.InvalidVirtualArguments;
             const abstract_type = try self.lower(field.type_node orelse return error.InvalidVirtualArguments);
             return self.writer.addResolvedType(.{ .virtual = abstract_type });
         }
@@ -208,7 +214,7 @@ pub const Context = struct {
         defer arguments.deinit();
         for (arguments_literal.fields) |field_node| {
             const field = self.tree.structTypeField(field_node) orelse return error.InvalidGenericArgument;
-            const name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, field.name_token));
+            const name = try self.writer.addString(type_arguments.name(self.tree, self.source, field, base_name));
             const value: entities.GenericArgument.Value = if (field.type_node) |type_node|
                 .{ .type = try self.lower(type_node) }
             else if (field.default_value) |value_node|

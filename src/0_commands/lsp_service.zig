@@ -896,7 +896,7 @@ fn classifySyntax(allocator: std.mem.Allocator, tree: *const st.FileSyntaxTree, 
             const readonly = if (binding.mutability == .constant) @as(u32, 1) << MOD_INDEX.readonly else 0;
             try markSyntax(tree, classes, binding.name_token, TOKEN_INDEX.variable, declaration | readonly);
         }
-        if (tree.structTypeField(node)) |field| try markSyntax(tree, classes, field.name_token, TOKEN_INDEX.property, declaration);
+        if (tree.structTypeField(node)) |field| if (field.position == null) try markSyntax(tree, classes, field.name_token, TOKEN_INDEX.property, declaration);
         if (tree.valueField(node)) |field| if (field.name_token) |name| try markSyntax(tree, classes, name, TOKEN_INDEX.property, 0);
         if (tree.structFieldAccess(node)) |field| try markSyntax(tree, classes, field.field_token, TOKEN_INDEX.property, 0);
         if (tree.choiceLiteral(node)) |variant| try markSyntax(tree, classes, variant.name_token, TOKEN_INDEX.enum_member, 0);
@@ -1115,6 +1115,7 @@ fn outlineNodes(work: std.mem.Allocator, file: *const editor_syntax.File, nodes:
                 kind = 2;
             };
         } else if (file.tree.structTypeField(node)) |decl| {
+            if (decl.position != null) continue;
             name_token = decl.name_token;
             kind = 8;
         } else if (file.tree.choiceTypeVariant(node)) |decl| {
@@ -1689,4 +1690,27 @@ test "LSP formatting removes multiline struct literal commas" {
     defer edits.deinit();
     try std.testing.expectEqual(@as(usize, 1), edits.items.len);
     try std.testing.expectEqualStrings("value := (\n    .first  = 1\n    .second = 2\n)\n", edits.items[0].new_text);
+}
+
+test "LSP positional type arguments remain type tokens" {
+    const code = "main() -> (.result: Errable#(Int32, Reasons)) := {}\n";
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.rg", .data = code });
+    const path = try @import("../test_support.zig").tmpFilePath(&tmp, "main.rg");
+    defer std.testing.allocator.free(path);
+    var service = LanguageService.init(std.testing.allocator, std.testing.io);
+    defer service.deinit();
+    try service.documents.append(try Document.init(std.testing.allocator, "file:///positional.rg", path, 1, code));
+    var data = try service.semanticTokensFull("file:///positional.rg");
+    defer data.deinit();
+    try expectSemanticToken(data.items, code, "Int32", TOKEN_INDEX.type_, 0);
+    try expectSemanticToken(data.items, code, "Reasons", TOKEN_INDEX.type_, 0);
+    const symbols = try service.documentSymbols("file:///positional.rg");
+    defer symbols.deinit();
+    try std.testing.expectEqual(@as(usize, 1), symbols.items.len);
+    for (symbols.items[0].children) |child| {
+        try std.testing.expect(!std.mem.eql(u8, child.name, "Int32"));
+        try std.testing.expect(!std.mem.eql(u8, child.name, "Reasons"));
+    }
 }
