@@ -8117,7 +8117,7 @@ test "C interop preserves explicit record layouts through native pointers" {
 
 test "C interop extends narrow scalars according to the platform ABI" {
     const target = @import("builtin").target;
-    const extends = target.cpu.arch == .x86_64 or (target.cpu.arch == .aarch64 and target.os.tag.isDarwin());
+    const extends = (target.cpu.arch == .x86_64 and target.os.tag != .windows) or (target.cpu.arch == .aarch64 and target.os.tag.isDarwin());
     try checkNativeCFixture("tests/feature_tests/c_interop/33_narrow_scalar_abi", if (extends) &.{
         "define signext i8 @argi_c_small_signed(i8 signext",
         "define zeroext i8 @argi_c_small_unsigned(i8 zeroext",
@@ -8467,10 +8467,18 @@ test "C interop traps null callback invocation" {
 }
 
 test "C interop invokes narrow floating and void callbacks" {
-    try checkNativeCFixture("tests/feature_tests/c_interop/85_callback_invocation_scalar_signatures", &.{
+    const target = @import("builtin").target;
+    const extends = (target.cpu.arch == .x86_64 and target.os.tag != .windows) or (target.cpu.arch == .aarch64 and target.os.tag.isDarwin());
+    try checkNativeCFixture("tests/feature_tests/c_interop/85_callback_invocation_scalar_signatures", if (extends) &.{
         "callback.nonnull",
         "call signext i16 %",
         "i8 signext",
+        "call double %",
+        "call void %",
+    } else &.{
+        "callback.nonnull",
+        "call i16 %",
+        "(i8 ",
         "call double %",
         "call void %",
     });
