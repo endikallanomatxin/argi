@@ -9928,3 +9928,8 @@ test "usecase_tests/04_tree_cli" {
     try expect(std.mem.indexOf(u8, help.stdout, "-r, --root <PATH> (required)") != null);
     try expect(std.mem.indexOf(u8, help.stdout, "[default: 64]") != null);
 }
+
+test "feature_tests/codecs/02_csv" {
+    try expectSuccessfulBuild("tests/feature_tests/codecs/02_csv");
+    try runExpect("tests/feature_tests/codecs/02_csv", 0);
+}
