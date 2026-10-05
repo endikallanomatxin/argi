@@ -13,7 +13,7 @@ CsvRecord deinit(.self: $&CsvRecord, .allocator: $&Allocator) -> () := {
 -- Borrowed input must remain unchanged. Records own decoded fields, including
 -- embedded line breaks and doubled quotes. Accept CRLF and LF record endings;
 -- bare CR is invalid outside quotes. Empty input has no records; a blank line
--- contains one empty field. Width validation belongs to the consumer.
+-- contains one empty field. Encoding and width validation belong to the consumer.
 CsvReader: Type = (
     ._text               : StringView,
     ._position           : UIntNative,

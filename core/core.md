@@ -25,13 +25,21 @@ The implemented foundations include:
 - System and I/O: program capabilities, files, filesystem operations, terminal
   streams, blocking networking, processes, and byte/block reader/writer contracts.
   Filesystem helpers include directory enumeration, metadata, file positioning
-  and truncation, temporary directory owners, and lexical path normalization. Stream helpers support exact
+  and truncation, temporary directory owners, lexical path normalization and
+  bounded-depth
+  directory walking. Declarative command-line options support short/long
+  forms, required and repeated options, defaults and generated help. Stream
+  helpers support exact
   reads, complete writes, bounded delimiter reads, copying with caller buffers,
   size-limited copying and owning binary reads, memory adapters, limited block
   and byte readers, bounded borrowed LF/CRLF lines, and fallible iteration
   over independently owned byte lines.
 - Time: checked Gregorian UTC calendar conversion, leap years and weekdays,
-  alongside monotonic clocks, Unix timestamps and durations.
+  alongside monotonic clocks, Unix timestamps, durations, monotonic deadlines
+  and UTC-only RFC 3339 parsing/formatting.
+- Coordination: owning sequentially consistent UInt32 atomics and cooperative
+  cancellation observers. These foundations do not define cross-thread transfer
+  or an Argi thread/task runtime.
 - Errors: nominal reasons, `Errable`, explicit propagation, and tracing policies.
 - Testing: bounded equality diagnostics for numeric values, strings, bytes,
   and readonly views, with error traces for failed or skipped test roots.
