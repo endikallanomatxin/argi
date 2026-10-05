@@ -22,7 +22,7 @@ BufferedReader init#(
         .base      : $&base_type,
         .capacity  : UIntNative,
     ) -> (
-        .result : Errable#(.t: BufferedReader#(.base_type: base_type), .reasons: (..out_of_memory))
+        .result : Errable#(BufferedReader#(.base_type: base_type), (..out_of_memory))
     ) := {
     constructed :: BufferedReader#(.base_type: base_type)
 
@@ -72,7 +72,7 @@ read_byte#(
     )(
         .self : $&BufferedReader#(.base_type: base_type)
     ) -> (
-        .result : Errable#(.t: ReadByte, .reasons: (..stream_read_failed))
+        .result : Errable#(ReadByte, (..stream_read_failed))
     ) := {
     if self&.start < self&.end {
         ptr ::= _trusted_allocation_byte_ro(.allocation = &self&.buffer, .offset = self&.start).reference

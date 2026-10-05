@@ -11,10 +11,7 @@ _extent(
         .rows : UIntNative,
         .cols : UIntNative
     ) -> (
-        .result : Errable#(
-            .t       : UIntNative,
-            .reasons : (..dimension_mismatch)
-        )
+        .result : Errable#(UIntNative, (..dimension_mismatch))
     ) := {
     maximum :: UIntNative = 0
     i :: UIntNative = 0
@@ -42,10 +39,7 @@ DynamicMatrix init#(
         .values    : ArrayViewRO#(.t: t),
         .allocator : $&Allocator
     ) -> (
-        .result : Errable#(
-            .t       : DynamicMatrix#(.t: t),
-            .reasons : (..dimension_mismatch, ..out_of_memory)
-        )
+        .result : Errable#(DynamicMatrix#(.t: t), (..dimension_mismatch, ..out_of_memory))
     ) := {
     count ::= _extent(.rows = rows, .cols = cols)!
 
@@ -78,10 +72,7 @@ get#(
         .row  : UIntNative,
         .col  : UIntNative
     ) -> (
-        .result : Errable#(
-            .t       : t,
-            .reasons : (..out_of_bounds)
-        )
+        .result : Errable#(t, (..out_of_bounds))
     ) := {
     if row >= self&._rows or col >= self&._cols {
         result = ..error(.reason = ..out_of_bounds)
@@ -99,10 +90,7 @@ set#(
         .col   : UIntNative,
         .value : t
     ) -> (
-        .result : Errable#(
-            .t       : Void,
-            .reasons : (..out_of_bounds)
-        )
+        .result : Errable#(Void, (..out_of_bounds))
     ) := {
     if row >= self&._rows or col >= self&._cols {
         result = ..error(.reason = ..out_of_bounds)
@@ -122,10 +110,7 @@ add#(
         .right     : &DynamicMatrix#(.t: t),
         .allocator : $&Allocator
     ) -> (
-        .result : Errable#(
-            .t       : DynamicMatrix#(.t: t),
-            .reasons : (..dimension_mismatch, ..out_of_memory)
-        )
+        .result : Errable#(DynamicMatrix#(.t: t), (..dimension_mismatch, ..out_of_memory))
     ) := {
     if left&._rows != right&._rows or left&._cols != right&._cols {
         result = ..error(.reason = ..dimension_mismatch)
@@ -153,10 +138,7 @@ multiply#(
         .right     : &DynamicMatrix#(.t: t),
         .allocator : $&Allocator
     ) -> (
-        .result : Errable#(
-            .t       : DynamicMatrix#(.t: t),
-            .reasons : (..dimension_mismatch, ..out_of_memory)
-        )
+        .result : Errable#(DynamicMatrix#(.t: t), (..dimension_mismatch, ..out_of_memory))
     ) := {
     if left&._cols != right&._rows {
         result = ..error(.reason = ..dimension_mismatch)
@@ -199,10 +181,7 @@ transpose#(
         .self      : &DynamicMatrix#(.t: t),
         .allocator : $&Allocator
     ) -> (
-        .result : Errable#(
-            .t       : DynamicMatrix#(.t: t),
-            .reasons : (..out_of_memory)
-        )
+        .result : Errable#(DynamicMatrix#(.t: t), (..out_of_memory))
     ) := {
     count ::= length(&self&._values).count
     storage ::= DynamicArray#(.t: t)(.allocator = allocator, .capacity = count)!
@@ -235,10 +214,7 @@ DynamicVector init#(
         .values    : ArrayViewRO#(.t: t),
         .allocator : $&Allocator
     ) -> (
-        .result : Errable#(
-            .t       : DynamicVector#(.t: t),
-            .reasons : (..out_of_memory)
-        )
+        .result : Errable#(DynamicVector#(.t: t), (..out_of_memory))
     ) := {
     count ::= length(&values).count
     storage ::= DynamicArray#(.t: t)(.allocator = allocator, .capacity = count)!
@@ -263,10 +239,7 @@ get#(
         .self  : &DynamicVector#(.t: t),
         .index : UIntNative
     ) -> (
-        .result : Errable#(
-            .t       : t,
-            .reasons : (..out_of_bounds)
-        )
+        .result : Errable#(t, (..out_of_bounds))
     ) := {
     result = get(.self = &self&._values, .index = index)
 }
@@ -278,10 +251,7 @@ set#(
         .index : UIntNative,
         .value : t
     ) -> (
-        .result : Errable#(
-            .t       : Void,
-            .reasons : (..out_of_bounds)
-        )
+        .result : Errable#(Void, (..out_of_bounds))
     ) := {
     pointer ::= get_rw_ref(.self = $&self&._values, .index = index)!
     pointer&= value
@@ -295,10 +265,7 @@ dot#(
         .left  : &DynamicVector#(.t: t),
         .right : &DynamicVector#(.t: t)
     ) -> (
-        .result : Errable#(
-            .t       : t,
-            .reasons : (..dimension_mismatch)
-        )
+        .result : Errable#(t, (..dimension_mismatch))
     ) := {
     count ::= length(left).count
 
@@ -327,10 +294,7 @@ add#(
         .right     : &DynamicVector#(.t: t),
         .allocator : $&Allocator
     ) -> (
-        .result : Errable#(
-            .t       : DynamicVector#(.t: t),
-            .reasons : (..dimension_mismatch, ..out_of_memory)
-        )
+        .result : Errable#(DynamicVector#(.t: t), (..dimension_mismatch, ..out_of_memory))
     ) := {
     count ::= length(left).count
 
@@ -359,10 +323,7 @@ scale#(
         .factor    : t,
         .allocator : $&Allocator
     ) -> (
-        .result : Errable#(
-            .t       : DynamicVector#(.t: t),
-            .reasons : (..out_of_memory)
-        )
+        .result : Errable#(DynamicVector#(.t: t), (..out_of_memory))
     ) := {
     count ::= length(self).count
     storage ::= DynamicArray#(.t: t)(.allocator = allocator, .capacity = count)!

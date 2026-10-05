@@ -6,7 +6,7 @@ BitSet init(
         .count     : UIntNative,
         .allocator : $&Allocator
     ) -> (
-        .result : Errable#(.t: BitSet, .reasons: (..out_of_memory))
+        .result : Errable#(BitSet, (..out_of_memory))
     ) := {
     assume allocator
     needed ::= count / 8
@@ -38,7 +38,7 @@ contains(
         .self  : &BitSet,
         .index : UIntNative
     ) -> (
-        .result : Errable#(.t: Bool, .reasons: (..out_of_bounds))
+        .result : Errable#(Bool, (..out_of_bounds))
     ) := {
     if index >= self&._count {
         result = ..error(.reason = ..out_of_bounds)
@@ -56,7 +56,7 @@ set(
         .index : UIntNative,
         .value : Bool        = true
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..out_of_bounds))
+        .result : Errable#(Void, (..out_of_bounds))
     ) := {
     view ::= as_view(self).view
 

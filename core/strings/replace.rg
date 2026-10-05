@@ -4,10 +4,7 @@ replace(
         .replacement : StringView,
         .allocator   : $&Allocator,
     ) -> (
-        .result : Errable#(
-            .t       : String,
-            .reasons : (..out_of_memory, ..size_overflow, ..empty_pattern)
-        )
+        .result : Errable#(String, (..out_of_memory, ..size_overflow, ..empty_pattern))
     ) := {
     if pattern.length == 0 {
         result = ..error(.reason = ..empty_pattern)

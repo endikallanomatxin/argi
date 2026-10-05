@@ -14,7 +14,7 @@ read_uint16(
         .offset : UIntNative               = 0,
         .order  : ByteOrder
     ) -> (
-        .result : Errable#(.t: UInt16, .reasons: (..out_of_bounds))
+        .result : Errable#(UInt16, (..out_of_bounds))
     ) := {
     if [
         _binary_range(.length = length(&bytes).count, .offset = offset, .width = 2).ok
@@ -45,7 +45,7 @@ write_uint16(
         .value  : UInt16,
         .order  : ByteOrder
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..out_of_bounds))
+        .result : Errable#(Void, (..out_of_bounds))
     ) := {
     -- Prove the whole range before any destination byte changes.
     if [
@@ -77,7 +77,7 @@ read_uint32(
         .offset : UIntNative               = 0,
         .order  : ByteOrder
     ) -> (
-        .result : Errable#(.t: UInt32, .reasons: (..out_of_bounds))
+        .result : Errable#(UInt32, (..out_of_bounds))
     ) := {
     if [
         _binary_range(.length = length(&bytes).count, .offset = offset, .width = 4).ok
@@ -108,7 +108,7 @@ write_uint32(
         .value  : UInt32,
         .order  : ByteOrder
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..out_of_bounds))
+        .result : Errable#(Void, (..out_of_bounds))
     ) := {
     -- Prove the whole range before any destination byte changes.
     if [
@@ -140,7 +140,7 @@ read_uint64(
         .offset : UIntNative               = 0,
         .order  : ByteOrder
     ) -> (
-        .result : Errable#(.t: UInt64, .reasons: (..out_of_bounds))
+        .result : Errable#(UInt64, (..out_of_bounds))
     ) := {
     if [
         _binary_range(.length = length(&bytes).count, .offset = offset, .width = 8).ok
@@ -171,7 +171,7 @@ write_uint64(
         .value  : UInt64,
         .order  : ByteOrder
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..out_of_bounds))
+        .result : Errable#(Void, (..out_of_bounds))
     ) := {
     -- Prove the whole range before any destination byte changes.
     if [

@@ -13,7 +13,7 @@ split(
         .self      : StringView,
         .separator : StringView,
     ) -> (
-        .result : Errable#(.t: StringSplitIterator, .reasons: (..empty_separator))
+        .result : Errable#(StringSplitIterator, (..empty_separator))
     ) := {
     if separator.length == 0 {
         result = ..error(.reason = ..empty_separator)

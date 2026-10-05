@@ -45,7 +45,7 @@ next(
         .self      : $&CsvReader,
         .allocator : $&Allocator  = reach allocator
     ) -> (
-        .result : Errable#(.t: ?CsvRecord, .reasons: CsvReasons)
+        .result : Errable#(?CsvRecord, CsvReasons)
     ) := {
     assume allocator
 
@@ -143,7 +143,7 @@ write_record(
         .writer : $&Writer,
         .fields : ArrayViewRO#(.t: StringView)
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()
     ) := {
     index :: UIntNative = 0
 

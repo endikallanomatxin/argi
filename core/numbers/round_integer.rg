@@ -7,7 +7,7 @@ round_down#(
         .value    : t,
         .multiple : t
     ) -> (
-        .result : Errable#(.t: t, .reasons: (..invalid_multiple))
+        .result : Errable#(t, (..invalid_multiple))
     ) := {
     if multiple == 0 {
         result = ..error(.reason = ..invalid_multiple)
@@ -23,7 +23,7 @@ round_up#(
         .value    : t,
         .multiple : t
     ) -> (
-        .result : Errable#(.t: t, .reasons: (..invalid_multiple, ..out_of_range))
+        .result : Errable#(t, (..invalid_multiple, ..out_of_range))
     ) := {
     if multiple == 0 {
         result = ..error(.reason = ..invalid_multiple)

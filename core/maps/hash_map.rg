@@ -26,8 +26,8 @@ _hash_map_slots#(
         .allocator : $&Allocator,
     ) -> (
         .result : Errable#(
-            .t       : DynamicArray#(.t: _HashMapSlot#(.key: key, .value: value)),
-            .reasons : (..out_of_memory)
+            DynamicArray#(.t: _HashMapSlot#(.key: key, .value: value)),
+            (..out_of_memory)
         )
     ) := {
     slots ::= DynamicArray#(.t: _HashMapSlot#(.key: key, .value: value))(
@@ -54,10 +54,7 @@ HashMap init#(
         .allocator : $&Allocator,
         .capacity  : UIntNative   = 8
     ) -> (
-        .result : Errable#(
-            .t       : HashMap#(.key: key, .value: value, .policy: policy),
-            .reasons : (..out_of_memory)
-        )
+        .result : Errable#(HashMap#(.key: key, .value: value, .policy: policy), (..out_of_memory))
     ) := {
     constructed :: HashMap#(.key: key, .value: value, .policy: policy)
 
@@ -171,7 +168,7 @@ _hash_map_grow#(
         .self      : $&HashMap#(.key: key, .value: value, .policy: policy),
         .allocator : $&Allocator
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..out_of_memory))
+        .result : Errable#(Void, (..out_of_memory))
     ) := {
     old_count ::= capacity(.self = self).count
     new_count ::= old_count * 2
@@ -221,7 +218,7 @@ put#(
         .value     : value,
         .allocator : $&Allocator
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..out_of_memory))
+        .result : Errable#(Void, (..out_of_memory))
     ) := {
     assume allocator
     digest ::= hash(.self = &self&._policy, .key = key).hash

@@ -25,7 +25,7 @@ DirectoryWalker init(
         .maximum_depth : UIntNative  = 64,
         .allocator     : $&Allocator = reach allocator
     ) -> (
-        .result : Errable#(.t: DirectoryWalker, .reasons: _FilesystemReasons)
+        .result : Errable#(DirectoryWalker, _FilesystemReasons)
     ) := {
     assume allocator
     frames ::= DynamicArray#(.t: _WalkFrame)(.capacity = 1)!
@@ -62,7 +62,7 @@ next(
         .self      : $&DirectoryWalker,
         .allocator : $&Allocator        = reach allocator
     ) -> (
-        .result : Errable#(.t: ?WalkEntry, .reasons: _FilesystemReasons)
+        .result : Errable#(?WalkEntry, _FilesystemReasons)
     ) := {
     assume allocator
 

@@ -3,7 +3,7 @@ count_text(
         .text      : StringView,
         .allocator : $&PageAllocator
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..invalid_utf8, ..out_of_memory, ..out_of_range)) = ..ok Void()
+        .result : Errable#(Void, (..invalid_utf8, ..out_of_memory, ..out_of_range)) = ..ok Void()
     ) := {
     assume allocator
 
@@ -33,8 +33,8 @@ count_directory(
         .allocator   : $&PageAllocator
     ) -> (
         .result : Errable#(
-            .t       : Void,
-            .reasons : (
+            Void,
+            (
                 ..invalid_utf8,
                 ..out_of_memory,
                 ..out_of_range,

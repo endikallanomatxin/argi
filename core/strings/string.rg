@@ -33,7 +33,7 @@ string_with_length(
         .allocator : $&Allocator,
         .length    : UIntNative,
     ) -> (
-        .result : Errable#(.t: String, .reasons: (..out_of_memory))
+        .result : Errable#(String, (..out_of_memory))
     ) := {
     assume allocator
 
@@ -61,7 +61,7 @@ string_with_capacity(
         .allocator : $&Allocator,
         .capacity  : UIntNative,
     ) -> (
-        .result : Errable#(.t: String, .reasons: (..out_of_memory))
+        .result : Errable#(String, (..out_of_memory))
     ) := {
     assume allocator
 
@@ -89,7 +89,7 @@ String init(
         .allocator : $&Allocator,
         .length    : UIntNative,
     ) -> (
-        .result : Errable#(.t: String, .reasons: (..out_of_memory))
+        .result : Errable#(String, (..out_of_memory))
     ) := {
     constructed :: String
 
@@ -119,7 +119,7 @@ String init(
         .allocator : $&Allocator,
         .capacity  : UIntNative,
     ) -> (
-        .result : Errable#(.t: String, .reasons: (..out_of_memory))
+        .result : Errable#(String, (..out_of_memory))
     ) := {
     constructed :: String
 
@@ -158,7 +158,7 @@ copy(
         .self      : &String,
         .allocator : $&Allocator,
     ) -> (
-        .result : Errable#(.t: String, .reasons: (..out_of_memory))
+        .result : Errable#(String, (..out_of_memory))
     ) := {
     assume allocator
 
@@ -286,7 +286,7 @@ ensure_capacity(
         .capacity  : UIntNative,
         .allocator : $&Allocator,
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..out_of_memory))
+        .result : Errable#(Void, (..out_of_memory))
     ) := {
     assume allocator
 
@@ -302,7 +302,7 @@ ensure_capacity_growing(
         .target_capacity : UIntNative,
         .allocator       : $&Allocator,
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..out_of_memory))
+        .result : Errable#(Void, (..out_of_memory))
     ) := {
     assume allocator
 
@@ -401,7 +401,7 @@ push_byte(
         .byte      : UInt8,
         .allocator : $&Allocator,
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..out_of_memory))
+        .result : Errable#(Void, (..out_of_memory))
     ) := {
     assume allocator
 
@@ -438,7 +438,7 @@ push_c_string(
         .text      : &Char,
         .allocator : $&Allocator,
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..out_of_memory))
+        .result : Errable#(Void, (..out_of_memory))
     ) := {
     assume allocator
 
@@ -485,7 +485,7 @@ push_view(
         .view      : StringView,
         .allocator : $&Allocator,
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..out_of_memory))
+        .result : Errable#(Void, (..out_of_memory))
     ) := {
     assume allocator
 
@@ -562,7 +562,7 @@ concat_views(
         .right     : &StringView,
         .allocator : $&Allocator,
     ) -> (
-        .result : Errable#(.t: String, .reasons: (..out_of_memory))
+        .result : Errable#(String, (..out_of_memory))
     ) := {
     assume allocator
 
@@ -610,7 +610,7 @@ operator + (
         .right     : &Char,
         .allocator : $&Allocator,
     ) -> (
-        .result : Errable#(.t: String, .reasons: (..out_of_memory))
+        .result : Errable#(String, (..out_of_memory))
     ) := {
     assume allocator
 
@@ -625,7 +625,7 @@ operator + (
         .right     : &StringView,
         .allocator : $&Allocator,
     ) -> (
-        .result : Errable#(.t: String, .reasons: (..out_of_memory))
+        .result : Errable#(String, (..out_of_memory))
     ) := {
     assume allocator
 
@@ -639,7 +639,7 @@ operator + (
         .right     : &String,
         .allocator : $&Allocator,
     ) -> (
-        .result : Errable#(.t: String, .reasons: (..out_of_memory))
+        .result : Errable#(String, (..out_of_memory))
     ) := {
     assume allocator
 
@@ -654,7 +654,7 @@ operator + (
         .right     : &Char,
         .allocator : $&Allocator,
     ) -> (
-        .result : Errable#(.t: String, .reasons: (..out_of_memory))
+        .result : Errable#(String, (..out_of_memory))
     ) := {
     assume allocator
 
@@ -668,7 +668,7 @@ operator + (
         .right     : &StringView,
         .allocator : $&Allocator,
     ) -> (
-        .result : Errable#(.t: String, .reasons: (..out_of_memory))
+        .result : Errable#(String, (..out_of_memory))
     ) := {
     assume allocator
 
@@ -682,7 +682,7 @@ operator + (
         .right     : &String,
         .allocator : $&Allocator,
     ) -> (
-        .result : Errable#(.t: String, .reasons: (..out_of_memory))
+        .result : Errable#(String, (..out_of_memory))
     ) := {
     assume allocator
 
@@ -696,7 +696,7 @@ concat(
         .right     : &String,
         .allocator : $&Allocator,
     ) -> (
-        .result : Errable#(.t: String, .reasons: (..out_of_memory))
+        .result : Errable#(String, (..out_of_memory))
     ) := {
     assume allocator
     right_view := as_view(right)
@@ -709,7 +709,7 @@ concat(
         .right     : StringView,
         .allocator : $&Allocator,
     ) -> (
-        .result : Errable#(.t: String, .reasons: (..out_of_memory))
+        .result : Errable#(String, (..out_of_memory))
     ) := {
     assume allocator
 
@@ -721,7 +721,7 @@ concat(
         .right     : StringView,
         .allocator : $&Allocator,
     ) -> (
-        .result : Errable#(.t: String, .reasons: (..out_of_memory))
+        .result : Errable#(String, (..out_of_memory))
     ) := {
     assume allocator
     left_view := as_view(left)
@@ -734,7 +734,7 @@ concat(
         .right     : &String,
         .allocator : $&Allocator,
     ) -> (
-        .result : Errable#(.t: String, .reasons: (..out_of_memory))
+        .result : Errable#(String, (..out_of_memory))
     ) := {
     assume allocator
     left_view := as_view(left)

@@ -121,7 +121,7 @@ _general_purpose_small_address(
         .self      : $&GeneralPurposeAllocator,
         .slot_size : UIntNative,
     ) -> (
-        .result : Errable#(.t: _GeneralPurposeMapped, .reasons: (..out_of_memory))
+        .result : Errable#(_GeneralPurposeMapped, (..out_of_memory))
     ) := {
     bucket_address :: UIntNative = self&._bucket_head
 
@@ -212,7 +212,7 @@ _general_purpose_large_address(
         .size      : UIntNative,
         .alignment : UIntNative,
     ) -> (
-        .result : Errable#(.t: _GeneralPurposeMapped, .reasons: (..out_of_memory))
+        .result : Errable#(_GeneralPurposeMapped, (..out_of_memory))
     ) := {
     allocated ::= allocate(
         .self      = $&self&._backing_allocator
@@ -267,11 +267,11 @@ allocate(
         .size      : UIntNative,
         .alignment : UIntNative,
     ) -> (
-        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+        .result : Errable#(Allocation, (..out_of_memory))
     ) := {
     _require_allocation_alignment(.alignment = alignment)
     slot_size ::= _general_purpose_slot_size(.size = size, .alignment = alignment).slot_size
-    mapped :: Errable#(.t: _GeneralPurposeMapped, .reasons: (..out_of_memory))
+    mapped :: Errable#(_GeneralPurposeMapped, (..out_of_memory))
 
     if slot_size > self&._bucket_size / 2 {
         mapped = _general_purpose_large_address(.self = self, .size = size, .alignment = alignment)

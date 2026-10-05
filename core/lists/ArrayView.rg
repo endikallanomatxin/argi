@@ -136,7 +136,7 @@ get_ro_ref#(
         .self  : &ArrayView#(.t: t),
         .index : UIntNative,
     ) -> (
-        .result : Errable#(.t: &t, .reasons: (..out_of_bounds))
+        .result : Errable#(&t, (..out_of_bounds))
     ) := {
     if index >= self&._length {
         result = ..error(.reason = ..out_of_bounds)
@@ -155,7 +155,7 @@ get_ro_ref#(
         .self  : &ArrayViewRO#(.t: t),
         .index : UIntNative,
     ) -> (
-        .result : Errable#(.t: &t, .reasons: (..out_of_bounds))
+        .result : Errable#(&t, (..out_of_bounds))
     ) := {
     if index >= self&._length {
         result = ..error(.reason = ..out_of_bounds)
@@ -174,7 +174,7 @@ get_rw_ref#(
         .self  : $&ArrayView#(.t: t),
         .index : UIntNative,
     ) -> (
-        .result : Errable#(.t: $&t, .reasons: (..out_of_bounds))
+        .result : Errable#($&t, (..out_of_bounds))
     ) := {
     if index >= self&._length {
         result = ..error(.reason = ..out_of_bounds)
@@ -193,7 +193,7 @@ get#(
         .self  : &ArrayView#(.t: t),
         .index : UIntNative,
     ) -> (
-        .result : Errable#(.t: t, .reasons: (..out_of_bounds))
+        .result : Errable#(t, (..out_of_bounds))
     ) := {
     if index >= self&._length {
         result = ..error(.reason = ..out_of_bounds)
@@ -215,7 +215,7 @@ set#(
         .index : UIntNative,
         .value : t,
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..out_of_bounds))
+        .result : Errable#(Void, (..out_of_bounds))
     ) := {
     if index >= self&._length {
         result = ..error(.reason = ..out_of_bounds)
@@ -243,7 +243,7 @@ get#(
         .self  : &ArrayViewRO#(.t: t),
         .index : UIntNative,
     ) -> (
-        .result : Errable#(.t: t, .reasons: (..out_of_bounds))
+        .result : Errable#(t, (..out_of_bounds))
     ) := {
     match get_ro_ref#(.t: t)(.self = self, .index = index).result {
         ..error _ { result = ..error(.reason = ..out_of_bounds) }

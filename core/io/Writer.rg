@@ -1,9 +1,9 @@
 Writer: Abstract = (
     write_byte(.self: $&Self, .byte: UInt8) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     )
     flush(.self: $&Self) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     )
 )
 
@@ -11,7 +11,7 @@ write(
         .self : $&Writer,
         .text : StringView,
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) := {
     i :: UIntNative = 0
 
@@ -35,7 +35,7 @@ write(
         .self : $&Writer,
         .text : &String,
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) := {
     result = write(.self = self, .text = as_view(text))
 }
@@ -44,7 +44,7 @@ write(
         .self   : $&Writer,
         .buffer : ArrayView#(.t: UInt8),
     ) -> (
-        .result : Errable#(.t: UIntNative, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        .result : Errable#(UIntNative, (..stream_write_failed, ..stream_flush_failed))
     ) := {
     wrote_count :: UIntNative = 0
 

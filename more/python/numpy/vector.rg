@@ -14,7 +14,7 @@ Vector64 init(
         .interpreter : &python.Python,
         .values      : ArrayViewRO#(.t: Float64)
     ) -> (
-        .result : Errable#(.t: Vector64, .reasons: _PythonReasons)
+        .result : Errable#(Vector64, _PythonReasons)
     ) := {
     object ::= python.numeric_array(.self = interpreter, .values = values)!
 
@@ -29,7 +29,7 @@ add(
         .left  : &Vector64,
         .right : &Vector64
     ) -> (
-        .result : Errable#(.t: Vector64, .reasons: _NumpyReasons)
+        .result : Errable#(Vector64, _NumpyReasons)
     ) := {
     if left&._length != right&._length {
         result = ..error(.reason = ..numpy_shape_mismatch)
@@ -50,7 +50,7 @@ multiply(
         .left  : &Vector64,
         .right : &Vector64
     ) -> (
-        .result : Errable#(.t: Vector64, .reasons: _NumpyReasons)
+        .result : Errable#(Vector64, _NumpyReasons)
     ) := {
     if left&._length != right&._length {
         result = ..error(.reason = ..numpy_shape_mismatch)
@@ -71,7 +71,7 @@ dot(
         .left  : &Vector64,
         .right : &Vector64
     ) -> (
-        .result : Errable#(.t: Float64, .reasons: _NumpyReasons)
+        .result : Errable#(Float64, _NumpyReasons)
     ) := {
     if left&._length != right&._length {
         result = ..error(.reason = ..numpy_shape_mismatch)
@@ -89,7 +89,7 @@ dot(
     result = ..ok value
 }
 
-sum(.self: &Vector64) -> (.result: Errable#(.t: Float64, .reasons: _NumpyReasons)) := {
+sum(.self: &Vector64) -> (.result: Errable#(Float64, _NumpyReasons)) := {
     object ::= python.call_method(.self = &self&._object, .name = "sum")!
     value ::= python.to_float64(.self = &object)!
 
@@ -100,7 +100,7 @@ copy_values(
         .self        : &Vector64,
         .destination : ArrayView#(.t: Float64)
     ) -> (
-        .result : Errable#(.t: UIntNative, .reasons: _NumpyReasons)
+        .result : Errable#(UIntNative, _NumpyReasons)
     ) := {
     if length(&destination).count < self&._length {
         result = ..error(.reason = ..numpy_shape_mismatch)

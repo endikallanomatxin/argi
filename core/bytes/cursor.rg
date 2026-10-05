@@ -33,7 +33,7 @@ skip(
         .self  : $&ByteReader,
         .count : UIntNative
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..out_of_bounds))
+        .result : Errable#(Void, (..out_of_bounds))
     ) := {
     if count > remaining(.self = self).count {
         result = ..error(.reason = ..out_of_bounds)
@@ -49,7 +49,7 @@ read_uint16(
         .self  : $&ByteReader,
         .order : ByteOrder
     ) -> (
-        .result : Errable#(.t: UInt16, .reasons: (..out_of_bounds))
+        .result : Errable#(UInt16, (..out_of_bounds))
     ) := {
     value_out ::= read_uint16(.bytes = self&._bytes, .offset = self&._position, .order = order)!
     self&._position = self&._position + 2
@@ -61,7 +61,7 @@ read_uint32(
         .self  : $&ByteReader,
         .order : ByteOrder
     ) -> (
-        .result : Errable#(.t: UInt32, .reasons: (..out_of_bounds))
+        .result : Errable#(UInt32, (..out_of_bounds))
     ) := {
     value_out ::= read_uint32(.bytes = self&._bytes, .offset = self&._position, .order = order)!
     self&._position = self&._position + 4
@@ -73,7 +73,7 @@ read_uint64(
         .self  : $&ByteReader,
         .order : ByteOrder
     ) -> (
-        .result : Errable#(.t: UInt64, .reasons: (..out_of_bounds))
+        .result : Errable#(UInt64, (..out_of_bounds))
     ) := {
     value_out ::= read_uint64(.bytes = self&._bytes, .offset = self&._position, .order = order)!
     self&._position = self&._position + 8
@@ -85,7 +85,7 @@ skip(
         .self  : $&ByteWriter,
         .count : UIntNative
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..out_of_bounds))
+        .result : Errable#(Void, (..out_of_bounds))
     ) := {
     if count > remaining(.self = self).count {
         result = ..error(.reason = ..out_of_bounds)
@@ -102,7 +102,7 @@ write_uint16(
         .value : UInt16,
         .order : ByteOrder
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..out_of_bounds))
+        .result : Errable#(Void, (..out_of_bounds))
     ) := {
     value_out ::= write_uint16(
         .bytes  = self&._bytes
@@ -120,7 +120,7 @@ write_uint32(
         .value : UInt32,
         .order : ByteOrder
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..out_of_bounds))
+        .result : Errable#(Void, (..out_of_bounds))
     ) := {
     value_out ::= write_uint32(
         .bytes  = self&._bytes
@@ -138,7 +138,7 @@ write_uint64(
         .value : UInt64,
         .order : ByteOrder
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..out_of_bounds))
+        .result : Errable#(Void, (..out_of_bounds))
     ) := {
     value_out ::= write_uint64(
         .bytes  = self&._bytes

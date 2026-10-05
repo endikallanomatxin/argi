@@ -6,7 +6,7 @@ UnicodeScalar implements ImplicitlyCopyable
 UnicodeScalar init(
         .value : UInt32
     ) -> (
-        .result : Errable#(.t: UnicodeScalar, .reasons: (..invalid_codepoint))
+        .result : Errable#(UnicodeScalar, (..invalid_codepoint))
     ) := {
     if value > 1114111 or [value >= 55296 and value <= 57343] {
         result = ..error(.reason = ..invalid_codepoint)
@@ -96,7 +96,7 @@ utf8_decode(
         .text   : StringView,
         .offset : UIntNative  = 0
     ) -> (
-        .result : Errable#(.t: Utf8Decoded, .reasons: (..invalid_utf8, ..out_of_bounds))
+        .result : Errable#(Utf8Decoded, (..invalid_utf8, ..out_of_bounds))
     ) := {
     match _utf8_decode(.text = text, .offset = offset).result {
         ..valid payload { result = ..ok payload.decoded }
@@ -105,7 +105,7 @@ utf8_decode(
     }
 }
 
-validate_utf8(.text: StringView) -> (.result: Errable#(.t: UIntNative, .reasons: (..invalid_utf8))) := {
+validate_utf8(.text: StringView) -> (.result: Errable#(UIntNative, (..invalid_utf8))) := {
     offset :: UIntNative = 0
     count :: UIntNative = 0
 
@@ -152,7 +152,7 @@ utf8_encode(
         .buffer : ArrayView#(.t: UInt8),
         .offset : UIntNative             = 0
     ) -> (
-        .result : Errable#(.t: UIntNative, .reasons: (..out_of_bounds))
+        .result : Errable#(UIntNative, (..out_of_bounds))
     ) := {
     width ::= utf8_encoded_length(.scalar = scalar).count
     size ::= length(&buffer).count
@@ -202,7 +202,7 @@ position(.self: &Utf8Decoder) -> (.count: UIntNative) := { count = self&._offset
 next_codepoint(
         .self : $&Utf8Decoder
     ) -> (
-        .result : Errable#(.t: ?UnicodeScalar, .reasons: (..invalid_utf8))
+        .result : Errable#(?UnicodeScalar, (..invalid_utf8))
     ) := {
     if self&._offset == self&._text.length {
         result = ..ok ..none
@@ -225,13 +225,13 @@ Utf8View: Type = (._text: StringView, ._count: UIntNative)
 
 Utf8View implements ImplicitlyCopyable
 
-Utf8View init(.text: StringView) -> (.result: Errable#(.t: Utf8View, .reasons: (..invalid_utf8))) := {
+Utf8View init(.text: StringView) -> (.result: Errable#(Utf8View, (..invalid_utf8))) := {
     count ::= validate_utf8(.text = text)!
 
     result = ..ok(._text = text, ._count = count)
 }
 
-codepoints(.text: StringView) -> (.result: Errable#(.t: Utf8View, .reasons: (..invalid_utf8))) := {
+codepoints(.text: StringView) -> (.result: Errable#(Utf8View, (..invalid_utf8))) := {
     result = Utf8View(.text = text)
 }
 

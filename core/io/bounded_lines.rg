@@ -8,7 +8,7 @@ read_line(
         .self   : $&Reader,
         .buffer : ArrayView#(.t: UInt8)
     ) -> (
-        .result : Errable#(.t: ?ByteLine, .reasons: (..stream_read_failed, ..line_too_long))
+        .result : Errable#(?ByteLine, (..stream_read_failed, ..line_too_long))
     ) := {
     read_result ::= read_until(.self = self, .buffer = buffer, .delimiter = 10)!
     count ::= read_result.count

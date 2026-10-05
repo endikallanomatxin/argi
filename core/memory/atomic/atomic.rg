@@ -32,7 +32,7 @@ AtomicUInt32 init(
         .initial : UInt32                     = 0,
         .ffi     : $&ForeignFunctionInterface = reach ffi
     ) -> (
-        .result : Errable#(.t: AtomicUInt32, .reasons: (..out_of_memory))
+        .result : Errable#(AtomicUInt32, (..out_of_memory))
     ) := {
     assume ffi
     handle ::= _atomic_create(.initial = initial).handle

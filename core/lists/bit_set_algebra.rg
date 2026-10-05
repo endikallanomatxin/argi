@@ -26,7 +26,7 @@ _bit_set_combine_into(
         .other : &BitSet,
         .mode  : UInt8
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..bit_set_size_mismatch)) = ..ok Void()
+        .result : Errable#(Void, (..bit_set_size_mismatch)) = ..ok Void()
     ) := {
     if self&._count != other&._count {
         result = ..error(.reason = ..bit_set_size_mismatch)
@@ -47,7 +47,7 @@ union_with(
         .self  : $&BitSet,
         .other : &BitSet
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..bit_set_size_mismatch))
+        .result : Errable#(Void, (..bit_set_size_mismatch))
     ) := {
     result = _bit_set_combine_into(.self = self, .other = other, .mode = 0)
 }
@@ -56,7 +56,7 @@ intersect_with(
         .self  : $&BitSet,
         .other : &BitSet
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..bit_set_size_mismatch))
+        .result : Errable#(Void, (..bit_set_size_mismatch))
     ) := {
     result = _bit_set_combine_into(.self = self, .other = other, .mode = 1)
 }
@@ -65,7 +65,7 @@ difference_with(
         .self  : $&BitSet,
         .other : &BitSet
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..bit_set_size_mismatch))
+        .result : Errable#(Void, (..bit_set_size_mismatch))
     ) := {
     result = _bit_set_combine_into(.self = self, .other = other, .mode = 2)
 }

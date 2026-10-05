@@ -26,7 +26,7 @@ ErrorTracer: Abstract = (
     add_context(.self: $&Self, .location: SourceLocationId, .context: StringView) -> ()
     reset_context(.self: $&Self) -> ()
     report(.self: $&Self, .writer: $&Virtual#(.abstract: Writer)) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     )
 )
 
@@ -47,7 +47,7 @@ report(
         .self   : $&NoopErrorTracer,
         .writer : $&Virtual#(.abstract: Writer)
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) := {
     result = ..ok Void()
 }
@@ -245,7 +245,7 @@ write_trace_text(
         .text   : &Char,
         .writer : $&Virtual#(.abstract: Writer)
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) := {
     assume error_tracer ::= $&noop_error_tracer
     view ::= c_string_as_view(.text = text).view
@@ -263,7 +263,7 @@ write_trace_uint(
         .value  : UIntNative,
         .writer : $&Virtual#(.abstract: Writer)
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) := {
     assume error_tracer ::= $&noop_error_tracer
     divisor :: UIntNative = 1
@@ -287,7 +287,7 @@ _error_report_entry(
         .index  : UIntNative,
         .writer : $&Virtual#(.abstract: Writer)
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) := {
     assume error_tracer ::= $&noop_error_tracer
     entry ::= _error_trace_load_entry(.self = self, .index = index)
@@ -330,7 +330,7 @@ report(
         .self   : $&FixedSizeErrorTracer,
         .writer : $&Virtual#(.abstract: Writer)
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) := {
     assume error_tracer ::= $&noop_error_tracer
     write_trace_text(.text = "error trace (most recent first):\n", .writer = writer)!
@@ -373,7 +373,7 @@ report_trace(
         .trace  : &ErrorTrace,
         .writer : $&Writer
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) := {
     assume error_tracer ::= $&noop_error_tracer
     virtual_writer ::= to_virtual#(.abstract: Writer)(.value = writer)
@@ -388,7 +388,7 @@ report_error#(
         .err    : &Error#(.reasons: reasons),
         .writer : $&Writer
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) := {
     assume error_tracer ::= $&noop_error_tracer
     report_trace(.trace = &err&.trace, .writer = writer)!
@@ -403,7 +403,7 @@ report_error#(
         .err     : &Error#(.reasons: reasons),
         .writer  : $&Writer
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) := {
     assume error_tracer ::= $&noop_error_tracer
     virtual_writer ::= to_virtual#(.abstract: Writer)(.value = writer)
@@ -424,7 +424,7 @@ unwrap_or_abort#(
         .t       : Type,
         .reasons : Type
     )(
-        .value : Errable#(.t: t, .reasons: reasons)
+        .value : Errable#(t, reasons)
     ) -> (
         .result : t
     ) := {

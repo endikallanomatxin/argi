@@ -6,7 +6,7 @@ format_into#(
         .out   : $&Writer,
         .value : t,
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) := {
     encoded ::= _decimal_encode#(.t: t)(.value = value)
 
@@ -19,7 +19,7 @@ write#(
         .self  : $&Writer,
         .value : t,
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) := {
     result = format_into(.out = self, .value = value)
 }
@@ -30,10 +30,7 @@ format_into#(
         .out   : $&Writer,
         .value : t
     ) -> (
-        .result : Errable#(
-            .t       : Void,
-            .reasons : (..stream_write_failed, ..stream_flush_failed)
-        )
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) := {
     encoded ::= _float_encode(.value = value)
 
@@ -46,10 +43,7 @@ write#(
         .self  : $&Writer,
         .value : t
     ) -> (
-        .result : Errable#(
-            .t       : Void,
-            .reasons : (..stream_write_failed, ..stream_flush_failed)
-        )
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) := {
     result = format_into(.out = self, .value = value)
 }

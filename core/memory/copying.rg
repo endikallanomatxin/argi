@@ -3,7 +3,7 @@ InfalliblyCopyable: Abstract = (
 )
 
 FalliblyCopyable#(.reasons: Type): Abstract = (
-    copy(.self: &Self, .allocator: $&Allocator) -> (.result: Errable#(.t: Self, .reasons: reasons))
+    copy(.self: &Self, .allocator: $&Allocator) -> (.result: Errable#(Self, reasons))
 )
 
 ImplicitlyCopyable: Abstract = ()

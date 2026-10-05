@@ -3,7 +3,7 @@
 -- containment proof. Relative leading parents remain, rooted parents clamp
 -- at the root, and Windows drive-relative prefixes retain their meaning.
 normalize_path(.view: StringView, .allocator: $&Allocator = reach allocator) -> (
-    .result : Errable#(.t: Path, .reasons: (..invalid_path, ..out_of_memory))
+    .result : Errable#(Path, (..invalid_path, ..out_of_memory))
 ) := {
     assume allocator
     index :: UIntNative = 0

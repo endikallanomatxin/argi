@@ -29,8 +29,8 @@ copy_stream_limited(
         .limit  : UIntNative
     ) -> (
         .result : Errable#(
-            .t       : StreamCopyResult,
-            .reasons : (
+            StreamCopyResult,
+            (
                 ..stream_read_failed,
                 ..stream_write_failed,
                 ..stream_flush_failed,
@@ -79,8 +79,8 @@ copy_stream_limited(
         .limit  : UIntNative
     ) -> (
         .result : Errable#(
-            .t       : StreamCopyResult,
-            .reasons : (
+            StreamCopyResult,
+            (
                 ..stream_read_failed,
                 ..stream_write_failed,
                 ..stream_flush_failed,
@@ -129,8 +129,8 @@ copy_stream_limited(
         .limit  : UIntNative
     ) -> (
         .result : Errable#(
-            .t       : StreamCopyResult,
-            .reasons : (
+            StreamCopyResult,
+            (
                 ..stream_read_failed,
                 ..stream_write_failed,
                 ..stream_flush_failed,
@@ -179,8 +179,8 @@ copy_stream_limited(
         .limit  : UIntNative
     ) -> (
         .result : Errable#(
-            .t       : StreamCopyResult,
-            .reasons : (
+            StreamCopyResult,
+            (
                 ..stream_read_failed,
                 ..stream_write_failed,
                 ..stream_flush_failed,
@@ -231,8 +231,8 @@ read_all_limited(
         .allocator : $&Allocator
     ) -> (
         .result : Errable#(
-            .t       : String,
-            .reasons : (
+            String,
+            (
                 ..stream_read_failed,
                 ..invalid_stream_buffer,
                 ..size_limit_exceeded,
@@ -310,8 +310,8 @@ read_all_limited(
         .allocator : $&Allocator
     ) -> (
         .result : Errable#(
-            .t       : String,
-            .reasons : (
+            String,
+            (
                 ..stream_read_failed,
                 ..invalid_stream_buffer,
                 ..size_limit_exceeded,

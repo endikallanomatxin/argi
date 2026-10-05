@@ -40,7 +40,7 @@ acquire_heap_storage(
         .alignment : UIntNative,
         .ffi       : $&ForeignFunctionInterface,
     ) -> (
-        .result : Errable#(.t: AcquiredStorage, .reasons: (..out_of_memory))
+        .result : Errable#(AcquiredStorage, (..out_of_memory))
     ) := {
     _require_allocation_alignment(.alignment = alignment)
     physical_alignment ::= alignment
@@ -78,7 +78,7 @@ acquire_page_storage(
         .size      : UIntNative,
         .alignment : UIntNative,
     ) -> (
-        .result : Errable#(.t: AcquiredStorage, .reasons: (..out_of_memory))
+        .result : Errable#(AcquiredStorage, (..out_of_memory))
     ) := {
     assume ffi := memory&._ffi
     acquired ::= _memory_map_aligned(

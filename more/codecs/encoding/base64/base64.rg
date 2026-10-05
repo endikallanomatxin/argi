@@ -29,7 +29,7 @@ encode(
         .bytes     : ArrayViewRO#(.t: UInt8),
         .allocator : $&Allocator              = reach allocator
     ) -> (
-        .result : Errable#(.t: String, .reasons: (..out_of_memory, ..out_of_range))
+        .result : Errable#(String, (..out_of_memory, ..out_of_range))
     ) := {
     assume allocator
     alphabet ::= _alphabet().text
@@ -139,10 +139,7 @@ decode(
         .text      : StringView,
         .allocator : $&Allocator = reach allocator
     ) -> (
-        .result : Errable#(
-            .t       : DynamicArray#(.t: UInt8),
-            .reasons : (..invalid_base64, ..out_of_memory)
-        )
+        .result : Errable#(DynamicArray#(.t: UInt8), (..invalid_base64, ..out_of_memory))
     ) := {
     assume allocator
 

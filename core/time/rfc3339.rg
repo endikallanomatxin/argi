@@ -7,7 +7,7 @@ _date_digits(
         .start : UIntNative,
         .count : UIntNative
     ) -> (
-        .result : Errable#(.t: UInt32, .reasons: (..invalid_datetime))
+        .result : Errable#(UInt32, (..invalid_datetime))
     ) := {
     value :: UInt32 = 0
     index :: UIntNative = 0
@@ -28,7 +28,7 @@ _date_digits(
 parse_utc(
         .text : StringView
     ) -> (
-        .result : Errable#(.t: UtcDateTime, .reasons: (..invalid_datetime))
+        .result : Errable#(UtcDateTime, (..invalid_datetime))
     ) := {
     if text.length < 20 or text.length > 30 {
         result = ..error(.reason = ..invalid_datetime)
@@ -105,7 +105,7 @@ format_utc_into(
         .date   : UtcDateTime,
         .buffer : ArrayView#(.t: UInt8)
     ) -> (
-        .result : Errable#(.t: UIntNative, .reasons: (..invalid_datetime, ..out_of_bounds))
+        .result : Errable#(UIntNative, (..invalid_datetime, ..out_of_bounds))
     ) := {
     if valid_utc_date(.date = date).ok == false {
         result = ..error(.reason = ..invalid_datetime)

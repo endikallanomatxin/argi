@@ -1,13 +1,13 @@
 -- Block protocols preserve partial operations through static and virtual use.
 BlockReader: Abstract = (
     read_block(.self: $&Self, .buffer: ArrayView#(.t: UInt8)) -> (
-        .result : Errable#(.t: UIntNative, .reasons: (..stream_read_failed))
+        .result : Errable#(UIntNative, (..stream_read_failed))
     )
 )
 
 BlockWriter: Abstract = (
     write_block(.self: $&Self, .buffer: ArrayViewRO#(.t: UInt8)) -> (
-        .result : Errable#(.t: UIntNative, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        .result : Errable#(UIntNative, (..stream_write_failed, ..stream_flush_failed))
     )
 )
 
@@ -17,7 +17,7 @@ _reader_block#(
         .self   : $&t,
         .buffer : ArrayView#(.t: UInt8)
     ) -> (
-        .result : Errable#(.t: UIntNative, .reasons: (..stream_read_failed))
+        .result : Errable#(UIntNative, (..stream_read_failed))
     ) := {
     result = read(.self = self, .buffer = buffer)
 }
@@ -28,7 +28,7 @@ _writer_block#(
         .self   : $&t,
         .buffer : ArrayViewRO#(.t: UInt8)
     ) -> (
-        .result : Errable#(.t: UIntNative, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        .result : Errable#(UIntNative, (..stream_write_failed, ..stream_flush_failed))
     ) := {
     index :: UIntNative = 0
 
@@ -57,7 +57,7 @@ read_exact(
         .self   : $&BlockReader,
         .buffer : ArrayView#(.t: UInt8)
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_read_failed, ..unexpected_eof))
+        .result : Errable#(Void, (..stream_read_failed, ..unexpected_eof))
     ) := {
     total ::= length(&buffer).count
     count :: UIntNative = 0
@@ -89,7 +89,7 @@ write_all(
         .self   : $&BlockWriter,
         .buffer : ArrayViewRO#(.t: UInt8)
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) := {
     total ::= length(&buffer).count
     count :: UIntNative = 0
@@ -123,8 +123,8 @@ copy_stream(
         .buffer : ArrayView#(.t: UInt8)
     ) -> (
         .result : Errable#(
-            .t       : UIntNative,
-            .reasons : (
+            UIntNative,
+            (
                 ..stream_read_failed,
                 ..stream_write_failed,
                 ..stream_flush_failed,
@@ -174,7 +174,7 @@ read_until(
         .buffer    : ArrayView#(.t: UInt8),
         .delimiter : UInt8
     ) -> (
-        .result : Errable#(.t: ReadUntil, .reasons: (..stream_read_failed))
+        .result : Errable#(ReadUntil, (..stream_read_failed))
     ) := {
     count :: UIntNative = 0
 
@@ -204,7 +204,7 @@ read_block(
         .self   : $&File,
         .buffer : ArrayView#(.t: UInt8)
     ) -> (
-        .result : Errable#(.t: UIntNative, .reasons: (..stream_read_failed))
+        .result : Errable#(UIntNative, (..stream_read_failed))
     ) := {
     result = read(.self = self, .buffer = buffer)
 }
@@ -213,7 +213,7 @@ read_block(
         .self   : $&ProcessStream,
         .buffer : ArrayView#(.t: UInt8)
     ) -> (
-        .result : Errable#(.t: UIntNative, .reasons: (..stream_read_failed))
+        .result : Errable#(UIntNative, (..stream_read_failed))
     ) := {
     result = read(.self = self, .buffer = buffer)
 }
@@ -222,7 +222,7 @@ write_block(
         .self   : $&ProcessStream,
         .buffer : ArrayViewRO#(.t: UInt8)
     ) -> (
-        .result : Errable#(.t: UIntNative, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        .result : Errable#(UIntNative, (..stream_write_failed, ..stream_flush_failed))
     ) := {
     result = _writer_block(.self = self, .buffer = buffer)
 }
@@ -233,7 +233,7 @@ read_block#(
         .self   : $&BufferedReader#(.base_type: base_type),
         .buffer : ArrayView#(.t: UInt8)
     ) -> (
-        .result : Errable#(.t: UIntNative, .reasons: (..stream_read_failed))
+        .result : Errable#(UIntNative, (..stream_read_failed))
     ) := {
     result = _reader_block(.self = self, .buffer = buffer)
 }
@@ -244,7 +244,7 @@ write_block#(
         .self   : $&BufferedWriter#(.base_type: base_type),
         .buffer : ArrayViewRO#(.t: UInt8)
     ) -> (
-        .result : Errable#(.t: UIntNative, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        .result : Errable#(UIntNative, (..stream_write_failed, ..stream_flush_failed))
     ) := {
     result = _writer_block(.self = self, .buffer = buffer)
 }
@@ -253,7 +253,7 @@ read_exact(
         .self   : $&Virtual#(.abstract: BlockReader),
         .buffer : ArrayView#(.t: UInt8)
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_read_failed, ..unexpected_eof))
+        .result : Errable#(Void, (..stream_read_failed, ..unexpected_eof))
     ) := {
     total ::= length(&buffer).count
     count :: UIntNative = 0
@@ -285,7 +285,7 @@ write_all(
         .self   : $&Virtual#(.abstract: BlockWriter),
         .buffer : ArrayViewRO#(.t: UInt8)
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) := {
     total ::= length(&buffer).count
     count :: UIntNative = 0
@@ -319,8 +319,8 @@ copy_stream(
         .buffer : ArrayView#(.t: UInt8)
     ) -> (
         .result : Errable#(
-            .t       : UIntNative,
-            .reasons : (
+            UIntNative,
+            (
                 ..stream_read_failed,
                 ..stream_write_failed,
                 ..stream_flush_failed,
@@ -363,8 +363,8 @@ copy_stream(
         .buffer : ArrayView#(.t: UInt8)
     ) -> (
         .result : Errable#(
-            .t       : UIntNative,
-            .reasons : (
+            UIntNative,
+            (
                 ..stream_read_failed,
                 ..stream_write_failed,
                 ..stream_flush_failed,
@@ -407,8 +407,8 @@ copy_stream(
         .buffer : ArrayView#(.t: UInt8)
     ) -> (
         .result : Errable#(
-            .t       : UIntNative,
-            .reasons : (
+            UIntNative,
+            (
                 ..stream_read_failed,
                 ..stream_write_failed,
                 ..stream_flush_failed,

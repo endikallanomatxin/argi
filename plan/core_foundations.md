@@ -23,9 +23,15 @@ allocation, capabilities, ownership and nominal errors throughout.
 ## Compiler dependencies
 
 Generic bodies still need contextual choice-literal resolution inside constructor
-fields and binary operands, and standalone lexical blocks. Use explicit typed bindings until that path carries
-the expected nominal types into specialization. Failed specializations should
-explain the body failure rather than only listing overload signatures.
+fields and binary operands, and standalone lexical blocks. Use explicit typed
+bindings until that path carries the expected nominal types into specialization.
+Failed specializations should explain the body failure rather than only listing
+overload signatures.
+
+Contextual positional record assignments still need their nominal destination
+carried through codegen; use constructors or named fields in those assignments.
+Generic consumers such as `unwrap_or_abort` also need inferred error envelopes
+to retain the nominal Errable identity; direct matching remains available.
 
 Each unit includes executable or negative feature tests and public contracts.
 Use application usecases to validate composition. Existing implementations must

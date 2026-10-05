@@ -8,7 +8,7 @@ ByteWriter implements BlockWriter
 read_byte(
         .self : $&ByteReader
     ) -> (
-        .result : Errable#(.t: ReadByte, .reasons: (..stream_read_failed))
+        .result : Errable#(ReadByte, (..stream_read_failed))
     ) := {
     if remaining(.self = self).count == 0 {
         result = ..ok ..end
@@ -25,7 +25,7 @@ write_byte(
         .self : $&ByteWriter,
         .byte : UInt8
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()
     ) := {
     if remaining(.self = self).count == 0 {
         result = ..error(.reason = ..stream_write_failed)
@@ -42,14 +42,14 @@ write_byte(
 flush(
         .self : $&ByteWriter
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()
     ) := {}
 
 read_block(
         .self   : $&ByteReader,
         .buffer : ArrayView#(.t: UInt8)
     ) -> (
-        .result : Errable#(.t: UIntNative, .reasons: (..stream_read_failed))
+        .result : Errable#(UIntNative, (..stream_read_failed))
     ) := {
     count ::= remaining(.self = self).count
     size ::= length(&buffer).count
@@ -81,7 +81,7 @@ write_block(
         .self   : $&ByteWriter,
         .buffer : ArrayViewRO#(.t: UInt8)
     ) -> (
-        .result : Errable#(.t: UIntNative, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        .result : Errable#(UIntNative, (..stream_write_failed, ..stream_flush_failed))
     ) := {
     count ::= remaining(.self = self).count
     size ::= length(&buffer).count

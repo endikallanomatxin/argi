@@ -88,10 +88,7 @@ uniform_uint32(
         .self        : $&Pcg32,
         .upper_bound : UInt32
     ) -> (
-        .result : Errable#(
-            .t       : UInt32,
-            .reasons : (..invalid_range)
-        )
+        .result : Errable#(UInt32, (..invalid_range))
     ) := {
     if upper_bound == 0 {
         result = ..error(.reason = ..invalid_range)
@@ -115,10 +112,7 @@ uniform_uint64(
         .self        : $&Pcg32,
         .upper_bound : UInt64
     ) -> (
-        .result : Errable#(
-            .t       : UInt64,
-            .reasons : (..invalid_range)
-        )
+        .result : Errable#(UInt64, (..invalid_range))
     ) := {
     if upper_bound == 0 {
         result = ..error(.reason = ..invalid_range)

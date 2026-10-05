@@ -16,10 +16,7 @@ UnixTimestamp init(
         .seconds     : Int64,
         .nanoseconds : UInt32
     ) -> (
-        .result : Errable#(
-            .t       : UnixTimestamp,
-            .reasons : (..out_of_range)
-        )
+        .result : Errable#(UnixTimestamp, (..out_of_range))
     ) := {
     if nanoseconds >= 1000000000 {
         result = ..error(.reason = ..out_of_range)
@@ -37,10 +34,7 @@ elapsed(
         .start : MonotonicInstant,
         .end   : MonotonicInstant
     ) -> (
-        .result : Errable#(
-            .t       : Duration,
-            .reasons : (..out_of_range)
-        )
+        .result : Errable#(Duration, (..out_of_range))
     ) := {
     if end._nanoseconds < start._nanoseconds {
         result = ..error(.reason = ..out_of_range)
@@ -97,10 +91,7 @@ once Clock init(.ffi: $&ForeignFunctionInterface = reach ffi) -> (.result: Clock
 monotonic_now(
         .self : &Clock = reach clock
     ) -> (
-        .result : Errable#(
-            .t       : MonotonicInstant,
-            .reasons : (..clock_read_failed, ..out_of_range)
-        )
+        .result : Errable#(MonotonicInstant, (..clock_read_failed, ..out_of_range))
     ) := {
     assume ffi ::= self&._ffi
     reading ::= _platform_monotonic()
@@ -124,10 +115,7 @@ monotonic_now(
 wall_now(
         .self : &Clock = reach clock
     ) -> (
-        .result : Errable#(
-            .t       : UnixTimestamp,
-            .reasons : (..clock_read_failed, ..out_of_range)
-        )
+        .result : Errable#(UnixTimestamp, (..clock_read_failed, ..out_of_range))
     ) := {
     assume ffi ::= self&._ffi
     reading ::= _platform_wall()
@@ -149,10 +137,7 @@ sleep(
         .duration : Duration,
         .self     : &Clock    = reach clock
     ) -> (
-        .result : Errable#(
-            .t       : Void,
-            .reasons : (..sleep_failed)
-        )
+        .result : Errable#(Void, (..sleep_failed))
     ) := {
     assume ffi ::= self&._ffi
 

@@ -338,6 +338,8 @@ feature first.
   named arguments when they clarify roles, limits, or similarly typed values.
   Reuse lexical `assume` for capabilities instead of forwarding the same binding
   repeatedly. Preserve explicit capability selection when switching resources.
+  Spell Errable type applications positionally, such as `Errable#(Void, Reasons)`,
+  including in return signatures.
   Keep test fixtures explicit when their syntax is part of the behavior tested.
 
 - Follow Zig coding style:

@@ -87,7 +87,7 @@ _owned_hash_slots(
         .capacity  : UIntNative,
         .allocator : $&Allocator
     ) -> (
-        .result : Errable#(.t: DynamicArray#(.t: _OwnedHashSlot), .reasons: (..out_of_memory))
+        .result : Errable#(DynamicArray#(.t: _OwnedHashSlot), (..out_of_memory))
     ) := {
     slots ::= DynamicArray#(.t: _OwnedHashSlot)(.capacity = capacity, .allocator = allocator)!
     index :: UIntNative = 0
@@ -110,8 +110,8 @@ OwnedHashMap init#(
         .capacity  : UIntNative   = 8
     ) -> (
         .result : Errable#(
-            .t       : OwnedHashMap#(.key: key, .value: value, .policy: policy),
-            .reasons : (..out_of_memory)
+            OwnedHashMap#(.key: key, .value: value, .policy: policy),
+            (..out_of_memory)
         )
     ) := {
     constructed :: OwnedHashMap#(.key: key, .value: value, .policy: policy)
@@ -257,7 +257,7 @@ reserve#(
         .capacity  : UIntNative,
         .allocator : $&Allocator
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..out_of_memory))
+        .result : Errable#(Void, (..out_of_memory))
     ) := {
     assume allocator
     old_count ::= capacity(.self = self).count
@@ -322,7 +322,7 @@ put#(
         .value     : value,
         .allocator : $&Allocator
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..out_of_memory))
+        .result : Errable#(Void, (..out_of_memory))
     ) := {
     assume allocator
     digest ::= hash(.self = &self&._policy, .key = &key).hash

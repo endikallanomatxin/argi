@@ -34,7 +34,7 @@ _testing_failure(
         .detail  : StringView,
         .message : StringView
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..test_failed))
+        .result : Errable#(Void, (..test_failed))
     ) := {
     if message.length != 0 { add_context(.context = message) }
     test_fail_impl()!! detail
@@ -42,7 +42,7 @@ _testing_failure(
     result = ..ok Void()
 }
 
-fail(.message: StringView) -> (.result: Errable#(.t: Void, .reasons: (..test_failed))) := {
+fail(.message: StringView) -> (.result: Errable#(Void, (..test_failed))) := {
     test_fail_impl()!! message
 
     result = ..ok Void()
@@ -55,7 +55,7 @@ expect_equal#(
         .actual   : t,
         .message  : StringView = ""
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..test_failed))
+        .result : Errable#(Void, (..test_failed))
     ) := {
     if expected == actual {
         result = ..ok Void()
@@ -81,7 +81,7 @@ expect_equal#(
         .actual   : t,
         .message  : StringView = ""
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..test_failed))
+        .result : Errable#(Void, (..test_failed))
     ) := {
     if expected == actual {
         result = ..ok Void()
@@ -105,7 +105,7 @@ expect_equal(
         .actual   : Bool,
         .message  : StringView = ""
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..test_failed))
+        .result : Errable#(Void, (..test_failed))
     ) := {
     if expected == actual {
         result = ..ok Void()
@@ -132,7 +132,7 @@ _testing_compare_text(
         .kind     : StringView,
         .message  : StringView  = ""
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..test_failed))
+        .result : Errable#(Void, (..test_failed))
     ) := {
     common ::= expected.length
 
@@ -185,7 +185,7 @@ expect_equal_strings(
         .actual   : StringView,
         .message  : StringView  = ""
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..test_failed))
+        .result : Errable#(Void, (..test_failed))
     ) := {
     result = _testing_compare_text(
         .expected = expected
@@ -200,7 +200,7 @@ expect_equal(
         .actual   : StringView,
         .message  : StringView  = ""
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..test_failed))
+        .result : Errable#(Void, (..test_failed))
     ) := {
     result = expect_equal_strings(.expected = expected, .actual = actual, .message = message)
 }
@@ -210,7 +210,7 @@ expect_equal_strings(
         .actual   : &String,
         .message  : StringView = ""
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..test_failed))
+        .result : Errable#(Void, (..test_failed))
     ) := {
     result = expect_equal_strings(
         .expected = as_view(expected)
@@ -226,7 +226,7 @@ expect_equal_views#(
         .actual   : ArrayViewRO#(.t: t),
         .message  : StringView           = ""
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..test_failed))
+        .result : Errable#(Void, (..test_failed))
     ) := {
     expected_length ::= length(&expected).count
     actual_length ::= length(&actual).count
@@ -269,7 +269,7 @@ expect_equal_bytes(
         .actual   : ArrayViewRO#(.t: UInt8),
         .message  : StringView               = ""
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..test_failed))
+        .result : Errable#(Void, (..test_failed))
     ) := {
     expected_length ::= length(&expected).count
     actual_length ::= length(&actual).count

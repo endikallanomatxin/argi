@@ -61,7 +61,7 @@ _identifiers_valid(.text: StringView, .allow_numeric_zeroes: Bool) -> (.ok: Bool
     ok = true
 }
 
-parse(.text: StringView) -> (.result: Errable#(.t: VersionView, .reasons: (..invalid_input))) := {
+parse(.text: StringView) -> (.result: Errable#(VersionView, (..invalid_input))) := {
     first ::= _numeric_end(.text = &text, .start = 0)
 
     if first.ok == false or first.end == text.length {
@@ -142,10 +142,7 @@ parse(.text: StringView) -> (.result: Errable#(.t: VersionView, .reasons: (..inv
 VersionView init(
         .text : StringView
     ) -> (
-        .result : Errable#(
-            .t       : VersionView,
-            .reasons : (..invalid_input)
-        )
+        .result : Errable#(VersionView, (..invalid_input))
     ) := {
     result = parse(.text = text)
 }
@@ -328,10 +325,7 @@ format(
         .value     : &VersionView,
         .allocator : $&Allocator
     ) -> (
-        .result : Errable#(
-            .t       : String,
-            .reasons : (..out_of_memory)
-        )
+        .result : Errable#(String, (..out_of_memory))
     ) := {
     result = format(.value = as_view(value).text, .allocator = allocator)
 }
@@ -341,11 +335,7 @@ format_into(
         .value     : &VersionView,
         .allocator : $&Allocator
     ) -> (
-        .result : Errable#(
-            .t : Void,
-
-            .reasons : (..out_of_memory)
-        )
+        .result : Errable#(Void, (..out_of_memory))
     ) := {
     result = format_into(.out = out, .value = as_view(value).text, .allocator = allocator)
 }
@@ -354,10 +344,7 @@ format_into(
         .out   : $&Writer,
         .value : &VersionView
     ) -> (
-        .result : Errable#(
-            .t       : Void,
-            .reasons : (..stream_write_failed, ..stream_flush_failed)
-        )
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) := {
     result = write(.self = out, .text = as_view(value).text)
 }

@@ -6,7 +6,7 @@ BitSetView init(
         .bytes : ArrayView#(.t: UInt8),
         .count : UIntNative
     ) -> (
-        .result : Errable#(.t: BitSetView, .reasons: (..out_of_bounds))
+        .result : Errable#(BitSetView, (..out_of_bounds))
     ) := {
     needed ::= count / 8
 
@@ -42,7 +42,7 @@ contains(
         .self  : &BitSetView,
         .index : UIntNative
     ) -> (
-        .result : Errable#(.t: Bool, .reasons: (..out_of_bounds))
+        .result : Errable#(Bool, (..out_of_bounds))
     ) := {
     if index >= self&._count {
         result = ..error(.reason = ..out_of_bounds)
@@ -60,7 +60,7 @@ set(
         .index : UIntNative,
         .value : Bool          = true
     ) -> (
-        .result : Errable#(.t: Void, .reasons: (..out_of_bounds)) = ..ok Void()
+        .result : Errable#(Void, (..out_of_bounds)) = ..ok Void()
     ) := {
     present ::= contains(.self = self, .index = index)!
 

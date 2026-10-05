@@ -60,7 +60,7 @@ slice(
         .start : UIntNative,
         .count : UIntNative
     ) -> (
-        .result : Errable#(.t: StringView, .reasons: (..out_of_bounds))
+        .result : Errable#(StringView, (..out_of_bounds))
     ) := {
     if start > self.length {
         result = ..error(.reason = ..out_of_bounds)

@@ -9,7 +9,7 @@ to_object(
         .self  : &Python,
         .value : Int8
     ) -> (
-        .result : Errable#(.t: Object, .reasons: (..python_error))
+        .result : Errable#(Object, (..python_error))
     ) := {
     result = integer(.self = self, .value = Int64(.value = value))
 }
@@ -18,10 +18,7 @@ to_object(
         .self  : &Python,
         .value : Int16
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     result = integer(.self = self, .value = Int64(.value = value))
 }
@@ -30,10 +27,7 @@ to_object(
         .self  : &Python,
         .value : Int32
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     result = integer(.self = self, .value = Int64(.value = value))
 }
@@ -42,10 +36,7 @@ to_object(
         .self  : &Python,
         .value : Int64
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     result = integer(.self = self, .value = value)
 }
@@ -54,10 +45,7 @@ to_object(
         .self  : &Python,
         .value : UInt8
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     result = integer(.self = self, .value = UInt64(.value = value))
 }
@@ -66,10 +54,7 @@ to_object(
         .self  : &Python,
         .value : UInt16
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     result = integer(.self = self, .value = UInt64(.value = value))
 }
@@ -78,10 +63,7 @@ to_object(
         .self  : &Python,
         .value : UInt32
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     result = integer(.self = self, .value = UInt64(.value = value))
 }
@@ -90,10 +72,7 @@ to_object(
         .self  : &Python,
         .value : UInt64
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     result = integer(.self = self, .value = value)
 }
@@ -102,10 +81,7 @@ to_object(
         .self  : &Python,
         .value : UIntNative
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     result = integer(.self = self, .value = UInt64(.value = value))
 }
@@ -114,7 +90,7 @@ to_object(
         .self  : &Python,
         .value : Bool
     ) -> (
-        .result : Errable#(.t: Object, .reasons: (..python_error))
+        .result : Errable#(Object, (..python_error))
     ) := {
     result = boolean(.self = self, .value = value)
 }
@@ -123,10 +99,7 @@ to_object(
         .self  : &Python,
         .value : Float64
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     result = floating(.self = self, .value = value)
 }
@@ -135,10 +108,7 @@ to_object(
         .self  : &Python,
         .value : StringView
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     result = string(.self = self, .value = value)
 }
@@ -147,10 +117,7 @@ to_object(
         .self  : &Python,
         .value : &Object
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     result = clone(.self = value)
 }
@@ -159,10 +126,7 @@ to_object(
         .self  : &Python,
         .value : &String
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     result = string(.self = self, .value = as_view(value).view)
 }
@@ -173,10 +137,7 @@ to_object#(
         .self  : &Python,
         .value : ArrayViewRO#(.t: t)
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     converted ::= list(.self = self)!
     index :: UIntNative = 0
@@ -198,11 +159,7 @@ to_object#(
         .self  : &Python,
         .value : &Array#(.n = n, .t: t)
     ) -> (
-        .result : Errable#(
-            .t : Object,
-
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     result = to_object(.self = self, .value = view(value))
 }
@@ -213,11 +170,7 @@ to_object#(
         .self  : &Python,
         .value : &DynamicArray#(.t: t)
     ) -> (
-        .result : Errable#(
-            .t : Object,
-
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     result = to_object(.self = self, .value = array_view_ro(.array = value).view)
 }
@@ -226,11 +179,7 @@ keyword_arguments(
         .self   : &Python,
         .values : ArrayViewRO#(.t: Keyword)
     ) -> (
-        .result : Errable#(
-            .t : Object,
-
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     converted ::= dictionary(.self = self)!
     index :: UIntNative = 0
@@ -251,11 +200,7 @@ to_object#(
         .self  : &Python,
         .value : &t
     ) -> (
-        .result : Errable#(
-            .t : Object,
-
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     result = to_object(.self = self, .value = value&)
 }
@@ -268,10 +213,7 @@ to_object(
         .self  : &Python,
         .value : Float32
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     assume ffi := self&._ffi
 
@@ -301,10 +243,7 @@ to_object(
         .self  : &Python,
         .value : Argument
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     match value {
         ..none { result = none(.self = self) }
@@ -321,11 +260,7 @@ keyword_arguments(
         .self   : &Python,
         .values : ArrayViewRO#(.t: NamedArgument)
     ) -> (
-        .result : Errable#(
-            .t : Object,
-
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     converted ::= dictionary(.self = self)!
     index :: UIntNative = 0
@@ -354,11 +289,7 @@ positional_arguments#(
         .self   : &Python,
         .values : ArrayViewRO#(.t: t)
     ) -> (
-        .result : Errable#(
-            .t : Object,
-
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     assume ffi := self&._ffi
     converted ::= to_object(.self = self, .value = values)!
@@ -374,11 +305,7 @@ call(
         .arguments : &Object,
         .keywords  : ?&Object = _no_keywords()
     ) -> (
-        .result : Errable#(
-            .t : Object,
-
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     assume ffi := self&._python&._ffi
     keyword_handle :: RawPointer#(.t: _PyObject) = raw_pointer#(.t: _PyObject)(.address = 0).raw
@@ -400,10 +327,7 @@ to_object#(
         .self  : &Python,
         .value : ArrayView#(.t: t)
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     converted ::= list(.self = self)!
     index :: UIntNative = 0
@@ -422,10 +346,7 @@ to_object(
         .self  : &Python,
         .value : &&Object
     ) -> (
-        .result : Errable#(
-            .t       : Object,
-            .reasons : (..python_error)
-        )
+        .result : Errable#(Object, (..python_error))
     ) := {
     result = clone(.self = value&)
 }
