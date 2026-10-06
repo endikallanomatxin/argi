@@ -17,7 +17,7 @@ allocation, capabilities, ownership and nominal errors throughout.
    compression/archive consumers. Borrowed JSON tokens and owning CSV records
    remain the allocation-aware foundations for those consumers.
 6. Services/runtime: HTTP and selected hashes/crypto; additional atomic widths,
-   native threads and synchronization require the transfer contracts in 0.5.
+   native threads and synchronization require explicit transfer contracts.
    Integrate cooperative cancellation/deadlines with task and native-wait cleanup.
 
 ## Compiler dependencies
