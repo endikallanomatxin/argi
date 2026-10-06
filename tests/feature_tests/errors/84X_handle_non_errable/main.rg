@@ -1,3 +1,3 @@
 main() -> () := {
-    number ::= 7 handle value, error { value = 0 }
+    number ::= 7 handle error, value { value = 0 }
 }

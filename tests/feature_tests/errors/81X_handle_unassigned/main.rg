@@ -5,6 +5,6 @@ fail() -> (.result: Errable#(.t: Int32, .reasons: (..missing))) := {
 }
 
 main() -> (.status_code: Int32 = 0) := {
-    number ::= fail() handle value, error {}
+    number ::= fail() handle error, value {}
     status_code = number
 }

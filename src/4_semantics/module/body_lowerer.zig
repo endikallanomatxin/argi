@@ -586,7 +586,14 @@ const Context = struct {
             .option_name = try self.writer.addString("ok"),
             .source = self.sourceRef(node),
         } }, expected);
-        const result_name = self.tree.tokenTextFromSource(self.source, handle.result_name);
+        if (handle.result_name == .none) {
+            if (expected) |ty| if (ty != try self.builtin(.Void)) {
+                if (self.diagnostics) |bag| try bag.add(self.tree.tokenLocation(handle.error_name), .semantic, "handle without a value binding produces Void", .{});
+                return error.Reported;
+            };
+            return self.lowerHandleWithoutResult(node, value.node);
+        }
+        const result_name = self.tree.tokenTextFromSource(self.source, handle.result_name.unwrap().?);
         const error_name = self.tree.tokenTextFromSource(self.source, handle.error_name);
         if (std.mem.eql(u8, result_name, error_name)) {
             if (self.diagnostics) |bag| try bag.add(self.tree.tokenLocation(handle.error_name), .semantic, "handle result and error bindings must have different names", .{});
@@ -619,6 +626,28 @@ const Context = struct {
         const result_move = try self.resolved(node, expected, .{ .move_value = result_use.node });
         const block = try self.writer.addBlock(.{ .nodes = try self.writer.appendNodeRefs(&.{ dispatch.node, result_move.node }), .ret_val = result_move.node });
         return self.resolved(node, expected, .{ .value_sequence = block });
+    }
+
+    // No result slot is needed: match owns and drops either payload in its
+    // branch. The handler remains in the caller's control-flow context.
+    fn lowerHandleWithoutResult(self: *Context, node: syn.NodeIndex, value: entities.ModuleNodeId) !Lowered {
+        const handle = self.tree.extraData(syn.HandleExtra, self.tree.data(node).extra);
+        const error_name = self.tree.tokenTextFromSource(self.source, handle.error_name);
+        const success = try self.writer.addUnresolvedBinding(try self.writer.addString("#handle_success"), self.sourceRef(node), null, .constant);
+        const failure = try self.writer.addUnresolvedBinding(try self.writer.addString(error_name), self.sourceRef(node), null, .constant);
+        const success_body = try self.writer.addBlock(.{ .nodes = try self.writer.appendNodeRefs(&.{}), .ret_val = null });
+        try self.pushScope();
+        try self.bindings.append(.{ .name = self.graph.semantic.bindings.items[@intFromEnum(failure)].name, .id = failure, .ty = null });
+        const failure_body = try self.lowerBlock(handle.body);
+        self.popScope();
+        var cases: [2]entities.ModuleNodeId = undefined;
+        for ([_][]const u8{ "ok", "error" }, [_]entities.ModuleBindingId{ success, failure }, [_]entities.ModuleBlockId{ success_body, failure_body }, 0..) |name, binding, body, index| {
+            const option = try self.writer.addExternalRef(.{ .kind = .choice_option, .module_path = null, .name = try self.writer.addString(name), .source = self.sourceRef(node) });
+            cases[index] = (try self.pending(node, .{ .resolve_match_case = .{ .node = self.nextNodeId(), .option = option, .payload_binding = binding, .body = body, .mode = .move } }, null)).node;
+        }
+        const dispatch = try self.pending(node, .{ .resolve_match = .{ .node = self.nextNodeId(), .value = value, .cases = try self.writer.appendNodeRefs(&cases) } }, try self.builtin(.Void));
+        const block = try self.writer.addBlock(.{ .nodes = try self.writer.appendNodeRefs(&.{dispatch.node}), .ret_val = dispatch.node });
+        return self.resolved(node, try self.builtin(.Void), .{ .value_sequence = block });
     }
 
     fn lowerUnwrap(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {

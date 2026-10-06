@@ -356,7 +356,7 @@ This enables:
 `handle` provides a shorter form for handling an `Errable`:
 
 ```rg
-my_thing := fallible() handle value, error {
+my_thing := fallible() handle error, value {
     match error.reason {
         ..file_not_found {
             value = 0
@@ -369,7 +369,9 @@ my_thing := fallible() handle value, error {
 }
 ```
 
-Expected semantics:
+The recovery form converts `Errable#(T, Reasons)` into `T`.
+
+Semantics:
 - `handle` is syntactic sugar specific to `Errable`.
 - The expression on the left must have type `Errable#(T, ...)`.
 - `value` is the shared result slot.
@@ -379,8 +381,9 @@ Expected semantics:
 - Use regular `match` on `error.reason` inside the block.
 - The block does not return a value specially; it only assigns to `value`.
 - The complete construct produces `value`.
-- The compiler requires `value` to be assigned on every path through the
-  error block.
+- The compiler requires `value` to be initialized on every path through the
+  error block that continues past the handler. Paths that return, abort, or
+  propagate an error do not need to initialize it.
 
 Motivation:
 - It does not introduce a new `match` form.
@@ -399,3 +402,23 @@ ordinary meaning. Owning results are moved out of the construct; `handle` does
 not make them implicitly copyable. Generic function bodies support the same
 form. The result binding is private to the construct and cannot be used later
 by its handler name.
+
+### Handling without a result
+
+Omit the value binding to handle an error and continue without recovering a value:
+
+```rg
+save() handle error {
+    report(.trace = &error.trace)!
+}
+continue_work()
+```
+
+`expr handle error { ... }` evaluates an Errable operand once. On success it
+releases the success payload without running the block. On error it binds the
+complete error payload, runs the block, and continues after normal block exit.
+This variant produces no recovered value (its expression type is Void).
+Both forms keep `return`, `abort`, `!`, and other control transfers relative to
+the enclosing function or loop; a handler is an ordinary lexical block, not a
+new function. Owned payloads and handler locals receive ordinary cleanup on
+normal continuation and on control transfers.
