@@ -9,10 +9,9 @@ change(.value = $&x)
 ```
 
 Borrowing does not by itself extend existing storage or acquire its cleanup
-responsibilities. Returning references to bounded local storage can transfer
-that storage to the caller, as described below. A `$&T` may reach a place whose
-current value has such responsibilities; mutating or deinitializing that value
-changes the place.
+responsibilities. A function cannot return a reference that depends on storage
+ending when it returns. A `$&T` may reach a place whose current value has cleanup
+responsibilities; mutating or deinitializing that value changes the place.
 Aliases are checked when they are used. Mutable references may alias in
 sequential code: `$&T` does not imply exclusive access or `noalias`.
 Concurrency requires additional rules.
@@ -43,37 +42,42 @@ The prefix applies to the whole place. Postfix `&` dereferences a pointer, so
 operation that moves or replaces an element may invalidate a reference to
 that element even while the container remains live.
 
-## Returning references to local storage
+## Returning values and references
 
-A function may return safe references to local values when the storage that
-must survive has a statically bounded shape. The compiler constructs those
-values in storage supplied by the caller rather than the callee's stack.
-The retained storage includes backing arrays, referenced local owners, and
-local capabilities required by delayed cleanup. Internal addresses remain
-stable; promotion neither allocates on the heap nor grants allocation receipts.
+A function output cannot depend on a local storage generation that ends when
+it returns. This includes references to local variables, by-value input slots,
+local arrays, and temporary expression results. Wrapping a reference in a
+struct, choice, virtual value, or owning container does not extend its lifetime.
+The rule also applies to hidden dependencies: an `Allocation` cannot escape
+with a local deallocator, and an `Error` cannot escape with a local tracer.
 
-Cleanup follows the receiving scope. A receiving value's destructor runs
-before its retained storage is destroyed, and retained values are destroyed
-once in reverse construction order. Copies of a reference do not independently
-extend that storage's lifetime. Dependencies borrowed from the caller still
-need to remain valid, and explicit destruction still invalidates references.
+Return an owned value when the caller should receive ownership. If the result
+must borrow storage, create the owner in the caller and pass its reference to
+the helper:
 
-Branches do not require dynamic storage when every alternative has a bounded
-shape. The compiler reserves the alternatives and tracks which values were
-initialized. Nested direct calls may forward bounded retained storage through
-the caller's result.
+```rg
+NumberBox: Type = (.value: Int32)
 
-An unbounded number of retained values requires explicit dynamic storage.
-For example, repeatedly creating locals and appending their references to a
-`DynamicArray` does not make the array own those locals: its allocation stores
-the references. Allocate the referenced values explicitly when their number
-cannot be bounded at compilation time. The compiler diagnoses unsupported
-retention instead of introducing implicit heap allocation.
+number(.box: &NumberBox) -> (.result: &Int32) := {
+    result = &box&.value
+}
 
-> [!IMPLEMENTATION]
-> Promotion currently supports finite direct-call frames. Recursive retention,
-> repeatedly constructed retained locals, retaining calls inside loops, and
-> virtual methods returning retained local storage are rejected.
+main() -> () := {
+    box ::= NumberBox(7)
+    reference ::= number(&box)
+}
+```
+
+Borrows derived from inputs or globals remain valid while their original
+owners and resources remain valid. Returning an owner transfers its ordinary
+cleanup responsibilities; references inside that owner must still obey the
+same lifetime rule. Returning an owner together with a reference to its local
+slot does not establish an address-stability or pinning guarantee.
+
+Large values may use destination passing or an indirect return as an ABI
+choice. This does not extend local lifetimes or permit references to local
+storage to escape. There is no implicit heap allocation or hidden storage
+retention for borrowed outputs.
 
 ## References to expression results
 
@@ -90,8 +94,7 @@ calls or pipes. Taking a reference does not turn the constructed value into a
 pointer value or transfer its cleanup responsibilities to the reference.
 The temporary remains alive while the surrounding expression uses it, then
 is cleaned up, including on short-circuit and loop-condition exits. A
-reference to it can survive in a function result through bounded caller-owned
-storage; otherwise its expression lifetime applies.
+reference to it cannot escape through a function result.
 Moving the temporary value into a destination instead transfers its cleanup
 responsibilities there.
 

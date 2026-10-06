@@ -17,7 +17,7 @@ semantizing decisions. Begin with a verified representation and a complete VM
 path for the supported subset before adding native execution.
 
 Use the existing LLVM infrastructure for the JIT where practical. Define one
-execution contract for values, aggregates, references, caller-owned frames,
+execution contract for values, aggregates, references, output lifetime checks,
 errors, and host operations. VM frames need not use identical physical storage
 to LLVM frames, but boundary adapters must preserve the same ownership and
 lifetime facts. A host bridge does not grant FFI permission by itself.
@@ -85,7 +85,7 @@ report limits as evaluation diagnostics with source and call information.
 - [ ] Measure cold evaluation and repeated calls before choosing promotion
   thresholds; retain forced executor modes for deterministic parity tests.
 - [ ] Exercise values, aggregates, generic/virtual calls, errors, cleanup,
-  retained frames, and supported C boundaries against ahead-of-time fixtures.
+  output lifetime checks, and supported C boundaries against ahead-of-time fixtures.
 
 Transparent live-value migration, arbitrary hot replacement, background native
 compilation, and tiered optimization beyond the first VM/JIT boundary are later

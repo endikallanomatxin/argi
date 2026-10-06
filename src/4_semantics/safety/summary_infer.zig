@@ -646,20 +646,6 @@ pub const Infer = struct {
         self.local_address_bindings.clearRetainingCapacity();
         var start = profile.timestamp(self.profile_io);
         try self.inferBlock(function_id, function.body.?, outputs);
-        if (@intFromEnum(function_id) < self.graph.retained_storage.items.len) {
-            // A returned frame also borrows capabilities used only by delayed
-            // cleanup. Export their lifetime without transferring caller-owned
-            // resources or granting fresh acquisition authorization.
-            var dependencies: facts.ValueEffect = .{};
-            for (self.graph.retained_storage.items[@intFromEnum(function_id)].bindings) |binding| {
-                const effect: facts.ValueEffect = if (self.inputIndex(function_id, binding)) |index|
-                    try self.inputValueEffect(index, &.{})
-                else
-                    self.bindings.get(binding) orelse .{};
-                dependencies = try self.mergeValueEffects(dependencies, try self.retainedDependencyEffect(effect));
-            }
-            for (outputs) |*output| output.* = try self.mergeValueEffects(output.*, dependencies);
-        }
         profile.accumulate(self.profile_io, start, &self.output_ns);
 
         var required_live_inputs = std.array_list.Managed(facts.InputPath).init(self.allocator);
@@ -1320,7 +1306,6 @@ pub const Infer = struct {
                 for (self.graph.node_refs.items[context.cleanup_nodes.start..][0..context.cleanup_nodes.len]) |value| try self.infer_capability_node(function, value, flow, exits);
             },
             .auto_deinit_binding => |id| {
-                if (self.graph.retainedCleanup(id)) return;
                 const cleanup = self.graph.auto_deinits.items[@intFromEnum(id)];
                 if (cleanup.input) |input| {
                     try self.infer_capability_node(function, input, flow, exits);
@@ -1871,7 +1856,6 @@ pub const Infer = struct {
         auto_id: graph_mod.GlobalAutoDeinitId,
         states: *std.array_list.Managed(facts.PlacePostState),
     ) !void {
-        if (self.graph.retainedCleanup(auto_id)) return;
         const cleanup = self.graph.auto_deinits.items[@intFromEnum(auto_id)];
         const binding_effect = self.bindings.get(cleanup.binding);
         if (cleanup.deinit_fn) |deinit_fn| if (cleanup.input) |input| {
@@ -2333,7 +2317,6 @@ pub const Infer = struct {
         effects: *std.array_list.Managed(facts.OpaqueStorageEffect),
         state: *OpaqueEmptyState,
     ) !void {
-        if (self.graph.retainedCleanup(auto_id)) return;
         const cleanup = self.graph.auto_deinits.items[@intFromEnum(auto_id)];
         const binding_effect = self.bindings.get(cleanup.binding);
         if (cleanup.deinit_fn) |deinit_fn| if (cleanup.input) |input| {
@@ -3111,7 +3094,6 @@ pub const Infer = struct {
         auto_id: graph_mod.GlobalAutoDeinitId,
         required: *std.array_list.Managed(facts.InputPath),
     ) !void {
-        if (self.graph.retainedCleanup(auto_id)) return;
         const cleanup = self.graph.auto_deinits.items[@intFromEnum(auto_id)];
         const binding_effect = self.bindings.get(cleanup.binding);
         if (cleanup.input) |input| {
@@ -3157,16 +3139,6 @@ pub const Infer = struct {
         }
     }
 
-    fn retainedAddressRoot(self: *Infer, node: graph_mod.GlobalNodeId) ?graph_mod.GlobalBindingId {
-        return switch (self.graph.node(node).content) {
-            .binding_use => |binding| if (self.graph.retainedBinding(binding)) binding else null,
-            .struct_field_access => |field| self.retainedAddressRoot(field.value),
-            .array_index => |index| self.retainedAddressRoot(index.array_ptr),
-            .address_of => |value| self.retainedAddressRoot(value),
-            else => null,
-        };
-    }
-
     fn inferExpression(
         self: *Infer,
         function_id: graph_mod.GlobalFunctionId,
@@ -3185,12 +3157,6 @@ pub const Infer = struct {
             .move_value => |value| try self.withOwnershipTransfer(try self.inferExpression(function_id, value)),
             .denied_implicit_copy => |value| try self.inferExpression(function_id, value),
             .address_of => |value| blk: {
-                if (self.retainedAddressRoot(value)) |binding| {
-                    const fresh = try self.allocator.alloc(facts.FreshEffectSource, 1);
-                    fresh[0] = facts.caller_storage_source_bit + @intFromEnum(binding);
-                    const pointed = try self.inferExpression(function_id, value);
-                    break :blk try self.mergeValueEffects(pointed, .{ .fresh_dependencies = fresh });
-                }
                 if (self.graph.node(value).content == .array_index) {
                     const index = self.graph.node(value).content.array_index;
                     // An indexed address borrows the storage reached by the
@@ -3899,13 +3865,6 @@ pub const Infer = struct {
 
     /// Retain the input's lifetime without claiming its referent as the output's
     /// referent. Raw-address establishment chooses the latter independently.
-    fn retainedDependencyEffect(self: *Infer, effect: facts.ValueEffect) anyerror!facts.ValueEffect {
-        var result = try self.validityOnlyEffect(effect);
-        for (effect.fields) |field| result = try self.mergeValueEffects(result, try self.retainedDependencyEffect(field.value.*));
-        for (effect.variants) |variant| result = try self.mergeValueEffects(result, try self.retainedDependencyEffect(variant.value.*));
-        return result;
-    }
-
     fn validityOnlyEffect(self: *Infer, effect: facts.ValueEffect) !facts.ValueEffect {
         var dependencies = std.array_list.Managed(facts.InputDependency).init(self.allocator);
         for (effect.input_dependencies) |dependency| {
@@ -4123,8 +4082,7 @@ pub const Infer = struct {
             var hash = std.hash.Wyhash.init(0);
             hash.update(std.mem.asBytes(&call_raw));
             hash.update(std.mem.asBytes(&source));
-            const storage_marker = facts.caller_storage_source_bit;
-            result[index] = (@as(usize, @intCast(hash.final())) & ~storage_marker) | (source & storage_marker);
+            result[index] = @intCast(hash.final());
         }
         return result;
     }
@@ -4205,7 +4163,7 @@ pub const Infer = struct {
         var hash = std.hash.Wyhash.init(0);
         hash.update(std.mem.asBytes(&node_raw));
         hash.update(std.mem.asBytes(&role));
-        return @as(usize, @intCast(hash.final())) & ~facts.caller_storage_source_bit;
+        return @intCast(hash.final());
     }
 };
 
@@ -4224,7 +4182,6 @@ fn alignFreshSources(
     mapping: *std.AutoHashMap(facts.FreshEffectSource, facts.FreshEffectSource),
 ) !bool {
     for (canonical, candidate) |canonical_source, candidate_source| {
-        if ((canonical_source & facts.caller_storage_source_bit) != (candidate_source & facts.caller_storage_source_bit)) return false;
         if (mapping.get(candidate_source)) |existing| {
             if (existing != canonical_source) return false;
         } else {

@@ -3367,9 +3367,8 @@ test "feature_tests/ownership/56_branch_ownership_cleanup_resolves" {
     try expectSuccessfulBuild("tests/feature_tests/ownership/56_branch_ownership_cleanup_resolves");
 }
 
-test "feature_tests/ownership/57_return_reference_to_local" {
-    try expectSuccessfulBuild("tests/feature_tests/ownership/57_return_reference_to_local");
-    try runExpect("tests/feature_tests/ownership/57_return_reference_to_local", 3);
+test "feature_tests/ownership/57X_return_reference_to_local" {
+    try buildExpectFail("tests/feature_tests/ownership/57X_return_reference_to_local", "local storage generation");
 }
 
 test "feature_tests/ownership/58X_null_safe_reference" {
@@ -3431,14 +3430,12 @@ test "feature_tests/ownership/65_allocation_stores_stateful_allocator" {
     try run(test_path);
 }
 
-test "feature_tests/ownership/66_allocation_stateful_allocator_escape" {
-    try expectSuccessfulBuild("tests/feature_tests/ownership/66_allocation_stateful_allocator_escape");
-    try runExpect("tests/feature_tests/ownership/66_allocation_stateful_allocator_escape", 0);
+test "feature_tests/ownership/66X_allocation_stateful_allocator_escape" {
+    try buildExpectFail("tests/feature_tests/ownership/66X_allocation_stateful_allocator_escape", "local storage generation");
 }
 
-test "feature_tests/ownership/67_local_binding_summary_dependency" {
-    try expectSuccessfulBuild("tests/feature_tests/ownership/67_local_binding_summary_dependency");
-    try runExpect("tests/feature_tests/ownership/67_local_binding_summary_dependency", 7);
+test "feature_tests/ownership/67X_local_binding_summary_dependency" {
+    try buildExpectFail("tests/feature_tests/ownership/67X_local_binding_summary_dependency", "local storage generation");
 }
 
 test "feature_tests/ownership/68_arena_child_deinit_preserves_sibling" {
@@ -5020,9 +5017,8 @@ test "feature_tests/ownership/269_loop_local_owning_cleanup" {
     try runExpect(test_path, 0);
 }
 
-test "feature_tests/ownership/270_return_local_storage" {
-    try expectSuccessfulBuild("tests/feature_tests/ownership/270_return_local_storage");
-    try runExpect("tests/feature_tests/ownership/270_return_local_storage", 1);
+test "feature_tests/ownership/270X_return_local_storage" {
+    try buildExpectFail("tests/feature_tests/ownership/270X_return_local_storage", "local storage generation");
 }
 
 test "feature_tests/ownership/271X_opaque_external_dependency_direct" {
@@ -6418,9 +6414,8 @@ test "feature_tests/system/43X_general_purpose_large_double_free" {
     try runExpectFailure(test_path);
 }
 
-test "feature_tests/system/37_system_local_resource_escape" {
-    try expectSuccessfulBuild("tests/feature_tests/system/37_system_local_resource_escape");
-    try runExpect("tests/feature_tests/system/37_system_local_resource_escape", 0);
+test "feature_tests/system/37X_system_local_resource_escape" {
+    try buildExpectFail("tests/feature_tests/system/37X_system_local_resource_escape", "local storage generation");
 }
 
 test "feature_tests/system/44_memory_allocator_composition" {
@@ -6578,9 +6573,8 @@ test "feature_tests/text/23_propagated_constructor_failure" {
     try runExpect(test_path, 0);
 }
 
-test "feature_tests/ownership/135_inherited_reference_escapes_root" {
-    try expectSuccessfulBuild("tests/feature_tests/ownership/135_inherited_reference_escapes_root");
-    try runExpect("tests/feature_tests/ownership/135_inherited_reference_escapes_root", 7);
+test "feature_tests/ownership/135X_inherited_reference_escapes_root" {
+    try buildExpectFail("tests/feature_tests/ownership/135X_inherited_reference_escapes_root", "local storage generation");
 }
 
 test "feature_tests/ownership/136X_duplicate_aligned_storage_establishment" {
@@ -6590,9 +6584,8 @@ test "feature_tests/ownership/136X_duplicate_aligned_storage_establishment" {
     );
 }
 
-test "feature_tests/ownership/137_inherited_reference_wrapper_escapes_root" {
-    try expectSuccessfulBuild("tests/feature_tests/ownership/137_inherited_reference_wrapper_escapes_root");
-    try runExpect("tests/feature_tests/ownership/137_inherited_reference_wrapper_escapes_root", 7);
+test "feature_tests/ownership/137X_inherited_reference_wrapper_escapes_root" {
+    try buildExpectFail("tests/feature_tests/ownership/137X_inherited_reference_wrapper_escapes_root", "local storage generation");
 }
 
 test "feature_tests/types/65_error_tracer_capability" {
@@ -6616,9 +6609,8 @@ test "feature_tests/types/66_error_tracer_context_copy" {
     );
 }
 
-test "feature_tests/types/67_error_tracer_escape" {
-    try expectSuccessfulBuild("tests/feature_tests/types/67_error_tracer_escape");
-    try runExpect("tests/feature_tests/types/67_error_tracer_escape", 0);
+test "feature_tests/types/67X_error_tracer_escape" {
+    try buildExpectFail("tests/feature_tests/types/67X_error_tracer_escape", "local storage generation");
 }
 
 test "feature_tests/types/68_error_tracer_bounded_failures" {
@@ -6649,9 +6641,8 @@ test "feature_tests/types/70_virtual_context_inference" {
     try run(path);
 }
 
-test "feature_tests/types/71_virtual_pipe_temporary_escape" {
-    try expectSuccessfulBuild("tests/feature_tests/types/71_virtual_pipe_temporary_escape");
-    try runExpect("tests/feature_tests/types/71_virtual_pipe_temporary_escape", 0);
+test "feature_tests/types/71X_virtual_pipe_temporary_escape" {
+    try buildExpectFail("tests/feature_tests/types/71X_virtual_pipe_temporary_escape", "local storage generation");
 }
 
 test "feature_tests/types/72X_virtual_inference_missing_context" {
@@ -9182,8 +9173,8 @@ test "feature_tests/python/05X_object_copy" {
 test "feature_tests/python/06X_private_handle" {
     try buildExpectFail("tests/feature_tests/python/06X_private_handle", "field '_handle' is private to its module");
 }
-test "feature_tests/python/07_object_escape" {
-    try checkPythonFixture("tests/feature_tests/python/07_object_escape");
+test "feature_tests/python/07X_object_escape" {
+    try buildExpectFail("tests/feature_tests/python/07X_object_escape", "local storage generation");
 }
 
 test "feature_tests/python/08_conversions" {
@@ -9251,9 +9242,8 @@ test "feature_tests/functions/35X_nested_pipe_requires_outer_placeholder" {
     try buildExpectFail("tests/feature_tests/functions/35X_nested_pipe_requires_outer_placeholder", "pipe right-hand side must use at least one argument placeholder");
 }
 
-test "feature_tests/functions/36_generic_pipe_temporary_escape" {
-    try expectSuccessfulBuild("tests/feature_tests/functions/36_generic_pipe_temporary_escape");
-    try runExpect("tests/feature_tests/functions/36_generic_pipe_temporary_escape", 0);
+test "feature_tests/functions/36X_generic_pipe_temporary_escape" {
+    try buildExpectFail("tests/feature_tests/functions/36X_generic_pipe_temporary_escape", "local storage generation");
 }
 
 test "feature_tests/functions/37X_pipe_temporary_consumed_twice" {
@@ -9339,54 +9329,47 @@ test "feature_tests/basics/82_fallible_main_explicit" {
 }
 
 test "feature_tests/ownership/338X_caller_storage_overwritten_cleanup" {
-    try buildExpectFail("tests/feature_tests/ownership/338X_caller_storage_overwritten_cleanup", "retained storage cleanup depends on a root that has ended");
+    try buildExpectFail("tests/feature_tests/ownership/338X_caller_storage_overwritten_cleanup", "local storage generation");
 }
 
 test "feature_tests/ownership/339X_caller_storage_field_cleanup_borrow" {
-    try buildExpectFail("tests/feature_tests/ownership/339X_caller_storage_field_cleanup_borrow", "retained storage cleanup depends on a root that has ended");
+    try buildExpectFail("tests/feature_tests/ownership/339X_caller_storage_field_cleanup_borrow", "local storage generation");
 }
 
-test "feature_tests/ownership/340_caller_storage_field_cleanup" {
-    const path = "tests/feature_tests/ownership/340_caller_storage_field_cleanup";
-    try expectSuccessfulBuild(path);
-    try runExpect(path, 0);
+test "feature_tests/ownership/340X_caller_storage_field_cleanup" {
+    try buildExpectFail("tests/feature_tests/ownership/340X_caller_storage_field_cleanup", "local storage generation");
 }
 
 test "feature_tests/ownership/341X_caller_storage_array_cleanup_borrow" {
-    try buildExpectFail("tests/feature_tests/ownership/341X_caller_storage_array_cleanup_borrow", "retained storage cleanup depends on a root that has ended");
+    try buildExpectFail("tests/feature_tests/ownership/341X_caller_storage_array_cleanup_borrow", "local storage generation");
 }
 
-test "feature_tests/ownership/342_caller_storage_array_cleanup" {
-    const path = "tests/feature_tests/ownership/342_caller_storage_array_cleanup";
-    try expectSuccessfulBuild(path);
-    try runExpect(path, 0);
+test "feature_tests/ownership/342X_caller_storage_array_cleanup" {
+    try buildExpectFail("tests/feature_tests/ownership/342X_caller_storage_array_cleanup", "local storage generation");
 }
 
-test "feature_tests/ownership/321_caller_storage_cleanup" {
-    try expectSuccessfulBuild("tests/feature_tests/ownership/321_caller_storage_cleanup");
-    try runExpect("tests/feature_tests/ownership/321_caller_storage_cleanup", 0);
+test "feature_tests/ownership/321X_caller_storage_cleanup" {
+    try buildExpectFail("tests/feature_tests/ownership/321X_caller_storage_cleanup", "local storage generation");
 }
 
-test "feature_tests/ownership/322_caller_storage_forwarding" {
-    try expectSuccessfulBuild("tests/feature_tests/ownership/322_caller_storage_forwarding");
-    try runExpect("tests/feature_tests/ownership/322_caller_storage_forwarding", 0);
+test "feature_tests/ownership/322X_caller_storage_forwarding" {
+    try buildExpectFail("tests/feature_tests/ownership/322X_caller_storage_forwarding", "local storage generation");
 }
 
-test "feature_tests/ownership/323_caller_storage_branches" {
-    try expectSuccessfulBuild("tests/feature_tests/ownership/323_caller_storage_branches");
-    try runExpect("tests/feature_tests/ownership/323_caller_storage_branches", 0);
+test "feature_tests/ownership/323X_caller_storage_branches" {
+    try buildExpectFail("tests/feature_tests/ownership/323X_caller_storage_branches", "local storage generation");
 }
 
 test "feature_tests/ownership/324X_caller_storage_loop" {
-    try buildExpectFail("tests/feature_tests/ownership/324X_caller_storage_loop", "use an explicit allocator");
+    try buildExpectFail("tests/feature_tests/ownership/324X_caller_storage_loop", "local storage generation");
 }
 
 test "feature_tests/ownership/325X_caller_storage_recursive" {
-    try buildExpectFail("tests/feature_tests/ownership/325X_caller_storage_recursive", "recursive retention is not supported");
+    try buildExpectFail("tests/feature_tests/ownership/325X_caller_storage_recursive", "local storage generation");
 }
 
 test "feature_tests/ownership/326X_caller_storage_scope" {
-    try buildExpectFail("tests/feature_tests/ownership/326X_caller_storage_scope", "reference depends on a root that has ended");
+    try buildExpectFail("tests/feature_tests/ownership/326X_caller_storage_scope", "local storage generation");
 }
 
 test "feature_tests/basics/83_fallible_main_local_tracer" {
@@ -9400,17 +9383,16 @@ test "feature_tests/basics/83_fallible_main_local_tracer" {
     try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
     try expectEqualStrings("", result.stdout);
     try expect(std.mem.indexOf(u8, result.stderr, "error trace (most recent first)") != null);
-    const location = if (@import("builtin").os.tag == .windows) "83_fallible_main_local_tracer\\main.rg:8:" else "83_fallible_main_local_tracer/main.rg:8:";
+    const location = if (@import("builtin").os.tag == .windows) "83_fallible_main_local_tracer\\main.rg:4:" else "83_fallible_main_local_tracer/main.rg:4:";
     try expect(std.mem.indexOf(u8, result.stderr, location) != null);
 }
 
-test "feature_tests/ownership/327_caller_storage_generic" {
-    try expectSuccessfulBuild("tests/feature_tests/ownership/327_caller_storage_generic");
-    try runExpect("tests/feature_tests/ownership/327_caller_storage_generic", 0);
+test "feature_tests/ownership/327X_caller_storage_generic" {
+    try buildExpectFail("tests/feature_tests/ownership/327X_caller_storage_generic", "local storage generation");
 }
 
 test "feature_tests/ownership/328X_caller_storage_virtual" {
-    try buildExpectFail("tests/feature_tests/ownership/328X_caller_storage_virtual", "virtual methods cannot return local storage");
+    try buildExpectFail("tests/feature_tests/ownership/328X_caller_storage_virtual", "local storage generation");
 }
 
 test "feature_tests/ownership/329X_caller_storage_dynamic_references" {
@@ -9421,37 +9403,32 @@ test "feature_tests/ownership/330X_caller_storage_dynamic_wrapper" {
     try buildExpectFail("tests/feature_tests/ownership/330X_caller_storage_dynamic_wrapper", "reference depends on a root that has ended");
 }
 
-test "feature_tests/ownership/331_caller_storage_virtual_value" {
-    try expectSuccessfulBuild("tests/feature_tests/ownership/331_caller_storage_virtual_value");
-    try runExpect("tests/feature_tests/ownership/331_caller_storage_virtual_value", 0);
+test "feature_tests/ownership/331X_caller_storage_virtual_value" {
+    try buildExpectFail("tests/feature_tests/ownership/331X_caller_storage_virtual_value", "local storage generation");
 }
 
-test "feature_tests/ownership/332_caller_storage_array" {
-    try expectSuccessfulBuild("tests/feature_tests/ownership/332_caller_storage_array");
-    try runExpect("tests/feature_tests/ownership/332_caller_storage_array", 0);
+test "feature_tests/ownership/332X_caller_storage_array" {
+    try buildExpectFail("tests/feature_tests/ownership/332X_caller_storage_array", "local storage generation");
 }
 
-test "feature_tests/ownership/333_caller_storage_large_return" {
-    try expectSuccessfulBuild("tests/feature_tests/ownership/333_caller_storage_large_return");
-    try runExpect("tests/feature_tests/ownership/333_caller_storage_large_return", 0);
+test "feature_tests/ownership/333X_caller_storage_large_return" {
+    try buildExpectFail("tests/feature_tests/ownership/333X_caller_storage_large_return", "local storage generation");
 }
 
-test "feature_tests/ownership/334_caller_storage_branch_initialization" {
-    try expectSuccessfulBuild("tests/feature_tests/ownership/334_caller_storage_branch_initialization");
-    try runExpect("tests/feature_tests/ownership/334_caller_storage_branch_initialization", 0);
+test "feature_tests/ownership/334X_caller_storage_branch_initialization" {
+    try buildExpectFail("tests/feature_tests/ownership/334X_caller_storage_branch_initialization", "local storage generation");
 }
 
-test "feature_tests/ownership/335_caller_storage_cleanup_dependencies" {
-    try expectSuccessfulBuild("tests/feature_tests/ownership/335_caller_storage_cleanup_dependencies");
-    try runExpect("tests/feature_tests/ownership/335_caller_storage_cleanup_dependencies", 0);
+test "feature_tests/ownership/335X_caller_storage_cleanup_dependencies" {
+    try buildExpectFail("tests/feature_tests/ownership/335X_caller_storage_cleanup_dependencies", "local storage generation");
 }
 
 test "feature_tests/ownership/336X_caller_storage_cleanup_borrow" {
-    try buildExpectFail("tests/feature_tests/ownership/336X_caller_storage_cleanup_borrow", "root that has ended");
+    try buildExpectFail("tests/feature_tests/ownership/336X_caller_storage_cleanup_borrow", "local storage generation");
 }
 
 test "feature_tests/ownership/337X_caller_storage_cleanup_after_borrow" {
-    try buildExpectFail("tests/feature_tests/ownership/337X_caller_storage_cleanup_after_borrow", "retained storage cleanup depends on a root that has ended");
+    try buildExpectFail("tests/feature_tests/ownership/337X_caller_storage_cleanup_after_borrow", "local storage generation");
 }
 
 test "feature_tests/errors/80_local_handle" {
@@ -10308,4 +10285,78 @@ test "feature_tests/text/51X_split_for_separator_after_cleanup" {
 test "feature_tests/io/48_line_error_cleanup" {
     try expectSuccessfulBuild("tests/feature_tests/io/48_line_error_cleanup");
     try runExpect("tests/feature_tests/io/48_line_error_cleanup", 0);
+}
+
+test "feature_tests/ownership/343X_return_local_system" {
+    try buildExpectFail("tests/feature_tests/ownership/343X_return_local_system", "local storage generation");
+}
+
+test "feature_tests/ownership/344X_return_local_deallocator" {
+    try buildExpectFail("tests/feature_tests/ownership/344X_return_local_deallocator", "local storage generation");
+}
+
+test "feature_tests/ownership/345X_return_local_error_tracer" {
+    try buildExpectFail("tests/feature_tests/ownership/345X_return_local_error_tracer", "local storage generation");
+}
+
+test "feature_tests/ownership/346_explicit_caller_owners" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/346_explicit_caller_owners");
+    try runExpect("tests/feature_tests/ownership/346_explicit_caller_owners", 0);
+}
+
+test "feature_tests/ownership/347_indirect_return_caller_borrow" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/347_indirect_return_caller_borrow");
+    try runExpect("tests/feature_tests/ownership/347_indirect_return_caller_borrow", 0);
+}
+
+test "feature_tests/ownership/348X_return_owner_and_local_reference" {
+    try buildExpectFail("tests/feature_tests/ownership/348X_return_owner_and_local_reference", "local storage generation");
+}
+
+test "feature_tests/ownership/349_return_global_borrow" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/349_return_global_borrow");
+    try runExpect("tests/feature_tests/ownership/349_return_global_borrow", 0);
+}
+
+test "feature_tests/ownership/350X_return_output_slot_reference" {
+    try buildExpectFail("tests/feature_tests/ownership/350X_return_output_slot_reference", "local storage generation");
+}
+
+test "feature_tests/ownership/351X_propagated_local_error_tracer" {
+    try buildExpectFail("tests/feature_tests/ownership/351X_propagated_local_error_tracer", "local storage generation");
+}
+
+test "feature_tests/ownership/352X_propagated_local_error_tracer" {
+    try buildExpectFail("tests/feature_tests/ownership/352X_propagated_local_error_tracer", "local storage generation");
+}
+
+test "feature_tests/ownership/353_return_allocation_caller_deallocator" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/353_return_allocation_caller_deallocator");
+    try runExpect("tests/feature_tests/ownership/353_return_allocation_caller_deallocator", 0);
+}
+
+test "feature_tests/ownership/354X_return_opaque_local_borrow" {
+    try buildExpectFail("tests/feature_tests/ownership/354X_return_opaque_local_borrow", "local storage generation");
+}
+
+test "feature_tests/ownership/355X_return_borrowed_opaque_local" {
+    try buildExpectFail("tests/feature_tests/ownership/355X_return_borrowed_opaque_local", "local storage generation");
+}
+
+test "feature_tests/ownership/356_return_opaque_caller_borrow" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/356_return_opaque_caller_borrow");
+    try runExpect("tests/feature_tests/ownership/356_return_opaque_caller_borrow", 0);
+}
+
+test "feature_tests/ownership/357_return_virtual_caller_borrow" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/357_return_virtual_caller_borrow");
+    try runExpect("tests/feature_tests/ownership/357_return_virtual_caller_borrow", 0);
+}
+
+test "feature_tests/ownership/358X_return_local_expression" {
+    try buildExpectFail("tests/feature_tests/ownership/358X_return_local_expression", "local storage generation");
+}
+
+test "feature_tests/ownership/359X_return_local_error_trace" {
+    try buildExpectFail("tests/feature_tests/ownership/359X_return_local_error_trace", "local storage generation");
 }
