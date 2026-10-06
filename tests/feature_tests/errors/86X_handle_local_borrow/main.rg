@@ -6,7 +6,7 @@ attempt(.value: &Int32) -> (.result: Errable#(.t: &Int32, .reasons: (..missing))
 
 main() -> () := {
     source :: Int32 = 7
-    pointer ::= attempt(.value = &source) handle value, error {
+    pointer ::= attempt(.value = &source) handle error, value {
         local :: Int32 = 9
         value = &local
     }

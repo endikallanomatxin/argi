@@ -9,7 +9,7 @@ make(.fail: Bool) -> (.result: Errable#(.t: Owner, .reasons: (..missing))) := {
 }
 
 main() -> (.status_code: Int32 = 0) := {
-    first ::= make(.fail = false) handle value, error { value = (.value = 9) }
-    second ::= make(.fail = true) handle value, error { value = (.value = 9) }
+    first ::= make(.fail = false) handle error, value { value = (.value = 9) }
+    second ::= make(.fail = true) handle error, value { value = (.value = 9) }
     if first.value != 7 or second.value != 9 { abort }
 }

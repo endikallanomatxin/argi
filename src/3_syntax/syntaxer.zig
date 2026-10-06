@@ -1600,17 +1600,22 @@ pub const Syntaxer = struct {
     }
 
     fn parseExpression(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
-        var value = try self.parseUnwrapExpr();
+        return self.parseHandleTail(try self.parseUnwrapExpr());
+    }
+
+    fn parseHandleTail(self: *Syntaxer, operand: syn.NodeIndex) SyntaxerError!syn.NodeIndex {
+        var value = operand;
         if (self.currentIdentifierEquals("handle")) {
             const start: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
             self.advanceOne();
-            const result_name = (try self.parseName()).token;
-            if (!self.tokenIs(.comma)) return SyntaxerError.ExpectedStructField;
-            self.advanceOne();
             const error_name = (try self.parseName()).token;
+            const result_name: ?syn.TokenIndex = if (self.tokenIs(.comma)) blk: {
+                self.advanceOne();
+                break :blk (try self.parseName()).token;
+            } else null;
             self.skipNewLinesAndComments();
             const body = try self.parseCodeBlock();
-            const extra = try self.addExtra(syn.HandleExtra{ .value = value, .result_name = result_name, .error_name = error_name, .body = body });
+            const extra = try self.addExtra(syn.HandleExtra{ .value = value, .result_name = syn.OptionalTokenIndex.init(result_name), .error_name = error_name, .body = body });
             value = try self.addNode(.handle_expression, start, .{ .extra = extra });
         }
         return value;
@@ -1938,7 +1943,7 @@ pub const Syntaxer = struct {
                     .input = input_node,
                 });
                 const call_node = try self.addNode(.function_call, name.token, .{ .extra = extra });
-                const expr = try self.parsePostfix(call_node);
+                const expr = try self.parseHandleTail(try self.parsePostfix(call_node));
                 if (expr == call_node) return call_node;
                 return try self.addNode(.expression_statement, self.file.mainToken(expr), .{ .node = expr });
             }

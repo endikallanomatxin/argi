@@ -1192,7 +1192,8 @@ pub const Context = struct {
         const payload = try self.addPending(node, .choice_payload, &.{value}, try self.writer.addString("ok"), null, .none);
         const payload_pending = self.graph.semantic.parameterized_storage.ir.nodes.items[@intFromEnum(payload)].pending;
         self.graph.semantic.parameterized_storage.ir.pending.items[@intFromEnum(payload_pending)].resolve_expression.requires_errable = true;
-        const result_name = self.tree.tokenTextFromSource(self.source, handle.result_name);
+        if (handle.result_name == .none) return self.lowerHandleWithoutResult(node, value);
+        const result_name = self.tree.tokenTextFromSource(self.source, handle.result_name.unwrap().?);
         const error_name = self.tree.tokenTextFromSource(self.source, handle.error_name);
         if (std.mem.eql(u8, result_name, error_name)) {
             if (self.diagnostics) |bag| try bag.add(self.tree.tokenLocation(handle.error_name), .semantic, "handle result and error bindings must have different names", .{});
@@ -1223,6 +1224,29 @@ pub const Context = struct {
         const use = try self.addResolvedNode(node, null, .{ .binding_use = result });
         const result_move = try self.addResolvedNode(node, null, .{ .move_value = use });
         return self.addResolvedNode(node, null, .{ .value_sequence = try self.handleBlock(&.{ dispatch, result_move }, result_move) });
+    }
+
+    // Keep transfers inside the specialized containing function, as for the
+    // recovery form. Match payload ownership also cleans discarded successes.
+    fn lowerHandleWithoutResult(self: *Context, node: syn.NodeIndex, value: ir.ParameterizedNodeId) !ir.ParameterizedNodeId {
+        const handle = self.tree.extraData(syn.HandleExtra, self.tree.data(node).extra);
+        const error_name = self.tree.tokenTextFromSource(self.source, handle.error_name);
+        const success = try self.handleBinding(node, "#handle_success", null);
+        const failure = try self.handleBinding(node, error_name, null);
+        const success_body = try self.handleBlock(&.{}, null);
+        const mark = self.bindings.items.len;
+        try self.bindings.append(.{ .name = error_name, .id = failure });
+        const failure_body = try self.lowerBlock(handle.body);
+        self.bindings.shrinkRetainingCapacity(mark);
+        const storage = &self.graph.semantic.parameterized_storage.ir;
+        const start: u32 = @intCast(storage.match_cases.items.len);
+        for ([_][]const u8{ "ok", "error" }, [_]ir.ParameterizedBindingId{ success, failure }, [_]ir.ParameterizedBlockId{ success_body, failure_body }) |name, binding, body| {
+            try storage.match_cases.append(self.allocator, .{ .name = try self.writer.addString(name), .payload_binding = binding, .body = body, .mode = .move, .source = self.sourceRef(node) });
+        }
+        const dispatch = try self.addPending(node, .match, &.{value}, null, null, .none);
+        const pending = storage.nodes.items[@intFromEnum(dispatch)].pending;
+        storage.pending.items[@intFromEnum(pending)].resolve_expression.match_cases = .{ .start = start, .len = 2 };
+        return self.addResolvedNode(node, null, .{ .value_sequence = try self.handleBlock(&.{dispatch}, dispatch) });
     }
 
     fn lowerPipe(self: *Context, node: syn.NodeIndex) !ir.ParameterizedNodeId {

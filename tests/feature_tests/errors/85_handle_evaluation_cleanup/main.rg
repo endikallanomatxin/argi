@@ -12,7 +12,7 @@ attempt(.fail: Bool) -> !Int32 := {
 }
 
 recover(.fail: Bool) -> (.result: Int32) := {
-    result = attempt(.fail = fail) handle value, error {
+    result = attempt(.fail = fail) handle error, value {
         marker ::= Marker(.id = 1)
         result = 12
         return
@@ -22,7 +22,7 @@ recover(.fail: Bool) -> (.result: Int32) := {
 main() -> (.status_code: Int32 = 0) := {
     if recover(.fail = false).result != 5 or calls != 1 or drops != 0 { abort }
     if recover(.fail = true).result != 12 or calls != 2 or drops != 1 { abort }
-    handled ::= attempt(.fail = true) handle value, error {
+    handled ::= attempt(.fail = true) handle error, value {
         marker ::= Marker(.id = 2)
         value = 7
     }

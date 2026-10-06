@@ -867,7 +867,11 @@ test "formatter preserves inferred fallible output defaults" {
 
 test "formatter preserves local error handlers" {
     try expectFormat(
-        "main()->():={value:=fallible() handle result,error{result=0}}\n",
-        "main() -> () := { value := fallible() handle result, error { result = 0 } }\n",
+        "main()->():={value:=fallible() handle error,result{result=0}}\n",
+        "main() -> () := { value := fallible() handle error, result { result = 0 } }\n",
+    );
+    try expectFormat(
+        "main()->():={fallible() handle error{report(error)!}}\n",
+        "main() -> () := { fallible() handle error { report(error)! } }\n",
     );
 }

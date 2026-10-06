@@ -222,7 +222,7 @@ pub const CallExtra = struct {
     type_arguments_struct: OptionalNodeIndex,
     input: NodeIndex,
 };
-pub const HandleExtra = struct { value: NodeIndex, result_name: TokenIndex, error_name: TokenIndex, body: NodeIndex };
+pub const HandleExtra = struct { value: NodeIndex, result_name: OptionalTokenIndex, error_name: TokenIndex, body: NodeIndex };
 
 pub const ForExtra = struct { name_token: TokenIndex, iterable: NodeIndex, body: NodeIndex };
 pub const MatchCaseExtra = struct { payload_name: OptionalTokenIndex, body: NodeIndex };

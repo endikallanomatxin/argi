@@ -241,9 +241,12 @@ feature first.
   trace handle with the program-lifetime noop tracer while preserving the reason
   used by the C wrapper for failure/skip status.
 
-- Local `Errable` handling (`handle value, error { ... }`) lowers to a match
+- Local `Errable` handling (`handle error, value { ... }`) lowers to a match
   inside an explicit `value_sequence`. Its result storage is deferred in the
   enclosing scope, while match payloads and handler locals belong to branches.
+  The `handle error { ... }` variant has no result slot and discards the success
+  payload through ordinary branch cleanup. Both forms retain the containing
+  function and loop control-flow context.
   Ownership must traverse value sequences nested in initializers, arguments,
   assignments, conditions, and returns before finalizing cleanup. Codegen must
   not retain binding-map entry pointers across recursive expression emission.

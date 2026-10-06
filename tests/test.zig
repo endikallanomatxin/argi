@@ -9459,6 +9459,28 @@ test "feature_tests/errors/80_local_handle" {
     try runExpect("tests/feature_tests/errors/80_local_handle", 0);
 }
 
+test "feature_tests/errors/88_handle_without_result" {
+    try expectSuccessfulBuild("tests/feature_tests/errors/88_handle_without_result");
+    try runExpect("tests/feature_tests/errors/88_handle_without_result", 0);
+}
+
+test "feature_tests/errors/89X_handle_partial_recovery" {
+    try buildExpectFail("tests/feature_tests/errors/89X_handle_partial_recovery", "cannot be used");
+}
+
+test "feature_tests/errors/90X_handle_without_result_value" {
+    try buildExpectFail("tests/feature_tests/errors/90X_handle_without_result_value", "handle without a value binding produces Void");
+}
+
+test "feature_tests/errors/91X_handle_without_result_non_errable" {
+    try buildExpectFail("tests/feature_tests/errors/91X_handle_without_result_non_errable", "handle expects an Errable value");
+}
+
+test "feature_tests/errors/92_handle_abort" {
+    try expectSuccessfulBuild("tests/feature_tests/errors/92_handle_abort");
+    try runExpectFailure("tests/feature_tests/errors/92_handle_abort");
+}
+
 test "feature_tests/errors/81X_handle_unassigned" {
     try buildExpectFail("tests/feature_tests/errors/81X_handle_unassigned", "cannot be used");
 }
