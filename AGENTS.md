@@ -246,7 +246,11 @@ feature first.
   enclosing scope, while match payloads and handler locals belong to branches.
   The `handle error { ... }` variant has no result slot and discards the success
   payload through ordinary branch cleanup. Both forms retain the containing
-  function and loop control-flow context.
+  function and loop control-flow context. `!!!` uses the same recovery lowering
+  with an ordinary report_trace call and a bare containing-function return.
+  Reporting requires a reachable writer; it neither propagates an Errable
+  output nor changes the process status. Program main returns no values or
+  status_code: Int32; the checked entry supplies zero for no-result completion.
   Ownership must traverse value sequences nested in initializers, arguments,
   assignments, conditions, and returns before finalizing cleanup. Codegen must
   not retain binding-map entry pointers across recursive expression emission.

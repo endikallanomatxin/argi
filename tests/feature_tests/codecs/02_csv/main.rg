@@ -1,6 +1,6 @@
 csv ::= import ("codecs/serialization/csv")
 
-main(.system: System) -> !Void = ..ok Void() := {
+run_main(.system: System) -> !Void = ..ok Void() := {
     assume allocator := system.page_allocator
     reader ::= csv.CsvReader(.text = "first,\"a,b\",\"say \"\"hi\"\"\"\r\n\"two\nlines\",\n")
     first ::= ~csv.next(.self = $&reader, .allocator = allocator)!
@@ -41,4 +41,9 @@ main(.system: System) -> !Void = ..ok Void() := {
     csv.write_record(.writer = $&writer, .fields = view(.array = &fields))!
     text :: StringView = (.data = &storage[0], .length = 20)
     if text != "\"a,b\",\"\"\"quoted\"\"\"\r\n" { abort }
+}
+
+main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+    run_main(.system = system)!!!
+    status_code = 0
 }

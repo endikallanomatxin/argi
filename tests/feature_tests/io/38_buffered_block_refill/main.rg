@@ -11,7 +11,7 @@ read_byte(.self: $&Source) -> (.result: Errable#(.t: ReadByte, .reasons: (..stre
     result = ..ok ..ok 65
 }
 
-main(.system: System) -> !Void = ..ok Void() := {
+run_main(.system: System) -> !Void = ..ok Void() := {
     assume allocator := system.page_allocator
     source :: Source = (.count = 0)
     reader ::= BufferedReader(.base = $&source, .allocator = allocator, .capacity = 3)!
@@ -23,4 +23,9 @@ main(.system: System) -> !Void = ..ok Void() := {
     read_exact(.self = $&reader, .buffer = view(.array = $&bytes))!
     if source.count != 4 or bytes[0] != 65 or bytes[1] != 65 { abort }
     match read_byte(.self = $&reader)! { ..end {} ..ok byte { abort } }
+}
+
+main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+    run_main(.system = system)!!!
+    status_code = 0
 }

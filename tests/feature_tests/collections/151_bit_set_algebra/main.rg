@@ -1,4 +1,4 @@
-main(.system: System) -> !Void = ..ok Void() := {
+run_main(.system: System) -> !Void = ..ok Void() := {
     assume allocator := system.page_allocator
     a ::= BitSet(.count = 10, .allocator = allocator)!
     b ::= BitSet(.count = 10, .allocator = allocator)!
@@ -31,4 +31,9 @@ main(.system: System) -> !Void = ..ok Void() := {
     difference_with(.self = $&b, .other = &b)!
     if count_set(.self = &b).count != 0 { abort }
 
+}
+
+main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+    run_main(.system = system)!!!
+    status_code = 0
 }

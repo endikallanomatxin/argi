@@ -32,5 +32,6 @@ __argi_entry() -> __ARGI_OUTPUT__ := {
         .rand_gen       = $&rand_gen_storage,
         .ffi            = $&ffi_storage,
     )
+    __ARGI_REPORT_SETUP__
     __ARGI_CALL__
 }

@@ -1,6 +1,6 @@
 json ::= import ("codecs/serialization/json")
 
-main(.system: System) -> !Void = ..ok Void() := {
+run_main(.system: System) -> !Void = ..ok Void() := {
     json.validate(
         .text = " {\"text\":\"café \\uD83D\\uDE42\", \"values\":[null,true,false,-1.2e+3]} "
     )!
@@ -61,4 +61,9 @@ main(.system: System) -> !Void = ..ok Void() := {
     json.write_string(.writer = $&writer, .text = as_view(.self = &decoded))!
     text :: StringView = (.data = &storage[0], .length = 18)
     json.validate(.text = text)!
+}
+
+main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+    run_main(.system = system)!!!
+    status_code = 0
 }

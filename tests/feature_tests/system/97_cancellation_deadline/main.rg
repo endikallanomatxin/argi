@@ -1,4 +1,4 @@
-main(.system: System) -> !Void = ..ok Void() := {
+run_main(.system: System) -> !Void = ..ok Void() := {
     now ::= monotonic_now(.self = system.clock)!
     deadline ::= Deadline(.at = now)
     if expired(.self = deadline, .now = now).value == false { abort }
@@ -25,4 +25,9 @@ main(.system: System) -> !Void = ..ok Void() := {
     }
     empty ::= CancellationContext()
     check_cancelled(.self = empty, .now = now)!
+}
+
+main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+    run_main(.system = system)!!!
+    status_code = 0
 }

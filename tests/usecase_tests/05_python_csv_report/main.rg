@@ -3,7 +3,7 @@ p := import ("python")
 ..invalid_arguments
 ..invalid_duration
 
-main(.system: System) -> !Void = ..ok Void() := {
+run_main(.system: System) -> !Void = ..ok Void() := {
     assume allocator := system.page_allocator
     assume writer ::= $&BufferedWriter(
         $&system.terminal&.stdout
@@ -98,4 +98,9 @@ invalid_arguments() -> (.result: Errable#(Void, (..invalid_arguments))) := {
 
 invalid_duration() -> (.result: Errable#(Void, (..invalid_duration))) := {
     result = ..error(.reason = ..invalid_duration)
+}
+
+main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+    run_main(.system = system)!!!
+    status_code = 0
 }

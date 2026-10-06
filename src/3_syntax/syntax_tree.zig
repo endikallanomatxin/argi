@@ -114,6 +114,7 @@ pub const Node = struct {
         struct_field_access,
         choice_payload_access,
         error_propagation,
+        error_report_return,
         error_context,
         nullable_test,
         index_access,
@@ -840,7 +841,7 @@ pub const FileSyntaxTree = struct {
 
     pub fn unaryOperand(tree: *const FileSyntaxTree, node: NodeIndex) ?NodeIndex {
         return switch (tree.tag(node)) {
-            .expression_statement, .move_expression, .error_propagation, .nullable_test, .defer_statement, .address_of, .address_of_mut, .dereference => tree.data(node).node,
+            .expression_statement, .move_expression, .error_propagation, .error_report_return, .nullable_test, .defer_statement, .address_of, .address_of_mut, .dereference => tree.data(node).node,
             else => null,
         };
     }
@@ -927,6 +928,7 @@ fn fixedTokenText(content: token.Content) []const u8 {
         .tilde => "~",
         .bang => "!",
         .double_bang => "!!",
+        .triple_bang => "!!!",
         .question_mark => "?",
         .ampersand => "&",
         .dollar => "$",

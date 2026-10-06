@@ -1,4 +1,4 @@
-main(.system: System) -> !Void = ..ok Void() := {
+run_main(.system: System) -> !Void = ..ok Void() := {
     cell ::= AtomicUInt32(.initial = 7, .ffi = system.ffi)!
     if load(.self = &cell).value != 7 { abort }
     if exchange(.self = $&cell, .value = 10).previous != 7 { abort }
@@ -10,4 +10,9 @@ main(.system: System) -> !Void = ..ok Void() := {
     store(.self = $&cell, .value = 4294967295)
     if fetch_add(.self = $&cell, .value = 1).previous != 4294967295 { abort }
     if load(.self = &cell).value != 0 { abort }
+}
+
+main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+    run_main(.system = system)!!!
+    status_code = 0
 }

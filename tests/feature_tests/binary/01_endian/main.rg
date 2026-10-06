@@ -1,4 +1,4 @@
-main() -> !Void = ..ok Void() := {
+run_main() -> !Void = ..ok Void() := {
     bytes :: [10]UInt8 = (99, 0, 0, 0, 0, 0, 0, 0, 0, 88)
     output ::= view(.array = $&bytes)
     write_uint64(.bytes = output, .offset = 1, .value = 18446744073709551615, .order = ..big)!
@@ -25,4 +25,9 @@ main() -> !Void = ..ok Void() := {
     ) {
         ..ok _ { abort } ..error _ {}
     }
+}
+
+main(.writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+    run_main()!!!
+    status_code = 0
 }

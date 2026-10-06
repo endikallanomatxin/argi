@@ -223,6 +223,24 @@ that retains the context copies it, so the entry does not borrow a temporary
 string. A tracer that emits the entry immediately can use the text during the
 call.
 
+### Reporting and returning
+
+`expr!!!` accepts an `Errable#(T, Reasons)`. It evaluates the operand once and
+moves the success payload out as `T`. On error it reports the stored trace
+through the ordinary reachable writer and returns from the containing function.
+It is shorthand for recovery whose error branch reports and executes a bare
+`return`, not propagation into the function's Errable output.
+
+The enclosing function's output defaults and explicit assignments determine its
+return value. Normal owner and defer cleanup runs on that return. A reporting
+failure is discarded rather than recursively reported. Functions that use this
+operator require the same writer capability as ordinary error reporting.
+`!` and `!! context` retain their propagation behavior.
+
+A no-result `main` exits with `0`, including when `!!!` returns early. Use an
+explicit `.status_code: Int32` output to select another exit status. `main`
+returning an Errable has no special entry-wrapper support.
+
 ## Error tracing
 
 `ErrorTracer` is an `Abstract` for the tracing policy:

@@ -10,7 +10,12 @@ report(.self: $&CustomTracer, .writer: $&Virtual#(.abstract: Writer)) -> (.resul
     write_trace_text(.writer = writer, .text = "custom trace\n")!
     result = ..ok Void()
 }
-main() -> !Void = ..ok Void() := {
+run_main() -> !Void = ..ok Void() := {
     assume error_tracer ::= $&custom_tracer_virtual
     result = ..error(.reason = ..application_failed)
+}
+
+main(.writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+    run_main()!!!
+    status_code = 0
 }

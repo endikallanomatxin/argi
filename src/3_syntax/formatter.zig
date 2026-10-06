@@ -470,7 +470,7 @@ fn firstToken(tree: *const syn.FileSyntaxTree, node: syn.NodeIndex) usize {
         return first;
     }
     const child: ?syn.NodeIndex = switch (tree.tag(node)) {
-        .expression_statement, .error_propagation, .nullable_test, .dereference => tree.unaryOperand(node),
+        .expression_statement, .error_propagation, .error_report_return, .nullable_test, .dereference => tree.unaryOperand(node),
         .handle_expression => tree.extraData(syn.HandleExtra, tree.data(node).extra).value,
         .struct_field_access => tree.structFieldAccess(node).?.value,
         .choice_payload_access => tree.choicePayloadAccess(node).?.value,
@@ -533,7 +533,7 @@ fn needsSpace(left: Tag, right: Tag, tokens: tok.View, index: usize) bool {
     if (left == .bang and index >= 2 and tokens.contents[index - 2] == .arrow) return false;
     if (right == .comma or right == .close_parenthesis or right == .close_bracket) return false;
     if (left == .comma) return true;
-    if (right == .dot or right == .hash or right == .bang or right == .double_bang) return false;
+    if (right == .dot or right == .hash or right == .bang or right == .double_bang or right == .triple_bang) return false;
     if (left == .dot or left == .double_dot or left == .hash or left == .dollar or left == .tilde or left == .question_mark) return false;
     if (left == .open_parenthesis or left == .open_bracket) return false;
     if (right == .double_colon) return true;
@@ -874,4 +874,8 @@ test "formatter preserves local error handlers" {
         "main()->():={fallible() handle error{report(error)!}}\n",
         "main() -> () := { fallible() handle error { report(error)! } }\n",
     );
+}
+
+test "formatter preserves reporting return postfix" {
+    try expectFormat("main()->():={value:=attempt()!!!}\n", "main() -> () := { value := attempt()!!! }\n");
 }

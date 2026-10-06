@@ -7,7 +7,7 @@ invalid(.bytes: [4]UInt8, .count: UIntNative) -> () := {
     if position(.self = &decoder).count != 0 { abort }
 }
 
-main() -> !Void = ..ok Void() := {
+run_main() -> !Void = ..ok Void() := {
     invalid(.bytes = (128, 0, 0, 0), .count = 1)
     invalid(.bytes = (191, 0, 0, 0), .count = 1)
     invalid(.bytes = (192, 128, 0, 0), .count = 2)
@@ -49,4 +49,9 @@ main() -> !Void = ..ok Void() := {
     if position(.self = &decoder).count != 1 { abort }
     match next_codepoint(.self = $&decoder) { ..ok _ { abort } ..error _ {} }
     if position(.self = &decoder).count != 1 { abort }
+}
+
+main(.writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+    run_main()!!!
+    status_code = 0
 }

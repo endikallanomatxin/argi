@@ -6,7 +6,7 @@ Tracked deinit(.self: $&Tracked) -> () := { drops = drops + 1 }
 
 Wrapper: Type = (.tracked: Tracked, .text: String)
 
-main(.system: System) -> !Void = ..ok Void() := {
+run_main(.system: System) -> !Void = ..ok Void() := {
     assume allocator := system.page_allocator
     map ::= OwnedHashMap#(.key: Int32, .value: Wrapper, .policy: Int32HashPolicy)(
         .policy    = Int32HashPolicy()
@@ -37,4 +37,9 @@ main(.system: System) -> !Void = ..ok Void() := {
     if drops != 2 { abort }
     deinit(.self = $&map, .allocator = allocator)
     if drops != 21 { abort }
+}
+
+main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+    run_main(.system = system)!!!
+    status_code = 0
 }

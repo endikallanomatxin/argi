@@ -21,7 +21,7 @@ consume#(.t: Type)(.input: DynamicArray#(.t: t), .allocator: $&PageAllocator) ->
     for ~item in input { break }
 }
 
-main(.system: System) -> !Void = ..ok Void() := {
+run_main(.system: System) -> !Void = ..ok Void() := {
     assume allocator := system.page_allocator
     values ::= DynamicArray#(.t: Int32)(.allocator = allocator, .capacity = 3)!
     push(.self = $&values, .value = 1, .allocator = allocator)!
@@ -36,4 +36,9 @@ main(.system: System) -> !Void = ..ok Void() := {
     push(.self = $&owners, .value = Tracked(.id = 2), .allocator = allocator)!
     consume(.input = ~owners, .allocator = allocator)
     if drops != 2 { abort }
+}
+
+main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+    run_main(.system = system)!!!
+    status_code = 0
 }

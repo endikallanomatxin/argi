@@ -1,4 +1,4 @@
-main(.system: System) -> !Void = ..ok Void() := {
+run_main(.system: System) -> !Void = ..ok Void() := {
     assume allocator := system.page_allocator
     array ::= DynamicArray#(.t: UIntNative)(.allocator = allocator, .capacity = 1)!
     index :: UIntNative = 0
@@ -23,4 +23,9 @@ main(.system: System) -> !Void = ..ok Void() := {
         ..error error { if error.reason != ..out_of_memory { abort } }
     }
     if length(.self = &array).count != 65 or capacity(.self = &array).count != 256 { abort }
+}
+
+main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+    run_main(.system = system)!!!
+    status_code = 0
 }

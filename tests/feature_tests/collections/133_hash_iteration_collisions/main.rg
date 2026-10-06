@@ -7,7 +7,7 @@ hash(.self: &CollisionPolicy, .key: Int32) -> (.hash: UIntNative) := { hash = 7 
 
 eql(.self: &CollisionPolicy, .left: Int32, .right: Int32) -> (.ok: Bool) := { ok = left == right }
 
-main(.system: System) -> !Void = ..ok Void() := {
+run_main(.system: System) -> !Void = ..ok Void() := {
     assume allocator := system.page_allocator
     map ::= HashMap#(.key: Int32, .value: Int32, .policy: CollisionPolicy)(
         .policy    = CollisionPolicy()
@@ -38,4 +38,9 @@ main(.system: System) -> !Void = ..ok Void() := {
     count = 0
     for entry in map { count = count + 1 }
     if count != 3 { abort }
+}
+
+main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+    run_main(.system = system)!!!
+    status_code = 0
 }

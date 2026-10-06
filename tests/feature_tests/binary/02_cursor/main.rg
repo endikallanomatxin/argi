@@ -1,4 +1,4 @@
-main() -> !Void = ..ok Void() := {
+run_main() -> !Void = ..ok Void() := {
     bytes :: [6]UInt8 = (0, 0, 0, 0, 0, 0)
     writer ::= ByteWriter(.bytes = view(.array = $&bytes))
     write_uint16(.self = $&writer, .value = 4660, .order = ..big)!
@@ -13,4 +13,9 @@ main() -> !Void = ..ok Void() := {
     if read_uint32(.self = $&reader, .order = ..little)! != 16909060 { abort }
     match skip(.self = $&reader, .count = 1) { ..ok _ { abort } ..error _ {} }
     if position(.self = &reader).count != 6 { abort }
+}
+
+main(.writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+    run_main()!!!
+    status_code = 0
 }

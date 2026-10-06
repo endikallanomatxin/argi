@@ -9293,7 +9293,7 @@ test "feature_tests/basics/76_fallible_main_trace" {
     defer std.testing.allocator.free(result.stderr);
     try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
     try expectEqualStrings("", result.stdout);
-    try expect(std.mem.indexOf(u8, result.stderr, "error: unhandled error in main") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "error trace") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "error trace (most recent first)") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "starting application") != null);
     const location = if (@import("builtin").os.tag == .windows) "76_fallible_main_trace\\main.rg:3:" else "76_fallible_main_trace/main.rg:3:";
@@ -9307,7 +9307,7 @@ test "feature_tests/basics/77_fallible_main_system" {
 }
 
 test "feature_tests/basics/78X_fallible_main_non_void" {
-    try buildExpectFail("tests/feature_tests/basics/78X_fallible_main_non_void", "Expected main() -> (.status_code: Int32) or main() -> !Void.");
+    try buildExpectFail("tests/feature_tests/basics/78X_fallible_main_non_void", "main must return no values or (.status_code: Int32)");
 }
 
 test "feature_tests/basics/79_fallible_main_custom_tracer" {
@@ -9319,7 +9319,7 @@ test "feature_tests/basics/79_fallible_main_custom_tracer" {
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
     try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
-    try expectEqualStrings("error: unhandled error in main\ncustom trace\n", result.stderr);
+    try expectEqualStrings("custom trace\n", result.stderr);
 }
 
 test "feature_tests/basics/80_fallible_output_defaults" {
@@ -9457,6 +9457,34 @@ test "feature_tests/ownership/337X_caller_storage_cleanup_after_borrow" {
 test "feature_tests/errors/80_local_handle" {
     try expectSuccessfulBuild("tests/feature_tests/errors/80_local_handle");
     try runExpect("tests/feature_tests/errors/80_local_handle", 0);
+}
+
+test "feature_tests/errors/93_report_return" {
+    try expectSuccessfulBuild("tests/feature_tests/errors/93_report_return");
+    try runExpect("tests/feature_tests/errors/93_report_return", 0);
+}
+
+test "feature_tests/errors/94_report_return_void_main" {
+    try expectSuccessfulBuild("tests/feature_tests/errors/94_report_return_void_main");
+    try runExpect("tests/feature_tests/errors/94_report_return_void_main", 0);
+}
+
+test "feature_tests/errors/95X_report_return_non_errable" {
+    try buildExpectFail("tests/feature_tests/errors/95X_report_return_non_errable", "handle expects an Errable value");
+}
+
+test "feature_tests/errors/97_void_main_report_return" {
+    try expectSuccessfulBuild("tests/feature_tests/errors/97_void_main_report_return");
+    try runExpect("tests/feature_tests/errors/97_void_main_report_return", 0);
+}
+
+test "feature_tests/basics/86X_fallible_main_removed" {
+    try buildExpectFail("tests/feature_tests/basics/86X_fallible_main_removed", "main must return no values or (.status_code: Int32)");
+}
+
+test "feature_tests/basics/85_void_main" {
+    try expectSuccessfulBuild("tests/feature_tests/basics/85_void_main");
+    try runExpect("tests/feature_tests/basics/85_void_main", 0);
 }
 
 test "feature_tests/errors/88_handle_without_result" {

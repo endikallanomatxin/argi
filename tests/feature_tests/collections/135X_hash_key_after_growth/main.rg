@@ -1,4 +1,4 @@
-main(.system: System) -> !Void = ..ok Void() := {
+run_main(.system: System) -> !Void = ..ok Void() := {
     assume allocator := system.page_allocator
     map ::= HashMap#(.key: Int32, .value: Int32, .policy: Int32HashPolicy)(
         .policy    = Int32HashPolicy()
@@ -13,4 +13,9 @@ main(.system: System) -> !Void = ..ok Void() := {
         index = index + 1
     }
     if entry.key&!= 1 { abort }
+}
+
+main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+    run_main(.system = system)!!!
+    status_code = 0
 }

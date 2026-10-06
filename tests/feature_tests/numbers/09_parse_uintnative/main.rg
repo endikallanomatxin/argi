@@ -1,4 +1,4 @@
-main(.system: System) -> !Void = ..ok Void() := {
+run_main(.system: System) -> !Void = ..ok Void() := {
     assume allocator := system.page_allocator
     maximum :: UIntNative = 0
     bytes ::= size_of(.type = UIntNative)
@@ -24,4 +24,9 @@ main(.system: System) -> !Void = ..ok Void() := {
         ..ok _ { abort }
         ..error error { if error.reason != ..invalid_base { abort } }
     }
+}
+
+main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+    run_main(.system = system)!!!
+    status_code = 0
 }

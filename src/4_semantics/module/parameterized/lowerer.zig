@@ -871,7 +871,7 @@ pub const Context = struct {
         for (self.pipe_operand_overrides) |entry| if (entry.syntax == node) return entry.value;
         if (self.tree.tag(node) == .pipe_placeholder) return self.pipe_value orelse error.PipePlaceholderOutsidePipe;
         if (self.tree.tag(node) == .pipe_expression) return self.lowerPipe(node);
-        if (self.tree.tag(node) == .handle_expression) return self.lowerHandle(node);
+        if ((self.tree.tag(node) == .handle_expression or self.tree.tag(node) == .error_report_return)) return self.lowerHandle(node);
         if (self.tree.tag(node) == .expression_statement)
             return self.lowerBodyNode(self.tree.unaryOperand(node).?);
         if (self.tree.tag(node) == .reach_directive) return self.lowerReach(node);
@@ -1187,14 +1187,15 @@ pub const Context = struct {
     }
 
     fn lowerHandle(self: *Context, node: syn.NodeIndex) !ir.ParameterizedNodeId {
-        const handle = self.tree.extraData(syn.HandleExtra, self.tree.data(node).extra);
+        const reporting = self.tree.tag(node) == .error_report_return;
+        const handle = if (reporting) syn.HandleExtra{ .value = self.tree.unaryOperand(node).?, .result_name = .none, .error_name = self.tree.mainToken(node), .body = node } else self.tree.extraData(syn.HandleExtra, self.tree.data(node).extra);
         const value = try self.lowerBodyNode(handle.value);
         const payload = try self.addPending(node, .choice_payload, &.{value}, try self.writer.addString("ok"), null, .none);
         const payload_pending = self.graph.semantic.parameterized_storage.ir.nodes.items[@intFromEnum(payload)].pending;
         self.graph.semantic.parameterized_storage.ir.pending.items[@intFromEnum(payload_pending)].resolve_expression.requires_errable = true;
-        if (handle.result_name == .none) return self.lowerHandleWithoutResult(node, value);
-        const result_name = self.tree.tokenTextFromSource(self.source, handle.result_name.unwrap().?);
-        const error_name = self.tree.tokenTextFromSource(self.source, handle.error_name);
+        if (!reporting and handle.result_name == .none) return self.lowerHandleWithoutResult(node, value);
+        const result_name = if (reporting) "#reported_value" else self.tree.tokenTextFromSource(self.source, handle.result_name.unwrap().?);
+        const error_name = if (reporting) "#reported_error" else self.tree.tokenTextFromSource(self.source, handle.error_name);
         if (std.mem.eql(u8, result_name, error_name)) {
             if (self.diagnostics) |bag| try bag.add(self.tree.tokenLocation(handle.error_name), .semantic, "handle result and error bindings must have different names", .{});
             return error.Reported;
@@ -1211,7 +1212,7 @@ pub const Context = struct {
         const mark = self.bindings.items.len;
         try self.bindings.append(.{ .name = result_name, .id = result });
         try self.bindings.append(.{ .name = error_name, .id = failure });
-        const failure_body = try self.lowerBlock(handle.body);
+        const failure_body = if (reporting) try self.lowerReportReturnBlock(node, failure) else try self.lowerBlock(handle.body);
         self.bindings.shrinkRetainingCapacity(mark);
         const storage = &self.graph.semantic.parameterized_storage.ir;
         const start: u32 = @intCast(storage.match_cases.items.len);
@@ -1226,8 +1227,21 @@ pub const Context = struct {
         return self.addResolvedNode(node, null, .{ .value_sequence = try self.handleBlock(&.{ dispatch, result_move }, result_move) });
     }
 
-    // Keep transfers inside the specialized containing function, as for the
-    // recovery form. Match payload ownership also cleans discarded successes.
+    // Specialization retains the ordinary report call and containing return.
+    fn lowerReportReturnBlock(self: *Context, node: syn.NodeIndex, failure: ir.ParameterizedBindingId) !ir.ParameterizedBlockId {
+        const use = try self.addResolvedNode(node, null, .{ .binding_use = failure });
+        const trace = try self.addPending(node, .field_access, &.{use}, try self.writer.addString("trace"), null, .none);
+        const reference = try self.addPending(node, .address_of, &.{trace}, null, null, .{ .pointer_mutability = .read_only });
+        const storage = &self.graph.semantic.parameterized_storage.ir;
+        const start: u32 = @intCast(storage.value_fields.items.len);
+        try storage.value_fields.append(self.allocator, .{ .name = try self.writer.addString("trace"), .value = reference });
+        const input = try self.addResolvedNode(node, null, .{ .struct_value_literal = .{ .fields = .{ .start = start, .len = 1 } } });
+        try self.captureAssumedFields(node, input);
+        const report = try self.addPending(node, .generic_call, &.{input}, try self.writer.addString("report_trace"), null, .none);
+        const ret = try self.addPending(node, .return_statement, &.{}, null, null, .none);
+        return self.handleBlock(&.{ report, ret }, null);
+    }
+
     fn lowerHandleWithoutResult(self: *Context, node: syn.NodeIndex, value: ir.ParameterizedNodeId) !ir.ParameterizedNodeId {
         const handle = self.tree.extraData(syn.HandleExtra, self.tree.data(node).extra);
         const error_name = self.tree.tokenTextFromSource(self.source, handle.error_name);

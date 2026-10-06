@@ -47,7 +47,7 @@ propagate_early(
 
 Pair: Type = (.first: Tracked, .second: Tracked)
 
-main(.system: System) -> !Void = ..ok Void() := {
+run_main(.system: System) -> !Void = ..ok Void() := {
     assume allocator := system.page_allocator
     array ::= DynamicArray#(.t: Int32)(.allocator = allocator, .capacity = 3)!
     push(.self = $&array, .value = 1, .allocator = allocator)!
@@ -151,4 +151,9 @@ main(.system: System) -> !Void = ..ok Void() := {
         if drops != 21 { abort }
     }
 
+}
+
+main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+    run_main(.system = system)!!!
+    status_code = 0
 }

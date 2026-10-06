@@ -6,14 +6,15 @@ capability retains its ordinary FFI dependency; sockets and resolution owners
 borrow it and must be cleaned up before it ends.
 
 ```rg
-main(.system: System) -> !Void = ..ok Void() := {
+main(.system: System) -> () := {
+    assume writer ::= $&system.terminal&.stderr
     assume network := system.network
-    addresses ::= resolve_addresses(.host = "localhost", .port = 8080)!
-    address ::= get(.self = &addresses, .index = 0)!
-    connection ::= TcpConnection(.address = address)!
+    addresses ::= resolve_addresses(.host = "localhost", .port = 8080)!!!
+    address ::= get(.self = &addresses, .index = 0)!!!
+    connection ::= TcpConnection(.address = address)!!!
     bytes: [4]UInt8 = (112, 105, 110, 103)
-    write_all(.self = $&connection, .buffer = view(.array = &bytes))!
-    shutdown_write(.self = $&connection)!
+    write_all(.self = $&connection, .buffer = view(.array = &bytes))!!!
+    shutdown_write(.self = $&connection)!!!
 }
 ```
 

@@ -12,7 +12,7 @@ roundtrip(.date: UtcDateTime) -> !Void = ..ok Void() := {
     ] { abort }
 }
 
-main() -> !Void = ..ok Void() := {
+run_main() -> !Void = ..ok Void() := {
     roundtrip(.date = UtcDateTime(.year = 1, .month = 1, .day = 1))!
     roundtrip(
         .date = UtcDateTime(
@@ -32,4 +32,9 @@ main() -> !Void = ..ok Void() := {
     if prior.year != 1969 or prior.month != 12 or prior.day != 31 or prior.second != 59 { abort }
     if valid_utc_date(.date = UtcDateTime(.year = 1900, .month = 2, .day = 29)).ok { abort }
     if weekday(.date = UtcDateTime(.year = 1970, .month = 1, .day = 1))! != 4 { abort }
+}
+
+main(.writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+    run_main()!!!
+    status_code = 0
 }

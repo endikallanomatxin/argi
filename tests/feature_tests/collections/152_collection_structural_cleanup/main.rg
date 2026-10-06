@@ -22,7 +22,7 @@ allocate(
         .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
     ) := { result = ..error(.reason = ..out_of_memory) }
 
-main(.system: System) -> !Void = ..ok Void() := {
+run_main(.system: System) -> !Void = ..ok Void() := {
     assume allocator := system.page_allocator
     refusal ::= RefusingAllocator()
     array ::= DynamicArray#(.t: Pair)(.allocator = allocator, .capacity = 1)!
@@ -72,4 +72,9 @@ main(.system: System) -> !Void = ..ok Void() := {
     if drops != 24 { abort }
     deinit(.self = $&deque, .allocator = allocator)
     if drops != 26 { abort }
+}
+
+main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+    run_main(.system = system)!!!
+    status_code = 0
 }

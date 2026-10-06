@@ -67,7 +67,7 @@ hash(.self: &Policy, .key: &Int32) -> (.hash: UIntNative) := { hash = 0 }
 
 eql(.self: &Policy, .left: &Int32, .right: &Int32) -> (.ok: Bool) := { ok = left&== right&}
 
-main(.system: System) -> !Void = ..ok Void() := {
+run_main(.system: System) -> !Void = ..ok Void() := {
     allocator :: RecordingAllocator = (.ffi = system.ffi)
     map ::= OwnedHashMap#(.key: Int32, .value: Tracked, .policy: Int32HashPolicy)(
         .policy    = Int32HashPolicy()
@@ -128,4 +128,9 @@ main(.system: System) -> !Void = ..ok Void() := {
         } ..error _ {} }
     if policy_drops != 2 or allocator.allocations != allocator.deallocations { abort }
 
+}
+
+main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+    run_main(.system = system)!!!
+    status_code = 0
 }

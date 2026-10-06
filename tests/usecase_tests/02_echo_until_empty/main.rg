@@ -1,5 +1,5 @@
 -- Echo complete lines until an empty line or EOF, including a final line without LF.
-main(.system: System) -> !Void = ..ok Void() := {
+run_main(.system: System) -> !Void = ..ok Void() := {
     assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
     assume writer ::= $&system.terminal&.stdout
     assume reader ::= $&system.terminal&.stdin
@@ -17,4 +17,9 @@ main(.system: System) -> !Void = ..ok Void() := {
             }
         }
     }
+}
+
+main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+    run_main(.system = system)!!!
+    status_code = 0
 }

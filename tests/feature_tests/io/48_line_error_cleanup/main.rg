@@ -66,7 +66,7 @@ read_byte(.self: $&Source) -> (.result: Errable#(ReadByte, (..stream_read_failed
     result = ..ok ..ok byte
 }
 
-main(.system: System) -> !Void = ..ok Void() := {
+run_main(.system: System) -> !Void = ..ok Void() := {
     allocator ::= RecordingAllocator(.ffi = system.ffi)
     failed_reader ::= Source(.text = "abc", .fail_after = 1)
     match read_line(.allocator = $&allocator, .reader = $&failed_reader) {
@@ -90,4 +90,9 @@ main(.system: System) -> !Void = ..ok Void() := {
         ..ok ~_ { abort }
     }
     if allocator.allocations != 3 or allocator.deallocations != 3 { abort }
+}
+
+main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+    run_main(.system = system)!!!
+    status_code = 0
 }

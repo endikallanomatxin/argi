@@ -14,7 +14,7 @@ expect_count(
     }
 }
 
-main(.system: System) -> !Void = ..ok Void() := {
+run_main(.system: System) -> !Void = ..ok Void() := {
     assume allocator := system.page_allocator
     counts ::= OwnedHashMap#(.key: String, .value: UIntNative, .policy: StringHashPolicy)(
         .policy    = StringHashPolicy()
@@ -52,4 +52,9 @@ main(.system: System) -> !Void = ..ok Void() := {
         ..error error { if error.reason != ..size_limit_exceeded { abort } }
     }
     expect_count(.self = &counts, .word = "café", .expected = 3, .allocator = allocator)!
+}
+
+main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+    run_main(.system = system)!!!
+    status_code = 0
 }

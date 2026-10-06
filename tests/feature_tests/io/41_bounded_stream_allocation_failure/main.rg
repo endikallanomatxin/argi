@@ -74,7 +74,7 @@ read_block(
     result = ..ok 1
 }
 
-main(.system: System) -> !Void = ..ok Void() := {
+run_main(.system: System) -> !Void = ..ok Void() := {
     allocator :: RecordingAllocator = (.ffi = system.ffi, .fail_at = 1)
     source :: FaultReader = FaultReader()
     scratch :: [2]UInt8 = (0, 0)
@@ -173,4 +173,9 @@ main(.system: System) -> !Void = ..ok Void() := {
     if owned.length != 8 or capacity(.self = &owned).value > 8 { abort }
     deinit(.self = $&owned, .allocator = $&allocator)
     if allocator.allocations != allocator.deallocations { abort }
+}
+
+main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+    run_main(.system = system)!!!
+    status_code = 0
 }
