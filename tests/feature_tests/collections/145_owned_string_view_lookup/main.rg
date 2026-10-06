@@ -1,4 +1,4 @@
-main(.system: System) -> !Void = ..ok Void() := {
+run_main(.system: System) -> !Void = ..ok Void() := {
     assume allocator := system.page_allocator
     map ::= OwnedHashMap#(.key: String, .value: UIntNative, .policy: StringHashPolicy)(
         .policy    = StringHashPolicy()
@@ -31,4 +31,9 @@ main(.system: System) -> !Void = ..ok Void() := {
         ..some borrowed { if borrowed.value&!= 42 { abort } }
     }
 
+}
+
+main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+    run_main(.system = system)!!!
+    status_code = 0
 }

@@ -1,4 +1,4 @@
-main(.system: System) -> !Void = ..ok Void() := {
+run_main(.system: System) -> !Void = ..ok Void() := {
     assume allocator := system.page_allocator
     assume file_system := system.file_system
     directory_path: StringView = "tests/feature_tests/system/80_filesystem_operations/build/sample"
@@ -46,4 +46,9 @@ main(.system: System) -> !Void = ..ok Void() := {
                 != ..invalid_path
             ] { abort } }
     }
+}
+
+main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+    run_main(.system = system)!!!
+    status_code = 0
 }

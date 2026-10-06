@@ -1,4 +1,4 @@
-main(.system: System) -> !Void = ..ok Void() := {
+run_main(.system: System) -> !Void = ..ok Void() := {
     assume allocator := system.page_allocator
     order ::= Int32OrderPolicy()
     queue ::= PriorityQueue#(.t: Int32, .order: Int32OrderPolicy)(
@@ -50,4 +50,9 @@ main(.system: System) -> !Void = ..ok Void() := {
         ..some item { if item.value != 2147483647 { abort } }
     }
 
+}
+
+main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+    run_main(.system = system)!!!
+    status_code = 0
 }

@@ -1,4 +1,4 @@
-main(.system: System) -> !Void = ..ok Void() := {
+run_main(.system: System) -> !Void = ..ok Void() := {
     assume network := system.network
     addresses ::= resolve_addresses(
         .host    = "127.0.0.1"
@@ -65,4 +65,9 @@ main(.system: System) -> !Void = ..ok Void() := {
             if is(.value = error.reason, .variant = ..datagram_truncated) == false { abort }
         }
     }
+}
+
+main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+    run_main(.system = system)!!!
+    status_code = 0
 }

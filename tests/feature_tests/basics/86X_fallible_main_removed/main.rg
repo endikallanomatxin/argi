@@ -1,0 +1,1 @@
+main() -> !Void = ..ok Void() := {}

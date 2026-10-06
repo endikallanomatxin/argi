@@ -1,4 +1,4 @@
-main(.system: System) -> !Void = ..ok Void() := {
+run_main(.system: System) -> !Void = ..ok Void() := {
     assume network := system.network
     match resolve_addresses(.host = "local\0host", .port = 0) {
         ..ok _ { abort } ..error error {
@@ -41,4 +41,9 @@ main(.system: System) -> !Void = ..ok Void() := {
     close(.self = $&listener)!
     match accept(.self = $&listener) { ..ok _ { abort } ..error _ {} }
     if port(.self = &bound).value == 0 { abort }
+}
+
+main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+    run_main(.system = system)!!!
+    status_code = 0
 }

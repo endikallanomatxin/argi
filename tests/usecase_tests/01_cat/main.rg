@@ -1,5 +1,5 @@
 -- Transfer binary input through one buffered output stream.
-main(.system: System) -> !Void = ..ok Void() := {
+run_main(.system: System) -> !Void = ..ok Void() := {
     assume allocator := system.page_allocator
     stdin ::= $&system.terminal&.stdin
     assume writer ::= $&BufferedWriter(
@@ -39,4 +39,9 @@ main(.system: System) -> !Void = ..ok Void() := {
             }
         }
     }
+}
+
+main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+    run_main(.system = system)!!!
+    status_code = 0
 }

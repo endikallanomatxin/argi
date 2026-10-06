@@ -1,4 +1,4 @@
-main() -> !Void = ..ok Void() := {
+run_main() -> !Void = ..ok Void() := {
     date ::= parse_utc(.text = "2024-02-29T12:34:56.123Z")!
     if date.nanoseconds != 123000000 { abort }
     bytes ::= zeroed#(.t: [30]UInt8)()
@@ -13,4 +13,9 @@ main() -> !Void = ..ok Void() := {
         ..ok _ { abort } ..error _ {}
     }
     if small[0] != 99 { abort }
+}
+
+main(.writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+    run_main()!!!
+    status_code = 0
 }

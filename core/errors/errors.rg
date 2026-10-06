@@ -371,7 +371,7 @@ report(
 
 report_trace(
         .trace  : &ErrorTrace,
-        .writer : $&Writer
+        .writer : $&Writer     = reach writer
     ) -> (
         .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) := {

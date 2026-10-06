@@ -1,6 +1,6 @@
 words ::= import ("./library")
 
-main(.system: System) -> !Void = ..ok Void() := {
+run_main(.system: System) -> !Void = ..ok Void() := {
     assume allocator := system.page_allocator
     assume file_system := system.file_system
     assume writer ::= $&BufferedWriter(
@@ -34,4 +34,9 @@ main(.system: System) -> !Void = ..ok Void() := {
         print(entry.value&, .terminator = "\t")!
         print(as_view(entry.key))!
     }
+}
+
+main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+    run_main(.system = system)!!!
+    status_code = 0
 }

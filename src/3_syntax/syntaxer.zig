@@ -1183,6 +1183,13 @@ pub const Syntaxer = struct {
                 continue;
             }
 
+            if (self.tokenIs(.triple_bang)) {
+                const bang_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
+                self.advanceOne();
+                node = try self.addNode(.error_report_return, bang_token, .{ .node = node });
+                continue;
+            }
+
             if (self.tokenIs(.bang)) {
                 const bang_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
                 self.advanceOne();

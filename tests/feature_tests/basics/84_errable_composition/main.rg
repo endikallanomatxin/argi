@@ -19,7 +19,7 @@ pass#(.t: Type)(.value: t) -> (.result: Errable#(.t: t, .reasons: (..composition
     result = ..ok ~payload
 }
 
-main() -> (.result: Errable#(.t: Void, .reasons: (..composition_failure)) = ..ok Void()) := {
+run_main() -> (.result: Errable#(.t: Void, .reasons: (..composition_failure)) = ..ok Void()) := {
     bounded()!
     value ::= pass(.value = Box(.number = 42))!
     if value.number != 42 { abort }
@@ -31,4 +31,9 @@ main() -> (.result: Errable#(.t: Void, .reasons: (..composition_failure)) = ..ok
             ] { abort }
         }
     }
+}
+
+main(.writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+    run_main()!!!
+    status_code = 0
 }

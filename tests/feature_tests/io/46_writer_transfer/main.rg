@@ -58,7 +58,7 @@ flush(
     result = ..error(.reason = ..stream_flush_failed)
 }
 
-main() -> !Void = ..ok Void() := {
+run_main() -> !Void = ..ok Void() := {
     input: [5]UInt8 = (0, 255, 65, 66, 10)
     output ::= zeroed#([8]UInt8)()
     base ::= ByteWriter(.bytes = view($&output))
@@ -149,4 +149,9 @@ main() -> !Void = ..ok Void() := {
     deinit($&flush_writer)
     if flush_sink.received != 2 { abort }
 
+}
+
+main(.writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+    run_main()!!!
+    status_code = 0
 }

@@ -1,7 +1,7 @@
 python := import ("python")
 numpy := import ("python/numpy")
 
-main(.system: System) -> !Void = ..ok Void() := {
+run_main(.system: System) -> !Void = ..ok Void() := {
     interpreter ::= python.Python(.ffi = system.ffi)!
     input: [4]Float64 = (1.0, 2.0, 3.0, 4.0)
     other: [4]Float64 = (2.0, 3.0, 4.0, 5.0)
@@ -34,4 +34,9 @@ main(.system: System) -> !Void = ..ok Void() := {
     if numpy.sum(.self = &zero)! != 0.0 or numpy.dot(.left = &zero, .right = &zero)! != 0.0 {
         abort
     }
+}
+
+main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+    run_main(.system = system)!!!
+    status_code = 0
 }

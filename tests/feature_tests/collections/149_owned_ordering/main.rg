@@ -31,7 +31,7 @@ allocate(
     result = ..error(.reason = ..out_of_memory)
 }
 
-main(.system: System) -> !Void = ..ok Void() := {
+run_main(.system: System) -> !Void = ..ok Void() := {
     assume allocator := system.page_allocator
     order ::= PairOrder()
     items ::= DynamicArray#(.t: Pair)(.allocator = allocator, .capacity = 3)!
@@ -111,4 +111,9 @@ main(.system: System) -> !Void = ..ok Void() := {
     }
     deinit(.self = $&bounded, .allocator = allocator)
     if drops != 16 { abort }
+}
+
+main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+    run_main(.system = system)!!!
+    status_code = 0
 }

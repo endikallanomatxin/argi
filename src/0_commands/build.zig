@@ -60,14 +60,10 @@ fn hasExecutableMain(graph: *const graph_mod.GlobalSemanticGraph) bool {
     for (graph.functions.items) |function| {
         const declaration = graph.declarations.items[@intFromEnum(function.declaration)];
         if (!std.mem.eql(u8, graph.text(declaration.name), "main")) continue;
+        if (function.output.len == 0) return true;
         if (function.output.len != 1) continue;
         const output = graph.fields.items[function.output.start];
         if (std.mem.eql(u8, graph.text(output.name), "status_code") and types.isBuiltin(graph, output.ty, .Int32)) return true;
-        if (std.mem.eql(u8, graph.text(output.name), "result")) {
-            const ok = types.findVariant(graph, output.ty, "ok") orelse continue;
-            const payload = ok.variant.payload_type orelse continue;
-            if (types.isBuiltin(graph, payload, .Void) and types.findVariant(graph, output.ty, "error") != null) return true;
-        }
     }
     return false;
 }
@@ -77,7 +73,7 @@ fn printMissingMainError(module_dir: []const u8, from_manifest: bool) void {
         std.debug.print("Error: executable module has no valid main function:\n  {s}\n\n", .{module_dir})
     else
         std.debug.print("Error: module has no executable main function:\n  {s}\n\n", .{module_dir});
-    std.debug.print("Expected main() -> (.status_code: Int32) or main() -> !Void.\n", .{});
+    std.debug.print("Expected main() -> () or main() -> (.status_code: Int32).\n", .{});
 }
 
 fn dumpDiagnostics(diagnostics: *diag.Diagnostics, flags: BuildFlags) void {

@@ -1,7 +1,7 @@
 hex := import ("codecs/encoding/hex")
 base64 := import ("codecs/encoding/base64")
 
-main(.system: System) -> !Void = ..ok Void() := {
+run_main(.system: System) -> !Void = ..ok Void() := {
     assume allocator := system.page_allocator
     bytes :: [3]UInt8 = (102, 111, 111)
     text ::= hex.encode(.bytes = view(.array = &bytes), .allocator = allocator)!
@@ -68,4 +68,9 @@ main(.system: System) -> !Void = ..ok Void() := {
             ..ok ~_ { abort } ..error _ {}
         }
     }
+}
+
+main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+    run_main(.system = system)!!!
+    status_code = 0
 }

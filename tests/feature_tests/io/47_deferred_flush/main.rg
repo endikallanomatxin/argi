@@ -41,7 +41,7 @@ finish(.sink: $&Sink, .early: Bool) -> !Void = ..ok Void() := {
     write_byte(writer, 66)!
 }
 
-main() -> !Void = ..ok Void() := {
+run_main() -> !Void = ..ok Void() := {
     normal ::= Sink()
     finish($&normal, false)!
     if normal.flush_calls != 1 { abort }
@@ -71,4 +71,9 @@ main() -> !Void = ..ok Void() := {
     }
     if both_failed.flush_calls != 1 { abort }
 
+}
+
+main(.writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+    run_main()!!!
+    status_code = 0
 }

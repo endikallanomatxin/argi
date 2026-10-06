@@ -4,7 +4,7 @@ count_computed#(.t: Type)(.text: t) -> (.count: UIntNative = 0) := {
     }
 }
 
-main() -> !Void = ..ok Void() := {
+run_main() -> !Void = ..ok Void() := {
     if count_computed(",a,").count != 3 { abort }
 
     parts ::= split(",a,,b,", .separator = ",")!
@@ -33,4 +33,9 @@ main() -> !Void = ..ok Void() := {
         count = count + 1
     }
     if count != 1 { abort }
+}
+
+main(.writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+    run_main()!!!
+    status_code = 0
 }

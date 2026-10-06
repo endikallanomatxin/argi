@@ -216,7 +216,13 @@ pub const FrontendPipeline = struct {
         const target = self.options.semantizing.selected_test_name orelse "main";
         var found = false;
         var takes_system = false;
-        var fallible_main = false;
+        var returns_status = false;
+        // Bootstrap reporting only when requested. Creating FFI/terminal
+        // owners in otherwise pure entries changes once and capability checks.
+        var needs_reporting = self.options.semantizing.selected_test_name != null;
+        for (self.syntax_files.items) |*file| for (file.tokens.items(.content)) |content| {
+            if (content == .triple_bang) needs_reporting = true;
+        };
         for (self.syntax_files.items) |*file| {
             const source = self.source_db.get(file.file_id);
             if (!std.mem.eql(u8, std.fs.path.dirname(source.path) orelse ".", dir)) continue;
@@ -225,10 +231,15 @@ pub const FrontendPipeline = struct {
                 const name = file.tokenText(self.source_db, function.name_token);
                 if (std.mem.eql(u8, name, target)) {
                     found = true;
-                    if (file.structTypeLiteral(function.output)) |output| {
+                    if (self.options.semantizing.selected_test_name == null) {
+                        const output = file.structTypeLiteral(function.output) orelse return error.InvalidMainOutput;
                         if (output.fields.len == 1) {
                             const field = file.structTypeField(output.fields[0]).?;
-                            fallible_main = field.inferred_result or std.mem.eql(u8, file.tokenText(self.source_db, field.name_token), "result");
+                            returns_status = std.mem.eql(u8, file.tokenText(self.source_db, field.name_token), "status_code");
+                        }
+                        if (output.fields.len != 0 and !returns_status) {
+                            try self.diagnostics.add(file.location(root), .semantic, "main must return no values or (.status_code: Int32)", .{});
+                            return error.Reported;
                         }
                     }
                     if (file.structTypeLiteral(function.input)) |input| {
@@ -248,9 +259,8 @@ pub const FrontendPipeline = struct {
         const is_test = self.options.semantizing.selected_test_name != null;
         const output = if (is_test) "!()" else "(.status_code: Int32 = 0)";
         const result = if (is_test) "result" else "status_code";
-        fallible_main = fallible_main and !is_test;
-        const template = if (takes_system) @embedFile("program_entry.rg") else if (fallible_main) @embedFile("fallible_plain_entry.rg") else @embedFile("plain_entry.rg");
-        const tracer = if (fallible_main or is_test)
+        const template = if (takes_system) @embedFile("program_entry.rg") else @embedFile("plain_entry.rg");
+        const tracer = if (needs_reporting)
             "trace_buffer :: [4096]UInt8 = zeroed#(.t: [4096]UInt8)()\n" ++
                 "    tracer_storage ::= FixedSizeErrorTracer(.buffer = view($&trace_buffer))\n" ++
                 "    tracer_virtual ::= to_virtual#(.abstract: ErrorTracer)(.value = $&tracer_storage)\n" ++
@@ -272,25 +282,19 @@ pub const FrontendPipeline = struct {
                 "        }}\n" ++
                 "    }}\n" ++
                 "    result = ~test_result", .{ target, call_args })
-        else if (fallible_main)
-            try std.fmt.allocPrint(self.allocator, "main_result := {s}({s})\n" ++
-                "    match main_result {{\n" ++
-                "        ..ok _ {{}}\n" ++
-                "        ..error error {{\n" ++
-                "            status_code = 1\n" ++
-                "            assume error_tracer ::= $&noop_error_tracer\n" ++
-                "            write(.self = $&terminal&.stderr, .text = \"error: unhandled error in main\\n\")\n" ++
-                "            report_trace(.trace = &error.trace, .writer = $&terminal&.stderr)\n" ++
-                "        }}\n" ++
-                "    }}", .{ target, call_args })
+        else if (returns_status)
+            try std.fmt.allocPrint(self.allocator, "{s} = {s}({s})", .{ result, target, call_args })
         else
-            try std.fmt.allocPrint(self.allocator, "{s} = {s}({s})", .{ result, target, call_args });
+            try std.fmt.allocPrint(self.allocator, "__main_result ::= {s}({s})", .{ target, call_args });
         defer self.allocator.free(call);
         const with_output = try std.mem.replaceOwned(u8, self.allocator, template, "__ARGI_OUTPUT__", output);
         defer self.allocator.free(with_output);
         const with_tracer = try std.mem.replaceOwned(u8, self.allocator, with_output, "__ARGI_TRACER_SETUP__", tracer);
         defer self.allocator.free(with_tracer);
-        self.entry_source = try std.mem.replaceOwned(u8, self.allocator, with_tracer, "__ARGI_CALL__", call);
+        const report_setup = if (!needs_reporting) "" else if (takes_system) "assume writer ::= $&terminal&.stderr" else "ffi_storage ::= ForeignFunctionInterface()\n    assume ffi ::= $&ffi_storage\n    terminal_storage ::= Terminal()\n    assume writer ::= $&terminal_storage.stderr";
+        const with_report = try std.mem.replaceOwned(u8, self.allocator, with_tracer, "__ARGI_REPORT_SETUP__", report_setup);
+        defer self.allocator.free(with_report);
+        self.entry_source = try std.mem.replaceOwned(u8, self.allocator, with_report, "__ARGI_CALL__", call);
         self.entry_path = try std.fs.path.join(self.allocator, &.{ dir, "<program-entry>" });
         self.entry_file = try self.diagnostics.appendSource(.{ .path = self.entry_path.?, .code = self.entry_source.? });
         var tokens = tokenizer.Tokenizer.init(self.allocator, self.diagnostics, self.entry_source.?, self.entry_file.?);

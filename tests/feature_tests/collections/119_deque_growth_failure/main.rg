@@ -53,7 +53,7 @@ drops :: Int32 = 0
 
 Tracked deinit(.self: $&Tracked) -> () := { drops = drops + 1 }
 
-main(.system: System) -> !Void = ..ok Void() := {
+run_main(.system: System) -> !Void = ..ok Void() := {
     allocator :: RecordingAllocator = (.ffi = system.ffi)
     queue ::= Deque#(.t: Tracked)(.capacity = 2, .allocator = $&allocator)!
     push_back(.self = $&queue, .value = Tracked(.id = 1), .allocator = $&allocator)!
@@ -90,4 +90,9 @@ main(.system: System) -> !Void = ..ok Void() := {
     deinit(.self = $&front)
     deinit(.self = $&back)
     if drops != 4 { abort }
+}
+
+main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+    run_main(.system = system)!!!
+    status_code = 0
 }

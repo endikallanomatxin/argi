@@ -4,7 +4,7 @@ drops :: Int32 = 0
 
 Tracked deinit(.self: $&Tracked) -> () := { drops = drops + 1 }
 
-main(.system: System) -> !Void = ..ok Void() := {
+run_main(.system: System) -> !Void = ..ok Void() := {
     assume allocator := system.page_allocator
     queue ::= Deque#(.t: Tracked)(.capacity = 2)!
     push_back(.self = $&queue, .value = Tracked(.id = 1))!
@@ -28,4 +28,9 @@ main(.system: System) -> !Void = ..ok Void() := {
     extracted ::= pop_back(.self = $&strings)!
     deinit(.self = $&strings)
     if as_view(.self = &extracted).view != "A" { abort }
+}
+
+main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+    run_main(.system = system)!!!
+    status_code = 0
 }

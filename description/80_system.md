@@ -50,31 +50,36 @@ calls in that scope, but cannot escape after the allocator is cleaned up.
 
 ## Program results
 
-`main` may return one `.status_code: Int32` output or one `.result` containing
-an `Errable<Void>`. The fallible shorthand infers its reasons:
+`main` returns no values, or one `.status_code: Int32` output when the program
+needs explicit control of its exit code. Normal completion of a no-result main
+exits with `0`; the integer form uses its returned status, including on early
+`return`. There is no special fallible-main contract.
 
 ```rg
-main(.system: System) -> !Void = ..ok Void() := {
-    write(.self = $&system.terminal&.stdout, .text = "ready\n")!
+main(.system: System) -> () := {
+    assume writer ::= $&system.terminal&.stderr
+    write($&system.terminal&.stdout, "ready\n")!!!
 }
 ```
 
-The explicit default makes successful completion return `..ok Void()` without
-assigning `result` in the body. It is an ordinary output default, not an
-implicit return of the last expression. The same contract works without a
-`System` input and with the explicit `Errable#(Void)` output form.
+`!!!` unwraps success, or reports the error and returns normally from the
+containing function. It does not set a failure exit code. To exit with `1` on
+such an early return, initialize `.status_code: Int32 = 1` and set it to `0`
+only after successful work. Fallible work may remain in an ordinary helper:
 
-Success exits with status `0`. A returned error exits with status `1` and
-writes an unhandled-error heading followed by its trace to stderr. Reporting
-calls the `ErrorTracer` retained by that error through its ordinary interface.
-The default entry tracer retains bounded context in a 4096-byte stack buffer;
-its report marks context truncation when needed. A program may supply another
-tracer provided its lifetime covers the returned error and reporting.
+```rg
+main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+    run(.system = system)!!!
+    status_code = 0
+}
+```
 
-Reporting runs before entry-owned terminal, tracer, and other process
-resources are cleaned up. Reporting failures do not recursively report or
-change the failure exit status. The integer-returning contract continues to
-use the program's explicit status code.
+Reporting uses the ordinary writer and the tracer stored in the error.
+The checked entry provides a stderr writer and a bounded 4096-byte tracer;
+functions using reporting need a reachable writer or an explicit writer input.
+A locally selected writer or tracer retains its ordinary meaning. Reporting
+finishes before normal return cleanup releases borrowed resources. A failed
+report is not recursively reported and does not alter the pending return.
 
 ## Stream capabilities
 
@@ -127,8 +132,6 @@ Streams may be redirected to files or pipes. A stream implementing `Reader`
 or `Writer` does not by itself promise terminal-specific operations such as
 querying screen dimensions.
 
-A fallible `main` may create a fixed-size tracer, its backing array, and its
-virtual interface locally. Returning an error retains that bounded storage
-in the entry wrapper, which reports the trace before running its cleanup.
-The error's existing tracer interface controls reporting; the wrapper does
-not replace it with the default tracer.
+An ordinary fallible helper may return an error borrowing a locally created
+fixed-size tracer. Supported bounded storage is retained by its caller, which
+can report the error with `!!!` before releasing that storage.

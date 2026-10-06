@@ -1,4 +1,4 @@
-main(.system: System) -> !Void = ..ok Void() := {
+run_main(.system: System) -> !Void = ..ok Void() := {
     assume allocator := system.page_allocator
     map ::= OwnedHashMap#(.key: Int32, .value: String, .policy: Int32HashPolicy)(
         .policy    = Int32HashPolicy()
@@ -8,4 +8,9 @@ main(.system: System) -> !Void = ..ok Void() := {
     put(.self = $&map, .key = 1, .value = ~text, .allocator = allocator)!
     query :: Int32 = 1
     as_view(.self = &text)
+}
+
+main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+    run_main(.system = system)!!!
+    status_code = 0
 }

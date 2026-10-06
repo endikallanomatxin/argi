@@ -20,7 +20,7 @@ hash(.self: &Policy, .key: &Key) -> (.hash: UIntNative) := { hash = 7 }
 
 eql(.self: &Policy, .left: &Key, .right: &Key) -> (.ok: Bool) := { ok = left&.id == right&.id }
 
-main(.system: System) -> !Void = ..ok Void() := {
+run_main(.system: System) -> !Void = ..ok Void() := {
     assume allocator := system.page_allocator
     map ::= OwnedHashMap#(.key: Key, .value: Tracked, .policy: Policy)(
         .policy    = Policy()
@@ -84,4 +84,9 @@ main(.system: System) -> !Void = ..ok Void() := {
         }
     }
     if key_drops != 33 { abort }
+}
+
+main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+    run_main(.system = system)!!!
+    status_code = 0
 }

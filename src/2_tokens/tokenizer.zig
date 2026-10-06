@@ -472,6 +472,10 @@ pub const Tokenizer = struct {
                 if (self.peekNext() == '=') {
                     try self.addToken(tok.Content{ .comparison_operator = .not_equal }, loc);
                     _ = self.advance(); // Advance past the second '!'.
+                } else if (self.peekNext() == '!' and self.location.offset + 2 < self.source.len and self.source[self.location.offset + 2] == '!') {
+                    try self.addToken(tok.Content{ .triple_bang = .{} }, loc);
+                    _ = self.advance();
+                    _ = self.advance();
                 } else if (self.peekNext() == '!') {
                     try self.addToken(tok.Content{ .double_bang = .{} }, loc);
                     _ = self.advance(); // Advance past the second '!'.

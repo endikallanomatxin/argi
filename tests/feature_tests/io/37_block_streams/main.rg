@@ -55,7 +55,7 @@ write_block(
     result = ..ok 1
 }
 
-main() -> !Void = ..ok Void() := {
+run_main() -> !Void = ..ok Void() := {
     input: [4]UInt8 = (65, 0, 66, 10)
     output :: [4]UInt8 = (9, 9, 9, 9)
     source :: Source = (.bytes = view(.array = &input), .position = 0, .calls = 0)
@@ -83,4 +83,9 @@ main() -> !Void = ..ok Void() := {
     match read_exact(.self = $&virtual, .buffer = view(.array = $&scratch)) {
         ..ok _ { abort } ..error _ {}
     }
+}
+
+main(.writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+    run_main()!!!
+    status_code = 0
 }

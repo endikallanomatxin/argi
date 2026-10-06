@@ -1,4 +1,4 @@
-main(.system: System) -> (.result: Errable#(.t: Void, .reasons: CliReasons) = ..ok Void()) := {
+run_main(.system: System) -> (.result: Errable#(.t: Void, .reasons: CliReasons) = ..ok Void()) := {
     assume allocator := system.page_allocator
     specs :: [3]CliSpec = (
         CliSpec(.name = "verbose", .short_name = "v", .help = "Enable tracing", .repeatable = true),
@@ -54,4 +54,9 @@ main(.system: System) -> (.result: Errable#(.t: Void, .reasons: CliReasons) = ..
                 err&.reason
                 != ..duplicate_option
             ] { abort } } }
+}
+
+main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+    run_main(.system = system)!!!
+    status_code = 0
 }

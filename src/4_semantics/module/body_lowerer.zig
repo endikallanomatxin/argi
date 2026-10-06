@@ -359,7 +359,7 @@ const Context = struct {
             .expression_statement => self.lowerNode(self.tree.unaryOperand(node).?, expected),
             .move_expression => self.wrapUnary(node, .move_value, expected),
             .pipe_expression => self.lowerPipe(node, expected),
-            .handle_expression => self.lowerHandle(node, expected),
+            .handle_expression, .error_report_return => self.lowerHandle(node, expected),
             .unwrap_or, .unwrap_or_do => self.lowerUnwrap(node, expected),
             .function_call => self.lowerCall(node, expected),
             .code_block => self.lowerBlockNode(node),
@@ -577,7 +577,8 @@ const Context = struct {
     // is conditional. Match payloads remain branch-local and are moved into
     // that storage, so cleanup and definite initialization use ordinary flow.
     fn lowerHandle(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
-        const handle = self.tree.extraData(syn.HandleExtra, self.tree.data(node).extra);
+        const reporting = self.tree.tag(node) == .error_report_return;
+        const handle = if (reporting) syn.HandleExtra{ .value = self.tree.unaryOperand(node).?, .result_name = .none, .error_name = self.tree.mainToken(node), .body = node } else self.tree.extraData(syn.HandleExtra, self.tree.data(node).extra);
         const value = try self.lowerNode(handle.value, null);
         const payload = try self.pending(node, .{ .resolve_choice_payload = .{
             .requires_errable = true,
@@ -586,15 +587,15 @@ const Context = struct {
             .option_name = try self.writer.addString("ok"),
             .source = self.sourceRef(node),
         } }, expected);
-        if (handle.result_name == .none) {
+        if (!reporting and handle.result_name == .none) {
             if (expected) |ty| if (ty != try self.builtin(.Void)) {
                 if (self.diagnostics) |bag| try bag.add(self.tree.tokenLocation(handle.error_name), .semantic, "handle without a value binding produces Void", .{});
                 return error.Reported;
             };
             return self.lowerHandleWithoutResult(node, value.node);
         }
-        const result_name = self.tree.tokenTextFromSource(self.source, handle.result_name.unwrap().?);
-        const error_name = self.tree.tokenTextFromSource(self.source, handle.error_name);
+        const result_name = if (reporting) "#reported_value" else self.tree.tokenTextFromSource(self.source, handle.result_name.unwrap().?);
+        const error_name = if (reporting) "#reported_error" else self.tree.tokenTextFromSource(self.source, handle.error_name);
         if (std.mem.eql(u8, result_name, error_name)) {
             if (self.diagnostics) |bag| try bag.add(self.tree.tokenLocation(handle.error_name), .semantic, "handle result and error bindings must have different names", .{});
             return error.Reported;
@@ -614,7 +615,7 @@ const Context = struct {
         try self.pushScope();
         try self.bindings.append(.{ .name = self.graph.semantic.bindings.items[@intFromEnum(result)].name, .id = result, .ty = expected });
         try self.bindings.append(.{ .name = self.graph.semantic.bindings.items[@intFromEnum(failure)].name, .id = failure, .ty = null });
-        const failure_body = try self.lowerBlock(handle.body);
+        const failure_body = if (reporting) try self.lowerReportReturnBlock(node, failure) else try self.lowerBlock(handle.body);
         self.popScope();
         var cases: [2]entities.ModuleNodeId = undefined;
         for ([_][]const u8{ "ok", "error" }, [_]entities.ModuleBindingId{ success, failure }, [_]entities.ModuleBlockId{ success_body, failure_body }, 0..) |name, binding, body, i| {
@@ -628,8 +629,22 @@ const Context = struct {
         return self.resolved(node, expected, .{ .value_sequence = block });
     }
 
-    // No result slot is needed: match owns and drops either payload in its
-    // branch. The handler remains in the caller's control-flow context.
+    // Reporting is an ordinary reached call. A bare return then follows the
+    // enclosing function's output and cleanup rules.
+    fn lowerReportReturnBlock(self: *Context, node: syn.NodeIndex, failure: entities.ModuleBindingId) !entities.ModuleBlockId {
+        const error_use = try self.resolved(node, null, .{ .binding_use = failure });
+        const trace = try self.pending(node, .{ .resolve_field = .{ .node = self.nextNodeId(), .value = error_use.node, .field_name = try self.writer.addString("trace"), .source = self.sourceRef(node) } }, null);
+        const reference = try self.pending(node, .{ .resolve_address = .{ .node = self.nextNodeId(), .value = trace.node, .mutability = .read_only, .collapse_existing_pointer = false } }, null);
+        const start: u32 = @intCast(self.graph.semantic.value_fields.items.len);
+        try self.graph.semantic.value_fields.append(self.allocator, .{ .name = try self.writer.addString("trace"), .value = reference.node });
+        const input = try self.resolved(node, null, .{ .struct_value_literal = .{ .fields = .{ .start = start, .len = 1 } } });
+        try self.captureAssumedFields(node, input.node);
+        const callee = try self.writer.addExternalRef(.{ .kind = .function, .module_path = null, .name = try self.writer.addString("report_trace"), .source = self.sourceRef(node) });
+        const report = try self.pending(node, .{ .resolve_call = .{ .node = self.nextNodeId(), .callee = callee, .callee_value = null, .input = input.node, .expected_type = null, .visible_bindings = try self.captureVisibleBindings(), .owner_function = self.current_function } }, null);
+        const ret = try self.resolved(node, try self.builtin(.Void), .{ .return_statement = .{ .expression = null, .cleanup = .{ .start = 0, .len = 0 } } });
+        return self.writer.addBlock(.{ .nodes = try self.writer.appendNodeRefs(&.{ report.node, ret.node }), .ret_val = null });
+    }
+
     fn lowerHandleWithoutResult(self: *Context, node: syn.NodeIndex, value: entities.ModuleNodeId) !Lowered {
         const handle = self.tree.extraData(syn.HandleExtra, self.tree.data(node).extra);
         const error_name = self.tree.tokenTextFromSource(self.source, handle.error_name);

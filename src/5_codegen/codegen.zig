@@ -2427,7 +2427,9 @@ pub const CodeGenerator = struct {
         if (!symbol.is_c_abi) {
             const result = try self.callArgi(symbol, input.value_ref, "call");
             try self.markCallDropState(call, result, false);
-            if (callee.output.len == 0) return null;
+            // No-output Argi calls return an empty record. Preserve that unit
+            // value when a checked entry binds an otherwise discarded call.
+            if (callee.output.len == 0) return .{ .value_ref = result, .type_ref = symbol.return_type, .ty = null };
             if (callee.output.len == 1) {
                 const field = self.graph.fields.items[callee.output.start];
                 return .{ .value_ref = c.LLVMBuildExtractValue(self.builder, result, 0, "call.out"), .type_ref = try self.toLLVMType(field.ty), .ty = field.ty };

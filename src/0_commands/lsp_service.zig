@@ -1056,7 +1056,7 @@ fn classifyToken(content: token.Content) ?TokenClass {
             else => .{ .type_index = TOKEN_INDEX.number },
         },
         .keyword_abort, .keyword_import, .keyword_return, .keyword_if, .keyword_else, .keyword_match, .keyword_for, .keyword_in, .keyword_while, .keyword_break, .keyword_continue, .keyword_once, .keyword_assume, .keyword_reach, .keyword_test, .keyword_and, .keyword_or => .{ .type_index = TOKEN_INDEX.keyword },
-        .binary_operator, .comparison_operator, .equal, .arrow, .pipe, .tilde, .bang, .double_bang, .question_mark, .ampersand, .dollar, .colon, .double_colon => .{ .type_index = TOKEN_INDEX.operator },
+        .binary_operator, .comparison_operator, .equal, .arrow, .pipe, .tilde, .bang, .double_bang, .triple_bang, .question_mark, .ampersand, .dollar, .colon, .double_colon => .{ .type_index = TOKEN_INDEX.operator },
         else => null,
     };
 }
@@ -1088,6 +1088,7 @@ fn tokenLength(content: token.Content, source: []const u8, offset: u32) u32 {
         .keyword_and => 3,
         .keyword_or => 2,
         .double_colon, .arrow, .double_bang => 2,
+        .triple_bang => 3,
         .comparison_operator => |operator| switch (operator) {
             .not_equal, .less_than_or_equal, .greater_than_or_equal, .equal => 2,
             else => 1,

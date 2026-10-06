@@ -1,4 +1,4 @@
-main() -> !Void = ..ok Void() := {
+run_main() -> !Void = ..ok Void() := {
     boundaries :: [11]UInt32 = (
         0,
         127,
@@ -77,4 +77,9 @@ main() -> !Void = ..ok Void() := {
     empty ::= Utf8View(.text = "")!
     if length(.self = &empty).count != 0 { abort }
     for scalar in empty { abort }
+}
+
+main(.writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+    run_main()!!!
+    status_code = 0
 }

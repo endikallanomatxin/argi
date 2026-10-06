@@ -51,7 +51,7 @@ write_block(
     result = ..ok 1
 }
 
-main(.system: System) -> !Void = ..ok Void() := {
+run_main(.system: System) -> !Void = ..ok Void() := {
     assume allocator := system.page_allocator
     scratch :: [2]UInt8 = (0, 0)
     source :: FaultReader = FaultReader(.fail_at = 3)
@@ -122,4 +122,9 @@ main(.system: System) -> !Void = ..ok Void() := {
         ..error error { if error.reason != ..invalid_stream_buffer { abort } }
     }
     if source.calls != calls { abort }
+}
+
+main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+    run_main(.system = system)!!!
+    status_code = 0
 }
