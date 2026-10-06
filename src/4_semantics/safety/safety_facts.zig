@@ -13,10 +13,6 @@ pub const ValidityRoot = struct {
     id: ValidityRootId,
     state: enum { alive, conditional, maybe_alive, dead } = .alive,
     owned_resource: bool = false,
-    /// Receiving binding for a bounded caller frame; this is checker-local
-    /// storage identity and does not enter symbolic function summaries.
-    caller_frame_owner: ?u32 = null,
-    caller_frame_dependencies: []const ValidityRootId = &.{},
 };
 
 pub const ValidityDependency = struct {
@@ -51,11 +47,6 @@ pub const OutputFieldEffect = struct {
 /// Stable compiler-owned identity for a fresh runtime fact produced while
 /// evaluating a summarized expression.
 pub const FreshEffectSource = usize;
-
-/// Ordinary fresh effects and caller-frame storage have distinct temporal
-/// meanings. Keep this tag when rebasing identities across direct calls.
-/// It grants no storage acquisition capability or resource ownership.
-pub const caller_storage_source_bit: usize = @as(usize, 1) << (@bitSizeOf(usize) - 1);
 
 /// Symbolic value facts for a function output. All references to caller state
 /// remain expressed as InputPath until call instantiation.

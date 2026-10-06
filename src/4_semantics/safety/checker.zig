@@ -150,8 +150,6 @@ pub const SafetyChecker = struct {
         }
     };
 
-    retaining_call: bool = false,
-    receiving_binding: ?graph_mod.GlobalBindingId = null,
     allocator: std.mem.Allocator,
     diagnostics: *diagnostics.Diagnostics,
     graph: *graph_mod.GlobalSemanticGraph,
@@ -200,16 +198,6 @@ pub const SafetyChecker = struct {
         var inference = summary_infer.Infer.init(inference_allocator, self.graph, &engine);
         defer inference.deinit();
         inference.profile_io = self.profile_io;
-        // Provisional summaries distinguish borrowing a caller value from
-        // retaining its slot. Discover bounded frames from those dependencies,
-        // then infer final summaries with the retained storage identities.
-        try inference.inferSafetySummariesFixedPoint();
-        try @import("../global/storage_promotion.zig").prepare(inference_allocator, self.graph, self.diagnostics, &engine, &inference);
-        inference.deinit();
-        inference = summary_infer.Infer.init(inference_allocator, self.graph, &engine);
-        inference.profile_io = self.profile_io;
-        engine.deinit();
-        engine = summary_engine.Engine.init(inference_allocator);
         const inference_start = profile.timestamp(self.profile_io);
         try inference.inferSafetySummariesFixedPoint();
         profile.accumulate(self.profile_io, inference_start, &self.stats.summary_inference_ns);
@@ -407,14 +395,12 @@ pub const SafetyChecker = struct {
         result: ?*facts.ValueFacts,
     ) anyerror!void {
         const block = self.graph.blocks.items[@intFromEnum(block_id)];
-        for (self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len]) |node_id| {
+        const nodes = self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len];
+        for (nodes, 0..) |node_id, node_index| {
             if (!state.reachable) break;
             const node = self.graph.nodes.items[@intFromEnum(node_id)];
             switch (node.content) {
                 .binding_declaration => |binding| {
-                    const previous_receiver = self.receiving_binding;
-                    self.receiving_binding = binding;
-                    defer self.receiving_binding = previous_receiver;
                     const record = self.graph.bindings.items[@intFromEnum(binding)];
                     const storage = facts.Place{ .root = binding };
                     try self.beginLexicalStorage(state, storage);
@@ -425,9 +411,6 @@ pub const SafetyChecker = struct {
                     try self.setPlace(state, .{ .root = binding }, if (record.initialization != null and !record.deferred_initialization) .initialized else .deinitialized, value);
                 },
                 .assignment => |assignment| {
-                    const previous_receiver = self.receiving_binding;
-                    self.receiving_binding = assignment.binding;
-                    defer self.receiving_binding = previous_receiver;
                     const binding = self.graph.binding(assignment.binding);
                     const storage = facts.Place{ .root = assignment.binding };
                     const previous_state = self.initializednessAtPlace(state, storage);
@@ -441,7 +424,17 @@ pub const SafetyChecker = struct {
                     const value = try self.evaluate(function, assignment.value, state);
                     try self.setPlace(state, .{ .root = assignment.binding }, .initialized, value);
                 },
-                .auto_deinit_binding => |auto_id| try self.applyAutoDeinit(function, auto_id, state),
+                .auto_deinit_binding => |auto_id| {
+                    if (self.graph.function(function).body == block_id) {
+                        const final_cleanup = for (nodes[node_index..]) |remaining| {
+                            if (self.graph.node(remaining).content != .auto_deinit_binding) break false;
+                        } else true;
+                        // Fallthrough has the same escape rule as an explicit
+                        // return. Check before cleanup erases local owners.
+                        if (final_cleanup) try self.rejectEscapingOutputBindings(function, state);
+                    }
+                    try self.applyAutoDeinit(function, auto_id, state);
+                },
                 .struct_field_store => |store| {
                     const pointer = try self.evaluatePointerUse(function, node.source, store.struct_ptr, state) orelse continue;
                     const value = try self.evaluate(function, store.value, state);
@@ -737,6 +730,7 @@ pub const SafetyChecker = struct {
                 // continuation that receives the unwrapped value.
                 var error_state = try state.clone(self.allocator, if (self.collect_stats) &self.stats else null);
                 defer error_state.deinit();
+                try self.rejectPropagatedLocalError(function, node.source, prop.errable_value, prop.error_variant, value, &error_state);
                 for (self.graph.node_refs.items[prop.cleanup_nodes.start..][0..prop.cleanup_nodes.len]) |cleanup|
                     _ = try self.evaluate(function, cleanup, &error_state);
                 break :blk try self.error_success_facts(prop.errable_value, prop.ok_variant, prop.ok_value_field_index, value, state);
@@ -746,6 +740,7 @@ pub const SafetyChecker = struct {
                 const value = try self.evaluate(function, ctx.errable_value, state);
                 var error_state = try state.clone(self.allocator, if (self.collect_stats) &self.stats else null);
                 defer error_state.deinit();
+                try self.rejectPropagatedLocalError(function, node.source, ctx.errable_value, ctx.error_variant, value, &error_state);
                 _ = try self.evaluate(function, ctx.context, &error_state);
                 for (self.graph.node_refs.items[ctx.cleanup_nodes.start..][0..ctx.cleanup_nodes.len]) |cleanup|
                     _ = try self.evaluate(function, cleanup, &error_state);
@@ -820,6 +815,25 @@ pub const SafetyChecker = struct {
             .float_literal, .char_literal, .string_literal, .bool_literal, .declaration, .reach_directive, .break_statement, .continue_statement, .abort_statement => .{},
             else => .{},
         };
+    }
+
+    fn rejectPropagatedLocalError(
+        self: *SafetyChecker,
+        function: graph_mod.GlobalFunctionId,
+        source: primitives.SourceRef,
+        errable: graph_mod.GlobalNodeId,
+        error_variant: graph_mod.GlobalVariantId,
+        value: facts.ValueFacts,
+        state: *FunctionState,
+    ) !void {
+        const ty = self.graph.node(errable).ty orelse return;
+        const index = variantIndex(self.graph, ty, error_variant) orelse return;
+        if (value.known_choice_variant) |known| if (known != index) return;
+        // ! and !! return the error payload before ordinary success resumes.
+        // Its tracer and other dependencies obey the same output lifetime
+        // rule as an explicit return, before branch cleanup destroys locals.
+        const failure = try self.projectValueFacts(value, &.{.{ .variant = index }});
+        try self.rejectEscapingLocalRoots(function, source, failure, state);
     }
 
     // Propagation continues only on success. Its runtime value is the selected
@@ -929,20 +943,6 @@ pub const SafetyChecker = struct {
     ) !?facts.ValueFacts {
         const engine = self.active_summaries orelse return null;
         const summary = engine.summaryFor(callee) orelse return null;
-        const previous_receiver = self.receiving_binding;
-        if (call_node) |node| if (self.graph.retained_call_owners.items[@intFromEnum(node)]) |owner| {
-            self.receiving_binding = owner;
-        };
-        defer self.receiving_binding = previous_receiver;
-        const previous_retaining = self.retaining_call;
-        self.retaining_call = false;
-        if (call_node) |node| for (self.graph.retained_storage.items) |frame| {
-            if (std.mem.indexOfScalar(graph_mod.GlobalNodeId, frame.calls, node) != null) {
-                self.retaining_call = true;
-                break;
-            }
-        };
-        defer self.retaining_call = previous_retaining;
         var call_capabilities = std.AutoHashMap(facts.FreshEffectSource, facts.StorageCapabilityId).init(self.allocator);
         defer call_capabilities.deinit();
         const previous_capabilities = self.active_fresh_capabilities;
@@ -1642,6 +1642,26 @@ pub const SafetyChecker = struct {
         return target;
     }
 
+    fn resolveSummaryOpaqueStoragePath(
+        self: *SafetyChecker,
+        path: facts.InputPath,
+        argument_ids: []const graph_mod.GlobalValueFieldId,
+        arguments: []const facts.ValueFacts,
+        state: *FunctionState,
+    ) !?facts.Place {
+        if (try self.resolveSummaryInputPath(path, argument_ids, arguments, state)) |storage| return storage;
+        if (path.input_index >= argument_ids.len or path.input_index >= arguments.len) return null;
+        const argument = self.graph.value_fields.items[@intFromEnum(argument_ids[path.input_index])].value;
+        const pointer_slot = try self.resolvePlace(argument, state) orelse return null;
+        if (!isPointer(self.graph, self.graph.binding(pointer_slot.root).ty)) return null;
+        // An unknown input referent still has a symbolic opaque domain. Keep
+        // its hidden contents behind a dereference, separate from the pointer
+        // slot: ordinary post-state writes must not overwrite pointer facts.
+        var storage = try self.project(pointer_slot, .dereference);
+        for (path.projections) |projection| storage = try self.project(storage, projection);
+        return storage;
+    }
+
     fn applySummaryOpaqueStorageEffects(
         self: *SafetyChecker,
         summary: facts.SafetySummary,
@@ -1650,7 +1670,7 @@ pub const SafetyChecker = struct {
         state: *FunctionState,
     ) !void {
         for (summary.opaque_storage_effects) |effect| {
-            const storage = try self.resolveSummaryInputPath(effect.storage, argument_ids, arguments, state) orelse continue;
+            const storage = try self.resolveSummaryOpaqueStoragePath(effect.storage, argument_ids, arguments, state) orelse continue;
             var hidden = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
             defer hidden.deinit();
             var fresh_roots = std.AutoHashMap(facts.FreshEffectSource, facts.ValidityRootId).init(self.allocator);
@@ -1688,7 +1708,7 @@ pub const SafetyChecker = struct {
         state: *FunctionState,
     ) !void {
         for (summary.opaque_storage_empties) |empty_path| {
-            const storage = try self.resolveSummaryInputPath(empty_path, argument_ids, arguments, state) orelse continue;
+            const storage = try self.resolveSummaryOpaqueStoragePath(empty_path, argument_ids, arguments, state) orelse continue;
             self.markOpaqueStorageEmpty(state, storage);
         }
     }
@@ -1762,11 +1782,7 @@ pub const SafetyChecker = struct {
         state: *FunctionState,
     ) !facts.ValueFacts {
         if (outputs.len == 0) return .{};
-        if (outputs.len == 1) {
-            const value = try self.instantiateOutput(outputs[0], arguments, state);
-            try self.bindRetainedDependencies(value, state);
-            return value;
-        }
+        if (outputs.len == 1) return self.instantiateOutput(outputs[0], arguments, state);
         var fresh_roots = std.AutoHashMap(facts.FreshEffectSource, facts.ValidityRootId).init(self.allocator);
         defer fresh_roots.deinit();
         var fresh_capabilities = std.AutoHashMap(facts.FreshEffectSource, facts.StorageCapabilityId).init(self.allocator);
@@ -1780,28 +1796,7 @@ pub const SafetyChecker = struct {
             aggregate = try self.mergeValueFacts(aggregate, value.*);
         }
         aggregate.fields = fields;
-        try self.bindRetainedDependencies(aggregate, state);
         return aggregate;
-    }
-
-    fn bindRetainedDependencies(self: *SafetyChecker, value: facts.ValueFacts, state: *FunctionState) !void {
-        const receiver = self.receiving_binding orelse return;
-        var dependencies = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
-        defer dependencies.deinit();
-        try collectDependencyRoots(value, &dependencies);
-        // Keep frame obligations independently of the receiving value. A move
-        // can clear that Place before its original scope runs frame cleanup.
-        for (dependencies.items) |id| {
-            const root = &state.tracker.roots.items[@intFromEnum(id)];
-            if (root.caller_frame_owner != @intFromEnum(receiver)) continue;
-            var external = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
-            try external.appendSlice(root.caller_frame_dependencies);
-            for (dependencies.items) |dependency| {
-                if (state.tracker.roots.items[@intFromEnum(dependency)].caller_frame_owner == @intFromEnum(receiver)) continue;
-                try appendRootFact(&external, dependency);
-            }
-            root.caller_frame_dependencies = try external.toOwnedSlice();
-        }
     }
 
     fn instantiateOutput(
@@ -1990,16 +1985,7 @@ pub const SafetyChecker = struct {
                         input_storage = true;
                         break;
                     };
-                    // Caller frame storage exists independently of the selected payload.
-                    var retained_storage = false;
-                    var fresh_iterator = fresh_roots.iterator();
-                    while (fresh_iterator.next()) |entry| {
-                        if (entry.value_ptr.* == root.id and entry.key_ptr.* >= facts.caller_storage_source_bit) {
-                            retained_storage = true;
-                            break;
-                        }
-                    }
-                    if (!input_storage and !retained_storage) root.state = .conditional;
+                    if (!input_storage) root.state = .conditional;
                 }
                 for (state.storage_capabilities.items[first_capability..]) |*capability| if (capability.* == .available) {
                     capability.* = .conditional;
@@ -2021,13 +2007,9 @@ pub const SafetyChecker = struct {
         state: *FunctionState,
         fresh: *std.AutoHashMap(facts.FreshEffectSource, facts.ValidityRootId),
     ) !facts.ValidityRootId {
+        _ = self;
         if (fresh.get(source)) |root| return root;
         const root = try state.tracker.establish(.fresh);
-        if (source >= facts.caller_storage_source_bit and !self.retaining_call) {
-            try appendRootFact(&state.lexical_storage_generations, root);
-            if (self.receiving_binding) |binding|
-                state.tracker.roots.items[@intFromEnum(root)].caller_frame_owner = @intFromEnum(binding);
-        }
         try fresh.put(source, root);
         return root;
     }
@@ -3163,29 +3145,8 @@ pub const SafetyChecker = struct {
         id: graph_mod.GlobalAutoDeinitId,
         state: *FunctionState,
     ) !void {
-        if (self.graph.retainedCleanup(id)) return;
         const cleanup = self.graph.auto_deinits.items[@intFromEnum(id)];
         const storage = facts.Place{ .root = cleanup.binding };
-        // Overwriting a receiving value leaves earlier frames alive until its
-        // scope ends. Every frame keeps its own delayed-cleanup obligations.
-        for (state.tracker.roots.items) |root| if (root.caller_frame_owner == @intFromEnum(cleanup.binding)) {
-            const source = self.graph.binding(cleanup.binding).source;
-            for (root.caller_frame_dependencies) |dependency| {
-                const required = state.tracker.roots.items[@intFromEnum(dependency)];
-                if (required.state == .dead or (required.state != .alive and !required.owned_resource)) {
-                    try self.report(source, "retained storage cleanup depends on a root that has ended", .{});
-                    break;
-                }
-            }
-            if (self.valueAtPlace(state, storage)) |value| {
-                if (valueDependsOnDeadRoot(value, state)) try self.report(source, "retained storage cleanup depends on a root that has ended", .{});
-            }
-        };
-        // Destroy the receiver before the frame so its destructor can still
-        // inspect returned references. Borrowed copies do not extend this scope.
-        defer for (state.tracker.roots.items) |*root| {
-            if (root.caller_frame_owner == @intFromEnum(cleanup.binding)) root.state = .dead;
-        };
         switch (self.initializednessAtPlace(state, storage)) {
             .initialized => if (cleanup.deinit_fn != null) {
                 try self.evaluateResolvedAutoDeinit(function, cleanup, storage, state);
@@ -3343,7 +3304,19 @@ pub const SafetyChecker = struct {
         const opaque_provenance = try self.opaqueProvenanceForAccess(child, state);
         var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
         if (opaque_provenance.len == 0) {
-            if (storage) |target| try appendDependencyFact(&dependencies, .{ .root = try self.storageGeneration(state, target) });
+            if (storage) |target| {
+                const generation = try self.storageGeneration(state, target);
+                try appendDependencyFact(&dependencies, .{ .root = generation });
+                // Taking the address of an input/output slot borrows this
+                // function's physical storage. Summaries can also materialize
+                // facts rooted at those bindings for caller-derived values;
+                // those metadata roots alone do not constitute a slot borrow.
+                const record = self.graph.function(function);
+                const outputs = self.graph.binding_refs.items[record.output_bindings.start..][0..record.output_bindings.len];
+                if (self.functionInputIndex(function, target.root) != null or
+                    std.mem.indexOfScalar(graph_mod.GlobalBindingId, outputs, target.root) != null)
+                    try appendRootFact(&state.lexical_storage_generations, generation);
+            }
         } else {
             for (opaque_provenance) |provenance|
                 try appendDependencyFact(&dependencies, .{ .root = provenance.generation });
@@ -3541,8 +3514,13 @@ pub const SafetyChecker = struct {
         value: facts.ValueFacts,
         state: *FunctionState,
     ) !void {
-        if (self.valueDependsOnLocalStorage(function, value, state)) {
-            try self.report(source, "function output cannot depend on a local storage generation that ends before return", .{});
+        if (self.escapingLocalRoot(function, value, state)) |root| {
+            var name: []const u8 = "local or temporary";
+            for (state.storage_generations.items) |entry| if (entry.generation == root) {
+                name = self.graph.text(self.graph.binding(entry.storage.root).name);
+                break;
+            };
+            try self.report(source, "function output cannot depend on a local storage generation that ends before return (storage rooted at '{s}'); return an owned value instead, or create the owner in the caller and pass a reference to it", .{name});
             return;
         }
         if (valueDependsOnDeadRoot(value, state))
@@ -3558,8 +3536,7 @@ pub const SafetyChecker = struct {
         for (self.graph.binding_refs.items[record.output_bindings.start..][0..record.output_bindings.len]) |binding| {
             const storage = facts.Place{ .root = binding };
             const output = self.valueAtPlace(state, storage) orelse continue;
-            if (self.initializednessAtPlace(state, storage) != .initialized or
-                !self.typeContainsPointer(self.graph.bindings.items[@intFromEnum(binding)].ty)) continue;
+            if (self.initializednessAtPlace(state, storage) != .initialized) continue;
             const source = self.graph.bindings.items[@intFromEnum(binding)].source;
             try self.rejectEscapingLocalRoots(function, source, output, state);
             // Field assignments have their own authoritative place records.
@@ -3576,15 +3553,47 @@ pub const SafetyChecker = struct {
         self: *SafetyChecker,
         function: graph_mod.GlobalFunctionId,
         value: facts.ValueFacts,
-        state: *const FunctionState,
+        state: *FunctionState,
     ) bool {
+        return self.escapingLocalRoot(function, value, state) != null;
+    }
+
+    // Dependencies survive erasure into virtual receivers and opaque values.
+    // Inspect the facts rather than relying on the output's surface type.
+    fn escapingLocalRoot(
+        self: *SafetyChecker,
+        function: graph_mod.GlobalFunctionId,
+        value: facts.ValueFacts,
+        state: *FunctionState,
+    ) ?facts.ValidityRootId {
         for (value.dependencies) |dependency|
-            if (self.isLocalStorageGeneration(function, state, dependency.root)) return true;
+            if (self.isLocalStorageGeneration(function, state, dependency.root)) return dependency.root;
+        for (value.opaque_provenance) |provenance|
+            if (self.isLocalStorageGeneration(function, state, provenance.generation)) return provenance.generation;
+        for (state.opaque_storages.items) |domain| {
+            const stored = self.valueAtPlace(state, domain.storage) orelse facts.ValueFacts{};
+            var carries_domain = valueSharesOwnedDependency(value, stored);
+            if (!carries_domain) if (self.functionInputIndex(function, domain.storage.root)) |input_index| {
+                // Pointer input seeds describe an unknown caller referent.
+                // Symbolic output paths identify which input domain escapes;
+                // validity roots alone cannot distinguish possibly aliased
+                // inputs from unrelated owners sharing an allocator.
+                if (self.active_summaries) |summaries| if (summaries.summaryFor(function)) |summary| {
+                    for (summary.outputs) |output| if (effectBorrowsInputReferent(output, input_index)) {
+                        carries_domain = true;
+                        break;
+                    };
+                };
+            };
+            if (!carries_domain) continue;
+            for (domain.hidden_dependencies) |dependency|
+                if (self.isLocalStorageGeneration(function, state, dependency)) return dependency;
+        }
         for (value.fields) |field|
-            if (self.valueDependsOnLocalStorage(function, field.value.*, state)) return true;
+            if (self.escapingLocalRoot(function, field.value.*, state)) |root| return root;
         for (value.variants) |variant|
-            if (self.valueDependsOnLocalStorage(function, variant.value.*, state)) return true;
-        return false;
+            if (self.escapingLocalRoot(function, variant.value.*, state)) |root| return root;
+        return null;
     }
 
     fn isLocalStorageGeneration(
@@ -3594,17 +3603,12 @@ pub const SafetyChecker = struct {
         root: facts.ValidityRootId,
     ) bool {
         if (containsRoot(state.lexical_storage_generations.items, root)) return true;
-        const record = self.graph.functions.items[@intFromEnum(function)];
-        const inputs = self.graph.binding_refs.items[record.input_bindings.start..][0..record.input_bindings.len];
-        const outputs = self.graph.binding_refs.items[record.output_bindings.start..][0..record.output_bindings.len];
         for (state.storage_generations.items) |entry| {
             if (entry.generation != root) continue;
-            if (self.graph.retainedBinding(entry.storage.root)) return false;
             if (self.graph.isModuleBinding(entry.storage.root)) return false;
-            for (inputs) |input| if (input == entry.storage.root) return false;
-            // Function output bindings model caller-provided result storage.
-            // A value materialized into that storage may carry its generation
-            // without borrowing a callee-local lifetime.
+            if (self.functionInputIndex(function, entry.storage.root) != null) return false;
+            const record = self.graph.function(function);
+            const outputs = self.graph.binding_refs.items[record.output_bindings.start..][0..record.output_bindings.len];
             for (outputs) |output| if (output == entry.storage.root) return false;
             return true;
         }
@@ -3618,7 +3622,6 @@ pub const SafetyChecker = struct {
         const block = self.graph.blocks.items[@intFromEnum(block_id)];
         for (self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len]) |node| switch (self.graph.nodes.items[@intFromEnum(node)].content) {
             .binding_declaration => |binding| {
-                if (self.graph.retainedBinding(binding)) continue;
                 var i: usize = 0;
                 while (i < state.storage_generations.items.len) {
                     const entry = state.storage_generations.items[i];
@@ -3661,18 +3664,10 @@ pub const SafetyChecker = struct {
                 .dead;
             const left_owned = index < left.tracker.roots.items.len and left.tracker.roots.items[index].owned_resource;
             const right_owned = index < right.tracker.roots.items.len and right.tracker.roots.items[index].owned_resource;
-            var frame_dependencies = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
-            if (index < left.tracker.roots.items.len) for (left.tracker.roots.items[index].caller_frame_dependencies) |dependency| try appendRootFact(&frame_dependencies, dependency);
-            if (index < right.tracker.roots.items.len) for (right.tracker.roots.items[index].caller_frame_dependencies) |dependency| try appendRootFact(&frame_dependencies, dependency);
             try joined.tracker.roots.append(.{
                 .id = id,
                 .state = if (left_state == right_state) left_state else .maybe_alive,
                 .owned_resource = left_owned or right_owned,
-                .caller_frame_owner = if (index < left.tracker.roots.items.len)
-                    left.tracker.roots.items[index].caller_frame_owner
-                else
-                    right.tracker.roots.items[index].caller_frame_owner,
-                .caller_frame_dependencies = try frame_dependencies.toOwnedSlice(),
             });
         }
 
@@ -4565,6 +4560,26 @@ fn valueDependsOnRoot(value: facts.ValueFacts, root: facts.ValidityRootId) bool 
     return false;
 }
 
+fn effectBorrowsInputReferent(effect: facts.ValueEffect, input_index: usize) bool {
+    for (effect.input_places) |path| if (path.input_index == input_index) return true;
+    for (effect.input_dependencies) |dependency|
+        if (dependency.path.input_index == input_index and !dependency.validity_only and !dependency.transfers_ownership) return true;
+    for (effect.fields) |field| if (effectBorrowsInputReferent(field.value.*, input_index)) return true;
+    for (effect.variants) |variant| if (effectBorrowsInputReferent(variant.value.*, input_index)) return true;
+    return false;
+}
+
+// A returned owner or borrow can carry an opaque domain without exposing its
+// stored elements. Shared resource roots connect those values to the domain's
+// hidden dependencies even after the source owner has moved.
+fn valueSharesOwnedDependency(value: facts.ValueFacts, storage: facts.ValueFacts) bool {
+    for (value.owned_roots) |root| if (valueContainsOwnedRoot(storage, root)) return true;
+    for (value.dependencies) |dependency| if (valueContainsOwnedRoot(storage, dependency.root)) return true;
+    for (value.fields) |field| if (valueSharesOwnedDependency(field.value.*, storage)) return true;
+    for (value.variants) |variant| if (valueSharesOwnedDependency(variant.value.*, storage)) return true;
+    return false;
+}
+
 fn valueContainsOwnedRoot(value: facts.ValueFacts, root: facts.ValidityRootId) bool {
     if (containsRoot(value.owned_roots, root)) return true;
     for (value.fields) |field| if (valueContainsOwnedRoot(field.value.*, root)) return true;
@@ -4675,10 +4690,8 @@ fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChe
         left.choice_rejected.items.len != right.choice_rejected.items.len or
         left.choice_temporary_active.items.len != right.choice_temporary_active.items.len) return false;
 
-    for (left.tracker.roots.items, right.tracker.roots.items) |a, b| {
-        if (a.state != b.state or a.owned_resource != b.owned_resource or a.caller_frame_owner != b.caller_frame_owner or a.caller_frame_dependencies.len != b.caller_frame_dependencies.len) return false;
-        for (a.caller_frame_dependencies) |dependency| if (!containsRoot(b.caller_frame_dependencies, dependency)) return false;
-    }
+    for (left.tracker.roots.items, right.tracker.roots.items) |a, b|
+        if (a.state != b.state or a.owned_resource != b.owned_resource) return false;
     for (left.storage_capabilities.items, right.storage_capabilities.items) |a, b|
         if (a != b) return false;
     for (left.lexical_storage_generations.items) |root|

@@ -132,6 +132,8 @@ Streams may be redirected to files or pipes. A stream implementing `Reader`
 or `Writer` does not by itself promise terminal-specific operations such as
 querying screen dimensions.
 
-An ordinary fallible helper may return an error borrowing a locally created
-fixed-size tracer. Supported bounded storage is retained by its caller, which
-can report the error with `!!!` before releasing that storage.
+A fallible helper can return an error borrowing a tracer supplied by its caller
+or the program entry scope. A tracer created inside the helper cannot escape
+in an `Error` or `ErrorTrace`. Create a custom tracer in the caller, keep its
+buffer and virtual wrapper alive, and pass or reach that capability while the
+caller handles or reports the error.
