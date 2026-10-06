@@ -47,9 +47,9 @@ The implemented foundations include:
 
 A directory's presence does not imply that its module is complete. Consult
 its `.rg` implementation and registered feature tests for the supported
-operations. Language contracts belong in `description/`; planned library
+operations. Language contracts belong in `description/`; shipped changes are
+summarized in the [0.3 release notes](../releases/0.3.0.md). Planned library
 extensions and implementation milestones belong in the
-[0.3 preparation](../plan/0.3.md) and
 [0.4 roadmap](../plan/0.4.md). The dependency order for library extensions
 is maintained in [the foundations plan](../plan/core_foundations.md).
 Exploratory possibilities that are not scheduled remain in
