@@ -1085,6 +1085,28 @@ pub const Resolver = struct {
                     if (try self.containsErasedSelf(field.ty, abstract_ty))
                         reason = "Self cannot appear in a virtual method result; return a known type or an explicit virtual handle";
                 }
+                if (reason == null) if (requirement.safety_contract) |contract| {
+                    for (contract.referents) |referent| {
+                        const input_ty = self.graph.semanticType(self.graph.fields.items[inputs.start + referent.input_index].ty);
+                        const output_ty = self.graph.semanticType(self.graph.fields.items[outputs.start + referent.output_index].ty);
+                        if (input_ty != .pointer or output_ty != .pointer) {
+                            reason = "refers_to requires a reference output and a reference input";
+                            break;
+                        }
+                        if (global_types.equal(self.graph, input_ty.pointer.child, abstract_ty)) {
+                            reason = "refers_to cannot expose erased Self storage; name a known reference input instead";
+                            break;
+                        }
+                        if (!global_types.equal(self.graph, input_ty.pointer.child, output_ty.pointer.child)) {
+                            reason = "refers_to requires matching input and output referent types";
+                            break;
+                        }
+                        if (input_ty.pointer.mutability == .read_only and output_ty.pointer.mutability == .read_write) {
+                            reason = "refers_to cannot grant mutable access from a read-only input";
+                            break;
+                        }
+                    }
+                };
             }
             if (reason) |message| {
                 self.virtual_signature_failure = .{ .source = source, .method_name = name, .reason = message };
@@ -1935,22 +1957,30 @@ pub const Resolver = struct {
         };
         if (requirement.safety_contract != null and implementations.items.len != 0) {
             const function = self.graph.function(implementations.items[0]);
-            var scalar_outputs = true;
-            for (self.graph.fields.items[function.output.start..][0..function.output.len]) |field| {
+            var described_outputs = true;
+            for (self.graph.fields.items[function.output.start..][0..function.output.len], 0..) |field, output_index| {
                 const ty = self.graph.semanticType(field.ty);
+                if (ty == .pointer) {
+                    var has_referent = false;
+                    for (requirement.safety_contract.?.referents) |referent| if (referent.output_index == output_index) {
+                        has_referent = true;
+                        break;
+                    };
+                    if (has_referent) continue;
+                }
                 if (ty != .builtin) {
-                    scalar_outputs = false;
+                    described_outputs = false;
                     break;
                 }
                 switch (ty.builtin) {
                     .Int8, .Int16, .Int32, .Int64, .UIntNative, .UInt8, .UInt16, .UInt32, .UInt64, .Float16, .Float32, .Float64, .Char, .Bool, .Void => {},
                     else => {
-                        scalar_outputs = false;
+                        described_outputs = false;
                         break;
                     },
                 }
             }
-            if (scalar_outputs) self.graph.virtual_registries.items[@intFromEnum(registry_id)].contract_input_count = function.input.len;
+            if (described_outputs) self.graph.virtual_registries.items[@intFromEnum(registry_id)].contract_input_count = function.input.len;
         }
     }
 

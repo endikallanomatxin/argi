@@ -196,6 +196,7 @@ pub const SourceRef = struct {
 pub const MethodSafetyContract = struct {
     output_count: u32,
     dependencies: []const Dependency = &.{},
+    referents: []const Dependency = &.{},
     source: SourceRef,
 
     pub const Dependency = struct { output_index: u32, input_index: u32 };
@@ -398,8 +399,8 @@ pub fn VirtualMethodRegistry(comptime Ids: type) type {
         /// argument may have the same concrete type as Self after substitution.
         receiver_input_index: u32,
         safety_contract: ?MethodSafetyContract = null,
-        /// Scalar output contracts have no erased reference/owner layout to
-        /// recover. Their call summaries can be generated without concrete bodies.
+        /// Scalar outputs and declared input referents need no concrete receiver
+        /// layout. Their call summaries are generated without concrete bodies.
         contract_input_count: ?u32 = null,
     };
 }

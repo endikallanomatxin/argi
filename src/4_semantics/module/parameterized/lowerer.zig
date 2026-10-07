@@ -311,15 +311,18 @@ pub const Context = struct {
         const node = requirement.safety_contract orelse return null;
         var dependencies: std.ArrayList(primitives.MethodSafetyContract.Dependency) = .empty;
         defer dependencies.deinit(self.allocator);
+        var referents: std.ArrayList(primitives.MethodSafetyContract.Dependency) = .empty;
+        defer referents.deinit(self.allocator);
         if (self.tree.codeBlock(node)) |block| {
             for (block.statements) |statement| {
                 const clause = if (self.tree.tag(statement) == .expression_statement) self.tree.data(statement).node else statement;
-                try self.lowerDependencyClause(requirement, clause, &dependencies);
+                try self.lowerDependencyClause(requirement, clause, &dependencies, &referents);
             }
-        } else try self.lowerDependencyClause(requirement, node, &dependencies);
+        } else try self.lowerDependencyClause(requirement, node, &dependencies, &referents);
         return .{
             .output_count = @intCast(self.tree.structTypeLiteral(requirement.output).?.fields.len),
             .dependencies = try dependencies.toOwnedSlice(self.allocator),
+            .referents = try referents.toOwnedSlice(self.allocator),
             .source = self.sourceRef(node),
         };
     }
@@ -329,13 +332,16 @@ pub const Context = struct {
         return error.Reported;
     }
 
-    fn lowerDependencyClause(self: *Context, requirement: syn.AbstractFunctionRequirement, node: syn.NodeIndex, dependencies: *std.ArrayList(primitives.MethodSafetyContract.Dependency)) !void {
-        const call = self.tree.functionCall(node) orelse return self.contractError(node, "expected depends_on(output, input) in an Abstract safety contract");
+    fn lowerDependencyClause(self: *Context, requirement: syn.AbstractFunctionRequirement, node: syn.NodeIndex, dependencies: *std.ArrayList(primitives.MethodSafetyContract.Dependency), referents: *std.ArrayList(primitives.MethodSafetyContract.Dependency)) !void {
+        const call = self.tree.functionCall(node) orelse return self.contractError(node, "expected depends_on or refers_to in an Abstract safety contract");
+        const name = self.tree.tokenTextFromSource(self.source, call.callee_token);
+        const is_referent = std.mem.eql(u8, name, "refers_to");
         if (call.module_qualifier != null or call.type_arguments.len != 0 or call.type_arguments_struct != null or
-            !std.mem.eql(u8, self.tree.tokenTextFromSource(self.source, call.callee_token), "depends_on"))
-            return self.contractError(node, "expected depends_on(output, input) in an Abstract safety contract");
+            (!is_referent and !std.mem.eql(u8, name, "depends_on")))
+            return self.contractError(node, "expected depends_on or refers_to in an Abstract safety contract");
         const literal = self.tree.structValueLiteral(call.input).?;
         if (literal.fields.len < 2) return self.contractError(node, "depends_on requires an output followed by one or more inputs");
+        if (is_referent and literal.fields.len != 2) return self.contractError(node, "refers_to requires exactly one output and one reference input");
         const output_node = self.tree.valueField(literal.fields[0]).?.value;
         const output_index = (try self.contractFieldIndex(requirement.output, output_node)) orelse
             return self.contractError(output_node, "the first depends_on argument must name a method output");
@@ -345,6 +351,18 @@ pub const Context = struct {
             const input_index = (try self.contractFieldIndex(requirement.input, field.value)) orelse
                 return self.contractError(field.value, "depends_on dependencies must name method inputs");
             const dependency = primitives.MethodSafetyContract.Dependency{ .output_index = output_index, .input_index = input_index };
+            if (is_referent) {
+                for (referents.items) |item| {
+                    if (item.output_index == output_index and item.input_index != input_index)
+                        return self.contractError(node, "an output cannot have conflicting refers_to inputs");
+                }
+                var has_referent = false;
+                for (referents.items) |item| if (item.output_index == output_index) {
+                    has_referent = true;
+                    break;
+                };
+                if (!has_referent) try referents.append(self.allocator, dependency);
+            }
             var exists = false;
             for (dependencies.items) |item| if (item.output_index == output_index and item.input_index == input_index) {
                 exists = true;

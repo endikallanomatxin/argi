@@ -130,12 +130,16 @@ pub const Infer = struct {
             const declared = registry.safety_contract orelse return error.MissingVirtualSafetyContract;
             // This summary depends on the declaration and fixed signature only.
             // Concrete summaries are read separately for conformance after the
-            // fixed point. Scalar results carry validity, never receiver aliases.
+            // fixed point. Only an explicit referent clause can select an input's
+            // storage; dependency permissions alone never establish aliases.
             const contract = try @import("contracts.zig").fromDeclaration(self.allocator, declared);
             const outputs = try self.allocator.alloc(facts.ValueEffect, contract.outputs.len);
             for (contract.outputs, outputs) |allowed, *output| {
                 const dependencies = try self.allocator.alloc(facts.InputDependency, allowed.dependencies.len);
-                for (allowed.dependencies, dependencies) |path, *dependency| dependency.* = .{ .path = path, .validity_only = true };
+                for (allowed.dependencies, dependencies) |path, *dependency| dependency.* = .{
+                    .path = path,
+                    .validity_only = if (allowed.referent) |referent| path.input_index != referent.input_index else true,
+                };
                 output.* = .{ .input_dependencies = dependencies, .explicit_dependency = dependencies.len != 0 };
             }
             const required = try self.allocator.alloc(facts.InputPath, input_count);

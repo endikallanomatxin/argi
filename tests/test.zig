@@ -10404,3 +10404,20 @@ test "feature_tests/polymorphism/76X_virtual_safety_contract_receiver_generation
 test "feature_tests/polymorphism/77X_virtual_safety_contract_transitive_generation" {
     try buildExpectFail("tests/feature_tests/polymorphism/77X_virtual_safety_contract_transitive_generation", "root that has ended");
 }
+
+test "feature_tests/polymorphism/78_virtual_safety_contract_referent" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/78_virtual_safety_contract_referent");
+    try runExpect("tests/feature_tests/polymorphism/78_virtual_safety_contract_referent", 0);
+}
+
+test "feature_tests/polymorphism/79X_virtual_safety_contract_referent_branch" {
+    try buildExpectFail("tests/feature_tests/polymorphism/79X_virtual_safety_contract_referent_branch", "cannot prove refers_to");
+}
+
+test "feature_tests/polymorphism/80X_virtual_safety_contract_referent_type" {
+    try buildExpectFail("tests/feature_tests/polymorphism/80X_virtual_safety_contract_referent_type", "matching input and output referent types");
+}
+
+test "feature_tests/polymorphism/81X_virtual_safety_contract_referent_mutability" {
+    try buildExpectFail("tests/feature_tests/polymorphism/81X_virtual_safety_contract_referent_mutability", "cannot grant mutable access");
+}

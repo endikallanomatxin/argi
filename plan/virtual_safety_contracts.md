@@ -30,7 +30,9 @@ permissions and ownership transfers are separate obligations.
   layouts. Broad dependency permissions must not become permission to transfer
   ownership, replace generations or manufacture safe references.
 - Extend contract-generated virtual call summaries to reference and owner results.
-  Scalar and no-result method contracts already have independent call summaries.
+  Scalar, no-result and exact input-reference forwarding contracts already have
+  independent call summaries. Extend must-alias proofs beyond direct forwarding
+  bodies before admitting control flow or intermediate calls in `refers_to`.
   Conservatively summarize permitted dependencies while preserving output
   structure and actual storage
   identities. Do not represent every returned pointer as the receiver address.

@@ -249,6 +249,11 @@ pub const SafetyChecker = struct {
                 const contract = try contracts.fromDeclaration(self.allocator, declared);
                 const method = self.graph.function_refs.items[virtualize.methods.start + index];
                 const function = self.graph.function(method);
+                for (declared.referents) |referent| {
+                    if (!self.provesDirectContractReferent(function, referent)) {
+                        try self.report(virtualize.source, "method '{s}' cannot prove refers_to: the implementation must directly forward the declared reference input", .{self.graph.text(self.graph.declaration(function.declaration).name)});
+                    }
+                }
                 const summary = (try inference.virtualImplementationSummary(method, registry.receiver_input_index)) orelse {
                     try self.report(virtualize.source, "cannot verify Abstract safety contract for this implementation", .{});
                     continue;
@@ -263,6 +268,35 @@ pub const SafetyChecker = struct {
                 }
             }
         }
+    }
+
+    fn provesDirectContractReferent(self: *SafetyChecker, function: graph_mod.Function, referent: primitives.MethodSafetyContract.Dependency) bool {
+        const block = self.graph.blocks.items[@intFromEnum(function.body orelse return false)];
+        if (referent.input_index >= function.input_bindings.len or referent.output_index >= function.output_bindings.len) return false;
+        const input = self.graph.binding_refs.items[function.input_bindings.start + referent.input_index];
+        const output = self.graph.binding_refs.items[function.output_bindings.start + referent.output_index];
+        var assigned = false;
+        // May-dependency summaries intentionally forget independent alternatives.
+        // They cannot prove a must-alias guarantee. Until path-sensitive alias
+        // proofs exist, accept only a direct reference-forwarding body. Reject
+        // unknown control flow rather than mistaking one branch for all paths.
+        for (self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len]) |id| {
+            switch (self.graph.node(id).content) {
+                .assignment => |assignment| {
+                    if (assignment.binding != output) return false;
+                    const expression = self.graph.node(assignment.value).content;
+                    if (expression != .binding_use or expression.binding_use != input) return false;
+                    assigned = true;
+                },
+                .auto_deinit_binding => {},
+                .return_statement => |ret| {
+                    if (ret.expression != null) return false;
+                    return assigned;
+                },
+                else => return false,
+            }
+        }
+        return assigned;
     }
 
     fn validateInitializerContracts(self: *SafetyChecker, engine: *summary_engine.Engine) !void {

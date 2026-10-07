@@ -180,6 +180,20 @@ permission to consume storage capabilities, end resources or store new hidden
 dependencies. Input values must remain valid for the call, including capabilities
 or references carried inside by-value arguments.
 
+`refers_to(output, input)` guarantees that a reference output points to the same
+storage as a named reference input. It also permits the corresponding validity
+dependency. Both references must have the same referent type; read-only input
+access cannot produce mutable output access. This relation names known input
+storage, not erased `Self` or one of its private fields. Unlike `depends_on`, it
+is a guarantee, so returning independent storage on another path does not comply.
+
+```rg
+Forwarder: Abstract = (
+    forward(.self: &Self, .input: $&Int32) -> (.value: $&Int32)
+        where refers_to(value, input)
+)
+```
+
 Every concrete method placed in a virtual table must satisfy its declared
 contract, including methods never called. A violation identifies the method,
 offending input and contract declaration. Checking an implementation does not
@@ -193,13 +207,17 @@ storage generations, and opaque storage.
 
 > [!IMPLEMENTATION]
 > Declaration checking supports `depends_on` and preservation contracts. Calls
-> through annotated methods with scalar outputs or no outputs use summaries
+> through annotated methods with scalar outputs, no outputs, or reference outputs
+> described by `refers_to` use summaries
 > generated from their contracts. Results containing references or owners still
 > use the existing implementation summaries to preserve concrete storage facts;
 > abstract domains and output storage identities remain to be implemented.
 > Methods without annotations retain the program-wide combination of known
 > implementations during this migration. Domain invalidation, ownership transfer
 > and outcome-specific contract clauses are not supported yet.
+> Proving `refers_to` currently requires a concrete body that directly forwards
+> the declared reference input. More complex control flow and forwarding through
+> other calls are rejected until path-sensitive storage identity proofs exist.
 
 For example, a fixed `Readable#(.item: Int32)` contract can occupy a virtual
 handle. Conversion checks the concrete type's declared associated arguments,

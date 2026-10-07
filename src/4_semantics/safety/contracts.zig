@@ -7,6 +7,7 @@ const facts = @import("safety_facts.zig");
 pub const Output = struct {
     dependencies: []const facts.InputPath = &.{},
     ownership_transfers: []const facts.InputPath = &.{},
+    referent: ?facts.InputPath = null,
 };
 
 /// This first contract representation covers output provenance and preservation.
@@ -24,6 +25,9 @@ pub fn fromDeclaration(allocator: std.mem.Allocator, declaration: @import("../pr
             if (dependency.output_index == index) try paths.append(allocator, .{ .input_index = dependency.input_index });
         }
         output.* = .{ .dependencies = try paths.toOwnedSlice(allocator) };
+        for (declaration.referents) |referent| {
+            if (referent.output_index == index) output.referent = .{ .input_index = referent.input_index };
+        }
     }
     return .{ .outputs = outputs };
 }
@@ -33,6 +37,7 @@ pub const Failure = struct {
         output_count,
         undeclared_dependency,
         undeclared_ownership_transfer,
+        incompatible_referent,
         unsupported_post_state,
         unsupported_opaque_effect,
         unsupported_capability_effect,
@@ -45,6 +50,7 @@ pub const Failure = struct {
             .output_count => "the number of outputs differs",
             .undeclared_dependency => "undeclared output dependency",
             .undeclared_ownership_transfer => "undeclared ownership transfer",
+            .incompatible_referent => "the output must refer to the same storage as the declared input",
             .unsupported_post_state => "a storage transition is not permitted by this preservation contract",
             .unsupported_opaque_effect => "an opaque storage effect is not permitted by this preservation contract",
             .unsupported_capability_effect => "storage capability consumption is not permitted by this contract",
@@ -96,6 +102,9 @@ pub fn check(contract: Contract, summary: facts.SafetySummary) ?Failure {
 }
 
 fn checkValue(allowed: Output, actual: facts.ValueEffect) ?Failure {
+    if (allowed.referent) |path| {
+        if (!hasExactReferent(actual, path)) return .{ .kind = .incompatible_referent, .input = path };
+    }
     for (actual.input_dependencies) |dependency| {
         const paths = if (dependency.transfers_ownership) allowed.ownership_transfers else allowed.dependencies;
         if (!covers(paths, dependency.path)) return .{
@@ -126,6 +135,34 @@ fn checkValue(allowed: Output, actual: facts.ValueEffect) ?Failure {
     // is checked by ordinary safety, not turned into a dependency on the receiver.
     // Raw address/capability facts likewise do not establish safe references.
     return null;
+}
+
+fn samePath(a: facts.InputPath, b: facts.InputPath) bool {
+    if (a.input_index != b.input_index or a.projections.len != b.projections.len) return false;
+    for (a.projections, b.projections) |x, y| if (!x.eql(y)) return false;
+    return true;
+}
+
+/// Reject summary provenance incompatible with an exact referent. This is not
+/// a must-alias proof: summaries may forget independent alternatives. The
+/// concrete checker additionally proves direct forwarding before accepting a
+/// declaration. Lifetime-only anchors cannot select an output's storage.
+fn hasExactReferent(actual: facts.ValueEffect, expected: facts.InputPath) bool {
+    if (actual.input_place_values.len != 0 or actual.fields.len != 0 or actual.variants.len != 0 or
+        actual.fresh_dependencies.len != 0 or actual.fresh_owned_roots.len != 0 or
+        actual.fresh_storage_capabilities.len != 0 or actual.unavailable_fresh_storage.len != 0 or
+        actual.integer_address or actual.foreign_storage or actual.input_storage_capabilities.len != 0) return false;
+    var established = false;
+    for (actual.input_places) |path| {
+        if (!samePath(path, expected)) return false;
+        established = true;
+    }
+    for (actual.input_dependencies) |dependency| {
+        if (dependency.validity_only) continue;
+        if (dependency.transfers_ownership or !samePath(dependency.path, expected)) return false;
+        established = true;
+    }
+    return established;
 }
 
 fn covers(allowed: []const facts.InputPath, actual: facts.InputPath) bool {
@@ -162,6 +199,15 @@ fn emptyValue(value: facts.ValueEffect) bool {
     for (value.fields) |field| if (!emptyValue(field.value.*)) return false;
     for (value.variants) |variant| if (!emptyValue(variant.value.*)) return false;
     return true;
+}
+
+test "safety contracts distinguish exact referents from lifetime anchors" {
+    const path = facts.InputPath{ .input_index = 1 };
+    const contract = Contract{ .outputs = &.{.{ .dependencies = &.{path}, .referent = path }} };
+    try std.testing.expect(check(contract, .{ .outputs = &.{.{ .input_dependencies = &.{.{ .path = path }} }} }) == null);
+    try std.testing.expectEqual(.incompatible_referent, check(contract, .{ .outputs = &.{.{ .input_dependencies = &.{.{ .path = path, .validity_only = true }} }} }).?.kind);
+    try std.testing.expectEqual(.incompatible_referent, check(contract, .{ .outputs = &.{.{}} }).?.kind);
+    try std.testing.expectEqual(.incompatible_referent, check(contract, .{ .outputs = &.{.{ .input_places = &.{.{ .input_index = 1, .projections = &.{.{ .field = 0 }} }} }} }).?.kind);
 }
 
 test "safety contracts permit fewer dependencies and independent implementations" {
