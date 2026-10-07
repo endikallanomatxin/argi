@@ -10527,3 +10527,21 @@ test "feature_tests/polymorphism/104X_static_safety_contract_reference_transfer"
 test "feature_tests/polymorphism/105X_virtual_safety_contract_undeclared_owner" {
     try buildExpectFail("tests/feature_tests/polymorphism/105X_virtual_safety_contract_undeclared_owner", "undeclared fresh output ownership");
 }
+
+test "feature_tests/polymorphism/106X_virtual_safety_contract_domain_result_unknown" {
+    try buildExpectFail("tests/feature_tests/polymorphism/106X_virtual_safety_contract_domain_result_unknown", "preserve its domain identities");
+}
+
+test "feature_tests/polymorphism/107_virtual_safety_contract_domain_result_transfer" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/107_virtual_safety_contract_domain_result_transfer");
+    try runExpect("tests/feature_tests/polymorphism/107_virtual_safety_contract_domain_result_transfer", 0);
+}
+
+test "feature_tests/polymorphism/108X_virtual_safety_contract_domain_result_invalidation" {
+    try buildExpectFail("tests/feature_tests/polymorphism/108X_virtual_safety_contract_domain_result_invalidation", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/109_virtual_safety_contract_domain_result_referent" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/109_virtual_safety_contract_domain_result_referent");
+    try runExpect("tests/feature_tests/polymorphism/109_virtual_safety_contract_domain_result_referent", 0);
+}

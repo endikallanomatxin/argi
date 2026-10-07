@@ -35,7 +35,9 @@ permissions and ownership transfers are separate obligations.
 - Extend must-alias and ownership transfer proofs beyond direct forwarding
   bodies before admitting control flow or intermediate calls in `refers_to` and
   `transfers`. Preserve actual storage identities; do not represent every returned
-  pointer as the receiver address.
+  pointer as the receiver address. Mapped virtual results require proven input
+  identity relations; extend output domain mappings before admitting arbitrary
+  fresh or dependency-only handles.
 - Extend declaration checking to the new storage effect clauses, retaining
   diagnostics for implicit error-tracer inputs.
 - Complete opaque storage and conditional generation obligations for the core

@@ -1306,7 +1306,54 @@ pub const Resolver = struct {
                 break;
             }
         }
+        for (self.graph.fields.items[outputs.start..][0..outputs.len], 0..) |field, index| {
+            var preserves_identity = false;
+            for (contract.transfers) |transfer| if (transfer.output_index == index) {
+                preserves_identity = true;
+                break;
+            };
+            for (contract.referents) |referent| if (referent.output_index == index) {
+                preserves_identity = true;
+                break;
+            };
+            if (!preserves_identity and try self.containsMappedVirtual(field.ty)) {
+                reason = "returning mapped Virtual storage requires transfers or refers_to to preserve its domain identities";
+                break;
+            }
+        }
         return reason;
+    }
+
+    fn containsMappedVirtual(self: *Resolver, ty: global_sg.GlobalTypeId) !bool {
+        var visited = std.AutoHashMap(global_sg.GlobalTypeId, void).init(self.allocator);
+        defer visited.deinit();
+        return self.containsMappedVirtualVisited(ty, &visited);
+    }
+
+    fn containsMappedVirtualVisited(self: *Resolver, ty: global_sg.GlobalTypeId, visited: *std.AutoHashMap(global_sg.GlobalTypeId, void)) anyerror!bool {
+        if (visited.contains(ty)) return false;
+        try visited.put(ty, {});
+        switch (self.graph.semanticType(ty)) {
+            .virtual => |abstract_ty| {
+                const use = self.abstractUse(abstract_ty) orelse return false;
+                const located = self.findAbstractDefinition(use.declaration) orelse return false;
+                return located.definition.domains.len != 0;
+            },
+            .pointer => |pointer| return self.containsMappedVirtualVisited(pointer.child, visited),
+            .array => |array| return self.containsMappedVirtualVisited(array.element, visited),
+            else => {},
+        }
+        if (global_types.fields(self.graph, ty)) |fields| {
+            for (self.graph.fields.items[fields.start..][0..fields.len]) |field| {
+                if (try self.containsMappedVirtualVisited(field.ty, visited)) return true;
+            }
+        }
+        if (global_types.variants(self.graph, ty)) |variants| {
+            for (self.graph.variants.items[variants.start..][0..variants.len]) |variant| {
+                if (variant.payload_type) |payload| if (try self.containsMappedVirtualVisited(payload, visited)) return true;
+            }
+        }
+        return false;
     }
 
     fn containsErasedSelf(self: *Resolver, ty: global_sg.GlobalTypeId, erased: global_sg.GlobalTypeId) !bool {

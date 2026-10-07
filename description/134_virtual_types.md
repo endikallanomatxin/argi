@@ -302,6 +302,9 @@ storage generations, and opaque storage.
 > Direct input `invalidates` currently supports no-result methods and known scalar
 > reference inputs. Receiver invalidation uses explicitly mapped domains. Neither
 > form permits destroying owners or replacing their hidden dependencies.
+> Results containing mapped virtual domains must preserve their identities with
+> `transfers` or `refers_to`. A dependency permission alone cannot establish the
+> correspondence between a returned handle and its underlying storage.
 > Outcome clauses support output dependencies and fresh ownership; conditional
 > generation changes and hidden storage effects remain to be implemented.
 
