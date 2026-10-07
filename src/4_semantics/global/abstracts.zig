@@ -1086,6 +1086,33 @@ pub const Resolver = struct {
                         reason = "Self cannot appear in a virtual method result; return a known type or an explicit virtual handle";
                 }
                 if (reason == null) if (requirement.safety_contract) |contract| {
+                    for (contract.invalidates) |input_index| {
+                        if (outputs.len != 0) {
+                            reason = "invalidates with outputs requires post-invalidation result contracts; use a no-result method for now";
+                            break;
+                        }
+                        const input_ty = self.graph.semanticType(self.graph.fields.items[inputs.start + input_index].ty);
+                        if (input_ty != .pointer or input_ty.pointer.mutability != .read_write) {
+                            reason = "invalidates requires a mutable reference input";
+                            break;
+                        }
+                        if (global_types.equal(self.graph, input_ty.pointer.child, abstract_ty)) {
+                            reason = "invalidating erased Self requires a mapped storage domain; name a known reference input instead";
+                            break;
+                        }
+                        const child = self.graph.semanticType(input_ty.pointer.child);
+                        if (child != .builtin) {
+                            reason = "invalidates currently requires scalar referent storage; aggregate domains need explicit mappings";
+                            break;
+                        }
+                        switch (child.builtin) {
+                            .Int8, .Int16, .Int32, .Int64, .UIntNative, .UInt8, .UInt16, .UInt32, .UInt64, .Float16, .Float32, .Float64, .Char, .Bool => {},
+                            else => {
+                                reason = "invalidates currently requires scalar referent storage; aggregate domains need explicit mappings";
+                                break;
+                            },
+                        }
+                    }
                     for (contract.referents) |referent| {
                         const input_ty = self.graph.semanticType(self.graph.fields.items[inputs.start + referent.input_index].ty);
                         const output_ty = self.graph.semanticType(self.graph.fields.items[outputs.start + referent.output_index].ty);

@@ -313,16 +313,19 @@ pub const Context = struct {
         defer dependencies.deinit(self.allocator);
         var referents: std.ArrayList(primitives.MethodSafetyContract.Dependency) = .empty;
         defer referents.deinit(self.allocator);
+        var invalidates: std.ArrayList(u32) = .empty;
+        defer invalidates.deinit(self.allocator);
         if (self.tree.codeBlock(node)) |block| {
             for (block.statements) |statement| {
                 const clause = if (self.tree.tag(statement) == .expression_statement) self.tree.data(statement).node else statement;
-                try self.lowerDependencyClause(requirement, clause, &dependencies, &referents);
+                try self.lowerDependencyClause(requirement, clause, &dependencies, &referents, &invalidates);
             }
-        } else try self.lowerDependencyClause(requirement, node, &dependencies, &referents);
+        } else try self.lowerDependencyClause(requirement, node, &dependencies, &referents, &invalidates);
         return .{
             .output_count = @intCast(self.tree.structTypeLiteral(requirement.output).?.fields.len),
             .dependencies = try dependencies.toOwnedSlice(self.allocator),
             .referents = try referents.toOwnedSlice(self.allocator),
+            .invalidates = try invalidates.toOwnedSlice(self.allocator),
             .source = self.sourceRef(node),
         };
     }
@@ -332,13 +335,30 @@ pub const Context = struct {
         return error.Reported;
     }
 
-    fn lowerDependencyClause(self: *Context, requirement: syn.AbstractFunctionRequirement, node: syn.NodeIndex, dependencies: *std.ArrayList(primitives.MethodSafetyContract.Dependency), referents: *std.ArrayList(primitives.MethodSafetyContract.Dependency)) !void {
-        const call = self.tree.functionCall(node) orelse return self.contractError(node, "expected depends_on or refers_to in an Abstract safety contract");
+    fn lowerDependencyClause(self: *Context, requirement: syn.AbstractFunctionRequirement, node: syn.NodeIndex, dependencies: *std.ArrayList(primitives.MethodSafetyContract.Dependency), referents: *std.ArrayList(primitives.MethodSafetyContract.Dependency), invalidates: *std.ArrayList(u32)) !void {
+        const call = self.tree.functionCall(node) orelse return self.contractError(node, "expected depends_on, refers_to or invalidates in an Abstract safety contract");
         const name = self.tree.tokenTextFromSource(self.source, call.callee_token);
         const is_referent = std.mem.eql(u8, name, "refers_to");
+        if (std.mem.eql(u8, name, "invalidates") and call.module_qualifier == null and call.type_arguments.len == 0 and call.type_arguments_struct == null) {
+            const arguments = self.tree.structValueLiteral(call.input).?;
+            if (arguments.fields.len == 0) return self.contractError(node, "invalidates requires one or more mutable reference inputs");
+            for (arguments.fields) |argument| {
+                const field = self.tree.valueField(argument).?;
+                if (field.name_token != null) return self.contractError(argument, "safety contract arguments must be positional names");
+                const index = (try self.contractFieldIndex(requirement.input, field.value)) orelse
+                    return self.contractError(field.value, "invalidates must name a method input");
+                var found = false;
+                for (invalidates.items) |existing| if (existing == index) {
+                    found = true;
+                    break;
+                };
+                if (!found) try invalidates.append(self.allocator, index);
+            }
+            return;
+        }
         if (call.module_qualifier != null or call.type_arguments.len != 0 or call.type_arguments_struct != null or
             (!is_referent and !std.mem.eql(u8, name, "depends_on")))
-            return self.contractError(node, "expected depends_on or refers_to in an Abstract safety contract");
+            return self.contractError(node, "expected depends_on, refers_to or invalidates in an Abstract safety contract");
         const literal = self.tree.structValueLiteral(call.input).?;
         if (literal.fields.len < 2) return self.contractError(node, "depends_on requires an output followed by one or more inputs");
         if (is_referent and literal.fields.len != 2) return self.contractError(node, "refers_to requires exactly one output and one reference input");

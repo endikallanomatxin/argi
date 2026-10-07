@@ -48,6 +48,7 @@ pub fn verifyParameterizedForms(graph: *const graph_mod.ModuleSemanticGraph) !vo
             try require(input == .resolved and input.resolved == .structural);
             try require(output == .resolved and output.resolved == .structural);
             try require(contract.output_count == output.resolved.structural.fields.len);
+            for (contract.invalidates) |index| try require(index < input.resolved.structural.fields.len);
             for (contract.dependencies) |dependency| {
                 try require(dependency.output_index < contract.output_count);
                 try require(dependency.input_index < input.resolved.structural.fields.len);

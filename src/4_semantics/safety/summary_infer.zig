@@ -144,7 +144,13 @@ pub const Infer = struct {
             }
             const required = try self.allocator.alloc(facts.InputPath, input_count);
             for (required, 0..) |*path, index| path.* = .{ .input_index = @intCast(index) };
-            const result = facts.SafetySummary{ .outputs = outputs, .required_live_inputs = required };
+            const post_states = try self.allocator.alloc(facts.PlacePostState, contract.invalidates.len);
+            for (contract.invalidates, post_states) |path, *post_state| post_state.* = .{
+                .target = path,
+                .initializedness = .initialized,
+                .refreshes_storage_generation = true,
+            };
+            const result = facts.SafetySummary{ .outputs = outputs, .required_live_inputs = required, .input_post_states = post_states };
             try self.virtual_summaries.put(registry_id, result);
             return result;
         }
@@ -4601,6 +4607,18 @@ test "virtual safety contract scalar summaries do not read implementations" {
     infer.virtual_summaries.clearRetainingCapacity();
     const second = (try infer.virtualSummary(@enumFromInt(0))).?;
     try std.testing.expect(summaries.summaryEql(first, second));
+    try std.testing.expectEqual(@as(u64, 0), infer.virtual_summary_merges);
+    var declaration = graph.virtual_registries.items[0].safety_contract.?;
+    declaration.output_count = 0;
+    declaration.dependencies = &.{};
+    declaration.invalidates = &.{0};
+    graph.virtual_registries.items[0].safety_contract = declaration;
+    infer.virtual_summaries.clearRetainingCapacity();
+    const invalidating = (try infer.virtualSummary(@enumFromInt(0))).?;
+    try std.testing.expectEqual(@as(usize, 1), invalidating.input_post_states.len);
+    try std.testing.expectEqual(@as(u32, 0), invalidating.input_post_states[0].target.input_index);
+    try std.testing.expect(invalidating.input_post_states[0].refreshes_storage_generation);
+    try std.testing.expect(!invalidating.input_post_states[0].ends_previous_roots);
     try std.testing.expectEqual(@as(u64, 0), infer.virtual_summary_merges);
 }
 

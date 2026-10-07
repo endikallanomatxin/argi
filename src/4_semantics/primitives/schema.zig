@@ -197,6 +197,7 @@ pub const MethodSafetyContract = struct {
     output_count: u32,
     dependencies: []const Dependency = &.{},
     referents: []const Dependency = &.{},
+    invalidates: []const u32 = &.{},
     source: SourceRef,
 
     pub const Dependency = struct { output_index: u32, input_index: u32 };

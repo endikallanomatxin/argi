@@ -26,6 +26,9 @@ permissions and ownership transfers are separate obligations.
 - Extend compatibility checking with domain invalidation, allowed dependency
   storage, initialization/consumption and outcome-specific guarantees. Validate
   every provenance category, including fresh root identity and ownership roles.
+  Source-level `invalidates` currently covers scalar reference inputs on
+  no-result methods. Extend it to mapped receiver domains and checked result
+  facts after invalidation without dropping existing ownership or field facts.
 - Connect validated, disjoint domain path mappings to type-aware lowering and
   receiver conversion. Reject physical aliases across nominally disjoint domains
   as well as structural path overlaps; map generations without extending lives.

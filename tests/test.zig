@@ -10421,3 +10421,20 @@ test "feature_tests/polymorphism/80X_virtual_safety_contract_referent_type" {
 test "feature_tests/polymorphism/81X_virtual_safety_contract_referent_mutability" {
     try buildExpectFail("tests/feature_tests/polymorphism/81X_virtual_safety_contract_referent_mutability", "cannot grant mutable access");
 }
+
+test "feature_tests/polymorphism/82_virtual_safety_contract_invalidate_input" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/82_virtual_safety_contract_invalidate_input");
+    try runExpect("tests/feature_tests/polymorphism/82_virtual_safety_contract_invalidate_input", 0);
+}
+
+test "feature_tests/polymorphism/83X_virtual_safety_contract_invalidate_alias" {
+    try buildExpectFail("tests/feature_tests/polymorphism/83X_virtual_safety_contract_invalidate_alias", "root that has ended");
+}
+
+test "feature_tests/polymorphism/84X_virtual_safety_contract_invalidate_readonly" {
+    try buildExpectFail("tests/feature_tests/polymorphism/84X_virtual_safety_contract_invalidate_readonly", "invalidates requires a mutable reference input");
+}
+
+test "feature_tests/polymorphism/85X_virtual_safety_contract_invalidate_self" {
+    try buildExpectFail("tests/feature_tests/polymorphism/85X_virtual_safety_contract_invalidate_self", "invalidating erased Self requires a mapped storage domain");
+}

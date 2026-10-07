@@ -254,10 +254,36 @@ pub const SafetyChecker = struct {
                         try self.report(virtualize.source, "method '{s}' cannot prove refers_to: the implementation must directly forward the declared reference input", .{self.graph.text(self.graph.declaration(function.declaration).name)});
                     }
                 }
-                const summary = (try inference.virtualImplementationSummary(method, registry.receiver_input_index)) orelse {
+                var summary = (try inference.virtualImplementationSummary(method, registry.receiver_input_index)) orelse {
                     try self.report(virtualize.source, "cannot verify Abstract safety contract for this implementation", .{});
                     continue;
                 };
+                if (declared.invalidates.len != 0) {
+                    const states = try self.allocator.dupe(facts.PlacePostState, summary.input_post_states);
+                    for (states) |*post_state| {
+                        // Generic pointer writes conservatively mark possible
+                        // opaque repopulation. A checked scalar referent cannot
+                        // contain hidden pointers; normalize that vacuous bit
+                        // without discarding its value/capability provenance.
+                        for (declared.invalidates) |input_index| {
+                            if (post_state.target.input_index == input_index and post_state.target.projections.len == 0)
+                                post_state.may_repopulate_opaque_storage = false;
+                        }
+                    }
+                    summary.input_post_states = states;
+                    const outcomes = try self.allocator.dupe(facts.OutcomePostStates, summary.outcome_post_states);
+                    for (outcomes) |*outcome| {
+                        const outcome_states = try self.allocator.dupe(facts.PlacePostState, outcome.input_post_states);
+                        for (outcome_states) |*post_state| {
+                            for (declared.invalidates) |input_index| {
+                                if (post_state.target.input_index == input_index and post_state.target.projections.len == 0)
+                                    post_state.may_repopulate_opaque_storage = false;
+                            }
+                        }
+                        outcome.input_post_states = outcome_states;
+                    }
+                    summary.outcome_post_states = outcomes;
+                }
                 if (contracts.check(contract, summary)) |failure| {
                     const method_name = self.graph.text(self.graph.declaration(function.declaration).name);
                     if (failure.input) |path| {

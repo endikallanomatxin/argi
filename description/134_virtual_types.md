@@ -189,8 +189,22 @@ is a guarantee, so returning independent storage on another path does not comply
 
 ```rg
 Forwarder: Abstract = (
-    forward(.self: &Self, .input: $&Int32) -> (.value: $&Int32)
+forward(.self: &Self, .input: $&Int32) -> (.value: $&Int32)
         where refers_to(value, input)
+)
+```
+
+`invalidates(input, ...)` permits replacing the storage generation reached by
+the named mutable reference inputs. Callers must treat existing references to
+that storage as expired after the call, even when a particular implementation
+only changes the contents. An implementation may have fewer effects than the
+contract permits. Generation invalidation does not grant permission to destroy
+owners, consume acquisition capabilities or store new hidden dependencies.
+
+```rg
+Editor: Abstract = (
+    edit(.self: &Self, .target: $&Int32) -> ()
+        where invalidates(target)
 )
 ```
 
@@ -208,9 +222,9 @@ storage generations, and opaque storage.
 > [!IMPLEMENTATION]
 > Declaration checking supports `depends_on` and preservation contracts. Calls
 > through annotated methods with scalar outputs, no outputs, or reference outputs
-> described by `refers_to` use summaries
-> generated from their contracts. Results containing references or owners still
-> use the existing implementation summaries to preserve concrete storage facts;
+> described by `refers_to` use summaries generated from their contracts. Other
+> results containing references or owners still use the existing implementation
+> summaries to preserve concrete storage facts;
 > abstract domains and output storage identities remain to be implemented.
 > Methods without annotations retain the program-wide combination of known
 > implementations during this migration. Domain invalidation, ownership transfer
@@ -218,6 +232,10 @@ storage generations, and opaque storage.
 > Proving `refers_to` currently requires a concrete body that directly forwards
 > the declared reference input. More complex control flow and forwarding through
 > other calls are rejected until path-sensitive storage identity proofs exist.
+> `invalidates` currently supports no-result methods and known scalar reference
+> inputs. Aggregate storage, erased receiver storage and post-invalidation output
+> facts require domain mappings and additional contracts; these combinations are
+> rejected rather than approximated as ownership consumption.
 
 For example, a fixed `Readable#(.item: Int32)` contract can occupy a virtual
 handle. Conversion checks the concrete type's declared associated arguments,

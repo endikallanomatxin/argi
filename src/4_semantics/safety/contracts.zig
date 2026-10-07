@@ -33,7 +33,9 @@ pub fn fromDeclaration(allocator: std.mem.Allocator, declaration: @import("../pr
             if (referent.output_index == index) output.referent = .{ .input_index = referent.input_index };
         }
     }
-    return .{ .outputs = outputs };
+    const invalidates = try allocator.alloc(facts.InputPath, declaration.invalidates.len);
+    for (declaration.invalidates, invalidates) |index, *path| path.* = .{ .input_index = index };
+    return .{ .outputs = outputs, .invalidates = invalidates };
 }
 
 pub const Failure = struct {

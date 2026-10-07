@@ -51,6 +51,7 @@ pub fn verifyGlobal(graph: *const graph_mod.GlobalSemanticGraph) !void {
             try require(value.receiver_input_index < graph.function(method).input.len);
             if (value.safety_contract) |contract| {
                 try require(contract.output_count == graph.function(method).output.len);
+                for (contract.invalidates) |index| try require(index < graph.function(method).input.len);
                 for (contract.dependencies) |dependency| try require(dependency.input_index < graph.function(method).input.len);
                 for (contract.referents) |referent| try require(referent.input_index < graph.function(method).input.len);
             }
