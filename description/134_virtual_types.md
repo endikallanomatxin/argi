@@ -286,16 +286,19 @@ offending input and contract declaration. Checking an implementation does not
 depend on the bodies of other implementations. A virtual call uses the published
 contract; a direct concrete call can use its more precise inferred summary.
 
+Every method used through a virtual handle must declare a safety contract.
+Use `where {}` when the method preserves storage and returns no borrowed or
+owning dependencies; otherwise declare the permitted dependencies and effects.
+An unannotated abstract can still select a statically known implementation,
+but cannot be erased into a virtual handle. Adding an implementation does not
+change the safety obligations of existing virtual calls.
+
 Private concrete receiver fields are not fields of the virtual handle. A
 returned borrow still depends on the receiver's storage; erasing its layout
 must not erase that lifetime dependency. See `34_safety_model.md` for roots,
 storage generations, and opaque storage.
 
 > [!IMPLEMENTATION]
-> Annotated virtual methods use summaries generated from their declarations and
-> fixed signatures, including structured and owning results. Methods without
-> annotations retain the program-wide combination of known implementations during
-> migration.
 > Proving `refers_to` and `transfers` currently requires a concrete body that
 > directly forwards the declared input. Intermediate calls and complex control
 > flow require more precise storage identity proofs.

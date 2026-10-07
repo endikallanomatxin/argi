@@ -1,9 +1,11 @@
-Choose : Abstract = (
-    choose(.self: &Self, .other: &Int32) -> (.value: &Int32)
+Choose: Abstract = (
+    choose(.self: &Self, .other: &Int32) -> (.value: &Int32) where depends_on(value, self, other)
 )
 
-FromSelf : Type = (.value: Int32)
-FromOther : Type = (.value: Int32)
+FromSelf: Type = (.value: Int32)
+
+FromOther: Type = (.value: Int32)
+
 FromSelf implements Choose
 FromOther implements Choose
 

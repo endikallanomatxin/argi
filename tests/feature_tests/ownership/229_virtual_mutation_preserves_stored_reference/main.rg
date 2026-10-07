@@ -1,15 +1,18 @@
-Mutator : Abstract = (
-    mutate(.self: $&Self) -> ()
+Mutator: Abstract = (
+    mutate(.self: $&Self) -> () where {}
 )
 
-Stateful : Type = (.counter: Int32)
-Holder : Type = (.state: $&Stateful)
-Noop : Type = (.marker: UInt8)
+Stateful: Type = (.counter: Int32)
+
+Holder: Type = (.state: $&Stateful)
+
+Noop: Type = (.marker: UInt8)
+
 Stateful implements Mutator
 Noop implements Mutator
 
 mutate(.self: $&Stateful) -> () := {
-    self& = (.counter = self&.counter + 1)
+    self&.counter = self&.counter + 1
 }
 
 mutate(.self: $&Noop) -> () := {}

@@ -180,6 +180,8 @@ fn checkValue(allowed: Output, actual: facts.ValueEffect) ?Failure {
     const dependencies = [_][]const facts.InputPath{
         actual.input_places,
         actual.input_generation_dependencies,
+        actual.input_captured_storages,
+        actual.input_receiver_values,
         actual.input_place_values,
         actual.input_owned_roots,
         actual.opaque_generation_dependencies,
@@ -265,7 +267,7 @@ fn permitsPostState(contract: Contract, state: facts.PlacePostState) bool {
 fn emptyValue(value: facts.ValueEffect) bool {
     if (value.explicit_dependency or value.input_dependencies.len != 0 or
         value.input_storage_capabilities.len != 0 or value.input_places.len != 0 or
-        value.input_generation_dependencies.len != 0 or value.input_place_values.len != 0 or
+        value.input_generation_dependencies.len != 0 or value.input_captured_storages.len != 0 or value.input_receiver_values.len != 0 or value.input_place_values.len != 0 or
         value.input_owned_roots.len != 0 or value.input_domains.len != 0 or value.domain_values.len != 0 or value.opaque_generation_dependencies.len != 0 or
         value.opaque_storage_dependencies.len != 0 or value.fresh_dependencies.len != 0 or
         value.fresh_owned_roots.len != 0 or value.fresh_storage_capabilities.len != 0 or

@@ -1,12 +1,17 @@
-View : Abstract = (
-    get(.self: &Self) -> (.result: RefResult)
+View: Abstract = (
+    get(.self: &Self) -> (.result: RefResult) where depends_on(result, self)
 )
 
-RefResult : Type = (.reference: &Int32)
-Cell : Type = (.value: Int32)
+RefResult: Type = (.reference: &Int32)
+
+Cell: Type = (.value: Int32)
+
 Cell deinit(.self: $&Cell) -> () := {}
-Holder : Type = (.cell: Cell)
-Other : Type = (.cell: Cell)
+
+Holder: Type = (.cell: Cell)
+
+Other: Type = (.cell: Cell)
+
 Holder implements View
 Other implements View
 

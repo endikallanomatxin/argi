@@ -265,6 +265,13 @@ feature first.
   concrete input types: another argument can have that same concrete type.
   Content writes in preservation protocols should update fields directly;
   assigning the whole receiver replaces its storage generation.
+  Virtual safety summaries are generated from fixed declarations and cached
+  independently of the concrete-summary worklist. Implementation lists serve
+  runtime reachability and conformance, never dispatch effect inference.
+  Receiver validity captures the actual erased referent and its generations,
+  not the local slot holding a virtual handle. Summary place paths distinguish
+  a reference-valued field's slot from its pointee with explicit dereference
+  projections; writing through the reference must preserve the field's facts.
 
 - Moving `for ~ item in collection` loops consume through `OwningIterable`.
   Global semantizing wraps the iterator declaration and loop in one lexical

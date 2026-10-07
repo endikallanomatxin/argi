@@ -274,8 +274,7 @@ fn printStats(
     std.debug.print("    opaque storage:     {d:.3} ms\n", .{milliseconds(safety.opaque_inference_ns)});
     std.debug.print("  summary bytes requested: {d}\n", .{safety.summary_allocated_bytes});
     std.debug.print("  retained worklist bytes: {d}\n", .{safety.summary_worklist_bytes});
-    std.debug.print("  virtual summary time: {d:.3} ms ({d} merges)\n", .{ milliseconds(safety.virtual_summary_ns), safety.virtual_summary_merges });
-    std.debug.print("  virtual receiver lookup: {d:.3} ms\n", .{milliseconds(safety.virtual_receiver_ns)});
+    std.debug.print("  virtual contract summary time: {d:.3} ms\n", .{milliseconds(safety.virtual_summary_ns)});
     std.debug.print("  state copy time:      {d:.3} ms\n", .{milliseconds(safety.state_copy_ns)});
     std.debug.print("  functions:            {d}\n", .{safety.functions});
     std.debug.print("  calls:                {d}\n", .{safety.calls});

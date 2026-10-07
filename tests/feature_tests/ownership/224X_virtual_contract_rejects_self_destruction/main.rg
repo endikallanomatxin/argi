@@ -1,11 +1,13 @@
-Closable : Abstract = (
-    close(.self: $&Self) -> ()
+Closable: Abstract = (
+    close(.self: $&Self) -> () where {}
 )
 
 drops :: Int32 = 0
 
-First : Type = (.value: Int32)
-Second : Type = (.value: Int32)
+First: Type = (.value: Int32)
+
+Second: Type = (.value: Int32)
+
 First implements Closable
 Second implements Closable
 
@@ -31,9 +33,9 @@ register_second(.value: $&Second) -> () := {
 
 verify(.status: $&Int32) -> () := {
     if drops == 1 {
-        status& = 0
+        status&= 0
     } else {
-        status& = 7
+        status&= 7
     }
 }
 

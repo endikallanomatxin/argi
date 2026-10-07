@@ -22,8 +22,6 @@ pub const Infer = struct {
     outcome_ns: u64 = 0,
     opaque_ns: u64 = 0,
     virtual_summary_ns: u64 = 0,
-    virtual_receiver_ns: u64 = 0,
-    virtual_summary_merges: u64 = 0,
     evaluations: u64 = 0,
     summary_changes: u64 = 0,
     allocator: std.mem.Allocator,
@@ -33,7 +31,6 @@ pub const Infer = struct {
     place_bindings: std.AutoHashMap(graph_mod.GlobalBindingId, []const facts.InputPath),
     local_address_bindings: std.AutoHashMap(graph_mod.GlobalBindingId, []const graph_mod.GlobalNodeId),
     virtual_summaries: std.AutoHashMap(graph_mod.GlobalVirtualRegistryId, facts.SafetySummary),
-    invalid_virtual_summaries: std.AutoHashMap(graph_mod.GlobalVirtualRegistryId, void),
     domain_invalidations: std.array_list.Managed(facts.InputDomain),
 
     pub fn init(
@@ -49,7 +46,6 @@ pub const Infer = struct {
             .place_bindings = std.AutoHashMap(graph_mod.GlobalBindingId, []const facts.InputPath).init(allocator),
             .local_address_bindings = std.AutoHashMap(graph_mod.GlobalBindingId, []const graph_mod.GlobalNodeId).init(allocator),
             .virtual_summaries = std.AutoHashMap(graph_mod.GlobalVirtualRegistryId, facts.SafetySummary).init(allocator),
-            .invalid_virtual_summaries = std.AutoHashMap(graph_mod.GlobalVirtualRegistryId, void).init(allocator),
             .domain_invalidations = std.array_list.Managed(facts.InputDomain).init(allocator),
         };
     }
@@ -59,7 +55,6 @@ pub const Infer = struct {
         self.place_bindings.deinit();
         self.local_address_bindings.deinit();
         self.virtual_summaries.deinit();
-        self.invalid_virtual_summaries.deinit();
         self.domain_invalidations.deinit();
     }
 
@@ -99,11 +94,6 @@ pub const Infer = struct {
         // so a change schedules every observer, including recursive callers.
         try self.engine.seed(functions.items);
         while (self.engine.nextDirty()) |function| {
-            // Successful and unrepresentable virtual merges both depend on
-            // concrete summary approximations. Recompute them for each worklist
-            // evaluation so changes cannot leave either kind of cache stale.
-            self.virtual_summaries.clearRetainingCapacity();
-            self.invalid_virtual_summaries.clearRetainingCapacity();
             self.evaluations += 1;
             self.engine.beginInference(function);
             const next = self.inferFunction(function) catch |err| {
@@ -113,11 +103,6 @@ pub const Infer = struct {
             try self.engine.endInference();
             if (try self.engine.updateSummary(function, next)) self.summary_changes += 1;
         }
-        // A virtual summary may have been cached while one of its concrete
-        // implementations still held an earlier fixed-point approximation.
-        // Runtime validation must merge the final summaries.
-        self.virtual_summaries.clearRetainingCapacity();
-        self.invalid_virtual_summaries.clearRetainingCapacity();
     }
 
     pub fn virtualSummary(
@@ -126,7 +111,6 @@ pub const Infer = struct {
     ) !?facts.SafetySummary {
         const start = profile.timestamp(self.profile_io);
         defer profile.accumulate(self.profile_io, start, &self.virtual_summary_ns);
-        if (self.invalid_virtual_summaries.contains(registry_id)) return null;
         if (self.virtual_summaries.get(registry_id)) |summary| return summary;
         const registry = self.graph.virtual_registries.items[@intFromEnum(registry_id)];
         if (registry.contract_input_count) |input_count| {
@@ -151,6 +135,7 @@ pub const Infer = struct {
                     output.* = .{ .input_dependencies = dependencies, .input_domains = allowed.domains, .explicit_dependency = dependencies.len != 0 or allowed.domains.len != 0 };
                 }
             }
+            for (outputs) |*output| output.* = try self.bindVirtualReceiverValues(output.*, registry.receiver_input_index);
             const required = try self.allocator.alloc(facts.InputPath, input_count);
             for (required, 0..) |*path, index| path.* = .{ .input_index = @intCast(index) };
             const post_states = try self.allocator.alloc(facts.PlacePostState, contract.invalidates.len);
@@ -165,71 +150,60 @@ pub const Infer = struct {
             try self.virtual_summaries.put(registry_id, result);
             return result;
         }
-        const implementations = self.graph.function_refs.items[registry.implementations.start..][0..registry.implementations.len];
-        if (implementations.len == 0) return null;
-        self.virtual_summary_merges += 1;
+        return error.MissingVirtualSafetyContract;
+    }
 
-        const receiver = self.virtualReceiverIndex(registry_id);
-        var merged = (try self.virtualImplementationSummary(implementations[0], receiver)) orelse return null;
-        if (!virtualInputPostStatesRuntimeRepresentable(merged.input_post_states)) {
-            try self.invalid_virtual_summaries.put(registry_id, {});
-            return null;
+    fn bindVirtualReceiverValues(self: *Infer, effect: facts.ValueEffect, receiver: u32) anyerror!facts.ValueEffect {
+        var result = effect;
+        var dependencies = std.array_list.Managed(facts.InputDependency).init(self.allocator);
+        var receivers = std.array_list.Managed(facts.InputPath).init(self.allocator);
+        for (effect.input_dependencies) |dependency| {
+            if (dependency.path.input_index == receiver and dependency.validity_only) {
+                try appendInputPath(&receivers, dependency.path);
+            } else try appendInputDependency(&dependencies, dependency);
         }
-        for (implementations[1..]) |implementation| {
-            const next = (try self.virtualImplementationSummary(implementation, receiver)) orelse return null;
-            if (!virtualInputPostStatesRuntimeRepresentable(next.input_post_states)) {
-                try self.invalid_virtual_summaries.put(registry_id, {});
-                return null;
+        result.input_dependencies = try dependencies.toOwnedSlice();
+        result.input_receiver_values = try receivers.toOwnedSlice();
+        if (effect.fields.len != 0) {
+            const fields = try self.allocator.dupe(facts.OutputFieldEffect, effect.fields);
+            for (fields) |*field| {
+                const value = try self.allocator.create(facts.ValueEffect);
+                value.* = try self.bindVirtualReceiverValues(field.value.*, receiver);
+                field.value = value;
             }
-            merged = (try self.mergeVirtualSafetySummary(merged, next)) orelse {
-                try self.invalid_virtual_summaries.put(registry_id, {});
-                return null;
-            };
+            result.fields = fields;
         }
-        try self.virtual_summaries.put(registry_id, merged);
-        return merged;
-    }
-
-    pub fn virtualReceiverIndex(self: *Infer, registry_id: graph_mod.GlobalVirtualRegistryId) ?u32 {
-        const start = profile.timestamp(self.profile_io);
-        defer profile.accumulate(self.profile_io, start, &self.virtual_receiver_ns);
-        return self.graph.virtual_registries.items[@intFromEnum(registry_id)].receiver_input_index;
-    }
-
-    pub fn virtualizeReceiverIndex(self: *const Infer, virtualize: graph_mod.Virtualize, method_index: usize) u32 {
-        const registry = self.graph.virtual_registry_refs.items[virtualize.safety_methods.start + method_index];
-        return self.graph.virtual_registries.items[@intFromEnum(registry)].receiver_input_index;
-    }
-
-    pub fn virtualImplementationSummary(self: *Infer, implementation: graph_mod.GlobalFunctionId, receiver: ?u32) !?facts.SafetySummary {
-        return self.implementationSummary(implementation, receiver, true);
+        if (effect.variants.len != 0) {
+            const variants = try self.allocator.dupe(facts.OutputVariantEffect, effect.variants);
+            for (variants) |*variant| {
+                const value = try self.allocator.create(facts.ValueEffect);
+                value.* = try self.bindVirtualReceiverValues(variant.value.*, receiver);
+                variant.value = value;
+            }
+            result.variants = variants;
+        }
+        return result;
     }
 
     pub fn contractImplementationSummary(self: *Infer, implementation: graph_mod.GlobalFunctionId, receiver: ?u32) !?facts.SafetySummary {
-        return self.implementationSummary(implementation, receiver, false);
+        return self.implementationSummary(implementation, receiver);
     }
 
-    fn implementationSummary(self: *Infer, implementation: graph_mod.GlobalFunctionId, receiver: ?u32, erase_receiver: bool) !?facts.SafetySummary {
+    fn implementationSummary(self: *Infer, implementation: graph_mod.GlobalFunctionId, receiver: ?u32) !?facts.SafetySummary {
         var summary = self.engine.summaryFor(implementation) orelse return null;
         var states = std.array_list.Managed(facts.PlacePostState).init(self.allocator);
         const function = self.graph.function(implementation);
         const outputs = try self.allocator.alloc(facts.ValueEffect, summary.outputs.len);
         for (summary.outputs, 0..) |output, index| {
             const erased = try self.eraseScalarOwnershipTransfers(function, output);
-            outputs[index] = if (receiver != null and erase_receiver)
-                try self.borrowVirtualReceiverGenerations(erased, receiver.?)
-            else
-                erased;
-        }
-        for (summary.storage_capability_uses) |use| {
-            if (receiver != null and use.target.input_index == receiver.? and use.target.projections.len != 0) return null;
+            outputs[index] = erased;
         }
         summary.outputs = outputs;
         for (summary.input_post_states) |state| {
             var ty = self.graph.fields.items[function.input.start + state.target.input_index].ty;
             var scalar_field = receiver != null and state.target.input_index == receiver.? and state.target.projections.len != 0;
             for (state.target.projections) |projection| {
-                if (self.graph.semanticType(ty) == .pointer) ty = self.graph.semanticType(ty).pointer.child;
+                if (projection != .dereference and self.graph.semanticType(ty) == .pointer) ty = self.graph.semanticType(ty).pointer.child;
                 switch (projection) {
                     .field => |index| {
                         const fields = types.fields(self.graph, ty) orelse {
@@ -241,6 +215,20 @@ pub const Infer = struct {
                             break;
                         }
                         ty = types.effectiveFieldType(self.graph.fields.items[fields.start + index]);
+                    },
+                    .dereference => {
+                        const current = self.graph.semanticType(ty);
+                        if (current != .pointer) {
+                            scalar_field = false;
+                            break;
+                        }
+                        ty = current.pointer.child;
+                    },
+                    .static_index, .dynamic_index => {
+                        ty = types.arrayElement(self.graph, ty) orelse {
+                            scalar_field = false;
+                            break;
+                        };
                     },
                     else => {
                         scalar_field = false;
@@ -314,359 +302,6 @@ pub const Infer = struct {
         }
         result.variants = variants;
         return result;
-    }
-
-    pub fn virtualSummaryInvalid(self: *const Infer, registry_id: graph_mod.GlobalVirtualRegistryId) bool {
-        return self.invalid_virtual_summaries.contains(registry_id);
-    }
-
-    fn mergeVirtualSafetySummary(
-        self: *Infer,
-        left: facts.SafetySummary,
-        right: facts.SafetySummary,
-    ) !?facts.SafetySummary {
-        if (left.outputs.len != right.outputs.len) return null;
-        if (!virtualInputPostStatesRuntimeRepresentable(left.input_post_states) or
-            !virtualInputPostStatesRuntimeRepresentable(right.input_post_states)) return null;
-
-        const input_post_states = (try self.mergeVirtualInputPostStates(
-            left.input_post_states,
-            right.input_post_states,
-        )) orelse return null;
-
-        var fresh_map = std.AutoHashMap(facts.FreshEffectSource, facts.FreshEffectSource).init(self.allocator);
-        defer fresh_map.deinit();
-        // Match identities throughout the output before merging any field:
-        // an optional root in an early field may be shared with a root that
-        // both implementations expose in a later field.
-        for (left.outputs, right.outputs) |left_output, right_output|
-            if (!try self.prealignVirtualFreshSources(left_output, right_output, &fresh_map)) return null;
-        const outputs = try self.allocator.alloc(facts.ValueEffect, left.outputs.len);
-        for (left.outputs, right.outputs, 0..) |left_output, right_output, index|
-            outputs[index] = (try self.mergeVirtualValueEffect(left_output, right_output, &fresh_map)) orelse return null;
-
-        var opaque_storage_effects = std.array_list.Managed(facts.OpaqueStorageEffect).init(self.allocator);
-        for (left.opaque_storage_effects) |effect|
-            try self.recordOpaqueStorageEffect(&opaque_storage_effects, effect.storage, effect.hidden_dependencies);
-        for (right.opaque_storage_effects) |effect|
-            try self.recordOpaqueStorageEffect(&opaque_storage_effects, effect.storage, effect.hidden_dependencies);
-
-        const empty_intersection = try self.intersectInputPaths(left.opaque_storage_empties, right.opaque_storage_empties);
-        var opaque_storage_empties = std.array_list.Managed(facts.InputPath).init(self.allocator);
-        for (empty_intersection) |empty| {
-            var repopulated = false;
-            for (opaque_storage_effects.items) |effect| if (self.inputPathEqual(empty, effect.storage)) {
-                repopulated = true;
-                break;
-            };
-            if (!repopulated) try appendInputPath(&opaque_storage_empties, empty);
-        }
-
-        var required_live_inputs = std.array_list.Managed(facts.InputPath).init(self.allocator);
-        for (left.required_live_inputs) |input| try appendInputPath(&required_live_inputs, input);
-        for (right.required_live_inputs) |input| try appendInputPath(&required_live_inputs, input);
-        var left_capabilities = CapabilityFlow.init(self.allocator);
-        defer left_capabilities.deinit();
-        var right_capabilities = CapabilityFlow.init(self.allocator);
-        defer right_capabilities.deinit();
-        for (left.storage_capability_uses) |use| try self.add_capability_count(&left_capabilities, .{ .input = use.target }, use.minimum, use.maximum);
-        for (right.storage_capability_uses) |use| try self.add_capability_count(&right_capabilities, .{ .input = use.target }, use.minimum, use.maximum);
-        for (left.storage_capability_conflicts) |pair| try self.record_capability_conflict(&left_capabilities, .{ .input = pair.first }, .{ .input = pair.second });
-        for (right.storage_capability_conflicts) |pair| try self.record_capability_conflict(&right_capabilities, .{ .input = pair.first }, .{ .input = pair.second });
-        var joined_capabilities = CapabilityFlow.init(self.allocator);
-        defer joined_capabilities.deinit();
-        try self.join_capability_flows(&joined_capabilities, &left_capabilities, &right_capabilities);
-        var capability_uses = std.array_list.Managed(facts.StorageCapabilityUse).init(self.allocator);
-        for (joined_capabilities.counts.items) |count| try capability_uses.append(.{ .target = count.source.input, .minimum = count.minimum, .maximum = count.maximum });
-        var capability_conflicts = std.array_list.Managed(facts.StorageCapabilityConflict).init(self.allocator);
-        for (joined_capabilities.conflicts.items) |pair| try capability_conflicts.append(.{ .first = pair.first.input, .second = pair.second.input });
-        return .{
-            .outputs = outputs,
-            .storage_capability_uses = try capability_uses.toOwnedSlice(),
-            .storage_capability_conflicts = try capability_conflicts.toOwnedSlice(),
-
-            .required_live_inputs = try required_live_inputs.toOwnedSlice(),
-            .input_post_states = input_post_states,
-            .opaque_storage_effects = try opaque_storage_effects.toOwnedSlice(),
-            .opaque_storage_empties = try opaque_storage_empties.toOwnedSlice(),
-        };
-    }
-
-    fn prealignVirtualFreshSources(
-        self: *Infer,
-        left: facts.ValueEffect,
-        right: facts.ValueEffect,
-        mapping: *std.AutoHashMap(facts.FreshEffectSource, facts.FreshEffectSource),
-    ) !bool {
-        if (left.fresh_dependencies.len != 0 and right.fresh_dependencies.len != 0 and
-            (left.fresh_dependencies.len != right.fresh_dependencies.len or
-                !try alignFreshSources(left.fresh_dependencies, right.fresh_dependencies, mapping))) return false;
-        if (left.fresh_owned_roots.len != 0 and right.fresh_owned_roots.len != 0 and
-            (left.fresh_owned_roots.len != right.fresh_owned_roots.len or
-                !try alignFreshSources(left.fresh_owned_roots, right.fresh_owned_roots, mapping))) return false;
-        if (left.fresh_storage_capabilities.len != 0 and right.fresh_storage_capabilities.len != 0 and
-            (left.fresh_storage_capabilities.len != right.fresh_storage_capabilities.len or
-                !try alignFreshSources(left.fresh_storage_capabilities, right.fresh_storage_capabilities, mapping))) return false;
-        for (left.fields) |left_field| for (right.fields) |right_field| {
-            if (left_field.index == right_field.index and
-                !try self.prealignVirtualFreshSources(left_field.value.*, right_field.value.*, mapping)) return false;
-        };
-        for (left.variants) |left_variant| for (right.variants) |right_variant| {
-            if (left_variant.index == right_variant.index and
-                !try self.prealignVirtualFreshSources(left_variant.value.*, right_variant.value.*, mapping)) return false;
-        };
-        return true;
-    }
-
-    fn mergeVirtualInputPostStates(
-        self: *Infer,
-        left: []const facts.PlacePostState,
-        right: []const facts.PlacePostState,
-    ) !?[]const facts.PlacePostState {
-        var merged = std.array_list.Managed(facts.PlacePostState).init(self.allocator);
-        for (left) |left_state| {
-            const right_state = self.findInputPostState(right, left_state.target) orelse facts.PlacePostState{
-                .target = left_state.target,
-                .initializedness = .initialized,
-                .value = try self.inputPlaceValueEffect(left_state.target),
-            };
-            try merged.append((try self.mergeVirtualPlacePostState(left_state, right_state)) orelse return null);
-        }
-        for (right) |right_state| if (self.findInputPostState(left, right_state.target) == null) {
-            const unchanged = facts.PlacePostState{
-                .target = right_state.target,
-                .initializedness = .initialized,
-                .value = try self.inputPlaceValueEffect(right_state.target),
-            };
-            try merged.append((try self.mergeVirtualPlacePostState(unchanged, right_state)) orelse return null);
-        };
-        return try merged.toOwnedSlice();
-    }
-
-    fn mergeVirtualPlacePostState(
-        self: *Infer,
-        left: facts.PlacePostState,
-        right: facts.PlacePostState,
-    ) !?facts.PlacePostState {
-        if (!self.inputPathEqual(left.target, right.target)) return null;
-        if (!virtualInputPostStateRuntimeRepresentable(left) or
-            !virtualInputPostStateRuntimeRepresentable(right)) return null;
-
-        const value = if (summaries.valueEffectEql(left.value, right.value))
-            left.value
-        else blk: {
-            if (outputEffectHasFreshRole(left.value) or outputEffectHasFreshRole(right.value) or
-                outputEffectTransfersOwnership(left.value) or outputEffectTransfersOwnership(right.value)) return null;
-            break :blk try self.mergeValueEffects(left.value, right.value);
-        };
-        var result = facts.PlacePostState{
-            .target = left.target,
-            .initializedness = joinInitializedness(left.initializedness, right.initializedness),
-            .value = value,
-            .ends_previous_roots = left.ends_previous_roots or right.ends_previous_roots,
-            .refreshes_storage_generation = left.refreshes_storage_generation or right.refreshes_storage_generation,
-            .requires_available_destination = left.requires_available_destination or right.requires_available_destination,
-            .may_repopulate_opaque_storage = left.may_repopulate_opaque_storage or right.may_repopulate_opaque_storage,
-        };
-        if (!self.mergeVirtualOpaqueOwnershipEffect(&result, left, right)) return null;
-        return result;
-    }
-
-    fn mergeVirtualOpaqueOwnershipEffect(
-        self: *Infer,
-        merged: *facts.PlacePostState,
-        left: facts.PlacePostState,
-        right: facts.PlacePostState,
-    ) bool {
-        const left_ownership = left.opaque_ownership;
-        const right_ownership = right.opaque_ownership;
-        if (left_ownership == .ambiguous or right_ownership == .ambiguous) return false;
-        if (left_ownership == .none and right_ownership == .none) {
-            merged.opaque_ownership = .none;
-            merged.opaque_storage = null;
-            return true;
-        }
-        const left_storage = if (left_ownership == .none) right.opaque_storage else left.opaque_storage;
-        const right_storage = if (right_ownership == .none) left.opaque_storage else right.opaque_storage;
-        if (!self.optionalInputPathEqual(left_storage, right_storage)) return false;
-        merged.opaque_storage = left_storage;
-        merged.opaque_ownership = if (left_ownership == .none or right_ownership == .none or
-            left_ownership == .conditional or right_ownership == .conditional)
-            .conditional
-        else
-            .definite;
-        return true;
-    }
-
-    fn borrowVirtualReceiverGenerations(self: *Infer, effect: facts.ValueEffect, receiver_index: u32) !facts.ValueEffect {
-        // Private receiver projections cannot be instantiated against an
-        // erased Virtual handle. Carry their lifetime through the handle's
-        // value and collapse opaque provenance paths before fixed-point
-        // inference can extend them through recursive allocator wrappers.
-        var result = effect;
-        var private_receiver_borrow = false;
-        var places = std.array_list.Managed(facts.InputPath).init(self.allocator);
-        for (effect.input_places) |path| {
-            if (path.input_index == receiver_index and path.projections.len != 0) {
-                private_receiver_borrow = true;
-            } else try appendInputPath(&places, path);
-        }
-        result.input_places = try places.toOwnedSlice();
-        var generations = std.array_list.Managed(facts.InputPath).init(self.allocator);
-        for (effect.input_generation_dependencies) |path| {
-            if (path.input_index == receiver_index and path.projections.len != 0) {
-                private_receiver_borrow = true;
-            } else try appendInputPath(&generations, path);
-        }
-        result.input_generation_dependencies = try generations.toOwnedSlice();
-        var storage_capabilities = std.array_list.Managed(facts.InputPath).init(self.allocator);
-        for (effect.input_storage_capabilities) |path| {
-            var erased = path;
-            if (path.input_index == receiver_index) erased.projections = &.{};
-            try appendInputPath(&storage_capabilities, erased);
-        }
-        result.input_storage_capabilities = try storage_capabilities.toOwnedSlice();
-        var receiver_values = std.array_list.Managed(facts.InputPath).init(self.allocator);
-        for (effect.input_place_values) |path| {
-            if (path.input_index == receiver_index and path.projections.len != 0) {
-                private_receiver_borrow = true;
-            } else try appendInputPath(&receiver_values, path);
-        }
-        if (private_receiver_borrow)
-            try appendInputPath(&receiver_values, .{ .input_index = receiver_index });
-        result.input_place_values = try receiver_values.toOwnedSlice();
-        var opaque_generations = std.array_list.Managed(facts.InputPath).init(self.allocator);
-        for (effect.opaque_generation_dependencies) |path| {
-            // The erased receiver has no implementation-specific fields.
-            // Its opaque provenance is carried by the whole Virtual value.
-            const erased = if (path.input_index == receiver_index and path.projections.len != 0)
-                facts.InputPath{ .input_index = receiver_index }
-            else
-                path;
-            try appendInputPath(&opaque_generations, erased);
-        }
-        result.opaque_generation_dependencies = try opaque_generations.toOwnedSlice();
-        if (effect.fields.len != 0) {
-            const fields = try self.allocator.alloc(facts.OutputFieldEffect, effect.fields.len);
-            for (effect.fields, 0..) |field, index| {
-                const value = try self.allocator.create(facts.ValueEffect);
-                value.* = try self.borrowVirtualReceiverGenerations(field.value.*, receiver_index);
-                fields[index] = .{ .index = field.index, .value = value };
-            }
-            result.fields = fields;
-        }
-        if (effect.variants.len != 0) {
-            const variants = try self.allocator.alloc(facts.OutputVariantEffect, effect.variants.len);
-            for (effect.variants, 0..) |variant, index| {
-                const value = try self.allocator.create(facts.ValueEffect);
-                value.* = try self.borrowVirtualReceiverGenerations(variant.value.*, receiver_index);
-                variants[index] = .{ .index = variant.index, .value = value };
-            }
-            result.variants = variants;
-        }
-        return result;
-    }
-
-    fn mergeVirtualValueEffect(
-        self: *Infer,
-        left: facts.ValueEffect,
-        right: facts.ValueEffect,
-        fresh_map: *std.AutoHashMap(facts.FreshEffectSource, facts.FreshEffectSource),
-    ) !?facts.ValueEffect {
-        if (left.integer_address != right.integer_address or
-            left.foreign_storage != right.foreign_storage or
-            left.fresh_storage_capabilities.len != right.fresh_storage_capabilities.len or
-            left.variants.len != right.variants.len) return null;
-
-        const fresh_dependencies = (try mergeVirtualFreshRoots(self.allocator, left.fresh_dependencies, right.fresh_dependencies, fresh_map)) orelse return null;
-        const fresh_owned_roots = (try mergeVirtualFreshRoots(self.allocator, left.fresh_owned_roots, right.fresh_owned_roots, fresh_map)) orelse return null;
-        if (!try alignFreshSources(left.fresh_storage_capabilities, right.fresh_storage_capabilities, fresh_map)) return null;
-
-        var dependencies = std.array_list.Managed(facts.InputDependency).init(self.allocator);
-        for (left.input_dependencies) |dependency| try appendInputDependency(&dependencies, dependency);
-        for (right.input_dependencies) |dependency| {
-            if (dependency.transfers_ownership and !containsInputDependency(left.input_dependencies, dependency)) return null;
-            try appendInputDependency(&dependencies, dependency);
-        }
-        for (left.input_dependencies) |dependency| {
-            if (dependency.transfers_ownership and !containsInputDependency(right.input_dependencies, dependency)) return null;
-        }
-
-        var input_places = std.array_list.Managed(facts.InputPath).init(self.allocator);
-        for (left.input_places) |input| try appendInputPath(&input_places, input);
-        for (right.input_places) |input| try appendInputPath(&input_places, input);
-        var input_generations = std.array_list.Managed(facts.InputPath).init(self.allocator);
-        for (left.input_generation_dependencies) |input| try appendInputPath(&input_generations, input);
-        for (right.input_generation_dependencies) |input| try appendInputPath(&input_generations, input);
-        var input_place_values = std.array_list.Managed(facts.InputPath).init(self.allocator);
-        for (left.input_place_values) |input| try appendInputPath(&input_place_values, input);
-        for (right.input_place_values) |input| try appendInputPath(&input_place_values, input);
-        var input_owned_roots = std.array_list.Managed(facts.InputPath).init(self.allocator);
-        for (left.input_owned_roots) |input| try appendInputPath(&input_owned_roots, input);
-        for (right.input_owned_roots) |input| try appendInputPath(&input_owned_roots, input);
-        var opaque_generations = std.array_list.Managed(facts.InputPath).init(self.allocator);
-        for (left.opaque_generation_dependencies) |input| try appendInputPath(&opaque_generations, input);
-        for (right.opaque_generation_dependencies) |input| try appendInputPath(&opaque_generations, input);
-        var opaque_storages = std.array_list.Managed(facts.InputPath).init(self.allocator);
-        for (left.opaque_storage_dependencies) |input| try appendInputPath(&opaque_storages, input);
-        for (right.opaque_storage_dependencies) |input| try appendInputPath(&opaque_storages, input);
-
-        var fields = std.array_list.Managed(facts.OutputFieldEffect).init(self.allocator);
-        for (left.fields) |left_field| {
-            const right_value = blk: {
-                for (right.fields) |right_field| if (right_field.index == left_field.index) break :blk right_field.value.*;
-                break :blk try self.projectValueEffect(right, .{ .field = left_field.index });
-            };
-            const value = try self.allocator.create(facts.ValueEffect);
-            value.* = (try self.mergeVirtualValueEffect(left_field.value.*, right_value, fresh_map)) orelse return null;
-            try fields.append(.{ .index = left_field.index, .value = value });
-        }
-        for (right.fields) |right_field| {
-            var found = false;
-            for (left.fields) |left_field| if (left_field.index == right_field.index) {
-                found = true;
-                break;
-            };
-            if (found) continue;
-            const left_value = try self.projectValueEffect(left, .{ .field = right_field.index });
-            const value = try self.allocator.create(facts.ValueEffect);
-            value.* = (try self.mergeVirtualValueEffect(left_value, right_field.value.*, fresh_map)) orelse return null;
-            try fields.append(.{ .index = right_field.index, .value = value });
-        }
-        const variants = try self.allocator.alloc(facts.OutputVariantEffect, left.variants.len);
-        for (left.variants, right.variants, 0..) |left_variant, right_variant, index| {
-            if (left_variant.index != right_variant.index) return null;
-            const value = try self.allocator.create(facts.ValueEffect);
-            value.* = (try self.mergeVirtualValueEffect(left_variant.value.*, right_variant.value.*, fresh_map)) orelse return null;
-            variants[index] = .{ .index = left_variant.index, .value = value };
-        }
-        const right_unavailable = try self.allocator.alloc(facts.FreshStorageCapabilityState, right.unavailable_fresh_storage.len);
-        for (right.unavailable_fresh_storage, 0..) |entry, index| {
-            right_unavailable[index] = entry;
-            right_unavailable[index].source = fresh_map.get(entry.source) orelse entry.source;
-            right_unavailable[index].maybe_consumed = true;
-        }
-        const unavailable = try self.merge_unavailable_fresh_storage(left.unavailable_fresh_storage, right_unavailable);
-        return .{
-            .input_dependencies = try dependencies.toOwnedSlice(),
-            .input_storage_capabilities = try self.union_input_paths(left.input_storage_capabilities, right.input_storage_capabilities),
-            .input_places = try input_places.toOwnedSlice(),
-            .input_generation_dependencies = try input_generations.toOwnedSlice(),
-            .input_place_values = try input_place_values.toOwnedSlice(),
-            .input_owned_roots = try input_owned_roots.toOwnedSlice(),
-            .opaque_generation_dependencies = try opaque_generations.toOwnedSlice(),
-            .opaque_storage_dependencies = try opaque_storages.toOwnedSlice(),
-            .fields = try fields.toOwnedSlice(),
-            .variants = variants,
-            .known_choice_variant = if (left.known_choice_variant == right.known_choice_variant) left.known_choice_variant else null,
-            .fresh_dependencies = fresh_dependencies,
-            .fresh_owned_roots = fresh_owned_roots,
-            .fresh_storage_capabilities = left.fresh_storage_capabilities,
-            .unavailable_fresh_storage = unavailable,
-            .integer_address = left.integer_address,
-            .explicit_dependency = left.explicit_dependency or right.explicit_dependency,
-            .foreign_storage = left.foreign_storage,
-        };
     }
 
     fn inferFunction(self: *Infer, function_id: graph_mod.GlobalFunctionId) !facts.SafetySummary {
@@ -1525,7 +1160,7 @@ pub const Infer = struct {
                 try self.inferInputPostStatesExpression(function_id, assignment.value, states, exits);
                 try self.recordInputPostState(
                     states,
-                    try self.inferInputPaths(function_id, assignment.pointer),
+                    try self.inferPointeePaths(function_id, assignment.pointer),
                     .initialized,
                     try self.inferExpression(function_id, assignment.value),
                     false,
@@ -2844,6 +2479,8 @@ pub const Infer = struct {
             .input_dependencies = input_dependencies,
             .input_places = effect.input_places,
             .input_generation_dependencies = effect.input_generation_dependencies,
+            .input_captured_storages = effect.input_captured_storages,
+            .input_receiver_values = effect.input_receiver_values,
             .input_place_values = effect.input_place_values,
             .input_owned_roots = effect.input_owned_roots,
             .opaque_generation_dependencies = effect.opaque_generation_dependencies,
@@ -3128,12 +2765,34 @@ pub const Infer = struct {
         if (override) |symbolic| if (symbolic.input_index == path.input_index) {
             if (path.projections.len == 0) return &.{};
             var effect = symbolic.effect;
-            for (path.projections) |projection| effect = try self.projectValueEffect(effect, projection);
+            for (path.projections, 0..) |projection, projection_index| {
+                if (purpose == .place and projection == .dereference) {
+                    // A symbolic receiver field can already name a caller's
+                    // pointer input referent. Only references stored inside
+                    // that referent need another dereference coordinate.
+                    var sources = try self.opaqueGenerationSourcePaths(effect);
+                    var referents = std.array_list.Managed(facts.InputPath).init(self.allocator);
+                    for (sources) |source| {
+                        const ty = self.inputPathType(function_id, source) orelse continue;
+                        try appendInputPath(&referents, if (self.graph.semanticType(ty) == .pointer)
+                            .{ .input_index = source.input_index, .projections = try self.appendProjection(source.projections, .dereference) }
+                        else
+                            source);
+                    }
+                    sources = try referents.toOwnedSlice();
+                    for (path.projections[projection_index + 1 ..]) |remaining| sources = try self.projectInputPaths(sources, remaining);
+                    return sources;
+                }
+                effect = try self.projectValueEffect(effect, projection);
+            }
             return self.opaqueGenerationSourcePaths(effect);
         };
 
         const argument = arguments[path.input_index].value;
-        var direct = try self.inferInputPaths(function_id, argument);
+        var direct = if (purpose == .place)
+            try self.inferPointeePaths(function_id, argument)
+        else
+            try self.inferInputPaths(function_id, argument);
         if (direct.len != 0) {
             for (path.projections) |projection| direct = try self.projectInputPaths(direct, projection);
             return direct;
@@ -3438,22 +3097,10 @@ pub const Infer = struct {
             result.domain_values = domain_values;
             return result;
         }
-        var generations = std.array_list.Managed(facts.InputPath).init(self.allocator);
-        try generations.appendSlice(result.input_generation_dependencies);
-        for (self.graph.function_refs.items[virtualize.methods.start..][0..virtualize.methods.len], 0..) |method, index| {
-            const receiver_index = self.virtualizeReceiverIndex(virtualize, index);
-            const summary = self.engine.summaryFor(method) orelse continue;
-            for (summary.outputs) |output| {
-                const borrowed = try facts.receiverBorrowedPlaces(self.allocator, output, receiver_index);
-                for (receiver_paths) |receiver_path| for (borrowed) |borrowed_path| {
-                    const projections = try self.allocator.alloc(facts.Projection, receiver_path.projections.len + borrowed_path.projections.len);
-                    @memcpy(projections[0..receiver_path.projections.len], receiver_path.projections);
-                    @memcpy(projections[receiver_path.projections.len..], borrowed_path.projections);
-                    try appendInputPath(&generations, .{ .input_index = receiver_path.input_index, .projections = projections });
-                };
-            }
-        }
-        result.input_generation_dependencies = try generations.toOwnedSlice();
+        // A receiver without named domains captures its reachable storage.
+        // Callers resolve these paths to actual generations; concrete method
+        // summaries never determine the shape or liveness of the handle.
+        result.input_captured_storages = receiver_paths;
         return result;
     }
 
@@ -3572,6 +3219,73 @@ pub const Infer = struct {
         };
     }
 
+    fn inputPathType(self: *Infer, function_id: graph_mod.GlobalFunctionId, path: facts.InputPath) ?graph_mod.GlobalTypeId {
+        const function = self.graph.function(function_id);
+        if (path.input_index >= function.input.len) return null;
+        var ty = self.graph.fields.items[function.input.start + path.input_index].ty;
+        if (self.graph.semanticType(ty) == .pointer) ty = self.graph.semanticType(ty).pointer.child;
+        for (path.projections) |projection| {
+            ty = switch (projection) {
+                .field => |index| blk: {
+                    const fields = types.fields(self.graph, ty) orelse return null;
+                    if (index >= fields.len) return null;
+                    break :blk types.effectiveFieldType(self.graph.fields.items[fields.start + index]);
+                },
+                .variant => |index| blk: {
+                    const variants = types.variants(self.graph, ty) orelse return null;
+                    if (index >= variants.len) return null;
+                    break :blk self.graph.variants.items[variants.start + index].payload_type orelse return null;
+                },
+                .static_index, .dynamic_index => types.arrayElement(self.graph, ty) orelse return null,
+                .dereference => if (self.graph.semanticType(ty) == .pointer) self.graph.semanticType(ty).pointer.child else return null,
+            };
+        }
+        return ty;
+    }
+
+    fn inferPointeePaths(self: *Infer, function_id: graph_mod.GlobalFunctionId, pointer: graph_mod.GlobalNodeId) ![]const facts.InputPath {
+        const paths = try self.inferInputPaths(function_id, pointer);
+        const pointer_ty = self.graph.node(pointer).ty orelse return paths;
+        const pointer_type = self.graph.semanticType(pointer_ty);
+        if (pointer_type != .pointer) return paths;
+        var result = std.array_list.Managed(facts.InputPath).init(self.allocator);
+        const function = self.graph.function(function_id);
+        for (paths) |path| {
+            if (path.input_index >= function.input.len) continue;
+            var ty = self.graph.fields.items[function.input.start + path.input_index].ty;
+            // Input pointer coordinates already denote their referent. A
+            // pointer stored inside it needs an explicit dereference instead
+            // of describing a write to the field holding that pointer.
+            if (self.graph.semanticType(ty) == .pointer) ty = self.graph.semanticType(ty).pointer.child;
+            var projections = std.array_list.Managed(facts.Projection).init(self.allocator);
+            for (path.projections) |projection| {
+                if (projection != .dereference and self.graph.semanticType(ty) == .pointer) {
+                    try projections.append(.dereference);
+                    ty = self.graph.semanticType(ty).pointer.child;
+                }
+                try projections.append(projection);
+                ty = switch (projection) {
+                    .field => |index| blk: {
+                        const fields = types.fields(self.graph, ty) orelse break :blk ty;
+                        if (index >= fields.len) break :blk ty;
+                        break :blk types.effectiveFieldType(self.graph.fields.items[fields.start + index]);
+                    },
+                    .variant => |index| blk: {
+                        const variants = types.variants(self.graph, ty) orelse break :blk ty;
+                        if (index >= variants.len) break :blk ty;
+                        break :blk self.graph.variants.items[variants.start + index].payload_type orelse ty;
+                    },
+                    .static_index, .dynamic_index => types.arrayElement(self.graph, ty) orelse ty,
+                    .dereference => if (self.graph.semanticType(ty) == .pointer) self.graph.semanticType(ty).pointer.child else ty,
+                };
+            }
+            if (self.graph.semanticType(ty) == .pointer and !types.equal(self.graph, ty, pointer_type.pointer.child))
+                try projections.append(.dereference);
+            try appendInputPath(&result, .{ .input_index = path.input_index, .projections = try projections.toOwnedSlice() });
+        }
+        return result.toOwnedSlice();
+    }
+
     fn inferInputPaths(self: *Infer, function_id: graph_mod.GlobalFunctionId, node_id: graph_mod.GlobalNodeId) anyerror![]const facts.InputPath {
         return switch (self.graph.node(node_id).content) {
             .value_sequence => |block| blk: {
@@ -3684,6 +3398,29 @@ pub const Infer = struct {
             for (mapped) |candidate| try appendInputPath(&input_generations, candidate);
         }
         result.input_generation_dependencies = try input_generations.toOwnedSlice();
+        var captured_storages = std.array_list.Managed(facts.InputPath).init(self.allocator);
+        for (effect.input_captured_storages) |path| {
+            const mapped = try self.substituteRequiredInputPath(function_id, path, arguments, override);
+            for (mapped) |candidate| try appendInputPath(&captured_storages, candidate);
+        }
+        result.input_captured_storages = try captured_storages.toOwnedSlice();
+
+        var receiver_values = std.array_list.Managed(facts.InputPath).init(self.allocator);
+        for (effect.input_receiver_values) |path| {
+            if (path.input_index >= arguments.len) continue;
+            const argument = arguments[path.input_index].value;
+            if ((try self.inferInputPaths(function_id, argument)).len == 0) {
+                if (try self.localPointeeEffect(function_id, argument)) |pointee| {
+                    var value = pointee;
+                    for (path.projections) |projection| value = try self.projectValueEffect(value, projection);
+                    result = try self.mergeValueEffects(result, try self.validityOnlyEffect(value));
+                    continue;
+                }
+            }
+            const mapped = try self.substituteRequiredInputPath(function_id, path, arguments, override);
+            for (mapped) |candidate| try appendInputPath(&receiver_values, candidate);
+        }
+        result.input_receiver_values = try receiver_values.toOwnedSlice();
 
         var input_place_values = std.array_list.Managed(facts.InputPath).init(self.allocator);
         var input_place_value_overrides: facts.ValueEffect = .{};
@@ -3879,6 +3616,12 @@ pub const Infer = struct {
         var input_generations = std.array_list.Managed(facts.InputPath).init(self.allocator);
         for (left.input_generation_dependencies) |value| try appendInputPath(&input_generations, value);
         for (right.input_generation_dependencies) |value| try appendInputPath(&input_generations, value);
+        var receiver_values = std.array_list.Managed(facts.InputPath).init(self.allocator);
+        for (left.input_receiver_values) |value| try appendInputPath(&receiver_values, value);
+        for (right.input_receiver_values) |value| try appendInputPath(&receiver_values, value);
+        var captured_storages = std.array_list.Managed(facts.InputPath).init(self.allocator);
+        for (left.input_captured_storages) |value| try appendInputPath(&captured_storages, value);
+        for (right.input_captured_storages) |value| try appendInputPath(&captured_storages, value);
         var input_place_values = std.array_list.Managed(facts.InputPath).init(self.allocator);
         for (left.input_place_values) |value| try appendInputPath(&input_place_values, value);
         for (right.input_place_values) |value| try appendInputPath(&input_place_values, value);
@@ -3947,6 +3690,8 @@ pub const Infer = struct {
             .input_storage_capabilities = try self.union_input_paths(left.input_storage_capabilities, right.input_storage_capabilities),
             .input_places = try input_places.toOwnedSlice(),
             .input_generation_dependencies = try input_generations.toOwnedSlice(),
+            .input_captured_storages = try captured_storages.toOwnedSlice(),
+            .input_receiver_values = try receiver_values.toOwnedSlice(),
             .input_place_values = try input_place_values.toOwnedSlice(),
             .input_owned_roots = try input_owned_roots.toOwnedSlice(),
             .input_domains = try input_domains.toOwnedSlice(),
@@ -4006,6 +3751,8 @@ pub const Infer = struct {
             .explicit_dependency = effect.explicit_dependency,
             .input_dependencies = try dependencies.toOwnedSlice(),
             .input_generation_dependencies = try generations.toOwnedSlice(),
+            .input_captured_storages = effect.input_captured_storages,
+            .input_receiver_values = effect.input_receiver_values,
             .input_owned_roots = effect.input_owned_roots,
             .opaque_generation_dependencies = effect.opaque_generation_dependencies,
             .opaque_storage_dependencies = effect.opaque_storage_dependencies,
@@ -4293,58 +4040,6 @@ pub const Infer = struct {
     }
 };
 
-fn virtualInputPostStatesRuntimeRepresentable(states: []const facts.PlacePostState) bool {
-    for (states) |state| if (!virtualInputPostStateRuntimeRepresentable(state)) return false;
-    return true;
-}
-
-fn virtualInputPostStateRuntimeRepresentable(state: facts.PlacePostState) bool {
-    return state.initializedness == .initialized and state.opaque_ownership == .none;
-}
-
-fn alignFreshSources(
-    canonical: []const facts.FreshEffectSource,
-    candidate: []const facts.FreshEffectSource,
-    mapping: *std.AutoHashMap(facts.FreshEffectSource, facts.FreshEffectSource),
-) !bool {
-    for (canonical, candidate) |canonical_source, candidate_source| {
-        if (mapping.get(candidate_source)) |existing| {
-            if (existing != canonical_source) return false;
-        } else {
-            var iterator = mapping.iterator();
-            while (iterator.next()) |entry|
-                if (entry.value_ptr.* == canonical_source and entry.key_ptr.* != candidate_source) return false;
-            try mapping.put(candidate_source, canonical_source);
-        }
-    }
-    return true;
-}
-
-fn mergeVirtualFreshRoots(
-    allocator: std.mem.Allocator,
-    canonical: []const facts.FreshEffectSource,
-    candidate: []const facts.FreshEffectSource,
-    mapping: *std.AutoHashMap(facts.FreshEffectSource, facts.FreshEffectSource),
-) !?[]const facts.FreshEffectSource {
-    // A fresh temporal identity can conservatively represent either a
-    // separately released allocation or a child of a shared region. The
-    // latter still carries its region dependency through the other effects.
-    if (candidate.len == 0) return canonical;
-    if (canonical.len == 0) {
-        const result = try allocator.dupe(facts.FreshEffectSource, candidate);
-        for (result) |*source| {
-            if (mapping.get(source.*)) |mapped| {
-                source.* = mapped;
-            } else {
-                try mapping.put(source.*, source.*);
-            }
-        }
-        return result;
-    }
-    if (canonical.len != candidate.len or !try alignFreshSources(canonical, candidate, mapping)) return null;
-    return canonical;
-}
-
 fn containsInputDependency(haystack: []const facts.InputDependency, needle: facts.InputDependency) bool {
     for (haystack) |candidate| {
         if (candidate.path.input_index != needle.path.input_index or
@@ -4564,7 +4259,6 @@ fn expectGlobalReseedingStable(infer: *Infer) !void {
     for (infer.graph.functions.items, 0..) |_, raw| {
         const function: graph_mod.GlobalFunctionId = @enumFromInt(raw);
         infer.virtual_summaries.clearRetainingCapacity();
-        infer.invalid_virtual_summaries.clearRetainingCapacity();
         infer.engine.beginInference(function);
         const next = try infer.inferFunction(function);
         try infer.engine.endInference();
@@ -4696,8 +4390,8 @@ test "virtual safety contract scalar summaries do not read implementations" {
     });
     const first = (try infer.virtualSummary(@enumFromInt(0))).?;
     try std.testing.expectEqual(@as(usize, 2), first.required_live_inputs.len);
-    try std.testing.expectEqual(@as(u32, 1), first.outputs[0].input_dependencies[0].path.input_index);
-    try std.testing.expect(first.outputs[0].input_dependencies[0].validity_only);
+    try std.testing.expectEqual(@as(u32, 1), first.outputs[0].input_receiver_values[0].input_index);
+    try std.testing.expectEqual(@as(usize, 0), first.outputs[0].input_dependencies.len);
     // No concrete summaries exist. Changing the implementation list must not
     // introduce a read of a concrete body or change the published call effects.
     try graph.function_refs.appendSlice(allocator, &.{ @enumFromInt(0), @enumFromInt(1) });
@@ -4705,7 +4399,6 @@ test "virtual safety contract scalar summaries do not read implementations" {
     infer.virtual_summaries.clearRetainingCapacity();
     const second = (try infer.virtualSummary(@enumFromInt(0))).?;
     try std.testing.expect(summaries.summaryEql(first, second));
-    try std.testing.expectEqual(@as(u64, 0), infer.virtual_summary_merges);
     var declaration = graph.virtual_registries.items[0].safety_contract.?;
     declaration.output_count = 0;
     declaration.dependencies = &.{};
@@ -4717,115 +4410,6 @@ test "virtual safety contract scalar summaries do not read implementations" {
     try std.testing.expectEqual(@as(u32, 0), invalidating.input_post_states[0].target.input_index);
     try std.testing.expect(invalidating.input_post_states[0].refreshes_storage_generation);
     try std.testing.expect(!invalidating.input_post_states[0].ends_previous_roots);
-    try std.testing.expectEqual(@as(u64, 0), infer.virtual_summary_merges);
-}
-
-test "virtual summaries align fresh roles and reject ownership mismatches" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
-    var graph: graph_mod.GlobalSemanticGraph = .{};
-    defer graph.deinit(allocator);
-    var engine = summaries.Engine.init(allocator);
-    defer engine.deinit();
-    var infer = Infer.init(allocator, &graph, &engine);
-    defer infer.deinit();
-
-    const left_source: facts.FreshEffectSource = 11;
-    const right_source: facts.FreshEffectSource = 29;
-    const compatible = try infer.mergeVirtualSafetySummary(
-        .{ .outputs = &.{.{ .fresh_dependencies = &.{left_source}, .fresh_owned_roots = &.{left_source} }} },
-        .{ .outputs = &.{.{ .fresh_dependencies = &.{right_source}, .fresh_owned_roots = &.{right_source} }} },
-    );
-    try std.testing.expect(compatible != null);
-    try std.testing.expectEqual(left_source, compatible.?.outputs[0].fresh_dependencies[0]);
-    try std.testing.expectEqual(left_source, compatible.?.outputs[0].fresh_owned_roots[0]);
-
-    const region_dependency = facts.InputDependency{ .path = .{ .input_index = 0 } };
-    const separately_released = facts.SafetySummary{
-        .outputs = &.{.{ .fresh_dependencies = &.{left_source}, .fresh_owned_roots = &.{left_source} }},
-    };
-    const region_child = facts.SafetySummary{
-        .outputs = &.{.{ .input_dependencies = &.{region_dependency} }},
-    };
-    const heap_first = (try infer.mergeVirtualSafetySummary(separately_released, region_child)).?;
-    const region_first = (try infer.mergeVirtualSafetySummary(region_child, separately_released)).?;
-    for ([_]facts.SafetySummary{ heap_first, region_first }) |merged| {
-        try std.testing.expectEqualSlices(facts.FreshEffectSource, &.{left_source}, merged.outputs[0].fresh_owned_roots);
-        try std.testing.expectEqual(@as(usize, 1), merged.outputs[0].input_dependencies.len);
-    }
-
-    const transfer = facts.InputDependency{ .path = .{ .input_index = 0 }, .transfers_ownership = true };
-    try std.testing.expect((try infer.mergeVirtualSafetySummary(
-        .{ .outputs = &.{.{ .input_dependencies = &.{transfer} }} },
-        .{ .outputs = &.{.{}} },
-    )) == null);
-}
-
-test "virtual summary merge preserves fresh identity across output fields" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
-    var graph: graph_mod.GlobalSemanticGraph = .{};
-    defer graph.deinit(allocator);
-    var engine = summaries.Engine.init(allocator);
-    defer engine.deinit();
-    var infer = Infer.init(allocator, &graph, &engine);
-    defer infer.deinit();
-
-    const empty = facts.ValueEffect{};
-    const left_root = facts.ValueEffect{ .fresh_dependencies = &.{11}, .fresh_owned_roots = &.{11} };
-    const right_root = facts.ValueEffect{ .fresh_dependencies = &.{29}, .fresh_owned_roots = &.{29} };
-    const left = facts.SafetySummary{ .outputs = &.{.{ .fields = &.{
-        .{ .index = 0, .value = &empty },
-        .{ .index = 1, .value = &left_root },
-    } }} };
-    const right = facts.SafetySummary{ .outputs = &.{.{ .fields = &.{
-        .{ .index = 0, .value = &right_root },
-        .{ .index = 1, .value = &right_root },
-    } }} };
-    const merged_optional_first = (try infer.mergeVirtualSafetySummary(left, right)).?;
-    try std.testing.expectEqual(@as(facts.FreshEffectSource, 11), merged_optional_first.outputs[0].fields[0].value.fresh_owned_roots[0]);
-    try std.testing.expectEqual(@as(facts.FreshEffectSource, 11), merged_optional_first.outputs[0].fields[1].value.fresh_owned_roots[0]);
-
-    const aligned_first = facts.SafetySummary{ .outputs = &.{.{ .fields = &.{
-        .{ .index = 0, .value = &left_root },
-        .{ .index = 1, .value = &empty },
-    } }} };
-    const merged = (try infer.mergeVirtualSafetySummary(aligned_first, right)).?;
-    try std.testing.expectEqual(@as(facts.FreshEffectSource, 11), merged.outputs[0].fields[0].value.fresh_owned_roots[0]);
-    try std.testing.expectEqual(@as(facts.FreshEffectSource, 11), merged.outputs[0].fields[1].value.fresh_owned_roots[0]);
-
-    const second_left_root = facts.ValueEffect{ .fresh_dependencies = &.{17}, .fresh_owned_roots = &.{17} };
-    const incompatible_left = facts.SafetySummary{ .outputs = &.{.{ .fields = &.{
-        .{ .index = 0, .value = &left_root },
-        .{ .index = 1, .value = &second_left_root },
-    } }} };
-    try std.testing.expect((try infer.mergeVirtualSafetySummary(incompatible_left, right)) == null);
-}
-
-test "virtual summaries intersect opaque empty guarantees" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
-    var graph: graph_mod.GlobalSemanticGraph = .{};
-    defer graph.deinit(allocator);
-    var engine = summaries.Engine.init(allocator);
-    defer engine.deinit();
-    var infer = Infer.init(allocator, &graph, &engine);
-    defer infer.deinit();
-
-    const emptied = facts.InputPath{ .input_index = 0, .projections = &.{.{ .field = 1 }} };
-    const same = try infer.mergeVirtualSafetySummary(
-        .{ .opaque_storage_empties = &.{emptied} },
-        .{ .opaque_storage_empties = &.{emptied} },
-    );
-    try std.testing.expectEqual(@as(usize, 1), same.?.opaque_storage_empties.len);
-    const absent = try infer.mergeVirtualSafetySummary(
-        .{ .opaque_storage_empties = &.{emptied} },
-        .{},
-    );
-    try std.testing.expectEqual(@as(usize, 0), absent.?.opaque_storage_empties.len);
 }
 
 test "validity-only transfer retains loaded input anchor paths" {

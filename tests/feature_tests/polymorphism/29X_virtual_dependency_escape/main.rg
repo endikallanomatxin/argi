@@ -1,9 +1,11 @@
-View : Abstract = (
-    get(.self: &Self) -> (.value: &Int32)
+View: Abstract = (
+    get(.self: &Self) -> (.value: &Int32) where depends_on(value, self)
 )
 
-Left : Type = (.value: Int32)
-Right : Type = (.value: Int32)
+Left: Type = (.value: Int32)
+
+Right: Type = (.value: Int32)
+
 Left implements View
 Right implements View
 

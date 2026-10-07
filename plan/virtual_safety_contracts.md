@@ -23,9 +23,8 @@ permissions and ownership transfers are separate obligations.
 
 ## Remaining work
 
-- Extend compatibility checking with domain invalidation, allowed dependency
-  storage, initialization/consumption and outcome-specific guarantees. Validate
-  every provenance category, including fresh root identity and ownership roles.
+- Extend compatibility checking with allowed dependency storage,
+  initialization/consumption and outcome-specific storage guarantees.
   Source-level `invalidates` covers scalar reference inputs on no-result methods
   and mapped receiver domains. Extend it to checked aggregate/result
   facts after invalidation without dropping existing ownership or field facts.
@@ -40,10 +39,9 @@ permissions and ownership transfers are separate obligations.
   fresh or dependency-only handles.
 - Extend declaration checking to the new storage effect clauses, retaining
   diagnostics for implicit error-tracer inputs.
-- Complete opaque storage and conditional generation obligations for the core
-  protocols. Allocator, Deallocator, Reader, Writer and ErrorTracer now declare
-  their output contracts; keep unsupported effects rejected during migration.
+- Extend opaque storage and conditional generation obligations when protocols
+  need to expose those effects. Keep unsupported effects rejected rather than
+  inferring them from the program's implementation set.
 - Extend independence and conformance fixtures to nested owners, opaque storage,
   error outcomes and aliased inputs as their contract representation becomes
   available.
-- Remove remaining program-wide summary unions after the core protocols migrate.

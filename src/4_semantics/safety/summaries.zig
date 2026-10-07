@@ -145,6 +145,8 @@ pub fn valueEffectEql(a: facts.ValueEffect, b: facts.ValueEffect) bool {
         a.input_dependencies.len != b.input_dependencies.len or
         a.input_places.len != b.input_places.len or
         a.input_generation_dependencies.len != b.input_generation_dependencies.len or
+        a.input_captured_storages.len != b.input_captured_storages.len or
+        a.input_receiver_values.len != b.input_receiver_values.len or
         a.input_place_values.len != b.input_place_values.len or
         a.input_owned_roots.len != b.input_owned_roots.len or
         a.opaque_generation_dependencies.len != b.opaque_generation_dependencies.len or
@@ -164,6 +166,8 @@ pub fn valueEffectEql(a: facts.ValueEffect, b: facts.ValueEffect) bool {
             !inputPathEql(left.path, right.path)) return false;
     }
     for (a.input_places, b.input_places) |left, right| if (!inputPathEql(left, right)) return false;
+    for (a.input_receiver_values, b.input_receiver_values) |left, right| if (!inputPathEql(left, right)) return false;
+    for (a.input_captured_storages, b.input_captured_storages) |left, right| if (!inputPathEql(left, right)) return false;
     for (a.input_generation_dependencies, b.input_generation_dependencies) |left, right| if (!inputPathEql(left, right)) return false;
     for (a.input_place_values, b.input_place_values) |left, right| if (!inputPathEql(left, right)) return false;
     for (a.input_owned_roots, b.input_owned_roots) |left, right| if (!inputPathEql(left, right)) return false;

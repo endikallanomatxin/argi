@@ -1,9 +1,11 @@
-Echo : Abstract = (
-    echo(.self: &Self, .input: Int32) -> (.output: Int32)
+Echo: Abstract = (
+    echo(.self: &Self, .input: Int32) -> (.output: Int32) where depends_on(output, input)
 )
 
-Direct : Type = (.marker: Int32)
-Moved : Type = (.marker: Int32)
+Direct: Type = (.marker: Int32)
+
+Moved: Type = (.marker: Int32)
+
 Direct implements Echo
 Moved implements Echo
 

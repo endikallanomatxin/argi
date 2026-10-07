@@ -4585,17 +4585,17 @@ test "feature_tests/polymorphism/29X_virtual_dependency_escape" {
     );
 }
 
-test "feature_tests/polymorphism/30X_virtual_dependency_union" {
+test "feature_tests/polymorphism/30X_virtual_declared_dependency_escape" {
     try buildExpectFail(
-        "tests/feature_tests/polymorphism/30X_virtual_dependency_union",
+        "tests/feature_tests/polymorphism/30X_virtual_declared_dependency_escape",
         "function output cannot depend on a local storage generation that ends before return",
     );
 }
 
-test "feature_tests/polymorphism/31X_virtual_incompatible_deinit" {
+test "feature_tests/polymorphism/31X_virtual_contract_rejects_deinit" {
     try buildExpectFail(
-        "tests/feature_tests/polymorphism/31X_virtual_incompatible_deinit",
-        "cannot form Virtual value because an Abstract method has incompatible safety effects across implementations",
+        "tests/feature_tests/polymorphism/31X_virtual_contract_rejects_deinit",
+        "violates its Abstract safety contract",
     );
 }
 
@@ -4625,72 +4625,72 @@ test "feature_tests/polymorphism/40X_virtual_nested_aggregate_borrow" {
     );
 }
 
-test "feature_tests/ownership/219_virtual_post_state_allows_optional_self_mutation" {
-    const test_path = "tests/feature_tests/ownership/219_virtual_post_state_allows_optional_self_mutation";
+test "feature_tests/ownership/219_virtual_preservation_allows_self_mutation" {
+    const test_path = "tests/feature_tests/ownership/219_virtual_preservation_allows_self_mutation";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
 
-test "feature_tests/ownership/220X_virtual_post_state_dependency_union" {
+test "feature_tests/ownership/220X_virtual_contract_rejects_hidden_dependency" {
     try buildExpectFail(
-        "tests/feature_tests/ownership/220X_virtual_post_state_dependency_union",
-        "reference depends on a root that has ended",
+        "tests/feature_tests/ownership/220X_virtual_contract_rejects_hidden_dependency",
+        "violates its Abstract safety contract",
     );
 }
 
-test "feature_tests/ownership/221X_virtual_post_state_initializedness_join" {
+test "feature_tests/ownership/221X_virtual_contract_rejects_conditional_deinit" {
     try buildExpectFail(
-        "tests/feature_tests/ownership/221X_virtual_post_state_initializedness_join",
-        "cannot form Virtual value because an Abstract method has incompatible safety effects across implementations",
+        "tests/feature_tests/ownership/221X_virtual_contract_rejects_conditional_deinit",
+        "violates its Abstract safety contract",
     );
 }
 
-test "feature_tests/ownership/222X_virtual_conditional_opaque_ownership_same_storage" {
+test "feature_tests/ownership/222X_virtual_contract_rejects_conditional_opaque_transfer" {
     try buildExpectFail(
-        "tests/feature_tests/ownership/222X_virtual_conditional_opaque_ownership_same_storage",
-        "cannot form Virtual value because an Abstract method has incompatible safety effects across implementations",
+        "tests/feature_tests/ownership/222X_virtual_contract_rejects_conditional_opaque_transfer",
+        "violates its Abstract safety contract",
     );
 }
 
-test "feature_tests/ownership/222X_virtual_conditional_opaque_ownership_same_storage_invalidates_source" {
+test "feature_tests/ownership/222X_virtual_contract_rejects_opaque_source_transfer" {
     try buildExpectFail(
-        "tests/feature_tests/ownership/222X_virtual_conditional_opaque_ownership_same_storage_invalidates_source",
-        "cannot form Virtual value because an Abstract method has incompatible safety effects across implementations",
+        "tests/feature_tests/ownership/222X_virtual_contract_rejects_opaque_source_transfer",
+        "violates its Abstract safety contract",
     );
 }
 
-test "feature_tests/ownership/223X_virtual_opaque_ownership_different_storages_incompatible" {
+test "feature_tests/ownership/223X_virtual_contract_rejects_ambiguous_opaque_storage" {
     try buildExpectFail(
-        "tests/feature_tests/ownership/223X_virtual_opaque_ownership_different_storages_incompatible",
-        "cannot form Virtual value because an Abstract method has incompatible safety effects across implementations",
+        "tests/feature_tests/ownership/223X_virtual_contract_rejects_ambiguous_opaque_storage",
+        "violates its Abstract safety contract",
     );
 }
 
-test "feature_tests/ownership/224X_virtual_definite_self_destruction_incompatible" {
+test "feature_tests/ownership/224X_virtual_contract_rejects_self_destruction" {
     try buildExpectFail(
-        "tests/feature_tests/ownership/224X_virtual_definite_self_destruction_incompatible",
-        "cannot form Virtual value because an Abstract method has incompatible safety effects across implementations",
+        "tests/feature_tests/ownership/224X_virtual_contract_rejects_self_destruction",
+        "violates its Abstract safety contract",
     );
 }
 
-test "feature_tests/ownership/225X_virtual_receiver_uses_self_input_index" {
+test "feature_tests/ownership/225X_virtual_contract_nonleading_receiver" {
     try buildExpectFail(
-        "tests/feature_tests/ownership/225X_virtual_receiver_uses_self_input_index",
-        "reference depends on a root that has ended",
+        "tests/feature_tests/ownership/225X_virtual_contract_nonleading_receiver",
+        "violates its Abstract safety contract",
     );
 }
 
-test "feature_tests/ownership/226X_virtual_conditional_opaque_ownership_drop_state_incompatible" {
+test "feature_tests/ownership/226X_virtual_contract_rejects_conditional_opaque_drop" {
     try buildExpectFail(
-        "tests/feature_tests/ownership/226X_virtual_conditional_opaque_ownership_drop_state_incompatible",
-        "cannot form Virtual value because an Abstract method has incompatible safety effects across implementations",
+        "tests/feature_tests/ownership/226X_virtual_contract_rejects_conditional_opaque_drop",
+        "violates its Abstract safety contract",
     );
 }
 
-test "feature_tests/ownership/227X_virtual_definite_opaque_ownership_drop_state_incompatible" {
+test "feature_tests/ownership/227X_virtual_contract_rejects_opaque_drop" {
     try buildExpectFail(
-        "tests/feature_tests/ownership/227X_virtual_definite_opaque_ownership_drop_state_incompatible",
-        "cannot form Virtual value because an Abstract method has incompatible safety effects across implementations",
+        "tests/feature_tests/ownership/227X_virtual_contract_rejects_opaque_drop",
+        "violates its Abstract safety contract",
     );
 }
 
@@ -4706,8 +4706,8 @@ test "feature_tests/ownership/229_virtual_mutation_preserves_stored_reference" {
     try runExpect(test_path, 0);
 }
 
-test "feature_tests/ownership/230_virtual_unchanged_alternative_preserves_pointee_facts" {
-    const test_path = "tests/feature_tests/ownership/230_virtual_unchanged_alternative_preserves_pointee_facts";
+test "feature_tests/ownership/230_virtual_preservation_retains_pointee_facts" {
+    const test_path = "tests/feature_tests/ownership/230_virtual_preservation_retains_pointee_facts";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
@@ -6775,8 +6775,8 @@ test "safety wrapper parity for fallible initialization outcomes" {
 
 test "safety wrapper parity for recursion and virtual dispatch" {
     try expectSafetyWrapperParity("tests/feature_tests/polymorphism/41_recursive_virtual_summaries", null);
-    try expectSafetyWrapperParity("tests/feature_tests/ownership/220X_virtual_post_state_dependency_union", "reference depends on a root that has ended");
-    try expectSafetyWrapperParity("tests/feature_tests/polymorphism/30X_virtual_dependency_union", "function output cannot depend on a local storage generation that ends before return");
+    try expectSafetyWrapperParity("tests/feature_tests/ownership/220X_virtual_contract_rejects_hidden_dependency", "violates its Abstract safety contract");
+    try expectSafetyWrapperParity("tests/feature_tests/polymorphism/30X_virtual_declared_dependency_escape", "function output cannot depend on a local storage generation that ends before return");
 }
 
 test "feature_tests/basics/27X_mixed_width_arithmetic" {
@@ -6803,7 +6803,7 @@ test "safety statistics preserve composed allocator behavior" {
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
     try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
-    for ([_][]const u8{ "summary inference:", "summary bytes requested:", "retained worklist bytes:", "virtual summary time:", "virtual receiver lookup:", "state copy time:" }) |label|
+    for ([_][]const u8{ "summary inference:", "summary bytes requested:", "retained worklist bytes:", "virtual contract summary time:", "state copy time:" }) |label|
         try expect(std.mem.indexOf(u8, result.stderr, label) != null);
     try run(path);
 }
@@ -10544,4 +10544,8 @@ test "feature_tests/polymorphism/108X_virtual_safety_contract_domain_result_inva
 test "feature_tests/polymorphism/109_virtual_safety_contract_domain_result_referent" {
     try expectSuccessfulBuild("tests/feature_tests/polymorphism/109_virtual_safety_contract_domain_result_referent");
     try runExpect("tests/feature_tests/polymorphism/109_virtual_safety_contract_domain_result_referent", 0);
+}
+
+test "feature_tests/polymorphism/110X_virtual_safety_contract_missing" {
+    try buildExpectFail("tests/feature_tests/polymorphism/110X_virtual_safety_contract_missing", "virtual methods require a declared safety contract");
 }

@@ -21,7 +21,6 @@ pub const OutputFieldEffect = base.OutputFieldEffect;
 pub const OutputDomainEffect = base.OutputDomainEffect;
 pub const FreshEffectSource = base.FreshEffectSource;
 pub const ValueEffect = base.ValueEffect;
-pub const receiverBorrowedPlaces = base.receiverBorrowedPlaces;
 pub const OutputVariantEffect = base.OutputVariantEffect;
 pub const PlacePostState = base.PlacePostState;
 pub const OpaqueOwnershipConsumption = base.OpaqueOwnershipConsumption;

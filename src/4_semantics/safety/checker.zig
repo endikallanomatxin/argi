@@ -33,8 +33,6 @@ pub const SafetyChecker = struct {
         outcome_inference_ns: u64 = 0,
         opaque_inference_ns: u64 = 0,
         virtual_summary_ns: u64 = 0,
-        virtual_receiver_ns: u64 = 0,
-        virtual_summary_merges: u64 = 0,
         summary_evaluations: u64 = 0,
         summary_changes: u64 = 0,
         functions: usize = 0,
@@ -232,8 +230,6 @@ pub const SafetyChecker = struct {
         }
         if (self.collect_stats) {
             self.stats.virtual_summary_ns = inference.virtual_summary_ns;
-            self.stats.virtual_receiver_ns = inference.virtual_receiver_ns;
-            self.stats.virtual_summary_merges = inference.virtual_summary_merges;
         }
         if (self.diagnostics.list.items.len != before) return error.Reported;
     }
@@ -848,19 +844,6 @@ pub const SafetyChecker = struct {
             .virtual_call => |call_id| try self.evaluateVirtualCall(function, call_id, state),
             .virtualize => |virtualize_id| blk: {
                 const virtualize = self.graph.virtualizes.items[@intFromEnum(virtualize_id)];
-                if (self.active_summary_inference) |inference| {
-                    for (self.graph.virtual_registry_refs.items[virtualize.safety_methods.start..][0..virtualize.safety_methods.len]) |registry_id| {
-                        const merged = try inference.virtualSummary(registry_id);
-                        if (merged == null and inference.virtualSummaryInvalid(registry_id)) {
-                            try self.report(
-                                virtualize.source,
-                                "cannot form Virtual value because an Abstract method has incompatible safety effects across implementations",
-                                .{},
-                            );
-                            break;
-                        }
-                    }
-                }
                 var value = (try self.evaluate(function, virtualize.value, state)).referenceCopy();
                 if (virtualize.domains.len != 0 and value.referenced_place == null) {
                     var pointer = virtualize.value;
@@ -914,39 +897,12 @@ pub const SafetyChecker = struct {
                     if (@import("domains.zig").validateCaptured(captured.items)) |_| try self.report(virtualize.source, "Abstract storage domains share a storage generation and cannot be invalidated independently", .{});
                     value.domains = try domains.toOwnedSlice(self.allocator);
                 };
-                // A concrete method may return a reference into a receiver
-                // field. Capture that field's generation before its layout is
-                // erased by Virtual dispatch.
-                if (value.referenced_place) |receiver_place| if (self.active_summaries) |summaries| {
+                if (value.referenced_place) |receiver_place| if (virtualize.domains.len == 0) {
                     var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
                     try dependencies.appendSlice(value.dependencies);
-                    var has_declared_contract = false;
-                    for (self.graph.virtual_registry_refs.items[virtualize.safety_methods.start..][0..virtualize.safety_methods.len]) |registry_id| {
-                        if (self.graph.virtual_registries.items[@intFromEnum(registry_id)].safety_contract != null) has_declared_contract = true;
-                    }
-                    if (has_declared_contract and virtualize.domains.len == 0) {
-                        // A published receiver contract cannot discover its live
-                        // storage requirements from the selected method bodies.
-                        // Capture the initialized receiver's reachable generations
-                        // before erasure, including references nested in its fields.
-                        var visited = std.array_list.Managed(facts.Place).init(self.allocator);
-                        defer visited.deinit();
-                        try self.captureContractStorage(function, virtualize.source, state, receiver_place, virtualize.concrete_type, &dependencies, &visited);
-                    }
-                    for (self.graph.function_refs.items[virtualize.methods.start..][0..virtualize.methods.len], 0..) |method, index| {
-                        if (virtualize.domains.len != 0) continue;
-                        const inference = self.active_summary_inference orelse continue;
-                        const receiver_index = inference.virtualizeReceiverIndex(virtualize, index);
-                        const summary = summaries.summaryFor(method) orelse continue;
-                        for (summary.outputs) |output| {
-                            const borrowed = try facts.receiverBorrowedPlaces(self.allocator, output, receiver_index);
-                            for (borrowed) |path| {
-                                var storage = receiver_place;
-                                for (path.projections) |projection| storage = try self.project(storage, projection);
-                                try appendDependencyFact(&dependencies, .{ .root = try self.storageGeneration(state, storage) });
-                            }
-                        }
-                    }
+                    var visited = std.array_list.Managed(facts.Place).init(self.allocator);
+                    defer visited.deinit();
+                    try self.captureContractStorage(function, virtualize.source, state, receiver_place, virtualize.concrete_type, &dependencies, &visited);
                     value.dependencies = try dependencies.toOwnedSlice();
                 };
                 value.virtual_methods = self.graph.function_refs.items[virtualize.methods.start..][0..virtualize.methods.len];
@@ -1895,7 +1851,17 @@ pub const SafetyChecker = struct {
                 arguments[index].referenced_place == null) return null;
             break :blk storage;
         };
-        for (path_value.projections) |projection| target = try self.project(target, projection);
+        for (path_value.projections) |projection| {
+            if (projection == .dereference) {
+                if (self.valueAtPlace(state, target)) |stored| {
+                    if (stored.referenced_place) |referent| {
+                        target = referent;
+                        continue;
+                    }
+                }
+            }
+            target = try self.project(target, projection);
+        }
         return target;
     }
 
@@ -2125,6 +2091,30 @@ pub const SafetyChecker = struct {
             state.storage_capabilities.items[@intFromEnum(capability)] = if (entry.maybe_consumed) .maybe_consumed else .consumed;
         }
 
+        for (effect.input_receiver_values) |path| {
+            if (path.input_index >= arguments.len) continue;
+            var receiver = try self.projectValueFacts(arguments[path.input_index], path.projections);
+            if (receiver.referenced_place) |storage| if (self.domainStorageType(storage)) |ty| {
+                if (self.graph.semanticType(ty) == .virtual) {
+                    if (self.valueAtPlace(state, storage)) |stored| receiver = stored;
+                }
+            };
+            var roots = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+            defer roots.deinit();
+            try collectDependencyRoots(receiver, &roots);
+            try collectOwnedRoots(receiver, &roots);
+            for (roots.items) |root| try appendDependencyFact(&dependencies, .{ .root = root });
+            var visited = std.array_list.Managed(facts.Place).init(self.allocator);
+            defer visited.deinit();
+            if (receiver.referenced_place) |storage| if (self.domainStorageType(storage)) |ty| {
+                try self.captureContractStorage(@enumFromInt(0), self.graph.binding(storage.root).source, state, storage, ty, &dependencies, &visited);
+            };
+            for (receiver.domains) |domain| for (domain.storages) |storage| {
+                if (self.domainStorageType(storage)) |ty| {
+                    try self.captureContractStorage(@enumFromInt(0), self.graph.binding(storage.root).source, state, storage, ty, &dependencies, &visited);
+                } else try appendDependencyFact(&dependencies, .{ .root = try self.storageGeneration(state, storage) });
+            };
+        }
         for (effect.input_domains) |domain| {
             if (domain.path.input_index >= arguments.len) continue;
             const input = try self.projectValueFacts(arguments[domain.path.input_index], domain.path.projections);
@@ -2156,6 +2146,15 @@ pub const SafetyChecker = struct {
                 referenced_place = target;
                 has_referent = true;
             }
+        }
+        for (effect.input_captured_storages) |path| {
+            if (path.input_index >= arguments.len) continue;
+            const input = try self.projectValueFacts(arguments[path.input_index], path.projections);
+            if (input.referenced_place) |storage| if (self.domainStorageType(storage)) |ty| {
+                var visited = std.array_list.Managed(facts.Place).init(self.allocator);
+                defer visited.deinit();
+                try self.captureContractStorage(@enumFromInt(0), self.graph.binding(storage.root).source, state, storage, ty, &dependencies, &visited);
+            };
         }
         for (effect.input_generation_dependencies) |path| {
             if (path.input_index >= arguments.len) continue;
@@ -3364,58 +3363,24 @@ pub const SafetyChecker = struct {
 
         if (call.self_input_index >= values.len) return .{};
         // The call argument points at the Virtual wrapper, while the exact
-        // implementation facts are stored in that wrapper's value. Recover
-        // them when available; parameters and joined values still fall back
-        // to the program-wide virtual summary below.
-        var receiver = values[call.self_input_index];
+        // receiver facts are stored in that wrapper's value. Recover them
+        // before instantiating the published contract; selected method bodies
+        // do not determine dispatch safety.
+        const receiver = values[call.self_input_index];
         if (receiver.referenced_place) |wrapper| {
             if (self.valueAtPlace(&candidate, wrapper)) |stored| {
                 if (stored.referenced_place != null) {
                     values[call.self_input_index] = stored;
-                    receiver = stored;
                 }
             }
         }
-        const declared_dispatch = self.graph.virtual_registries.items[@intFromEnum(call.safety_methods)].contract_input_count != null;
-        if (declared_dispatch or call.method_index >= receiver.virtual_methods.len) {
-            const result = (try self.applyVirtualSummaryFallback(
-                call,
-                input_node.source,
-                argument_nodes,
-                values,
-                &candidate,
-            )) orelse facts.ValueFacts{};
-            if (self.diagnostics.list.items.len != diagnostic_count) return .{};
-            self.commitState(state, &candidate);
-            return result;
-        }
-        const callee_id = receiver.virtual_methods[call.method_index];
-        const callee = self.graph.functions.items[@intFromEnum(callee_id)];
-
-        if (callee.safety_primitive != .none) {
-            if (self.collect_stats) self.stats.primitive_calls += 1;
-            const result = try self.evaluatePrimitive(caller, callee.safety_primitive, argument_nodes, values, &candidate, input_node.source);
-            if (self.diagnostics.list.items.len != diagnostic_count) return .{};
-            self.commitState(state, &candidate);
-            return result;
-        }
-        if (callee.body == null) {
-            const result: facts.ValueFacts = if (callee.output.len == 1)
-                try @import("foreign_result.zig").value(facts.ValueFacts, self.allocator, self.graph, self.graph.fields.items[callee.output.start].ty)
-            else
-                .{};
-            if (self.diagnostics.list.items.len != diagnostic_count) return .{};
-            self.commitState(state, &candidate);
-            return result;
-        }
-        if (self.callStackContains(callee_id) and self.collect_stats) self.stats.recursive_edges += 1;
-        const result = (try self.applyFunctionSummary(input_node.source, null, callee_id, argument_nodes, values, &candidate)) orelse facts.ValueFacts{};
+        const result = (try self.applyVirtualContractSummary(call, input_node.source, argument_nodes, values, &candidate)) orelse facts.ValueFacts{};
         if (self.diagnostics.list.items.len != diagnostic_count) return .{};
         self.commitState(state, &candidate);
         return result;
     }
 
-    fn applyVirtualSummaryFallback(
+    fn applyVirtualContractSummary(
         self: *SafetyChecker,
         call: graph_mod.VirtualCall,
         source: primitives.SourceRef,
@@ -3424,15 +3389,7 @@ pub const SafetyChecker = struct {
         state: *FunctionState,
     ) !?facts.ValueFacts {
         const inference = self.active_summary_inference orelse return null;
-        const summary = try inference.virtualSummary(call.safety_methods) orelse {
-            if (inference.virtualSummaryInvalid(call.safety_methods))
-                try self.report(
-                    source,
-                    "virtual method '{s}' has incompatible safety effects across implementations",
-                    .{self.graph.text(call.method_name)},
-                );
-            return null;
-        };
+        const summary = try inference.virtualSummary(call.safety_methods) orelse return error.MissingVirtualSafetyContract;
         // Private receiver projections are erased at a virtual boundary.
         // Validate the receiver contents as well as the handle lifetime.
         if (call.self_input_index < values.len) {

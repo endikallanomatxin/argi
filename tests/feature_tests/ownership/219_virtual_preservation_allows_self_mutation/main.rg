@@ -1,9 +1,11 @@
-Mutator : Abstract = (
-    mutate(.self: $&Self) -> ()
+Mutator: Abstract = (
+    mutate(.self: $&Self) -> () where {}
 )
 
-Keeping : Type = (.counter: Int32)
-Mutating : Type = (.counter: Int32)
+Keeping: Type = (.counter: Int32)
+
+Mutating: Type = (.counter: Int32)
+
 Keeping implements Mutator
 Mutating implements Mutator
 

@@ -1,5 +1,5 @@
 Readable#(.item: Type): Abstract = (
-    read(.self: &Self) -> (.value: &item)
+    read(.self: &Self) -> (.value: &item) where depends_on(value, self)
 )
 
 Box: Type = (.value: Int32)

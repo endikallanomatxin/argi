@@ -1,11 +1,15 @@
-unsafe_allocation := import("../../_support/unsafe_allocation")
-OpaqueStorer : Abstract = (
-    store(.self: $&Self, .storage: $&Allocation, .slot: $&Tracked, .source: $&Tracked) -> ()
+unsafe_allocation := import ("../../_support/unsafe_allocation")
+
+OpaqueStorer: Abstract = (
+    store(.self: $&Self, .storage: $&Allocation, .slot: $&Tracked, .source: $&Tracked) -> () where {}
 )
 
-Tracked : Type = (.id: Int32)
-First : Type = (.marker: UInt8)
-Second : Type = (.marker: UInt8)
+Tracked: Type = (.id: Int32)
+
+First: Type = (.marker: UInt8)
+
+Second: Type = (.marker: UInt8)
+
 First implements OpaqueStorer
 Second implements OpaqueStorer
 
@@ -17,17 +21,17 @@ Tracked deinit(.self: $&Tracked) -> () := {
 
 store(.self: $&First, .storage: $&Allocation, .slot: $&Tracked, .source: $&Tracked) -> () := {
     trusted_opaque_move_in#(.t: Tracked, .storage_type: Allocation)(
-        .storage = storage,
-        .destination = slot,
-        .source = ~source&,
+        .storage     = storage
+        .destination = slot
+        .source      = ~source&
     )
 }
 
 store(.self: $&Second, .storage: $&Allocation, .slot: $&Tracked, .source: $&Tracked) -> () := {
     trusted_opaque_move_in#(.t: Tracked, .storage_type: Allocation)(
-        .storage = storage,
-        .destination = slot,
-        .source = ~source&,
+        .storage     = storage
+        .destination = slot
+        .source      = ~source&
     )
 }
 
@@ -37,9 +41,9 @@ register_second(.value: $&Second) -> () := {
 
 verify(.status: $&Int32) -> () := {
     if drops == 1 {
-        status& = 0
+        status&= 0
     } else {
-        status& = 7
+        status&= 7
     }
 }
 
@@ -50,9 +54,14 @@ main(.system: System) -> (.status_code: Int32) := {
     slot_result ::= allocate(.self = $&allocator_storage, .size = size_of(.type = Tracked))
     match slot_result {
         ..error _ { status_code = 1 }
-        ..ok ~ slot_payload {
+        ..ok ~slot_payload {
             storage ::= ~slot_payload
-            slot ::= trusted_mutable_reinterpret_reference#(.from: UInt8, .to: Tracked)(.base = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&storage, .offset = 0).reference).reference
+            slot ::= trusted_mutable_reinterpret_reference#(.from: UInt8, .to: Tracked)(
+                .base = unsafe_allocation.trusted_allocation_byte_rw(
+                    .allocation = $&storage
+                    .offset     = 0
+                ).reference
+            ).reference
             second ::= Second(.marker = 0)
             register_second(.value = $&second)
             implementation ::= First(.marker = 0)

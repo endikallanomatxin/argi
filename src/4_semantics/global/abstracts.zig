@@ -1181,6 +1181,8 @@ pub const Resolver = struct {
                     reason = try self.methodSafetyContractFailure(inputs, outputs, instance.output, abstract_ty, located, contract, true);
                 };
             }
+            if (reason == null and requirement.safety_contract == null)
+                reason = "virtual methods require a declared safety contract; use where {} for preservation or declare output dependencies and storage effects";
             if (reason) |message| {
                 self.virtual_signature_failure = .{ .source = source, .method_name = name, .reason = message };
                 return false;
@@ -2146,11 +2148,10 @@ pub const Resolver = struct {
         }
     }
 
-    /// Virtual call safety is checked against every concrete implementation
-    /// that can inhabit the erased abstract type. Resolution records exact
-    /// methods on each `virtualize` node for codegen; once the program-wide set
-    /// is stable, this pass builds the conservative registries consumed by the
-    /// summary engine.
+    /// Bind each virtual contract to its fixed signature. Implementation lists
+    /// describe runtime reachability and once obligations, not safety effects:
+    /// Safety generates dispatch summaries from the declaration and checks
+    /// each selected concrete method independently.
     pub fn closeVirtualMethodRegistries(self: *Resolver) !void {
         for (self.graph.virtualizes.items) |virtualize| {
             const registries = self.graph.virtual_registry_refs.items[virtualize.safety_methods.start..][0..virtualize.safety_methods.len];
