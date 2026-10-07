@@ -198,9 +198,19 @@ pub const MethodSafetyContract = struct {
     dependencies: []const Dependency = &.{},
     referents: []const Dependency = &.{},
     invalidates: []const u32 = &.{},
+    domain_dependencies: []const DomainDependency = &.{},
+    invalidated_domains: []const DomainInput = &.{},
     source: SourceRef,
 
     pub const Dependency = struct { output_index: u32, input_index: u32 };
+    pub const DomainInput = struct { input_index: u32, domain_index: u32 };
+    pub const DomainDependency = struct { output_index: u32, input: DomainInput };
+};
+
+pub const StorageDomainMapping = struct {
+    domain_index: u32,
+    paths: []const Path,
+    pub const Path = struct { fields: []const u32 };
 };
 
 /// Canonical declaration payload shared by ModuleSG and GlobalSG. Source
@@ -415,6 +425,7 @@ pub fn Virtualize(comptime Ids: type) type {
         methods: Range(Ids.FunctionId),
         safety_methods: Range(Ids.VirtualRegistryId),
         source: SourceRef,
+        domains: []const StorageDomainMapping = &.{},
     };
 }
 

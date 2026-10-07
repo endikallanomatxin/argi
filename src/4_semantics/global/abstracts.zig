@@ -348,6 +348,7 @@ pub const Resolver = struct {
             try self.graph.virtual_registry_refs.append(self.allocator, registry);
         }
         const virtual_ty = try self.generics.internType(.{ .virtual = abstract_ty });
+        const domains = (try self.resolveStorageDomains(abstract_use, concrete, located, self.sourceFor(module_index, reference.source))) orelse return null;
         const virtualize: global_sg.GlobalVirtualizeId = @enumFromInt(@as(u32, @intCast(self.graph.virtualizes.items.len)));
         try self.graph.virtualizes.append(self.allocator, .{
             .value = handle,
@@ -357,6 +358,7 @@ pub const Resolver = struct {
             .methods = .{ .start = method_start, .len = @intCast(methods.items.len) },
             .safety_methods = .{ .start = safety_start, .len = @intCast(methods.items.len) },
             .source = self.sourceFor(module_index, reference.source),
+            .domains = domains,
         });
         return .{
             .source = self.sourceFor(module_index, reference.source),
@@ -385,6 +387,94 @@ pub const Resolver = struct {
             found = @enumFromInt(@as(u32, @intCast(raw)));
         }
         return found;
+    }
+
+    fn resolveStorageDomains(self: *Resolver, use: AbstractUse, concrete: global_sg.GlobalTypeId, located: LocatedAbstractDefinition, source: primitives.SourceRef) !?[]const primitives.StorageDomainMapping {
+        for (self.modules, 0..) |*module, module_index| {
+            const storage = &module.semantic.parameterized_storage;
+            for (storage.abstract_implementations.items) |implementation| {
+                if (try self.resolveDeclarationRef(module_index, implementation.abstract_ref, .abstract_type) != use.declaration) continue;
+                if (!global_types.equal(self.graph, concrete, globalizer.globalType(self.offsets[module_index], implementation.ty))) continue;
+                if (!self.directAbstractArgumentsMatchGlobal(located, module_index, implementation, use.arguments)) continue;
+                return self.resolveDomainPaths(module_index, implementation.domains, concrete, located, source);
+            }
+            for (storage.parameterized_abstract_implementations.items) |implementation| {
+                if (try self.resolveDeclarationRef(module_index, implementation.abstract_ref, .abstract_type) != use.declaration) continue;
+                var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
+                defer bindings.deinit(self.allocator);
+                if (!try self.bindParameterizedImplementation(module_index, concrete, implementation, &bindings)) continue;
+                if (!try self.parameterizedAbstractArgumentsMatchGlobal(located, module_index, implementation, concrete, &bindings, use.arguments)) continue;
+                return self.resolveDomainPaths(module_index, implementation.domains, concrete, located, source);
+            }
+        }
+        if (located.definition.domains.len == 0) return &.{};
+        return self.domainFailure(source, "storage domains require an explicit implementation mapping for this abstract");
+    }
+
+    fn domainFailure(self: *Resolver, source: primitives.SourceRef, message: []const u8) ?[]const primitives.StorageDomainMapping {
+        self.virtual_signature_failure = .{ .source = source, .method_name = "to_virtual", .reason = message };
+        return null;
+    }
+
+    fn resolveDomainPaths(self: *Resolver, module_index: usize, mappings: []const parameterized_storage.DomainMapping, concrete: global_sg.GlobalTypeId, located: LocatedAbstractDefinition, source: primitives.SourceRef) !?[]const primitives.StorageDomainMapping {
+        if (mappings.len != located.definition.domains.len) return self.domainFailure(source, "every Abstract storage domain requires exactly one implementation mapping");
+        var result: std.ArrayList(primitives.StorageDomainMapping) = .empty;
+        defer result.deinit(self.allocator);
+        for (mappings) |mapping| {
+            var domain_index: ?u32 = null;
+            for (located.definition.domains, 0..) |domain, index| {
+                if (std.mem.eql(u8, self.modules[module_index].text(mapping.name), self.modules[located.module_index].text(domain))) domain_index = @intCast(index);
+            }
+            const index = domain_index orelse return self.domainFailure(source, "implementation mapping names an unknown Abstract storage domain");
+            for (result.items) |existing| if (existing.domain_index == index) return self.domainFailure(source, "duplicate implementation storage domain mapping");
+            var paths: std.ArrayList(primitives.StorageDomainMapping.Path) = .empty;
+            defer paths.deinit(self.allocator);
+            for (mapping.paths) |path| {
+                var ty = concrete;
+                var fields: std.ArrayList(u32) = .empty;
+                defer fields.deinit(self.allocator);
+                for (path.fields) |name| {
+                    if (self.graph.semanticType(ty) == .pointer) ty = self.graph.semanticType(ty).pointer.child;
+                    const field_name = self.modules[module_index].text(name);
+                    if (std.mem.startsWith(u8, field_name, "_")) {
+                        const nominal = switch (self.graph.semanticType(ty)) {
+                            .declared => |declaration| declaration,
+                            .generic => |identity| identity.base,
+                            else => null,
+                        };
+                        if (nominal) |declaration| if (self.graph.moduleForDeclaration(declaration)) |owner| {
+                            if (@intFromEnum(owner) != module_index and !(self.modules[module_index].is_bundled_core and self.graph.modules.items[@intFromEnum(owner)].is_bundled_core))
+                                return self.domainFailure(source, "storage domain mappings cannot access private fields of another module");
+                        };
+                    }
+                    const range = global_types.fields(self.graph, ty) orelse return self.domainFailure(source, "storage domain paths must select concrete record fields");
+                    var selected: ?u32 = null;
+                    for (self.graph.fields.items[range.start..][0..range.len], 0..) |field, field_index| {
+                        if (std.mem.eql(u8, self.graph.text(field.name), self.modules[module_index].text(name))) {
+                            selected = @intCast(field_index);
+                            ty = global_types.effectiveFieldType(field);
+                            break;
+                        }
+                    }
+                    try fields.append(self.allocator, selected orelse return self.domainFailure(source, "storage domain mapping selects an unknown concrete field"));
+                }
+                try paths.append(self.allocator, .{ .fields = try fields.toOwnedSlice(self.allocator) });
+            }
+            try result.append(self.allocator, .{ .domain_index = index, .paths = try paths.toOwnedSlice(self.allocator) });
+        }
+        var symbolic: std.ArrayList(@import("../safety/domains.zig").Mapping) = .empty;
+        defer symbolic.deinit(self.allocator);
+        for (result.items) |mapping| {
+            const paths = try self.allocator.alloc(@import("../safety/safety_facts.zig").InputPath, mapping.paths.len);
+            for (mapping.paths, paths) |path, *resolved| {
+                const projections = try self.allocator.alloc(@import("../safety/place.zig").Projection, path.fields.len);
+                for (path.fields, projections) |field, *projection| projection.* = .{ .field = field };
+                resolved.* = .{ .input_index = 0, .projections = projections };
+            }
+            try symbolic.append(self.allocator, .{ .domain = @enumFromInt(mapping.domain_index), .paths = paths });
+        }
+        if (@import("../safety/domains.zig").validate(symbolic.items, 0) != null) return self.domainFailure(source, "implementation storage domains overlap or have an invalid mapping");
+        return try result.toOwnedSlice(self.allocator);
     }
 
     fn isAbstractContractInstance(
@@ -1086,6 +1176,28 @@ pub const Resolver = struct {
                         reason = "Self cannot appear in a virtual method result; return a known type or an explicit virtual handle";
                 }
                 if (reason == null) if (requirement.safety_contract) |contract| {
+                    for (contract.domain_dependencies) |dependency| {
+                        if (dependency.input.domain_index >= located.definition.domains.len) {
+                            reason = "unknown Abstract storage domain";
+                            break;
+                        }
+                        const input_ty = self.graph.semanticType(self.graph.fields.items[inputs.start + dependency.input.input_index].ty);
+                        if (input_ty != .pointer or !global_types.equal(self.graph, input_ty.pointer.child, abstract_ty)) {
+                            reason = "Abstract storage domains must be rooted at the Self receiver";
+                            break;
+                        }
+                    }
+                    for (contract.invalidated_domains) |domain| {
+                        if (domain.domain_index >= located.definition.domains.len) {
+                            reason = "unknown Abstract storage domain";
+                            break;
+                        }
+                        const input_ty = self.graph.semanticType(self.graph.fields.items[inputs.start + domain.input_index].ty);
+                        if (input_ty != .pointer or !global_types.equal(self.graph, input_ty.pointer.child, abstract_ty) or input_ty.pointer.mutability != .read_write) {
+                            reason = "invalidating an Abstract storage domain requires a mutable Self receiver";
+                            break;
+                        }
+                    }
                     for (contract.invalidates) |input_index| {
                         if (outputs.len != 0) {
                             reason = "invalidates with outputs requires post-invalidation result contracts; use a no-result method for now";
@@ -1994,6 +2106,12 @@ pub const Resolver = struct {
                         break;
                     };
                     if (has_referent) continue;
+                    var has_domain = false;
+                    for (requirement.safety_contract.?.domain_dependencies) |dependency| if (dependency.output_index == output_index) {
+                        has_domain = true;
+                        break;
+                    };
+                    if (has_domain) continue;
                 }
                 if (ty != .builtin) {
                     described_outputs = false;

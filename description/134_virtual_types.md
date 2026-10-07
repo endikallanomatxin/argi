@@ -208,6 +208,45 @@ Editor: Abstract = (
 )
 ```
 
+## Receiver storage domains
+
+An abstract can name storage domains without exposing concrete fields. Its
+methods refer to them through the receiver name:
+
+```rg
+Source: Abstract = (
+    domain storage
+
+    get(.self: &Self) -> (.value: &Int32)
+        where depends_on(value, self.storage)
+    reset(.self: $&Self) -> ()
+        where invalidates(self.storage)
+)
+
+Cell: Type = (.value: Int32, .other: Int32)
+Cell implements Source where {
+    storage(self.value)
+}
+```
+
+An implementation maps every declared domain exactly once. One mapping can name
+several concrete field paths, grouped as `storage(self.first, self.second)`.
+Private paths follow ordinary module visibility. Unknown fields, missing
+mappings and overlapping domain paths are errors. Distinct domains must not
+capture the same storage generation through aliased references. Aliases inside
+one domain share that domain's invalidation obligation.
+
+The mapping establishes no ownership and does not prolong a lifetime. A handle
+uses current domain generations at a call; a returned reference captures the
+generation present when it was produced. Invalidating a domain therefore expires
+previous references while allowing subsequent calls through the same handle.
+Unrelated domains and references to unrelated fields remain valid.
+
+Contract checking preserves concrete paths until conformance has been checked.
+Dynamic calls then use domain identities without inspecting other implementations.
+Domain dependencies survive ordinary wrapper functions and local virtual
+conversions. They cannot authorize returning a reference into a local receiver.
+
 Every concrete method placed in a virtual table must satisfy its declared
 contract, including methods never called. A violation identifies the method,
 offending input and contract declaration. Checking an implementation does not
@@ -225,17 +264,17 @@ storage generations, and opaque storage.
 > described by `refers_to` use summaries generated from their contracts. Other
 > results containing references or owners still use the existing implementation
 > summaries to preserve concrete storage facts;
-> abstract domains and output storage identities remain to be implemented.
+> Other output storage identities remain to be implemented.
 > Methods without annotations retain the program-wide combination of known
-> implementations during this migration. Domain invalidation, ownership transfer
+> implementations during this migration. Ownership transfer
 > and outcome-specific contract clauses are not supported yet.
 > Proving `refers_to` currently requires a concrete body that directly forwards
 > the declared reference input. More complex control flow and forwarding through
 > other calls are rejected until path-sensitive storage identity proofs exist.
-> `invalidates` currently supports no-result methods and known scalar reference
-> inputs. Aggregate storage, erased receiver storage and post-invalidation output
-> facts require domain mappings and additional contracts; these combinations are
-> rejected rather than approximated as ownership consumption.
+> Direct input `invalidates` currently supports no-result methods and known scalar
+> reference inputs. Receiver invalidation uses explicitly mapped domains. Neither
+> form permits destroying owners or replacing their hidden dependencies; those
+> effects require additional contracts.
 
 For example, a fixed `Readable#(.item: Int32)` contract can occupy a virtual
 handle. Conversion checks the concrete type's declared associated arguments,

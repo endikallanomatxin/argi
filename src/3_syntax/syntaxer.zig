@@ -459,6 +459,7 @@ pub const Syntaxer = struct {
     fn parseAbstractBody(self: *Syntaxer) SyntaxerError!struct {
         req_names: syn.NodeRange,
         req_funcs: syn.NodeRange,
+        domains: syn.NodeRange,
     } {
         if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
         self.advanceOne();
@@ -468,6 +469,17 @@ pub const Syntaxer = struct {
         defer self.scratch.shrinkRetainingCapacity(scratch_top);
 
         while (!self.tokenIs(.close_parenthesis)) {
+            if (self.currentIdentifierEquals("domain")) {
+                self.advanceOne();
+                const domain = try self.parseName();
+                try self.scratch.append(self.allocator, try self.addNode(.abstract_domain, domain.token, .{ .unused = .{ 0, 0 } }));
+                self.skipNewLinesAndComments();
+                if (self.tokenIs(.comma)) {
+                    self.advanceOne();
+                    self.skipNewLinesAndComments();
+                }
+                continue;
+            }
             var name = try self.parseName();
             var lifecycle_type: ?syn.TokenIndex = null;
             if (self.currentContent() == .identifier and (std.mem.eql(u8, self.tokenText(self.currentContent().identifier), "init") or
@@ -533,9 +545,16 @@ pub const Syntaxer = struct {
             const item = self.scratch.items[index];
             if (self.file.tag(item) == .abstract_function_requirement) try self.scratch.append(self.allocator, item);
         }
+        const domains_start = self.scratch.items.len;
+        index = scratch_top;
+        while (index < items_end) : (index += 1) {
+            const item = self.scratch.items[index];
+            if (self.file.tag(item) == .abstract_domain) try self.scratch.append(self.allocator, item);
+        }
         return .{
             .req_names = try self.addNodeRange(self.scratch.items[items_end..funcs_start]),
-            .req_funcs = try self.addNodeRange(self.scratch.items[funcs_start..]),
+            .req_funcs = try self.addNodeRange(self.scratch.items[funcs_start..domains_start]),
+            .domains = try self.addNodeRange(self.scratch.items[domains_start..]),
         };
     }
 
@@ -1974,11 +1993,17 @@ pub const Syntaxer = struct {
                 if (std.mem.eql(u8, kw, "implements")) {
                     self.advanceOne();
                     const abstract_ty = (try self.parseType()).?; // required
+                    const domain_mapping: ?syn.NodeIndex = if (self.currentIdentifierEquals("where")) blk: {
+                        self.advanceOne();
+                        self.skipNewLinesAndComments();
+                        break :blk try self.parseCodeBlock();
+                    } else null;
                     const extra = try self.addExtra(syn.GenericValueExtra{
                         .generic_params_start = generic_params.start,
                         .generic_params_end = generic_params.end,
                         .generic_params_struct = syn.OptionalNodeIndex.init(generic_params_struct),
                         .value = abstract_ty,
+                        .safety_contract = syn.OptionalNodeIndex.init(domain_mapping),
                     });
                     return try self.addNode(.abstract_implements, name.token, .{ .extra = extra });
                 } else if (std.mem.eql(u8, kw, "defaultsto")) {
@@ -2038,11 +2063,13 @@ pub const Syntaxer = struct {
                 } else if (std.mem.eql(u8, type_name, "Abstract")) {
                     var req_names = try self.addNodeRange(&.{});
                     var req_funcs = try self.addNodeRange(&.{});
+                    var domains = try self.addNodeRange(&.{});
                     if (self.tokenIs(.equal)) {
                         self.advanceOne();
                         const body = try self.parseAbstractBody();
                         req_names = body.req_names;
                         req_funcs = body.req_funcs;
+                        domains = body.domains;
                     }
                     const extra = try self.addExtra(syn.AbstractExtra{
                         .generic_params_start = generic_params.start,
@@ -2052,6 +2079,8 @@ pub const Syntaxer = struct {
                         .requires_abstracts_end = req_names.end,
                         .requires_functions_start = req_funcs.start,
                         .requires_functions_end = req_funcs.end,
+                        .domains_start = domains.start,
+                        .domains_end = domains.end,
                     });
                     return try self.addNode(.abstract_declaration, name.token, .{ .extra = extra });
                 }

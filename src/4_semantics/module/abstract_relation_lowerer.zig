@@ -90,6 +90,7 @@ const Context = struct {
             .ty = concrete,
             .arguments = .{ .start = arg_start, .len = @intCast(parsed.module_arguments.len) },
             .source = self.sourceRef(node),
+            .domains = try self.lowerDomainMappings(relation.domain_mapping),
         });
     }
 
@@ -112,7 +113,45 @@ const Context = struct {
             .concrete_parameter_count = concrete_parameter_count,
             .arguments = parsed.parameterized_arguments,
             .source = self.sourceRef(node),
+            .domains = try self.lowerDomainMappings(relation.domain_mapping),
         });
+    }
+
+    fn lowerDomainMappings(self: *Context, optional: ?syn.NodeIndex) ![]const parameterized_storage.DomainMapping {
+        const node = optional orelse return &.{};
+        var result: std.ArrayList(parameterized_storage.DomainMapping) = .empty;
+        defer result.deinit(self.allocator);
+        for (self.tree.codeBlock(node).?.statements) |statement| {
+            const clause = if (self.tree.tag(statement) == .expression_statement) self.tree.data(statement).node else statement;
+            const call = self.tree.functionCall(clause) orelse return error.InvalidStorageDomainMapping;
+            if (call.module_qualifier != null or call.type_arguments.len != 0 or call.type_arguments_struct != null) return error.InvalidStorageDomainMapping;
+            var paths: std.ArrayList(parameterized_storage.DomainMapping.Path) = .empty;
+            defer paths.deinit(self.allocator);
+            for (self.tree.structValueLiteral(call.input).?.fields) |argument| {
+                const field = self.tree.valueField(argument).?;
+                if (field.name_token != null) return error.InvalidStorageDomainMapping;
+                var names: std.ArrayList(primitives.StringRange) = .empty;
+                defer names.deinit(self.allocator);
+                try self.lowerDomainPath(field.value, &names);
+                if (names.items.len == 0) return error.InvalidStorageDomainMapping;
+                try paths.append(self.allocator, .{ .fields = try names.toOwnedSlice(self.allocator) });
+            }
+            if (paths.items.len == 0) return error.InvalidStorageDomainMapping;
+            try result.append(self.allocator, .{
+                .name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, call.callee_token)),
+                .paths = try paths.toOwnedSlice(self.allocator),
+            });
+        }
+        return result.toOwnedSlice(self.allocator);
+    }
+
+    fn lowerDomainPath(self: *Context, node: syn.NodeIndex, names: *std.ArrayList(primitives.StringRange)) anyerror!void {
+        if (self.tree.structFieldAccess(node)) |field| {
+            try self.lowerDomainPath(field.value, names);
+            try names.append(self.allocator, try self.writer.addString(self.tree.tokenTextFromSource(self.source, field.field_token)));
+            return;
+        }
+        if (self.tree.tag(node) != .identifier or !std.mem.eql(u8, self.tree.tokenTextFromSource(self.source, self.tree.mainToken(node)), "self")) return error.InvalidStorageDomainMapping;
     }
 
     fn lowerCompactConcretePattern(self: *Context, concrete_name: []const u8) !?ir.ParameterizedTypeId {

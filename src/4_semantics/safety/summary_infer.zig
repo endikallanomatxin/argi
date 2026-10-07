@@ -34,6 +34,7 @@ pub const Infer = struct {
     local_address_bindings: std.AutoHashMap(graph_mod.GlobalBindingId, []const graph_mod.GlobalNodeId),
     virtual_summaries: std.AutoHashMap(graph_mod.GlobalVirtualRegistryId, facts.SafetySummary),
     invalid_virtual_summaries: std.AutoHashMap(graph_mod.GlobalVirtualRegistryId, void),
+    domain_invalidations: std.array_list.Managed(facts.InputDomain),
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -49,6 +50,7 @@ pub const Infer = struct {
             .local_address_bindings = std.AutoHashMap(graph_mod.GlobalBindingId, []const graph_mod.GlobalNodeId).init(allocator),
             .virtual_summaries = std.AutoHashMap(graph_mod.GlobalVirtualRegistryId, facts.SafetySummary).init(allocator),
             .invalid_virtual_summaries = std.AutoHashMap(graph_mod.GlobalVirtualRegistryId, void).init(allocator),
+            .domain_invalidations = std.array_list.Managed(facts.InputDomain).init(allocator),
         };
     }
 
@@ -58,6 +60,7 @@ pub const Infer = struct {
         self.local_address_bindings.deinit();
         self.virtual_summaries.deinit();
         self.invalid_virtual_summaries.deinit();
+        self.domain_invalidations.deinit();
     }
 
     /// Infer every SafetySummary dimension until reverse dependencies are stable:
@@ -140,7 +143,7 @@ pub const Infer = struct {
                     .path = path,
                     .validity_only = if (allowed.referent) |referent| path.input_index != referent.input_index else true,
                 };
-                output.* = .{ .input_dependencies = dependencies, .explicit_dependency = dependencies.len != 0 };
+                output.* = .{ .input_dependencies = dependencies, .input_domains = allowed.domains, .explicit_dependency = dependencies.len != 0 or allowed.domains.len != 0 };
             }
             const required = try self.allocator.alloc(facts.InputPath, input_count);
             for (required, 0..) |*path, index| path.* = .{ .input_index = @intCast(index) };
@@ -150,7 +153,9 @@ pub const Infer = struct {
                 .initializedness = .initialized,
                 .refreshes_storage_generation = true,
             };
-            const result = facts.SafetySummary{ .outputs = outputs, .required_live_inputs = required, .input_post_states = post_states };
+            const invalidated_domains = try self.allocator.alloc(facts.InputDomain, declared.invalidated_domains.len);
+            for (declared.invalidated_domains, invalidated_domains) |domain, *effect| effect.* = .{ .path = .{ .input_index = domain.input_index }, .domain_index = domain.domain_index };
+            const result = facts.SafetySummary{ .outputs = outputs, .required_live_inputs = required, .input_post_states = post_states, .invalidated_domains = invalidated_domains };
             try self.virtual_summaries.put(registry_id, result);
             return result;
         }
@@ -191,14 +196,22 @@ pub const Infer = struct {
     }
 
     pub fn virtualImplementationSummary(self: *Infer, implementation: graph_mod.GlobalFunctionId, receiver: ?u32) !?facts.SafetySummary {
+        return self.implementationSummary(implementation, receiver, true);
+    }
+
+    pub fn contractImplementationSummary(self: *Infer, implementation: graph_mod.GlobalFunctionId, receiver: ?u32) !?facts.SafetySummary {
+        return self.implementationSummary(implementation, receiver, false);
+    }
+
+    fn implementationSummary(self: *Infer, implementation: graph_mod.GlobalFunctionId, receiver: ?u32, erase_receiver: bool) !?facts.SafetySummary {
         var summary = self.engine.summaryFor(implementation) orelse return null;
         var states = std.array_list.Managed(facts.PlacePostState).init(self.allocator);
         const function = self.graph.function(implementation);
         const outputs = try self.allocator.alloc(facts.ValueEffect, summary.outputs.len);
         for (summary.outputs, 0..) |output, index| {
             const erased = try self.eraseScalarOwnershipTransfers(function, output);
-            outputs[index] = if (receiver) |receiver_index|
-                try self.borrowVirtualReceiverGenerations(erased, receiver_index)
+            outputs[index] = if (receiver != null and erase_receiver)
+                try self.borrowVirtualReceiverGenerations(erased, receiver.?)
             else
                 erased;
         }
@@ -672,6 +685,7 @@ pub const Infer = struct {
         self.bindings.clearRetainingCapacity();
         self.place_bindings.clearRetainingCapacity();
         self.local_address_bindings.clearRetainingCapacity();
+        self.domain_invalidations.clearRetainingCapacity();
         var start = profile.timestamp(self.profile_io);
         try self.inferBlock(function_id, function.body.?, outputs);
         profile.accumulate(self.profile_io, start, &self.output_ns);
@@ -775,6 +789,7 @@ pub const Infer = struct {
             .outcome_post_states = outcome_post_states,
             .opaque_storage_effects = try opaque_storage_effects.toOwnedSlice(),
             .opaque_storage_empties = opaque_storage_empties,
+            .invalidated_domains = try self.domain_invalidations.toOwnedSlice(),
         };
     }
 
@@ -1831,6 +1846,22 @@ pub const Infer = struct {
         states: *std.array_list.Managed(facts.PlacePostState),
         override: ?SymbolicInputOverride,
     ) !void {
+        for (summary.invalidated_domains) |domain| {
+            var resolved = false;
+            if (domain.path.input_index < arguments.len) {
+                const argument = arguments[domain.path.input_index].value;
+                const value = (try self.localPointeeEffect(function_id, argument)) orelse try self.inferExpression(function_id, argument);
+                for (value.domain_values) |mapped| if (mapped.domain_index == domain.domain_index) {
+                    try self.recordInputPostState(states, mapped.value.input_generation_dependencies, .initialized, .{}, false, true, false, false);
+                    for (mapped.value.input_domains) |input| try appendDomain(&self.domain_invalidations, input);
+                    resolved = true;
+                };
+            }
+            if (!resolved) {
+                const paths = try self.substituteRequiredInputPath(function_id, domain.path, arguments, override);
+                for (paths) |path| try appendDomain(&self.domain_invalidations, .{ .path = path, .domain_index = domain.domain_index });
+            }
+        }
         for (summary.input_post_states) |post_state| {
             if (post_state.target.input_index >= arguments.len) continue;
             const targets = try self.substituteInputPath(
@@ -3385,6 +3416,22 @@ pub const Infer = struct {
         const virtualize = self.graph.virtualizes.items[@intFromEnum(id)];
         var result = try self.inferExpression(function_id, virtualize.value);
         const receiver_paths = try self.inferInputPaths(function_id, virtualize.value);
+        if (virtualize.domains.len != 0) {
+            const domain_values = try self.allocator.alloc(facts.OutputDomainEffect, virtualize.domains.len);
+            for (virtualize.domains, domain_values) |mapping, *domain| {
+                var paths = std.array_list.Managed(facts.InputPath).init(self.allocator);
+                for (receiver_paths) |receiver| for (mapping.paths) |path| {
+                    var projections = receiver.projections;
+                    for (path.fields) |field| projections = try self.appendProjection(projections, .{ .field = field });
+                    try appendInputPath(&paths, .{ .input_index = receiver.input_index, .projections = projections });
+                };
+                const value = try self.allocator.create(facts.ValueEffect);
+                value.* = .{ .input_generation_dependencies = try paths.toOwnedSlice() };
+                domain.* = .{ .domain_index = mapping.domain_index, .value = value };
+            }
+            result.domain_values = domain_values;
+            return result;
+        }
         var generations = std.array_list.Managed(facts.InputPath).init(self.allocator);
         try generations.appendSlice(result.input_generation_dependencies);
         for (self.graph.function_refs.items[virtualize.methods.start..][0..virtualize.methods.len], 0..) |method, index| {
@@ -3579,6 +3626,32 @@ pub const Infer = struct {
             .foreign_storage = effect.foreign_storage,
             .known_choice_variant = effect.known_choice_variant,
         };
+
+        var input_domains = std.array_list.Managed(facts.InputDomain).init(self.allocator);
+        for (effect.input_domains) |domain| {
+            var resolved = false;
+            if (domain.path.input_index < arguments.len) {
+                const argument = arguments[domain.path.input_index].value;
+                var value = (try self.localPointeeEffect(function_id, argument)) orelse try self.inferExpression(function_id, argument);
+                for (domain.path.projections) |projection| value = try self.projectValueEffect(value, projection);
+                for (value.domain_values) |mapped| if (mapped.domain_index == domain.domain_index) {
+                    result = try self.mergeValueEffects(result, mapped.value.*);
+                    resolved = true;
+                };
+            }
+            if (!resolved) {
+                const paths = try self.substituteRequiredInputPath(function_id, domain.path, arguments, override);
+                for (paths) |path| try appendDomain(&input_domains, .{ .path = path, .domain_index = domain.domain_index });
+            }
+        }
+        result.input_domains = try input_domains.toOwnedSlice();
+        const domain_values = try self.allocator.alloc(facts.OutputDomainEffect, effect.domain_values.len);
+        for (effect.domain_values, domain_values) |domain, *mapped| {
+            const value = try self.allocator.create(facts.ValueEffect);
+            value.* = try self.substituteOutputWithOverride(function_id, domain.value.*, arguments, override);
+            mapped.* = .{ .domain_index = domain.domain_index, .value = value };
+        }
+        result.domain_values = domain_values;
 
         for (effect.input_storage_capabilities) |path| {
             if (path.input_index >= arguments.len) continue;
@@ -3775,6 +3848,22 @@ pub const Infer = struct {
     }
 
     fn mergeValueEffects(self: *Infer, left: facts.ValueEffect, right: facts.ValueEffect) !facts.ValueEffect {
+        var input_domains = std.array_list.Managed(facts.InputDomain).init(self.allocator);
+        for (left.input_domains) |domain| try appendDomain(&input_domains, domain);
+        for (right.input_domains) |domain| try appendDomain(&input_domains, domain);
+        var domain_values = std.array_list.Managed(facts.OutputDomainEffect).init(self.allocator);
+        for (left.domain_values) |domain| try domain_values.append(domain);
+        for (right.domain_values) |domain| {
+            var found = false;
+            for (domain_values.items) |*existing| if (existing.domain_index == domain.domain_index) {
+                const value = try self.allocator.create(facts.ValueEffect);
+                value.* = try self.mergeValueEffects(existing.value.*, domain.value.*);
+                existing.value = value;
+                found = true;
+                break;
+            };
+            if (!found) try domain_values.append(domain);
+        }
         var dependencies = std.array_list.Managed(facts.InputDependency).init(self.allocator);
         for (left.input_dependencies) |value| try appendInputDependency(&dependencies, value);
         for (right.input_dependencies) |value| try appendInputDependency(&dependencies, value);
@@ -3854,6 +3943,8 @@ pub const Infer = struct {
             .input_generation_dependencies = try input_generations.toOwnedSlice(),
             .input_place_values = try input_place_values.toOwnedSlice(),
             .input_owned_roots = try input_owned_roots.toOwnedSlice(),
+            .input_domains = try input_domains.toOwnedSlice(),
+            .domain_values = try domain_values.toOwnedSlice(),
             .opaque_generation_dependencies = try opaque_generations.toOwnedSlice(),
             .opaque_storage_dependencies = try opaque_storages.toOwnedSlice(),
             .fields = try fields.toOwnedSlice(),
@@ -3905,6 +3996,7 @@ pub const Infer = struct {
         for (effect.input_generation_dependencies) |path| try appendInputPath(&generations, path);
         for (effect.input_places) |path| try appendInputPath(&generations, path);
         return .{
+            .input_domains = effect.input_domains,
             .explicit_dependency = effect.explicit_dependency,
             .input_dependencies = try dependencies.toOwnedSlice(),
             .input_generation_dependencies = try generations.toOwnedSlice(),
@@ -4799,4 +4891,17 @@ test "large numeric literals keep no per-element summary records" {
     const value = try inference.inferElements(@enumFromInt(0), .{ .start = 0, .len = 65536 });
     try std.testing.expect(facts.isEmptyValue(value));
     try std.testing.expect(facts.isEmptyValue(try inference.mergeValueEffects(value, value)));
+}
+
+fn appendDomain(list: *std.array_list.Managed(facts.InputDomain), domain: facts.InputDomain) !void {
+    for (list.items) |existing| {
+        if (existing.domain_index != domain.domain_index or existing.path.input_index != domain.path.input_index or existing.path.projections.len != domain.path.projections.len) continue;
+        var same = true;
+        for (existing.path.projections, domain.path.projections) |x, y| if (!x.eql(y)) {
+            same = false;
+            break;
+        };
+        if (same) return;
+    }
+    try list.append(domain);
 }

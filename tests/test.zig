@@ -10438,3 +10438,47 @@ test "feature_tests/polymorphism/84X_virtual_safety_contract_invalidate_readonly
 test "feature_tests/polymorphism/85X_virtual_safety_contract_invalidate_self" {
     try buildExpectFail("tests/feature_tests/polymorphism/85X_virtual_safety_contract_invalidate_self", "invalidating erased Self requires a mapped storage domain");
 }
+
+test "feature_tests/polymorphism/86_virtual_safety_contract_domains" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/86_virtual_safety_contract_domains");
+    try runExpect("tests/feature_tests/polymorphism/86_virtual_safety_contract_domains", 0);
+}
+
+test "feature_tests/polymorphism/87X_virtual_safety_contract_domain_borrow" {
+    try buildExpectFail("tests/feature_tests/polymorphism/87X_virtual_safety_contract_domain_borrow", "root that has ended");
+}
+
+test "feature_tests/polymorphism/88X_virtual_safety_contract_domain_wrong_field" {
+    try buildExpectFail("tests/feature_tests/polymorphism/88X_virtual_safety_contract_domain_wrong_field", "undeclared output dependency");
+}
+
+test "feature_tests/polymorphism/89X_virtual_safety_contract_domain_overlap" {
+    try buildExpectFail("tests/feature_tests/polymorphism/89X_virtual_safety_contract_domain_overlap", "storage domains overlap");
+}
+
+test "feature_tests/polymorphism/90X_virtual_safety_contract_domain_missing" {
+    try buildExpectFail("tests/feature_tests/polymorphism/90X_virtual_safety_contract_domain_missing", "every Abstract storage domain requires exactly one implementation mapping");
+}
+
+test "feature_tests/polymorphism/91_virtual_safety_contract_domain_local_conversion" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/91_virtual_safety_contract_domain_local_conversion");
+    try runExpect("tests/feature_tests/polymorphism/91_virtual_safety_contract_domain_local_conversion", 0);
+}
+
+test "feature_tests/polymorphism/92X_virtual_safety_contract_domain_local_escape" {
+    try buildExpectFail("tests/feature_tests/polymorphism/92X_virtual_safety_contract_domain_local_escape", "local storage generation");
+}
+
+test "feature_tests/polymorphism/93_virtual_safety_contract_domain_sibling" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/93_virtual_safety_contract_domain_sibling");
+    try runExpect("tests/feature_tests/polymorphism/93_virtual_safety_contract_domain_sibling", 0);
+}
+
+test "feature_tests/polymorphism/94_virtual_safety_contract_domain_associated" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/94_virtual_safety_contract_domain_associated");
+    try runExpect("tests/feature_tests/polymorphism/94_virtual_safety_contract_domain_associated", 0);
+}
+
+test "feature_tests/polymorphism/95X_virtual_safety_contract_domain_alias" {
+    try buildExpectFail("tests/feature_tests/polymorphism/95X_virtual_safety_contract_domain_alias", "storage domains share a storage generation");
+}

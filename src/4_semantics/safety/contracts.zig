@@ -8,6 +8,7 @@ pub const Output = struct {
     dependencies: []const facts.InputPath = &.{},
     ownership_transfers: []const facts.InputPath = &.{},
     referent: ?facts.InputPath = null,
+    domains: []const facts.InputDomain = &.{},
 };
 
 /// This first contract representation covers output provenance and preservation.
@@ -19,6 +20,7 @@ pub const Contract = struct {
     /// generation permits invalidating references, but grants no permission to
     /// consume owned resources or replace hidden dependency contents.
     invalidates: []const facts.InputPath = &.{},
+    invalidated_domains: []const facts.InputDomain = &.{},
 };
 
 pub fn fromDeclaration(allocator: std.mem.Allocator, declaration: @import("../primitives/schema.zig").MethodSafetyContract) !Contract {
@@ -32,10 +34,17 @@ pub fn fromDeclaration(allocator: std.mem.Allocator, declaration: @import("../pr
         for (declaration.referents) |referent| {
             if (referent.output_index == index) output.referent = .{ .input_index = referent.input_index };
         }
+        var domains: std.ArrayList(facts.InputDomain) = .empty;
+        for (declaration.domain_dependencies) |dependency| {
+            if (dependency.output_index == index) try domains.append(allocator, .{ .path = .{ .input_index = dependency.input.input_index }, .domain_index = dependency.input.domain_index });
+        }
+        output.domains = try domains.toOwnedSlice(allocator);
     }
     const invalidates = try allocator.alloc(facts.InputPath, declaration.invalidates.len);
     for (declaration.invalidates, invalidates) |index, *path| path.* = .{ .input_index = index };
-    return .{ .outputs = outputs, .invalidates = invalidates };
+    const invalidated_domains = try allocator.alloc(facts.InputDomain, declaration.invalidated_domains.len);
+    for (declaration.invalidated_domains, invalidated_domains) |domain, *input| input.* = .{ .path = .{ .input_index = domain.input_index }, .domain_index = domain.domain_index };
+    return .{ .outputs = outputs, .invalidates = invalidates, .invalidated_domains = invalidated_domains };
 }
 
 pub const Failure = struct {
@@ -69,6 +78,14 @@ pub const Failure = struct {
 /// have passed the ordinary function-output check: a contract never authorizes
 /// an expired local generation or certifies physical pointer validity.
 pub fn check(contract: Contract, summary: facts.SafetySummary) ?Failure {
+    for (summary.invalidated_domains) |domain| {
+        var permitted = false;
+        for (contract.invalidated_domains) |expected| if (domain.domain_index == expected.domain_index and samePath(domain.path, expected.path)) {
+            permitted = true;
+            break;
+        };
+        if (!permitted) return .{ .kind = .unsupported_post_state, .input = domain.path };
+    }
     if (contract.outputs.len != summary.outputs.len) return .{ .kind = .output_count };
     for (contract.outputs, summary.outputs, 0..) |allowed, actual, index| {
         if (checkValue(allowed, actual)) |failure| {
@@ -108,6 +125,14 @@ pub fn check(contract: Contract, summary: facts.SafetySummary) ?Failure {
 }
 
 fn checkValue(allowed: Output, actual: facts.ValueEffect) ?Failure {
+    for (actual.input_domains) |domain| {
+        var permitted = false;
+        for (allowed.domains) |expected| if (domain.domain_index == expected.domain_index and samePath(domain.path, expected.path)) {
+            permitted = true;
+            break;
+        };
+        if (!permitted) return .{ .kind = .undeclared_dependency, .input = domain.path };
+    }
     if (allowed.referent) |path| {
         if (!hasExactReferent(actual, path)) return .{ .kind = .incompatible_referent, .input = path };
     }
@@ -136,6 +161,9 @@ fn checkValue(allowed: Output, actual: facts.ValueEffect) ?Failure {
     }
     for (actual.variants) |variant| {
         if (checkValue(allowed, variant.value.*)) |failure| return failure;
+    }
+    for (actual.domain_values) |domain| {
+        if (checkValue(allowed, domain.value.*)) |failure| return failure;
     }
     // Fresh roots have no input provenance. Their ownership/liveness relation
     // is checked by ordinary safety, not turned into a dependency on the receiver.
@@ -198,7 +226,7 @@ fn emptyValue(value: facts.ValueEffect) bool {
     if (value.explicit_dependency or value.input_dependencies.len != 0 or
         value.input_storage_capabilities.len != 0 or value.input_places.len != 0 or
         value.input_generation_dependencies.len != 0 or value.input_place_values.len != 0 or
-        value.input_owned_roots.len != 0 or value.opaque_generation_dependencies.len != 0 or
+        value.input_owned_roots.len != 0 or value.input_domains.len != 0 or value.domain_values.len != 0 or value.opaque_generation_dependencies.len != 0 or
         value.opaque_storage_dependencies.len != 0 or value.fresh_dependencies.len != 0 or
         value.fresh_owned_roots.len != 0 or value.fresh_storage_capabilities.len != 0 or
         value.unavailable_fresh_storage.len != 0 or value.integer_address or value.foreign_storage) return false;

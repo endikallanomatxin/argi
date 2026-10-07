@@ -108,6 +108,7 @@ pub const Engine = struct {
 };
 
 pub fn summaryEql(a: facts.SafetySummary, b: facts.SafetySummary) bool {
+    if (!domainsEql(a.invalidated_domains, b.invalidated_domains)) return false;
     if (a.storage_capability_conflicts.len != b.storage_capability_conflicts.len) return false;
     for (a.storage_capability_conflicts, b.storage_capability_conflicts) |left, right|
         if (!inputPathEql(left.first, right.first) or !inputPathEql(left.second, right.second)) return false;
@@ -137,6 +138,9 @@ pub fn summaryEql(a: facts.SafetySummary, b: facts.SafetySummary) bool {
 }
 
 pub fn valueEffectEql(a: facts.ValueEffect, b: facts.ValueEffect) bool {
+    if (!domainsEql(a.input_domains, b.input_domains)) return false;
+    if (a.domain_values.len != b.domain_values.len) return false;
+    for (a.domain_values, b.domain_values) |x, y| if (x.domain_index != y.domain_index or !valueEffectEql(x.value.*, y.value.*)) return false;
     if (a.explicit_dependency != b.explicit_dependency or
         a.input_dependencies.len != b.input_dependencies.len or
         a.input_places.len != b.input_places.len or
@@ -179,6 +183,12 @@ pub fn valueEffectEql(a: facts.ValueEffect, b: facts.ValueEffect) bool {
     if (a.unavailable_fresh_storage.len != b.unavailable_fresh_storage.len) return false;
     for (a.unavailable_fresh_storage, b.unavailable_fresh_storage) |left, right|
         if (left.source != right.source or left.maybe_consumed != right.maybe_consumed) return false;
+    return true;
+}
+
+fn domainsEql(a: []const facts.InputDomain, b: []const facts.InputDomain) bool {
+    if (a.len != b.len) return false;
+    for (a, b) |x, y| if (x.domain_index != y.domain_index or !inputPathEql(x.path, y.path)) return false;
     return true;
 }
 

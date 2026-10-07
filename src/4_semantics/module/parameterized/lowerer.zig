@@ -278,12 +278,24 @@ pub const Context = struct {
                     self.abstract_parameters.clearRetainingCapacity();
                     const params = try self.lowerParameters(abstract.generic_params, abstract.generic_params_struct);
                     const req_start: u32 = @intCast(self.graph.semantic.parameterized_storage.abstract_requirements.items.len);
+                    var domains: std.ArrayList(primitives.StringRange) = .empty;
+                    defer domains.deinit(self.allocator);
+                    for (abstract.domains) |domain| {
+                        const text = self.tree.tokenTextFromSource(self.source, self.tree.mainToken(domain));
+                        for (domains.items) |previous| {
+                            if (std.mem.eql(u8, self.graph.text(previous), text)) {
+                                try self.contractError(domain, "duplicate Abstract storage domain");
+                                unreachable;
+                            }
+                        }
+                        try domains.append(self.allocator, try self.writer.addString(text));
+                    }
                     for (abstract.requires_functions) |requirement_node| {
                         const requirement = self.tree.abstractFunctionRequirement(requirement_node) orelse continue;
                         const name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, requirement.name_token));
                         const input = try self.lowerType(requirement.input, true);
                         const output = try self.lowerType(requirement.output, true);
-                        const safety_contract = try self.lowerMethodSafetyContract(requirement);
+                        const safety_contract = try self.lowerMethodSafetyContract(requirement, domains.items);
                         try self.graph.semantic.parameterized_storage.abstract_requirements.append(self.allocator, .{
                             .name = name,
                             .input = input,
@@ -298,6 +310,7 @@ pub const Context = struct {
                             .start = req_start,
                             .len = @intCast(self.graph.semantic.parameterized_storage.abstract_requirements.items.len - req_start),
                         },
+                        .domains = try domains.toOwnedSlice(self.allocator),
                     });
                     stats.abstract_definitions += 1;
                 },
@@ -307,7 +320,7 @@ pub const Context = struct {
         return stats;
     }
 
-    fn lowerMethodSafetyContract(self: *Context, requirement: syn.AbstractFunctionRequirement) !?primitives.MethodSafetyContract {
+    fn lowerMethodSafetyContract(self: *Context, requirement: syn.AbstractFunctionRequirement, domains: []const primitives.StringRange) !?primitives.MethodSafetyContract {
         const node = requirement.safety_contract orelse return null;
         var dependencies: std.ArrayList(primitives.MethodSafetyContract.Dependency) = .empty;
         defer dependencies.deinit(self.allocator);
@@ -315,17 +328,23 @@ pub const Context = struct {
         defer referents.deinit(self.allocator);
         var invalidates: std.ArrayList(u32) = .empty;
         defer invalidates.deinit(self.allocator);
+        var domain_dependencies: std.ArrayList(primitives.MethodSafetyContract.DomainDependency) = .empty;
+        defer domain_dependencies.deinit(self.allocator);
+        var invalidated_domains: std.ArrayList(primitives.MethodSafetyContract.DomainInput) = .empty;
+        defer invalidated_domains.deinit(self.allocator);
         if (self.tree.codeBlock(node)) |block| {
             for (block.statements) |statement| {
                 const clause = if (self.tree.tag(statement) == .expression_statement) self.tree.data(statement).node else statement;
-                try self.lowerDependencyClause(requirement, clause, &dependencies, &referents, &invalidates);
+                try self.lowerDependencyClause(requirement, clause, &dependencies, &referents, &invalidates, domains, &domain_dependencies, &invalidated_domains);
             }
-        } else try self.lowerDependencyClause(requirement, node, &dependencies, &referents, &invalidates);
+        } else try self.lowerDependencyClause(requirement, node, &dependencies, &referents, &invalidates, domains, &domain_dependencies, &invalidated_domains);
         return .{
             .output_count = @intCast(self.tree.structTypeLiteral(requirement.output).?.fields.len),
             .dependencies = try dependencies.toOwnedSlice(self.allocator),
             .referents = try referents.toOwnedSlice(self.allocator),
             .invalidates = try invalidates.toOwnedSlice(self.allocator),
+            .domain_dependencies = try domain_dependencies.toOwnedSlice(self.allocator),
+            .invalidated_domains = try invalidated_domains.toOwnedSlice(self.allocator),
             .source = self.sourceRef(node),
         };
     }
@@ -335,7 +354,7 @@ pub const Context = struct {
         return error.Reported;
     }
 
-    fn lowerDependencyClause(self: *Context, requirement: syn.AbstractFunctionRequirement, node: syn.NodeIndex, dependencies: *std.ArrayList(primitives.MethodSafetyContract.Dependency), referents: *std.ArrayList(primitives.MethodSafetyContract.Dependency), invalidates: *std.ArrayList(u32)) !void {
+    fn lowerDependencyClause(self: *Context, requirement: syn.AbstractFunctionRequirement, node: syn.NodeIndex, dependencies: *std.ArrayList(primitives.MethodSafetyContract.Dependency), referents: *std.ArrayList(primitives.MethodSafetyContract.Dependency), invalidates: *std.ArrayList(u32), domains: []const primitives.StringRange, domain_dependencies: *std.ArrayList(primitives.MethodSafetyContract.DomainDependency), invalidated_domains: *std.ArrayList(primitives.MethodSafetyContract.DomainInput)) !void {
         const call = self.tree.functionCall(node) orelse return self.contractError(node, "expected depends_on, refers_to or invalidates in an Abstract safety contract");
         const name = self.tree.tokenTextFromSource(self.source, call.callee_token);
         const is_referent = std.mem.eql(u8, name, "refers_to");
@@ -345,6 +364,10 @@ pub const Context = struct {
             for (arguments.fields) |argument| {
                 const field = self.tree.valueField(argument).?;
                 if (field.name_token != null) return self.contractError(argument, "safety contract arguments must be positional names");
+                if (try self.contractDomainInput(requirement, field.value, domains)) |input| {
+                    try invalidated_domains.append(self.allocator, input);
+                    continue;
+                }
                 const index = (try self.contractFieldIndex(requirement.input, field.value)) orelse
                     return self.contractError(field.value, "invalidates must name a method input");
                 var found = false;
@@ -368,6 +391,11 @@ pub const Context = struct {
         for (literal.fields[1..]) |argument| {
             const field = self.tree.valueField(argument).?;
             if (field.name_token != null) return self.contractError(argument, "safety contract arguments must be positional names");
+            if (try self.contractDomainInput(requirement, field.value, domains)) |input| {
+                if (is_referent) return self.contractError(field.value, "refers_to names exact reference inputs; use depends_on for storage domains");
+                try domain_dependencies.append(self.allocator, .{ .output_index = output_index, .input = input });
+                continue;
+            }
             const input_index = (try self.contractFieldIndex(requirement.input, field.value)) orelse
                 return self.contractError(field.value, "depends_on dependencies must name method inputs");
             const dependency = primitives.MethodSafetyContract.Dependency{ .output_index = output_index, .input_index = input_index };
@@ -392,6 +420,21 @@ pub const Context = struct {
         }
         if (self.tree.valueField(literal.fields[0]).?.name_token != null)
             return self.contractError(output_node, "safety contract arguments must be positional names");
+    }
+
+    fn contractDomainInput(self: *Context, requirement: syn.AbstractFunctionRequirement, node: syn.NodeIndex, domains: []const primitives.StringRange) !?primitives.MethodSafetyContract.DomainInput {
+        const field = self.tree.structFieldAccess(node) orelse return null;
+        const input = (try self.contractFieldIndex(requirement.input, field.value)) orelse return self.contractDomainError(node, "storage domains must be rooted at a method input");
+        const name = self.tree.tokenTextFromSource(self.source, field.field_token);
+        for (domains, 0..) |domain, index| {
+            if (std.mem.eql(u8, self.graph.text(domain), name)) return .{ .input_index = input, .domain_index = @intCast(index) };
+        }
+        return self.contractDomainError(node, "unknown Abstract storage domain");
+    }
+
+    fn contractDomainError(self: *Context, node: syn.NodeIndex, message: []const u8) !?primitives.MethodSafetyContract.DomainInput {
+        try self.contractError(node, message);
+        unreachable;
     }
 
     fn contractFieldIndex(self: *Context, signature: syn.NodeIndex, node: syn.NodeIndex) !?u32 {

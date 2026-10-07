@@ -39,10 +39,13 @@ pub const InputDependency = struct {
     validity_only: bool = false,
 };
 
+pub const InputDomain = struct { path: InputPath, domain_index: u32 };
+
 pub const OutputFieldEffect = struct {
     index: u32,
     value: *const ValueEffect,
 };
+pub const OutputDomainEffect = struct { domain_index: u32, value: *const ValueEffect };
 
 /// Stable compiler-owned identity for a fresh runtime fact produced while
 /// evaluating a summarized expression.
@@ -63,6 +66,8 @@ pub const ValueEffect = struct {
     input_place_values: []const InputPath = &.{},
     /// Roots owned by the value at an input reference's place, borrowed as dependencies.
     input_owned_roots: []const InputPath = &.{},
+    input_domains: []const InputDomain = &.{},
+    domain_values: []const OutputDomainEffect = &.{},
     opaque_generation_dependencies: []const InputPath = &.{},
     opaque_storage_dependencies: []const InputPath = &.{},
     fields: []const OutputFieldEffect = &.{},
@@ -156,6 +161,7 @@ pub const SafetySummary = struct {
     outcome_post_states: []const OutcomePostStates = &.{},
     opaque_storage_effects: []const OpaqueStorageEffect = &.{},
     opaque_storage_empties: []const InputPath = &.{},
+    invalidated_domains: []const InputDomain = &.{},
 };
 
 pub const OutcomePostStates = struct {

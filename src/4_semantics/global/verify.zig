@@ -45,6 +45,7 @@ pub fn verifyGlobal(graph: *const graph_mod.GlobalSemanticGraph) !void {
             try require(verify.sourceFits(contract.source, graph.files.items.len));
             for (contract.dependencies) |dependency| try require(dependency.output_index < contract.output_count);
             for (contract.referents) |referent| try require(referent.output_index < contract.output_count);
+            for (contract.domain_dependencies) |dependency| try require(dependency.output_index < contract.output_count);
         }
         for (graph.function_refs.items[value.implementations.start..][0..value.implementations.len]) |method| {
             try require(verify.idFits(method, graph.functions.items.len));
@@ -54,6 +55,8 @@ pub fn verifyGlobal(graph: *const graph_mod.GlobalSemanticGraph) !void {
                 for (contract.invalidates) |index| try require(index < graph.function(method).input.len);
                 for (contract.dependencies) |dependency| try require(dependency.input_index < graph.function(method).input.len);
                 for (contract.referents) |referent| try require(referent.input_index < graph.function(method).input.len);
+                for (contract.domain_dependencies) |dependency| try require(dependency.input.input_index < graph.function(method).input.len);
+                for (contract.invalidated_domains) |domain| try require(domain.input_index < graph.function(method).input.len);
             }
         }
     }

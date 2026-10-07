@@ -246,7 +246,32 @@ pub const SafetyChecker = struct {
             for (self.graph.virtual_registry_refs.items[virtualize.safety_methods.start..][0..virtualize.safety_methods.len], 0..) |registry_id, index| {
                 const registry = self.graph.virtual_registries.items[@intFromEnum(registry_id)];
                 const declared = registry.safety_contract orelse continue;
-                const contract = try contracts.fromDeclaration(self.allocator, declared);
+                var contract = try contracts.fromDeclaration(self.allocator, declared);
+                for (declared.domain_dependencies) |dependency| {
+                    const outputs = @constCast(contract.outputs);
+                    var paths: std.ArrayList(facts.InputPath) = .empty;
+                    try paths.appendSlice(self.allocator, outputs[dependency.output_index].dependencies);
+                    for (virtualize.domains) |mapping| {
+                        if (mapping.domain_index != dependency.input.domain_index) continue;
+                        for (mapping.paths) |path| {
+                            const projections = try self.allocator.alloc(facts.Projection, path.fields.len);
+                            for (path.fields, projections) |field, *projection| projection.* = .{ .field = field };
+                            try paths.append(self.allocator, .{ .input_index = dependency.input.input_index, .projections = projections });
+                        }
+                    }
+                    outputs[dependency.output_index].dependencies = try paths.toOwnedSlice(self.allocator);
+                }
+                var invalidates: std.ArrayList(facts.InputPath) = .empty;
+                try invalidates.appendSlice(self.allocator, contract.invalidates);
+                for (declared.invalidated_domains) |domain| for (virtualize.domains) |mapping| {
+                    if (mapping.domain_index != domain.domain_index) continue;
+                    for (mapping.paths) |path| {
+                        const projections = try self.allocator.alloc(facts.Projection, path.fields.len);
+                        for (path.fields, projections) |field, *projection| projection.* = .{ .field = field };
+                        try invalidates.append(self.allocator, .{ .input_index = domain.input_index, .projections = projections });
+                    }
+                };
+                contract.invalidates = try invalidates.toOwnedSlice(self.allocator);
                 const method = self.graph.function_refs.items[virtualize.methods.start + index];
                 const function = self.graph.function(method);
                 for (declared.referents) |referent| {
@@ -254,7 +279,7 @@ pub const SafetyChecker = struct {
                         try self.report(virtualize.source, "method '{s}' cannot prove refers_to: the implementation must directly forward the declared reference input", .{self.graph.text(self.graph.declaration(function.declaration).name)});
                     }
                 }
-                var summary = (try inference.virtualImplementationSummary(method, registry.receiver_input_index)) orelse {
+                var summary = (try inference.contractImplementationSummary(method, registry.receiver_input_index)) orelse {
                     try self.report(virtualize.source, "cannot verify Abstract safety contract for this implementation", .{});
                     continue;
                 };
@@ -447,7 +472,7 @@ pub const SafetyChecker = struct {
         var shared_pointer_root: ?facts.ValidityRootId = null;
         for (self.graph.binding_refs.items[function.input_bindings.start..][0..function.input_bindings.len]) |binding| {
             const record = self.graph.bindings.items[@intFromEnum(binding)];
-            const value: facts.ValueFacts = if (isPointer(self.graph, record.ty)) blk: {
+            var value: facts.ValueFacts = if (isPointer(self.graph, record.ty)) blk: {
                 const root = shared_pointer_root orelse root_blk: {
                     const created = try state.tracker.establish(.fresh);
                     shared_pointer_root = created;
@@ -455,6 +480,22 @@ pub const SafetyChecker = struct {
                 };
                 break :blk .{ .dependencies = try self.oneDependency(root) };
             } else .{};
+            const ty = if (isPointer(self.graph, record.ty)) self.graph.semanticType(record.ty).pointer.child else record.ty;
+            if (self.graph.semanticType(ty) == .virtual) {
+                for (self.graph.virtualizes.items) |virtualize| {
+                    if (!types.equal(self.graph, ty, virtualize.virtual_type) or virtualize.domains.len == 0) continue;
+                    const domains = try self.allocator.alloc(facts.DomainFacts, virtualize.domains.len);
+                    for (virtualize.domains, domains) |mapping, *domain| {
+                        const storage = try self.project(.{ .root = binding }, .{ .field = mapping.domain_index });
+                        _ = try self.storageGeneration(state, storage);
+                        const places = try self.allocator.alloc(facts.Place, 1);
+                        places[0] = storage;
+                        domain.* = .{ .domain_index = mapping.domain_index, .storages = places };
+                    }
+                    value.domains = domains;
+                    break;
+                }
+            }
             try self.setPlace(state, .{ .root = binding }, .initialized, value);
         }
         // Outputs without defaults are storage to be filled by the body.
@@ -780,6 +821,58 @@ pub const SafetyChecker = struct {
                     }
                 }
                 var value = (try self.evaluate(function, virtualize.value, state)).referenceCopy();
+                if (virtualize.domains.len != 0 and value.referenced_place == null) {
+                    var pointer = virtualize.value;
+                    const address = self.graph.node(pointer).content;
+                    if (address == .address_of) {
+                        const child = self.graph.node(address.address_of).content;
+                        if (child == .dereference) pointer = child.dereference.pointer;
+                    }
+                    if (try self.resolvePlace(pointer, state)) |slot| {
+                        if (self.functionInputIndex(function, slot.root) != null) {
+                            // Symbolic input referents are caller storage, not
+                            // this function's argument slot. Keep a distinct
+                            // dereference path for their domain generations.
+                            const receiver = try self.project(slot, .dereference);
+                            const contents = try self.initializedValueAtPlace(state, receiver, virtualize.concrete_type);
+                            try self.setPlace(state, receiver, .initialized, contents);
+                            value.referenced_place = receiver;
+                        }
+                    }
+                }
+                if (value.referenced_place) |receiver| if (virtualize.domains.len != 0) {
+                    var domains: std.ArrayList(facts.DomainFacts) = .empty;
+                    var captured: std.ArrayList(@import("domains.zig").Captured) = .empty;
+                    defer captured.deinit(self.allocator);
+                    for (virtualize.domains) |mapping| {
+                        var storages: std.ArrayList(facts.Place) = .empty;
+                        var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
+                        defer dependencies.deinit();
+                        var visited = std.array_list.Managed(facts.Place).init(self.allocator);
+                        defer visited.deinit();
+                        for (mapping.paths) |path| {
+                            var storage = receiver;
+                            var ty = virtualize.concrete_type;
+                            for (path.fields) |field| {
+                                if (self.graph.semanticType(ty) == .pointer) {
+                                    const stored: facts.ValueFacts = self.valueAtPlace(state, storage) orelse .{};
+                                    storage = stored.referenced_place orelse storage;
+                                    ty = self.graph.semanticType(ty).pointer.child;
+                                }
+                                storage = try self.project(storage, .{ .field = field });
+                                ty = self.fieldTypeAt(ty, field) orelse return error.InvalidDomainMapping;
+                            }
+                            try storages.append(self.allocator, storage);
+                            try self.captureContractStorage(function, virtualize.source, state, storage, ty, &dependencies, &visited);
+                        }
+                        const roots = try self.allocator.alloc(facts.ValidityRootId, visited.items.len);
+                        for (visited.items, roots) |storage, *root| root.* = try self.storageGeneration(state, storage);
+                        try captured.append(self.allocator, .{ .domain = @enumFromInt(mapping.domain_index), .generations = roots });
+                        try domains.append(self.allocator, .{ .domain_index = mapping.domain_index, .storages = try storages.toOwnedSlice(self.allocator) });
+                    }
+                    if (@import("domains.zig").validateCaptured(captured.items)) |_| try self.report(virtualize.source, "Abstract storage domains share a storage generation and cannot be invalidated independently", .{});
+                    value.domains = try domains.toOwnedSlice(self.allocator);
+                };
                 // A concrete method may return a reference into a receiver
                 // field. Capture that field's generation before its layout is
                 // erased by Virtual dispatch.
@@ -790,7 +883,7 @@ pub const SafetyChecker = struct {
                     for (self.graph.virtual_registry_refs.items[virtualize.safety_methods.start..][0..virtualize.safety_methods.len]) |registry_id| {
                         if (self.graph.virtual_registries.items[@intFromEnum(registry_id)].safety_contract != null) has_declared_contract = true;
                     }
-                    if (has_declared_contract) {
+                    if (has_declared_contract and virtualize.domains.len == 0) {
                         // A published receiver contract cannot discover its live
                         // storage requirements from the selected method bodies.
                         // Capture the initialized receiver's reachable generations
@@ -800,6 +893,7 @@ pub const SafetyChecker = struct {
                         try self.captureContractStorage(function, virtualize.source, state, receiver_place, virtualize.concrete_type, &dependencies, &visited);
                     }
                     for (self.graph.function_refs.items[virtualize.methods.start..][0..virtualize.methods.len], 0..) |method, index| {
+                        if (virtualize.domains.len != 0) continue;
                         const inference = self.active_summary_inference orelse continue;
                         const receiver_index = inference.virtualizeReceiverIndex(virtualize, index);
                         const summary = summaries.summaryFor(method) orelse continue;
@@ -1549,6 +1643,13 @@ pub const SafetyChecker = struct {
                 // Preserve this obligation across ordinary wrapper functions.
                 if (self.valueAtPlace(state, storage)) |stored| {
                     if (stored.virtual_methods.len != 0) try self.requireLive(@enumFromInt(0), source, stored, state);
+                    for (stored.domains) |domain| for (domain.storages) |target| {
+                        const generation = try self.storageGeneration(state, target);
+                        if (state.tracker.roots.items[@intFromEnum(generation)].state != .alive)
+                            try self.report(source, "reference depends on a root that has ended", .{});
+                        try self.requirePlaceInitialized(@enumFromInt(0), source, target, self.initializednessAtPlace(state, target), state);
+                        if (self.valueAtPlace(state, target)) |contents| try self.requireLive(@enumFromInt(0), source, try self.reconstructPlaceValue(state, target, contents), state);
+                    };
                 }
                 // A capability authorizes a call only while its value remains
                 // initialized. Unlike an output pointer, it is never merely a
@@ -1574,6 +1675,13 @@ pub const SafetyChecker = struct {
         arguments: []const facts.ValueFacts,
         state: *FunctionState,
     ) !void {
+        for (summary.invalidated_domains) |domain| {
+            if (domain.path.input_index >= arguments.len) continue;
+            const value = try self.projectValueFacts(arguments[domain.path.input_index], domain.path.projections);
+            for (try self.domainStorage(value, domain.domain_index, state)) |storage|
+                try self.refreshStorageGenerationChecked(source, state, storage);
+        }
+
         const capability_diagnostics = self.diagnostics.list.items.len;
         for (summary.storage_capability_uses) |use| {
             try self.require_available_storage_capabilities(source, try self.load_summary_input_value(use.target, arguments, state), use.maximum, state);
@@ -1976,6 +2084,26 @@ pub const SafetyChecker = struct {
             state.storage_capabilities.items[@intFromEnum(capability)] = if (entry.maybe_consumed) .maybe_consumed else .consumed;
         }
 
+        for (effect.input_domains) |domain| {
+            if (domain.path.input_index >= arguments.len) continue;
+            const input = try self.projectValueFacts(arguments[domain.path.input_index], domain.path.projections);
+            for (try self.domainStorage(input, domain.domain_index, state)) |storage| {
+                try appendDependencyFact(&dependencies, .{ .root = try self.storageGeneration(state, storage) });
+                if (self.domainStorageType(storage)) |ty| {
+                    var visited = std.array_list.Managed(facts.Place).init(self.allocator);
+                    defer visited.deinit();
+                    try self.captureContractStorage(@enumFromInt(0), self.graph.binding(storage.root).source, state, storage, ty, &dependencies, &visited);
+                }
+                if (self.valueAtPlace(state, storage)) |stored| {
+                    const value = try self.reconstructPlaceValue(state, storage, stored);
+                    var roots = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+                    defer roots.deinit();
+                    try collectDependencyRoots(value, &roots);
+                    try collectOwnedRoots(value, &roots);
+                    for (roots.items) |root| try appendDependencyFact(&dependencies, .{ .root = root });
+                }
+            }
+        }
         var referenced_place: ?facts.Place = null;
         var has_referent = false;
         for (effect.input_places) |path| {
@@ -2001,6 +2129,30 @@ pub const SafetyChecker = struct {
             if (self.valueAtPlace(state, place)) |value| {
                 for (value.owned_roots) |root| try appendDependencyFact(&dependencies, .{ .root = root });
             }
+        }
+        if (effect.domain_values.len != 0) {
+            var domains: std.ArrayList(facts.DomainFacts) = .empty;
+            for (effect.domain_values) |domain| {
+                var storages = std.array_list.Managed(facts.Place).init(self.allocator);
+                for (domain.value.input_generation_dependencies) |path| {
+                    if (path.input_index >= arguments.len) continue;
+                    var storage = arguments[path.input_index].referenced_place orelse continue;
+                    for (path.projections) |projection| {
+                        if (self.valueAtPlace(state, storage)) |stored| {
+                            if (stored.referenced_place) |referent| storage = referent;
+                        }
+                        storage = try self.project(storage, projection);
+                    }
+                    try appendPlaceFact(&storages, storage);
+                }
+                for (domain.value.input_domains) |input| {
+                    if (input.path.input_index >= arguments.len) continue;
+                    const value = try self.projectValueFacts(arguments[input.path.input_index], input.path.projections);
+                    for (try self.domainStorage(value, input.domain_index, state)) |storage| try appendPlaceFact(&storages, storage);
+                }
+                try domains.append(self.allocator, .{ .domain_index = domain.domain_index, .storages = try storages.toOwnedSlice() });
+            }
+            result.domains = try domains.toOwnedSlice(self.allocator);
         }
         result.dependencies = try dependencies.toOwnedSlice();
         const direct_owned_roots = result.owned_roots;
@@ -2180,6 +2332,7 @@ pub const SafetyChecker = struct {
     }
 
     fn mergeValueFacts(self: *SafetyChecker, left: facts.ValueFacts, right: facts.ValueFacts) !facts.ValueFacts {
+        const domains = try mergeDomainFacts(self.allocator, left.domains, right.domains);
         var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
         for (left.dependencies) |value| try appendDependencyFact(&dependencies, value);
         for (right.dependencies) |value| try appendDependencyFact(&dependencies, value);
@@ -2246,6 +2399,7 @@ pub const SafetyChecker = struct {
             .referenced_place = if (left.referenced_place != null and right.referenced_place != null and left.referenced_place.?.eql(right.referenced_place.?)) left.referenced_place else null,
             .opaque_provenance = try opaque_provenance.toOwnedSlice(),
             .virtual_methods = if (std.mem.eql(graph_mod.GlobalFunctionId, left.virtual_methods, right.virtual_methods)) left.virtual_methods else &.{},
+            .domains = domains,
         };
     }
 
@@ -3611,6 +3765,31 @@ pub const SafetyChecker = struct {
         try self.requireInitialized(function, source, initializedness);
     }
 
+    fn domainStorageType(self: *SafetyChecker, storage: facts.Place) ?graph_mod.GlobalTypeId {
+        var ty = self.graph.binding(storage.root).ty;
+        for (storage.projections) |projection| {
+            ty = switch (projection) {
+                .field => |field| blk: {
+                    if (self.graph.semanticType(ty) == .pointer) ty = self.graph.semanticType(ty).pointer.child;
+                    break :blk self.fieldTypeAt(ty, field) orelse return null;
+                },
+                .variant => |variant| self.variantPayloadTypeAt(ty, variant) orelse return null,
+                .static_index, .dynamic_index => types.arrayElement(self.graph, ty) orelse return null,
+                .dereference => if (self.graph.semanticType(ty) == .pointer) self.graph.semanticType(ty).pointer.child else return null,
+            };
+        }
+        return ty;
+    }
+
+    fn domainStorage(self: *SafetyChecker, argument: facts.ValueFacts, index: u32, state: *FunctionState) ![]const facts.Place {
+        var value = argument;
+        if (value.domains.len == 0) if (value.referenced_place) |wrapper| {
+            if (self.valueAtPlace(state, wrapper)) |stored| value = stored;
+        };
+        for (value.domains) |domain| if (domain.domain_index == index) return domain.storages;
+        return error.MissingVirtualStorageDomain;
+    }
+
     fn captureContractStorage(self: *SafetyChecker, function: graph_mod.GlobalFunctionId, source: primitives.SourceRef, state: *FunctionState, storage: facts.Place, ty: graph_mod.GlobalTypeId, dependencies: *std.array_list.Managed(facts.ValidityDependency), visited: *std.array_list.Managed(facts.Place)) anyerror!void {
         for (visited.items) |previous| if (previous.eql(storage)) return;
         try visited.append(storage);
@@ -4902,6 +5081,11 @@ fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChe
 }
 
 fn valueFactsEqual(left: facts.ValueFacts, right: facts.ValueFacts) bool {
+    if (left.domains.len != right.domains.len) return false;
+    for (left.domains, right.domains) |a, b| {
+        if (a.domain_index != b.domain_index or a.storages.len != b.storages.len) return false;
+        for (a.storages, b.storages) |x, y| if (!x.eql(y)) return false;
+    }
     if (left.explicit_dependency != right.explicit_dependency or
         left.integer_address != right.integer_address or
         left.foreign_storage != right.foreign_storage or
@@ -6089,4 +6273,23 @@ test "large numeric literals keep no per-element safety records" {
     const value = try checker.evaluateArray(@enumFromInt(0), .{ .elements = graph_mod.NodeRange{ .start = 0, .len = 65536 } }, &state);
     try std.testing.expect(facts.isEmptyValue(value));
     try std.testing.expect(facts.isEmptyValue(try checker.mergeValueFacts(value, value)));
+}
+
+fn mergeDomainFacts(allocator: std.mem.Allocator, left: []const facts.DomainFacts, right: []const facts.DomainFacts) ![]const facts.DomainFacts {
+    var result: std.ArrayList(facts.DomainFacts) = .empty;
+    for (left) |domain| try result.append(allocator, domain);
+    for (right) |domain| {
+        var found = false;
+        for (result.items) |*existing| {
+            if (existing.domain_index != domain.domain_index) continue;
+            var storages = std.array_list.Managed(facts.Place).init(allocator);
+            try storages.appendSlice(existing.storages);
+            for (domain.storages) |storage| try appendPlaceFact(&storages, storage);
+            existing.storages = try storages.toOwnedSlice();
+            found = true;
+            break;
+        }
+        if (!found) try result.append(allocator, domain);
+    }
+    return result.toOwnedSlice(allocator);
 }

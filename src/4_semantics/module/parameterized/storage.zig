@@ -68,6 +68,13 @@ pub const AbstractDefinition = struct {
     declaration: entities.ModuleDeclId,
     parameters: primitives.Range(ComptimeParameterId),
     requirements: primitives.Range(AbstractRequirementId),
+    domains: []const primitives.StringRange = &.{},
+};
+
+pub const DomainMapping = struct {
+    name: primitives.StringRange,
+    paths: []const Path,
+    pub const Path = struct { fields: []const primitives.StringRange };
 };
 
 pub const AbstractArgument = union(enum) { none, type: entities.ModuleTypeId, comptime_int: i64 };
@@ -77,6 +84,7 @@ pub const AbstractImplementation = struct {
     ty: entities.ModuleTypeId,
     arguments: primitives.Range(AbstractArgumentId) = .{ .start = 0, .len = 0 },
     source: primitives.SourceRef,
+    domains: []const DomainMapping = &.{},
 };
 
 pub const ParameterizedAbstractImplementation = struct {
@@ -87,6 +95,7 @@ pub const ParameterizedAbstractImplementation = struct {
     concrete_parameter_count: u32 = 0,
     arguments: primitives.Range(ir.ParameterizedGenericArgId) = .{ .start = 0, .len = 0 },
     source: primitives.SourceRef,
+    domains: []const DomainMapping = &.{},
 };
 
 pub const AbstractDefault = struct {

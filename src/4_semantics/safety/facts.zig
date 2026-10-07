@@ -16,7 +16,9 @@ pub const ValidityDependency = base.ValidityDependency;
 pub const ValidityRootEstablishment = base.ValidityRootEstablishment;
 pub const InputPath = base.InputPath;
 pub const InputDependency = base.InputDependency;
+pub const InputDomain = base.InputDomain;
 pub const OutputFieldEffect = base.OutputFieldEffect;
+pub const OutputDomainEffect = base.OutputDomainEffect;
 pub const FreshEffectSource = base.FreshEffectSource;
 pub const ValueEffect = base.ValueEffect;
 pub const receiverBorrowedPlaces = base.receiverBorrowedPlaces;
@@ -54,6 +56,7 @@ pub const ValueFacts = struct {
     /// this in transient safety facts lets exact dispatch survive bindings and
     /// ordinary value copies without reintroducing graph-object identity.
     virtual_methods: []const graph.GlobalFunctionId = &.{},
+    domains: []const DomainFacts = &.{},
 
     pub fn referenceCopy(self: ValueFacts) ValueFacts {
         return .{
@@ -65,6 +68,7 @@ pub const ValueFacts = struct {
             .referenced_place = self.referenced_place,
             .opaque_provenance = self.opaque_provenance,
             .virtual_methods = self.virtual_methods,
+            .domains = self.domains,
         };
     }
 
@@ -81,6 +85,11 @@ pub const ValueFacts = struct {
         };
     }
 };
+
+/// Domain storage identities remain usable across handle copies. Current
+/// generations are looked up at the call, while returned borrows capture the
+/// old generation. Domain invalidation never transfers cleanup ownership.
+pub const DomainFacts = struct { domain_index: u32, storages: []const Place };
 
 /// Only a wholly empty value may omit its element records. In a mixed
 /// aggregate, explicit empty children prevent projection from inheriting
