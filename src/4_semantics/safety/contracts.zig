@@ -15,6 +15,10 @@ pub const Output = struct {
 /// use it; unsupported effects are rejected, never silently discarded.
 pub const Contract = struct {
     outputs: []const Output,
+    /// Paths are resolved domain mappings, not source field names. Ending a
+    /// generation permits invalidating references, but grants no permission to
+    /// consume owned resources or replace hidden dependency contents.
+    invalidates: []const facts.InputPath = &.{},
 };
 
 pub fn fromDeclaration(allocator: std.mem.Allocator, declaration: @import("../primitives/schema.zig").MethodSafetyContract) !Contract {
@@ -75,11 +79,11 @@ pub fn check(contract: Contract, summary: facts.SafetySummary) ?Failure {
     // introduce new dependencies, transfer ownership, or change generations.
     // Type-aware normalization removes private scalar writes before this check.
     for (summary.input_post_states) |state| {
-        if (!preserves(state)) return .{ .kind = .unsupported_post_state, .input = state.target };
+        if (!permitsPostState(contract, state)) return .{ .kind = .unsupported_post_state, .input = state.target };
     }
     for (summary.outcome_post_states) |outcome| {
         for (outcome.input_post_states) |state| {
-            if (!preserves(state)) return .{ .kind = .unsupported_post_state, .input = state.target };
+            if (!permitsPostState(contract, state)) return .{ .kind = .unsupported_post_state, .input = state.target };
         }
     }
     if (summary.opaque_storage_effects.len != 0) return .{
@@ -180,11 +184,11 @@ fn covers(allowed: []const facts.InputPath, actual: facts.InputPath) bool {
     return false;
 }
 
-fn preserves(state: facts.PlacePostState) bool {
-    if (state.initializedness != .initialized or state.ends_previous_roots or
-        state.refreshes_storage_generation or state.requires_available_destination or
+fn permitsPostState(contract: Contract, state: facts.PlacePostState) bool {
+    if (state.initializedness != .initialized or state.ends_previous_roots or state.requires_available_destination or
         state.opaque_ownership != .none or state.opaque_storage != null or
         state.may_repopulate_opaque_storage) return false;
+    if (state.refreshes_storage_generation and !covers(contract.invalidates, state.target)) return false;
     return emptyValue(state.value);
 }
 
@@ -208,6 +212,31 @@ test "safety contracts distinguish exact referents from lifetime anchors" {
     try std.testing.expectEqual(.incompatible_referent, check(contract, .{ .outputs = &.{.{ .input_dependencies = &.{.{ .path = path, .validity_only = true }} }} }).?.kind);
     try std.testing.expectEqual(.incompatible_referent, check(contract, .{ .outputs = &.{.{}} }).?.kind);
     try std.testing.expectEqual(.incompatible_referent, check(contract, .{ .outputs = &.{.{ .input_places = &.{.{ .input_index = 1, .projections = &.{.{ .field = 0 }} }} }} }).?.kind);
+}
+
+test "safety contracts limit generation invalidation to mapped storage" {
+    const domain = facts.InputPath{ .input_index = 0, .projections = &.{.{ .field = 1 }} };
+    const child = facts.InputPath{ .input_index = 0, .projections = &.{ .{ .field = 1 }, .{ .field = 2 } } };
+    const sibling = facts.InputPath{ .input_index = 0, .projections = &.{.{ .field = 3 }} };
+    const contract = Contract{ .outputs = &.{}, .invalidates = &.{domain} };
+    const permitted = facts.SafetySummary{ .input_post_states = &.{.{ .target = child, .initializedness = .initialized, .refreshes_storage_generation = true }} };
+    try std.testing.expect(check(contract, permitted) == null);
+    try std.testing.expectEqual(.unsupported_post_state, check(.{ .outputs = &.{} }, permitted).?.kind);
+    try std.testing.expectEqual(.unsupported_post_state, check(contract, .{ .input_post_states = &.{.{ .target = sibling, .initializedness = .initialized, .refreshes_storage_generation = true }} }).?.kind);
+    try std.testing.expectEqual(.unsupported_post_state, check(contract, .{ .input_post_states = &.{.{ .target = .{ .input_index = 0 }, .initializedness = .initialized, .refreshes_storage_generation = true }} }).?.kind);
+}
+
+test "safety contracts do not turn invalidation into ownership consumption" {
+    const path = facts.InputPath{ .input_index = 0, .projections = &.{.{ .field = 1 }} };
+    const contract = Contract{ .outputs = &.{}, .invalidates = &.{path} };
+    const states = [_]facts.PlacePostState{
+        .{ .target = path, .initializedness = .initialized, .refreshes_storage_generation = true, .ends_previous_roots = true },
+        .{ .target = path, .initializedness = .deinitialized, .refreshes_storage_generation = true },
+        .{ .target = path, .initializedness = .initialized, .opaque_ownership = .definite },
+        .{ .target = path, .initializedness = .initialized, .value = .{ .input_dependencies = &.{.{ .path = .{ .input_index = 1 } }} } },
+    };
+    for (states) |state| try std.testing.expectEqual(.unsupported_post_state, check(contract, .{ .input_post_states = &.{state} }).?.kind);
+    try std.testing.expectEqual(.unsupported_capability_effect, check(contract, .{ .storage_capability_uses = &.{.{ .target = path }} }).?.kind);
 }
 
 test "safety contracts permit fewer dependencies and independent implementations" {

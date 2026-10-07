@@ -26,8 +26,10 @@ permissions and ownership transfers are separate obligations.
 - Extend compatibility checking with domain invalidation, allowed dependency
   storage, initialization/consumption and outcome-specific guarantees. Validate
   every provenance category, including fresh root identity and ownership roles.
-- Define type-aware normalization and domain mapping before erasing receiver
-  layouts. Broad dependency permissions must not become permission to transfer
+- Connect validated, disjoint domain path mappings to type-aware lowering and
+  receiver conversion. Reject physical aliases across nominally disjoint domains
+  as well as structural path overlaps; map generations without extending lives.
+  Broad dependency permissions must not become permission to transfer
   ownership, replace generations or manufacture safe references.
 - Extend contract-generated virtual call summaries to reference and owner results.
   Scalar, no-result and exact input-reference forwarding contracts already have
