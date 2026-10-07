@@ -239,83 +239,91 @@ pub const SafetyChecker = struct {
     }
 
     fn validateVirtualSafetyContracts(self: *SafetyChecker, inference: *summary_infer.Infer) !void {
-        const contracts = @import("contracts.zig");
-        // Conformance is checked only after the concrete summaries converge.
-        // Registry closure includes uncalled table slots and associated bindings.
+        // Conformance uses converged concrete summaries. Static selections and
+        // virtual table slots share the same proof obligations; neither can
+        // weaken a declaration by choosing a different dispatch mechanism.
+        for (self.graph.abstract_safety_conformances.items) |conformance| {
+            try self.validateAbstractSafetyContract(inference, conformance.contract, conformance.method, conformance.receiver_input_index, conformance.domains, conformance.source);
+        }
         for (self.graph.virtualizes.items) |virtualize| {
             for (self.graph.virtual_registry_refs.items[virtualize.safety_methods.start..][0..virtualize.safety_methods.len], 0..) |registry_id, index| {
                 const registry = self.graph.virtual_registries.items[@intFromEnum(registry_id)];
                 const declared = registry.safety_contract orelse continue;
-                var contract = try contracts.fromDeclaration(self.allocator, declared);
-                for (@constCast(contract.outputs)) |*output| try self.resolveContractDomains(output, virtualize);
-                var invalidates: std.ArrayList(facts.InputPath) = .empty;
-                try invalidates.appendSlice(self.allocator, contract.invalidates);
-                for (declared.invalidated_domains) |domain| for (virtualize.domains) |mapping| {
-                    if (mapping.domain_index != domain.domain_index) continue;
-                    for (mapping.paths) |path| {
-                        const projections = try self.allocator.alloc(facts.Projection, path.fields.len);
-                        for (path.fields, projections) |field, *projection| projection.* = .{ .field = field };
-                        try invalidates.append(self.allocator, .{ .input_index = domain.input_index, .projections = projections });
-                    }
-                };
-                contract.invalidates = try invalidates.toOwnedSlice(self.allocator);
                 const method = self.graph.function_refs.items[virtualize.methods.start + index];
-                const function = self.graph.function(method);
-                for (declared.referents) |referent| {
-                    if (!self.provesDirectContractReferent(function, referent)) {
-                        try self.report(virtualize.source, "method '{s}' cannot prove refers_to: the implementation must directly forward the declared reference input", .{self.graph.text(self.graph.declaration(function.declaration).name)});
-                    }
-                }
-                for (declared.transfers) |transfer| {
-                    if (!self.provesDirectContractTransfer(function, transfer))
-                        try self.report(virtualize.source, "method '{s}' cannot prove transfers: directly move the declared input to the output", .{self.graph.text(self.graph.declaration(function.declaration).name)});
-                }
-                var summary = (try inference.contractImplementationSummary(method, registry.receiver_input_index)) orelse {
-                    try self.report(virtualize.source, "cannot verify Abstract safety contract for this implementation", .{});
-                    continue;
-                };
-                if (declared.invalidates.len != 0) {
-                    const states = try self.allocator.dupe(facts.PlacePostState, summary.input_post_states);
-                    for (states) |*post_state| {
-                        // Generic pointer writes conservatively mark possible
-                        // opaque repopulation. A checked scalar referent cannot
-                        // contain hidden pointers; normalize that vacuous bit
-                        // without discarding its value/capability provenance.
-                        for (declared.invalidates) |input_index| {
-                            if (post_state.target.input_index == input_index and post_state.target.projections.len == 0)
-                                post_state.may_repopulate_opaque_storage = false;
-                        }
-                    }
-                    summary.input_post_states = states;
-                    const outcomes = try self.allocator.dupe(facts.OutcomePostStates, summary.outcome_post_states);
-                    for (outcomes) |*outcome| {
-                        const outcome_states = try self.allocator.dupe(facts.PlacePostState, outcome.input_post_states);
-                        for (outcome_states) |*post_state| {
-                            for (declared.invalidates) |input_index| {
-                                if (post_state.target.input_index == input_index and post_state.target.projections.len == 0)
-                                    post_state.may_repopulate_opaque_storage = false;
-                            }
-                        }
-                        outcome.input_post_states = outcome_states;
-                    }
-                    summary.outcome_post_states = outcomes;
-                }
-                if (contracts.check(contract, summary)) |failure| {
-                    const method_name = self.graph.text(self.graph.declaration(function.declaration).name);
-                    if (failure.input) |path| {
-                        const input_name = if (path.input_index < function.input.len) self.graph.text(self.graph.fields.items[function.input.start + path.input_index].name) else "implicit input";
-                        try self.report(virtualize.source, "method '{s}' violates its Abstract safety contract: {s} involving input '{s}'", .{ method_name, failure.description(), input_name });
-                    } else try self.report(virtualize.source, "method '{s}' violates its Abstract safety contract: {s}", .{ method_name, failure.description() });
-                    try self.report(declared.source, "the Abstract safety contract is declared here", .{});
-                }
+                try self.validateAbstractSafetyContract(inference, declared, method, registry.receiver_input_index, virtualize.domains, virtualize.source);
             }
         }
     }
 
-    fn resolveContractDomains(self: *SafetyChecker, output: *@import("contracts.zig").Output, virtualize: graph_mod.Virtualize) anyerror!void {
+    fn validateAbstractSafetyContract(self: *SafetyChecker, inference: *summary_infer.Infer, declared: primitives.MethodSafetyContract, method: graph_mod.GlobalFunctionId, receiver: ?u32, domains: []const primitives.StorageDomainMapping, source: primitives.SourceRef) !void {
+        const contracts = @import("contracts.zig");
+        var contract = try contracts.fromDeclaration(self.allocator, declared);
+        for (@constCast(contract.outputs)) |*output| try self.resolveContractDomains(output, domains);
+        var invalidates: std.ArrayList(facts.InputPath) = .empty;
+        try invalidates.appendSlice(self.allocator, contract.invalidates);
+        for (declared.invalidated_domains) |domain| for (domains) |mapping| {
+            if (mapping.domain_index != domain.domain_index) continue;
+            for (mapping.paths) |path| {
+                const projections = try self.allocator.alloc(facts.Projection, path.fields.len);
+                for (path.fields, projections) |field, *projection| projection.* = .{ .field = field };
+                try invalidates.append(self.allocator, .{ .input_index = domain.input_index, .projections = projections });
+            }
+        };
+        contract.invalidates = try invalidates.toOwnedSlice(self.allocator);
+        const function = self.graph.function(method);
+        for (declared.referents) |referent| {
+            if (!self.provesDirectContractReferent(function, referent)) {
+                try self.report(source, "method '{s}' cannot prove refers_to: the implementation must directly forward the declared reference input", .{self.graph.text(self.graph.declaration(function.declaration).name)});
+            }
+        }
+        for (declared.transfers) |transfer| {
+            if (!self.provesDirectContractTransfer(function, transfer))
+                try self.report(source, "method '{s}' cannot prove transfers: directly move the declared input to the output", .{self.graph.text(self.graph.declaration(function.declaration).name)});
+        }
+        var summary = (try inference.contractImplementationSummary(method, receiver)) orelse {
+            try self.report(source, "cannot verify Abstract safety contract for this implementation", .{});
+            return;
+        };
+        if (declared.invalidates.len != 0) {
+            const states = try self.allocator.dupe(facts.PlacePostState, summary.input_post_states);
+            for (states) |*post_state| {
+                // Generic pointer writes conservatively mark possible
+                // opaque repopulation. A checked scalar referent cannot
+                // contain hidden pointers; normalize that vacuous bit
+                // without discarding its value/capability provenance.
+                for (declared.invalidates) |input_index| {
+                    if (post_state.target.input_index == input_index and post_state.target.projections.len == 0)
+                        post_state.may_repopulate_opaque_storage = false;
+                }
+            }
+            summary.input_post_states = states;
+            const outcomes = try self.allocator.dupe(facts.OutcomePostStates, summary.outcome_post_states);
+            for (outcomes) |*outcome| {
+                const outcome_states = try self.allocator.dupe(facts.PlacePostState, outcome.input_post_states);
+                for (outcome_states) |*post_state| {
+                    for (declared.invalidates) |input_index| {
+                        if (post_state.target.input_index == input_index and post_state.target.projections.len == 0)
+                            post_state.may_repopulate_opaque_storage = false;
+                    }
+                }
+                outcome.input_post_states = outcome_states;
+            }
+            summary.outcome_post_states = outcomes;
+        }
+        if (contracts.check(contract, summary)) |failure| {
+            const method_name = self.graph.text(self.graph.declaration(function.declaration).name);
+            if (failure.input) |path| {
+                const input_name = if (path.input_index < function.input.len) self.graph.text(self.graph.fields.items[function.input.start + path.input_index].name) else "implicit input";
+                try self.report(source, "method '{s}' violates its Abstract safety contract: {s} involving input '{s}'", .{ method_name, failure.description(), input_name });
+            } else try self.report(source, "method '{s}' violates its Abstract safety contract: {s}", .{ method_name, failure.description() });
+            try self.report(declared.source, "the Abstract safety contract is declared here", .{});
+        }
+    }
+
+    fn resolveContractDomains(self: *SafetyChecker, output: *@import("contracts.zig").Output, domains: []const primitives.StorageDomainMapping) anyerror!void {
         var paths: std.ArrayList(facts.InputPath) = .empty;
         try paths.appendSlice(self.allocator, output.dependencies);
-        for (output.domains) |domain| for (virtualize.domains) |mapping| {
+        for (output.domains) |domain| for (domains) |mapping| {
             if (mapping.domain_index != domain.domain_index) continue;
             for (mapping.paths) |path| {
                 const projections = try self.allocator.alloc(facts.Projection, path.fields.len);
@@ -324,7 +332,7 @@ pub const SafetyChecker = struct {
             }
         };
         output.dependencies = try paths.toOwnedSlice(self.allocator);
-        for (output.outcomes) |outcome| try self.resolveContractDomains(@constCast(outcome.value), virtualize);
+        for (output.outcomes) |outcome| try self.resolveContractDomains(@constCast(outcome.value), domains);
     }
 
     fn provesDirectContractTransfer(self: *SafetyChecker, function: graph_mod.Function, transfer: primitives.MethodSafetyContract.Dependency) bool {

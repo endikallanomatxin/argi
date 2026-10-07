@@ -59,6 +59,7 @@ pub const AbstractFieldStorageConflict = struct {
 };
 
 pub const VirtualSignatureFailure = struct {
+    static_contract: bool = false,
     source: primitives.SourceRef,
     method_name: []const u8,
     reason: []const u8,
@@ -597,6 +598,7 @@ pub const Resolver = struct {
             const input_fields = global_types.fields(self.graph, instance.input) orelse continue;
             if (self.core.scoreCallInput(input_fields, input) == null) continue;
             if (!try self.core.completeCallInputFields(input_fields, input)) continue;
+            try self.recordStaticSafetyContract(located, requirement, &bindings, concrete, implementation, instance.output, source);
             return .{
                 .source = source,
                 .ty = try self.core.functionOutputType(implementation),
@@ -1176,121 +1178,7 @@ pub const Resolver = struct {
                         reason = "Self cannot appear in a virtual method result; return a known type or an explicit virtual handle";
                 }
                 if (reason == null) if (requirement.safety_contract) |contract| {
-                    if (contract.outcomes.len != 0) {
-                        if (outputs.len != 1 or global_types.variants(self.graph, self.graph.fields.items[outputs.start].ty) == null) {
-                            reason = "outcome contracts require one choice-valued output";
-                        } else {
-                            const output_ty = self.graph.fields.items[outputs.start].ty;
-                            for (contract.outcomes, 0..) |outcome, outcome_index| {
-                                const outcome_name = module.text(outcome.variant);
-                                if (global_types.findVariant(self.graph, output_ty, outcome_name) == null) {
-                                    reason = "outcome contract names an unknown output variant";
-                                    break;
-                                }
-                                for (contract.outcomes[0..outcome_index]) |previous| if (std.mem.eql(u8, module.text(previous.variant), outcome_name)) {
-                                    reason = "duplicate outcome contract";
-                                    break;
-                                };
-                                for (outcome.dependencies) |dependency| {
-                                    if (dependency.input_index >= inputs.len and !(dependency.input_index == inputs.len and self.fallibleOutput(instance.output))) {
-                                        reason = "error_tracer is only implicit for fallible Abstract methods";
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    for (contract.dependencies) |dependency| {
-                        if (dependency.input_index >= inputs.len and !(dependency.input_index == inputs.len and self.fallibleOutput(instance.output))) {
-                            reason = "error_tracer is only implicit for fallible Abstract methods";
-                            break;
-                        }
-                    }
-                    for (contract.transfers) |transfer| {
-                        const input_ty = self.graph.semanticType(self.graph.fields.items[inputs.start + transfer.input_index].ty);
-                        if (input_ty == .pointer) {
-                            reason = "transfers requires a by-value owning input; references do not transfer ownership";
-                            break;
-                        }
-                        if (!global_types.equal(self.graph, self.graph.fields.items[inputs.start + transfer.input_index].ty, self.graph.fields.items[outputs.start + transfer.output_index].ty)) {
-                            reason = "transfers requires matching input and output value types";
-                            break;
-                        }
-                        for (contract.owned_outputs) |owned| if (owned == transfer.output_index) {
-                            reason = "fresh and transferred ownership require separate outcome contracts";
-                            break;
-                        };
-                    }
-
-                    for (contract.domain_dependencies) |dependency| {
-                        if (dependency.input.domain_index >= located.definition.domains.len) {
-                            reason = "unknown Abstract storage domain";
-                            break;
-                        }
-                        const input_ty = self.graph.semanticType(self.graph.fields.items[inputs.start + dependency.input.input_index].ty);
-                        if (input_ty != .pointer or !global_types.equal(self.graph, input_ty.pointer.child, abstract_ty)) {
-                            reason = "Abstract storage domains must be rooted at the Self receiver";
-                            break;
-                        }
-                    }
-                    for (contract.invalidated_domains) |domain| {
-                        if (domain.domain_index >= located.definition.domains.len) {
-                            reason = "unknown Abstract storage domain";
-                            break;
-                        }
-                        const input_ty = self.graph.semanticType(self.graph.fields.items[inputs.start + domain.input_index].ty);
-                        if (input_ty != .pointer or !global_types.equal(self.graph, input_ty.pointer.child, abstract_ty) or input_ty.pointer.mutability != .read_write) {
-                            reason = "invalidating an Abstract storage domain requires a mutable Self receiver";
-                            break;
-                        }
-                    }
-                    for (contract.invalidates) |input_index| {
-                        if (outputs.len != 0) {
-                            reason = "invalidates with outputs requires post-invalidation result contracts; use a no-result method for now";
-                            break;
-                        }
-                        const input_ty = self.graph.semanticType(self.graph.fields.items[inputs.start + input_index].ty);
-                        if (input_ty != .pointer or input_ty.pointer.mutability != .read_write) {
-                            reason = "invalidates requires a mutable reference input";
-                            break;
-                        }
-                        if (global_types.equal(self.graph, input_ty.pointer.child, abstract_ty)) {
-                            reason = "invalidating erased Self requires a mapped storage domain; name a known reference input instead";
-                            break;
-                        }
-                        const child = self.graph.semanticType(input_ty.pointer.child);
-                        if (child != .builtin) {
-                            reason = "invalidates currently requires scalar referent storage; aggregate domains need explicit mappings";
-                            break;
-                        }
-                        switch (child.builtin) {
-                            .Int8, .Int16, .Int32, .Int64, .UIntNative, .UInt8, .UInt16, .UInt32, .UInt64, .Float16, .Float32, .Float64, .Char, .Bool => {},
-                            else => {
-                                reason = "invalidates currently requires scalar referent storage; aggregate domains need explicit mappings";
-                                break;
-                            },
-                        }
-                    }
-                    for (contract.referents) |referent| {
-                        const input_ty = self.graph.semanticType(self.graph.fields.items[inputs.start + referent.input_index].ty);
-                        const output_ty = self.graph.semanticType(self.graph.fields.items[outputs.start + referent.output_index].ty);
-                        if (input_ty != .pointer or output_ty != .pointer) {
-                            reason = "refers_to requires a reference output and a reference input";
-                            break;
-                        }
-                        if (global_types.equal(self.graph, input_ty.pointer.child, abstract_ty)) {
-                            reason = "refers_to cannot expose erased Self storage; name a known reference input instead";
-                            break;
-                        }
-                        if (!global_types.equal(self.graph, input_ty.pointer.child, output_ty.pointer.child)) {
-                            reason = "refers_to requires matching input and output referent types";
-                            break;
-                        }
-                        if (input_ty.pointer.mutability == .read_only and output_ty.pointer.mutability == .read_write) {
-                            reason = "refers_to cannot grant mutable access from a read-only input";
-                            break;
-                        }
-                    }
+                    reason = try self.methodSafetyContractFailure(inputs, outputs, instance.output, abstract_ty, located, contract, true);
                 };
             }
             if (reason) |message| {
@@ -1299,6 +1187,126 @@ pub const Resolver = struct {
             }
         }
         return true;
+    }
+
+    fn methodSafetyContractFailure(self: *Resolver, inputs: global_sg.FieldRange, outputs: global_sg.FieldRange, output_type: global_sg.GlobalTypeId, abstract_ty: global_sg.GlobalTypeId, located: LocatedAbstractDefinition, contract: primitives.MethodSafetyContract, erased_self: bool) !?[]const u8 {
+        var reason: ?[]const u8 = null;
+        if (contract.outcomes.len != 0) {
+            if (outputs.len != 1 or global_types.variants(self.graph, self.graph.fields.items[outputs.start].ty) == null) {
+                reason = "outcome contracts require one choice-valued output";
+            } else {
+                const output_ty = self.graph.fields.items[outputs.start].ty;
+                for (contract.outcomes, 0..) |outcome, outcome_index| {
+                    const outcome_name = self.modules[located.module_index].text(outcome.variant);
+                    if (global_types.findVariant(self.graph, output_ty, outcome_name) == null) {
+                        reason = "outcome contract names an unknown output variant";
+                        break;
+                    }
+                    for (contract.outcomes[0..outcome_index]) |previous| if (std.mem.eql(u8, self.modules[located.module_index].text(previous.variant), outcome_name)) {
+                        reason = "duplicate outcome contract";
+                        break;
+                    };
+                    for (outcome.dependencies) |dependency| {
+                        if (dependency.input_index >= inputs.len and !(dependency.input_index == inputs.len and self.fallibleOutput(output_type))) {
+                            reason = "error_tracer is only implicit for fallible Abstract methods";
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        for (contract.dependencies) |dependency| {
+            if (dependency.input_index >= inputs.len and !(dependency.input_index == inputs.len and self.fallibleOutput(output_type))) {
+                reason = "error_tracer is only implicit for fallible Abstract methods";
+                break;
+            }
+        }
+        for (contract.transfers) |transfer| {
+            const input_ty = self.graph.semanticType(self.graph.fields.items[inputs.start + transfer.input_index].ty);
+            if (input_ty == .pointer) {
+                reason = "transfers requires a by-value owning input; references do not transfer ownership";
+                break;
+            }
+            if (!global_types.equal(self.graph, self.graph.fields.items[inputs.start + transfer.input_index].ty, self.graph.fields.items[outputs.start + transfer.output_index].ty)) {
+                reason = "transfers requires matching input and output value types";
+                break;
+            }
+            for (contract.owned_outputs) |owned| if (owned == transfer.output_index) {
+                reason = "fresh and transferred ownership require separate outcome contracts";
+                break;
+            };
+        }
+
+        for (contract.domain_dependencies) |dependency| {
+            if (dependency.input.domain_index >= located.definition.domains.len) {
+                reason = "unknown Abstract storage domain";
+                break;
+            }
+            const input_ty = self.graph.semanticType(self.graph.fields.items[inputs.start + dependency.input.input_index].ty);
+            if (input_ty != .pointer or !global_types.equal(self.graph, input_ty.pointer.child, abstract_ty)) {
+                reason = "Abstract storage domains must be rooted at the Self receiver";
+                break;
+            }
+        }
+        for (contract.invalidated_domains) |domain| {
+            if (domain.domain_index >= located.definition.domains.len) {
+                reason = "unknown Abstract storage domain";
+                break;
+            }
+            const input_ty = self.graph.semanticType(self.graph.fields.items[inputs.start + domain.input_index].ty);
+            if (input_ty != .pointer or !global_types.equal(self.graph, input_ty.pointer.child, abstract_ty) or input_ty.pointer.mutability != .read_write) {
+                reason = "invalidating an Abstract storage domain requires a mutable Self receiver";
+                break;
+            }
+        }
+        for (contract.invalidates) |input_index| {
+            if (outputs.len != 0) {
+                reason = "invalidates with outputs requires post-invalidation result contracts; use a no-result method for now";
+                break;
+            }
+            const input_ty = self.graph.semanticType(self.graph.fields.items[inputs.start + input_index].ty);
+            if (input_ty != .pointer or input_ty.pointer.mutability != .read_write) {
+                reason = "invalidates requires a mutable reference input";
+                break;
+            }
+            if (global_types.equal(self.graph, input_ty.pointer.child, abstract_ty)) {
+                reason = "invalidating erased Self requires a mapped storage domain; name a known reference input instead";
+                break;
+            }
+            const child = self.graph.semanticType(input_ty.pointer.child);
+            if (child != .builtin) {
+                reason = "invalidates currently requires scalar referent storage; aggregate domains need explicit mappings";
+                break;
+            }
+            switch (child.builtin) {
+                .Int8, .Int16, .Int32, .Int64, .UIntNative, .UInt8, .UInt16, .UInt32, .UInt64, .Float16, .Float32, .Float64, .Char, .Bool => {},
+                else => {
+                    reason = "invalidates currently requires scalar referent storage; aggregate domains need explicit mappings";
+                    break;
+                },
+            }
+        }
+        for (contract.referents) |referent| {
+            const input_ty = self.graph.semanticType(self.graph.fields.items[inputs.start + referent.input_index].ty);
+            const output_ty = self.graph.semanticType(self.graph.fields.items[outputs.start + referent.output_index].ty);
+            if (input_ty != .pointer or output_ty != .pointer) {
+                reason = "refers_to requires a reference output and a reference input";
+                break;
+            }
+            if (erased_self and global_types.equal(self.graph, input_ty.pointer.child, abstract_ty)) {
+                reason = "refers_to cannot expose erased Self storage; name a known reference input instead";
+                break;
+            }
+            if (!global_types.equal(self.graph, input_ty.pointer.child, output_ty.pointer.child)) {
+                reason = "refers_to requires matching input and output referent types";
+                break;
+            }
+            if (input_ty.pointer.mutability == .read_only and output_ty.pointer.mutability == .read_write) {
+                reason = "refers_to cannot grant mutable access from a read-only input";
+                break;
+            }
+        }
+        return reason;
     }
 
     fn containsErasedSelf(self: *Resolver, ty: global_sg.GlobalTypeId, erased: global_sg.GlobalTypeId) !bool {
@@ -1543,8 +1551,12 @@ pub const Resolver = struct {
                         else => return err,
                     };
                     const method_name = self.modules[located.module_index].text(requirement.name);
-                    if (output) |resolved_output|
-                        if (self.findConcreteMethod(method_name, input, resolved_output) != null) continue;
+                    if (output) |resolved_output| {
+                        if (self.findConcreteMethod(method_name, input, resolved_output)) |method| {
+                            try self.recordStaticSafetyContract(located, requirement, &bindings, concrete, method, resolved_output, self.sourceFor(module_index, implementation.source));
+                            continue;
+                        }
+                    }
                     return .{
                         .abstract_decl = abstract_decl,
                         .concrete = concrete,
@@ -2115,31 +2127,10 @@ pub const Resolver = struct {
         const located = self.findAbstractDefinition(use.declaration) orelse return error.InvalidVirtualAbstract;
         const requirement = self.modules[located.module_index].semantic.parameterized_storage.abstract_requirements.items[located.definition.requirements.start + method_index];
         if (requirement.safety_contract) |declared| {
-            var contract = declared;
-            contract.source = self.sourceFor(located.module_index, contract.source);
-            if (declared.outcomes.len != 0) {
-                const instance = (try self.requirementInstanceForAbstractUse(use, abstract_ty, located, requirement, @intCast(method_index))) orelse return error.InvalidAbstractRequirement;
-                const fields = global_types.fields(self.graph, instance.output) orelse return error.InvalidAbstractRequirementOutput;
-                const output_ty = self.graph.fields.items[fields.start].ty;
-                const variants = global_types.variants(self.graph, output_ty) orelse return error.InvalidOutcomeContract;
-                const outcomes = try self.allocator.dupe(primitives.MethodSafetyContract.Outcome, declared.outcomes);
-                for (outcomes, 0..) |*outcome, index| {
-                    const name = self.modules[located.module_index].text(outcome.variant);
-                    var matched = false;
-                    for (self.graph.variants.items[variants.start..][0..variants.len], 0..) |variant, variant_index| if (std.mem.eql(u8, self.graph.text(variant.name), name)) {
-                        outcome.variant_index = @intCast(variant_index);
-                        outcome.variant = variant.name;
-                        matched = true;
-                        break;
-                    };
-                    if (!matched) return error.UnknownOutcomeContractVariant;
-                    for (outcomes[0..index]) |previous| if (previous.variant_index == outcome.variant_index) return error.DuplicateOutcomeContract;
-                    outcome.source = self.sourceFor(located.module_index, outcome.source);
-                }
-                contract.outcomes = outcomes;
-            }
-            self.graph.virtual_registries.items[@intFromEnum(registry_id)].safety_contract = contract;
+            const instance = (try self.requirementInstanceForAbstractUse(use, abstract_ty, located, requirement, @intCast(method_index))) orelse return error.InvalidAbstractRequirement;
+            self.graph.virtual_registries.items[@intFromEnum(registry_id)].safety_contract = try self.globalSafetyContract(located.module_index, declared, instance.output);
         }
+
         var implementations: std.ArrayList(global_sg.GlobalFunctionId) = .empty;
         defer implementations.deinit(self.allocator);
 
@@ -2168,6 +2159,90 @@ pub const Resolver = struct {
             self.graph.virtual_registries.items[@intFromEnum(registry_id)].contract_input_count = fields.len;
             self.graph.virtual_registries.items[@intFromEnum(registry_id)].contract_output_type = instance.output;
         }
+    }
+
+    fn globalSafetyContract(self: *Resolver, module_index: usize, declared: primitives.MethodSafetyContract, output_type: global_sg.GlobalTypeId) !primitives.MethodSafetyContract {
+        var contract = declared;
+        contract.source = self.sourceFor(module_index, contract.source);
+        if (declared.outcomes.len != 0) {
+            const fields = global_types.fields(self.graph, output_type) orelse return error.InvalidAbstractRequirementOutput;
+            const output_ty = self.graph.fields.items[fields.start].ty;
+            const variants = global_types.variants(self.graph, output_ty) orelse return error.InvalidOutcomeContract;
+            const outcomes = try self.allocator.dupe(primitives.MethodSafetyContract.Outcome, declared.outcomes);
+            for (outcomes, 0..) |*outcome, index| {
+                const name = self.modules[module_index].text(outcome.variant);
+                var matched = false;
+                for (self.graph.variants.items[variants.start..][0..variants.len], 0..) |variant, variant_index| if (std.mem.eql(u8, self.graph.text(variant.name), name)) {
+                    outcome.variant_index = @intCast(variant_index);
+                    outcome.variant = variant.name;
+                    matched = true;
+                    break;
+                };
+                if (!matched) return error.UnknownOutcomeContractVariant;
+                for (outcomes[0..index]) |previous| if (previous.variant_index == outcome.variant_index) return error.DuplicateOutcomeContract;
+                outcome.source = self.sourceFor(module_index, outcome.source);
+            }
+            contract.outcomes = outcomes;
+        }
+        return contract;
+    }
+
+    fn recordStaticSafetyContract(self: *Resolver, located: LocatedAbstractDefinition, requirement: parameterized_storage.AbstractRequirement, bindings: *generic_mod.Resolver.Bindings, concrete: global_sg.GlobalTypeId, method: global_sg.GlobalFunctionId, output: global_sg.GlobalTypeId, source: primitives.SourceRef) !void {
+        const declared = requirement.safety_contract orelse return;
+        if (self.fallibleOutput(output)) try self.core.ensureErrorTracerInput(method);
+        const function = self.graph.function(method);
+        if (try self.methodSafetyContractFailure(function.input, function.output, output, concrete, located, declared, false)) |reason| {
+            self.virtual_signature_failure = .{ .source = source, .method_name = self.modules[located.module_index].text(requirement.name), .reason = reason, .static_contract = true };
+            return;
+        }
+        const contract = self.globalSafetyContract(located.module_index, declared, output) catch |err| switch (err) {
+            error.UnknownOutcomeContractVariant, error.DuplicateOutcomeContract, error.InvalidOutcomeContract => {
+                self.virtual_signature_failure = .{
+                    .source = source,
+                    .static_contract = true,
+                    .method_name = self.modules[located.module_index].text(requirement.name),
+                    .reason = switch (err) {
+                        error.UnknownOutcomeContractVariant => "outcome contract names an unknown output variant",
+                        error.DuplicateOutcomeContract => "duplicate outcome contract",
+                        else => "outcome contracts require one choice-valued output",
+                    },
+                };
+                return;
+            },
+            else => return err,
+        };
+        for (self.graph.abstract_safety_conformances.items) |existing| {
+            if (existing.method == method and std.meta.eql(existing.contract.source, contract.source)) return;
+        }
+        const storage = &self.modules[located.module_index].semantic.parameterized_storage;
+        const start: u32 = @intCast(self.graph.generic_arguments.items.len);
+        for (0..located.definition.parameters.len) |offset| {
+            const raw = located.definition.parameters.start + @as(u32, @intCast(offset));
+            const parameter = storage.comptime_parameters.items[raw];
+            const name = try self.graph.addString(self.allocator, self.modules[located.module_index].text(parameter.name));
+            try self.graph.generic_arguments.append(self.allocator, .{
+                .name = name,
+                .value = switch (parameter.kind) {
+                    .type => .{ .type = bindings.types[raw] orelse return error.UnboundGenericTypeParameter },
+                    .comptime_int => .{ .comptime_int = bindings.ints[raw] orelse return error.UnboundComptimeParameter },
+                },
+            });
+        }
+        const abstract_decl = globalizer.globalDecl(self.offsets[located.module_index], located.definition.declaration);
+        const use = AbstractUse{ .declaration = abstract_decl, .arguments = .{ .start = start, .len = located.definition.parameters.len } };
+        const domains = if (located.definition.domains.len == 0) &.{} else (try self.resolveStorageDomains(use, concrete, located, source)) orelse return;
+        var receiver: ?u32 = null;
+        const input = storage.ir.types.items[@intFromEnum(requirement.input)].resolved.structural.fields;
+        for (storage.ir.fields.items[input.start..][0..input.len], 0..) |field, index| {
+            const ty = storage.ir.types.items[@intFromEnum(field.ty)];
+            if (ty == .resolved and ty.resolved == .pointer and
+                storage.ir.types.items[@intFromEnum(ty.resolved.pointer.child)] == .abstract_self)
+            {
+                receiver = @intCast(index);
+                break;
+            }
+        }
+        try self.graph.abstract_safety_conformances.append(self.allocator, .{ .method = method, .contract = contract, .receiver_input_index = receiver, .domains = domains, .source = source });
     }
 
     fn virtualCallAbstract(self: *const Resolver, call: global_sg.VirtualCall) ?global_sg.GlobalTypeId {

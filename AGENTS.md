@@ -257,6 +257,15 @@ feature first.
   Bound virtual abstract identities include associated type/value arguments;
   safety implementation registries must keep those identities separate.
 
+- Abstract safety conformance is checked after concrete summaries converge.
+  Static selection and virtual table construction share declaration validation
+  and implementation proofs. Static conformance metadata belongs to GlobalSG,
+  participates in speculative checkpoints, and creates no runtime erasure.
+  Find Self receivers in the original requirement rather than guessing from
+  concrete input types: another argument can have that same concrete type.
+  Content writes in preservation protocols should update fields directly;
+  assigning the whole receiver replaces its storage generation.
+
 - Moving `for ~ item in collection` loops consume through `OwningIterable`.
   Global semantizing wraps the iterator declaration and loop in one lexical
   block; synthetic iterator owners inherit the source item's captured cleanup

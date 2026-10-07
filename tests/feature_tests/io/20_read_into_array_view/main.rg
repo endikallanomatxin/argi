@@ -1,18 +1,20 @@
-DummyInput : Type = (
-    .index: Int32 = 0
+DummyInput: Type = (
+    .index : Int32 = 0
 )
 
 read_byte(
-    .self: $&DummyInput,
-) -> (.result: Errable#(.t: ReadByte, .reasons: (..stream_read_failed))) := {
+        .self : $&DummyInput,
+    ) -> (
+        .result : Errable#(.t: ReadByte, .reasons: (..stream_read_failed))
+    ) := {
     if self&.index == 0 {
-        self& = (.index = 1)
+        self&.index = 1
         result = ..ok ..ok 65
         return
     }
 
     if self&.index == 1 {
-        self& = (.index = 2)
+        self&.index = 2
         result = ..ok ..ok 66
         return
     }
@@ -23,7 +25,7 @@ read_byte(
 DummyInput implements Reader
 
 main() -> (.status_code: Int32) := {
-    bytes : Array#(.n = 4, .t: UInt8) = (0, 0, 0, 0)
+    bytes: Array#(.n = 4, .t: UInt8) = (0, 0, 0, 0)
     buffer ::= array_view(.array = $&bytes)
     stdin_storage :: DummyInput = DummyInput()
     assume reader ::= $&stdin_storage
@@ -35,7 +37,7 @@ main() -> (.status_code: Int32) := {
         return
     }
 
-    copied ::= read_result..ok
+    copied ::= read_result ..ok
     if copied != 2 {
         status_code = 12
         return
@@ -46,7 +48,7 @@ main() -> (.status_code: Int32) := {
         status_code = 13
         return
     }
-    if first_result..ok != 65 {
+    if first_result ..ok != 65 {
         status_code = 13
         return
     }
@@ -56,7 +58,7 @@ main() -> (.status_code: Int32) := {
         status_code = 14
         return
     }
-    if second_result..ok != 66 {
+    if second_result ..ok != 66 {
         status_code = 14
         return
     }

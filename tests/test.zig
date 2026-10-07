@@ -10501,3 +10501,29 @@ test "feature_tests/polymorphism/98_virtual_safety_contract_outcome_dependencies
 test "feature_tests/polymorphism/99X_virtual_safety_contract_outcome_wrong" {
     try buildExpectFail("tests/feature_tests/polymorphism/99X_virtual_safety_contract_outcome_wrong", "unknown output variant");
 }
+
+test "feature_tests/polymorphism/100X_static_safety_contract_dependency" {
+    try buildExpectFail("tests/feature_tests/polymorphism/100X_static_safety_contract_dependency", "undeclared output dependency");
+}
+
+test "feature_tests/polymorphism/101_static_safety_contract_domains" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/101_static_safety_contract_domains");
+    try runExpect("tests/feature_tests/polymorphism/101_static_safety_contract_domains", 0);
+}
+
+test "feature_tests/polymorphism/102_static_safety_contract_associated" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/102_static_safety_contract_associated");
+    try runExpect("tests/feature_tests/polymorphism/102_static_safety_contract_associated", 0);
+}
+
+test "feature_tests/polymorphism/103X_static_safety_contract_readonly" {
+    try buildExpectFail("tests/feature_tests/polymorphism/103X_static_safety_contract_readonly", "invalidates requires a mutable reference input");
+}
+
+test "feature_tests/polymorphism/104X_static_safety_contract_reference_transfer" {
+    try buildExpectFail("tests/feature_tests/polymorphism/104X_static_safety_contract_reference_transfer", "transfers requires a by-value owning input");
+}
+
+test "feature_tests/polymorphism/105X_virtual_safety_contract_undeclared_owner" {
+    try buildExpectFail("tests/feature_tests/polymorphism/105X_virtual_safety_contract_undeclared_owner", "undeclared fresh output ownership");
+}

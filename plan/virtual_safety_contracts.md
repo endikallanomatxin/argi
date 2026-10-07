@@ -36,8 +36,8 @@ permissions and ownership transfers are separate obligations.
   bodies before admitting control flow or intermediate calls in `refers_to` and
   `transfers`. Preserve actual storage identities; do not represent every returned
   pointer as the receiver address.
-- Extend declaration checking to static abstract implementation selection and to
-  the new effect clauses, retaining diagnostics for implicit error-tracer inputs.
+- Extend declaration checking to the new storage effect clauses, retaining
+  diagnostics for implicit error-tracer inputs.
 - Complete opaque storage and conditional generation obligations for the core
   protocols. Allocator, Deallocator, Reader, Writer and ErrorTracer now declare
   their output contracts; keep unsupported effects rejected during migration.

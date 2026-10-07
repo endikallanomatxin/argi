@@ -60,6 +60,26 @@ pub fn verifyGlobal(graph: *const graph_mod.GlobalSemanticGraph) !void {
             }
         }
     }
+    for (graph.abstract_safety_conformances.items) |value| {
+        try require(verify.idFits(value.method, graph.functions.items.len));
+        try require(verify.sourceFits(value.source, graph.files.items.len));
+        try require(verify.sourceFits(value.contract.source, graph.files.items.len));
+        const method = graph.function(value.method);
+        if (value.receiver_input_index) |index| try require(index < method.input.len);
+        try require(value.contract.output_count == method.output.len);
+        for (value.contract.dependencies) |dependency| {
+            try require(dependency.output_index < method.output.len);
+            try require(dependency.input_index < method.input.len);
+        }
+        for (value.contract.referents) |dependency| {
+            try require(dependency.output_index < method.output.len);
+            try require(dependency.input_index < method.input.len);
+        }
+        for (value.contract.transfers) |transfer| {
+            try require(transfer.output_index < method.output.len);
+            try require(transfer.input_index < method.input.len);
+        }
+    }
     for (graph.virtualizes.items) |value| try payload.virtualize(graph_mod.Ids, value, bounds);
     for (graph.virtual_calls.items) |value| {
         try payload.virtualCall(graph_mod.Ids, value, bounds);

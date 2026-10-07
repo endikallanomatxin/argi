@@ -279,8 +279,9 @@ Dynamic calls then use domain identities without inspecting other implementation
 Domain dependencies survive ordinary wrapper functions and local virtual
 conversions. They cannot authorize returning a reference into a local receiver.
 
-Every concrete method placed in a virtual table must satisfy its declared
-contract, including methods never called. A violation identifies the method,
+Concrete implementations must satisfy their declared contracts, including
+methods never called in a concrete implementation declaration. Static abstract
+selection and virtual table construction enforce the same obligations. A violation identifies the method,
 offending input and contract declaration. Checking an implementation does not
 depend on the bodies of other implementations. A virtual call uses the published
 contract; a direct concrete call can use its more precise inferred summary.
@@ -294,7 +295,7 @@ storage generations, and opaque storage.
 > Annotated virtual methods use summaries generated from their declarations and
 > fixed signatures, including structured and owning results. Methods without
 > annotations retain the program-wide combination of known implementations during
-> migration. Static implementation selection still needs declaration checking.
+> migration.
 > Proving `refers_to` and `transfers` currently requires a concrete body that
 > directly forwards the declared input. Intermediate calls and complex control
 > flow require more precise storage identity proofs.
