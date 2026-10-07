@@ -491,6 +491,12 @@ pub const Syntaxer = struct {
                 if (!self.tokenIs(.arrow)) return SyntaxerError.ExpectedArrow;
                 self.advanceOne();
                 const out_st = try self.parseStructTypeLiteral();
+                self.skipNewLinesAndComments();
+                const safety_contract: ?syn.NodeIndex = if (self.currentIdentifierEquals("where")) blk: {
+                    self.advanceOne();
+                    self.skipNewLinesAndComments();
+                    break :blk if (self.tokenIs(.open_brace)) try self.parseCodeBlock() else try self.parseExpression();
+                } else null;
                 const empty = try self.addNodeRange(&.{});
                 const extra = try self.addExtra(syn.FunctionExtra{
                     .name_token = name.token,
@@ -500,6 +506,7 @@ pub const Syntaxer = struct {
                     .input = in_st,
                     .output = out_st,
                     .body = .none,
+                    .safety_contract = syn.OptionalNodeIndex.init(safety_contract),
                 });
                 try self.scratch.append(self.allocator, try self.addNode(.abstract_function_requirement, name.token, .{ .extra = extra }));
             } else {

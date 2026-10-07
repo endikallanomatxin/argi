@@ -281,9 +281,10 @@ selected payload.
 Each function has an inferred Safety Summary. It records required live input
 dependencies, value effects, Place post-states, and opaque-storage effects.
 Callers instantiate these symbolic effects at their own Places and roots.
-Virtual dispatch combines the effects of possible implementations
-conservatively; incompatible temporal post-states therefore cannot form one
-safe virtual abstraction.
+Abstract safety contracts bound the effects allowed through virtual dispatch.
+Concrete implementations must satisfy their contract independently, and virtual
+calls use that contract. See `134_virtual_types.md` for dependency declarations
+and the remaining implementation gaps during migration from combined summaries.
 
 `$&T` does not imply `noalias`. Calls such as `f($&x, $&x)` and
 `f($&x, &x)` may be temporally safe under the current model. Exclusivity and

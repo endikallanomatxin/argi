@@ -10360,3 +10360,47 @@ test "feature_tests/ownership/358X_return_local_expression" {
 test "feature_tests/ownership/359X_return_local_error_trace" {
     try buildExpectFail("tests/feature_tests/ownership/359X_return_local_error_trace", "local storage generation");
 }
+
+test "feature_tests/polymorphism/68_virtual_safety_contract" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/68_virtual_safety_contract");
+    try runExpect("tests/feature_tests/polymorphism/68_virtual_safety_contract", 0);
+}
+
+test "feature_tests/polymorphism/69X_virtual_safety_contract_dependency" {
+    try buildExpectFail("tests/feature_tests/polymorphism/69X_virtual_safety_contract_dependency", "undeclared output dependency involving input 'other'");
+}
+
+test "feature_tests/polymorphism/70X_virtual_safety_contract_unknown_name" {
+    try buildExpectFail("tests/feature_tests/polymorphism/70X_virtual_safety_contract_unknown_name", "depends_on dependencies must name method inputs");
+}
+
+test "feature_tests/polymorphism/71_virtual_safety_contract_preservation" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/71_virtual_safety_contract_preservation");
+    try runExpect("tests/feature_tests/polymorphism/71_virtual_safety_contract_preservation", 0);
+}
+
+test "feature_tests/polymorphism/72_virtual_safety_contract_block" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/72_virtual_safety_contract_block");
+    try runExpect("tests/feature_tests/polymorphism/72_virtual_safety_contract_block", 0);
+}
+
+test "feature_tests/polymorphism/73X_virtual_safety_contract_invalidation" {
+    try buildExpectFail("tests/feature_tests/polymorphism/73X_virtual_safety_contract_invalidation", "storage transition is not permitted by this preservation contract");
+}
+
+test "feature_tests/polymorphism/74X_virtual_safety_contract_output_name" {
+    try buildExpectFail("tests/feature_tests/polymorphism/74X_virtual_safety_contract_output_name", "the first depends_on argument must name a method output");
+}
+
+test "feature_tests/polymorphism/75_virtual_safety_contract_associated" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/75_virtual_safety_contract_associated");
+    try runExpect("tests/feature_tests/polymorphism/75_virtual_safety_contract_associated", 0);
+}
+
+test "feature_tests/polymorphism/76X_virtual_safety_contract_receiver_generation" {
+    try buildExpectFail("tests/feature_tests/polymorphism/76X_virtual_safety_contract_receiver_generation", "root that has ended");
+}
+
+test "feature_tests/polymorphism/77X_virtual_safety_contract_transitive_generation" {
+    try buildExpectFail("tests/feature_tests/polymorphism/77X_virtual_safety_contract_transitive_generation", "root that has ended");
+}

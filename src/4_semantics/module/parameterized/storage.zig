@@ -61,6 +61,7 @@ pub const AbstractRequirement = struct {
     input: ir.ParameterizedTypeId,
     output: ir.ParameterizedTypeId,
     parameters: primitives.Range(ComptimeParameterId) = .{ .start = 0, .len = 0 },
+    safety_contract: ?primitives.MethodSafetyContract = null,
 };
 
 pub const AbstractDefinition = struct {

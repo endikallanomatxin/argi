@@ -212,6 +212,7 @@ pub const SafetyChecker = struct {
             self.stats.opaque_inference_ns = inference.opaque_ns;
         }
         try self.validateInitializerContracts(&engine);
+        try self.validateVirtualSafetyContracts(&inference);
         self.active_summaries = &engine;
         self.active_summary_inference = &inference;
         defer self.active_summary_inference = null;
@@ -235,6 +236,33 @@ pub const SafetyChecker = struct {
             self.stats.virtual_summary_merges = inference.virtual_summary_merges;
         }
         if (self.diagnostics.list.items.len != before) return error.Reported;
+    }
+
+    fn validateVirtualSafetyContracts(self: *SafetyChecker, inference: *summary_infer.Infer) !void {
+        const contracts = @import("contracts.zig");
+        // Conformance is checked only after the concrete summaries converge.
+        // Registry closure includes uncalled table slots and associated bindings.
+        for (self.graph.virtualizes.items) |virtualize| {
+            for (self.graph.virtual_registry_refs.items[virtualize.safety_methods.start..][0..virtualize.safety_methods.len], 0..) |registry_id, index| {
+                const registry = self.graph.virtual_registries.items[@intFromEnum(registry_id)];
+                const declared = registry.safety_contract orelse continue;
+                const contract = try contracts.fromDeclaration(self.allocator, declared);
+                const method = self.graph.function_refs.items[virtualize.methods.start + index];
+                const function = self.graph.function(method);
+                const summary = (try inference.virtualImplementationSummary(method, registry.receiver_input_index)) orelse {
+                    try self.report(virtualize.source, "cannot verify Abstract safety contract for this implementation", .{});
+                    continue;
+                };
+                if (contracts.check(contract, summary)) |failure| {
+                    const method_name = self.graph.text(self.graph.declaration(function.declaration).name);
+                    if (failure.input) |path| {
+                        const input_name = if (path.input_index < function.input.len) self.graph.text(self.graph.fields.items[function.input.start + path.input_index].name) else "implicit input";
+                        try self.report(virtualize.source, "method '{s}' violates its Abstract safety contract: {s} involving input '{s}'", .{ method_name, failure.description(), input_name });
+                    } else try self.report(virtualize.source, "method '{s}' violates its Abstract safety contract: {s}", .{ method_name, failure.description() });
+                    try self.report(declared.source, "the Abstract safety contract is declared here", .{});
+                }
+            }
+        }
     }
 
     fn validateInitializerContracts(self: *SafetyChecker, engine: *summary_engine.Engine) !void {
@@ -698,6 +726,19 @@ pub const SafetyChecker = struct {
                 if (value.referenced_place) |receiver_place| if (self.active_summaries) |summaries| {
                     var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
                     try dependencies.appendSlice(value.dependencies);
+                    var has_declared_contract = false;
+                    for (self.graph.virtual_registry_refs.items[virtualize.safety_methods.start..][0..virtualize.safety_methods.len]) |registry_id| {
+                        if (self.graph.virtual_registries.items[@intFromEnum(registry_id)].safety_contract != null) has_declared_contract = true;
+                    }
+                    if (has_declared_contract) {
+                        // A published receiver contract cannot discover its live
+                        // storage requirements from the selected method bodies.
+                        // Capture the initialized receiver's reachable generations
+                        // before erasure, including references nested in its fields.
+                        var visited = std.array_list.Managed(facts.Place).init(self.allocator);
+                        defer visited.deinit();
+                        try self.captureContractStorage(function, virtualize.source, state, receiver_place, virtualize.concrete_type, &dependencies, &visited);
+                    }
                     for (self.graph.function_refs.items[virtualize.methods.start..][0..virtualize.methods.len], 0..) |method, index| {
                         const inference = self.active_summary_inference orelse continue;
                         const receiver_index = inference.virtualizeReceiverIndex(virtualize, index);
@@ -1442,6 +1483,13 @@ pub const SafetyChecker = struct {
                 break;
             };
             if (value.referenced_place) |storage| {
+                // Referencing the wrapper checks its slot generation. Calling
+                // through that reference also requires the hidden receiver
+                // envelope stored inside it, including captured field roots.
+                // Preserve this obligation across ordinary wrapper functions.
+                if (self.valueAtPlace(state, storage)) |stored| {
+                    if (stored.virtual_methods.len != 0) try self.requireLive(@enumFromInt(0), source, stored, state);
+                }
                 // A capability authorizes a call only while its value remains
                 // initialized. Unlike an output pointer, it is never merely a
                 // destination whose live storage may hold no initialized value.
@@ -3064,7 +3112,8 @@ pub const SafetyChecker = struct {
                 }
             }
         }
-        if (call.method_index >= receiver.virtual_methods.len) {
+        const declared_dispatch = self.graph.virtual_registries.items[@intFromEnum(call.safety_methods)].contract_input_count != null;
+        if (declared_dispatch or call.method_index >= receiver.virtual_methods.len) {
             const result = (try self.applyVirtualSummaryFallback(
                 call,
                 input_node.source,
@@ -3500,6 +3549,42 @@ pub const SafetyChecker = struct {
             return self.report(source, "place rooted at '{s}' is maybe_initialized and cannot be used", .{name});
         }
         try self.requireInitialized(function, source, initializedness);
+    }
+
+    fn captureContractStorage(self: *SafetyChecker, function: graph_mod.GlobalFunctionId, source: primitives.SourceRef, state: *FunctionState, storage: facts.Place, ty: graph_mod.GlobalTypeId, dependencies: *std.array_list.Managed(facts.ValidityDependency), visited: *std.array_list.Managed(facts.Place)) anyerror!void {
+        for (visited.items) |previous| if (previous.eql(storage)) return;
+        try visited.append(storage);
+        try self.requirePlaceInitialized(function, source, storage, self.initializednessAtPlace(state, storage), state);
+        try self.requireDescendantsInitialized(function, source, storage, state);
+        try appendDependencyFact(dependencies, .{ .root = try self.storageGeneration(state, storage) });
+        const value = try self.reconstructPlaceValue(state, storage, self.valueAtPlace(state, storage) orelse .{});
+        var roots = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+        defer roots.deinit();
+        try collectDependencyRoots(value, &roots);
+        try collectOwnedRoots(value, &roots);
+        try self.collectOpaqueHiddenDependencies(state, value, &roots);
+        for (roots.items) |root| try appendDependencyFact(dependencies, .{ .root = root });
+        if (self.graph.semanticType(ty) == .pointer) {
+            if (value.referenced_place) |referent|
+                try self.captureContractStorage(function, source, state, referent, self.graph.semanticType(ty).pointer.child, dependencies, visited);
+            return;
+        }
+        if (self.graph.semanticType(ty) == .virtual) {
+            // Its concrete storage was captured when this nested handle was
+            // created. The handle's dependencies remain part of this envelope.
+            return;
+        }
+        const array_element = types.arrayElement(self.graph, ty);
+        for (value.fields) |field| {
+            const child_type = array_element orelse self.fieldTypeAt(ty, field.index) orelse continue;
+            const projection: facts.Projection = if (array_element != null) .{ .static_index = field.index } else .{ .field = field.index };
+            try self.captureContractStorage(function, source, state, try self.project(storage, projection), child_type, dependencies, visited);
+        }
+        for (value.variants) |variant| {
+            if (value.known_choice_variant) |known| if (variant.index != known) continue;
+            const child_type = self.variantPayloadTypeAt(ty, variant.index) orelse continue;
+            try self.captureContractStorage(function, source, state, try self.project(storage, .{ .variant = variant.index }), child_type, dependencies, visited);
+        }
     }
 
     fn requireLive(self: *SafetyChecker, function: graph_mod.GlobalFunctionId, source: primitives.SourceRef, value: facts.ValueFacts, state: *FunctionState) !void {

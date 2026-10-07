@@ -23,27 +23,23 @@ permissions and ownership transfers are separate obligations.
 
 ## Remaining work
 
-- Lower method contracts into syntax-free, input/output-indexed metadata. Support
-  `where depends_on(value, self)` and diagnose unknown names and wrong directions.
-  Preserve metadata through specialization, globalization, cache snapshots and
-  formatting. No accepted source annotation may silently be ignored.
 - Extend compatibility checking with domain invalidation, allowed dependency
   storage, initialization/consumption and outcome-specific guarantees. Validate
   every provenance category, including fresh root identity and ownership roles.
 - Define type-aware normalization and domain mapping before erasing receiver
   layouts. Broad dependency permissions must not become permission to transfer
   ownership, replace generations or manufacture safe references.
-- Generate virtual call summaries from contracts alone. Conservatively summarize
-  permitted dependencies while preserving output structure and actual storage
+- Extend contract-generated virtual call summaries to reference and owner results.
+  Scalar and no-result method contracts already have independent call summaries.
+  Conservatively summarize permitted dependencies while preserving output
+  structure and actual storage
   identities. Do not represent every returned pointer as the receiver address.
-- Check implementations after summary inference converges, including uncalled
-  vtable slots, implicit error-tracer inputs and bound associated arguments.
-  Report the method, offending effect and contract location.
+- Extend declaration checking to static abstract implementation selection and to
+  the new effect clauses, retaining diagnostics for implicit error-tracer inputs.
 - Describe and migrate Allocator, Deallocator, Reader, Writer and ErrorTracer.
   Keep the existing dispatch checker active until their complete obligations can
   be expressed; do not silently weaken checks during migration.
-- Add executable and negative fixtures proving that new valid implementations do
-  not change call validity, while undeclared dependencies and effects are rejected.
-  Cover nested owners, opaque storage, error outcomes and aliased inputs.
-- Replace program-wide summary unions and update the language specification once
-  the declaration syntax and all required effects are settled.
+- Extend independence and conformance fixtures to nested owners, opaque storage,
+  error outcomes and aliased inputs as their contract representation becomes
+  available.
+- Remove remaining program-wide summary unions after the core protocols migrate.

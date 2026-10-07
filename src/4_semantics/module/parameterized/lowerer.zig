@@ -283,10 +283,12 @@ pub const Context = struct {
                         const name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, requirement.name_token));
                         const input = try self.lowerType(requirement.input, true);
                         const output = try self.lowerType(requirement.output, true);
+                        const safety_contract = try self.lowerMethodSafetyContract(requirement);
                         try self.graph.semantic.parameterized_storage.abstract_requirements.append(self.allocator, .{
                             .name = name,
                             .input = input,
                             .output = output,
+                            .safety_contract = safety_contract,
                         });
                     }
                     try self.graph.semantic.parameterized_storage.abstract_definitions.append(self.allocator, .{
@@ -303,6 +305,68 @@ pub const Context = struct {
             }
         }
         return stats;
+    }
+
+    fn lowerMethodSafetyContract(self: *Context, requirement: syn.AbstractFunctionRequirement) !?primitives.MethodSafetyContract {
+        const node = requirement.safety_contract orelse return null;
+        var dependencies: std.ArrayList(primitives.MethodSafetyContract.Dependency) = .empty;
+        defer dependencies.deinit(self.allocator);
+        if (self.tree.codeBlock(node)) |block| {
+            for (block.statements) |statement| {
+                const clause = if (self.tree.tag(statement) == .expression_statement) self.tree.data(statement).node else statement;
+                try self.lowerDependencyClause(requirement, clause, &dependencies);
+            }
+        } else try self.lowerDependencyClause(requirement, node, &dependencies);
+        return .{
+            .output_count = @intCast(self.tree.structTypeLiteral(requirement.output).?.fields.len),
+            .dependencies = try dependencies.toOwnedSlice(self.allocator),
+            .source = self.sourceRef(node),
+        };
+    }
+
+    fn contractError(self: *Context, node: syn.NodeIndex, message: []const u8) !void {
+        if (self.diagnostics) |bag| try bag.add(self.tree.tokenLocation(self.tree.mainToken(node)), .semantic, "{s}", .{message});
+        return error.Reported;
+    }
+
+    fn lowerDependencyClause(self: *Context, requirement: syn.AbstractFunctionRequirement, node: syn.NodeIndex, dependencies: *std.ArrayList(primitives.MethodSafetyContract.Dependency)) !void {
+        const call = self.tree.functionCall(node) orelse return self.contractError(node, "expected depends_on(output, input) in an Abstract safety contract");
+        if (call.module_qualifier != null or call.type_arguments.len != 0 or call.type_arguments_struct != null or
+            !std.mem.eql(u8, self.tree.tokenTextFromSource(self.source, call.callee_token), "depends_on"))
+            return self.contractError(node, "expected depends_on(output, input) in an Abstract safety contract");
+        const literal = self.tree.structValueLiteral(call.input).?;
+        if (literal.fields.len < 2) return self.contractError(node, "depends_on requires an output followed by one or more inputs");
+        const output_node = self.tree.valueField(literal.fields[0]).?.value;
+        const output_index = (try self.contractFieldIndex(requirement.output, output_node)) orelse
+            return self.contractError(output_node, "the first depends_on argument must name a method output");
+        for (literal.fields[1..]) |argument| {
+            const field = self.tree.valueField(argument).?;
+            if (field.name_token != null) return self.contractError(argument, "safety contract arguments must be positional names");
+            const input_index = (try self.contractFieldIndex(requirement.input, field.value)) orelse
+                return self.contractError(field.value, "depends_on dependencies must name method inputs");
+            const dependency = primitives.MethodSafetyContract.Dependency{ .output_index = output_index, .input_index = input_index };
+            var exists = false;
+            for (dependencies.items) |item| if (item.output_index == output_index and item.input_index == input_index) {
+                exists = true;
+                break;
+            };
+            if (!exists) try dependencies.append(self.allocator, dependency);
+        }
+        if (self.tree.valueField(literal.fields[0]).?.name_token != null)
+            return self.contractError(output_node, "safety contract arguments must be positional names");
+    }
+
+    fn contractFieldIndex(self: *Context, signature: syn.NodeIndex, node: syn.NodeIndex) !?u32 {
+        if (self.tree.tag(node) != .identifier) {
+            try self.contractError(node, "safety contract arguments must name method inputs or outputs");
+            unreachable;
+        }
+        const name = self.tree.tokenTextFromSource(self.source, self.tree.mainToken(node));
+        for (self.tree.structTypeLiteral(signature).?.fields, 0..) |field_node, index| {
+            const field = self.tree.structTypeField(field_node).?;
+            if (field.position == null and std.mem.eql(u8, name, self.tree.tokenTextFromSource(self.source, field.name_token))) return @intCast(index);
+        }
+        return null;
     }
 
     const GenericTypePayload = struct {

@@ -1904,6 +1904,14 @@ pub const Resolver = struct {
         abstract_ty: global_sg.GlobalTypeId,
         method_index: usize,
     ) !void {
+        const use = self.abstractUse(abstract_ty) orelse return error.InvalidVirtualAbstract;
+        const located = self.findAbstractDefinition(use.declaration) orelse return error.InvalidVirtualAbstract;
+        const requirement = self.modules[located.module_index].semantic.parameterized_storage.abstract_requirements.items[located.definition.requirements.start + method_index];
+        if (requirement.safety_contract) |declared| {
+            var contract = declared;
+            contract.source = self.sourceFor(located.module_index, contract.source);
+            self.graph.virtual_registries.items[@intFromEnum(registry_id)].safety_contract = contract;
+        }
         var implementations: std.ArrayList(global_sg.GlobalFunctionId) = .empty;
         defer implementations.deinit(self.allocator);
 
@@ -1925,6 +1933,25 @@ pub const Resolver = struct {
             .start = start,
             .len = @intCast(implementations.items.len),
         };
+        if (requirement.safety_contract != null and implementations.items.len != 0) {
+            const function = self.graph.function(implementations.items[0]);
+            var scalar_outputs = true;
+            for (self.graph.fields.items[function.output.start..][0..function.output.len]) |field| {
+                const ty = self.graph.semanticType(field.ty);
+                if (ty != .builtin) {
+                    scalar_outputs = false;
+                    break;
+                }
+                switch (ty.builtin) {
+                    .Int8, .Int16, .Int32, .Int64, .UIntNative, .UInt8, .UInt16, .UInt32, .UInt64, .Float16, .Float32, .Float64, .Char, .Bool, .Void => {},
+                    else => {
+                        scalar_outputs = false;
+                        break;
+                    },
+                }
+            }
+            if (scalar_outputs) self.graph.virtual_registries.items[@intFromEnum(registry_id)].contract_input_count = function.input.len;
+        }
     }
 
     fn virtualCallAbstract(self: *const Resolver, call: global_sg.VirtualCall) ?global_sg.GlobalTypeId {

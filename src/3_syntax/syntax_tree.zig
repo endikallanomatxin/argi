@@ -198,6 +198,7 @@ pub const FunctionExtra = struct {
     body: OptionalNodeIndex,
     c_options: OptionalNodeIndex = .none,
     c_abi: u32 = 0,
+    safety_contract: OptionalNodeIndex = .none,
 };
 pub const IfExtra = struct { then_block: NodeIndex, else_block: OptionalNodeIndex };
 pub const FieldExtra = struct { type_node: OptionalNodeIndex, default_value: OptionalNodeIndex };
@@ -292,7 +293,7 @@ pub const AbstractDeclaration = struct {
     requires_abstracts: []const NodeIndex,
     requires_functions: []const NodeIndex,
 };
-pub const AbstractFunctionRequirement = struct { name_token: TokenIndex, input: NodeIndex, output: NodeIndex };
+pub const AbstractFunctionRequirement = struct { name_token: TokenIndex, input: NodeIndex, output: NodeIndex, safety_contract: ?NodeIndex = null };
 pub const GenericType = struct { base: NodeIndex, arguments: NodeIndex };
 pub const Type = union(enum) {
     name: struct { name_token: TokenIndex, qualifier_token: ?TokenIndex },
@@ -708,7 +709,7 @@ pub const FileSyntaxTree = struct {
     pub fn abstractFunctionRequirement(tree: *const FileSyntaxTree, node: NodeIndex) ?AbstractFunctionRequirement {
         if (tree.tag(node) != .abstract_function_requirement) return null;
         const extra = tree.extraData(FunctionExtra, tree.data(node).extra);
-        return .{ .name_token = extra.name_token, .input = extra.input, .output = extra.output };
+        return .{ .name_token = extra.name_token, .input = extra.input, .output = extra.output, .safety_contract = extra.safety_contract.unwrap() };
     }
 
     pub fn syntaxType(tree: *const FileSyntaxTree, node: NodeIndex) ?Type {

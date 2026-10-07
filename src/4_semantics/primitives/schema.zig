@@ -191,6 +191,16 @@ pub const SourceRef = struct {
     offset: u32,
 };
 
+/// Syntax-free method contract coordinates survive associated specialization.
+/// Source provenance is relocated together with the defining module.
+pub const MethodSafetyContract = struct {
+    output_count: u32,
+    dependencies: []const Dependency = &.{},
+    source: SourceRef,
+
+    pub const Dependency = struct { output_index: u32, input_index: u32 };
+};
+
 /// Canonical declaration payload shared by ModuleSG and GlobalSG. Source
 /// provenance is graph-local; semantic references use the corresponding Ids
 /// namespace. Layout lives here for nominal types because `.declared` type IDs
@@ -387,6 +397,10 @@ pub fn VirtualMethodRegistry(comptime Ids: type) type {
         /// Receiver position comes from the erased abstract contract. A known
         /// argument may have the same concrete type as Self after substitution.
         receiver_input_index: u32,
+        safety_contract: ?MethodSafetyContract = null,
+        /// Scalar output contracts have no erased reference/owner layout to
+        /// recover. Their call summaries can be generated without concrete bodies.
+        contract_input_count: ?u32 = null,
     };
 }
 

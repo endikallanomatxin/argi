@@ -16,6 +16,18 @@ pub const Contract = struct {
     outputs: []const Output,
 };
 
+pub fn fromDeclaration(allocator: std.mem.Allocator, declaration: @import("../primitives/schema.zig").MethodSafetyContract) !Contract {
+    const outputs = try allocator.alloc(Output, declaration.output_count);
+    for (outputs, 0..) |*output, index| {
+        var paths: std.ArrayList(facts.InputPath) = .empty;
+        for (declaration.dependencies) |dependency| {
+            if (dependency.output_index == index) try paths.append(allocator, .{ .input_index = dependency.input_index });
+        }
+        output.* = .{ .dependencies = try paths.toOwnedSlice(allocator) };
+    }
+    return .{ .outputs = outputs };
+}
+
 pub const Failure = struct {
     kind: enum {
         output_count,
@@ -27,6 +39,17 @@ pub const Failure = struct {
     },
     output_index: ?u32 = null,
     input: ?facts.InputPath = null,
+
+    pub fn description(self: Failure) []const u8 {
+        return switch (self.kind) {
+            .output_count => "the number of outputs differs",
+            .undeclared_dependency => "undeclared output dependency",
+            .undeclared_ownership_transfer => "undeclared ownership transfer",
+            .unsupported_post_state => "a storage transition is not permitted by this preservation contract",
+            .unsupported_opaque_effect => "an opaque storage effect is not permitted by this preservation contract",
+            .unsupported_capability_effect => "storage capability consumption is not permitted by this contract",
+        };
+    }
 };
 
 /// Check each implementation independently. No result depends on which other

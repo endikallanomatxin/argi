@@ -152,11 +152,39 @@ Dynamic dispatch retains safety obligations. A method may return a reference
 borrowed from its receiver, mutate caller-visible storage, or have effects on
 owned or opaque storage. Those effects must remain valid through erasure.
 
-When the concrete implementation is known, checking can use its specific
-summary. At a boundary where it is unknown, checking conservatively combines
-possible implementations: required liveness must cover every alternative,
-while guarantees must hold across alternatives. Incompatible ownership or
-storage transitions are rejected rather than hidden by the vtable.
+An abstract method can publish a safety contract after its signature:
+
+```rg
+Source: Abstract = (
+    get(.self: &Self) -> (.value: &Int32)
+        where depends_on(value, self)
+)
+Counter: Abstract = (
+    increment(.self: $&Self) -> () where {}
+)
+```
+
+`depends_on(output, input, ...)` permits the named output to carry validity
+dependencies from the named inputs. This permission applies transitively through
+fields, choice payloads and opaque values. A reference input names its referent
+and the referent's dependencies, not the local argument slot. An implementation
+may return a value with fewer dependencies, including an independent global
+reference. It cannot introduce dependencies on other inputs or on local storage
+that ends on return. This clause neither transfers ownership nor prolongs any
+lifetime.
+
+Multiple clauses can appear in a `where` block. An empty block declares no output
+dependencies. These contracts preserve storage generations and existing ownership;
+ordinary content writes remain permitted by mutable references. They do not grant
+permission to consume storage capabilities, end resources or store new hidden
+dependencies. Input values must remain valid for the call, including capabilities
+or references carried inside by-value arguments.
+
+Every concrete method placed in a virtual table must satisfy its declared
+contract, including methods never called. A violation identifies the method,
+offending input and contract declaration. Checking an implementation does not
+depend on the bodies of other implementations. A virtual call uses the published
+contract; a direct concrete call can use its more precise inferred summary.
 
 Private concrete receiver fields are not fields of the virtual handle. A
 returned borrow still depends on the receiver's storage; erasing its layout
@@ -164,9 +192,14 @@ must not erase that lifetime dependency. See `34_safety_model.md` for roots,
 storage generations, and opaque storage.
 
 > [!IMPLEMENTATION]
-> Unknown dispatch currently uses a program-wide set of implementations found
-> through virtual conversions. This can be more conservative than the actual
-> runtime alternatives at a particular call site.
+> Declaration checking supports `depends_on` and preservation contracts. Calls
+> through annotated methods with scalar outputs or no outputs use summaries
+> generated from their contracts. Results containing references or owners still
+> use the existing implementation summaries to preserve concrete storage facts;
+> abstract domains and output storage identities remain to be implemented.
+> Methods without annotations retain the program-wide combination of known
+> implementations during this migration. Domain invalidation, ownership transfer
+> and outcome-specific contract clauses are not supported yet.
 
 For example, a fixed `Readable#(.item: Int32)` contract can occupy a virtual
 handle. Conversion checks the concrete type's declared associated arguments,

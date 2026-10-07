@@ -126,6 +126,24 @@ pub const Infer = struct {
         if (self.invalid_virtual_summaries.contains(registry_id)) return null;
         if (self.virtual_summaries.get(registry_id)) |summary| return summary;
         const registry = self.graph.virtual_registries.items[@intFromEnum(registry_id)];
+        if (registry.contract_input_count) |input_count| {
+            const declared = registry.safety_contract orelse return error.MissingVirtualSafetyContract;
+            // This summary depends on the declaration and fixed signature only.
+            // Concrete summaries are read separately for conformance after the
+            // fixed point. Scalar results carry validity, never receiver aliases.
+            const contract = try @import("contracts.zig").fromDeclaration(self.allocator, declared);
+            const outputs = try self.allocator.alloc(facts.ValueEffect, contract.outputs.len);
+            for (contract.outputs, outputs) |allowed, *output| {
+                const dependencies = try self.allocator.alloc(facts.InputDependency, allowed.dependencies.len);
+                for (allowed.dependencies, dependencies) |path, *dependency| dependency.* = .{ .path = path, .validity_only = true };
+                output.* = .{ .input_dependencies = dependencies, .explicit_dependency = dependencies.len != 0 };
+            }
+            const required = try self.allocator.alloc(facts.InputPath, input_count);
+            for (required, 0..) |*path, index| path.* = .{ .input_index = @intCast(index) };
+            const result = facts.SafetySummary{ .outputs = outputs, .required_live_inputs = required };
+            try self.virtual_summaries.put(registry_id, result);
+            return result;
+        }
         const implementations = self.graph.function_refs.items[registry.implementations.start..][0..registry.implementations.len];
         if (implementations.len == 0) return null;
         self.virtual_summary_merges += 1;
@@ -162,7 +180,7 @@ pub const Infer = struct {
         return self.graph.virtual_registries.items[@intFromEnum(registry)].receiver_input_index;
     }
 
-    fn virtualImplementationSummary(self: *Infer, implementation: graph_mod.GlobalFunctionId, receiver: ?u32) !?facts.SafetySummary {
+    pub fn virtualImplementationSummary(self: *Infer, implementation: graph_mod.GlobalFunctionId, receiver: ?u32) !?facts.SafetySummary {
         var summary = self.engine.summaryFor(implementation) orelse return null;
         var states = std.array_list.Managed(facts.PlacePostState).init(self.allocator);
         const function = self.graph.function(implementation);
@@ -4550,6 +4568,36 @@ test "opaque ownership post-state joins preserve storage correlation" {
 fn joinInitializedness(left: value_state.Initializedness, right: value_state.Initializedness) value_state.Initializedness {
     if (left == right) return left;
     return .maybe_initialized;
+}
+
+test "virtual safety contract scalar summaries do not read implementations" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    var engine = summaries.Engine.init(allocator);
+    defer engine.deinit();
+    var infer = Infer.init(allocator, &graph, &engine);
+    defer infer.deinit();
+    try graph.virtual_registries.append(allocator, .{
+        .implementations = .{ .start = 0, .len = 0 },
+        .receiver_input_index = 1,
+        .contract_input_count = 2,
+        .safety_contract = .{ .output_count = 1, .source = .{ .file_index = 0, .offset = 0 }, .dependencies = &.{.{ .output_index = 0, .input_index = 1 }} },
+    });
+    const first = (try infer.virtualSummary(@enumFromInt(0))).?;
+    try std.testing.expectEqual(@as(usize, 2), first.required_live_inputs.len);
+    try std.testing.expectEqual(@as(u32, 1), first.outputs[0].input_dependencies[0].path.input_index);
+    try std.testing.expect(first.outputs[0].input_dependencies[0].validity_only);
+    // No concrete summaries exist. Changing the implementation list must not
+    // introduce a read of a concrete body or change the published call effects.
+    try graph.function_refs.appendSlice(allocator, &.{ @enumFromInt(0), @enumFromInt(1) });
+    graph.virtual_registries.items[0].implementations.len = 2;
+    infer.virtual_summaries.clearRetainingCapacity();
+    const second = (try infer.virtualSummary(@enumFromInt(0))).?;
+    try std.testing.expect(summaries.summaryEql(first, second));
+    try std.testing.expectEqual(@as(u64, 0), infer.virtual_summary_merges);
 }
 
 test "virtual summaries align fresh roles and reject ownership mismatches" {

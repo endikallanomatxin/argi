@@ -41,6 +41,18 @@ pub fn verifyParameterizedForms(graph: *const graph_mod.ModuleSemanticGraph) !vo
         try require(verify.idFits(requirement.input, storage.ir.types.items.len));
         try require(verify.idFits(requirement.output, storage.ir.types.items.len));
         try require(verify.rangeFits(requirement.parameters, storage.comptime_parameters.items.len));
+        if (requirement.safety_contract) |contract| {
+            try require(verify.sourceFits(contract.source, graph.file_offsets.items.len));
+            const input = storage.ir.types.items[@intFromEnum(requirement.input)];
+            const output = storage.ir.types.items[@intFromEnum(requirement.output)];
+            try require(input == .resolved and input.resolved == .structural);
+            try require(output == .resolved and output.resolved == .structural);
+            try require(contract.output_count == output.resolved.structural.fields.len);
+            for (contract.dependencies) |dependency| {
+                try require(dependency.output_index < contract.output_count);
+                try require(dependency.input_index < input.resolved.structural.fields.len);
+            }
+        }
     }
 
     for (storage.abstract_definitions.items) |definition| {
