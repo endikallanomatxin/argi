@@ -9,6 +9,9 @@ pub const Output = struct {
     ownership_transfers: []const facts.InputPath = &.{},
     referent: ?facts.InputPath = null,
     domains: []const facts.InputDomain = &.{},
+    fresh_owner: bool = false,
+    outcomes: []const Outcome = &.{},
+    pub const Outcome = struct { variant_index: u32, value: *const Output };
 };
 
 /// This first contract representation covers output provenance and preservation.
@@ -23,12 +26,15 @@ pub const Contract = struct {
     invalidated_domains: []const facts.InputDomain = &.{},
 };
 
-pub fn fromDeclaration(allocator: std.mem.Allocator, declaration: @import("../primitives/schema.zig").MethodSafetyContract) !Contract {
+pub fn fromDeclaration(allocator: std.mem.Allocator, declaration: @import("../primitives/schema.zig").MethodSafetyContract) anyerror!Contract {
     const outputs = try allocator.alloc(Output, declaration.output_count);
     for (outputs, 0..) |*output, index| {
         var paths: std.ArrayList(facts.InputPath) = .empty;
         for (declaration.dependencies) |dependency| {
             if (dependency.output_index == index) try paths.append(allocator, .{ .input_index = dependency.input_index });
+        }
+        for (declaration.transfers) |transfer| {
+            if (transfer.output_index == index) try paths.append(allocator, .{ .input_index = transfer.input_index });
         }
         output.* = .{ .dependencies = try paths.toOwnedSlice(allocator) };
         for (declaration.referents) |referent| {
@@ -39,8 +45,33 @@ pub fn fromDeclaration(allocator: std.mem.Allocator, declaration: @import("../pr
             if (dependency.output_index == index) try domains.append(allocator, .{ .path = .{ .input_index = dependency.input.input_index }, .domain_index = dependency.input.domain_index });
         }
         output.domains = try domains.toOwnedSlice(allocator);
+        for (declaration.owned_outputs) |owned| if (owned == index) {
+            output.fresh_owner = true;
+            break;
+        };
+        var transfers: std.ArrayList(facts.InputPath) = .empty;
+        for (declaration.transfers) |transfer| if (transfer.output_index == index) try transfers.append(allocator, .{ .input_index = transfer.input_index });
+        output.ownership_transfers = try transfers.toOwnedSlice(allocator);
     }
     const invalidates = try allocator.alloc(facts.InputPath, declaration.invalidates.len);
+    if (declaration.outcomes.len != 0) {
+        const outcomes = try allocator.alloc(Output.Outcome, declaration.outcomes.len);
+        for (declaration.outcomes, outcomes) |outcome, *allowed| {
+            const contract = try fromDeclaration(allocator, .{
+                .output_count = declaration.output_count,
+                .dependencies = outcome.dependencies,
+                .domain_dependencies = outcome.domain_dependencies,
+                .owned_outputs = outcome.owned_outputs,
+                .invalidates = outcome.invalidates,
+                .invalidated_domains = outcome.invalidated_domains,
+                .source = outcome.source,
+            });
+            const output = try allocator.create(Output);
+            output.* = contract.outputs[0];
+            allowed.* = .{ .variant_index = outcome.variant_index orelse return error.UnresolvedOutcomeContract, .value = output };
+        }
+        outputs[0].outcomes = outcomes;
+    }
     for (declaration.invalidates, invalidates) |index, *path| path.* = .{ .input_index = index };
     const invalidated_domains = try allocator.alloc(facts.InputDomain, declaration.invalidated_domains.len);
     for (declaration.invalidated_domains, invalidated_domains) |domain, *input| input.* = .{ .path = .{ .input_index = domain.input_index }, .domain_index = domain.domain_index };
@@ -53,6 +84,7 @@ pub const Failure = struct {
         undeclared_dependency,
         undeclared_ownership_transfer,
         incompatible_referent,
+        undeclared_fresh_owner,
         unsupported_post_state,
         unsupported_opaque_effect,
         unsupported_capability_effect,
@@ -66,6 +98,7 @@ pub const Failure = struct {
             .undeclared_dependency => "undeclared output dependency",
             .undeclared_ownership_transfer => "undeclared ownership transfer",
             .incompatible_referent => "the output must refer to the same storage as the declared input",
+            .undeclared_fresh_owner => "undeclared fresh output ownership; declare owns(output)",
             .unsupported_post_state => "a storage transition is not permitted by this preservation contract",
             .unsupported_opaque_effect => "an opaque storage effect is not permitted by this preservation contract",
             .unsupported_capability_effect => "storage capability consumption is not permitted by this contract",
@@ -125,6 +158,7 @@ pub fn check(contract: Contract, summary: facts.SafetySummary) ?Failure {
 }
 
 fn checkValue(allowed: Output, actual: facts.ValueEffect) ?Failure {
+    if (actual.fresh_owned_roots.len != 0 and !allowed.fresh_owner) return .{ .kind = .undeclared_fresh_owner };
     for (actual.input_domains) |domain| {
         var permitted = false;
         for (allowed.domains) |expected| if (domain.domain_index == expected.domain_index and samePath(domain.path, expected.path)) {
@@ -160,7 +194,13 @@ fn checkValue(allowed: Output, actual: facts.ValueEffect) ?Failure {
         if (checkValue(allowed, field.value.*)) |failure| return failure;
     }
     for (actual.variants) |variant| {
-        if (checkValue(allowed, variant.value.*)) |failure| return failure;
+        var selected = allowed;
+        for (allowed.outcomes) |outcome| if (outcome.variant_index == variant.index) {
+            selected = outcome.value.*;
+            break;
+        };
+        selected.outcomes = &.{};
+        if (checkValue(selected, variant.value.*)) |failure| return failure;
     }
     for (actual.domain_values) |domain| {
         if (checkValue(allowed, domain.value.*)) |failure| return failure;
@@ -355,7 +395,8 @@ test "safety contracts allow fresh owner outputs without receiver dependence" {
     }} };
     // Normal output checking establishes whether these fresh facts represent a
     // legal owner return. This matcher checks only the input provenance bound.
-    try std.testing.expect(check(.{ .outputs = &.{.{}} }, summary) == null);
+    try std.testing.expectEqual(.undeclared_fresh_owner, check(.{ .outputs = &.{.{}} }, summary).?.kind);
+    try std.testing.expect(check(.{ .outputs = &.{.{ .fresh_owner = true }} }, summary) == null);
     try std.testing.expectEqual(.output_count, check(.{ .outputs = &.{} }, summary).?.kind);
 }
 

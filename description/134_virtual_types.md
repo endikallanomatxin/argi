@@ -208,6 +208,38 @@ Editor: Abstract = (
 )
 ```
 
+## Owning and fallible results
+
+`owns(output)` permits fresh ownership in the output, including nested owning
+fields and choice payloads. It grants no safe address, acquisition receipt or
+permission to retain input storage. Declare validity dependencies separately.
+
+`transfers(output, input)` guarantees transfer of a by-value input into an output
+of the same type. Reference inputs cannot transfer ownership. This relation
+preserves the input's structure and validity dependencies. It cannot be combined
+with fresh ownership for the same output.
+
+A choice-valued result can distinguish permissions by variant:
+
+```rg
+Factory: Abstract = (
+    create(.self: &Self) -> (.result: Errable#(Item, Reasons)) where {
+        on ..ok {
+            owns(result)
+            depends_on(result, self)
+        }
+        on ..error {
+            depends_on(result, error_tracer)
+        }
+    }
+)
+```
+
+Within `on ..variant`, output clauses describe that variant's payload. The
+implicit `error_tracer` input can be named in dependencies of fallible methods.
+An unspecified variant retains the method's unconditional output permissions.
+No variant can authorize a reference to local storage that ends on return.
+
 ## Receiver storage domains
 
 An abstract can name storage domains without exposing concrete fields. Its
@@ -259,22 +291,18 @@ must not erase that lifetime dependency. See `34_safety_model.md` for roots,
 storage generations, and opaque storage.
 
 > [!IMPLEMENTATION]
-> Declaration checking supports `depends_on` and preservation contracts. Calls
-> through annotated methods with scalar outputs, no outputs, or reference outputs
-> described by `refers_to` use summaries generated from their contracts. Other
-> results containing references or owners still use the existing implementation
-> summaries to preserve concrete storage facts;
-> Other output storage identities remain to be implemented.
-> Methods without annotations retain the program-wide combination of known
-> implementations during this migration. Ownership transfer
-> and outcome-specific contract clauses are not supported yet.
-> Proving `refers_to` currently requires a concrete body that directly forwards
-> the declared reference input. More complex control flow and forwarding through
-> other calls are rejected until path-sensitive storage identity proofs exist.
+> Annotated virtual methods use summaries generated from their declarations and
+> fixed signatures, including structured and owning results. Methods without
+> annotations retain the program-wide combination of known implementations during
+> migration. Static implementation selection still needs declaration checking.
+> Proving `refers_to` and `transfers` currently requires a concrete body that
+> directly forwards the declared input. Intermediate calls and complex control
+> flow require more precise storage identity proofs.
 > Direct input `invalidates` currently supports no-result methods and known scalar
 > reference inputs. Receiver invalidation uses explicitly mapped domains. Neither
-> form permits destroying owners or replacing their hidden dependencies; those
-> effects require additional contracts.
+> form permits destroying owners or replacing their hidden dependencies.
+> Outcome clauses support output dependencies and fresh ownership; conditional
+> generation changes and hidden storage effects remain to be implemented.
 
 For example, a fixed `Readable#(.item: Int32)` contract can occupy a virtual
 handle. Conversion checks the concrete type's declared associated arguments,

@@ -10482,3 +10482,22 @@ test "feature_tests/polymorphism/94_virtual_safety_contract_domain_associated" {
 test "feature_tests/polymorphism/95X_virtual_safety_contract_domain_alias" {
     try buildExpectFail("tests/feature_tests/polymorphism/95X_virtual_safety_contract_domain_alias", "storage domains share a storage generation");
 }
+
+test "feature_tests/polymorphism/96_virtual_safety_contract_fresh_owner" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/96_virtual_safety_contract_fresh_owner");
+    try runExpect("tests/feature_tests/polymorphism/96_virtual_safety_contract_fresh_owner", 0);
+}
+
+test "feature_tests/polymorphism/97_virtual_safety_contract_transfer_owner" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/97_virtual_safety_contract_transfer_owner");
+    try runExpect("tests/feature_tests/polymorphism/97_virtual_safety_contract_transfer_owner", 0);
+}
+
+test "feature_tests/polymorphism/98_virtual_safety_contract_outcome_dependencies" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/98_virtual_safety_contract_outcome_dependencies");
+    try runExpect("tests/feature_tests/polymorphism/98_virtual_safety_contract_outcome_dependencies", 0);
+}
+
+test "feature_tests/polymorphism/99X_virtual_safety_contract_outcome_wrong" {
+    try buildExpectFail("tests/feature_tests/polymorphism/99X_virtual_safety_contract_outcome_wrong", "unknown output variant");
+}

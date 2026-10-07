@@ -14,12 +14,8 @@ allocate(
     ) := {
     storage ::= malloc(.size = size, .ffi = self&.ffi)
     raw_addr :: UIntNative = UIntNative(.value = storage)
-    self&= (
-        .ffi             = self&.ffi
-        .last_alloc_size = size
-        .alloc_count     = self&.alloc_count + 1
-        .dealloc_count   = self&.dealloc_count
-    )
+    self&.last_alloc_size = size
+    self&.alloc_count = self&.alloc_count + 1
     deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(
         .value = self
     )
@@ -40,12 +36,7 @@ deallocate(
     ) -> () := {
     raw_addr :: UIntNative = data.address
     free(.address = raw_addr, .ffi = self&.ffi)
-    self&= (
-        .ffi             = self&.ffi
-        .last_alloc_size = self&.last_alloc_size
-        .alloc_count     = self&.alloc_count
-        .dealloc_count   = self&.dealloc_count + 1
-    )
+    self&.dealloc_count = self&.dealloc_count + 1
 }
 
 CountingAllocator implements Allocator

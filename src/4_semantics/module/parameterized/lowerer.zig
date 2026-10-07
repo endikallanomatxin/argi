@@ -320,12 +320,18 @@ pub const Context = struct {
         return stats;
     }
 
-    fn lowerMethodSafetyContract(self: *Context, requirement: syn.AbstractFunctionRequirement, domains: []const primitives.StringRange) !?primitives.MethodSafetyContract {
+    fn lowerMethodSafetyContract(self: *Context, requirement: syn.AbstractFunctionRequirement, domains: []const primitives.StringRange) anyerror!?primitives.MethodSafetyContract {
         const node = requirement.safety_contract orelse return null;
+        var outcomes: std.ArrayList(primitives.MethodSafetyContract.Outcome) = .empty;
+        defer outcomes.deinit(self.allocator);
         var dependencies: std.ArrayList(primitives.MethodSafetyContract.Dependency) = .empty;
         defer dependencies.deinit(self.allocator);
         var referents: std.ArrayList(primitives.MethodSafetyContract.Dependency) = .empty;
         defer referents.deinit(self.allocator);
+        var owned_outputs: std.ArrayList(u32) = .empty;
+        defer owned_outputs.deinit(self.allocator);
+        var transfers: std.ArrayList(primitives.MethodSafetyContract.Dependency) = .empty;
+        defer transfers.deinit(self.allocator);
         var invalidates: std.ArrayList(u32) = .empty;
         defer invalidates.deinit(self.allocator);
         var domain_dependencies: std.ArrayList(primitives.MethodSafetyContract.DomainDependency) = .empty;
@@ -334,17 +340,48 @@ pub const Context = struct {
         defer invalidated_domains.deinit(self.allocator);
         if (self.tree.codeBlock(node)) |block| {
             for (block.statements) |statement| {
+                if (self.tree.tag(statement) == .contract_outcome) {
+                    const data = self.tree.data(statement).token_and_node;
+                    var child = requirement;
+                    child.safety_contract = data.node;
+                    const effect = (try self.lowerMethodSafetyContract(child, domains)).?;
+                    if (effect.invalidates.len != 0 or effect.invalidated_domains.len != 0) {
+                        try self.contractError(statement, "outcome-specific storage transitions require checked conditional generation effects");
+                        unreachable;
+                    }
+                    if (effect.outcomes.len != 0 or effect.referents.len != 0 or effect.transfers.len != 0) {
+                        try self.contractError(statement, "nested outcomes, refers_to and transfers require more precise outcome proofs");
+                        unreachable;
+                    }
+                    if (effect.output_count != 1) {
+                        try self.contractError(statement, "outcome contracts require one choice-valued output");
+                        unreachable;
+                    }
+                    try outcomes.append(self.allocator, .{
+                        .variant = try self.writer.addString(self.tree.tokenTextFromSource(self.source, data.token)),
+                        .dependencies = effect.dependencies,
+                        .domain_dependencies = effect.domain_dependencies,
+                        .owned_outputs = effect.owned_outputs,
+                        .invalidates = effect.invalidates,
+                        .invalidated_domains = effect.invalidated_domains,
+                        .source = effect.source,
+                    });
+                    continue;
+                }
                 const clause = if (self.tree.tag(statement) == .expression_statement) self.tree.data(statement).node else statement;
-                try self.lowerDependencyClause(requirement, clause, &dependencies, &referents, &invalidates, domains, &domain_dependencies, &invalidated_domains);
+                try self.lowerDependencyClause(requirement, clause, &dependencies, &referents, &invalidates, domains, &domain_dependencies, &invalidated_domains, &owned_outputs, &transfers);
             }
-        } else try self.lowerDependencyClause(requirement, node, &dependencies, &referents, &invalidates, domains, &domain_dependencies, &invalidated_domains);
+        } else try self.lowerDependencyClause(requirement, node, &dependencies, &referents, &invalidates, domains, &domain_dependencies, &invalidated_domains, &owned_outputs, &transfers);
         return .{
+            .outcomes = try outcomes.toOwnedSlice(self.allocator),
             .output_count = @intCast(self.tree.structTypeLiteral(requirement.output).?.fields.len),
             .dependencies = try dependencies.toOwnedSlice(self.allocator),
             .referents = try referents.toOwnedSlice(self.allocator),
             .invalidates = try invalidates.toOwnedSlice(self.allocator),
             .domain_dependencies = try domain_dependencies.toOwnedSlice(self.allocator),
             .invalidated_domains = try invalidated_domains.toOwnedSlice(self.allocator),
+            .owned_outputs = try owned_outputs.toOwnedSlice(self.allocator),
+            .transfers = try transfers.toOwnedSlice(self.allocator),
             .source = self.sourceRef(node),
         };
     }
@@ -354,10 +391,33 @@ pub const Context = struct {
         return error.Reported;
     }
 
-    fn lowerDependencyClause(self: *Context, requirement: syn.AbstractFunctionRequirement, node: syn.NodeIndex, dependencies: *std.ArrayList(primitives.MethodSafetyContract.Dependency), referents: *std.ArrayList(primitives.MethodSafetyContract.Dependency), invalidates: *std.ArrayList(u32), domains: []const primitives.StringRange, domain_dependencies: *std.ArrayList(primitives.MethodSafetyContract.DomainDependency), invalidated_domains: *std.ArrayList(primitives.MethodSafetyContract.DomainInput)) !void {
-        const call = self.tree.functionCall(node) orelse return self.contractError(node, "expected depends_on, refers_to or invalidates in an Abstract safety contract");
+    fn lowerDependencyClause(self: *Context, requirement: syn.AbstractFunctionRequirement, node: syn.NodeIndex, dependencies: *std.ArrayList(primitives.MethodSafetyContract.Dependency), referents: *std.ArrayList(primitives.MethodSafetyContract.Dependency), invalidates: *std.ArrayList(u32), domains: []const primitives.StringRange, domain_dependencies: *std.ArrayList(primitives.MethodSafetyContract.DomainDependency), invalidated_domains: *std.ArrayList(primitives.MethodSafetyContract.DomainInput), owned_outputs: *std.ArrayList(u32), transfers: *std.ArrayList(primitives.MethodSafetyContract.Dependency)) !void {
+        const call = self.tree.functionCall(node) orelse return self.contractError(node, "expected depends_on, refers_to, owns, transfers or invalidates in an Abstract safety contract");
         const name = self.tree.tokenTextFromSource(self.source, call.callee_token);
         const is_referent = std.mem.eql(u8, name, "refers_to");
+        if ((std.mem.eql(u8, name, "owns") or std.mem.eql(u8, name, "transfers")) and call.module_qualifier == null and call.type_arguments.len == 0 and call.type_arguments_struct == null) {
+            const arguments = self.tree.structValueLiteral(call.input).?;
+            const owns = std.mem.eql(u8, name, "owns");
+            if (arguments.fields.len != (if (owns) @as(usize, 1) else 2)) return self.contractError(node, "owns requires one output; transfers requires one output and one input");
+            const output_field = self.tree.valueField(arguments.fields[0]).?;
+            if (output_field.name_token != null) return self.contractError(node, "safety contract arguments must be positional names");
+            const output_index = (try self.contractFieldIndex(requirement.output, output_field.value)) orelse return self.contractError(node, "ownership contracts must name a method output first");
+            if (owns) {
+                var found = false;
+                for (owned_outputs.items) |existing| if (existing == output_index) {
+                    found = true;
+                    break;
+                };
+                if (!found) try owned_outputs.append(self.allocator, output_index);
+            } else {
+                const input_field = self.tree.valueField(arguments.fields[1]).?;
+                if (input_field.name_token != null) return self.contractError(node, "safety contract arguments must be positional names");
+                const input_index = (try self.contractFieldIndex(requirement.input, input_field.value)) orelse return self.contractError(node, "transfers must name a method input");
+                try transfers.append(self.allocator, .{ .input_index = input_index, .output_index = output_index });
+            }
+            return;
+        }
+
         if (std.mem.eql(u8, name, "invalidates") and call.module_qualifier == null and call.type_arguments.len == 0 and call.type_arguments_struct == null) {
             const arguments = self.tree.structValueLiteral(call.input).?;
             if (arguments.fields.len == 0) return self.contractError(node, "invalidates requires one or more mutable reference inputs");
@@ -381,7 +441,7 @@ pub const Context = struct {
         }
         if (call.module_qualifier != null or call.type_arguments.len != 0 or call.type_arguments_struct != null or
             (!is_referent and !std.mem.eql(u8, name, "depends_on")))
-            return self.contractError(node, "expected depends_on, refers_to or invalidates in an Abstract safety contract");
+            return self.contractError(node, "expected depends_on, refers_to, owns, transfers or invalidates in an Abstract safety contract");
         const literal = self.tree.structValueLiteral(call.input).?;
         if (literal.fields.len < 2) return self.contractError(node, "depends_on requires an output followed by one or more inputs");
         if (is_referent and literal.fields.len != 2) return self.contractError(node, "refers_to requires exactly one output and one reference input");
@@ -396,10 +456,12 @@ pub const Context = struct {
                 try domain_dependencies.append(self.allocator, .{ .output_index = output_index, .input = input });
                 continue;
             }
-            const input_index = (try self.contractFieldIndex(requirement.input, field.value)) orelse
+            const input_index = (try self.contractInputIndex(requirement, field.value)) orelse
                 return self.contractError(field.value, "depends_on dependencies must name method inputs");
             const dependency = primitives.MethodSafetyContract.Dependency{ .output_index = output_index, .input_index = input_index };
             if (is_referent) {
+                if (input_index >= self.tree.structTypeLiteral(requirement.input).?.fields.len)
+                    return self.contractError(field.value, "refers_to requires an explicit reference input");
                 for (referents.items) |item| {
                     if (item.output_index == output_index and item.input_index != input_index)
                         return self.contractError(node, "an output cannot have conflicting refers_to inputs");
@@ -424,7 +486,7 @@ pub const Context = struct {
 
     fn contractDomainInput(self: *Context, requirement: syn.AbstractFunctionRequirement, node: syn.NodeIndex, domains: []const primitives.StringRange) !?primitives.MethodSafetyContract.DomainInput {
         const field = self.tree.structFieldAccess(node) orelse return null;
-        const input = (try self.contractFieldIndex(requirement.input, field.value)) orelse return self.contractDomainError(node, "storage domains must be rooted at a method input");
+        const input = (try self.contractInputIndex(requirement, field.value)) orelse return self.contractDomainError(node, "storage domains must be rooted at a method input");
         const name = self.tree.tokenTextFromSource(self.source, field.field_token);
         for (domains, 0..) |domain, index| {
             if (std.mem.eql(u8, self.graph.text(domain), name)) return .{ .input_index = input, .domain_index = @intCast(index) };
@@ -435,6 +497,26 @@ pub const Context = struct {
     fn contractDomainError(self: *Context, node: syn.NodeIndex, message: []const u8) !?primitives.MethodSafetyContract.DomainInput {
         try self.contractError(node, message);
         unreachable;
+    }
+
+    fn contractInputIndex(self: *Context, requirement: syn.AbstractFunctionRequirement, node: syn.NodeIndex) !?u32 {
+        if (try self.contractFieldIndex(requirement.input, node)) |index| return index;
+        const name = self.tree.tokenTextFromSource(self.source, self.tree.mainToken(node));
+        if (!std.mem.eql(u8, name, "error_tracer")) return null;
+        for (self.tree.structTypeLiteral(requirement.output).?.fields) |field_node| {
+            const field = self.tree.structTypeField(field_node).?;
+            const ty = self.tree.syntaxType(field.type_node orelse continue) orelse continue;
+            const fallible = switch (ty) {
+                .inferred_errable => true,
+                .generic => |generic| blk: {
+                    const base = self.tree.syntaxType(generic.base) orelse break :blk false;
+                    break :blk base == .name and std.mem.eql(u8, self.tree.tokenTextFromSource(self.source, base.name.name_token), "Errable");
+                },
+                else => false,
+            };
+            if (fallible) return @intCast(self.tree.structTypeLiteral(requirement.input).?.fields.len);
+        }
+        return null;
     }
 
     fn contractFieldIndex(self: *Context, signature: syn.NodeIndex, node: syn.NodeIndex) !?u32 {

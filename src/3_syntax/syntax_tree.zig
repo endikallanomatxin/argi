@@ -80,6 +80,7 @@ pub const Node = struct {
         abstract_defaultsto,
         abstract_function_requirement,
         abstract_domain,
+        contract_outcome,
         c_function_pointer_declaration,
         function_declaration,
         function_declaration_once,

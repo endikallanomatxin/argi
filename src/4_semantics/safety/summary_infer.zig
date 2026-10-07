@@ -137,13 +137,19 @@ pub const Infer = struct {
             // storage; dependency permissions alone never establish aliases.
             const contract = try @import("contracts.zig").fromDeclaration(self.allocator, declared);
             const outputs = try self.allocator.alloc(facts.ValueEffect, contract.outputs.len);
-            for (contract.outputs, outputs) |allowed, *output| {
-                const dependencies = try self.allocator.alloc(facts.InputDependency, allowed.dependencies.len);
-                for (allowed.dependencies, dependencies) |path, *dependency| dependency.* = .{
-                    .path = path,
-                    .validity_only = if (allowed.referent) |referent| path.input_index != referent.input_index else true,
-                };
-                output.* = .{ .input_dependencies = dependencies, .input_domains = allowed.domains, .explicit_dependency = dependencies.len != 0 or allowed.domains.len != 0 };
+            for (contract.outputs, outputs, 0..) |allowed, *output, index| {
+                if (registry.contract_output_type) |ty| {
+                    const fields = types.fields(self.graph, ty) orelse return error.InvalidContractOutput;
+                    const field = self.graph.fields.items[fields.start + index];
+                    output.* = try @import("contract_outputs.zig").build(self.allocator, self.graph, field.ty, allowed, @as(usize, @truncate(std.hash.Wyhash.hash(@intFromEnum(registry_id), std.mem.asBytes(&index)))));
+                } else {
+                    const dependencies = try self.allocator.alloc(facts.InputDependency, allowed.dependencies.len);
+                    for (allowed.dependencies, dependencies) |path, *dependency| dependency.* = .{
+                        .path = path,
+                        .validity_only = if (allowed.referent) |referent| path.input_index != referent.input_index else true,
+                    };
+                    output.* = .{ .input_dependencies = dependencies, .input_domains = allowed.domains, .explicit_dependency = dependencies.len != 0 or allowed.domains.len != 0 };
+                }
             }
             const required = try self.allocator.alloc(facts.InputPath, input_count);
             for (required, 0..) |*path, index| path.* = .{ .input_index = @intCast(index) };

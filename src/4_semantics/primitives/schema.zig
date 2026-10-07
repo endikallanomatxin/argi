@@ -200,11 +200,24 @@ pub const MethodSafetyContract = struct {
     invalidates: []const u32 = &.{},
     domain_dependencies: []const DomainDependency = &.{},
     invalidated_domains: []const DomainInput = &.{},
+    owned_outputs: []const u32 = &.{},
+    transfers: []const Dependency = &.{},
+    outcomes: []const Outcome = &.{},
     source: SourceRef,
 
     pub const Dependency = struct { output_index: u32, input_index: u32 };
     pub const DomainInput = struct { input_index: u32, domain_index: u32 };
     pub const DomainDependency = struct { output_index: u32, input: DomainInput };
+    pub const Outcome = struct {
+        variant: StringRange,
+        variant_index: ?u32 = null,
+        dependencies: []const Dependency = &.{},
+        domain_dependencies: []const DomainDependency = &.{},
+        owned_outputs: []const u32 = &.{},
+        invalidates: []const u32 = &.{},
+        invalidated_domains: []const DomainInput = &.{},
+        source: SourceRef,
+    };
 };
 
 pub const StorageDomainMapping = struct {
@@ -413,6 +426,7 @@ pub fn VirtualMethodRegistry(comptime Ids: type) type {
         /// Scalar outputs and declared input referents need no concrete receiver
         /// layout. Their call summaries are generated without concrete bodies.
         contract_input_count: ?u32 = null,
+        contract_output_type: ?Ids.TypeId = null,
     };
 }
 

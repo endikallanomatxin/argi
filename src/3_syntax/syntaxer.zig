@@ -507,7 +507,7 @@ pub const Syntaxer = struct {
                 const safety_contract: ?syn.NodeIndex = if (self.currentIdentifierEquals("where")) blk: {
                     self.advanceOne();
                     self.skipNewLinesAndComments();
-                    break :blk if (self.tokenIs(.open_brace)) try self.parseCodeBlock() else try self.parseExpression();
+                    break :blk if (self.tokenIs(.open_brace)) try self.parseSafetyContract() else try self.parseExpression();
                 } else null;
                 const empty = try self.addNodeRange(&.{});
                 const extra = try self.addExtra(syn.FunctionExtra{
@@ -556,6 +556,36 @@ pub const Syntaxer = struct {
             .req_funcs = try self.addNodeRange(self.scratch.items[funcs_start..domains_start]),
             .domains = try self.addNodeRange(self.scratch.items[domains_start..]),
         };
+    }
+
+    fn parseSafetyContract(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
+        const open: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
+        if (!self.tokenIs(.open_brace)) return SyntaxerError.ExpectedLeftBrace;
+        self.advanceOne();
+        self.skipNewLinesAndComments();
+        const scratch_top = self.scratch.items.len;
+        defer self.scratch.shrinkRetainingCapacity(scratch_top);
+        while (!self.tokenIs(.close_brace)) {
+            if (self.currentIdentifierEquals("on")) {
+                const start: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
+                self.advanceOne();
+                if (!self.tokenIs(.double_dot)) return SyntaxerError.ExpectedIdentifier;
+                self.advanceOne();
+                const variant = try self.parseName();
+                self.skipNewLinesAndComments();
+                const body = try self.parseSafetyContract();
+                try self.scratch.append(self.allocator, try self.addNode(.contract_outcome, start, .{ .token_and_node = .{ .token = variant.token, .node = body } }));
+            } else {
+                try self.scratch.append(self.allocator, try self.parseExpression());
+            }
+            self.skipNewLinesAndComments();
+            if (self.tokenIs(.comma)) {
+                self.advanceOne();
+                self.skipNewLinesAndComments();
+            }
+        }
+        self.advanceOne();
+        return try self.addNode(.code_block, open, .{ .extra_range = try self.addNodeRange(self.scratch.items[scratch_top..]) });
     }
 
     fn parseListLiteral(self: *Syntaxer) SyntaxerError!syn.NodeIndex {

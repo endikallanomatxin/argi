@@ -32,18 +32,15 @@ permissions and ownership transfers are separate obligations.
 - Extend mapped domain effects to owned and opaque storage transitions.
   Broad dependency permissions must not become permission to transfer
   ownership, replace generations or manufacture safe references.
-- Extend contract-generated virtual call summaries to reference and owner results.
-  Scalar, no-result and exact input-reference forwarding contracts already have
-  independent call summaries. Extend must-alias proofs beyond direct forwarding
-  bodies before admitting control flow or intermediate calls in `refers_to`.
-  Conservatively summarize permitted dependencies while preserving output
-  structure and actual storage
-  identities. Do not represent every returned pointer as the receiver address.
+- Extend must-alias and ownership transfer proofs beyond direct forwarding
+  bodies before admitting control flow or intermediate calls in `refers_to` and
+  `transfers`. Preserve actual storage identities; do not represent every returned
+  pointer as the receiver address.
 - Extend declaration checking to static abstract implementation selection and to
   the new effect clauses, retaining diagnostics for implicit error-tracer inputs.
-- Describe and migrate Allocator, Deallocator, Reader, Writer and ErrorTracer.
-  Keep the existing dispatch checker active until their complete obligations can
-  be expressed; do not silently weaken checks during migration.
+- Complete opaque storage and conditional generation obligations for the core
+  protocols. Allocator, Deallocator, Reader, Writer and ErrorTracer now declare
+  their output contracts; keep unsupported effects rejected during migration.
 - Extend independence and conformance fixtures to nested owners, opaque storage,
   error outcomes and aliased inputs as their contract representation becomes
   available.

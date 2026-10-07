@@ -247,20 +247,7 @@ pub const SafetyChecker = struct {
                 const registry = self.graph.virtual_registries.items[@intFromEnum(registry_id)];
                 const declared = registry.safety_contract orelse continue;
                 var contract = try contracts.fromDeclaration(self.allocator, declared);
-                for (declared.domain_dependencies) |dependency| {
-                    const outputs = @constCast(contract.outputs);
-                    var paths: std.ArrayList(facts.InputPath) = .empty;
-                    try paths.appendSlice(self.allocator, outputs[dependency.output_index].dependencies);
-                    for (virtualize.domains) |mapping| {
-                        if (mapping.domain_index != dependency.input.domain_index) continue;
-                        for (mapping.paths) |path| {
-                            const projections = try self.allocator.alloc(facts.Projection, path.fields.len);
-                            for (path.fields, projections) |field, *projection| projection.* = .{ .field = field };
-                            try paths.append(self.allocator, .{ .input_index = dependency.input.input_index, .projections = projections });
-                        }
-                    }
-                    outputs[dependency.output_index].dependencies = try paths.toOwnedSlice(self.allocator);
-                }
+                for (@constCast(contract.outputs)) |*output| try self.resolveContractDomains(output, virtualize);
                 var invalidates: std.ArrayList(facts.InputPath) = .empty;
                 try invalidates.appendSlice(self.allocator, contract.invalidates);
                 for (declared.invalidated_domains) |domain| for (virtualize.domains) |mapping| {
@@ -278,6 +265,10 @@ pub const SafetyChecker = struct {
                     if (!self.provesDirectContractReferent(function, referent)) {
                         try self.report(virtualize.source, "method '{s}' cannot prove refers_to: the implementation must directly forward the declared reference input", .{self.graph.text(self.graph.declaration(function.declaration).name)});
                     }
+                }
+                for (declared.transfers) |transfer| {
+                    if (!self.provesDirectContractTransfer(function, transfer))
+                        try self.report(virtualize.source, "method '{s}' cannot prove transfers: directly move the declared input to the output", .{self.graph.text(self.graph.declaration(function.declaration).name)});
                 }
                 var summary = (try inference.contractImplementationSummary(method, registry.receiver_input_index)) orelse {
                     try self.report(virtualize.source, "cannot verify Abstract safety contract for this implementation", .{});
@@ -319,6 +310,48 @@ pub const SafetyChecker = struct {
                 }
             }
         }
+    }
+
+    fn resolveContractDomains(self: *SafetyChecker, output: *@import("contracts.zig").Output, virtualize: graph_mod.Virtualize) anyerror!void {
+        var paths: std.ArrayList(facts.InputPath) = .empty;
+        try paths.appendSlice(self.allocator, output.dependencies);
+        for (output.domains) |domain| for (virtualize.domains) |mapping| {
+            if (mapping.domain_index != domain.domain_index) continue;
+            for (mapping.paths) |path| {
+                const projections = try self.allocator.alloc(facts.Projection, path.fields.len);
+                for (path.fields, projections) |field, *projection| projection.* = .{ .field = field };
+                try paths.append(self.allocator, .{ .input_index = domain.path.input_index, .projections = projections });
+            }
+        };
+        output.dependencies = try paths.toOwnedSlice(self.allocator);
+        for (output.outcomes) |outcome| try self.resolveContractDomains(@constCast(outcome.value), virtualize);
+    }
+
+    fn provesDirectContractTransfer(self: *SafetyChecker, function: graph_mod.Function, transfer: primitives.MethodSafetyContract.Dependency) bool {
+        const block = self.graph.blocks.items[@intFromEnum(function.body orelse return false)];
+        if (transfer.input_index >= function.input_bindings.len or transfer.output_index >= function.output_bindings.len) return false;
+        const input = self.graph.binding_refs.items[function.input_bindings.start + transfer.input_index];
+        const output = self.graph.binding_refs.items[function.output_bindings.start + transfer.output_index];
+        var assigned = false;
+        for (self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len]) |id| {
+            switch (self.graph.node(id).content) {
+                .assignment => |assignment| {
+                    if (assignment.binding != output) return false;
+                    const expression = self.graph.node(assignment.value).content;
+                    if (expression != .move_value) return false;
+                    const moved = self.graph.node(expression.move_value).content;
+                    if (moved != .binding_use or moved.binding_use != input) return false;
+                    assigned = true;
+                },
+                .auto_deinit_binding => {},
+                .return_statement => |ret| {
+                    if (ret.expression != null) return false;
+                    return assigned;
+                },
+                else => return false,
+            }
+        }
+        return assigned;
     }
 
     fn provesDirectContractReferent(self: *SafetyChecker, function: graph_mod.Function, referent: primitives.MethodSafetyContract.Dependency) bool {
@@ -732,8 +765,8 @@ pub const SafetyChecker = struct {
                 try self.requirePlaceInitialized(function, node.source, storage, place.initializedness, state);
                 try self.requireDescendantsInitialized(function, node.source, storage, state);
                 const value = try self.reconstructPlaceValue(state, storage, place.value);
-                if (valueHasDeadExplicitDependency(value, state))
-                    try self.report(node.source, "value depends on a root that has ended", .{});
+                if (valueHasDeadExplicitDependencyForUse(value, state, isPointer(self.graph, self.graph.binding(binding).ty)))
+                    try self.report(node.source, "{s} depends on a root that has ended", .{if (isPointer(self.graph, self.graph.binding(binding).ty)) "reference" else "value"});
                 break :blk value;
             },
             .move_value => |child| blk: {
@@ -2172,10 +2205,19 @@ pub const SafetyChecker = struct {
                 referenced_place = if (!has_referent or (referenced_place != null and referenced_place.?.eql(place))) place else null;
                 has_referent = true;
             };
-            if (dependency.validity_only) input = .{
-                .explicit_dependency = input.explicit_dependency,
-                .dependencies = input.dependencies,
-            };
+            if (dependency.validity_only) {
+                var borrowed = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
+                try borrowed.appendSlice(input.dependencies);
+                if (input.referenced_place) |storage| if (self.valueAtPlace(state, storage)) |stored| {
+                    var roots = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+                    defer roots.deinit();
+                    const contents = try self.reconstructPlaceValue(state, storage, stored);
+                    try collectDependencyRoots(contents, &roots);
+                    try collectOwnedRoots(contents, &roots);
+                    for (roots.items) |root| try appendDependencyFact(&borrowed, .{ .root = root });
+                };
+                input = .{ .explicit_dependency = input.explicit_dependency, .dependencies = try borrowed.toOwnedSlice() };
+            }
             result = try self.mergeValueFacts(result, input);
         }
         for (effect.input_place_values) |path| {
@@ -4927,7 +4969,23 @@ fn valueHasDependency(value: facts.ValueFacts) bool {
 }
 
 fn valueHasDeadExplicitDependency(value: facts.ValueFacts, state: *const SafetyChecker.FunctionState) bool {
-    if (value.explicit_dependency and !state.tracker.dependenciesAreAlive(value)) return true;
+    return valueHasDeadExplicitDependencyForUse(value, state, false);
+}
+
+fn valueHasDeadExplicitDependencyForUse(value: facts.ValueFacts, state: *const SafetyChecker.FunctionState, pointer_identity: bool) bool {
+    if (value.explicit_dependency) for (value.dependencies) |dependency| {
+        const root = state.tracker.roots.items[@intFromEnum(dependency.root)];
+        if (root.state == .alive) continue;
+        // Copying pointer bits does not access the resource. Dereference and
+        // call preconditions check the complete loan before using it, while
+        // non-resource anchors remain obligations of this value itself.
+        if (pointer_identity and root.owned_resource) continue;
+        // A choice can carry an owner that exists only on its success branch.
+        // Inspecting the choice does not use that resource before narrowing.
+        // External loans have no ownership envelope and remain checked.
+        if (root.owned_resource and (root.state == .conditional or root.state == .maybe_alive) and valueContainsOwnedRoot(value, dependency.root)) continue;
+        return true;
+    };
     for (value.fields) |field| if (valueHasDeadExplicitDependency(field.value.*, state)) return true;
     for (value.variants) |variant| if (valueHasDeadExplicitDependency(variant.value.*, state)) return true;
     return false;
@@ -5648,6 +5706,26 @@ test "local storage generations survive scope cleanup for escape checks" {
     const nested = facts.ValueFacts{ .dependencies = &.{.{ .root = local_root }} };
     const aggregate = facts.ValueFacts{ .fields = &.{.{ .index = 0, .value = &nested }} };
     try std.testing.expect(checker.valueDependsOnLocalStorage(@enumFromInt(0), aggregate, &state));
+}
+
+test "conditional owner choices preserve explicit validity without admitting expired loans" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var state = SafetyChecker.FunctionState.init(arena.allocator());
+    defer state.deinit();
+    const root = try state.tracker.establish(.fresh);
+    state.tracker.roots.items[@intFromEnum(root)].owned_resource = true;
+    state.tracker.roots.items[@intFromEnum(root)].state = .conditional;
+    const owner = facts.ValueFacts{ .owned_roots = &.{root}, .dependencies = &.{.{ .root = root }}, .explicit_dependency = true };
+    const choice = facts.ValueFacts{ .variants = &.{.{ .index = 0, .value = &owner }} };
+    try std.testing.expect(!valueHasDeadExplicitDependency(choice, &state));
+    const loan = facts.ValueFacts{ .dependencies = owner.dependencies, .explicit_dependency = true };
+    try std.testing.expect(valueHasDeadExplicitDependency(loan, &state));
+    state.tracker.end(root);
+    try std.testing.expect(valueHasDeadExplicitDependency(choice, &state));
+    try std.testing.expect(!valueHasDeadExplicitDependencyForUse(loan, &state, true));
+    state.tracker.roots.items[@intFromEnum(root)].owned_resource = false;
+    try std.testing.expect(valueHasDeadExplicitDependencyForUse(loan, &state, true));
 }
 
 test "dead root output detection traverses choice payloads" {

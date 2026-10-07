@@ -397,12 +397,20 @@ fn appendBodyTables(allocator: std.mem.Allocator, result: *global_sg.GlobalSeman
     for (storage.virtual_registries.items) |value| try result.virtual_registries.append(allocator, .{
         .implementations = relocatePoolRange(global_sg.GlobalFunctionId, o.function_ref_base, value.implementations),
         .receiver_input_index = value.receiver_input_index,
+        .contract_input_count = value.contract_input_count,
+        .contract_output_type = if (value.contract_output_type) |ty| globalType(o, ty) else null,
+        .safety_contract = if (value.safety_contract) |contract| blk: {
+            var result_contract = contract;
+            result_contract.source = globalSource(o, contract.source);
+            break :blk result_contract;
+        } else null,
     });
     for (storage.virtualizes.items) |value| try result.virtualizes.append(allocator, .{
         .value = globalNode(o, value.value),
         .concrete_type = globalType(o, value.concrete_type),
         .abstract_decl = globalDecl(o, value.abstract_decl),
         .virtual_type = globalType(o, value.virtual_type),
+        .domains = value.domains,
         .methods = relocatePoolRange(global_sg.GlobalFunctionId, o.function_ref_base, value.methods),
         .safety_methods = relocatePoolRange(global_sg.GlobalVirtualRegistryId, o.virtual_registry_ref_base, value.safety_methods),
         .source = globalSource(o, value.source),

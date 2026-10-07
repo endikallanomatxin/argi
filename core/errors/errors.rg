@@ -23,11 +23,14 @@ source_location(.id: SourceLocationId) -> (.location: SourceLocation) := {
 }
 
 ErrorTracer: Abstract = (
-    add_context(.self: $&Self, .location: SourceLocationId, .context: StringView) -> ()
-    reset_context(.self: $&Self) -> ()
+    add_context(.self: $&Self, .location: SourceLocationId, .context: StringView) -> () where {}
+    reset_context(.self: $&Self) -> () where {}
     report(.self: $&Self, .writer: $&Virtual#(.abstract: Writer)) -> (
         .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-    )
+    ) where {
+        on ..ok {}
+        on ..error { depends_on(result, error_tracer) }
+    }
 )
 
 -- The virtual wrapper and its receiver both have program lifetime.

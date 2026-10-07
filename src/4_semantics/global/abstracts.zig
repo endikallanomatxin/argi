@@ -1176,6 +1176,52 @@ pub const Resolver = struct {
                         reason = "Self cannot appear in a virtual method result; return a known type or an explicit virtual handle";
                 }
                 if (reason == null) if (requirement.safety_contract) |contract| {
+                    if (contract.outcomes.len != 0) {
+                        if (outputs.len != 1 or global_types.variants(self.graph, self.graph.fields.items[outputs.start].ty) == null) {
+                            reason = "outcome contracts require one choice-valued output";
+                        } else {
+                            const output_ty = self.graph.fields.items[outputs.start].ty;
+                            for (contract.outcomes, 0..) |outcome, outcome_index| {
+                                const outcome_name = module.text(outcome.variant);
+                                if (global_types.findVariant(self.graph, output_ty, outcome_name) == null) {
+                                    reason = "outcome contract names an unknown output variant";
+                                    break;
+                                }
+                                for (contract.outcomes[0..outcome_index]) |previous| if (std.mem.eql(u8, module.text(previous.variant), outcome_name)) {
+                                    reason = "duplicate outcome contract";
+                                    break;
+                                };
+                                for (outcome.dependencies) |dependency| {
+                                    if (dependency.input_index >= inputs.len and !(dependency.input_index == inputs.len and self.fallibleOutput(instance.output))) {
+                                        reason = "error_tracer is only implicit for fallible Abstract methods";
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    for (contract.dependencies) |dependency| {
+                        if (dependency.input_index >= inputs.len and !(dependency.input_index == inputs.len and self.fallibleOutput(instance.output))) {
+                            reason = "error_tracer is only implicit for fallible Abstract methods";
+                            break;
+                        }
+                    }
+                    for (contract.transfers) |transfer| {
+                        const input_ty = self.graph.semanticType(self.graph.fields.items[inputs.start + transfer.input_index].ty);
+                        if (input_ty == .pointer) {
+                            reason = "transfers requires a by-value owning input; references do not transfer ownership";
+                            break;
+                        }
+                        if (!global_types.equal(self.graph, self.graph.fields.items[inputs.start + transfer.input_index].ty, self.graph.fields.items[outputs.start + transfer.output_index].ty)) {
+                            reason = "transfers requires matching input and output value types";
+                            break;
+                        }
+                        for (contract.owned_outputs) |owned| if (owned == transfer.output_index) {
+                            reason = "fresh and transferred ownership require separate outcome contracts";
+                            break;
+                        };
+                    }
+
                     for (contract.domain_dependencies) |dependency| {
                         if (dependency.input.domain_index >= located.definition.domains.len) {
                             reason = "unknown Abstract storage domain";
@@ -2071,6 +2117,27 @@ pub const Resolver = struct {
         if (requirement.safety_contract) |declared| {
             var contract = declared;
             contract.source = self.sourceFor(located.module_index, contract.source);
+            if (declared.outcomes.len != 0) {
+                const instance = (try self.requirementInstanceForAbstractUse(use, abstract_ty, located, requirement, @intCast(method_index))) orelse return error.InvalidAbstractRequirement;
+                const fields = global_types.fields(self.graph, instance.output) orelse return error.InvalidAbstractRequirementOutput;
+                const output_ty = self.graph.fields.items[fields.start].ty;
+                const variants = global_types.variants(self.graph, output_ty) orelse return error.InvalidOutcomeContract;
+                const outcomes = try self.allocator.dupe(primitives.MethodSafetyContract.Outcome, declared.outcomes);
+                for (outcomes, 0..) |*outcome, index| {
+                    const name = self.modules[located.module_index].text(outcome.variant);
+                    var matched = false;
+                    for (self.graph.variants.items[variants.start..][0..variants.len], 0..) |variant, variant_index| if (std.mem.eql(u8, self.graph.text(variant.name), name)) {
+                        outcome.variant_index = @intCast(variant_index);
+                        outcome.variant = variant.name;
+                        matched = true;
+                        break;
+                    };
+                    if (!matched) return error.UnknownOutcomeContractVariant;
+                    for (outcomes[0..index]) |previous| if (previous.variant_index == outcome.variant_index) return error.DuplicateOutcomeContract;
+                    outcome.source = self.sourceFor(located.module_index, outcome.source);
+                }
+                contract.outcomes = outcomes;
+            }
             self.graph.virtual_registries.items[@intFromEnum(registry_id)].safety_contract = contract;
         }
         var implementations: std.ArrayList(global_sg.GlobalFunctionId) = .empty;
@@ -2094,38 +2161,12 @@ pub const Resolver = struct {
             .start = start,
             .len = @intCast(implementations.items.len),
         };
-        if (requirement.safety_contract != null and implementations.items.len != 0) {
-            const function = self.graph.function(implementations.items[0]);
-            var described_outputs = true;
-            for (self.graph.fields.items[function.output.start..][0..function.output.len], 0..) |field, output_index| {
-                const ty = self.graph.semanticType(field.ty);
-                if (ty == .pointer) {
-                    var has_referent = false;
-                    for (requirement.safety_contract.?.referents) |referent| if (referent.output_index == output_index) {
-                        has_referent = true;
-                        break;
-                    };
-                    if (has_referent) continue;
-                    var has_domain = false;
-                    for (requirement.safety_contract.?.domain_dependencies) |dependency| if (dependency.output_index == output_index) {
-                        has_domain = true;
-                        break;
-                    };
-                    if (has_domain) continue;
-                }
-                if (ty != .builtin) {
-                    described_outputs = false;
-                    break;
-                }
-                switch (ty.builtin) {
-                    .Int8, .Int16, .Int32, .Int64, .UIntNative, .UInt8, .UInt16, .UInt32, .UInt64, .Float16, .Float32, .Float64, .Char, .Bool, .Void => {},
-                    else => {
-                        described_outputs = false;
-                        break;
-                    },
-                }
-            }
-            if (described_outputs) self.graph.virtual_registries.items[@intFromEnum(registry_id)].contract_input_count = function.input.len;
+        if (requirement.safety_contract != null) {
+            const instance = (try self.requirementInstanceForAbstractUse(use, abstract_ty, located, requirement, @intCast(method_index))) orelse return error.InvalidAbstractRequirement;
+            const input = try self.virtualInputType(instance.input, instance.output);
+            const fields = global_types.fields(self.graph, input) orelse return error.InvalidAbstractRequirementInput;
+            self.graph.virtual_registries.items[@intFromEnum(registry_id)].contract_input_count = fields.len;
+            self.graph.virtual_registries.items[@intFromEnum(registry_id)].contract_output_type = instance.output;
         }
     }
 

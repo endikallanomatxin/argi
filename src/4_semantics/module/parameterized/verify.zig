@@ -59,6 +59,25 @@ pub fn verifyParameterizedForms(graph: *const graph_mod.ModuleSemanticGraph) !vo
             try require(input == .resolved and input.resolved == .structural);
             try require(output == .resolved and output.resolved == .structural);
             try require(contract.output_count == output.resolved.structural.fields.len);
+            for (contract.owned_outputs) |index| try require(index < contract.output_count);
+            for (contract.outcomes) |outcome| {
+                try require(contract.output_count == 1);
+                try require(verify.stringFits(outcome.variant, graph.strings.items));
+                try require(verify.sourceFits(outcome.source, graph.file_offsets.items.len));
+                for (outcome.dependencies) |dependency| {
+                    try require(dependency.output_index == 0);
+                    try require(dependency.input_index <= input.resolved.structural.fields.len);
+                }
+                for (outcome.domain_dependencies) |dependency| {
+                    try require(dependency.output_index == 0);
+                    try require(dependency.input.input_index < input.resolved.structural.fields.len);
+                }
+                for (outcome.owned_outputs) |index| try require(index == 0);
+            }
+            for (contract.transfers) |transfer| {
+                try require(transfer.output_index < contract.output_count);
+                try require(transfer.input_index < input.resolved.structural.fields.len);
+            }
             for (contract.invalidates) |index| try require(index < input.resolved.structural.fields.len);
             for (contract.domain_dependencies) |dependency| {
                 try require(dependency.output_index < contract.output_count);
@@ -67,7 +86,7 @@ pub fn verifyParameterizedForms(graph: *const graph_mod.ModuleSemanticGraph) !vo
             for (contract.invalidated_domains) |domain| try require(domain.input_index < input.resolved.structural.fields.len);
             for (contract.dependencies) |dependency| {
                 try require(dependency.output_index < contract.output_count);
-                try require(dependency.input_index < input.resolved.structural.fields.len);
+                try require(dependency.input_index <= input.resolved.structural.fields.len);
             }
             for (contract.referents, 0..) |referent, index| {
                 try require(referent.output_index < contract.output_count);
@@ -91,6 +110,7 @@ pub fn verifyParameterizedForms(graph: *const graph_mod.ModuleSemanticGraph) !vo
         for (storage.abstract_requirements.items[definition.requirements.start..][0..definition.requirements.len]) |requirement| if (requirement.safety_contract) |contract| {
             for (contract.domain_dependencies) |dependency| try require(dependency.input.domain_index < definition.domains.len);
             for (contract.invalidated_domains) |domain| try require(domain.domain_index < definition.domains.len);
+            for (contract.outcomes) |outcome| for (outcome.domain_dependencies) |dependency| try require(dependency.input.domain_index < definition.domains.len);
         };
     }
 

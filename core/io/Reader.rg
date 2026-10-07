@@ -1,5 +1,8 @@
 Reader: Abstract = (
-    read_byte(.self: $&Self) -> (.result: Errable#(ReadByte, (..stream_read_failed)))
+    read_byte(.self: $&Self) -> (.result: Errable#(ReadByte, (..stream_read_failed))) where {
+        on ..ok {}
+        on ..error { depends_on(result, error_tracer) }
+    }
 )
 
 read(
