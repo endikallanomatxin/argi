@@ -23,6 +23,16 @@ permissions and ownership transfers are separate obligations.
 
 ## Remaining work
 
+- Represent conditional call effects as output selectors and complete effect
+  sets, independently of payload provenance. Infer per-return effects and retain
+  their correlation through result bindings, moves and projections. Refine
+  caller states when a selected result variant is known; unresolved outcomes
+  must remain conservative without reviving expired roots. This affects global
+  semantizing and safety, not tokenizing or codegen representation.
+- Extend `on output ..variant` to effects on other outputs and nested selectors.
+  Use shared effect records rather than eagerly enumerating a Cartesian product
+  of output variants. Distinguish effect permissions from required guarantees;
+  common clauses apply to all outcomes and conditional clauses add obligations.
 - Extend compatibility checking with allowed dependency storage,
   initialization/consumption and outcome-specific storage guarantees.
   Source-level `invalidates` covers scalar reference inputs on no-result methods

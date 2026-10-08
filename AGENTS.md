@@ -272,6 +272,12 @@ feature first.
   not the local slot holding a virtual handle. Summary place paths distinguish
   a reference-valued field's slot from its pointee with explicit dereference
   projections; writing through the reference must preserve the field's facts.
+  Outcome contracts select a named output and variant, not the first result.
+  Keep that output index through syntax-free IR, relocation, cached snapshots,
+  conformance and summary equality. Common clauses apply to every outcome;
+  an empty `on` block does not erase their permissions. Cross-output or
+  input-state conditions require correlated call-result facts before they can
+  be accepted; payload provenance alone cannot represent those obligations.
 
 - Moving `for ~ item in collection` loops consume through `OwningIterable`.
   Global semantizing wraps the iterator declaration and loop in one lexical

@@ -1193,28 +1193,17 @@ pub const Resolver = struct {
 
     fn methodSafetyContractFailure(self: *Resolver, inputs: global_sg.FieldRange, outputs: global_sg.FieldRange, output_type: global_sg.GlobalTypeId, abstract_ty: global_sg.GlobalTypeId, located: LocatedAbstractDefinition, contract: primitives.MethodSafetyContract, erased_self: bool) !?[]const u8 {
         var reason: ?[]const u8 = null;
-        if (contract.outcomes.len != 0) {
-            if (outputs.len != 1 or global_types.variants(self.graph, self.graph.fields.items[outputs.start].ty) == null) {
-                reason = "outcome contracts require one choice-valued output";
-            } else {
-                const output_ty = self.graph.fields.items[outputs.start].ty;
-                for (contract.outcomes, 0..) |outcome, outcome_index| {
-                    const outcome_name = self.modules[located.module_index].text(outcome.variant);
-                    if (global_types.findVariant(self.graph, output_ty, outcome_name) == null) {
-                        reason = "outcome contract names an unknown output variant";
-                        break;
-                    }
-                    for (contract.outcomes[0..outcome_index]) |previous| if (std.mem.eql(u8, self.modules[located.module_index].text(previous.variant), outcome_name)) {
-                        reason = "duplicate outcome contract";
-                        break;
-                    };
-                    for (outcome.dependencies) |dependency| {
-                        if (dependency.input_index >= inputs.len and !(dependency.input_index == inputs.len and self.fallibleOutput(output_type))) {
-                            reason = "error_tracer is only implicit for fallible Abstract methods";
-                            break;
-                        }
-                    }
-                }
+        for (contract.outcomes, 0..) |outcome, outcome_index| {
+            if (outcome.output_index >= outputs.len) return "outcome contract names an unknown output";
+            const output_ty = self.graph.fields.items[outputs.start + outcome.output_index].ty;
+            if (global_types.variants(self.graph, output_ty) == null) return "on requires a choice-valued output";
+            const outcome_name = self.modules[located.module_index].text(outcome.variant);
+            if (global_types.findVariant(self.graph, output_ty, outcome_name) == null) return "outcome contract names an unknown output variant";
+            for (contract.outcomes[0..outcome_index]) |previous| {
+                if (previous.output_index == outcome.output_index and std.mem.eql(u8, self.modules[located.module_index].text(previous.variant), outcome_name)) return "duplicate outcome contract";
+            }
+            for (outcome.dependencies) |dependency| {
+                if (dependency.input_index >= inputs.len and !(dependency.input_index == inputs.len and self.fallibleOutput(output_type))) return "error_tracer is only implicit for fallible Abstract methods";
             }
         }
         for (contract.dependencies) |dependency| {
@@ -2214,10 +2203,11 @@ pub const Resolver = struct {
         contract.source = self.sourceFor(module_index, contract.source);
         if (declared.outcomes.len != 0) {
             const fields = global_types.fields(self.graph, output_type) orelse return error.InvalidAbstractRequirementOutput;
-            const output_ty = self.graph.fields.items[fields.start].ty;
-            const variants = global_types.variants(self.graph, output_ty) orelse return error.InvalidOutcomeContract;
             const outcomes = try self.allocator.dupe(primitives.MethodSafetyContract.Outcome, declared.outcomes);
             for (outcomes, 0..) |*outcome, index| {
+                if (outcome.output_index >= fields.len) return error.InvalidOutcomeContract;
+                const output_ty = self.graph.fields.items[fields.start + outcome.output_index].ty;
+                const variants = global_types.variants(self.graph, output_ty) orelse return error.InvalidOutcomeContract;
                 const name = self.modules[module_index].text(outcome.variant);
                 var matched = false;
                 for (self.graph.variants.items[variants.start..][0..variants.len], 0..) |variant, variant_index| if (std.mem.eql(u8, self.graph.text(variant.name), name)) {
@@ -2227,7 +2217,7 @@ pub const Resolver = struct {
                     break;
                 };
                 if (!matched) return error.UnknownOutcomeContractVariant;
-                for (outcomes[0..index]) |previous| if (previous.variant_index == outcome.variant_index) return error.DuplicateOutcomeContract;
+                for (outcomes[0..index]) |previous| if (previous.output_index == outcome.output_index and previous.variant_index == outcome.variant_index) return error.DuplicateOutcomeContract;
                 outcome.source = self.sourceFor(module_index, outcome.source);
             }
             contract.outcomes = outcomes;
@@ -2252,7 +2242,7 @@ pub const Resolver = struct {
                     .reason = switch (err) {
                         error.UnknownOutcomeContractVariant => "outcome contract names an unknown output variant",
                         error.DuplicateOutcomeContract => "duplicate outcome contract",
-                        else => "outcome contracts require one choice-valued output",
+                        else => "on requires a choice-valued output",
                     },
                 };
                 return;

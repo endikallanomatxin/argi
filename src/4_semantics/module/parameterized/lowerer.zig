@@ -341,9 +341,19 @@ pub const Context = struct {
         if (self.tree.codeBlock(node)) |block| {
             for (block.statements) |statement| {
                 if (self.tree.tag(statement) == .contract_outcome) {
-                    const data = self.tree.data(statement).token_and_node;
+                    const data = self.tree.extraData(syn.ContractOutcomeExtra, self.tree.data(statement).extra);
+                    const output_name = self.tree.tokenTextFromSource(self.source, data.output);
+                    var output_index: ?u32 = null;
+                    for (self.tree.structTypeLiteral(requirement.output).?.fields, 0..) |field_node, index| {
+                        const field = self.tree.structTypeField(field_node).?;
+                        if (std.mem.eql(u8, output_name, self.tree.tokenTextFromSource(self.source, field.name_token))) output_index = @intCast(index);
+                    }
+                    if (output_index == null) {
+                        try self.contractError(statement, "on must select a named method output");
+                        unreachable;
+                    }
                     var child = requirement;
-                    child.safety_contract = data.node;
+                    child.safety_contract = data.body;
                     const effect = (try self.lowerMethodSafetyContract(child, domains)).?;
                     if (effect.invalidates.len != 0 or effect.invalidated_domains.len != 0) {
                         try self.contractError(statement, "outcome-specific storage transitions require checked conditional generation effects");
@@ -353,12 +363,21 @@ pub const Context = struct {
                         try self.contractError(statement, "nested outcomes, refers_to and transfers require more precise outcome proofs");
                         unreachable;
                     }
-                    if (effect.output_count != 1) {
-                        try self.contractError(statement, "outcome contracts require one choice-valued output");
+                    for (effect.dependencies) |dependency| if (dependency.output_index != output_index.?) {
+                        try self.contractError(statement, "conditional effects on other outputs require correlated result facts");
                         unreachable;
-                    }
+                    };
+                    for (effect.domain_dependencies) |dependency| if (dependency.output_index != output_index.?) {
+                        try self.contractError(statement, "conditional effects on other outputs require correlated result facts");
+                        unreachable;
+                    };
+                    for (effect.owned_outputs) |owned| if (owned != output_index.?) {
+                        try self.contractError(statement, "conditional effects on other outputs require correlated result facts");
+                        unreachable;
+                    };
                     try outcomes.append(self.allocator, .{
-                        .variant = try self.writer.addString(self.tree.tokenTextFromSource(self.source, data.token)),
+                        .output_index = output_index.?,
+                        .variant = try self.writer.addString(self.tree.tokenTextFromSource(self.source, data.variant)),
                         .dependencies = effect.dependencies,
                         .domain_dependencies = effect.domain_dependencies,
                         .owned_outputs = effect.owned_outputs,

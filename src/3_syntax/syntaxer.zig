@@ -569,12 +569,13 @@ pub const Syntaxer = struct {
             if (self.currentIdentifierEquals("on")) {
                 const start: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
                 self.advanceOne();
+                const output = try self.parseName();
                 if (!self.tokenIs(.double_dot)) return SyntaxerError.ExpectedIdentifier;
                 self.advanceOne();
                 const variant = try self.parseName();
                 self.skipNewLinesAndComments();
                 const body = try self.parseSafetyContract();
-                try self.scratch.append(self.allocator, try self.addNode(.contract_outcome, start, .{ .token_and_node = .{ .token = variant.token, .node = body } }));
+                try self.scratch.append(self.allocator, try self.addNode(.contract_outcome, start, .{ .extra = try self.addExtra(syn.ContractOutcomeExtra{ .output = output.token, .variant = variant.token, .body = body }) }));
             } else {
                 try self.scratch.append(self.allocator, try self.parseExpression());
             }

@@ -231,6 +231,8 @@ pub const CallExtra = struct {
 };
 pub const HandleExtra = struct { value: NodeIndex, result_name: OptionalTokenIndex, error_name: TokenIndex, body: NodeIndex };
 
+pub const ContractOutcomeExtra = struct { output: TokenIndex, variant: TokenIndex, body: NodeIndex };
+
 pub const ForExtra = struct { name_token: TokenIndex, iterable: NodeIndex, body: NodeIndex };
 pub const MatchCaseExtra = struct { payload_name: OptionalTokenIndex, body: NodeIndex };
 

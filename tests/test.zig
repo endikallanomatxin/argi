@@ -10549,3 +10549,24 @@ test "feature_tests/polymorphism/109_virtual_safety_contract_domain_result_refer
 test "feature_tests/polymorphism/110X_virtual_safety_contract_missing" {
     try buildExpectFail("tests/feature_tests/polymorphism/110X_virtual_safety_contract_missing", "virtual methods require a declared safety contract");
 }
+
+test "feature_tests/polymorphism/111_virtual_safety_contract_named_outputs" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/111_virtual_safety_contract_named_outputs");
+    try runExpect("tests/feature_tests/polymorphism/111_virtual_safety_contract_named_outputs", 0);
+}
+
+test "feature_tests/polymorphism/112X_virtual_safety_contract_unknown_selector" {
+    try buildExpectFail("tests/feature_tests/polymorphism/112X_virtual_safety_contract_unknown_selector", "on must select a named method output");
+}
+
+test "feature_tests/polymorphism/113X_virtual_safety_contract_scalar_selector" {
+    try buildExpectFail("tests/feature_tests/polymorphism/113X_virtual_safety_contract_scalar_selector", "on requires a choice-valued output");
+}
+
+test "feature_tests/polymorphism/114X_virtual_safety_contract_duplicate_selector" {
+    try buildExpectFail("tests/feature_tests/polymorphism/114X_virtual_safety_contract_duplicate_selector", "duplicate outcome contract");
+}
+
+test "feature_tests/polymorphism/115X_virtual_safety_contract_second_output_dependency" {
+    try buildExpectFail("tests/feature_tests/polymorphism/115X_virtual_safety_contract_second_output_dependency", "undeclared output dependency");
+}

@@ -137,7 +137,7 @@ pub const SafetySummary = struct {
     required_live_inputs: []const InputPath = &.{},
     input_post_states: []const PlacePostState = &.{},
     /// Post-states retained separately for a choice-valued function result.
-    /// Variant indices refer to the first output field's choice type.
+    /// Selectors identify the output field and its choice variant.
     outcome_post_states: []const OutcomePostStates = &.{},
     opaque_storage_effects: []const OpaqueStorageEffect = &.{},
     opaque_storage_empties: []const InputPath = &.{},
@@ -145,6 +145,7 @@ pub const SafetySummary = struct {
 };
 
 pub const OutcomePostStates = struct {
+    output_index: u32 = 0,
     variant_index: u32,
     input_post_states: []const PlacePostState,
 };

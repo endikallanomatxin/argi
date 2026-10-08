@@ -209,6 +209,7 @@ pub const MethodSafetyContract = struct {
     pub const DomainInput = struct { input_index: u32, domain_index: u32 };
     pub const DomainDependency = struct { output_index: u32, input: DomainInput };
     pub const Outcome = struct {
+        output_index: u32 = 0,
         variant: StringRange,
         variant_index: ?u32 = null,
         dependencies: []const Dependency = &.{},

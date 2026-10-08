@@ -31,8 +31,8 @@ Programs invoke abstract methods through ordinary function calls.
 
 ```rg
 Shape : Abstract = (
-    get_value(.self: &Self) -> (.value: Int32)
-    set_value(.self: $&Self, .value: Int32) -> ()
+    get_value(.self: &Self) -> (.value: Int32) where {}
+    set_value(.self: $&Self, .value: Int32) -> () where {}
 )
 Box : Type = (.value: Int32)
 Box implements Shape
@@ -224,21 +224,35 @@ A choice-valued result can distinguish permissions by variant:
 ```rg
 Factory: Abstract = (
     create(.self: &Self) -> (.result: Errable#(Item, Reasons)) where {
-        on ..ok {
+        on result ..ok {
             owns(result)
             depends_on(result, self)
         }
-        on ..error {
+        on result ..error {
             depends_on(result, error_tracer)
         }
     }
 )
 ```
 
-Within `on ..variant`, output clauses describe that variant's payload. The
-implicit `error_tracer` input can be named in dependencies of fallible methods.
-An unspecified variant retains the method's unconditional output permissions.
+`on output ..variant` always names the choice-valued output it selects. A method
+can have several outputs, including several choices; selectors with the same
+variant name on different outputs are distinct. Unknown outputs, non-choice
+selectors and duplicate selectors are errors.
+
+Within the block, the selected output denotes that variant's payload. Common
+clauses remain applicable in every variant; conditional clauses add permissions
+and obligations for the selected outcome. An empty conditional block does not
+cancel a common dependency or invalidation permission. The implicit
+`error_tracer` input can be named in dependencies of fallible methods.
 No variant can authorize a reference to local storage that ends on return.
+
+Outcome conditions describe the call's effects, rather than only its payload.
+They can describe relations with other outputs and the state left in inputs and
+storage domains. The caller must retain those correlations until it knows the
+selected variant. Before discrimination, it must conservatively account for all
+possible outcomes. Conditional guarantees do not undo effects already observed
+or revive references to expired generations.
 
 ## Receiver storage domains
 
@@ -309,7 +323,10 @@ storage generations, and opaque storage.
 > `transfers` or `refers_to`. A dependency permission alone cannot establish the
 > correspondence between a returned handle and its underlying storage.
 > Outcome clauses support output dependencies and fresh ownership; conditional
-> generation changes and hidden storage effects remain to be implemented.
+> generation changes and hidden storage effects remain to be implemented. Clauses
+> affecting other outputs and nested outcome selectors also require correlated
+> call-result facts and are currently rejected. Independent selectors on several
+> outputs are supported.
 
 For example, a fixed `Readable#(.item: Int32)` contract can occupy a virtual
 handle. Conversion checks the concrete type's declared associated arguments,

@@ -28,8 +28,8 @@ ErrorTracer: Abstract = (
     report(.self: $&Self, .writer: $&Virtual#(.abstract: Writer)) -> (
         .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) where {
-        on ..ok {}
-        on ..error { depends_on(result, error_tracer) }
+        on result ..ok {}
+        on result ..error { depends_on(result, error_tracer) }
     }
 )
 

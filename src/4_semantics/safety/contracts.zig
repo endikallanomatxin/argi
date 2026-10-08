@@ -54,9 +54,10 @@ pub fn fromDeclaration(allocator: std.mem.Allocator, declaration: @import("../pr
         output.ownership_transfers = try transfers.toOwnedSlice(allocator);
     }
     const invalidates = try allocator.alloc(facts.InputPath, declaration.invalidates.len);
-    if (declaration.outcomes.len != 0) {
-        const outcomes = try allocator.alloc(Output.Outcome, declaration.outcomes.len);
-        for (declaration.outcomes, outcomes) |outcome, *allowed| {
+    for (outputs, 0..) |*target, output_index| {
+        var outcomes: std.ArrayList(Output.Outcome) = .empty;
+        for (declaration.outcomes) |outcome| {
+            if (outcome.output_index != output_index) continue;
             const contract = try fromDeclaration(allocator, .{
                 .output_count = declaration.output_count,
                 .dependencies = outcome.dependencies,
@@ -67,10 +68,17 @@ pub fn fromDeclaration(allocator: std.mem.Allocator, declaration: @import("../pr
                 .source = outcome.source,
             });
             const output = try allocator.create(Output);
-            output.* = contract.outputs[0];
-            allowed.* = .{ .variant_index = outcome.variant_index orelse return error.UnresolvedOutcomeContract, .value = output };
+            output.* = contract.outputs[output_index];
+            // Common permissions apply to every outcome. Variant clauses add
+            // permissions rather than silently replacing the common contract.
+            output.dependencies = try std.mem.concat(allocator, facts.InputPath, &.{ target.dependencies, output.dependencies });
+            output.domains = try std.mem.concat(allocator, facts.InputDomain, &.{ target.domains, output.domains });
+            output.fresh_owner = output.fresh_owner or target.fresh_owner;
+            output.referent = target.referent;
+            output.ownership_transfers = target.ownership_transfers;
+            try outcomes.append(allocator, .{ .variant_index = outcome.variant_index orelse return error.UnresolvedOutcomeContract, .value = output });
         }
-        outputs[0].outcomes = outcomes;
+        target.outcomes = try outcomes.toOwnedSlice(allocator);
     }
     for (declaration.invalidates, invalidates) |index, *path| path.* = .{ .input_index = index };
     const invalidated_domains = try allocator.alloc(facts.InputDomain, declaration.invalidated_domains.len);
@@ -417,4 +425,21 @@ test "safety contracts reject ownership and generation changes despite initializ
     for (changes) |state| {
         try std.testing.expectEqual(.unsupported_post_state, check(.{ .outputs = &.{} }, .{ .input_post_states = &.{state} }).?.kind);
     }
+}
+
+test "named output outcomes retain common permissions independently" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const contract = try fromDeclaration(arena.allocator(), .{
+        .output_count = 3,
+        .dependencies = &.{.{ .output_index = 1, .input_index = 0 }},
+        .outcomes = &.{
+            .{ .output_index = 1, .variant = .{ .start = 0, .len = 0 }, .variant_index = 0, .source = .{ .file_index = 0, .offset = 0 } },
+            .{ .output_index = 2, .variant = .{ .start = 0, .len = 0 }, .variant_index = 0, .dependencies = &.{.{ .output_index = 2, .input_index = 1 }}, .source = .{ .file_index = 0, .offset = 0 } },
+        },
+        .source = .{ .file_index = 0, .offset = 0 },
+    });
+    try std.testing.expectEqual(@as(usize, 0), contract.outputs[0].outcomes.len);
+    try std.testing.expectEqual(@as(u32, 0), contract.outputs[1].outcomes[0].value.dependencies[0].input_index);
+    try std.testing.expectEqual(@as(u32, 1), contract.outputs[2].outcomes[0].value.dependencies[0].input_index);
 }

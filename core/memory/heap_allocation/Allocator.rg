@@ -4,11 +4,11 @@ Allocator: Abstract = (
     allocate(.self: $&Self, .size: UIntNative, .alignment: UIntNative) -> (
         .result : Errable#(Allocation, (..out_of_memory))
     ) where {
-        on ..ok {
+        on result ..ok {
             owns(result)
             depends_on(result, self, size, alignment)
         }
-        on ..error { depends_on(result, error_tracer) }
+        on result ..error { depends_on(result, error_tracer) }
     }
 )
 

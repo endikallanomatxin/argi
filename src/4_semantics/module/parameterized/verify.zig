@@ -61,18 +61,18 @@ pub fn verifyParameterizedForms(graph: *const graph_mod.ModuleSemanticGraph) !vo
             try require(contract.output_count == output.resolved.structural.fields.len);
             for (contract.owned_outputs) |index| try require(index < contract.output_count);
             for (contract.outcomes) |outcome| {
-                try require(contract.output_count == 1);
+                try require(outcome.output_index < contract.output_count);
                 try require(verify.stringFits(outcome.variant, graph.strings.items));
                 try require(verify.sourceFits(outcome.source, graph.file_offsets.items.len));
                 for (outcome.dependencies) |dependency| {
-                    try require(dependency.output_index == 0);
+                    try require(dependency.output_index == outcome.output_index);
                     try require(dependency.input_index <= input.resolved.structural.fields.len);
                 }
                 for (outcome.domain_dependencies) |dependency| {
-                    try require(dependency.output_index == 0);
+                    try require(dependency.output_index == outcome.output_index);
                     try require(dependency.input.input_index < input.resolved.structural.fields.len);
                 }
-                for (outcome.owned_outputs) |index| try require(index == 0);
+                for (outcome.owned_outputs) |index| try require(index == outcome.output_index);
             }
             for (contract.transfers) |transfer| {
                 try require(transfer.output_index < contract.output_count);
