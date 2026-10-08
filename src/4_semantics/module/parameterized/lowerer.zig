@@ -364,10 +364,6 @@ pub const Context = struct {
                             try self.contractError(statement, "nested on must follow the selected output payload");
                             unreachable;
                         }
-                        if (hasNestedOwnershipEffects(nested)) {
-                            try self.contractError(statement, "nested ownership effects require recursive choice cleanup and ownership proofs");
-                            unreachable;
-                        }
                         if (hasNestedGenerationEffects(nested)) {
                             try self.contractError(statement, "nested generation effects require projected call-result guards");
                             unreachable;
@@ -414,12 +410,6 @@ pub const Context = struct {
             .transfers = try transfers.toOwnedSlice(self.allocator),
             .source = self.sourceRef(node),
         };
-    }
-
-    fn hasNestedOwnershipEffects(outcome: primitives.MethodSafetyContract.Outcome) bool {
-        if (outcome.owned_outputs.len != 0) return true;
-        for (outcome.outcomes) |child| if (hasNestedOwnershipEffects(child)) return true;
-        return false;
     }
 
     fn hasNestedGenerationEffects(outcome: primitives.MethodSafetyContract.Outcome) bool {

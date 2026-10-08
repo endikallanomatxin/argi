@@ -32,7 +32,8 @@ discriminants and predicates over ordinary values.
   choice tests on computed expressions and error propagation. Direct forwarding,
   bound discrimination, moves and copies preserve call provenance; more complex
   flows must remain conservative without reviving expired roots.
-- Extend `on output ..variant` to effects on other outputs and nested selectors.
+- Extend `on output ..variant` to effects on other outputs and generation
+  transitions selected by nested payload tags.
   Use shared effect records rather than eagerly enumerating a Cartesian product
   of output variants. Distinguish effect permissions from required guarantees;
   common clauses apply to all outcomes and conditional clauses add obligations.
@@ -51,6 +52,7 @@ discriminants and predicates over ordinary values.
   fresh or dependency-only handles.
 - Extend declaration checking to the new storage effect clauses, retaining
   diagnostics for implicit error-tracer inputs.
-- Extend independence and conformance fixtures to nested owners, opaque storage,
+- Extend independence and conformance fixtures to conditional owner transfers,
+  opaque storage,
   error outcomes and aliased inputs as their contract representation becomes
   available.

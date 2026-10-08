@@ -83,6 +83,9 @@ pub const ValueEffect = struct {
     variants: []const OutputVariantEffect = &.{},
     known_choice_variant: ?u32 = null,
     fresh_dependencies: []const FreshEffectSource = &.{},
+    /// Nominal cleanup can be required without acquiring storage. This marker
+    /// checks ownership permissions without inventing a lifetime root.
+    fresh_cleanup_obligation: bool = false,
     fresh_owned_roots: []const FreshEffectSource = &.{},
     integer_address: bool = false,
     foreign_storage: bool = false,

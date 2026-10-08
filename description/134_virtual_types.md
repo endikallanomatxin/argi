@@ -350,8 +350,8 @@ storage generations, and opaque storage.
 > generation changes. Generation refinement supports bound result discrimination
 > and direct forwarding of a single choice through wrappers. More complex wrapper
 > bodies conservatively join their effects. Hidden storage transitions, clauses
-> affecting other outputs, nested ownership and nested generation effects remain
-> to be implemented. Nested payload selectors support dependency contracts.
+> affecting other outputs and nested generation effects remain to be implemented.
+> Nested payload selectors support dependency and fresh ownership contracts.
 > Independent payload selectors on several outputs are supported; generation
 > effects requiring independent result correlations are conservatively joined.
 
@@ -376,3 +376,11 @@ get(.self: &Self) -> (.result: Errable#(?&Int32, Reasons)) where {
     on result ..error { depends_on(result, error_tracer) }
 }
 ```
+
+`owns(result)` inside a nested outcome permits fresh ownership only in that
+selected payload. The implementation must declare this permission even when
+an owner's fields contain only scalar values. Discarding an owning choice
+runs cleanup for its active payload, including nested records and choices;
+moving the payload transfers that cleanup obligation to its new owner.
+A cleanup obligation alone establishes neither a fresh storage lifetime nor
+permission to manufacture references or storage acquisition receipts.

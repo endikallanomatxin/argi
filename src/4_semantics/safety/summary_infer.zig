@@ -6,6 +6,7 @@ const primitives = @import("../primitives/schema.zig");
 const facts = @import("facts.zig");
 const summaries = @import("summaries.zig");
 const value_state = @import("value_state.zig");
+const cleanup_activation = @import("cleanup_activation.zig");
 const primitive_transfer = @import("../primitives/registry.zig");
 
 /// Symbolic SafetySummary inference over the compact GlobalSG.
@@ -15,6 +16,8 @@ const primitive_transfer = @import("../primitives/registry.zig");
 /// recursive effects: this pass describes outputs in terms of function inputs
 /// and lets `summaries.Engine` iterate callers/SCCs to a fixed point.
 pub const Infer = struct {
+    cleanup: ?*const cleanup_activation.Activation = null,
+    cleanup_activations: std.AutoHashMap(graph_mod.GlobalFunctionId, cleanup_activation.Activation),
     profile_io: ?std.Io = null,
     output_ns: u64 = 0,
     required_live_ns: u64 = 0,
@@ -44,6 +47,7 @@ pub const Infer = struct {
         engine: *summaries.Engine,
     ) Infer {
         return .{
+            .cleanup_activations = .init(allocator),
             .allocator = allocator,
             .graph = graph,
             .engine = engine,
@@ -57,6 +61,9 @@ pub const Infer = struct {
     }
 
     pub fn deinit(self: *Infer) void {
+        var activations = self.cleanup_activations.valueIterator();
+        while (activations.next()) |activation| activation.deinit();
+        self.cleanup_activations.deinit();
         self.bindings.deinit();
         self.place_bindings.deinit();
         self.local_address_bindings.deinit();
@@ -68,7 +75,8 @@ pub const Infer = struct {
     /// Infer every SafetySummary dimension until reverse dependencies are stable:
     /// outputs, required-live inputs, input/outcome post-states, and opaque effects.
     /// Reading a previous approximation records a dependency, including the
-    /// function's own approximation and implementations merged for virtual calls.
+    /// function's own approximation. Virtual effects come from fixed contracts,
+    /// independently of implementation reachability and conformance checks.
     pub fn inferSafetySummariesFixedPoint(self: *Infer) !void {
         var functions = std.array_list.Managed(graph_mod.GlobalFunctionId).init(self.allocator);
         defer functions.deinit();
@@ -300,7 +308,7 @@ pub const Infer = struct {
                 state.initializedness == .initialized and state.opaque_ownership == .none and
                 !state.ends_previous_roots and !state.refreshes_storage_generation and
                 !state.requires_available_destination and !state.value.explicit_dependency and
-                state.value.fresh_owned_roots.len == 0 and state.value.fresh_dependencies.len == 0 and
+                !state.value.fresh_cleanup_obligation and state.value.fresh_owned_roots.len == 0 and state.value.fresh_dependencies.len == 0 and
                 state.value.fresh_storage_capabilities.len == 0) continue;
             try states.append(state);
         }
@@ -368,6 +376,16 @@ pub const Infer = struct {
             .opaque_storage_effects = previous.opaque_storage_effects,
             .opaque_storage_empties = previous.opaque_storage_empties,
         };
+
+        // Drop activation depends only on the finalized GlobalSG. Cache it
+        // across fixed-point reevaluations, independently of inferred effects.
+        if (!self.cleanup_activations.contains(function_id)) {
+            var activation = try cleanup_activation.collect(self.allocator, self.graph, function_id);
+            errdefer activation.deinit();
+            try self.cleanup_activations.put(function_id, activation);
+        }
+        self.cleanup = self.cleanup_activations.getPtr(function_id).?;
+        defer self.cleanup = null;
 
         self.bindings.clearRetainingCapacity();
         self.place_bindings.clearRetainingCapacity();
@@ -1067,11 +1085,13 @@ pub const Infer = struct {
                 for (self.graph.node_refs.items[context.cleanup_nodes.start..][0..context.cleanup_nodes.len]) |value| try self.infer_capability_node(function, value, flow, exits);
             },
             .auto_deinit_binding => |id| {
+                if (self.cleanup) |active| if (!active.roots.contains(id)) return;
                 const cleanup = self.graph.auto_deinits.items[@intFromEnum(id)];
                 if (cleanup.input) |input| {
                     try self.infer_capability_node(function, input, flow, exits);
                     if (cleanup.deinit_fn) |callee| if (self.structArguments(input)) |arguments| try self.infer_capability_call(function, callee, arguments, flow);
                 }
+                try self.infer_cleanup_capabilities(function, cleanup.fields, flow, exits);
             },
             .return_statement => |ret| {
                 if (ret.expression) |value| try self.infer_capability_node(function, value, flow, exits);
@@ -1151,6 +1171,37 @@ pub const Infer = struct {
             result.variants = variants;
         }
         return result;
+    }
+
+    fn infer_cleanup_capabilities(self: *Infer, function: graph_mod.GlobalFunctionId, fields: primitives.Range(graph_mod.GlobalAutoDeinitFieldId), flow: *CapabilityFlow, exits: *?CapabilityFlow) anyerror!void {
+        const children = self.graph.auto_deinit_fields.items[fields.start..][0..fields.len];
+        if (children.len != 0 and children[0].is_variant) {
+            var joined = try flow.clone(self.allocator);
+            defer joined.deinit();
+            for (children, 0..) |field, index| {
+                if (self.cleanup) |active| if (!active.fields.contains(@enumFromInt(fields.start + @as(u32, @intCast(index))))) continue;
+                var branch = try flow.clone(self.allocator);
+                defer branch.deinit();
+                try self.infer_cleanup_capability_field(function, field, &branch, exits);
+                // Payload alternatives are mutually exclusive. Taking the
+                // maximum use count must not add their consumptions together.
+                try self.join_capability_flows(&joined, &joined, &branch);
+            }
+            try self.join_capability_flows(flow, &joined, &joined);
+            return;
+        }
+        for (children, 0..) |field, index| {
+            if (self.cleanup) |active| if (!active.fields.contains(@enumFromInt(fields.start + @as(u32, @intCast(index))))) continue;
+            try self.infer_cleanup_capability_field(function, field, flow, exits);
+        }
+    }
+
+    fn infer_cleanup_capability_field(self: *Infer, function: graph_mod.GlobalFunctionId, field: graph_mod.AutoDeinitField, flow: *CapabilityFlow, exits: *?CapabilityFlow) anyerror!void {
+        if (field.input) |input| {
+            try self.infer_capability_node(function, input, flow, exits);
+            if (field.deinit_fn) |callee| if (self.structArguments(input)) |arguments| try self.infer_capability_call(function, callee, arguments, flow);
+        }
+        try self.infer_cleanup_capabilities(function, field.fields, flow, exits);
     }
 
     const SymbolicInputOverride = struct {
@@ -1717,6 +1768,7 @@ pub const Infer = struct {
         auto_id: graph_mod.GlobalAutoDeinitId,
         states: *std.array_list.Managed(facts.PlacePostState),
     ) !void {
+        if (self.cleanup) |active| if (!active.roots.contains(auto_id)) return;
         const cleanup = self.graph.auto_deinits.items[@intFromEnum(auto_id)];
         const binding_effect = self.bindings.get(cleanup.binding);
         if (cleanup.deinit_fn) |deinit_fn| if (cleanup.input) |input| {
@@ -1740,8 +1792,15 @@ pub const Infer = struct {
         states: *std.array_list.Managed(facts.PlacePostState),
         parent_effect: facts.ValueEffect,
     ) !void {
-        for (self.graph.auto_deinit_fields.items[field_range.start..][0..field_range.len]) |field| {
-            const field_effect = try self.projectValueEffect(parent_effect, .{ .field = field.field_index });
+        for (self.graph.auto_deinit_fields.items[field_range.start..][0..field_range.len], 0..) |field, index| {
+            if (self.cleanup) |active| if (!active.fields.contains(@enumFromInt(field_range.start + @as(u32, @intCast(index))))) continue;
+            if (field.is_variant) if (parent_effect.known_choice_variant) |active| {
+                if (active != field.field_index) continue;
+            };
+            const field_effect = try self.projectValueEffect(parent_effect, if (field.is_variant)
+                .{ .variant = field.field_index }
+            else
+                .{ .field = field.field_index });
             if (field.deinit_fn) |deinit_fn| if (field.input) |input| {
                 if (self.engine.summaryFor(deinit_fn)) |summary|
                     try self.applyInputPostStatesFromSummary(
@@ -2212,6 +2271,7 @@ pub const Infer = struct {
         effects: *std.array_list.Managed(facts.OpaqueStorageEffect),
         state: *OpaqueEmptyState,
     ) !void {
+        if (self.cleanup) |active| if (!active.roots.contains(auto_id)) return;
         const cleanup = self.graph.auto_deinits.items[@intFromEnum(auto_id)];
         const binding_effect = self.bindings.get(cleanup.binding);
         if (cleanup.deinit_fn) |deinit_fn| if (cleanup.input) |input| {
@@ -2237,8 +2297,15 @@ pub const Infer = struct {
         state: *OpaqueEmptyState,
         parent_effect: facts.ValueEffect,
     ) !void {
-        for (self.graph.auto_deinit_fields.items[field_range.start..][0..field_range.len]) |field| {
-            const field_effect = try self.projectValueEffect(parent_effect, .{ .field = field.field_index });
+        for (self.graph.auto_deinit_fields.items[field_range.start..][0..field_range.len], 0..) |field, index| {
+            if (self.cleanup) |active| if (!active.fields.contains(@enumFromInt(field_range.start + @as(u32, @intCast(index))))) continue;
+            if (field.is_variant) if (parent_effect.known_choice_variant) |active| {
+                if (active != field.field_index) continue;
+            };
+            const field_effect = try self.projectValueEffect(parent_effect, if (field.is_variant)
+                .{ .variant = field.field_index }
+            else
+                .{ .field = field.field_index });
             if (field.deinit_fn) |deinit_fn| if (field.input) |input| {
                 if (self.engine.summaryFor(deinit_fn)) |summary|
                     try self.applyOpaqueEmptySummary(
@@ -3013,6 +3080,7 @@ pub const Infer = struct {
         auto_id: graph_mod.GlobalAutoDeinitId,
         required: *std.array_list.Managed(facts.InputPath),
     ) !void {
+        if (self.cleanup) |active| if (!active.roots.contains(auto_id)) return;
         const cleanup = self.graph.auto_deinits.items[@intFromEnum(auto_id)];
         const binding_effect = self.bindings.get(cleanup.binding);
         if (cleanup.input) |input| {
@@ -3039,8 +3107,15 @@ pub const Infer = struct {
         parent_effect: facts.ValueEffect,
         required: *std.array_list.Managed(facts.InputPath),
     ) !void {
-        for (self.graph.auto_deinit_fields.items[fields_range.start..][0..fields_range.len]) |field| {
-            const field_effect = try self.projectValueEffect(parent_effect, .{ .field = field.field_index });
+        for (self.graph.auto_deinit_fields.items[fields_range.start..][0..fields_range.len], 0..) |field, index| {
+            if (self.cleanup) |active| if (!active.fields.contains(@enumFromInt(fields_range.start + @as(u32, @intCast(index))))) continue;
+            if (field.is_variant) if (parent_effect.known_choice_variant) |active| {
+                if (active != field.field_index) continue;
+            };
+            const field_effect = try self.projectValueEffect(parent_effect, if (field.is_variant)
+                .{ .variant = field.field_index }
+            else
+                .{ .field = field.field_index });
             if (field.input) |input| {
                 try self.inferRequiredLiveInputsNode(function_id, input, required);
                 if (field.deinit_fn) |deinit_fn| {
@@ -3342,6 +3417,20 @@ pub const Infer = struct {
             result.known_choice_variant = null;
         }
         result.fields = output_fields;
+        // A destructor creates a cleanup obligation, not necessarily a fresh
+        // storage lifetime. Shape anchors and scalar owners must not introduce
+        // extra roots that couple independently replaced backing allocations.
+        const nominal: ?graph_mod.GlobalDeclId = switch (self.graph.semanticType(self.graph.node(node_id).ty.?)) {
+            .declared => |declaration| declaration,
+            .generic => |identity| identity.base,
+            else => null,
+        };
+        if (nominal) |owner| for (self.graph.declarations.items) |declaration| {
+            if (declaration.destructor_type == owner) {
+                result.fresh_cleanup_obligation = true;
+                break;
+            }
+        };
         return result;
     }
 
@@ -3534,6 +3623,7 @@ pub const Infer = struct {
         var result: facts.ValueEffect = .{
             .explicit_dependency = effect.explicit_dependency,
             .fresh_dependencies = effect.fresh_dependencies,
+            .fresh_cleanup_obligation = effect.fresh_cleanup_obligation,
             .fresh_owned_roots = effect.fresh_owned_roots,
             .fresh_storage_capabilities = effect.fresh_storage_capabilities,
             .unavailable_fresh_storage = effect.unavailable_fresh_storage,
@@ -3904,6 +3994,7 @@ pub const Infer = struct {
             else
                 null,
             .fresh_dependencies = try fresh_dependencies.toOwnedSlice(),
+            .fresh_cleanup_obligation = left.fresh_cleanup_obligation or right.fresh_cleanup_obligation,
             .fresh_owned_roots = try fresh_owned.toOwnedSlice(),
             .integer_address = left.integer_address or right.integer_address,
             .foreign_storage = left.foreign_storage or right.foreign_storage,

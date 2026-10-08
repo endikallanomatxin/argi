@@ -402,6 +402,8 @@ pub fn Switch(comptime Ids: type) type {
 pub fn AutoDeinitField(comptime Ids: type) type {
     return struct {
         field_index: u32,
+        /// A choice payload uses a variant index and requires its active tag.
+        is_variant: bool = false,
         deinit_fn: ?Ids.FunctionId,
         input: ?Ids.NodeId = null,
         self_field_index: u32 = 0,

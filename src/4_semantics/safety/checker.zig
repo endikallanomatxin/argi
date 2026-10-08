@@ -3643,22 +3643,60 @@ pub const SafetyChecker = struct {
         storage: facts.Place,
         state: *FunctionState,
     ) !void {
-        for (self.graph.auto_deinit_fields.items[fields.start..][0..fields.len]) |field| {
-            const field_storage = try self.project(storage, .{ .field = field.field_index });
-            if (self.initializednessAtPlace(state, field_storage) != .initialized) continue;
-            if (field.deinit_fn) |deinit_fn| {
-                try self.evaluateResolvedDeinit(
-                    function,
-                    deinit_fn,
-                    field.input orelse continue,
-                    field.self_field_index,
-                    field_storage,
-                    state,
-                );
-            } else {
-                try self.evaluateStructuralAutoDeinit(function, field.fields, field_storage, state);
-                try self.setPlace(state, field_storage, .deinitialized, .{});
+        const children = self.graph.auto_deinit_fields.items[fields.start..][0..fields.len];
+        if (children.len != 0 and children[0].is_variant) {
+            const ty = self.domainStorageType(storage) orelse return;
+            const variants = types.variants(self.graph, ty) orelse return;
+            var joined: ?FunctionState = null;
+            defer if (joined) |*value| value.deinit();
+            for (0..variants.len) |index| {
+                if (self.activeVariant(state, storage)) |active| {
+                    if (active != index) continue;
+                }
+                if (self.valueAtPlace(state, storage)) |value| if (value.known_choice_variant) |active| {
+                    if (active != index) continue;
+                };
+                if (self.variantRejected(state, storage, @intCast(index))) continue;
+                var branch = try state.clone(self.allocator, if (self.collect_stats) &self.stats else null);
+                defer branch.deinit();
+                self.setActiveVariant(&branch, storage, @intCast(index));
+                const payload_storage = try self.project(storage, .{ .variant = @intCast(index) });
+                if (self.valueAtPlace(&branch, payload_storage)) |payload|
+                    try self.activate_conditional_resources(&branch, payload);
+                for (children) |field| {
+                    if (field.field_index != index) continue;
+                    try self.evaluateAutoDeinitField(function, field, payload_storage, &branch);
+                }
+                if (joined) |*existing| {
+                    var combined = try existing.clone(self.allocator, if (self.collect_stats) &self.stats else null);
+                    try self.joinState(&combined, existing, &branch);
+                    existing.deinit();
+                    existing.* = combined;
+                } else joined = try branch.clone(self.allocator, if (self.collect_stats) &self.stats else null);
             }
+            if (joined) |*value| self.commitState(state, value);
+            return;
+        }
+        for (children) |field| {
+            const field_storage = try self.project(storage, .{ .field = field.field_index });
+            try self.evaluateAutoDeinitField(function, field, field_storage, state);
+        }
+    }
+
+    fn evaluateAutoDeinitField(self: *SafetyChecker, function: graph_mod.GlobalFunctionId, field: graph_mod.AutoDeinitField, field_storage: facts.Place, state: *FunctionState) anyerror!void {
+        if (self.initializednessAtPlace(state, field_storage) != .initialized) return;
+        if (field.deinit_fn) |deinit_fn| {
+            try self.evaluateResolvedDeinit(
+                function,
+                deinit_fn,
+                field.input orelse return,
+                field.self_field_index,
+                field_storage,
+                state,
+            );
+        } else {
+            try self.evaluateStructuralAutoDeinit(function, field.fields, field_storage, state);
+            try self.setPlace(state, field_storage, .deinitialized, .{});
         }
     }
 

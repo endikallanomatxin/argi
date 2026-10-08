@@ -219,6 +219,15 @@ feature first.
   one extra scratch byte and destroy partial owners on error. Reserve bounded
   capacity before consuming a chunk.
 
+- Structural automatic cleanup follows record fields and active choice payloads.
+  AutoDeinitField keeps variant projections distinct from record fields; preserve
+  that distinction in summary substitution, checker state branches, relocation,
+  and codegen. Moving a match payload disables the source choice's cleanup.
+  Summary cleanup activation follows moves and discriminants and is cached from
+  finalized GlobalSG independently of the effects worklist. Nominal constructors
+  with destructors produce cleanup obligations even for scalar-only owners,
+  including inside nested payloads; those obligations grant no fresh storage.
+
 - Owning collection operations move generic input values into lexical owners
   before fallible branches. Extract replaced or discarded structural elements
   into lexical owners as well, so their fields receive recursive cleanup.

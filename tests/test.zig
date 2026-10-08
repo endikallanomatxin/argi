@@ -10655,6 +10655,25 @@ test "feature_tests/polymorphism/134_virtual_safety_contract_nested_common" {
     try runExpect("tests/feature_tests/polymorphism/134_virtual_safety_contract_nested_common", 0);
 }
 
-test "feature_tests/polymorphism/135X_virtual_safety_contract_nested_owner" {
-    try buildExpectFail("tests/feature_tests/polymorphism/135X_virtual_safety_contract_nested_owner", "nested ownership effects require recursive choice cleanup and ownership proofs");
+test "feature_tests/polymorphism/135_virtual_safety_contract_nested_owner_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/135_virtual_safety_contract_nested_owner_cleanup");
+    try runExpect("tests/feature_tests/polymorphism/135_virtual_safety_contract_nested_owner_cleanup", 0);
+}
+
+test "feature_tests/polymorphism/136X_virtual_safety_contract_nested_owner_undeclared" {
+    try buildExpectFail("tests/feature_tests/polymorphism/136X_virtual_safety_contract_nested_owner_undeclared", "undeclared fresh output ownership");
+}
+
+test "feature_tests/polymorphism/137_nested_choice_owner_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/137_nested_choice_owner_cleanup");
+    try runExpect("tests/feature_tests/polymorphism/137_nested_choice_owner_cleanup", 0);
+}
+
+test "feature_tests/polymorphism/138X_virtual_nested_cleanup_effect" {
+    try buildExpectFail("tests/feature_tests/polymorphism/138X_virtual_nested_cleanup_effect", "a storage transition is not permitted");
+}
+
+test "feature_tests/polymorphism/139_virtual_nested_cleanup_effect" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/139_virtual_nested_cleanup_effect");
+    try runExpect("tests/feature_tests/polymorphism/139_virtual_nested_cleanup_effect", 0);
 }

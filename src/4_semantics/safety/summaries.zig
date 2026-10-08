@@ -142,7 +142,8 @@ pub fn valueEffectEql(a: facts.ValueEffect, b: facts.ValueEffect) bool {
     if (!domainsEql(a.input_domains, b.input_domains)) return false;
     if (a.domain_values.len != b.domain_values.len) return false;
     for (a.domain_values, b.domain_values) |x, y| if (x.domain_index != y.domain_index or !valueEffectEql(x.value.*, y.value.*)) return false;
-    if (a.explicit_dependency != b.explicit_dependency or
+    if (a.fresh_cleanup_obligation != b.fresh_cleanup_obligation or
+        a.explicit_dependency != b.explicit_dependency or
         a.input_dependencies.len != b.input_dependencies.len or
         a.input_places.len != b.input_places.len or
         a.input_generation_dependencies.len != b.input_generation_dependencies.len or
@@ -289,4 +290,5 @@ test "nested effect equality preserves root paths and explicit dependencies" {
         .{ .fields = &.{.{ .index = 0, .value = &empty }} },
     ));
     try std.testing.expect(!valueEffectEql(.{ .explicit_dependency = true }, .{}));
+    try std.testing.expect(!valueEffectEql(.{ .fresh_cleanup_obligation = true }, .{}));
 }

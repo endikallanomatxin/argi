@@ -52,6 +52,7 @@ const Builder = struct {
             return result;
         }
         if (allowed.fresh_owner and self.hasDestructor(ty)) {
+            result.fresh_cleanup_obligation = true;
             const source = self.next_source;
             self.next_source +%= 1;
             const roots = try self.allocator.alloc(facts.FreshEffectSource, 1);

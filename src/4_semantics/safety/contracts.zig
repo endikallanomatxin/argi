@@ -204,7 +204,7 @@ pub fn check(contract: Contract, summary: facts.SafetySummary) ?Failure {
 }
 
 fn checkValue(allowed: Output, actual: facts.ValueEffect) ?Failure {
-    if (actual.fresh_owned_roots.len != 0 and !allowed.fresh_owner) return .{ .kind = .undeclared_fresh_owner };
+    if ((actual.fresh_cleanup_obligation or actual.fresh_owned_roots.len != 0) and !allowed.fresh_owner) return .{ .kind = .undeclared_fresh_owner };
     for (actual.input_domains) |domain| {
         var permitted = false;
         for (allowed.domains) |expected| if (domain.domain_index == expected.domain_index and samePath(domain.path, expected.path)) {
@@ -271,7 +271,7 @@ fn samePath(a: facts.InputPath, b: facts.InputPath) bool {
 /// declaration. Lifetime-only anchors cannot select an output's storage.
 fn hasExactReferent(actual: facts.ValueEffect, expected: facts.InputPath) bool {
     if (actual.input_place_values.len != 0 or actual.fields.len != 0 or actual.variants.len != 0 or
-        actual.fresh_dependencies.len != 0 or actual.fresh_owned_roots.len != 0 or
+        actual.fresh_cleanup_obligation or actual.fresh_dependencies.len != 0 or actual.fresh_owned_roots.len != 0 or
         actual.fresh_storage_capabilities.len != 0 or actual.unavailable_fresh_storage.len != 0 or
         actual.integer_address or actual.foreign_storage or actual.input_storage_capabilities.len != 0) return false;
     var established = false;
@@ -319,7 +319,7 @@ fn permitsPostState(contract: Contract, state: facts.PlacePostState) bool {
 }
 
 fn emptyValue(value: facts.ValueEffect) bool {
-    if (value.explicit_dependency or value.input_dependencies.len != 0 or
+    if (value.fresh_cleanup_obligation or value.explicit_dependency or value.input_dependencies.len != 0 or
         value.input_storage_capabilities.len != 0 or value.input_places.len != 0 or
         value.input_generation_dependencies.len != 0 or value.input_captured_storages.len != 0 or value.input_receiver_values.len != 0 or value.input_place_values.len != 0 or
         value.input_owned_roots.len != 0 or value.input_domains.len != 0 or value.domain_values.len != 0 or value.opaque_generation_dependencies.len != 0 or
