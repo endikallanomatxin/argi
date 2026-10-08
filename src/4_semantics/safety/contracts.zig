@@ -26,7 +26,7 @@ pub const Contract = struct {
     invalidates: []const facts.InputPath = &.{},
     invalidated_domains: []const facts.InputDomain = &.{},
 
-    pub const Outcome = struct { output_index: u32, variant_index: u32, effects: *const Contract };
+    pub const Outcome = struct { output_index: u32, parent_variants: []const u32 = &.{}, variant_index: u32, effects: *const Contract };
 };
 
 pub fn fromDeclaration(allocator: std.mem.Allocator, declaration: @import("../primitives/schema.zig").MethodSafetyContract) anyerror!Contract {
@@ -84,19 +84,46 @@ pub fn fromDeclaration(allocator: std.mem.Allocator, declaration: @import("../pr
     const invalidated_domains = try allocator.alloc(facts.InputDomain, declaration.invalidated_domains.len);
     for (declaration.invalidated_domains, invalidated_domains) |domain, *input| input.* = .{ .path = .{ .input_index = domain.input_index }, .domain_index = domain.domain_index };
     var conditional: std.ArrayList(Contract.Outcome) = .empty;
-    for (declaration.outcomes) |outcome| {
+    try appendConditionalContracts(allocator, declaration.output_count, declaration.outcomes, &.{}, invalidates, invalidated_domains, &conditional);
+    return .{ .outputs = outputs, .invalidates = invalidates, .invalidated_domains = invalidated_domains, .outcomes = try conditional.toOwnedSlice(allocator) };
+}
+
+fn appendConditionalContracts(allocator: std.mem.Allocator, output_count: u32, outcomes: []const @import("../primitives/schema.zig").MethodSafetyContract.Outcome, parents: []const u32, common_invalidates: []const facts.InputPath, common_domains: []const facts.InputDomain, result: *std.ArrayList(Contract.Outcome)) anyerror!void {
+    for (outcomes) |outcome| {
         const effects = try allocator.create(Contract);
         effects.* = try fromDeclaration(allocator, .{
-            .output_count = declaration.output_count,
+            .output_count = output_count,
             .invalidates = outcome.invalidates,
             .invalidated_domains = outcome.invalidated_domains,
             .source = outcome.source,
         });
-        effects.invalidates = try std.mem.concat(allocator, facts.InputPath, &.{ invalidates, effects.invalidates });
-        effects.invalidated_domains = try std.mem.concat(allocator, facts.InputDomain, &.{ invalidated_domains, effects.invalidated_domains });
-        try conditional.append(allocator, .{ .output_index = outcome.output_index, .variant_index = outcome.variant_index orelse return error.UnresolvedOutcomeContract, .effects = effects });
+        effects.invalidates = try std.mem.concat(allocator, facts.InputPath, &.{ common_invalidates, effects.invalidates });
+        effects.invalidated_domains = try std.mem.concat(allocator, facts.InputDomain, &.{ common_domains, effects.invalidated_domains });
+        const variant = outcome.variant_index orelse return error.UnresolvedOutcomeContract;
+        try result.append(allocator, .{ .output_index = outcome.output_index, .parent_variants = parents, .variant_index = variant, .effects = effects });
+        const child_parents = try std.mem.concat(allocator, u32, &.{ parents, &.{variant} });
+        try appendConditionalContracts(allocator, output_count, outcome.outcomes, child_parents, effects.invalidates, effects.invalidated_domains, result);
     }
-    return .{ .outputs = outputs, .invalidates = invalidates, .invalidated_domains = invalidated_domains, .outcomes = try conditional.toOwnedSlice(allocator) };
+}
+
+pub fn selectorCovers(expected: anytype, actual: anytype) bool {
+    if (expected.output_index != actual.output_index or expected.parent_variants.len > actual.parent_variants.len) return false;
+    if (!std.mem.eql(u32, expected.parent_variants, actual.parent_variants[0..expected.parent_variants.len])) return false;
+    const selected = if (expected.parent_variants.len == actual.parent_variants.len) actual.variant_index else actual.parent_variants[expected.parent_variants.len];
+    return expected.variant_index == selected;
+}
+
+pub fn effectsForSelector(contract: Contract, selector: anytype) Contract {
+    var selected = contract;
+    var depth: ?usize = null;
+    for (contract.outcomes) |outcome| {
+        if (!selectorCovers(outcome, selector)) continue;
+        if (depth == null or depth.? < outcome.parent_variants.len) {
+            selected = outcome.effects.*;
+            depth = outcome.parent_variants.len;
+        }
+    }
+    return selected;
 }
 
 fn inheritOutputPermissions(allocator: std.mem.Allocator, output: *Output, common: Output) anyerror!void {
@@ -121,7 +148,7 @@ pub const Failure = struct {
     },
     output_index: ?u32 = null,
     input: ?facts.InputPath = null,
-    outcome: ?struct { output_index: u32, variant_index: u32 } = null,
+    outcome: ?struct { output_index: u32, parent_variants: []const u32 = &.{}, variant_index: u32 } = null,
 
     pub fn description(self: Failure) []const u8 {
         return switch (self.kind) {
@@ -146,7 +173,7 @@ pub fn check(contract: Contract, summary: facts.SafetySummary) ?Failure {
         if (permitsDomain(contract, domain)) continue;
         var permitted = false;
         for (contract.outcomes) |outcome| for (summary.outcome_post_states) |actual| {
-            if (actual.output_index == outcome.output_index and actual.variant_index == outcome.variant_index and permitsDomain(outcome.effects.*, domain)) permitted = true;
+            if (selectorCovers(outcome, actual) and permitsDomain(outcome.effects.*, domain)) permitted = true;
         };
         if (!permitted) return .{ .kind = .unsupported_post_state, .input = domain.path };
     }
@@ -165,7 +192,7 @@ pub fn check(contract: Contract, summary: facts.SafetySummary) ?Failure {
         var permitted = false;
         for (contract.outcomes) |outcome| {
             var has_proof = false;
-            for (summary.outcome_post_states) |actual| if (actual.output_index == outcome.output_index and actual.variant_index == outcome.variant_index) {
+            for (summary.outcome_post_states) |actual| if (selectorCovers(outcome, actual)) {
                 has_proof = true;
                 break;
             };
@@ -174,15 +201,11 @@ pub fn check(contract: Contract, summary: facts.SafetySummary) ?Failure {
         if (!permitted) return .{ .kind = .unsupported_post_state, .input = state.target };
     }
     for (summary.outcome_post_states) |outcome| {
-        var allowed = contract;
-        for (contract.outcomes) |expected| if (expected.output_index == outcome.output_index and expected.variant_index == outcome.variant_index) {
-            allowed = expected.effects.*;
-            break;
-        };
+        const allowed = effectsForSelector(contract, outcome);
         for (outcome.input_post_states) |state| {
-            if (!permitsPostState(allowed, state)) return .{ .kind = .unsupported_post_state, .input = state.target, .outcome = .{ .output_index = outcome.output_index, .variant_index = outcome.variant_index } };
+            if (!permitsPostState(allowed, state)) return .{ .kind = .unsupported_post_state, .input = state.target, .outcome = .{ .output_index = outcome.output_index, .parent_variants = outcome.parent_variants, .variant_index = outcome.variant_index } };
         }
-        for (outcome.invalidated_domains) |domain| if (!permitsDomain(allowed, domain)) return .{ .kind = .unsupported_post_state, .input = domain.path, .outcome = .{ .output_index = outcome.output_index, .variant_index = outcome.variant_index } };
+        for (outcome.invalidated_domains) |domain| if (!permitsDomain(allowed, domain)) return .{ .kind = .unsupported_post_state, .input = domain.path, .outcome = .{ .output_index = outcome.output_index, .parent_variants = outcome.parent_variants, .variant_index = outcome.variant_index } };
     }
     if (summary.opaque_storage_effects.len != 0) return .{
         .kind = .unsupported_opaque_effect,

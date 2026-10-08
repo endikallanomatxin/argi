@@ -6,6 +6,8 @@ const primitives = @import("../primitives/schema.zig");
 const facts = @import("facts.zig");
 const summaries = @import("summaries.zig");
 const value_state = @import("value_state.zig");
+const outcome_selectors = @import("outcome_selectors.zig");
+const contracts = @import("contracts.zig");
 const cleanup_activation = @import("cleanup_activation.zig");
 const primitive_transfer = @import("../primitives/registry.zig");
 
@@ -36,8 +38,10 @@ pub const Infer = struct {
     addressed_outputs: std.AutoHashMap(graph_mod.GlobalBindingId, void),
     virtual_summaries: std.AutoHashMap(graph_mod.GlobalVirtualRegistryId, facts.SafetySummary),
     domain_invalidations: std.array_list.Managed(facts.InputDomain),
-    selected_outcome: ?struct { output_index: u32, variant_index: u32, binding: graph_mod.GlobalBindingId } = null,
-    forwarded_variant: ?u32 = null,
+    requested_selectors: std.AutoHashMap(graph_mod.GlobalFunctionId, []const outcome_selectors.Selector),
+    selected_outcome: ?struct { output_index: u32, parent_variants: []const u32 = &.{}, variant_index: u32, binding: graph_mod.GlobalBindingId } = null,
+    forwarded_outcome: ?outcome_selectors.Selector = null,
+    forwarded_leaf_selected: bool = false,
     post_domain_sink: ?*std.array_list.Managed(facts.InputDomain) = null,
     loop_post_effects: ?*InputPostStateFlow = null,
 
@@ -47,6 +51,7 @@ pub const Infer = struct {
         engine: *summaries.Engine,
     ) Infer {
         return .{
+            .requested_selectors = .init(allocator),
             .cleanup_activations = .init(allocator),
             .allocator = allocator,
             .graph = graph,
@@ -64,6 +69,7 @@ pub const Infer = struct {
         var activations = self.cleanup_activations.valueIterator();
         while (activations.next()) |activation| activation.deinit();
         self.cleanup_activations.deinit();
+        self.requested_selectors.deinit();
         self.bindings.deinit();
         self.place_bindings.deinit();
         self.local_address_bindings.deinit();
@@ -107,6 +113,16 @@ pub const Infer = struct {
         // All dimensions read callee approximations through summaryFor. The
         // engine records those reads and the read of our own prior outputs,
         // so a change schedules every observer, including recursive callers.
+        // Concrete summaries need enough selectors to prove their declarations.
+        // These hints select precision only; they never infer virtual effects
+        // from concrete implementations or depend on their final summaries.
+        for (self.graph.abstract_safety_conformances.items) |proof| try self.requestContractSelectors(proof.method, proof.contract);
+        for (self.graph.virtualizes.items) |virtualize| {
+            for (self.graph.virtual_registry_refs.items[virtualize.safety_methods.start..][0..virtualize.safety_methods.len], 0..) |registry_id, index| {
+                const declared = self.graph.virtual_registries.items[@intFromEnum(registry_id)].safety_contract orelse continue;
+                try self.requestContractSelectors(self.graph.function_refs.items[virtualize.methods.start + index], declared);
+            }
+        }
         try self.engine.seed(functions.items);
         while (self.engine.nextDirty()) |function| {
             self.evaluations += 1;
@@ -164,9 +180,12 @@ pub const Infer = struct {
             var conditional = std.array_list.Managed(facts.OutcomePostStates).init(self.allocator);
             // Every variant gets a record, including preservation alternatives.
             // Effect guards describe inputs independently of output payload facts.
+            var wanted = std.array_list.Managed(outcome_selectors.Selector).init(self.allocator);
+            defer wanted.deinit();
+            for (contract.outcomes) |outcome| try wanted.append(.{ .output_index = outcome.output_index, .parent_variants = outcome.parent_variants, .variant_index = outcome.variant_index });
             for (outputs, 0..) |_, output_index| {
                 var guarded_generation = false;
-                for (declared.outcomes) |outcome| if (outcome.output_index == output_index and (outcome.invalidates.len != 0 or outcome.invalidated_domains.len != 0)) {
+                for (contract.outcomes) |outcome| if (outcome.output_index == output_index and (outcome.effects.invalidates.len != 0 or outcome.effects.invalidated_domains.len != 0)) {
                     guarded_generation = true;
                     break;
                 };
@@ -174,16 +193,11 @@ pub const Infer = struct {
                 const output_ty = registry.contract_output_type orelse continue;
                 const fields = types.fields(self.graph, output_ty) orelse continue;
                 const ty = self.graph.fields.items[fields.start + @as(u32, @intCast(output_index))].ty;
-                const variants = types.variants(self.graph, ty) orelse continue;
-                for (0..variants.len) |variant_index| {
-                    var effects = contract;
-                    for (contract.outcomes) |outcome| if (outcome.output_index == output_index and outcome.variant_index == variant_index) {
-                        effects = outcome.effects.*;
-                        break;
-                    };
+                for (try outcome_selectors.partition(self.allocator, self.graph, @intCast(output_index), ty, wanted.items)) |selector| {
+                    const effects = contracts.effectsForSelector(contract, selector);
                     var states = std.array_list.Managed(facts.PlacePostState).init(self.allocator);
                     for (effects.invalidates) |path| try states.append(.{ .target = path, .initializedness = .initialized, .refreshes_storage_generation = true });
-                    try conditional.append(.{ .output_index = @intCast(output_index), .variant_index = @intCast(variant_index), .input_post_states = try states.toOwnedSlice(), .invalidated_domains = effects.invalidated_domains });
+                    try conditional.append(.{ .output_index = selector.output_index, .parent_variants = selector.parent_variants, .variant_index = selector.variant_index, .input_post_states = try states.toOwnedSlice(), .invalidated_domains = effects.invalidated_domains });
                 }
             }
             var fallback_states = std.array_list.Managed(facts.PlacePostState).init(self.allocator);
@@ -201,6 +215,90 @@ pub const Infer = struct {
             return result;
         }
         return error.MissingVirtualSafetyContract;
+    }
+
+    fn requestContractSelectors(self: *Infer, method: graph_mod.GlobalFunctionId, declared: primitives.MethodSafetyContract) !void {
+        if (declared.outcomes.len == 0) return;
+        const contract = try contracts.fromDeclaration(self.allocator, declared);
+        var wanted = std.array_list.Managed(outcome_selectors.Selector).init(self.allocator);
+        try wanted.appendSlice(self.requested_selectors.get(method) orelse &.{});
+        for (contract.outcomes) |outcome| {
+            if (outcome.effects.invalidates.len == 0 and outcome.effects.invalidated_domains.len == 0) continue;
+            const selector = outcome_selectors.Selector{ .output_index = outcome.output_index, .parent_variants = outcome.parent_variants, .variant_index = outcome.variant_index };
+            var duplicate = false;
+            for (wanted.items) |existing| if (existing.output_index == selector.output_index and existing.variant_index == selector.variant_index and std.mem.eql(u32, existing.parent_variants, selector.parent_variants)) {
+                duplicate = true;
+                break;
+            };
+            if (!duplicate) try wanted.append(selector);
+        }
+        try self.requested_selectors.put(method, try wanted.toOwnedSlice());
+    }
+
+    fn forwardable(self: *Infer, value: graph_mod.GlobalNodeId) bool {
+        return switch (self.graph.node(value).content) {
+            .function_call, .virtual_call => true,
+            .choice_literal => |literal| if (literal.payload) |payload| self.forwardable(payload) else false,
+            else => false,
+        };
+    }
+
+    fn knownOutcome(self: *Infer, effect: facts.ValueEffect, parents: []const u32) anyerror!struct { mismatch: bool = false, variant: ?u32 = null } {
+        var current = effect;
+        for (parents) |parent| {
+            const known = current.known_choice_variant orelse return .{};
+            if (known != parent) return .{ .mismatch = true };
+            var payload: ?facts.ValueEffect = null;
+            for (current.variants) |variant| if (variant.index == parent) {
+                payload = variant.value.*;
+                break;
+            };
+            current = payload orelse return .{};
+        }
+        _ = self;
+        return .{ .variant = current.known_choice_variant };
+    }
+
+    fn forwardingSelectors(self: *Infer, function: graph_mod.GlobalFunctionId, block_id: graph_mod.GlobalBlockId, wanted: *std.array_list.Managed(outcome_selectors.Selector)) anyerror!void {
+        const block = self.graph.blocks.items[@intFromEnum(block_id)];
+        for (self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len]) |id| switch (self.graph.node(id).content) {
+            .assignment => |assignment| if (self.outputIndex(function, assignment.binding)) |index| {
+                try self.forwardingExpressionSelectors(assignment.value, @intCast(index), &.{}, wanted);
+            },
+            .if_statement => |statement| {
+                try self.forwardingSelectors(function, statement.then_block, wanted);
+                if (statement.else_block) |child| try self.forwardingSelectors(function, child, wanted);
+            },
+            .while_statement => |statement| try self.forwardingSelectors(function, statement.body, wanted),
+            .for_statement => |statement| try self.forwardingSelectors(function, statement.body, wanted),
+            .switch_statement => |switch_id| {
+                const statement = self.graph.switches.items[@intFromEnum(switch_id)];
+                for (self.graph.switch_cases.items[statement.cases.start..][0..statement.cases.len]) |case| try self.forwardingSelectors(function, case.body, wanted);
+                if (statement.default_block) |child| try self.forwardingSelectors(function, child, wanted);
+            },
+            .code_block, .value_sequence => |child| try self.forwardingSelectors(function, child, wanted),
+            else => {},
+        };
+    }
+
+    fn forwardingExpressionSelectors(self: *Infer, value: graph_mod.GlobalNodeId, output_index: u32, parents: []const u32, wanted: *std.array_list.Managed(outcome_selectors.Selector)) anyerror!void {
+        const summary = switch (self.graph.node(value).content) {
+            .function_call => |call| self.engine.summaryFor(call.callee),
+            .virtual_call => |id| try self.virtualSummary(self.graph.virtual_calls.items[@intFromEnum(id)].safety_methods),
+            .choice_literal => |literal| {
+                if (literal.payload) |payload| {
+                    const index = self.variantIndex(literal.choice_type, literal.variant) orelse return;
+                    try self.forwardingExpressionSelectors(payload, output_index, try std.mem.concat(self.allocator, u32, &.{ parents, &.{index} }), wanted);
+                }
+                return;
+            },
+            else => return,
+        } orelse return;
+        if (summary.outputs.len != 1) return;
+        for (summary.outcome_post_states) |outcome| {
+            if (outcome.output_index != 0) continue;
+            try wanted.append(.{ .output_index = output_index, .parent_variants = try std.mem.concat(self.allocator, u32, &.{ parents, outcome.parent_variants }), .variant_index = outcome.variant_index });
+        }
     }
 
     fn bindVirtualReceiverValues(self: *Infer, effect: facts.ValueEffect, receiver: u32) anyerror!facts.ValueEffect {
@@ -425,9 +523,13 @@ pub const Infer = struct {
         if (post_states.items.len != 0 or common_domains.len != 0) {
             for (0..function.output.len) |output_index| {
                 const output_ty = self.graph.fields.items[function.output.start + @as(u32, @intCast(output_index))].ty;
-                const variants = types.variants(self.graph, output_ty) orelse continue;
-                for (0..variants.len) |variant_index| {
-                    self.selected_outcome = .{ .output_index = @intCast(output_index), .variant_index = @intCast(variant_index), .binding = self.graph.binding_refs.items[function.output_bindings.start + @as(u32, @intCast(output_index))] };
+                var wanted = std.array_list.Managed(outcome_selectors.Selector).init(self.allocator);
+                defer wanted.deinit();
+                try wanted.appendSlice(self.requested_selectors.get(function_id) orelse &.{});
+                for (previous.outcome_post_states) |outcome| try wanted.append(.{ .output_index = outcome.output_index, .parent_variants = outcome.parent_variants, .variant_index = outcome.variant_index });
+                try self.forwardingSelectors(function_id, function.body.?, &wanted);
+                for (try outcome_selectors.partition(self.allocator, self.graph, @intCast(output_index), output_ty, wanted.items)) |selector| {
+                    self.selected_outcome = .{ .output_index = @intCast(output_index), .parent_variants = selector.parent_variants, .variant_index = selector.variant_index, .binding = self.graph.binding_refs.items[function.output_bindings.start + @as(u32, @intCast(output_index))] };
                     defer self.selected_outcome = null;
                     self.domain_invalidations.clearRetainingCapacity();
                     var outcome_flow = InputPostStateFlow.init(self.allocator);
@@ -438,7 +540,8 @@ pub const Infer = struct {
                     if (outcome_flow.reachable) try self.recordOutcomeExit(&outcome_exits, &outcome_flow);
                     try outcomes.append(.{
                         .output_index = @intCast(output_index),
-                        .variant_index = @intCast(variant_index),
+                        .parent_variants = selector.parent_variants,
+                        .variant_index = selector.variant_index,
                         .input_post_states = if (outcome_exits) |exits| try self.allocator.dupe(facts.PlacePostState, exits.items) else &.{},
                         .invalidated_domains = try self.allocator.dupe(facts.InputDomain, self.domain_invalidations.items),
                     });
@@ -1213,6 +1316,7 @@ pub const Infer = struct {
         states: std.array_list.Managed(facts.PlacePostState),
         reachable: bool = true,
         outcome_variant: ?u32 = null,
+        outcome_parent_mismatch: bool = false,
         domains: std.array_list.Managed(facts.InputDomain),
 
         fn init(allocator: std.mem.Allocator) InputPostStateFlow {
@@ -1229,7 +1333,7 @@ pub const Infer = struct {
             try states.appendSlice(self.states.items);
             var domains = std.array_list.Managed(facts.InputDomain).init(allocator);
             try domains.appendSlice(self.domains.items);
-            return .{ .states = states, .domains = domains, .reachable = self.reachable, .outcome_variant = self.outcome_variant };
+            return .{ .states = states, .domains = domains, .reachable = self.reachable, .outcome_variant = self.outcome_variant, .outcome_parent_mismatch = self.outcome_parent_mismatch };
         }
     };
 
@@ -1289,25 +1393,25 @@ pub const Infer = struct {
                     try self.inferInputPostStatesExpression(function_id, initialization, states, exits);
             },
             .assignment => |assignment| {
-                const previous_forwarded = self.forwarded_variant;
-                defer self.forwarded_variant = previous_forwarded;
-                self.forwarded_variant = null;
-                if (self.selected_outcome) |selected| {
-                    if (self.outputIndex(function_id, assignment.binding)) |index| {
-                        if (index == selected.output_index) {
-                            const value_node = self.graph.node(assignment.value);
-                            if (value_node.content == .function_call or value_node.content == .virtual_call)
-                                self.forwarded_variant = selected.variant_index;
-                        }
-                    }
-                }
+                const previous_forwarded = self.forwarded_outcome;
+                const previous_leaf = self.forwarded_leaf_selected;
+                defer self.forwarded_outcome = previous_forwarded;
+                defer self.forwarded_leaf_selected = previous_leaf;
+                self.forwarded_outcome = null;
+                self.forwarded_leaf_selected = false;
+                if (self.selected_outcome) |selected| if (self.outputIndex(function_id, assignment.binding)) |index| {
+                    if (index == selected.output_index and !self.addressed_outputs.contains(selected.binding) and
+                        self.cleanup != null and self.cleanup.?.canForward(selected.binding) and self.forwardable(assignment.value))
+                        self.forwarded_outcome = .{ .output_index = 0, .parent_variants = selected.parent_variants, .variant_index = selected.variant_index };
+                };
                 try self.inferInputPostStatesExpression(function_id, assignment.value, states, exits);
-                if (self.selected_outcome) |selected| {
-                    if (self.outputIndex(function_id, assignment.binding)) |index| {
-                        if (index == selected.output_index)
-                            flow.outcome_variant = self.forwarded_variant orelse (try self.inferExpression(function_id, assignment.value)).known_choice_variant;
+                if (self.selected_outcome) |selected| if (self.outputIndex(function_id, assignment.binding)) |index| {
+                    if (index == selected.output_index) {
+                        const known = try self.knownOutcome(try self.inferExpression(function_id, assignment.value), selected.parent_variants);
+                        flow.outcome_parent_mismatch = known.mismatch;
+                        flow.outcome_variant = if (self.forwarded_leaf_selected and !known.mismatch) selected.variant_index else known.variant;
                     }
-                }
+                };
             },
             .function_call, .virtual_call => try self.inferInputPostStatesExpression(function_id, node_id, states, exits),
             .pointer_assignment => |assignment| {
@@ -1391,6 +1495,7 @@ pub const Infer = struct {
                 for (body_flow.domains.items) |domain| try appendDomain(&flow.domains, domain);
                 for (transfers.domains.items) |domain| try appendDomain(&flow.domains, domain);
                 flow.outcome_variant = null;
+                flow.outcome_parent_mismatch = false;
             },
             .for_statement => |statement| {
                 if (statement.init) |initialization|
@@ -1418,6 +1523,7 @@ pub const Infer = struct {
                 for (body_flow.domains.items) |domain| try appendDomain(&flow.domains, domain);
                 for (transfers.domains.items) |domain| try appendDomain(&flow.domains, domain);
                 flow.outcome_variant = null;
+                flow.outcome_parent_mismatch = false;
             },
             .switch_statement => |switch_id| {
                 const statement = self.graph.switches.items[@intFromEnum(switch_id)];
@@ -1519,8 +1625,17 @@ pub const Infer = struct {
                     try self.inferInputPostStatesExpression(function_id, element, states, exits);
             },
             .choice_literal => |literal| {
-                if (literal.payload) |payload|
-                    try self.inferInputPostStatesExpression(function_id, payload, states, exits);
+                const forwarded = self.forwarded_outcome;
+                defer self.forwarded_outcome = forwarded;
+                self.forwarded_outcome = null;
+                if (forwarded) |selector| if (selector.parent_variants.len != 0) {
+                    if ((self.variantIndex(literal.choice_type, literal.variant) orelse 0) == selector.parent_variants[0]) {
+                        var inner = selector;
+                        inner.parent_variants = inner.parent_variants[1..];
+                        self.forwarded_outcome = inner;
+                    }
+                };
+                if (literal.payload) |payload| try self.inferInputPostStatesExpression(function_id, payload, states, exits);
             },
             .struct_field_access => |access| try self.inferInputPostStatesExpression(function_id, access.value, states, exits),
             .choice_payload_access => |access| try self.inferInputPostStatesExpression(function_id, access.value, states, exits),
@@ -1574,20 +1689,20 @@ pub const Infer = struct {
                 if (error_flow.reachable) try self.recordOutcomeExit(exits, &error_flow);
             },
             .function_call => |call| {
-                const forwarded = self.forwarded_variant;
-                self.forwarded_variant = null;
+                const forwarded = self.forwarded_outcome;
+                self.forwarded_outcome = null;
                 if (call.callee_value) |value| try self.inferInputPostStatesExpression(function_id, value, states, exits);
                 try self.inferInputPostStatesExpression(function_id, call.input, states, exits);
-                self.forwarded_variant = forwarded;
+                self.forwarded_outcome = forwarded;
                 try self.applyInputPostStatesFromFunctionCall(function_id, call.callee, call.input, states);
             },
             .virtual_call => |virtual_call_id| {
                 const call = self.graph.virtual_calls.items[@intFromEnum(virtual_call_id)];
-                const forwarded = self.forwarded_variant;
-                self.forwarded_variant = null;
+                const forwarded = self.forwarded_outcome;
+                self.forwarded_outcome = null;
                 try self.inferInputPostStatesExpression(function_id, call.handle, states, exits);
                 try self.inferInputPostStatesExpression(function_id, call.input, states, exits);
-                self.forwarded_variant = forwarded;
+                self.forwarded_outcome = forwarded;
                 if (try self.virtualSummary(call.safety_methods)) |summary|
                     try self.applyInputPostStatesFromSummary(function_id, summary, call.input, states, null);
             },
@@ -1677,11 +1792,12 @@ pub const Infer = struct {
     ) !void {
         const arguments = self.structArguments(input) orelse return;
         var selected = summary;
-        if (self.forwarded_variant) |variant| {
+        if (self.forwarded_outcome) |selector| {
             // Forwarding a single choice keeps one selector. No correlation is
             // inferred merely because unrelated outputs use the same tag names.
             if (summary.outputs.len == 1) for (summary.outcome_post_states) |outcome| {
-                if (outcome.output_index == 0 and outcome.variant_index == variant) {
+                if (outcome.output_index == 0 and outcome.variant_index == selector.variant_index and std.mem.eql(u32, outcome.parent_variants, selector.parent_variants)) {
+                    self.forwarded_leaf_selected = true;
                     selected.input_post_states = outcome.input_post_states;
                     selected.invalidated_domains = outcome.invalidated_domains;
                     break;
@@ -1968,6 +2084,7 @@ pub const Infer = struct {
             try destination.domains.appendSlice(domains.items);
             destination.reachable = true;
             destination.outcome_variant = if (left.outcome_variant == right.outcome_variant) left.outcome_variant else null;
+            destination.outcome_parent_mismatch = left.outcome_parent_mismatch and right.outcome_parent_mismatch;
         }
     }
 
@@ -1998,6 +2115,7 @@ pub const Infer = struct {
         try destination.domains.appendSlice(source.domains.items);
         destination.reachable = source.reachable;
         destination.outcome_variant = source.outcome_variant;
+        destination.outcome_parent_mismatch = source.outcome_parent_mismatch;
     }
 
     fn markAddressedOutput(self: *Infer, function: graph_mod.GlobalFunctionId, node: graph_mod.GlobalNodeId) anyerror!void {
@@ -2017,6 +2135,7 @@ pub const Infer = struct {
             // change its tag. Keep every exit in that selector's may-effects
             // until indirect writes have a branch-local discriminant model.
             if (!self.addressed_outputs.contains(selected.binding)) {
+                if (flow.outcome_parent_mismatch) return;
                 if (flow.outcome_variant) |variant| if (variant != selected.variant_index) return;
             }
         }

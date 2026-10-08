@@ -151,6 +151,8 @@ pub const SafetySummary = struct {
 };
 
 pub const OutcomePostStates = struct {
+    /// Tags of the enclosing payload choices, from outermost to innermost.
+    parent_variants: []const u32 = &.{},
     output_index: u32 = 0,
     variant_index: u32,
     input_post_states: []const PlacePostState,

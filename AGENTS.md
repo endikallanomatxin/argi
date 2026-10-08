@@ -290,6 +290,11 @@ feature first.
   exposed through references conservatively lose tag-based exit filtering until
   indirect discriminant writes have a branch-local model. Resource consumption
   and hidden-state replacement remain separate checked obligations.
+  Nested generation guards retain their enclosing payload variant path. Partition
+  only paths requested by declarations or forwarded results, preserving a
+  conservative effect record elsewhere instead of expanding shared choice types.
+  Direct forwarding proofs require an output assigned once outside loops and
+  whose address has not escaped; rewrites retain unconditional may-effects.
   Outcome contracts select a named output and variant, not the first result.
   Keep that output index through syntax-free IR, relocation, cached snapshots,
   conformance and summary equality. Common clauses apply to every outcome;

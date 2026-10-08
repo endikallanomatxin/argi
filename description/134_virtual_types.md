@@ -350,8 +350,8 @@ storage generations, and opaque storage.
 > generation changes. Generation refinement supports bound result discrimination
 > and direct forwarding of a single choice through wrappers. More complex wrapper
 > bodies conservatively join their effects. Hidden storage transitions, clauses
-> affecting other outputs and nested generation effects remain to be implemented.
-> Nested payload selectors support dependency and fresh ownership contracts.
+> affecting other outputs remain to be implemented. Nested payload selectors
+> support dependencies, fresh ownership and generation changes.
 > Independent payload selectors on several outputs are supported; generation
 > effects requiring independent result correlations are conservatively joined.
 
@@ -384,3 +384,9 @@ runs cleanup for its active payload, including nested records and choices;
 moving the payload transfers that cleanup obligation to its new owner.
 A cleanup obligation alone establishes neither a fresh storage lifetime nor
 permission to manufacture references or storage acquisition receipts.
+
+Generation effects selected by a nested `on` clause require proving the complete
+payload path. Selecting an outer success variant does not prove preservation
+when its unresolved inner variants disagree. A preserving inner variant restores
+permission to use the same pre-call generation only while that generation remains
+current. Later invalidation or result replacement cannot restore an older root.

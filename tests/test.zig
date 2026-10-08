@@ -10677,3 +10677,38 @@ test "feature_tests/polymorphism/139_virtual_nested_cleanup_effect" {
     try expectSuccessfulBuild("tests/feature_tests/polymorphism/139_virtual_nested_cleanup_effect");
     try runExpect("tests/feature_tests/polymorphism/139_virtual_nested_cleanup_effect", 0);
 }
+
+test "feature_tests/polymorphism/140_virtual_nested_generation" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/140_virtual_nested_generation");
+    try runExpect("tests/feature_tests/polymorphism/140_virtual_nested_generation", 0);
+}
+
+test "feature_tests/polymorphism/141X_virtual_nested_generation_invalidated" {
+    try buildExpectFail("tests/feature_tests/polymorphism/141X_virtual_nested_generation_invalidated", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/142X_virtual_nested_generation_outer_only" {
+    try buildExpectFail("tests/feature_tests/polymorphism/142X_virtual_nested_generation_outer_only", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/143X_virtual_nested_generation_preservation" {
+    try buildExpectFail("tests/feature_tests/polymorphism/143X_virtual_nested_generation_preservation", "a storage transition is not permitted");
+}
+
+test "feature_tests/polymorphism/145X_virtual_nested_generation_overwritten" {
+    try buildExpectFail("tests/feature_tests/polymorphism/145X_virtual_nested_generation_overwritten", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/146X_virtual_nested_generation_aliased_output" {
+    try buildExpectFail("tests/feature_tests/polymorphism/146X_virtual_nested_generation_aliased_output", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/144_virtual_nested_generation_repackaged" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/144_virtual_nested_generation_repackaged");
+    try runExpect("tests/feature_tests/polymorphism/144_virtual_nested_generation_repackaged", 0);
+}
+
+test "feature_tests/polymorphism/147_virtual_nested_generation_domain" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/147_virtual_nested_generation_domain");
+    try runExpect("tests/feature_tests/polymorphism/147_virtual_nested_generation_domain", 0);
+}

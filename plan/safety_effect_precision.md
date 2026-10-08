@@ -216,11 +216,12 @@ https://rust-lang.github.io/polonius/rules/loans.html
 
 ## Development order
 
-1. Extend direct forwarding to repackaging wrappers, error propagation and nested
-   output projection selectors. Keep conservative fallback for unproven relations.
+1. Extend forwarding to wrappers with intermediate bindings, error propagation
+   and choice tests on computed expressions. Keep conservative fallback for
+   unproven relations and output slots that may be rewritten.
 2. Add checked storing/consuming/initializing effects and opaque owner obligations.
-3. Complete nested generation effects along payload selectors. Preserve parent
-   guards when refining these effects; measure representation growth and
-   reevaluations using core-sized examples.
+3. Measure representation growth and reevaluations using core-sized examples;
+   retain selective structural partitions rather than products of independent
+   output discriminants.
 4. Reconsider input guards and joint discriminants only when a concrete useful
    API remains unnecessarily rejected by the structural boundary.

@@ -28,12 +28,11 @@ implementation. Its structural boundary retains individual discriminants and
 nested payload paths, but conservatively forgets conjunctions of independent
 discriminants and predicates over ordinary values.
 
-- Extend guarded generation summaries to wrappers that repackage call results,
+- Extend guarded generation summaries to intermediate wrapper bindings,
   choice tests on computed expressions and error propagation. Direct forwarding,
   bound discrimination, moves and copies preserve call provenance; more complex
   flows must remain conservative without reviving expired roots.
-- Extend `on output ..variant` to effects on other outputs and generation
-  transitions selected by nested payload tags.
+- Extend `on output ..variant` to effects on other outputs.
   Use shared effect records rather than eagerly enumerating a Cartesian product
   of output variants. Distinguish effect permissions from required guarantees;
   common clauses apply to all outcomes and conditional clauses add obligations.

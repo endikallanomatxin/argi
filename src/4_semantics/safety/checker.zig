@@ -273,7 +273,7 @@ pub const SafetyChecker = struct {
         };
         var scalar_invalidates: std.ArrayList(u32) = .empty;
         try scalar_invalidates.appendSlice(self.allocator, declared.invalidates);
-        for (declared.outcomes) |outcome| try scalar_invalidates.appendSlice(self.allocator, outcome.invalidates);
+        try self.collectOutcomeInvalidations(declared.outcomes, &scalar_invalidates);
         if (scalar_invalidates.items.len != 0) {
             const states = try self.allocator.dupe(facts.PlacePostState, summary.input_post_states);
             for (states) |*post| for (scalar_invalidates.items) |index| {
@@ -299,13 +299,26 @@ pub const SafetyChecker = struct {
             if (failure.outcome) |outcome| {
                 if (outcome.output_index < function.output.len) {
                     const output = self.graph.fields.items[function.output.start + outcome.output_index];
-                    if (types.variants(self.graph, output.ty)) |variants| if (outcome.variant_index < variants.len) {
+                    var selected_ty = output.ty;
+                    for (outcome.parent_variants) |parent| {
+                        const enclosing = types.variants(self.graph, selected_ty) orelse break;
+                        if (parent >= enclosing.len) break;
+                        selected_ty = self.graph.variants.items[enclosing.start + parent].payload_type orelse break;
+                    }
+                    if (types.variants(self.graph, selected_ty)) |variants| if (outcome.variant_index < variants.len) {
                         const variant = self.graph.variants.items[variants.start + outcome.variant_index];
                         try self.report(declared.source, "cannot prove preservation for on {s} ..{s}; declare its generation effects or preserve the input on every continuing path", .{ self.graph.text(output.name), self.graph.text(variant.name) });
                     };
                 }
             }
             try self.report(declared.source, "the Abstract safety contract is declared here", .{});
+        }
+    }
+
+    fn collectOutcomeInvalidations(self: *SafetyChecker, outcomes: []const primitives.MethodSafetyContract.Outcome, result: *std.ArrayList(u32)) anyerror!void {
+        for (outcomes) |outcome| {
+            try result.appendSlice(self.allocator, outcome.invalidates);
+            try self.collectOutcomeInvalidations(outcome.outcomes, result);
         }
     }
 
@@ -1780,8 +1793,6 @@ pub const SafetyChecker = struct {
                 break;
             };
         }
-        const variants = try self.allocator.dupe(facts.VariantFacts, choice.variants);
-        choice.variants = variants;
         const guard = self.next_outcome_guard;
         self.next_outcome_guard += 1;
         var storages = std.array_list.Managed(facts.Place).init(self.allocator);
@@ -1809,19 +1820,29 @@ pub const SafetyChecker = struct {
             }
             entry.state = .maybe_alive;
             entry.outcome_guard = guard;
-            for (variants) |*variant| {
-                var invalidates = true;
-                for (summary.outcome_post_states) |outcome| if (outcome.output_index == output_index and outcome.variant_index == variant.index) {
-                    invalidates = try self.outcomeInvalidatesStorage(outcome, argument_ids, arguments, state, storage);
-                    break;
-                };
-                const payload = try self.allocator.create(facts.ValueFacts);
-                payload.* = variant.value.*;
-                payload.generation_outcomes = try std.mem.concat(self.allocator, facts.GenerationOutcome, &.{ payload.generation_outcomes, &.{.{ .storage = storage, .generation = root, .guard = guard, .invalidates = invalidates, .source = source }} });
-                variant.value = payload;
+            for (summary.outcome_post_states) |outcome| {
+                if (outcome.output_index != output_index) continue;
+                const invalidates = try self.outcomeInvalidatesStorage(outcome, argument_ids, arguments, state, storage);
+                try self.attachOutcomeGeneration(choice, outcome.parent_variants, outcome.variant_index, .{ .storage = storage, .generation = root, .guard = guard, .invalidates = invalidates, .source = source });
             }
         }
         return result;
+    }
+
+    fn attachOutcomeGeneration(self: *SafetyChecker, value: *facts.ValueFacts, parents: []const u32, leaf: u32, proof: facts.GenerationOutcome) anyerror!void {
+        const variants = try self.allocator.dupe(facts.VariantFacts, value.variants);
+        value.variants = variants;
+        const selected = if (parents.len == 0) leaf else parents[0];
+        for (variants) |*variant| {
+            if (variant.index != selected) continue;
+            const payload = try self.allocator.create(facts.ValueFacts);
+            payload.* = variant.value.*;
+            variant.value = payload;
+            if (parents.len == 0) {
+                payload.generation_outcomes = try std.mem.concat(self.allocator, facts.GenerationOutcome, &.{ payload.generation_outcomes, &.{proof} });
+            } else try self.attachOutcomeGeneration(payload, parents[1..], leaf, proof);
+            break;
+        }
     }
 
     fn outcomeInvalidatesStorage(self: *SafetyChecker, outcome: facts.OutcomePostStates, argument_ids: []const graph_mod.GlobalValueFieldId, arguments: []const facts.ValueFacts, state: *FunctionState, storage: facts.Place) !bool {
@@ -4831,6 +4852,10 @@ pub const SafetyChecker = struct {
                 try self.refreshStorageGenerationChecked(outcome.source, state, outcome.storage);
             } else root.state = .alive;
         }
+        for (value.fields) |field| try self.activate_conditional_resources(state, field.value.*);
+        if (value.known_choice_variant) |active| for (value.variants) |variant| {
+            if (variant.index == active) try self.activate_conditional_resources(state, variant.value.*);
+        };
         try self.activate_conditional_owner_roots(state, value);
         try self.activate_conditional_capabilities(state, value);
     }

@@ -11,8 +11,19 @@ const primitives = @import("../primitives/schema.zig");
 pub const Activation = struct {
     roots: std.AutoHashMap(graph_mod.GlobalAutoDeinitId, void),
     fields: std.AutoHashMap(graph_mod.GlobalAutoDeinitFieldId, void),
+    output_bindings: []const graph_mod.GlobalBindingId,
+    assignment_counts: []usize,
+    loop_assigned: []bool,
+
+    pub fn canForward(self: *const Activation, binding: graph_mod.GlobalBindingId) bool {
+        for (self.output_bindings, 0..) |output, index| if (output == binding)
+            return self.assignment_counts[index] == 1 and !self.loop_assigned[index];
+        return false;
+    }
 
     pub fn deinit(self: *Activation) void {
+        self.roots.allocator.free(self.assignment_counts);
+        self.roots.allocator.free(self.loop_assigned);
         self.roots.deinit();
         self.fields.deinit();
     }
@@ -72,12 +83,28 @@ const Flow = struct {
 };
 
 pub fn collect(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSemanticGraph, function_id: graph_mod.GlobalFunctionId) !Activation {
+    const function = graph.function(function_id);
+    const counts = try allocator.alloc(usize, function.output_bindings.len);
+    @memset(counts, 0);
+    const loop_assigned = allocator.alloc(bool, function.output_bindings.len) catch |err| {
+        allocator.free(counts);
+        return err;
+    };
+    @memset(loop_assigned, false);
     var scanner = Scanner{
         .allocator = allocator,
         .graph = graph,
-        .activation = .{ .roots = .init(allocator), .fields = .init(allocator) },
+        .assignment_nodes = .init(allocator),
+        .activation = .{
+            .roots = .init(allocator),
+            .fields = .init(allocator),
+            .output_bindings = graph.binding_refs.items[function.output_bindings.start..][0..function.output_bindings.len],
+            .assignment_counts = counts,
+            .loop_assigned = loop_assigned,
+        },
     };
     errdefer scanner.activation.deinit();
+    defer scanner.assignment_nodes.deinit();
     var flow = Flow.init(allocator);
     defer flow.deinit();
     if (graph.function(function_id).body) |body| try scanner.block(body, &flow);
@@ -88,6 +115,16 @@ const Scanner = struct {
     allocator: std.mem.Allocator,
     graph: *const graph_mod.GlobalSemanticGraph,
     activation: Activation,
+    in_loop: bool = false,
+    assignment_nodes: std.AutoHashMap(graph_mod.GlobalNodeId, void),
+
+    fn recordAssignment(self: *Scanner, id: graph_mod.GlobalNodeId, binding: graph_mod.GlobalBindingId) !void {
+        const seen = try self.assignment_nodes.getOrPut(id);
+        for (self.activation.output_bindings, 0..) |output, index| if (output == binding) {
+            if (!seen.found_existing) self.activation.assignment_counts[index] += 1;
+            self.activation.loop_assigned[index] = self.activation.loop_assigned[index] or self.in_loop;
+        };
+    }
 
     fn project(self: *Scanner, place: facts.Place, projection: facts.Projection) !facts.Place {
         const path = try self.allocator.alloc(facts.Projection, place.projections.len + 1);
@@ -179,6 +216,7 @@ const Scanner = struct {
                 } else try flow.disable(target);
             },
             .assignment => |assignment| {
+                try self.recordAssignment(id, assignment.binding);
                 try self.node(assignment.value, flow);
                 try self.initialize(flow, .{ .root = assignment.binding }, assignment.value);
             },
@@ -240,6 +278,9 @@ const Scanner = struct {
                 flow.reachable = joined.reachable;
             },
             .while_statement => |statement| {
+                const previous_loop = self.in_loop;
+                self.in_loop = true;
+                defer self.in_loop = previous_loop;
                 try self.node(statement.condition, flow);
                 var body = try flow.clone(self.allocator);
                 defer body.deinit();
@@ -249,6 +290,9 @@ const Scanner = struct {
                 flow.disabled.clearRetainingCapacity();
             },
             .for_statement => |statement| {
+                const previous_loop = self.in_loop;
+                self.in_loop = true;
+                defer self.in_loop = previous_loop;
                 if (statement.init) |initialization| try self.node(initialization, flow);
                 try self.node(statement.condition, flow);
                 var body = try flow.clone(self.allocator);

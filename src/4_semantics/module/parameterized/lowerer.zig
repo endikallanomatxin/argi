@@ -364,10 +364,6 @@ pub const Context = struct {
                             try self.contractError(statement, "nested on must follow the selected output payload");
                             unreachable;
                         }
-                        if (hasNestedGenerationEffects(nested)) {
-                            try self.contractError(statement, "nested generation effects require projected call-result guards");
-                            unreachable;
-                        }
                     }
                     for (effect.dependencies) |dependency| if (dependency.output_index != output_index.?) {
                         try self.contractError(statement, "conditional effects on other outputs require correlated result facts");
@@ -410,12 +406,6 @@ pub const Context = struct {
             .transfers = try transfers.toOwnedSlice(self.allocator),
             .source = self.sourceRef(node),
         };
-    }
-
-    fn hasNestedGenerationEffects(outcome: primitives.MethodSafetyContract.Outcome) bool {
-        if (outcome.invalidates.len != 0 or outcome.invalidated_domains.len != 0) return true;
-        for (outcome.outcomes) |child| if (hasNestedGenerationEffects(child)) return true;
-        return false;
     }
 
     fn contractError(self: *Context, node: syn.NodeIndex, message: []const u8) !void {
