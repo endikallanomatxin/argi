@@ -347,7 +347,8 @@ conservatively rather than gaining a guarantee that needs both results.
 
 > [!IMPLEMENTATION]
 > Generation effects support one choice output per refinement and direct
-> forwarding through one payload path, including direct repackaging. Other
+> forwarding through one payload path, stable lexical bindings and direct
+> repackaging. Other
 > conditional effect dimensions and selectors through output fields require
 > further implementation. The checker retains
 > conservative effects when it cannot preserve their correlation.

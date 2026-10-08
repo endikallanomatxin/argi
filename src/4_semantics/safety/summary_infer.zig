@@ -42,8 +42,13 @@ pub const Infer = struct {
     selected_outcome: ?struct { output_index: u32, parent_variants: []const u32 = &.{}, variant_index: u32, binding: graph_mod.GlobalBindingId } = null,
     forwarded_outcome: ?outcome_selectors.Selector = null,
     forwarded_leaf_selected: bool = false,
+    selected_forward: ?struct { call: graph_mod.GlobalNodeId, selector: outcome_selectors.Selector } = null,
+    selected_forward_applied: bool = false,
+
     post_domain_sink: ?*std.array_list.Managed(facts.InputDomain) = null,
     loop_post_effects: ?*InputPostStateFlow = null,
+
+    const ForwardOrigin = struct { call: graph_mod.GlobalNodeId, parent_variants: []const u32 = &.{} };
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -235,11 +240,61 @@ pub const Infer = struct {
         try self.requested_selectors.put(method, try wanted.toOwnedSlice());
     }
 
-    fn forwardable(self: *Infer, value: graph_mod.GlobalNodeId) bool {
+    /// Stable lexical definitions preserve the identity of one returned call.
+    /// Select that call before visiting its effects; never undo a joined caller
+    /// state when a later binding use reveals its tag. Subsequent calls and
+    /// writes still contribute their ordinary effects in source order.
+    fn forwardOrigin(self: *Infer, value: graph_mod.GlobalNodeId, parents: []const u32, seen: *std.array_list.Managed(graph_mod.GlobalBindingId)) anyerror!?ForwardOrigin {
         return switch (self.graph.node(value).content) {
-            .function_call, .virtual_call => true,
-            .choice_literal => |literal| if (literal.payload) |payload| self.forwardable(payload) else false,
-            else => false,
+            .function_call, .virtual_call => .{ .call = value, .parent_variants = parents },
+            .binding_use => |binding| blk: {
+                if (std.mem.indexOfScalar(graph_mod.GlobalBindingId, seen.items, binding) != null) break :blk null;
+                const initialization = if (self.cleanup) |cleanup| cleanup.stableInitializer(binding) else null;
+                try seen.append(binding);
+                break :blk if (initialization) |initializer| try self.forwardOrigin(initializer, parents, seen) else null;
+            },
+            .move_value, .denied_implicit_copy => |child| try self.forwardOrigin(child, parents, seen),
+            .choice_literal => |literal| if (literal.payload) |payload|
+                try self.forwardOrigin(payload, try std.mem.concat(self.allocator, u32, &.{ parents, &.{self.variantIndex(literal.choice_type, literal.variant) orelse return null} }), seen)
+            else
+                null,
+            else => null,
+        };
+    }
+
+    fn expressionForwardOrigin(self: *Infer, value: graph_mod.GlobalNodeId) !?ForwardOrigin {
+        var seen = std.array_list.Managed(graph_mod.GlobalBindingId).init(self.allocator);
+        defer seen.deinit();
+        return self.forwardOrigin(value, &.{}, &seen);
+    }
+
+    fn selectForwardedCall(self: *Infer, function: graph_mod.GlobalFunctionId, block_id: graph_mod.GlobalBlockId) anyerror!void {
+        const selected = self.selected_outcome orelse return;
+        if (self.addressed_outputs.contains(selected.binding) or self.cleanup == null or !self.cleanup.?.canForward(selected.binding)) return;
+        const block = self.graph.blocks.items[@intFromEnum(block_id)];
+        for (self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len]) |id| switch (self.graph.node(id).content) {
+            .assignment => |assignment| {
+                if (assignment.binding != selected.binding) continue;
+                const origin = try self.expressionForwardOrigin(assignment.value) orelse continue;
+                if (origin.parent_variants.len > selected.parent_variants.len or
+                    !std.mem.eql(u32, origin.parent_variants, selected.parent_variants[0..origin.parent_variants.len])) continue;
+                self.selected_forward = .{ .call = origin.call, .selector = .{
+                    .output_index = 0,
+                    .parent_variants = selected.parent_variants[origin.parent_variants.len..],
+                    .variant_index = selected.variant_index,
+                } };
+            },
+            .if_statement => |statement| {
+                try self.selectForwardedCall(function, statement.then_block);
+                if (statement.else_block) |child| try self.selectForwardedCall(function, child);
+            },
+            .switch_statement => |id_switch| {
+                const statement = self.graph.switches.items[@intFromEnum(id_switch)];
+                for (self.graph.switch_cases.items[statement.cases.start..][0..statement.cases.len]) |case| try self.selectForwardedCall(function, case.body);
+                if (statement.default_block) |child| try self.selectForwardedCall(function, child);
+            },
+            .code_block, .value_sequence => |child| try self.selectForwardedCall(function, child),
+            else => {},
         };
     }
 
@@ -282,22 +337,17 @@ pub const Infer = struct {
     }
 
     fn forwardingExpressionSelectors(self: *Infer, value: graph_mod.GlobalNodeId, output_index: u32, parents: []const u32, wanted: *std.array_list.Managed(outcome_selectors.Selector)) anyerror!void {
-        const summary = switch (self.graph.node(value).content) {
+        const origin = try self.expressionForwardOrigin(value) orelse return;
+        const enclosing = try std.mem.concat(self.allocator, u32, &.{ parents, origin.parent_variants });
+        const summary = switch (self.graph.node(origin.call).content) {
             .function_call => |call| self.engine.summaryFor(call.callee),
             .virtual_call => |id| try self.virtualSummary(self.graph.virtual_calls.items[@intFromEnum(id)].safety_methods),
-            .choice_literal => |literal| {
-                if (literal.payload) |payload| {
-                    const index = self.variantIndex(literal.choice_type, literal.variant) orelse return;
-                    try self.forwardingExpressionSelectors(payload, output_index, try std.mem.concat(self.allocator, u32, &.{ parents, &.{index} }), wanted);
-                }
-                return;
-            },
-            else => return,
+            else => unreachable,
         } orelse return;
         if (summary.outputs.len != 1) return;
         for (summary.outcome_post_states) |outcome| {
             if (outcome.output_index != 0) continue;
-            try wanted.append(.{ .output_index = output_index, .parent_variants = try std.mem.concat(self.allocator, u32, &.{ parents, outcome.parent_variants }), .variant_index = outcome.variant_index });
+            try wanted.append(.{ .output_index = output_index, .parent_variants = try std.mem.concat(self.allocator, u32, &.{ enclosing, outcome.parent_variants }), .variant_index = outcome.variant_index });
         }
     }
 
@@ -531,6 +581,10 @@ pub const Infer = struct {
                 for (try outcome_selectors.partition(self.allocator, self.graph, @intCast(output_index), output_ty, wanted.items)) |selector| {
                     self.selected_outcome = .{ .output_index = @intCast(output_index), .parent_variants = selector.parent_variants, .variant_index = selector.variant_index, .binding = self.graph.binding_refs.items[function.output_bindings.start + @as(u32, @intCast(output_index))] };
                     defer self.selected_outcome = null;
+                    self.selected_forward = null;
+                    self.selected_forward_applied = false;
+                    defer self.selected_forward = null;
+                    try self.selectForwardedCall(function_id, function.body.?);
                     self.domain_invalidations.clearRetainingCapacity();
                     var outcome_flow = InputPostStateFlow.init(self.allocator);
                     defer outcome_flow.deinit();
@@ -1399,17 +1453,14 @@ pub const Infer = struct {
                 defer self.forwarded_leaf_selected = previous_leaf;
                 self.forwarded_outcome = null;
                 self.forwarded_leaf_selected = false;
-                if (self.selected_outcome) |selected| if (self.outputIndex(function_id, assignment.binding)) |index| {
-                    if (index == selected.output_index and !self.addressed_outputs.contains(selected.binding) and
-                        self.cleanup != null and self.cleanup.?.canForward(selected.binding) and self.forwardable(assignment.value))
-                        self.forwarded_outcome = .{ .output_index = 0, .parent_variants = selected.parent_variants, .variant_index = selected.variant_index };
-                };
                 try self.inferInputPostStatesExpression(function_id, assignment.value, states, exits);
                 if (self.selected_outcome) |selected| if (self.outputIndex(function_id, assignment.binding)) |index| {
                     if (index == selected.output_index) {
                         const known = try self.knownOutcome(try self.inferExpression(function_id, assignment.value), selected.parent_variants);
                         flow.outcome_parent_mismatch = known.mismatch;
-                        flow.outcome_variant = if (self.forwarded_leaf_selected and !known.mismatch) selected.variant_index else known.variant;
+                        const origin = try self.expressionForwardOrigin(assignment.value);
+                        const selected_origin = if (self.selected_forward) |forwarded| if (origin) |actual| actual.call == forwarded.call else false else false;
+                        flow.outcome_variant = if (selected_origin and self.selected_forward_applied and !known.mismatch) selected.variant_index else known.variant;
                     }
                 };
             },
@@ -1693,8 +1744,15 @@ pub const Infer = struct {
                 self.forwarded_outcome = null;
                 if (call.callee_value) |value| try self.inferInputPostStatesExpression(function_id, value, states, exits);
                 try self.inferInputPostStatesExpression(function_id, call.input, states, exits);
-                self.forwarded_outcome = forwarded;
+                self.forwarded_outcome = if (self.selected_forward) |origin| if (origin.call == node_id) origin.selector else forwarded else forwarded;
+                const previous_leaf = self.forwarded_leaf_selected;
+                self.forwarded_leaf_selected = false;
                 try self.applyInputPostStatesFromFunctionCall(function_id, call.callee, call.input, states);
+                if (self.selected_forward) |origin| if (origin.call == node_id and self.forwarded_leaf_selected) {
+                    self.selected_forward_applied = true;
+                };
+                self.forwarded_leaf_selected = previous_leaf;
+                self.forwarded_outcome = forwarded;
             },
             .virtual_call => |virtual_call_id| {
                 const call = self.graph.virtual_calls.items[@intFromEnum(virtual_call_id)];
@@ -1702,9 +1760,16 @@ pub const Infer = struct {
                 self.forwarded_outcome = null;
                 try self.inferInputPostStatesExpression(function_id, call.handle, states, exits);
                 try self.inferInputPostStatesExpression(function_id, call.input, states, exits);
-                self.forwarded_outcome = forwarded;
+                self.forwarded_outcome = if (self.selected_forward) |origin| if (origin.call == node_id) origin.selector else forwarded else forwarded;
+                const previous_leaf = self.forwarded_leaf_selected;
+                self.forwarded_leaf_selected = false;
                 if (try self.virtualSummary(call.safety_methods)) |summary|
                     try self.applyInputPostStatesFromSummary(function_id, summary, call.input, states, null);
+                if (self.selected_forward) |origin| if (origin.call == node_id and self.forwarded_leaf_selected) {
+                    self.selected_forward_applied = true;
+                };
+                self.forwarded_leaf_selected = previous_leaf;
+                self.forwarded_outcome = forwarded;
             },
             .virtualize => |virtualize_id| try self.inferInputPostStatesExpression(
                 function_id,

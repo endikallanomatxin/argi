@@ -11,17 +11,29 @@ const primitives = @import("../primitives/schema.zig");
 pub const Activation = struct {
     roots: std.AutoHashMap(graph_mod.GlobalAutoDeinitId, void),
     fields: std.AutoHashMap(graph_mod.GlobalAutoDeinitFieldId, void),
+    stable_initializers: std.AutoHashMap(graph_mod.GlobalBindingId, graph_mod.GlobalNodeId),
+    unstable_bindings: std.AutoHashMap(graph_mod.GlobalBindingId, void),
+    incomplete_outputs: std.AutoHashMap(graph_mod.GlobalBindingId, void),
     output_bindings: []const graph_mod.GlobalBindingId,
     assignment_counts: []usize,
     loop_assigned: []bool,
 
     pub fn canForward(self: *const Activation, binding: graph_mod.GlobalBindingId) bool {
+        if (self.incomplete_outputs.contains(binding)) return false;
         for (self.output_bindings, 0..) |output, index| if (output == binding)
             return self.assignment_counts[index] == 1 and !self.loop_assigned[index];
         return false;
     }
 
+    pub fn stableInitializer(self: *const Activation, binding: graph_mod.GlobalBindingId) ?graph_mod.GlobalNodeId {
+        if (self.unstable_bindings.contains(binding)) return null;
+        return self.stable_initializers.get(binding);
+    }
+
     pub fn deinit(self: *Activation) void {
+        self.stable_initializers.deinit();
+        self.unstable_bindings.deinit();
+        self.incomplete_outputs.deinit();
         self.roots.allocator.free(self.assignment_counts);
         self.roots.allocator.free(self.loop_assigned);
         self.roots.deinit();
@@ -31,17 +43,20 @@ pub const Activation = struct {
 
 const Flow = struct {
     disabled: std.array_list.Managed(facts.Place),
+    assigned_outputs: std.array_list.Managed(graph_mod.GlobalBindingId),
     reachable: bool = true,
 
     fn init(allocator: std.mem.Allocator) Flow {
-        return .{ .disabled = .init(allocator) };
+        return .{ .disabled = .init(allocator), .assigned_outputs = .init(allocator) };
     }
     fn deinit(self: *Flow) void {
         self.disabled.deinit();
+        self.assigned_outputs.deinit();
     }
     fn clone(self: *const Flow, allocator: std.mem.Allocator) !Flow {
         var result = Flow.init(allocator);
         try result.disabled.appendSlice(self.disabled.items);
+        try result.assigned_outputs.appendSlice(self.assigned_outputs.items);
         result.reachable = self.reachable;
         return result;
     }
@@ -69,16 +84,21 @@ const Flow = struct {
         if (!self.reachable) {
             self.disabled.clearRetainingCapacity();
             try self.disabled.appendSlice(other.disabled.items);
+            self.assigned_outputs.clearRetainingCapacity();
+            try self.assigned_outputs.appendSlice(other.assigned_outputs.items);
             self.reachable = true;
             return;
         }
         var common = Flow.init(allocator);
         defer common.deinit();
+        for (self.assigned_outputs.items) |binding| if (std.mem.indexOfScalar(graph_mod.GlobalBindingId, other.assigned_outputs.items, binding) != null) try common.assigned_outputs.append(binding);
         for (self.disabled.items) |left| for (other.disabled.items) |right| {
             if (left.isPrefixOf(right)) try common.disable(right) else if (right.isPrefixOf(left)) try common.disable(left);
         };
         self.disabled.clearRetainingCapacity();
         try self.disabled.appendSlice(common.disabled.items);
+        self.assigned_outputs.clearRetainingCapacity();
+        try self.assigned_outputs.appendSlice(common.assigned_outputs.items);
     }
 };
 
@@ -96,6 +116,9 @@ pub fn collect(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSeman
         .graph = graph,
         .assignment_nodes = .init(allocator),
         .activation = .{
+            .stable_initializers = .init(allocator),
+            .unstable_bindings = .init(allocator),
+            .incomplete_outputs = .init(allocator),
             .roots = .init(allocator),
             .fields = .init(allocator),
             .output_bindings = graph.binding_refs.items[function.output_bindings.start..][0..function.output_bindings.len],
@@ -108,6 +131,7 @@ pub fn collect(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSeman
     var flow = Flow.init(allocator);
     defer flow.deinit();
     if (graph.function(function_id).body) |body| try scanner.block(body, &flow);
+    if (flow.reachable) try scanner.recordOutputExit(&flow);
     return scanner.activation;
 }
 
@@ -117,6 +141,13 @@ const Scanner = struct {
     activation: Activation,
     in_loop: bool = false,
     assignment_nodes: std.AutoHashMap(graph_mod.GlobalNodeId, void),
+
+    fn recordOutputExit(self: *Scanner, flow: *const Flow) !void {
+        for (self.activation.output_bindings) |binding| {
+            if (std.mem.indexOfScalar(graph_mod.GlobalBindingId, flow.assigned_outputs.items, binding) == null)
+                try self.activation.incomplete_outputs.put(binding, {});
+        }
+    }
 
     fn recordAssignment(self: *Scanner, id: graph_mod.GlobalNodeId, binding: graph_mod.GlobalBindingId) !void {
         const seen = try self.assignment_nodes.getOrPut(id);
@@ -209,6 +240,9 @@ const Scanner = struct {
             .code_block, .value_sequence => |child| try self.block(child, flow),
             .binding_declaration => |binding| {
                 const record = self.graph.binding(binding);
+                if (self.in_loop or record.deferred_initialization) {
+                    try self.activation.unstable_bindings.put(binding, {});
+                } else if (record.initialization) |initialization| try self.activation.stable_initializers.put(binding, initialization);
                 const target = facts.Place{ .root = binding };
                 if (!record.deferred_initialization and record.initialization != null) {
                     try self.node(record.initialization.?, flow);
@@ -217,14 +251,22 @@ const Scanner = struct {
             },
             .assignment => |assignment| {
                 try self.recordAssignment(id, assignment.binding);
+                try self.activation.unstable_bindings.put(assignment.binding, {});
                 try self.node(assignment.value, flow);
                 try self.initialize(flow, .{ .root = assignment.binding }, assignment.value);
+                if (std.mem.indexOfScalar(graph_mod.GlobalBindingId, self.activation.output_bindings, assignment.binding) != null and
+                    std.mem.indexOfScalar(graph_mod.GlobalBindingId, flow.assigned_outputs.items, assignment.binding) == null)
+                    try flow.assigned_outputs.append(assignment.binding);
             },
             .move_value => |value| {
                 try self.node(value, flow);
                 if (try self.resolvePlace(value)) |target| try flow.disable(target);
             },
-            .address_of, .denied_implicit_copy => |value| try self.node(value, flow),
+            .address_of => |value| {
+                if (try self.resolvePlace(value)) |target| try self.activation.unstable_bindings.put(target.root, {});
+                try self.node(value, flow);
+            },
+            .denied_implicit_copy => |value| try self.node(value, flow),
             .dereference => |value| try self.node(value.pointer, flow),
             .struct_field_access => |access| try self.node(access.value, flow),
             .choice_payload_access => |access| try self.node(access.value, flow),
@@ -248,6 +290,8 @@ const Scanner = struct {
                 try left.join(&right, self.allocator);
                 flow.disabled.clearRetainingCapacity();
                 try flow.disabled.appendSlice(left.disabled.items);
+                flow.assigned_outputs.clearRetainingCapacity();
+                try flow.assigned_outputs.appendSlice(left.assigned_outputs.items);
                 flow.reachable = left.reachable;
             },
             .switch_statement => |switch_id| {
@@ -275,6 +319,8 @@ const Scanner = struct {
                 } else if (!statement.exhaustive) try joined.join(flow, self.allocator);
                 flow.disabled.clearRetainingCapacity();
                 try flow.disabled.appendSlice(joined.disabled.items);
+                flow.assigned_outputs.clearRetainingCapacity();
+                try flow.assigned_outputs.appendSlice(joined.assigned_outputs.items);
                 flow.reachable = joined.reachable;
             },
             .while_statement => |statement| {
@@ -304,6 +350,7 @@ const Scanner = struct {
             .return_statement => |statement| {
                 if (statement.expression) |value| try self.node(value, flow);
                 try self.visitRange(statement.cleanup, flow);
+                try self.recordOutputExit(flow);
                 flow.reachable = false;
             },
             .break_statement, .continue_statement => flow.reachable = false,
@@ -373,6 +420,7 @@ const Scanner = struct {
                 var failed = try flow.clone(self.allocator);
                 defer failed.deinit();
                 try self.visitRange(propagation.cleanup_nodes, &failed);
+                try self.recordOutputExit(&failed);
             },
             .error_context => |value| {
                 const context = self.graph.error_contexts.items[@intFromEnum(value)];
@@ -381,6 +429,7 @@ const Scanner = struct {
                 var failed = try flow.clone(self.allocator);
                 defer failed.deinit();
                 try self.visitRange(context.cleanup_nodes, &failed);
+                try self.recordOutputExit(&failed);
             },
             .testing_expect_error => |value| {
                 const expect = self.graph.testing_expect_errors.items[@intFromEnum(value)];

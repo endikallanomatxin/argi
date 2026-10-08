@@ -348,10 +348,11 @@ storage generations, and opaque storage.
 > correspondence between a returned handle and its underlying storage.
 > Outcome clauses support output dependencies, fresh ownership and conditional
 > generation changes. Generation refinement supports bound result discrimination
-> and direct forwarding of a single choice through wrappers. More complex wrapper
-> bodies conservatively join their effects. Hidden storage transitions, clauses
-> affecting other outputs remain to be implemented. Nested payload selectors
-> support dependencies, fresh ownership and generation changes.
+> and forwarding through stable lexical bindings and direct repackaging. Wrappers
+> with rewritten or exposed intermediate results conservatively join effects.
+> Hidden storage transitions and clauses affecting other outputs remain to be
+> implemented. Nested payload selectors support dependencies, fresh ownership
+> and generation changes.
 > Independent payload selectors on several outputs are supported; generation
 > effects requiring independent result correlations are conservatively joined.
 
@@ -390,3 +391,17 @@ payload path. Selecting an outer success variant does not prove preservation
 when its unresolved inner variants disagree. A preserving inner variant restores
 permission to use the same pre-call generation only while that generation remains
 current. Later invalidation or result replacement cannot restore an older root.
+
+Copies and moves of a call result retain its outcome condition through lexical
+bindings. Wrapping that value in another choice retains the condition along its
+payload path. Each function exit must establish its own result relation: a return
+of a different default or error does not establish a pending call's outcome.
+Intervening operations retain their effects, so forwarding an earlier preserving
+result never erases a later invalidation or an ordinary content write.
+
+> [!IMPLEMENTATION]
+> Forwarding through intermediate bindings currently requires stable lexical
+> initializers and one output assignment on every returning path. Reassigned,
+> reference-exposed or loop-produced intermediate values lose provenance
+> conservatively. Branch-assigned results and early errors need richer exit
+> relations before their conditions can be retained.

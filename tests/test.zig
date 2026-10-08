@@ -10712,3 +10712,47 @@ test "feature_tests/polymorphism/147_virtual_nested_generation_domain" {
     try expectSuccessfulBuild("tests/feature_tests/polymorphism/147_virtual_nested_generation_domain");
     try runExpect("tests/feature_tests/polymorphism/147_virtual_nested_generation_domain", 0);
 }
+
+test "feature_tests/polymorphism/148_virtual_generation_bound_forward" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/148_virtual_generation_bound_forward");
+    try runExpect("tests/feature_tests/polymorphism/148_virtual_generation_bound_forward", 0);
+}
+
+test "feature_tests/polymorphism/149_virtual_generation_bound_move" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/149_virtual_generation_bound_move");
+    try runExpect("tests/feature_tests/polymorphism/149_virtual_generation_bound_move", 0);
+}
+
+test "feature_tests/polymorphism/150X_virtual_generation_bound_reassigned" {
+    try buildExpectFail("tests/feature_tests/polymorphism/150X_virtual_generation_bound_reassigned", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/151X_virtual_generation_bound_exposed" {
+    try buildExpectFail("tests/feature_tests/polymorphism/151X_virtual_generation_bound_exposed", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/152X_virtual_generation_bound_later_call" {
+    try buildExpectFail("tests/feature_tests/polymorphism/152X_virtual_generation_bound_later_call", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/153X_virtual_generation_bound_loop" {
+    try buildExpectFail("tests/feature_tests/polymorphism/153X_virtual_generation_bound_loop", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/154_virtual_generation_bound_repackaged" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/154_virtual_generation_bound_repackaged");
+    try runExpect("tests/feature_tests/polymorphism/154_virtual_generation_bound_repackaged", 0);
+}
+
+test "feature_tests/polymorphism/155_virtual_generation_bound_content_write" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/155_virtual_generation_bound_content_write");
+    try runExpect("tests/feature_tests/polymorphism/155_virtual_generation_bound_content_write", 0);
+}
+
+test "feature_tests/polymorphism/156X_virtual_generation_bound_early_return" {
+    try buildExpectFail("tests/feature_tests/polymorphism/156X_virtual_generation_bound_early_return", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/157X_virtual_generation_bound_early_error" {
+    try buildExpectFail("tests/feature_tests/polymorphism/157X_virtual_generation_bound_early_error", "reference depends on a root that has ended");
+}

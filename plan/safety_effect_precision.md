@@ -216,7 +216,7 @@ https://rust-lang.github.io/polonius/rules/loans.html
 
 ## Development order
 
-1. Extend forwarding to wrappers with intermediate bindings, error propagation
+1. Extend forwarding to branch-assigned intermediate results, error propagation
    and choice tests on computed expressions. Keep conservative fallback for
    unproven relations and output slots that may be rewritten.
 2. Add checked storing/consuming/initializing effects and opaque owner obligations.

@@ -293,6 +293,11 @@ feature first.
   Nested generation guards retain their enclosing payload variant path. Partition
   only paths requested by declarations or forwarded results, preserving a
   conservative effect record elsewhere instead of expanding shared choice types.
+  Forwarding proofs trace stable lexical initializers to one call and require
+  the output assignment on every returning path. Reassigned, loop-produced or
+  reference-exposed intermediate bindings lose provenance. Apply the selected
+  call's effects at its original position and retain every intervening effect;
+  do not reconstruct or restore caller state at the eventual binding use.
   Direct forwarding proofs require an output assigned once outside loops and
   whose address has not escaped; rewrites retain unconditional may-effects.
   Outcome contracts select a named output and variant, not the first result.
