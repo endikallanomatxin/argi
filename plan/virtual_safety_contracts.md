@@ -37,7 +37,9 @@ discriminants and predicates over ordinary values.
   of output variants. Distinguish effect permissions from required guarantees;
   common clauses apply to all outcomes and conditional clauses add obligations.
 - Extend compatibility checking with allowed dependency storage,
-  initialization/consumption and outcome-specific storage guarantees.
+  initialization and outcome-specific storage guarantees. Extend unconditional
+  known-input `consumes` to guarded resource states and cleanup identities for
+  erased receivers, indexed owners and mapped domains.
   Extend generation-only `invalidates` to checked aggregate/result facts after
   invalidation without dropping existing ownership or field facts.
 - Extend mapped domain effects to owned and opaque storage transitions.

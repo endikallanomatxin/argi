@@ -367,12 +367,14 @@ const Scanner = struct {
                 if (call.callee_value) |value| try self.node(value, flow);
                 try self.node(call.input, flow);
                 if (call.consumes_auto_deinit) |value| if (try self.resolvePlace(value)) |target| try flow.disable(target);
+                for (call.consumed_auto_deinits) |value| if (try self.resolvePlace(value)) |target| try flow.disable(target);
                 if (call.initializes_auto_deinit) |value| if (try self.resolvePlace(value)) |target| flow.initialize(target);
             },
             .virtual_call => |call_id| {
                 const call = self.graph.virtual_calls.items[@intFromEnum(call_id)];
                 try self.node(call.handle, flow);
                 try self.node(call.input, flow);
+                for (call.consumed_auto_deinits) |value| if (try self.resolvePlace(value)) |target| try flow.disable(target);
             },
             .virtualize => |value| try self.node(self.graph.virtualizes.items[@intFromEnum(value)].value, flow),
             .binary_operation => |value| {

@@ -97,8 +97,8 @@ separate. A useful model needs to describe:
   addresses and ordinary validity roots.
 
 These effects should work unconditionally or under the supported outcome guard.
-Do not add a separate restricted vocabulary for payload clauses. Exact keyword
-choices for storing, consuming and initializing effects remain unresolved.
+Do not add a separate restricted vocabulary for payload clauses. `consumes(input)` names definite destruction through a mutable reference.
+Keyword choices for storing and initializing effects remain unresolved.
 
 Common clauses apply to all outcomes. Conditional clauses add permissions and
 obligations. An empty error clause preserves generations only when no common
@@ -112,23 +112,23 @@ one undifferentiated union operation.
 
 ## Caller and inference architecture
 
-Today SafetySummary has recursive ValueEffect outputs, input post-states,
-capability uses, hidden storage effects and domain invalidations. OutcomePostStates
-now identifies its output, but contains only input post-states; inference still
-produces an empty outcome list. FunctionState remembers active/rejected choice
-variants and activates conditional resources in selected payloads. It does not
-associate general call effects with those result discriminants.
+SafetySummary carries recursive ValueEffect outputs, input post-states,
+capability uses, hidden storage effects and domain invalidations. Generation
+outcomes retain their controlling output and nested payload path. Callers attach
+proofs to the current generation and refine them through that result; stable
+lexical forwarding preserves the relation in wrapper summaries.
 
-Input post-state inference joins branch and return effects before preserving
-their result correlation. Extending only parser clauses or output facts cannot
-recover that information after the join. Retain variant-indexed return effects,
+The next storage dimensions must retain variant-indexed return effects,
 including normal and early-return cleanup, before computing the unconditional
-fallback. Independent inference dimensions must agree on the same guards.
+fallback. Adding clauses or output facts alone cannot recover correlations after
+a branch join. Initializedness, ownership, capability use and cleanup must agree
+on the same guard instead of postponing only generation invalidation.
 
-A proposed guarded effect record contains a result projection selector and a
-complete safety effect set. Output payload views can be derived from that record;
-they should not be the authoritative store of input transitions. Associate each
-instantiated record with the call occurrence and actual caller storage identities.
+Instantiate guarded effects against actual caller storage identities. Keep
+output payload views separate from the authoritative input transitions. Common
+unconditional consumption already establishes deinitialized caller places;
+conditional consumption must additionally track which cleanup remains active
+until discrimination, including when the result is ignored.
 
 Required behavior includes:
 
@@ -219,7 +219,9 @@ https://rust-lang.github.io/polonius/rules/loans.html
 1. Extend forwarding to branch-assigned intermediate results, error propagation
    and choice tests on computed expressions. Keep conservative fallback for
    unproven relations and output slots that may be rewritten.
-2. Add checked storing/consuming/initializing effects and opaque owner obligations.
+2. Add checked storing/initializing effects and opaque owner obligations. Extend
+   unconditional known-input consumption to outcome guards and erased storage,
+   keeping resource state and cleanup correlated with the selected outcome.
 3. Measure representation growth and reevaluations using core-sized examples;
    retain selective structural partitions rather than products of independent
    output discriminants.

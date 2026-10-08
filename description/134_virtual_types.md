@@ -208,6 +208,38 @@ Editor: Abstract = (
 )
 ```
 
+## Consuming resources
+
+`consumes(input)` guarantees that a resource passed by mutable reference is
+fully deinitialized on every returning path. It ends the resource's previous
+owned generations, including those nested in fields or choice payloads. The
+caller then has an uninitialized place and may assign a new owner to it.
+Automatic cleanup does not destroy the consumed value again.
+
+```rg
+Releaser: Abstract = (
+    release(.self: &Self, .resource: $&Resource) -> ()
+        where consumes(resource)
+)
+```
+
+This is a required post-state, not permission to sometimes destroy the resource.
+Each implementation must prove it, including through wrapper calls and early
+returns. By-value inputs already transfer ownership of their local value;
+`consumes` requires a mutable reference input instead.
+
+Consumption follows the actual caller storage through aliases and structural
+fields. Two consumed inputs must designate distinct owners. Ending an owner's
+nested resources does not end borrowed external resources or authorize writes
+through references stored in its fields. Declare other effects separately.
+
+> [!IMPLEMENTATION]
+> Consumption currently requires an unconditional clause and a known input type.
+> Consuming erased `Self`, named domains, or only selected result outcomes remains
+> unsupported. Conditional consumption needs guarded initializedness and cleanup,
+> in addition to generation guards. Indexed or indirect owners without a lexical
+> cleanup identity must first be moved into a lexical owner.
+
 ## Owning and fallible results
 
 `owns(output)` permits fresh ownership in the output, including nested owning

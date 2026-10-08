@@ -174,11 +174,16 @@ pub const Infer = struct {
             for (outputs) |*output| output.* = try self.bindVirtualReceiverValues(output.*, registry.receiver_input_index);
             const required = try self.allocator.alloc(facts.InputPath, input_count);
             for (required, 0..) |*path, index| path.* = .{ .input_index = @intCast(index) };
-            const post_states = try self.allocator.alloc(facts.PlacePostState, contract.invalidates.len);
-            for (contract.invalidates, post_states) |path, *post_state| post_state.* = .{
+            const post_states = try self.allocator.alloc(facts.PlacePostState, contract.invalidates.len + contract.consumed_inputs.len);
+            for (contract.invalidates, post_states[0..contract.invalidates.len]) |path, *post_state| post_state.* = .{
                 .target = path,
                 .initializedness = .initialized,
                 .refreshes_storage_generation = true,
+            };
+            for (contract.consumed_inputs, post_states[contract.invalidates.len..]) |path, *post_state| post_state.* = .{
+                .target = path,
+                .initializedness = .deinitialized,
+                .ends_previous_roots = true,
             };
             const invalidated_domains = try self.allocator.alloc(facts.InputDomain, declared.invalidated_domains.len);
             for (declared.invalidated_domains, invalidated_domains) |domain, *effect| effect.* = .{ .path = .{ .input_index = domain.input_index }, .domain_index = domain.domain_index };
@@ -202,6 +207,7 @@ pub const Infer = struct {
                     const effects = contracts.effectsForSelector(contract, selector);
                     var states = std.array_list.Managed(facts.PlacePostState).init(self.allocator);
                     for (effects.invalidates) |path| try states.append(.{ .target = path, .initializedness = .initialized, .refreshes_storage_generation = true });
+                    for (effects.consumed_inputs) |path| try states.append(.{ .target = path, .initializedness = .deinitialized, .ends_previous_roots = true });
                     try conditional.append(.{ .output_index = selector.output_index, .parent_variants = selector.parent_variants, .variant_index = selector.variant_index, .input_post_states = try states.toOwnedSlice(), .invalidated_domains = effects.invalidated_domains });
                 }
             }

@@ -1267,6 +1267,17 @@ pub const Resolver = struct {
                 break;
             }
         }
+        for (contract.consumed_inputs) |input_index| {
+            const input_ty = self.graph.semanticType(self.graph.fields.items[inputs.start + input_index].ty);
+            if (input_ty != .pointer or input_ty.pointer.mutability != .read_write) {
+                reason = "consumes requires a mutable reference input; by-value inputs already transfer their local ownership";
+                break;
+            }
+            if (erased_self and global_types.equal(self.graph, input_ty.pointer.child, abstract_ty)) {
+                reason = "consumes on erased Self requires receiver cleanup identities; name a known resource input instead";
+                break;
+            }
+        }
         for (contract.invalidates) |input_index| {
             if (outputs.len != 0) {
                 reason = "invalidates with outputs requires post-invalidation result contracts; use a no-result method for now";

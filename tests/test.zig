@@ -10756,3 +10756,69 @@ test "feature_tests/polymorphism/156X_virtual_generation_bound_early_return" {
 test "feature_tests/polymorphism/157X_virtual_generation_bound_early_error" {
     try buildExpectFail("tests/feature_tests/polymorphism/157X_virtual_generation_bound_early_error", "reference depends on a root that has ended");
 }
+
+test "feature_tests/polymorphism/158_virtual_consumes" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/158_virtual_consumes");
+    try runExpect("tests/feature_tests/polymorphism/158_virtual_consumes", 0);
+}
+
+test "feature_tests/polymorphism/159X_virtual_consumes_missing" {
+    try buildExpectFail("tests/feature_tests/polymorphism/159X_virtual_consumes_missing", "cannot prove consumes");
+}
+
+test "feature_tests/polymorphism/160X_virtual_consumes_conditional_body" {
+    try buildExpectFail("tests/feature_tests/polymorphism/160X_virtual_consumes_conditional_body", "cannot prove consumes");
+}
+
+test "feature_tests/polymorphism/161X_virtual_consumes_readonly" {
+    try buildExpectFail("tests/feature_tests/polymorphism/161X_virtual_consumes_readonly", "consumes requires a mutable reference input");
+}
+
+test "feature_tests/polymorphism/162X_virtual_consumes_byvalue" {
+    try buildExpectFail("tests/feature_tests/polymorphism/162X_virtual_consumes_byvalue", "consumes requires a mutable reference input");
+}
+
+test "feature_tests/polymorphism/163X_virtual_consumes_use_after" {
+    try buildExpectFail("tests/feature_tests/polymorphism/163X_virtual_consumes_use_after", "deinitialized");
+}
+
+test "feature_tests/polymorphism/164_virtual_consumes_alias" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/164_virtual_consumes_alias");
+    try runExpect("tests/feature_tests/polymorphism/164_virtual_consumes_alias", 0);
+}
+
+test "feature_tests/polymorphism/165_virtual_consumes_fields" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/165_virtual_consumes_fields");
+    try runExpect("tests/feature_tests/polymorphism/165_virtual_consumes_fields", 0);
+}
+
+test "feature_tests/polymorphism/168X_virtual_consumes_guarded" {
+    try buildExpectFail("tests/feature_tests/polymorphism/168X_virtual_consumes_guarded", "conditional consumes requires guarded resource state and cleanup");
+}
+
+test "feature_tests/polymorphism/169X_virtual_consumes_erased_self" {
+    try buildExpectFail("tests/feature_tests/polymorphism/169X_virtual_consumes_erased_self", "consumes on erased Self requires receiver cleanup identities");
+}
+
+test "feature_tests/polymorphism/166_virtual_consumes_multiple" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/166_virtual_consumes_multiple");
+    try runExpect("tests/feature_tests/polymorphism/166_virtual_consumes_multiple", 0);
+}
+
+test "feature_tests/polymorphism/167X_virtual_consumes_multiple_alias" {
+    try buildExpectFail("tests/feature_tests/polymorphism/167X_virtual_consumes_multiple_alias", "consumed inputs alias the same storage");
+}
+
+test "feature_tests/polymorphism/170X_virtual_consumes_external_write" {
+    try buildExpectFail("tests/feature_tests/polymorphism/170X_virtual_consumes_external_write", "a storage transition is not permitted");
+}
+
+test "feature_tests/polymorphism/171_virtual_consumes_large_return" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/171_virtual_consumes_large_return");
+    try runExpect("tests/feature_tests/polymorphism/171_virtual_consumes_large_return", 0);
+}
+
+test "feature_tests/polymorphism/172_virtual_consumes_reinitialize" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/172_virtual_consumes_reinitialize");
+    try runExpect("tests/feature_tests/polymorphism/172_virtual_consumes_reinitialize", 0);
+}

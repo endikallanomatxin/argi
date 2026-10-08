@@ -20,6 +20,8 @@ pub const Output = struct {
 pub const Contract = struct {
     outputs: []const Output,
     outcomes: []const Outcome = &.{},
+    /// Definite destruction guarantees for caller-owned input places.
+    consumed_inputs: []const facts.InputPath = &.{},
     /// Paths are resolved domain mappings, not source field names. Ending a
     /// generation permits invalidating references, but grants no permission to
     /// consume owned resources or replace hidden dependency contents.
@@ -85,7 +87,10 @@ pub fn fromDeclaration(allocator: std.mem.Allocator, declaration: @import("../pr
     for (declaration.invalidated_domains, invalidated_domains) |domain, *input| input.* = .{ .path = .{ .input_index = domain.input_index }, .domain_index = domain.domain_index };
     var conditional: std.ArrayList(Contract.Outcome) = .empty;
     try appendConditionalContracts(allocator, declaration.output_count, declaration.outcomes, &.{}, invalidates, invalidated_domains, &conditional);
-    return .{ .outputs = outputs, .invalidates = invalidates, .invalidated_domains = invalidated_domains, .outcomes = try conditional.toOwnedSlice(allocator) };
+    const consumed_inputs = try allocator.alloc(facts.InputPath, declaration.consumed_inputs.len);
+    for (declaration.consumed_inputs, consumed_inputs) |index, *path| path.* = .{ .input_index = index };
+    for (conditional.items) |outcome| @constCast(outcome.effects).consumed_inputs = consumed_inputs;
+    return .{ .outputs = outputs, .consumed_inputs = consumed_inputs, .invalidates = invalidates, .invalidated_domains = invalidated_domains, .outcomes = try conditional.toOwnedSlice(allocator) };
 }
 
 fn appendConditionalContracts(allocator: std.mem.Allocator, output_count: u32, outcomes: []const @import("../primitives/schema.zig").MethodSafetyContract.Outcome, parents: []const u32, common_invalidates: []const facts.InputPath, common_domains: []const facts.InputDomain, result: *std.ArrayList(Contract.Outcome)) anyerror!void {
@@ -143,6 +148,7 @@ pub const Failure = struct {
         incompatible_referent,
         undeclared_fresh_owner,
         unsupported_post_state,
+        missing_consumption,
         unsupported_opaque_effect,
         unsupported_capability_effect,
     },
@@ -157,6 +163,7 @@ pub const Failure = struct {
             .undeclared_ownership_transfer => "undeclared ownership transfer",
             .incompatible_referent => "the output must refer to the same storage as the declared input",
             .undeclared_fresh_owner => "undeclared fresh output ownership; declare owns(output)",
+            .missing_consumption => "cannot prove consumes: the input must be deinitialized on every returning path",
             .unsupported_post_state => "a storage transition is not permitted by this preservation contract",
             .unsupported_opaque_effect => "an opaque storage effect is not permitted by this preservation contract",
             .unsupported_capability_effect => "storage capability consumption is not permitted by this contract",
@@ -169,6 +176,19 @@ pub const Failure = struct {
 /// have passed the ordinary function-output check: a contract never authorizes
 /// an expired local generation or certifies physical pointer validity.
 pub fn check(contract: Contract, summary: facts.SafetySummary) ?Failure {
+    // Consumption is a guarantee, not merely permission to sometimes destroy
+    // a value. A caller can disable cleanup only after every exit proves it.
+    for (contract.consumed_inputs) |input| {
+        var consumed = false;
+        for (summary.input_post_states) |state| if (samePath(state.target, input) and
+            state.initializedness == .deinitialized and state.ends_previous_roots)
+        {
+            consumed = true;
+            break;
+        };
+        if (!consumed) return .{ .kind = .missing_consumption, .input = input };
+    }
+
     for (summary.invalidated_domains) |domain| {
         if (permitsDomain(contract, domain)) continue;
         var permitted = false;
@@ -331,6 +351,17 @@ fn permitsDomain(contract: Contract, actual: facts.InputDomain) bool {
 }
 
 fn permitsPostState(contract: Contract, state: facts.PlacePostState) bool {
+    if (covers(contract.consumed_inputs, state.target)) {
+        // Destroying a value may update its owned fields before their final
+        // cleanup. Dereferencing a borrowed field still reaches external
+        // storage and is not authorized by consumption of its containing slot.
+        for (state.target.projections) |projection| if (projection == .dereference) return false;
+        if (state.opaque_ownership != .none or state.opaque_storage != null or state.requires_available_destination or
+            state.may_repopulate_opaque_storage) return false;
+        if (state.initializedness == .deinitialized or state.initializedness == .moved) return emptyValue(state.value);
+        return state.initializedness == .initialized and emptyValue(state.value);
+    }
+
     if (state.initializedness != .initialized or state.ends_previous_roots or state.requires_available_destination or
         state.opaque_ownership != .none or state.opaque_storage != null or
         state.may_repopulate_opaque_storage) return false;
@@ -511,4 +542,17 @@ test "named output outcomes retain common permissions independently" {
     try std.testing.expectEqual(@as(usize, 0), contract.outputs[0].outcomes.len);
     try std.testing.expectEqual(@as(u32, 0), contract.outputs[1].outcomes[0].value.dependencies[0].input_index);
     try std.testing.expectEqual(@as(u32, 1), contract.outputs[2].outcomes[0].value.dependencies[0].input_index);
+}
+
+test "safety contracts consumption requires destruction without hidden storage replacement" {
+    const contract = Contract{ .outputs = &.{}, .consumed_inputs = &.{.{ .input_index = 0 }} };
+    const consumed = facts.PlacePostState{ .target = .{ .input_index = 0 }, .initializedness = .deinitialized, .ends_previous_roots = true };
+    try std.testing.expect(check(contract, .{ .input_post_states = &.{consumed} }) == null);
+    try std.testing.expectEqual(.missing_consumption, check(contract, .{}).?.kind);
+    const replacement = facts.PlacePostState{
+        .target = .{ .input_index = 0, .projections = &.{.{ .field = 0 }} },
+        .initializedness = .initialized,
+        .may_repopulate_opaque_storage = true,
+    };
+    try std.testing.expectEqual(.unsupported_post_state, check(contract, .{ .input_post_states = &.{ consumed, replacement } }).?.kind);
 }

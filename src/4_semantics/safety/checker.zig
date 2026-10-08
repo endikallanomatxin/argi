@@ -1162,7 +1162,8 @@ pub const SafetyChecker = struct {
         self.active_fresh_capabilities = &call_capabilities;
         defer self.active_fresh_capabilities = previous_capabilities;
         if (!try self.validateSummaryRequiredLive(source, summary, values, state)) return facts.ValueFacts{};
-        if (call_node) |node| self.recordFunctionCallAutoDeinit(node, summary, argument_nodes);
+        if (!try self.validateConsumedInputAliasing(source, summary, argument_nodes, values, state)) return facts.ValueFacts{};
+        if (call_node) |node| try self.recordFunctionCallAutoDeinit(node, summary, argument_nodes, values, state);
         return try self.applyOutcomeSummary(source, summary, argument_nodes, values, state);
     }
 
@@ -1171,9 +1172,13 @@ pub const SafetyChecker = struct {
         call_node: graph_mod.GlobalNodeId,
         summary: facts.SafetySummary,
         argument_ids: []const graph_mod.GlobalValueFieldId,
-    ) void {
+        arguments: []const facts.ValueFacts,
+        state: *FunctionState,
+    ) !void {
+        const consumed = try self.consumedCleanupNodes(summary, argument_ids, arguments, state);
         const node = &self.graph.nodes.items[@intFromEnum(call_node)];
         if (node.content != .function_call) return;
+        node.content.function_call.consumed_auto_deinits = consumed;
         for (summary.input_post_states) |post_state| {
             if (post_state.target.projections.len != 0 or post_state.target.input_index >= argument_ids.len) continue;
             const field = self.graph.value_fields.items[@intFromEnum(argument_ids[post_state.target.input_index])];
@@ -1183,6 +1188,82 @@ pub const SafetyChecker = struct {
             if (post_state.initializedness == .deinitialized or post_state.initializedness == .moved)
                 node.content.function_call.consumes_auto_deinit = field.value;
         }
+    }
+
+    fn validateConsumedInputAliasing(self: *SafetyChecker, source: primitives.SourceRef, summary: facts.SafetySummary, ids: []const graph_mod.GlobalValueFieldId, arguments: []const facts.ValueFacts, state: *FunctionState) !bool {
+        for (summary.input_post_states, 0..) |post, index| {
+            if (post.initializedness != .deinitialized or !post.ends_previous_roots) continue;
+            const target = try self.resolveSummaryInputPath(post.target, ids, arguments, state) orelse continue;
+            for (summary.input_post_states[0..index]) |previous| {
+                if (previous.initializedness != .deinitialized or !previous.ends_previous_roots or previous.target.input_index == post.target.input_index) continue;
+                const other = try self.resolveSummaryInputPath(previous.target, ids, arguments, state) orelse continue;
+                if (target.isPrefixOf(other) or other.isPrefixOf(target)) {
+                    try self.report(source, "consumed inputs alias the same storage; provide distinct owners or consume it once", .{});
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    fn consumedCleanupNodes(self: *SafetyChecker, summary: facts.SafetySummary, ids: []const graph_mod.GlobalValueFieldId, arguments: []const facts.ValueFacts, state: *FunctionState) ![]const graph_mod.GlobalNodeId {
+        var targets = std.array_list.Managed(facts.Place).init(self.allocator);
+        defer targets.deinit();
+        for (summary.input_post_states) |post| {
+            if (post.initializedness != .deinitialized or !post.ends_previous_roots) continue;
+            if (try self.resolveSummaryInputPath(post.target, ids, arguments, state)) |target| try appendPlaceFact(&targets, target);
+        }
+        var nodes = std.array_list.Managed(graph_mod.GlobalNodeId).init(self.allocator);
+        for (targets.items) |target| {
+            var covered = false;
+            for (targets.items) |other| if (!target.eql(other) and other.isPrefixOf(target)) {
+                covered = true;
+                break;
+            };
+            if (covered) continue;
+            if (try self.cleanupNodeForPlace(target)) |node| {
+                try nodes.append(node);
+            } else {
+                for (self.graph.auto_deinits.items) |cleanup| if (cleanup.binding == target.root) {
+                    try self.report(self.graph.binding(target.root).source, "cannot consume this indexed or indirect owner through a borrow; move it into a lexical owner before consuming it", .{});
+                    break;
+                };
+            }
+        }
+        return nodes.toOwnedSlice();
+    }
+
+    /// Cleanup flags belong to caller storage, not to a reference-valued alias
+    /// slot passed as an argument. Reconstruct only projections represented by
+    /// structural cleanup; borrowed pointer fields never own their pointees.
+    fn cleanupNodeForPlace(self: *SafetyChecker, storage: facts.Place) !?graph_mod.GlobalNodeId {
+        const binding = self.graph.binding(storage.root);
+        var ty = binding.ty;
+        var node: graph_mod.GlobalNodeId = @enumFromInt(self.graph.nodes.items.len);
+        try self.graph.nodes.append(self.allocator, .{ .source = binding.source, .ty = ty, .content = .{ .binding_use = storage.root } });
+        for (storage.projections) |projection| switch (projection) {
+            .field => |index| {
+                const fields = types.fields(self.graph, ty) orelse return null;
+                if (index >= fields.len) return null;
+                const field = self.graph.fields.items[fields.start + index];
+                const projected: graph_mod.GlobalNodeId = @enumFromInt(self.graph.nodes.items.len);
+                try self.graph.nodes.append(self.allocator, .{ .source = binding.source, .ty = field.ty, .content = .{ .struct_field_access = .{ .value = node, .field_name = field.name, .field_index = index } } });
+                node = projected;
+                ty = field.ty;
+            },
+            .variant => |index| {
+                const variants = types.variants(self.graph, ty) orelse return null;
+                if (index >= variants.len) return null;
+                const variant_id: graph_mod.GlobalVariantId = @enumFromInt(variants.start + index);
+                const payload = self.graph.variants.items[@intFromEnum(variant_id)].payload_type orelse return null;
+                const projected: graph_mod.GlobalNodeId = @enumFromInt(self.graph.nodes.items.len);
+                try self.graph.nodes.append(self.allocator, .{ .source = binding.source, .ty = payload, .content = .{ .choice_payload_access = .{ .value = node, .variant = variant_id, .payload_type = payload } } });
+                node = projected;
+                ty = payload;
+            },
+            .dereference, .static_index, .dynamic_index => return null,
+        };
+        return node;
     }
 
     fn evaluatePrimitive(
@@ -1989,7 +2070,10 @@ pub const SafetyChecker = struct {
                 (if (self.getPlace(state, target)) |current| current.initializedness == .deinitialized else false);
             const previous_value = self.valueAtPlace(state, target);
             if (post_state.ends_previous_roots) if (previous_value) |previous| {
-                for (previous.owned_roots) |root| _ = try self.endRoot(source, state, root);
+                var owned = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+                defer owned.deinit();
+                try collectOwnedRoots(previous, &owned);
+                _ = try self.endRoots(source, state, owned.items);
             };
             if (post_state.initializedness == .deinitialized)
                 try self.endStorageGenerationsUnder(source, state, target);
@@ -3576,6 +3660,11 @@ pub const SafetyChecker = struct {
                 }
             }
         }
+        const inference = self.active_summary_inference orelse return error.MissingSafetySummary;
+        const summary = try inference.virtualSummary(call.safety_methods) orelse return error.MissingVirtualSafetyContract;
+        if (!try self.validateConsumedInputAliasing(input_node.source, summary, argument_nodes, values, &candidate)) return .{};
+        const consumed = try self.consumedCleanupNodes(summary, argument_nodes, values, &candidate);
+        self.graph.virtual_calls.items[@intFromEnum(id)].consumed_auto_deinits = consumed;
         const result = (try self.applyVirtualContractSummary(call, input_node.source, argument_nodes, values, &candidate)) orelse facts.ValueFacts{};
         if (self.diagnostics.list.items.len != diagnostic_count) return .{};
         self.commitState(state, &candidate);
@@ -6140,15 +6229,17 @@ test "direct call summaries annotate auto deinit transitions" {
 
     var checker = SafetyChecker.init(allocator, undefined, &graph);
     defer checker.deinit();
-    checker.recordFunctionCallAutoDeinit(initializes_call, .{ .input_post_states = &.{.{
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    try checker.recordFunctionCallAutoDeinit(initializes_call, .{ .input_post_states = &.{.{
         .target = .{ .input_index = 0 },
         .initializedness = .initialized,
         .requires_available_destination = true,
-    }} }, &.{@as(graph_mod.GlobalValueFieldId, @enumFromInt(0))});
-    checker.recordFunctionCallAutoDeinit(consumes_call, .{ .input_post_states = &.{.{
+    }} }, &.{@as(graph_mod.GlobalValueFieldId, @enumFromInt(0))}, &.{}, &state);
+    try checker.recordFunctionCallAutoDeinit(consumes_call, .{ .input_post_states = &.{.{
         .target = .{ .input_index = 0 },
         .initializedness = .deinitialized,
-    }} }, &.{@as(graph_mod.GlobalValueFieldId, @enumFromInt(0))});
+    }} }, &.{@as(graph_mod.GlobalValueFieldId, @enumFromInt(0))}, &.{}, &state);
 
     try std.testing.expectEqual(address, graph.nodes.items[@intFromEnum(initializes_call)].content.function_call.initializes_auto_deinit.?);
     try std.testing.expectEqual(address, graph.nodes.items[@intFromEnum(consumes_call)].content.function_call.consumes_auto_deinit.?);
@@ -6659,4 +6750,38 @@ test "outer payload selection does not activate owners in an unresolved inner ch
     try std.testing.expectEqual(.conditional, state.tracker.roots.items[@intFromEnum(root)].state);
     try checker.activate_conditional_resources(&state, owned);
     try std.testing.expect(state.tracker.isAlive(root));
+}
+
+test "consuming a value ends nested owned roots while preserving borrowed dependencies" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    try graph.types.append(allocator, .{ .builtin = .Int32 });
+    try graph.fields.append(allocator, .{ .name = .{ .start = 0, .len = 0 }, .ty = @enumFromInt(0), .source = .{ .file_index = 0, .offset = 0 } });
+    try graph.types.append(allocator, .{ .structural = .{ .fields = .{ .start = 0, .len = 1 } } });
+    try graph.bindings.append(allocator, .{
+        .name = .{ .start = 0, .len = 0 },
+        .source = .{ .file_index = 0, .offset = 0 },
+        .ty = @enumFromInt(1),
+        .mutability = .variable,
+    });
+    var diags = diagnostics.Diagnostics.init(&allocator, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(allocator, &diags, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const owned = try state.tracker.establish(.fresh);
+    const borrowed = try state.tracker.establish(.fresh);
+    const child = facts.ValueFacts{ .owned_roots = &.{owned}, .dependencies = &.{.{ .root = borrowed }} };
+    const storage = facts.Place{ .root = @enumFromInt(0) };
+    try checker.setPlace(&state, storage, .initialized, .{ .fields = &.{.{ .index = 0, .value = &child }} });
+    try checker.applySummaryEffects(.{ .file_index = 0, .offset = 0 }, .{
+        .input_post_states = &.{.{ .target = .{ .input_index = 0 }, .initializedness = .deinitialized, .ends_previous_roots = true }},
+    }, &.{}, &.{.{ .referenced_place = storage }}, &state);
+    try std.testing.expect(!state.tracker.isAlive(owned));
+    try std.testing.expect(state.tracker.isAlive(borrowed));
+    try std.testing.expectEqual(value_state.Initializedness.deinitialized, checker.initializednessAtPlace(&state, storage));
 }

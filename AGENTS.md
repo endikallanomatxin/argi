@@ -290,6 +290,11 @@ feature first.
   exposed through references conservatively lose tag-based exit filtering until
   indirect discriminant writes have a branch-local model. Resource consumption
   and hidden-state replacement remain separate checked obligations.
+  Unconditional consumes clauses require definite deinitialization of known
+  mutable-reference inputs on every return. Resolve actual caller places before
+  updating cleanup, including aliases and structural fields; a call can consume
+  several owners. End nested owned roots without ending borrowed dependencies.
+  Cleanup annotations persist and relocate with both direct and virtual calls.
   Nested generation guards retain their enclosing payload variant path. Partition
   only paths requested by declarations or forwarded results, preserving a
   conservative effect record elsewhere instead of expanding shared choice types.

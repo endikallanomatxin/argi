@@ -197,6 +197,7 @@ pub const MethodSafetyContract = struct {
     output_count: u32,
     dependencies: []const Dependency = &.{},
     referents: []const Dependency = &.{},
+    consumed_inputs: []const u32 = &.{},
     invalidates: []const u32 = &.{},
     domain_dependencies: []const DomainDependency = &.{},
     invalidated_domains: []const DomainInput = &.{},
@@ -461,6 +462,9 @@ pub fn VirtualCall(comptime Ids: type) type {
         self_permission: PointerMutability,
         safety_methods: Ids.VirtualRegistryId,
         consumes_auto_deinit: ?Ids.NodeId = null,
+        /// Safety records every consumed caller place, including aliases and
+        /// multiple resource inputs. These nodes identify cleanup flags only.
+        consumed_auto_deinits: []const Ids.NodeId = &.{},
     };
 }
 
@@ -564,6 +568,9 @@ pub fn Node(comptime Ids: type) type {
                 callee_value: ?Ids.NodeId = null,
                 input: Ids.NodeId,
                 consumes_auto_deinit: ?Ids.NodeId = null,
+                /// Safety records every consumed caller place, including aliases and
+                /// multiple resource inputs. These nodes identify cleanup flags only.
+                consumed_auto_deinits: []const Ids.NodeId = &.{},
                 initializes_auto_deinit: ?Ids.NodeId = null,
             },
             virtualize: Ids.VirtualizeId,
