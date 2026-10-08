@@ -10874,3 +10874,29 @@ test "feature_tests/polymorphism/183_virtual_relocates_allocation" {
 test "feature_tests/polymorphism/184X_virtual_relocates_guarded" {
     try buildExpectFail("tests/feature_tests/polymorphism/184X_virtual_relocates_guarded", "conditional relocates requires guarded resource state and cleanup");
 }
+
+test "feature_tests/polymorphism/185_virtual_referent_local_chain" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/185_virtual_referent_local_chain");
+    try runExpect("tests/feature_tests/polymorphism/185_virtual_referent_local_chain", 0);
+}
+
+test "feature_tests/polymorphism/186_virtual_transfer_local_chain" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/186_virtual_transfer_local_chain");
+    try runExpect("tests/feature_tests/polymorphism/186_virtual_transfer_local_chain", 0);
+}
+
+test "feature_tests/polymorphism/187X_virtual_referent_reassigned_local" {
+    try buildExpectFail("tests/feature_tests/polymorphism/187X_virtual_referent_reassigned_local", "cannot prove refers_to");
+}
+
+test "feature_tests/polymorphism/188X_virtual_transfer_hidden_call" {
+    try buildExpectFail("tests/feature_tests/polymorphism/188X_virtual_transfer_hidden_call", "cannot prove transfers");
+}
+
+test "feature_tests/polymorphism/189X_virtual_referent_wrong_local" {
+    try buildExpectFail("tests/feature_tests/polymorphism/189X_virtual_referent_wrong_local", "cannot prove refers_to");
+}
+
+test "feature_tests/polymorphism/190X_virtual_transfer_reconstructed_local" {
+    try buildExpectFail("tests/feature_tests/polymorphism/190X_virtual_transfer_reconstructed_local", "cannot prove transfers");
+}

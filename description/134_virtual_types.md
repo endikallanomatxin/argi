@@ -408,8 +408,10 @@ storage generations, and opaque storage.
 
 > [!IMPLEMENTATION]
 > Proving `refers_to` and `transfers` currently requires a concrete body that
-> directly forwards the declared input. Intermediate calls and complex control
-> flow require more precise storage identity proofs.
+> forwards the declared input directly or through a straight-line chain of
+> lexical initializers. Every ownership link must explicitly move the whole
+> value. Reassignment, additional effects, intermediate calls and control flow
+> require more precise storage identity proofs.
 > Unconditional input `invalidates` currently supports no-result methods and known
 > scalar reference inputs. Conditional clauses also support these inputs and mapped
 > receiver domains. Neither

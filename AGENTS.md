@@ -309,6 +309,10 @@ feature first.
   reference-exposed intermediate bindings lose provenance. Apply the selected
   call's effects at its original position and retain every intervening effect;
   do not reconstruct or restore caller state at the eventual binding use.
+  Exact reference and ownership identity proofs also follow ordered lexical
+  initializers in straight-line bodies. Require explicit whole-value moves for
+  ownership links and a single output assignment. Keep this proof independent
+  of may-dependency summaries; reject calls, writes and unknown control flow.
   Direct forwarding proofs require an output assigned once outside loops and
   whose address has not escaped; rewrites retain unconditional may-effects.
   Outcome contracts select a named output and variant, not the first result.

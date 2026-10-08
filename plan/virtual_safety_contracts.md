@@ -45,8 +45,8 @@ discriminants and predicates over ordinary values.
 - Extend mapped domain effects to owned and opaque storage transitions.
   Broad dependency permissions must not become permission to transfer
   ownership, replace generations or manufacture safe references.
-- Extend must-alias and ownership transfer proofs beyond direct forwarding
-  bodies before admitting control flow or intermediate calls in `refers_to` and
+- Extend exact identity and ownership transfer proofs beyond straight-line
+  lexical forwarding before admitting control flow or intermediate calls in `refers_to` and
   `transfers`. Preserve actual storage identities; do not represent every returned
   pointer as the receiver address. Mapped virtual results require proven input
   identity relations; extend output domain mappings before admitting arbitrary

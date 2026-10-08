@@ -259,13 +259,13 @@ pub const SafetyChecker = struct {
         try self.resolveContractInvalidations(&contract, domains);
         const function = self.graph.function(method);
         for (declared.referents) |referent| {
-            if (!self.provesDirectContractReferent(function, referent)) {
-                try self.report(source, "method '{s}' cannot prove refers_to: the implementation must directly forward the declared reference input", .{self.graph.text(self.graph.declaration(function.declaration).name)});
+            if (!try self.provesDirectContractReferent(function, referent)) {
+                try self.report(source, "method '{s}' cannot prove refers_to: forward the declared reference input directly or through unchanged lexical bindings", .{self.graph.text(self.graph.declaration(function.declaration).name)});
             }
         }
         for (declared.transfers) |transfer| {
-            if (!self.provesDirectContractTransfer(function, transfer))
-                try self.report(source, "method '{s}' cannot prove transfers: directly move the declared input to the output", .{self.graph.text(self.graph.declaration(function.declaration).name)});
+            if (!try self.provesDirectContractTransfer(function, transfer))
+                try self.report(source, "method '{s}' cannot prove transfers: move the declared input to the output directly or through lexical owners", .{self.graph.text(self.graph.declaration(function.declaration).name)});
         }
         var summary = (try inference.contractImplementationSummary(method, receiver)) orelse {
             try self.report(source, "cannot verify Abstract safety contract for this implementation", .{});
@@ -352,60 +352,58 @@ pub const SafetyChecker = struct {
         for (output.outcomes) |outcome| try self.resolveContractDomains(@constCast(outcome.value), domains);
     }
 
-    fn provesDirectContractTransfer(self: *SafetyChecker, function: graph_mod.Function, transfer: primitives.MethodSafetyContract.Dependency) bool {
+    fn provesDirectContractTransfer(self: *SafetyChecker, function: graph_mod.Function, transfer: primitives.MethodSafetyContract.Dependency) !bool {
+        return self.provesLexicalContractForwarding(function, transfer, true);
+    }
+
+    fn provesDirectContractReferent(self: *SafetyChecker, function: graph_mod.Function, referent: primitives.MethodSafetyContract.Dependency) !bool {
+        return self.provesLexicalContractForwarding(function, referent, false);
+    }
+
+    /// A may-dependency summary cannot establish exact identity. Follow only
+    /// ordered lexical links, independently of the converged effect check.
+    /// Every ownership link moves the value; unknown effects or control flow
+    /// cannot certify that a later result retains the declared identity.
+    fn provesLexicalContractForwarding(self: *SafetyChecker, function: graph_mod.Function, relation: primitives.MethodSafetyContract.Dependency, owning: bool) !bool {
         const block = self.graph.blocks.items[@intFromEnum(function.body orelse return false)];
-        if (transfer.input_index >= function.input_bindings.len or transfer.output_index >= function.output_bindings.len) return false;
-        const input = self.graph.binding_refs.items[function.input_bindings.start + transfer.input_index];
-        const output = self.graph.binding_refs.items[function.output_bindings.start + transfer.output_index];
+        if (relation.input_index >= function.input_bindings.len or relation.output_index >= function.output_bindings.len) return false;
+        const input = self.graph.binding_refs.items[function.input_bindings.start + relation.input_index];
+        const output = self.graph.binding_refs.items[function.output_bindings.start + relation.output_index];
+        var links = std.array_list.Managed(graph_mod.GlobalBindingId).init(self.allocator);
+        defer links.deinit();
+        try links.append(input);
         var assigned = false;
-        for (self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len]) |id| {
-            switch (self.graph.node(id).content) {
-                .assignment => |assignment| {
-                    if (assignment.binding != output) return false;
-                    const expression = self.graph.node(assignment.value).content;
-                    if (expression != .move_value) return false;
-                    const moved = self.graph.node(expression.move_value).content;
-                    if (moved != .binding_use or moved.binding_use != input) return false;
-                    assigned = true;
-                },
-                .auto_deinit_binding => {},
-                .return_statement => |ret| {
-                    if (ret.expression != null) return false;
-                    return assigned;
-                },
-                else => return false,
-            }
-        }
+        for (self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len]) |id| switch (self.graph.node(id).content) {
+            .binding_declaration => |binding| {
+                const record = self.graph.binding(binding);
+                if (record.deferred_initialization or binding == output or linksContains(links.items, binding)) return false;
+                const initializer = record.initialization orelse return false;
+                if (!self.isForwardingLink(initializer, links.items, owning)) return false;
+                try links.append(binding);
+            },
+            .assignment => |assignment| {
+                if (assignment.binding != output or assigned) return false;
+                if (!self.isForwardingLink(assignment.value, links.items, owning)) return false;
+                assigned = true;
+            },
+            .auto_deinit_binding => {},
+            .return_statement => |ret| return ret.expression == null and assigned,
+            else => return false,
+        };
         return assigned;
     }
 
-    fn provesDirectContractReferent(self: *SafetyChecker, function: graph_mod.Function, referent: primitives.MethodSafetyContract.Dependency) bool {
-        const block = self.graph.blocks.items[@intFromEnum(function.body orelse return false)];
-        if (referent.input_index >= function.input_bindings.len or referent.output_index >= function.output_bindings.len) return false;
-        const input = self.graph.binding_refs.items[function.input_bindings.start + referent.input_index];
-        const output = self.graph.binding_refs.items[function.output_bindings.start + referent.output_index];
-        var assigned = false;
-        // May-dependency summaries intentionally forget independent alternatives.
-        // They cannot prove a must-alias guarantee. Until path-sensitive alias
-        // proofs exist, accept only a direct reference-forwarding body. Reject
-        // unknown control flow rather than mistaking one branch for all paths.
-        for (self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len]) |id| {
-            switch (self.graph.node(id).content) {
-                .assignment => |assignment| {
-                    if (assignment.binding != output) return false;
-                    const expression = self.graph.node(assignment.value).content;
-                    if (expression != .binding_use or expression.binding_use != input) return false;
-                    assigned = true;
-                },
-                .auto_deinit_binding => {},
-                .return_statement => |ret| {
-                    if (ret.expression != null) return false;
-                    return assigned;
-                },
-                else => return false,
-            }
+    fn linksContains(links: []const graph_mod.GlobalBindingId, binding: graph_mod.GlobalBindingId) bool {
+        return std.mem.indexOfScalar(graph_mod.GlobalBindingId, links, binding) != null;
+    }
+
+    fn isForwardingLink(self: *SafetyChecker, id: graph_mod.GlobalNodeId, links: []const graph_mod.GlobalBindingId, owning: bool) bool {
+        var expression = self.graph.node(id).content;
+        if (owning) {
+            if (expression != .move_value) return false;
+            expression = self.graph.node(expression.move_value).content;
         }
-        return assigned;
+        return expression == .binding_use and linksContains(links, expression.binding_use);
     }
 
     fn validateInitializerContracts(self: *SafetyChecker, engine: *summary_engine.Engine) !void {
