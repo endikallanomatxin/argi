@@ -68,17 +68,14 @@ pub fn fromDeclaration(allocator: std.mem.Allocator, declaration: @import("../pr
                 .owned_outputs = outcome.owned_outputs,
                 .invalidates = outcome.invalidates,
                 .invalidated_domains = outcome.invalidated_domains,
+                .outcomes = outcome.outcomes,
                 .source = outcome.source,
             });
             const output = try allocator.create(Output);
             output.* = contract.outputs[output_index];
-            // Common permissions apply to every outcome. Variant clauses add
-            // permissions rather than silently replacing the common contract.
-            output.dependencies = try std.mem.concat(allocator, facts.InputPath, &.{ target.dependencies, output.dependencies });
-            output.domains = try std.mem.concat(allocator, facts.InputDomain, &.{ target.domains, output.domains });
-            output.fresh_owner = output.fresh_owner or target.fresh_owner;
-            output.referent = target.referent;
-            output.ownership_transfers = target.ownership_transfers;
+            // Every nested payload inherits the enclosing permissions. Applying
+            // this recursively prevents a child selector from cancelling them.
+            try inheritOutputPermissions(allocator, output, target.*);
             try outcomes.append(allocator, .{ .variant_index = outcome.variant_index orelse return error.UnresolvedOutcomeContract, .value = output });
         }
         target.outcomes = try outcomes.toOwnedSlice(allocator);
@@ -100,6 +97,15 @@ pub fn fromDeclaration(allocator: std.mem.Allocator, declaration: @import("../pr
         try conditional.append(allocator, .{ .output_index = outcome.output_index, .variant_index = outcome.variant_index orelse return error.UnresolvedOutcomeContract, .effects = effects });
     }
     return .{ .outputs = outputs, .invalidates = invalidates, .invalidated_domains = invalidated_domains, .outcomes = try conditional.toOwnedSlice(allocator) };
+}
+
+fn inheritOutputPermissions(allocator: std.mem.Allocator, output: *Output, common: Output) anyerror!void {
+    output.dependencies = try std.mem.concat(allocator, facts.InputPath, &.{ common.dependencies, output.dependencies });
+    output.domains = try std.mem.concat(allocator, facts.InputDomain, &.{ common.domains, output.domains });
+    output.fresh_owner = output.fresh_owner or common.fresh_owner;
+    output.referent = common.referent;
+    output.ownership_transfers = common.ownership_transfers;
+    for (output.outcomes) |outcome| try inheritOutputPermissions(allocator, @constCast(outcome.value), common);
 }
 
 pub const Failure = struct {
@@ -237,11 +243,11 @@ fn checkValue(allowed: Output, actual: facts.ValueEffect) ?Failure {
     }
     for (actual.variants) |variant| {
         var selected = allowed;
+        selected.outcomes = &.{};
         for (allowed.outcomes) |outcome| if (outcome.variant_index == variant.index) {
             selected = outcome.value.*;
             break;
         };
-        selected.outcomes = &.{};
         if (checkValue(selected, variant.value.*)) |failure| return failure;
     }
     for (actual.domain_values) |domain| {

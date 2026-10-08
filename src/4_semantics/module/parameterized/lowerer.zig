@@ -355,9 +355,23 @@ pub const Context = struct {
                     var child = requirement;
                     child.safety_contract = data.body;
                     const effect = (try self.lowerMethodSafetyContract(child, domains)).?;
-                    if (effect.outcomes.len != 0 or effect.referents.len != 0 or effect.transfers.len != 0) {
-                        try self.contractError(statement, "nested outcomes, refers_to and transfers require more precise outcome proofs");
+                    if (effect.referents.len != 0 or effect.transfers.len != 0) {
+                        try self.contractError(statement, "conditional refers_to and transfers require more precise outcome proofs");
                         unreachable;
+                    }
+                    for (effect.outcomes) |nested| {
+                        if (nested.output_index != output_index.?) {
+                            try self.contractError(statement, "nested on must follow the selected output payload");
+                            unreachable;
+                        }
+                        if (hasNestedOwnershipEffects(nested)) {
+                            try self.contractError(statement, "nested ownership effects require recursive choice cleanup and ownership proofs");
+                            unreachable;
+                        }
+                        if (hasNestedGenerationEffects(nested)) {
+                            try self.contractError(statement, "nested generation effects require projected call-result guards");
+                            unreachable;
+                        }
                     }
                     for (effect.dependencies) |dependency| if (dependency.output_index != output_index.?) {
                         try self.contractError(statement, "conditional effects on other outputs require correlated result facts");
@@ -379,6 +393,7 @@ pub const Context = struct {
                         .owned_outputs = effect.owned_outputs,
                         .invalidates = effect.invalidates,
                         .invalidated_domains = effect.invalidated_domains,
+                        .outcomes = effect.outcomes,
                         .source = effect.source,
                     });
                     continue;
@@ -399,6 +414,18 @@ pub const Context = struct {
             .transfers = try transfers.toOwnedSlice(self.allocator),
             .source = self.sourceRef(node),
         };
+    }
+
+    fn hasNestedOwnershipEffects(outcome: primitives.MethodSafetyContract.Outcome) bool {
+        if (outcome.owned_outputs.len != 0) return true;
+        for (outcome.outcomes) |child| if (hasNestedOwnershipEffects(child)) return true;
+        return false;
+    }
+
+    fn hasNestedGenerationEffects(outcome: primitives.MethodSafetyContract.Outcome) bool {
+        if (outcome.invalidates.len != 0 or outcome.invalidated_domains.len != 0) return true;
+        for (outcome.outcomes) |child| if (hasNestedGenerationEffects(child)) return true;
+        return false;
     }
 
     fn contractError(self: *Context, node: syn.NodeIndex, message: []const u8) !void {

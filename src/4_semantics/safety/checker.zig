@@ -4793,14 +4793,21 @@ pub const SafetyChecker = struct {
                 try self.refreshStorageGenerationChecked(outcome.source, state, outcome.storage);
             } else root.state = .alive;
         }
-        var roots = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
-        defer roots.deinit();
-        try collectOwnedRoots(value, &roots);
-        for (roots.items) |root| {
+        try self.activate_conditional_owner_roots(state, value);
+        try self.activate_conditional_capabilities(state, value);
+    }
+
+    fn activate_conditional_owner_roots(self: *SafetyChecker, state: *FunctionState, value: facts.ValueFacts) anyerror!void {
+        for (value.owned_roots) |root| {
             const entry = &state.tracker.roots.items[@intFromEnum(root)];
             if (entry.state == .conditional) entry.state = .alive;
         }
-        try self.activate_conditional_capabilities(state, value);
+        for (value.fields) |field| try self.activate_conditional_owner_roots(state, field.value.*);
+        // Knowing an outer tag does not establish an inner choice's owner.
+        // Preserve the inner condition until its own payload is selected.
+        if (value.known_choice_variant) |active| for (value.variants) |variant| {
+            if (variant.index == active) try self.activate_conditional_owner_roots(state, variant.value.*);
+        };
     }
 
     fn activate_conditional_capabilities(self: *SafetyChecker, state: *FunctionState, value: facts.ValueFacts) !void {
@@ -6571,4 +6578,22 @@ test "generation outcome proofs cannot be replayed after another call or invalid
     state.tracker.roots.items[@intFromEnum(generation)].outcome_guard = 1;
     try checker.activate_conditional_resources(&state, preserved);
     try std.testing.expect(!state.tracker.isAlive(generation));
+}
+
+test "outer payload selection does not activate owners in an unresolved inner choice" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(allocator, undefined, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const root = try state.tracker.establish(.fresh);
+    state.tracker.roots.items[@intFromEnum(root)].state = .conditional;
+    const owned = facts.ValueFacts{ .owned_roots = &.{root} };
+    const inner = facts.ValueFacts{ .variants = &.{.{ .index = 0, .value = &owned }} };
+    try checker.activate_conditional_resources(&state, inner);
+    try std.testing.expectEqual(.conditional, state.tracker.roots.items[@intFromEnum(root)].state);
+    try checker.activate_conditional_resources(&state, owned);
+    try std.testing.expect(state.tracker.isAlive(root));
 }

@@ -217,6 +217,8 @@ pub const MethodSafetyContract = struct {
         owned_outputs: []const u32 = &.{},
         invalidates: []const u32 = &.{},
         invalidated_domains: []const DomainInput = &.{},
+        /// Nested selectors follow the selected payload, never another output.
+        outcomes: []const Outcome = &.{},
         source: SourceRef,
     };
 };

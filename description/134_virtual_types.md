@@ -350,7 +350,8 @@ storage generations, and opaque storage.
 > generation changes. Generation refinement supports bound result discrimination
 > and direct forwarding of a single choice through wrappers. More complex wrapper
 > bodies conservatively join their effects. Hidden storage transitions, clauses
-> affecting other outputs and nested outcome selectors remain to be implemented.
+> affecting other outputs, nested ownership and nested generation effects remain
+> to be implemented. Nested payload selectors support dependency contracts.
 > Independent payload selectors on several outputs are supported; generation
 > effects requiring independent result correlations are conservatively joined.
 
@@ -359,3 +360,19 @@ handle. Conversion checks the concrete type's declared associated arguments,
 then fixes every method signature before erasing `Self`. Handles for different
 associated arguments are different types; their possible implementation sets
 also remain separate during safety checking.
+
+Nested `on` clauses follow the selected output's payload. They describe one
+structural discriminant path rather than a conjunction between independent
+results. For an `Errable#(?&Int32, Reasons)` output, an inner `on result ..some`
+can permit `depends_on(result, self)` while `..none` has no such dependency.
+Permissions on the outer payload also apply to its nested alternatives.
+
+```argi
+get(.self: &Self) -> (.result: Errable#(?&Int32, Reasons)) where {
+    on result ..ok {
+        on result ..some { depends_on(result, self) }
+        on result ..none {}
+    }
+    on result ..error { depends_on(result, error_tracer) }
+}
+```

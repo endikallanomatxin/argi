@@ -17,6 +17,33 @@ fn verifyDomainMappings(graph: *const graph_mod.ModuleSemanticGraph, mappings: [
     }
 }
 
+fn verifyOutcome(graph: *const graph_mod.ModuleSemanticGraph, outcome: @import("../../primitives/schema.zig").MethodSafetyContract.Outcome, output_count: usize, input_count: usize) anyerror!void {
+    try require(outcome.output_index < output_count);
+    try require(verify.stringFits(outcome.variant, graph.strings.items));
+    try require(verify.sourceFits(outcome.source, graph.file_offsets.items.len));
+    for (outcome.dependencies) |dependency| {
+        try require(dependency.output_index == outcome.output_index);
+        try require(dependency.input_index <= input_count);
+    }
+    for (outcome.domain_dependencies) |dependency| {
+        try require(dependency.output_index == outcome.output_index);
+        try require(dependency.input.input_index < input_count);
+    }
+    for (outcome.owned_outputs) |index| try require(index == outcome.output_index);
+    for (outcome.invalidates) |index| try require(index < input_count);
+    for (outcome.invalidated_domains) |domain| try require(domain.input_index < input_count);
+    for (outcome.outcomes) |child| {
+        try require(child.output_index == outcome.output_index);
+        try verifyOutcome(graph, child, output_count, input_count);
+    }
+}
+
+fn verifyOutcomeDomains(outcome: @import("../../primitives/schema.zig").MethodSafetyContract.Outcome, domain_count: usize) anyerror!void {
+    for (outcome.domain_dependencies) |dependency| try require(dependency.input.domain_index < domain_count);
+    for (outcome.invalidated_domains) |domain| try require(domain.domain_index < domain_count);
+    for (outcome.outcomes) |child| try verifyOutcomeDomains(child, domain_count);
+}
+
 pub fn verifyParameterizedForms(graph: *const graph_mod.ModuleSemanticGraph) !void {
     const storage = &graph.semantic.parameterized_storage;
     try ir_verify.verifyIR(graph);
@@ -60,22 +87,7 @@ pub fn verifyParameterizedForms(graph: *const graph_mod.ModuleSemanticGraph) !vo
             try require(output == .resolved and output.resolved == .structural);
             try require(contract.output_count == output.resolved.structural.fields.len);
             for (contract.owned_outputs) |index| try require(index < contract.output_count);
-            for (contract.outcomes) |outcome| {
-                try require(outcome.output_index < contract.output_count);
-                try require(verify.stringFits(outcome.variant, graph.strings.items));
-                try require(verify.sourceFits(outcome.source, graph.file_offsets.items.len));
-                for (outcome.dependencies) |dependency| {
-                    try require(dependency.output_index == outcome.output_index);
-                    try require(dependency.input_index <= input.resolved.structural.fields.len);
-                }
-                for (outcome.domain_dependencies) |dependency| {
-                    try require(dependency.output_index == outcome.output_index);
-                    try require(dependency.input.input_index < input.resolved.structural.fields.len);
-                }
-                for (outcome.owned_outputs) |index| try require(index == outcome.output_index);
-                for (outcome.invalidates) |index| try require(index < input.resolved.structural.fields.len);
-                for (outcome.invalidated_domains) |domain| try require(domain.input_index < input.resolved.structural.fields.len);
-            }
+            for (contract.outcomes) |outcome| try verifyOutcome(graph, outcome, contract.output_count, input.resolved.structural.fields.len);
             for (contract.transfers) |transfer| {
                 try require(transfer.output_index < contract.output_count);
                 try require(transfer.input_index < input.resolved.structural.fields.len);
@@ -112,10 +124,7 @@ pub fn verifyParameterizedForms(graph: *const graph_mod.ModuleSemanticGraph) !vo
         for (storage.abstract_requirements.items[definition.requirements.start..][0..definition.requirements.len]) |requirement| if (requirement.safety_contract) |contract| {
             for (contract.domain_dependencies) |dependency| try require(dependency.input.domain_index < definition.domains.len);
             for (contract.invalidated_domains) |domain| try require(domain.domain_index < definition.domains.len);
-            for (contract.outcomes) |outcome| {
-                for (outcome.domain_dependencies) |dependency| try require(dependency.input.domain_index < definition.domains.len);
-                for (outcome.invalidated_domains) |domain| try require(domain.domain_index < definition.domains.len);
-            }
+            for (contract.outcomes) |outcome| try verifyOutcomeDomains(outcome, definition.domains.len);
         };
     }
 

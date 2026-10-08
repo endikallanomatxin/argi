@@ -10632,3 +10632,29 @@ test "feature_tests/polymorphism/128X_virtual_safety_contract_outcome_break_effe
 test "feature_tests/polymorphism/129X_virtual_safety_contract_outcome_result_alias" {
     try buildExpectFail("tests/feature_tests/polymorphism/129X_virtual_safety_contract_outcome_result_alias", "a storage transition is not permitted by this preservation contract");
 }
+
+test "feature_tests/polymorphism/130_virtual_safety_contract_nested_payload" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/130_virtual_safety_contract_nested_payload");
+    try runExpect("tests/feature_tests/polymorphism/130_virtual_safety_contract_nested_payload", 0);
+}
+
+test "feature_tests/polymorphism/131X_virtual_safety_contract_nested_dependency" {
+    try buildExpectFail("tests/feature_tests/polymorphism/131X_virtual_safety_contract_nested_dependency", "undeclared output dependency");
+}
+
+test "feature_tests/polymorphism/132X_virtual_safety_contract_nested_variant" {
+    try buildExpectFail("tests/feature_tests/polymorphism/132X_virtual_safety_contract_nested_variant", "unknown output variant");
+}
+
+test "feature_tests/polymorphism/133X_virtual_safety_contract_nested_nonchoice" {
+    try buildExpectFail("tests/feature_tests/polymorphism/133X_virtual_safety_contract_nested_nonchoice", "choice-valued output payload");
+}
+
+test "feature_tests/polymorphism/134_virtual_safety_contract_nested_common" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/134_virtual_safety_contract_nested_common");
+    try runExpect("tests/feature_tests/polymorphism/134_virtual_safety_contract_nested_common", 0);
+}
+
+test "feature_tests/polymorphism/135X_virtual_safety_contract_nested_owner" {
+    try buildExpectFail("tests/feature_tests/polymorphism/135X_virtual_safety_contract_nested_owner", "nested ownership effects require recursive choice cleanup and ownership proofs");
+}

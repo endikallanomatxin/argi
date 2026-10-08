@@ -219,7 +219,10 @@ https://rust-lang.github.io/polonius/rules/loans.html
 1. Extend direct forwarding to repackaging wrappers, error propagation and nested
    output projection selectors. Keep conservative fallback for unproven relations.
 2. Add checked storing/consuming/initializing effects and opaque owner obligations.
-3. Extend selectors down nested payload paths; measure representation growth and
-   reevaluations using core-sized examples.
+3. Complete nested ownership and generation effects along payload selectors.
+   Recursive choice cleanup must destroy ignored owning payloads, and concrete
+   summaries must describe fresh nominal ownership inside nested constructions.
+   Preserve parent guards when refining nested generation effects; measure
+   representation growth and reevaluations using core-sized examples.
 4. Reconsider input guards and joint discriminants only when a concrete useful
    API remains unnecessarily rejected by the structural boundary.

@@ -40,11 +40,11 @@ const Builder = struct {
             for (self.graph.variants.items[range.start..][0..range.len], variants, 0..) |variant, *output, index| {
                 const child = try self.allocator.create(facts.ValueEffect);
                 var child_allowed = allowed;
+                child_allowed.outcomes = &.{};
                 for (allowed.outcomes) |outcome| if (outcome.variant_index == index) {
                     child_allowed = outcome.value.*;
                     break;
                 };
-                child_allowed.outcomes = &.{};
                 child.* = if (variant.payload_type) |payload| try self.value(payload, child_allowed, depth + 1) else .{};
                 output.* = .{ .index = @intCast(index), .value = child };
             }

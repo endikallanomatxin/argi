@@ -1191,28 +1191,36 @@ pub const Resolver = struct {
         return true;
     }
 
+    fn outcomeSafetyContractFailure(self: *Resolver, inputs: global_sg.FieldRange, choice_ty: global_sg.GlobalTypeId, output_type: global_sg.GlobalTypeId, abstract_ty: global_sg.GlobalTypeId, located: LocatedAbstractDefinition, outcome: primitives.MethodSafetyContract.Outcome, erased_self: bool) anyerror!?[]const u8 {
+        if (global_types.variants(self.graph, choice_ty) == null) return "on requires a choice-valued output payload";
+        const name = self.modules[located.module_index].text(outcome.variant);
+        const hit = global_types.findVariant(self.graph, choice_ty, name) orelse return "outcome contract names an unknown output variant";
+        if (try self.methodSafetyContractFailure(inputs, .{ .start = 0, .len = 0 }, output_type, abstract_ty, located, .{
+            .output_count = 0,
+            .dependencies = outcome.dependencies,
+            .domain_dependencies = outcome.domain_dependencies,
+            .invalidates = outcome.invalidates,
+            .invalidated_domains = outcome.invalidated_domains,
+            .source = outcome.source,
+        }, erased_self)) |message| return message;
+        for (outcome.outcomes, 0..) |child, index| {
+            if (child.output_index != outcome.output_index) return "nested on must follow the selected output payload";
+            const payload = hit.variant.payload_type orelse return "nested on requires a choice-valued output payload";
+            if (try self.outcomeSafetyContractFailure(inputs, payload, output_type, abstract_ty, located, child, erased_self)) |message| return message;
+            for (outcome.outcomes[0..index]) |previous| if (std.mem.eql(u8, self.modules[located.module_index].text(previous.variant), self.modules[located.module_index].text(child.variant))) return "duplicate outcome contract";
+        }
+        return null;
+    }
+
     fn methodSafetyContractFailure(self: *Resolver, inputs: global_sg.FieldRange, outputs: global_sg.FieldRange, output_type: global_sg.GlobalTypeId, abstract_ty: global_sg.GlobalTypeId, located: LocatedAbstractDefinition, contract: primitives.MethodSafetyContract, erased_self: bool) !?[]const u8 {
         var reason: ?[]const u8 = null;
         for (contract.outcomes, 0..) |outcome, outcome_index| {
             if (outcome.output_index >= outputs.len) return "outcome contract names an unknown output";
             const output_ty = self.graph.fields.items[outputs.start + outcome.output_index].ty;
-            if (global_types.variants(self.graph, output_ty) == null) return "on requires a choice-valued output";
+            if (try self.outcomeSafetyContractFailure(inputs, output_ty, output_type, abstract_ty, located, outcome, erased_self)) |message| return message;
             const outcome_name = self.modules[located.module_index].text(outcome.variant);
-            if (global_types.findVariant(self.graph, output_ty, outcome_name) == null) return "outcome contract names an unknown output variant";
             for (contract.outcomes[0..outcome_index]) |previous| {
                 if (previous.output_index == outcome.output_index and std.mem.eql(u8, self.modules[located.module_index].text(previous.variant), outcome_name)) return "duplicate outcome contract";
-            }
-            if (outcome.invalidates.len != 0 or outcome.invalidated_domains.len != 0) {
-                const failure = try self.methodSafetyContractFailure(inputs, .{ .start = outputs.start, .len = 0 }, output_type, abstract_ty, located, .{
-                    .output_count = 0,
-                    .invalidates = outcome.invalidates,
-                    .invalidated_domains = outcome.invalidated_domains,
-                    .source = outcome.source,
-                }, erased_self);
-                if (failure) |message| return message;
-            }
-            for (outcome.dependencies) |dependency| {
-                if (dependency.input_index >= inputs.len and !(dependency.input_index == inputs.len and self.fallibleOutput(output_type))) return "error_tracer is only implicit for fallible Abstract methods";
             }
         }
         for (contract.dependencies) |dependency| {
@@ -2207,6 +2215,21 @@ pub const Resolver = struct {
         }
     }
 
+    fn globalSafetyOutcome(self: *Resolver, module_index: usize, outcome: *primitives.MethodSafetyContract.Outcome, choice_ty: global_sg.GlobalTypeId) anyerror!void {
+        const name = self.modules[module_index].text(outcome.variant);
+        const hit = global_types.findVariant(self.graph, choice_ty, name) orelse return error.UnknownOutcomeContractVariant;
+        outcome.variant_index = hit.index;
+        outcome.variant = hit.variant.name;
+        outcome.source = self.sourceFor(module_index, outcome.source);
+        const children = try self.allocator.dupe(primitives.MethodSafetyContract.Outcome, outcome.outcomes);
+        for (children, 0..) |*child, index| {
+            if (child.output_index != outcome.output_index) return error.InvalidOutcomeContract;
+            try self.globalSafetyOutcome(module_index, child, hit.variant.payload_type orelse return error.InvalidOutcomeContract);
+            for (children[0..index]) |previous| if (previous.variant_index == child.variant_index) return error.DuplicateOutcomeContract;
+        }
+        outcome.outcomes = children;
+    }
+
     fn globalSafetyContract(self: *Resolver, module_index: usize, declared: primitives.MethodSafetyContract, output_type: global_sg.GlobalTypeId) !primitives.MethodSafetyContract {
         var contract = declared;
         contract.source = self.sourceFor(module_index, contract.source);
@@ -2216,18 +2239,8 @@ pub const Resolver = struct {
             for (outcomes, 0..) |*outcome, index| {
                 if (outcome.output_index >= fields.len) return error.InvalidOutcomeContract;
                 const output_ty = self.graph.fields.items[fields.start + outcome.output_index].ty;
-                const variants = global_types.variants(self.graph, output_ty) orelse return error.InvalidOutcomeContract;
-                const name = self.modules[module_index].text(outcome.variant);
-                var matched = false;
-                for (self.graph.variants.items[variants.start..][0..variants.len], 0..) |variant, variant_index| if (std.mem.eql(u8, self.graph.text(variant.name), name)) {
-                    outcome.variant_index = @intCast(variant_index);
-                    outcome.variant = variant.name;
-                    matched = true;
-                    break;
-                };
-                if (!matched) return error.UnknownOutcomeContractVariant;
+                try self.globalSafetyOutcome(module_index, outcome, output_ty);
                 for (outcomes[0..index]) |previous| if (previous.output_index == outcome.output_index and previous.variant_index == outcome.variant_index) return error.DuplicateOutcomeContract;
-                outcome.source = self.sourceFor(module_index, outcome.source);
             }
             contract.outcomes = outcomes;
         }
