@@ -36,6 +36,19 @@ pub const OpaqueProvenance = struct {
     generation: ValidityRootId,
 };
 
+pub const GenerationOutcome = struct {
+    storage: Place,
+    generation: ValidityRootId,
+    guard: u64,
+    invalidates: bool,
+    source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 },
+
+    pub fn eql(self: GenerationOutcome, other: GenerationOutcome) bool {
+        return self.generation == other.generation and self.guard == other.guard and
+            self.invalidates == other.invalidates and self.storage.eql(other.storage);
+    }
+};
+
 pub const ValueFacts = struct {
     /// A user-declared dependency must be checked on ordinary value reads,
     /// including scalars. Other dependencies retain their operation-specific
@@ -56,6 +69,7 @@ pub const ValueFacts = struct {
     /// ordinary value copies without reintroducing graph-object identity.
     virtual_methods: []const graph.GlobalFunctionId = &.{},
     domains: []const DomainFacts = &.{},
+    generation_outcomes: []const GenerationOutcome = &.{},
 
     pub fn referenceCopy(self: ValueFacts) ValueFacts {
         return .{
@@ -68,6 +82,7 @@ pub const ValueFacts = struct {
             .opaque_provenance = self.opaque_provenance,
             .virtual_methods = self.virtual_methods,
             .domains = self.domains,
+            .generation_outcomes = self.generation_outcomes,
         };
     }
 
@@ -151,6 +166,7 @@ pub const Tracker = struct {
 
     pub fn end(self: *Tracker, id: ValidityRootId) void {
         self.roots.items[@intFromEnum(id)].state = .dead;
+        self.roots.items[@intFromEnum(id)].outcome_guard = 0;
     }
 
     pub fn isAlive(self: *const Tracker, id: ValidityRootId) bool {

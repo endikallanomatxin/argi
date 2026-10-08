@@ -355,10 +355,6 @@ pub const Context = struct {
                     var child = requirement;
                     child.safety_contract = data.body;
                     const effect = (try self.lowerMethodSafetyContract(child, domains)).?;
-                    if (effect.invalidates.len != 0 or effect.invalidated_domains.len != 0) {
-                        try self.contractError(statement, "outcome-specific storage transitions require checked conditional generation effects");
-                        unreachable;
-                    }
                     if (effect.outcomes.len != 0 or effect.referents.len != 0 or effect.transfers.len != 0) {
                         try self.contractError(statement, "nested outcomes, refers_to and transfers require more precise outcome proofs");
                         unreachable;

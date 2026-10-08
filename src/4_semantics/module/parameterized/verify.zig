@@ -73,6 +73,8 @@ pub fn verifyParameterizedForms(graph: *const graph_mod.ModuleSemanticGraph) !vo
                     try require(dependency.input.input_index < input.resolved.structural.fields.len);
                 }
                 for (outcome.owned_outputs) |index| try require(index == outcome.output_index);
+                for (outcome.invalidates) |index| try require(index < input.resolved.structural.fields.len);
+                for (outcome.invalidated_domains) |domain| try require(domain.input_index < input.resolved.structural.fields.len);
             }
             for (contract.transfers) |transfer| {
                 try require(transfer.output_index < contract.output_count);
@@ -110,7 +112,10 @@ pub fn verifyParameterizedForms(graph: *const graph_mod.ModuleSemanticGraph) !vo
         for (storage.abstract_requirements.items[definition.requirements.start..][0..definition.requirements.len]) |requirement| if (requirement.safety_contract) |contract| {
             for (contract.domain_dependencies) |dependency| try require(dependency.input.domain_index < definition.domains.len);
             for (contract.invalidated_domains) |domain| try require(domain.domain_index < definition.domains.len);
-            for (contract.outcomes) |outcome| for (outcome.domain_dependencies) |dependency| try require(dependency.input.domain_index < definition.domains.len);
+            for (contract.outcomes) |outcome| {
+                for (outcome.domain_dependencies) |dependency| try require(dependency.input.domain_index < definition.domains.len);
+                for (outcome.invalidated_domains) |domain| try require(domain.domain_index < definition.domains.len);
+            }
         };
     }
 

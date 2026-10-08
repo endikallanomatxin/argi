@@ -23,21 +23,23 @@ permissions and ownership transfers are separate obligations.
 
 ## Remaining work
 
-- Represent conditional call effects as output selectors and complete effect
-  sets, independently of payload provenance. Infer per-return effects and retain
-  their correlation through result bindings, moves and projections. Refine
-  caller states when a selected result variant is known; unresolved outcomes
-  must remain conservative without reviving expired roots. This affects global
-  semantizing and safety, not tokenizing or codegen representation.
+Use [the precision study](safety_effect_precision.md) to guide the next effects
+implementation. Its structural boundary retains individual discriminants and
+nested payload paths, but conservatively forgets conjunctions of independent
+discriminants and predicates over ordinary values.
+
+- Extend guarded generation summaries to wrappers that repackage call results,
+  choice tests on computed expressions and error propagation. Direct forwarding,
+  bound discrimination, moves and copies preserve call provenance; more complex
+  flows must remain conservative without reviving expired roots.
 - Extend `on output ..variant` to effects on other outputs and nested selectors.
   Use shared effect records rather than eagerly enumerating a Cartesian product
   of output variants. Distinguish effect permissions from required guarantees;
   common clauses apply to all outcomes and conditional clauses add obligations.
 - Extend compatibility checking with allowed dependency storage,
   initialization/consumption and outcome-specific storage guarantees.
-  Source-level `invalidates` covers scalar reference inputs on no-result methods
-  and mapped receiver domains. Extend it to checked aggregate/result
-  facts after invalidation without dropping existing ownership or field facts.
+  Extend generation-only `invalidates` to checked aggregate/result facts after
+  invalidation without dropping existing ownership or field facts.
 - Extend mapped domain effects to owned and opaque storage transitions.
   Broad dependency permissions must not become permission to transfer
   ownership, replace generations or manufacture safe references.
@@ -49,9 +51,6 @@ permissions and ownership transfers are separate obligations.
   fresh or dependency-only handles.
 - Extend declaration checking to the new storage effect clauses, retaining
   diagnostics for implicit error-tracer inputs.
-- Extend opaque storage and conditional generation obligations when protocols
-  need to expose those effects. Keep unsupported effects rejected rather than
-  inferring them from the program's implementation set.
 - Extend independence and conformance fixtures to nested owners, opaque storage,
   error outcomes and aliased inputs as their contract representation becomes
   available.

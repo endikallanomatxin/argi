@@ -126,7 +126,8 @@ pub fn summaryEql(a: facts.SafetySummary, b: facts.SafetySummary) bool {
     for (a.required_live_inputs, b.required_live_inputs) |left, right| if (!inputPathEql(left, right)) return false;
     for (a.input_post_states, b.input_post_states) |left, right| if (!postStateEql(left, right)) return false;
     for (a.outcome_post_states, b.outcome_post_states) |left, right| {
-        if (left.output_index != right.output_index or left.variant_index != right.variant_index or left.input_post_states.len != right.input_post_states.len) return false;
+        if (left.output_index != right.output_index or left.variant_index != right.variant_index or left.input_post_states.len != right.input_post_states.len or left.invalidated_domains.len != right.invalidated_domains.len) return false;
+        for (left.invalidated_domains, right.invalidated_domains) |a_domain, b_domain| if (a_domain.domain_index != b_domain.domain_index or !inputPathEql(a_domain.path, b_domain.path)) return false;
         for (left.input_post_states, right.input_post_states) |left_state, right_state|
             if (!postStateEql(left_state, right_state)) return false;
     }

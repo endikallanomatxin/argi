@@ -272,6 +272,15 @@ feature first.
   not the local slot holding a virtual handle. Summary place paths distinguish
   a reference-valued field's slot from its pointee with explicit dereference
   projections; writing through the reference must preserve the field's facts.
+  Choice-indexed generation effects retain input post-states and domain
+  invalidations separately from payload provenance. Infer exit effects after
+  cleanup, including loop transfers, and keep an unconditional may-effect union.
+  Caller proofs identify one call and one current generation; copies/moves retain
+  them, but overwrites, later invalidations and independent pending calls cannot
+  revive an older root. Refinement never restores caller snapshots. Output slots
+  exposed through references conservatively lose tag-based exit filtering until
+  indirect discriminant writes have a branch-local model. Resource consumption
+  and hidden-state replacement remain separate checked obligations.
   Outcome contracts select a named output and variant, not the first result.
   Keep that output index through syntax-free IR, relocation, cached snapshots,
   conformance and summary equality. Common clauses apply to every outcome;

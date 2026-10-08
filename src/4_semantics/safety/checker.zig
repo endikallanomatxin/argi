@@ -155,6 +155,7 @@ pub const SafetyChecker = struct {
     active_summaries: ?*summary_engine.Engine = null,
     // Outputs and input post-states of one call share acquisition identities.
     // Nested calls install their own map so repeated acquisitions stay distinct.
+    next_outcome_guard: u64 = 1,
     active_fresh_capabilities: ?*std.AutoHashMap(facts.FreshEffectSource, facts.StorageCapabilityId) = null,
     active_summary_inference: ?*summary_infer.Infer = null,
     collect_stats: bool = false,
@@ -255,17 +256,7 @@ pub const SafetyChecker = struct {
         const contracts = @import("contracts.zig");
         var contract = try contracts.fromDeclaration(self.allocator, declared);
         for (@constCast(contract.outputs)) |*output| try self.resolveContractDomains(output, domains);
-        var invalidates: std.ArrayList(facts.InputPath) = .empty;
-        try invalidates.appendSlice(self.allocator, contract.invalidates);
-        for (declared.invalidated_domains) |domain| for (domains) |mapping| {
-            if (mapping.domain_index != domain.domain_index) continue;
-            for (mapping.paths) |path| {
-                const projections = try self.allocator.alloc(facts.Projection, path.fields.len);
-                for (path.fields, projections) |field, *projection| projection.* = .{ .field = field };
-                try invalidates.append(self.allocator, .{ .input_index = domain.input_index, .projections = projections });
-            }
-        };
-        contract.invalidates = try invalidates.toOwnedSlice(self.allocator);
+        try self.resolveContractInvalidations(&contract, domains);
         const function = self.graph.function(method);
         for (declared.referents) |referent| {
             if (!self.provesDirectContractReferent(function, referent)) {
@@ -280,29 +271,22 @@ pub const SafetyChecker = struct {
             try self.report(source, "cannot verify Abstract safety contract for this implementation", .{});
             return;
         };
-        if (declared.invalidates.len != 0) {
+        var scalar_invalidates: std.ArrayList(u32) = .empty;
+        try scalar_invalidates.appendSlice(self.allocator, declared.invalidates);
+        for (declared.outcomes) |outcome| try scalar_invalidates.appendSlice(self.allocator, outcome.invalidates);
+        if (scalar_invalidates.items.len != 0) {
             const states = try self.allocator.dupe(facts.PlacePostState, summary.input_post_states);
-            for (states) |*post_state| {
-                // Generic pointer writes conservatively mark possible
-                // opaque repopulation. A checked scalar referent cannot
-                // contain hidden pointers; normalize that vacuous bit
-                // without discarding its value/capability provenance.
-                for (declared.invalidates) |input_index| {
-                    if (post_state.target.input_index == input_index and post_state.target.projections.len == 0)
-                        post_state.may_repopulate_opaque_storage = false;
-                }
-            }
+            for (states) |*post| for (scalar_invalidates.items) |index| {
+                if (post.target.input_index == index and post.target.projections.len == 0) post.may_repopulate_opaque_storage = false;
+            };
             summary.input_post_states = states;
             const outcomes = try self.allocator.dupe(facts.OutcomePostStates, summary.outcome_post_states);
             for (outcomes) |*outcome| {
-                const outcome_states = try self.allocator.dupe(facts.PlacePostState, outcome.input_post_states);
-                for (outcome_states) |*post_state| {
-                    for (declared.invalidates) |input_index| {
-                        if (post_state.target.input_index == input_index and post_state.target.projections.len == 0)
-                            post_state.may_repopulate_opaque_storage = false;
-                    }
-                }
-                outcome.input_post_states = outcome_states;
+                const states_in_outcome = try self.allocator.dupe(facts.PlacePostState, outcome.input_post_states);
+                for (states_in_outcome) |*post| for (scalar_invalidates.items) |index| {
+                    if (post.target.input_index == index and post.target.projections.len == 0) post.may_repopulate_opaque_storage = false;
+                };
+                outcome.input_post_states = states_in_outcome;
             }
             summary.outcome_post_states = outcomes;
         }
@@ -312,8 +296,32 @@ pub const SafetyChecker = struct {
                 const input_name = if (path.input_index < function.input.len) self.graph.text(self.graph.fields.items[function.input.start + path.input_index].name) else "implicit input";
                 try self.report(source, "method '{s}' violates its Abstract safety contract: {s} involving input '{s}'", .{ method_name, failure.description(), input_name });
             } else try self.report(source, "method '{s}' violates its Abstract safety contract: {s}", .{ method_name, failure.description() });
+            if (failure.outcome) |outcome| {
+                if (outcome.output_index < function.output.len) {
+                    const output = self.graph.fields.items[function.output.start + outcome.output_index];
+                    if (types.variants(self.graph, output.ty)) |variants| if (outcome.variant_index < variants.len) {
+                        const variant = self.graph.variants.items[variants.start + outcome.variant_index];
+                        try self.report(declared.source, "cannot prove preservation for on {s} ..{s}; declare its generation effects or preserve the input on every continuing path", .{ self.graph.text(output.name), self.graph.text(variant.name) });
+                    };
+                }
+            }
             try self.report(declared.source, "the Abstract safety contract is declared here", .{});
         }
+    }
+
+    fn resolveContractInvalidations(self: *SafetyChecker, contract: *@import("contracts.zig").Contract, mappings: []const primitives.StorageDomainMapping) anyerror!void {
+        var invalidates: std.ArrayList(facts.InputPath) = .empty;
+        try invalidates.appendSlice(self.allocator, contract.invalidates);
+        for (contract.invalidated_domains) |domain| for (mappings) |mapping| {
+            if (mapping.domain_index != domain.domain_index) continue;
+            for (mapping.paths) |path| {
+                const projections = try self.allocator.alloc(facts.Projection, path.fields.len);
+                for (path.fields, projections) |field, *projection| projection.* = .{ .field = field };
+                try invalidates.append(self.allocator, .{ .input_index = domain.path.input_index, .projections = projections });
+            }
+        };
+        contract.invalidates = try invalidates.toOwnedSlice(self.allocator);
+        for (contract.outcomes) |outcome| try self.resolveContractInvalidations(@constCast(outcome.effects), mappings);
     }
 
     fn resolveContractDomains(self: *SafetyChecker, output: *@import("contracts.zig").Output, domains: []const primitives.StorageDomainMapping) anyerror!void {
@@ -1142,8 +1150,7 @@ pub const SafetyChecker = struct {
         defer self.active_fresh_capabilities = previous_capabilities;
         if (!try self.validateSummaryRequiredLive(source, summary, values, state)) return facts.ValueFacts{};
         if (call_node) |node| self.recordFunctionCallAutoDeinit(node, summary, argument_nodes);
-        try self.applySummaryEffects(source, summary, argument_nodes, values, state);
-        return try self.instantiateSummaryOutputs(summary.outputs, values, state);
+        return try self.applyOutcomeSummary(source, summary, argument_nodes, values, state);
     }
 
     fn recordFunctionCallAutoDeinit(
@@ -1662,6 +1669,172 @@ pub const SafetyChecker = struct {
             }
         }
         return self.diagnostics.list.items.len == before;
+    }
+
+    /// Delay only generation transitions whose complete alternatives are known.
+    /// Value writes, resource consumption and capabilities still use the common
+    /// conservative summary. A guard never restores a saved caller snapshot.
+    fn applyOutcomeSummary(self: *SafetyChecker, source: primitives.SourceRef, summary: facts.SafetySummary, argument_ids: []const graph_mod.GlobalValueFieldId, arguments: []const facts.ValueFacts, state: *FunctionState) !facts.ValueFacts {
+        var selector: ?u32 = null;
+        for (summary.outcome_post_states) |outcome| {
+            var preserves = false;
+            for (summary.input_post_states) |post| {
+                if (!post.refreshes_storage_generation) continue;
+                var invalidates = false;
+                for (outcome.input_post_states) |branch_post| if (sameInputPath(branch_post.target, post.target) and branch_post.refreshes_storage_generation) {
+                    invalidates = true;
+                    break;
+                };
+                if (!invalidates) preserves = true;
+            }
+            for (summary.invalidated_domains) |domain| {
+                var invalidates = false;
+                for (outcome.invalidated_domains) |branch_domain| if (domain.domain_index == branch_domain.domain_index and sameInputPath(domain.path, branch_domain.path)) {
+                    invalidates = true;
+                    break;
+                };
+                if (!invalidates) preserves = true;
+            }
+            if (!preserves) continue;
+            if (selector != null and selector.? != outcome.output_index) {
+                try self.applySummaryEffects(source, summary, argument_ids, arguments, state);
+                return self.instantiateSummaryOutputs(summary.outputs, arguments, state);
+            }
+            selector = outcome.output_index;
+        }
+        const output_index = selector orelse {
+            try self.applySummaryEffects(source, summary, argument_ids, arguments, state);
+            return self.instantiateSummaryOutputs(summary.outputs, arguments, state);
+        };
+        var deferred = std.array_list.Managed(facts.PlacePostState).init(self.allocator);
+        defer deferred.deinit();
+        var common = std.array_list.Managed(facts.PlacePostState).init(self.allocator);
+        defer common.deinit();
+        for (summary.input_post_states) |post| {
+            // Only a pure generation change can be postponed independently of
+            // input contents. Everything else retains its conservative effect.
+            var pure = post;
+            pure.refreshes_storage_generation = false;
+            pure.may_repopulate_opaque_storage = false;
+            var value = pure.value;
+            var retains_input = true;
+            for (value.input_place_values) |path| if (!sameInputPath(path, post.target)) {
+                retains_input = false;
+                break;
+            };
+            value.input_place_values = &.{};
+            var preserves = false;
+            for (summary.outcome_post_states) |outcome| {
+                if (outcome.output_index != output_index) continue;
+                var invalidates = false;
+                for (outcome.input_post_states) |branch_post| if (sameInputPath(branch_post.target, post.target) and branch_post.refreshes_storage_generation) {
+                    invalidates = true;
+                    break;
+                };
+                if (!invalidates) preserves = true;
+            }
+            if (post.refreshes_storage_generation and preserves and pure.initializedness == .initialized and
+                !pure.ends_previous_roots and !pure.requires_available_destination and pure.opaque_ownership == .none and
+                pure.opaque_storage == null and retains_input and facts.isEmptyValue(value))
+            {
+                try deferred.append(post);
+                if (!facts.isEmptyValue(post.value)) {
+                    var contents = post;
+                    contents.refreshes_storage_generation = false;
+                    try common.append(contents);
+                }
+            } else try common.append(post);
+        }
+        var deferred_domains = std.array_list.Managed(facts.InputDomain).init(self.allocator);
+        defer deferred_domains.deinit();
+        var common_domains = std.array_list.Managed(facts.InputDomain).init(self.allocator);
+        defer common_domains.deinit();
+        for (summary.invalidated_domains) |domain| {
+            var preserves = false;
+            for (summary.outcome_post_states) |outcome| {
+                if (outcome.output_index != output_index) continue;
+                var invalidates = false;
+                for (outcome.invalidated_domains) |branch_domain| if (domain.domain_index == branch_domain.domain_index and sameInputPath(domain.path, branch_domain.path)) {
+                    invalidates = true;
+                    break;
+                };
+                if (!invalidates) preserves = true;
+            }
+            if (preserves) try deferred_domains.append(domain) else try common_domains.append(domain);
+        }
+        var common_summary = summary;
+        common_summary.input_post_states = common.items;
+        common_summary.invalidated_domains = common_domains.items;
+        try self.applySummaryEffects(source, common_summary, argument_ids, arguments, state);
+        var result = try self.instantiateSummaryOutputs(summary.outputs, arguments, state);
+        if (deferred.items.len == 0 and deferred_domains.items.len == 0) return result;
+        var choice: *facts.ValueFacts = &result;
+        if (summary.outputs.len != 1) {
+            const fields = try self.allocator.dupe(facts.FieldFacts, result.fields);
+            result.fields = fields;
+            for (fields) |*field| if (field.index == output_index) {
+                const stored = try self.allocator.create(facts.ValueFacts);
+                stored.* = field.value.*;
+                field.value = stored;
+                choice = stored;
+                break;
+            };
+        }
+        const variants = try self.allocator.dupe(facts.VariantFacts, choice.variants);
+        choice.variants = variants;
+        const guard = self.next_outcome_guard;
+        self.next_outcome_guard += 1;
+        var storages = std.array_list.Managed(facts.Place).init(self.allocator);
+        defer storages.deinit();
+        for (deferred.items) |post| {
+            if (try self.resolveSummaryInputPath(post.target, argument_ids, arguments, state)) |storage| try appendPlaceFact(&storages, storage);
+        }
+        for (deferred_domains.items) |domain| {
+            if (domain.path.input_index >= arguments.len) continue;
+            const value = try self.projectValueFacts(arguments[domain.path.input_index], domain.path.projections);
+            for (try self.domainStorage(value, domain.domain_index, state)) |storage| try appendPlaceFact(&storages, storage);
+        }
+        // An aggregate domain also governs references to its projected fields.
+        // Capture every existing generation below it before any guard is added.
+        const initial_storages = try self.allocator.dupe(facts.Place, storages.items);
+        for (initial_storages) |storage| for (state.storage_generations.items) |generation| {
+            if (storage.isPrefixOf(generation.storage)) try appendPlaceFact(&storages, generation.storage);
+        };
+        for (storages.items) |storage| {
+            const root = try self.storageGeneration(state, storage);
+            const entry = &state.tracker.roots.items[@intFromEnum(root)];
+            if (entry.state != .alive) {
+                entry.outcome_guard = 0;
+                continue;
+            }
+            entry.state = .maybe_alive;
+            entry.outcome_guard = guard;
+            for (variants) |*variant| {
+                var invalidates = true;
+                for (summary.outcome_post_states) |outcome| if (outcome.output_index == output_index and outcome.variant_index == variant.index) {
+                    invalidates = try self.outcomeInvalidatesStorage(outcome, argument_ids, arguments, state, storage);
+                    break;
+                };
+                const payload = try self.allocator.create(facts.ValueFacts);
+                payload.* = variant.value.*;
+                payload.generation_outcomes = try std.mem.concat(self.allocator, facts.GenerationOutcome, &.{ payload.generation_outcomes, &.{.{ .storage = storage, .generation = root, .guard = guard, .invalidates = invalidates, .source = source }} });
+                variant.value = payload;
+            }
+        }
+        return result;
+    }
+
+    fn outcomeInvalidatesStorage(self: *SafetyChecker, outcome: facts.OutcomePostStates, argument_ids: []const graph_mod.GlobalValueFieldId, arguments: []const facts.ValueFacts, state: *FunctionState, storage: facts.Place) !bool {
+        for (outcome.input_post_states) |post| {
+            if (!post.refreshes_storage_generation) continue;
+            if (try self.resolveSummaryInputPath(post.target, argument_ids, arguments, state)) |target| if (target.isPrefixOf(storage)) return true;
+        }
+        for (outcome.invalidated_domains) |domain| {
+            if (domain.path.input_index >= arguments.len) continue;
+            const value = try self.projectValueFacts(arguments[domain.path.input_index], domain.path.projections);
+            for (try self.domainStorage(value, domain.domain_index, state)) |target| if (target.isPrefixOf(storage)) return true;
+        }
+        return false;
     }
 
     fn applySummaryEffects(
@@ -2382,6 +2555,13 @@ pub const SafetyChecker = struct {
 
     fn mergeValueFacts(self: *SafetyChecker, left: facts.ValueFacts, right: facts.ValueFacts) !facts.ValueFacts {
         const domains = try mergeDomainFacts(self.allocator, left.domains, right.domains);
+        var generation_outcomes = std.array_list.Managed(facts.GenerationOutcome).init(self.allocator);
+        for (left.generation_outcomes) |outcome| for (right.generation_outcomes) |other| {
+            if (outcome.eql(other)) {
+                try generation_outcomes.append(outcome);
+                break;
+            }
+        };
         var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator);
         for (left.dependencies) |value| try appendDependencyFact(&dependencies, value);
         for (right.dependencies) |value| try appendDependencyFact(&dependencies, value);
@@ -2449,6 +2629,7 @@ pub const SafetyChecker = struct {
             .opaque_provenance = try opaque_provenance.toOwnedSlice(),
             .virtual_methods = if (std.mem.eql(graph_mod.GlobalFunctionId, left.virtual_methods, right.virtual_methods)) left.virtual_methods else &.{},
             .domains = domains,
+            .generation_outcomes = try generation_outcomes.toOwnedSlice(),
         };
     }
 
@@ -3405,8 +3586,7 @@ pub const SafetyChecker = struct {
         const previous_capabilities = self.active_fresh_capabilities;
         self.active_fresh_capabilities = &call_capabilities;
         defer self.active_fresh_capabilities = previous_capabilities;
-        try self.applySummaryEffects(source, summary, argument_nodes, values, state);
-        return try self.instantiateSummaryOutputs(summary.outputs, values, state);
+        return try self.applyOutcomeSummary(source, summary, argument_nodes, values, state);
     }
 
     fn applyAutoDeinit(
@@ -3999,6 +4179,11 @@ pub const SafetyChecker = struct {
                 .id = id,
                 .state = if (left_state == right_state) left_state else .maybe_alive,
                 .owned_resource = left_owned or right_owned,
+                .outcome_guard = if (index < left.tracker.roots.items.len and index < right.tracker.roots.items.len and
+                    left.tracker.roots.items[index].outcome_guard == right.tracker.roots.items[index].outcome_guard)
+                    left.tracker.roots.items[index].outcome_guard
+                else
+                    0,
             });
         }
 
@@ -4584,11 +4769,30 @@ pub const SafetyChecker = struct {
             remaining = candidate;
         }
         if (remaining) |only| {
+            if (self.valueAtPlace(state, target)) |value| for (value.variants) |payload| if (payload.index == only) {
+                try self.activate_conditional_resources(state, payload.value.*);
+                break;
+            };
             self.setActiveVariant(state, target, only);
         }
     }
 
     fn activate_conditional_resources(self: *SafetyChecker, state: *FunctionState, value: facts.ValueFacts) !void {
+        for (value.generation_outcomes) |outcome| {
+            if (@intFromEnum(outcome.generation) >= state.tracker.roots.items.len) continue;
+            const root = &state.tracker.roots.items[@intFromEnum(outcome.generation)];
+            if (root.state != .maybe_alive or root.outcome_guard != outcome.guard) continue;
+            var current = false;
+            for (state.storage_generations.items) |generation| if (generation.storage.eql(outcome.storage) and generation.generation == outcome.generation and !generation.needs_current_generation) {
+                current = true;
+                break;
+            };
+            root.outcome_guard = 0;
+            if (!current) continue;
+            if (outcome.invalidates) {
+                try self.refreshStorageGenerationChecked(outcome.source, state, outcome.storage);
+            } else root.state = .alive;
+        }
         var roots = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
         defer roots.deinit();
         try collectOwnedRoots(value, &roots);
@@ -5038,7 +5242,7 @@ fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChe
         left.choice_temporary_active.items.len != right.choice_temporary_active.items.len) return false;
 
     for (left.tracker.roots.items, right.tracker.roots.items) |a, b|
-        if (a.state != b.state or a.owned_resource != b.owned_resource) return false;
+        if (a.state != b.state or a.owned_resource != b.owned_resource or a.outcome_guard != b.outcome_guard) return false;
     for (left.storage_capabilities.items, right.storage_capabilities.items) |a, b|
         if (a != b) return false;
     for (left.lexical_storage_generations.items) |root|
@@ -5119,7 +5323,8 @@ fn valueFactsEqual(left: facts.ValueFacts, right: facts.ValueFacts) bool {
         left.owned_roots.len != right.owned_roots.len or
         left.fields.len != right.fields.len or
         left.variants.len != right.variants.len or
-        left.opaque_provenance.len != right.opaque_provenance.len) return false;
+        left.opaque_provenance.len != right.opaque_provenance.len or left.generation_outcomes.len != right.generation_outcomes.len) return false;
+    for (left.generation_outcomes, right.generation_outcomes) |a, b| if (!a.eql(b)) return false;
     for (left.dependencies, right.dependencies) |a, b| if (a.root != b.root) return false;
     for (left.owned_roots, right.owned_roots) |a, b| if (a != b) return false;
     if ((left.referenced_place == null) != (right.referenced_place == null)) return false;
@@ -6335,4 +6540,35 @@ fn mergeDomainFacts(allocator: std.mem.Allocator, left: []const facts.DomainFact
         if (!found) try result.append(allocator, domain);
     }
     return result.toOwnedSlice(allocator);
+}
+
+fn sameInputPath(left: facts.InputPath, right: facts.InputPath) bool {
+    if (left.input_index != right.input_index or left.projections.len != right.projections.len) return false;
+    for (left.projections, right.projections) |a, b| if (!a.eql(b)) return false;
+    return true;
+}
+
+test "generation outcome proofs cannot be replayed after another call or invalidation" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(allocator, undefined, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const storage = facts.Place{ .root = @enumFromInt(0) };
+    const generation = try checker.storageGeneration(&state, storage);
+    const preserved = facts.ValueFacts{ .generation_outcomes = &.{.{ .storage = storage, .generation = generation, .guard = 1, .invalidates = false }} };
+    state.tracker.roots.items[@intFromEnum(generation)].state = .maybe_alive;
+    state.tracker.roots.items[@intFromEnum(generation)].outcome_guard = 1;
+    try checker.activate_conditional_resources(&state, preserved);
+    try std.testing.expect(state.tracker.isAlive(generation));
+    state.tracker.roots.items[@intFromEnum(generation)].state = .maybe_alive;
+    state.tracker.roots.items[@intFromEnum(generation)].outcome_guard = 2;
+    try checker.activate_conditional_resources(&state, preserved);
+    try std.testing.expect(!state.tracker.isAlive(generation));
+    state.tracker.end(generation);
+    state.tracker.roots.items[@intFromEnum(generation)].outcome_guard = 1;
+    try checker.activate_conditional_resources(&state, preserved);
+    try std.testing.expect(!state.tracker.isAlive(generation));
 }

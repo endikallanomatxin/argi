@@ -1202,6 +1202,15 @@ pub const Resolver = struct {
             for (contract.outcomes[0..outcome_index]) |previous| {
                 if (previous.output_index == outcome.output_index and std.mem.eql(u8, self.modules[located.module_index].text(previous.variant), outcome_name)) return "duplicate outcome contract";
             }
+            if (outcome.invalidates.len != 0 or outcome.invalidated_domains.len != 0) {
+                const failure = try self.methodSafetyContractFailure(inputs, .{ .start = outputs.start, .len = 0 }, output_type, abstract_ty, located, .{
+                    .output_count = 0,
+                    .invalidates = outcome.invalidates,
+                    .invalidated_domains = outcome.invalidated_domains,
+                    .source = outcome.source,
+                }, erased_self);
+                if (failure) |message| return message;
+            }
             for (outcome.dependencies) |dependency| {
                 if (dependency.input_index >= inputs.len and !(dependency.input_index == inputs.len and self.fallibleOutput(output_type))) return "error_tracer is only implicit for fallible Abstract methods";
             }

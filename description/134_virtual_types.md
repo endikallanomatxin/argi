@@ -254,6 +254,29 @@ selected variant. Before discrimination, it must conservatively account for all
 possible outcomes. Conditional guarantees do not undo effects already observed
 or revive references to expired generations.
 
+A conditional generation permission can describe a fallible edit:
+
+```rg
+Editor: Abstract = (
+    edit(.self: &Self, .target: $&Int32) -> (.result: ?Int32) where {
+        on result ..some { invalidates(target) }
+        on result ..none {}
+    }
+)
+```
+
+A reference captured before this call is unavailable until its result is known.
+The `..none` branch proves that this call preserved the target's generation; the
+`..some` branch must account for its possible invalidation. This promise concerns
+temporal validity, not unchanged contents or absence of external side effects.
+The same distinction applies to explicitly mapped receiver domains.
+
+Testing a copied or moved result identifies the same historical call. Replacing
+that result loses its proof. A later invalidation remains effective even when an
+older result selects a preservation branch. Aliased input names describe the same
+actual storage; a preservation clause for one name cannot cancel an invalidation
+through another name.
+
 ## Receiver storage domains
 
 An abstract can name storage domains without exposing concrete fields. Its
@@ -316,17 +339,20 @@ storage generations, and opaque storage.
 > Proving `refers_to` and `transfers` currently requires a concrete body that
 > directly forwards the declared input. Intermediate calls and complex control
 > flow require more precise storage identity proofs.
-> Direct input `invalidates` currently supports no-result methods and known scalar
-> reference inputs. Receiver invalidation uses explicitly mapped domains. Neither
+> Unconditional input `invalidates` currently supports no-result methods and known
+> scalar reference inputs. Conditional clauses also support these inputs and mapped
+> receiver domains. Neither
 > form permits destroying owners or replacing their hidden dependencies.
 > Results containing mapped virtual domains must preserve their identities with
 > `transfers` or `refers_to`. A dependency permission alone cannot establish the
 > correspondence between a returned handle and its underlying storage.
-> Outcome clauses support output dependencies and fresh ownership; conditional
-> generation changes and hidden storage effects remain to be implemented. Clauses
-> affecting other outputs and nested outcome selectors also require correlated
-> call-result facts and are currently rejected. Independent selectors on several
-> outputs are supported.
+> Outcome clauses support output dependencies, fresh ownership and conditional
+> generation changes. Generation refinement supports bound result discrimination
+> and direct forwarding of a single choice through wrappers. More complex wrapper
+> bodies conservatively join their effects. Hidden storage transitions, clauses
+> affecting other outputs and nested outcome selectors remain to be implemented.
+> Independent payload selectors on several outputs are supported; generation
+> effects requiring independent result correlations are conservatively joined.
 
 For example, a fixed `Readable#(.item: Int32)` contract can occupy a virtual
 handle. Conversion checks the concrete type's declared associated arguments,

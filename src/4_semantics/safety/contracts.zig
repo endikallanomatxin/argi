@@ -14,16 +14,19 @@ pub const Output = struct {
     pub const Outcome = struct { variant_index: u32, value: *const Output };
 };
 
-/// This first contract representation covers output provenance and preservation.
-/// Stateful protocols need explicit post-state/domain contracts before they can
-/// use it; unsupported effects are rejected, never silently discarded.
+/// Payload provenance and guarded generation transitions are separate views.
+/// Resource consumption and hidden-state replacement require their own checked
+/// permissions; unsupported effects are rejected, never silently discarded.
 pub const Contract = struct {
     outputs: []const Output,
+    outcomes: []const Outcome = &.{},
     /// Paths are resolved domain mappings, not source field names. Ending a
     /// generation permits invalidating references, but grants no permission to
     /// consume owned resources or replace hidden dependency contents.
     invalidates: []const facts.InputPath = &.{},
     invalidated_domains: []const facts.InputDomain = &.{},
+
+    pub const Outcome = struct { output_index: u32, variant_index: u32, effects: *const Contract };
 };
 
 pub fn fromDeclaration(allocator: std.mem.Allocator, declaration: @import("../primitives/schema.zig").MethodSafetyContract) anyerror!Contract {
@@ -83,7 +86,20 @@ pub fn fromDeclaration(allocator: std.mem.Allocator, declaration: @import("../pr
     for (declaration.invalidates, invalidates) |index, *path| path.* = .{ .input_index = index };
     const invalidated_domains = try allocator.alloc(facts.InputDomain, declaration.invalidated_domains.len);
     for (declaration.invalidated_domains, invalidated_domains) |domain, *input| input.* = .{ .path = .{ .input_index = domain.input_index }, .domain_index = domain.domain_index };
-    return .{ .outputs = outputs, .invalidates = invalidates, .invalidated_domains = invalidated_domains };
+    var conditional: std.ArrayList(Contract.Outcome) = .empty;
+    for (declaration.outcomes) |outcome| {
+        const effects = try allocator.create(Contract);
+        effects.* = try fromDeclaration(allocator, .{
+            .output_count = declaration.output_count,
+            .invalidates = outcome.invalidates,
+            .invalidated_domains = outcome.invalidated_domains,
+            .source = outcome.source,
+        });
+        effects.invalidates = try std.mem.concat(allocator, facts.InputPath, &.{ invalidates, effects.invalidates });
+        effects.invalidated_domains = try std.mem.concat(allocator, facts.InputDomain, &.{ invalidated_domains, effects.invalidated_domains });
+        try conditional.append(allocator, .{ .output_index = outcome.output_index, .variant_index = outcome.variant_index orelse return error.UnresolvedOutcomeContract, .effects = effects });
+    }
+    return .{ .outputs = outputs, .invalidates = invalidates, .invalidated_domains = invalidated_domains, .outcomes = try conditional.toOwnedSlice(allocator) };
 }
 
 pub const Failure = struct {
@@ -99,6 +115,7 @@ pub const Failure = struct {
     },
     output_index: ?u32 = null,
     input: ?facts.InputPath = null,
+    outcome: ?struct { output_index: u32, variant_index: u32 } = null,
 
     pub fn description(self: Failure) []const u8 {
         return switch (self.kind) {
@@ -120,10 +137,10 @@ pub const Failure = struct {
 /// an expired local generation or certifies physical pointer validity.
 pub fn check(contract: Contract, summary: facts.SafetySummary) ?Failure {
     for (summary.invalidated_domains) |domain| {
+        if (permitsDomain(contract, domain)) continue;
         var permitted = false;
-        for (contract.invalidated_domains) |expected| if (domain.domain_index == expected.domain_index and samePath(domain.path, expected.path)) {
-            permitted = true;
-            break;
+        for (contract.outcomes) |outcome| for (summary.outcome_post_states) |actual| {
+            if (actual.output_index == outcome.output_index and actual.variant_index == outcome.variant_index and permitsDomain(outcome.effects.*, domain)) permitted = true;
         };
         if (!permitted) return .{ .kind = .unsupported_post_state, .input = domain.path };
     }
@@ -135,16 +152,31 @@ pub fn check(contract: Contract, summary: facts.SafetySummary) ?Failure {
             return result;
         }
     }
-    // Ordinary writes are compatible with preservation only if they cannot
-    // introduce new dependencies, transfer ownership, or change generations.
-    // Type-aware normalization removes private scalar writes before this check.
+    // The fallback is a union of may-effects. It is permitted only when each
+    // represented outcome separately satisfies its common-plus-variant contract.
     for (summary.input_post_states) |state| {
-        if (!permitsPostState(contract, state)) return .{ .kind = .unsupported_post_state, .input = state.target };
+        if (permitsPostState(contract, state)) continue;
+        var permitted = false;
+        for (contract.outcomes) |outcome| {
+            var has_proof = false;
+            for (summary.outcome_post_states) |actual| if (actual.output_index == outcome.output_index and actual.variant_index == outcome.variant_index) {
+                has_proof = true;
+                break;
+            };
+            if (has_proof and permitsPostState(outcome.effects.*, state)) permitted = true;
+        }
+        if (!permitted) return .{ .kind = .unsupported_post_state, .input = state.target };
     }
     for (summary.outcome_post_states) |outcome| {
+        var allowed = contract;
+        for (contract.outcomes) |expected| if (expected.output_index == outcome.output_index and expected.variant_index == outcome.variant_index) {
+            allowed = expected.effects.*;
+            break;
+        };
         for (outcome.input_post_states) |state| {
-            if (!permitsPostState(contract, state)) return .{ .kind = .unsupported_post_state, .input = state.target };
+            if (!permitsPostState(allowed, state)) return .{ .kind = .unsupported_post_state, .input = state.target, .outcome = .{ .output_index = outcome.output_index, .variant_index = outcome.variant_index } };
         }
+        for (outcome.invalidated_domains) |domain| if (!permitsDomain(allowed, domain)) return .{ .kind = .unsupported_post_state, .input = domain.path, .outcome = .{ .output_index = outcome.output_index, .variant_index = outcome.variant_index } };
     }
     if (summary.opaque_storage_effects.len != 0) return .{
         .kind = .unsupported_opaque_effect,
@@ -264,12 +296,20 @@ fn covers(allowed: []const facts.InputPath, actual: facts.InputPath) bool {
     return false;
 }
 
+fn permitsDomain(contract: Contract, actual: facts.InputDomain) bool {
+    for (contract.invalidated_domains) |domain| if (domain.domain_index == actual.domain_index and samePath(domain.path, actual.path)) return true;
+    return false;
+}
+
 fn permitsPostState(contract: Contract, state: facts.PlacePostState) bool {
     if (state.initializedness != .initialized or state.ends_previous_roots or state.requires_available_destination or
         state.opaque_ownership != .none or state.opaque_storage != null or
         state.may_repopulate_opaque_storage) return false;
     if (state.refreshes_storage_generation and !covers(contract.invalidates, state.target)) return false;
-    return emptyValue(state.value);
+    var value = state.value;
+    for (value.input_place_values) |path| if (!samePath(path, state.target)) return false;
+    value.input_place_values = &.{};
+    return emptyValue(value);
 }
 
 fn emptyValue(value: facts.ValueEffect) bool {

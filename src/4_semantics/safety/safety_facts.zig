@@ -13,6 +13,9 @@ pub const ValidityRoot = struct {
     id: ValidityRootId,
     state: enum { alive, conditional, maybe_alive, dead } = .alive,
     owned_resource: bool = false,
+    /// One unresolved call may refine this generation. Zero means no proof;
+    /// joins and independent calls erase the proof rather than combine guards.
+    outcome_guard: u64 = 0,
 };
 
 pub const ValidityDependency = struct {
@@ -148,6 +151,7 @@ pub const OutcomePostStates = struct {
     output_index: u32 = 0,
     variant_index: u32,
     input_post_states: []const PlacePostState,
+    invalidated_domains: []const InputDomain = &.{},
 };
 
 pub const OpaqueStorageEffect = struct {

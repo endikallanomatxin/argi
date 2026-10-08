@@ -30,8 +30,13 @@ pub const Infer = struct {
     bindings: std.AutoHashMap(graph_mod.GlobalBindingId, facts.ValueEffect),
     place_bindings: std.AutoHashMap(graph_mod.GlobalBindingId, []const facts.InputPath),
     local_address_bindings: std.AutoHashMap(graph_mod.GlobalBindingId, []const graph_mod.GlobalNodeId),
+    addressed_outputs: std.AutoHashMap(graph_mod.GlobalBindingId, void),
     virtual_summaries: std.AutoHashMap(graph_mod.GlobalVirtualRegistryId, facts.SafetySummary),
     domain_invalidations: std.array_list.Managed(facts.InputDomain),
+    selected_outcome: ?struct { output_index: u32, variant_index: u32, binding: graph_mod.GlobalBindingId } = null,
+    forwarded_variant: ?u32 = null,
+    post_domain_sink: ?*std.array_list.Managed(facts.InputDomain) = null,
+    loop_post_effects: ?*InputPostStateFlow = null,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -45,6 +50,7 @@ pub const Infer = struct {
             .bindings = std.AutoHashMap(graph_mod.GlobalBindingId, facts.ValueEffect).init(allocator),
             .place_bindings = std.AutoHashMap(graph_mod.GlobalBindingId, []const facts.InputPath).init(allocator),
             .local_address_bindings = std.AutoHashMap(graph_mod.GlobalBindingId, []const graph_mod.GlobalNodeId).init(allocator),
+            .addressed_outputs = std.AutoHashMap(graph_mod.GlobalBindingId, void).init(allocator),
             .virtual_summaries = std.AutoHashMap(graph_mod.GlobalVirtualRegistryId, facts.SafetySummary).init(allocator),
             .domain_invalidations = std.array_list.Managed(facts.InputDomain).init(allocator),
         };
@@ -54,6 +60,7 @@ pub const Infer = struct {
         self.bindings.deinit();
         self.place_bindings.deinit();
         self.local_address_bindings.deinit();
+        self.addressed_outputs.deinit();
         self.virtual_summaries.deinit();
         self.domain_invalidations.deinit();
     }
@@ -146,7 +153,42 @@ pub const Infer = struct {
             };
             const invalidated_domains = try self.allocator.alloc(facts.InputDomain, declared.invalidated_domains.len);
             for (declared.invalidated_domains, invalidated_domains) |domain, *effect| effect.* = .{ .path = .{ .input_index = domain.input_index }, .domain_index = domain.domain_index };
-            const result = facts.SafetySummary{ .outputs = outputs, .required_live_inputs = required, .input_post_states = post_states, .invalidated_domains = invalidated_domains };
+            var conditional = std.array_list.Managed(facts.OutcomePostStates).init(self.allocator);
+            // Every variant gets a record, including preservation alternatives.
+            // Effect guards describe inputs independently of output payload facts.
+            for (outputs, 0..) |_, output_index| {
+                var guarded_generation = false;
+                for (declared.outcomes) |outcome| if (outcome.output_index == output_index and (outcome.invalidates.len != 0 or outcome.invalidated_domains.len != 0)) {
+                    guarded_generation = true;
+                    break;
+                };
+                if (!guarded_generation) continue;
+                const output_ty = registry.contract_output_type orelse continue;
+                const fields = types.fields(self.graph, output_ty) orelse continue;
+                const ty = self.graph.fields.items[fields.start + @as(u32, @intCast(output_index))].ty;
+                const variants = types.variants(self.graph, ty) orelse continue;
+                for (0..variants.len) |variant_index| {
+                    var effects = contract;
+                    for (contract.outcomes) |outcome| if (outcome.output_index == output_index and outcome.variant_index == variant_index) {
+                        effects = outcome.effects.*;
+                        break;
+                    };
+                    var states = std.array_list.Managed(facts.PlacePostState).init(self.allocator);
+                    for (effects.invalidates) |path| try states.append(.{ .target = path, .initializedness = .initialized, .refreshes_storage_generation = true });
+                    try conditional.append(.{ .output_index = @intCast(output_index), .variant_index = @intCast(variant_index), .input_post_states = try states.toOwnedSlice(), .invalidated_domains = effects.invalidated_domains });
+                }
+            }
+            var fallback_states = std.array_list.Managed(facts.PlacePostState).init(self.allocator);
+            try fallback_states.appendSlice(post_states);
+            var fallback_domains = std.array_list.Managed(facts.InputDomain).init(self.allocator);
+            try fallback_domains.appendSlice(invalidated_domains);
+            for (conditional.items) |outcome| {
+                for (outcome.input_post_states) |post| {
+                    if (self.findInputPostState(fallback_states.items, post.target) == null) try fallback_states.append(post);
+                }
+                for (outcome.invalidated_domains) |domain| try appendDomain(&fallback_domains, domain);
+            }
+            const result = facts.SafetySummary{ .outputs = outputs, .required_live_inputs = required, .input_post_states = try fallback_states.toOwnedSlice(), .invalidated_domains = try fallback_domains.toOwnedSlice(), .outcome_post_states = try conditional.toOwnedSlice() };
             try self.virtual_summaries.put(registry_id, result);
             return result;
         }
@@ -191,15 +233,31 @@ pub const Infer = struct {
 
     fn implementationSummary(self: *Infer, implementation: graph_mod.GlobalFunctionId, receiver: ?u32) !?facts.SafetySummary {
         var summary = self.engine.summaryFor(implementation) orelse return null;
-        var states = std.array_list.Managed(facts.PlacePostState).init(self.allocator);
         const function = self.graph.function(implementation);
         const outputs = try self.allocator.alloc(facts.ValueEffect, summary.outputs.len);
-        for (summary.outputs, 0..) |output, index| {
-            const erased = try self.eraseScalarOwnershipTransfers(function, output);
-            outputs[index] = erased;
-        }
+        for (summary.outputs, 0..) |output, index| outputs[index] = try self.eraseScalarOwnershipTransfers(function, output);
         summary.outputs = outputs;
-        for (summary.input_post_states) |state| {
+        summary.input_post_states = try self.normalizeContractPostStates(function, receiver, summary.input_post_states);
+        const outcomes = try self.allocator.dupe(facts.OutcomePostStates, summary.outcome_post_states);
+        for (outcomes) |*outcome| outcome.input_post_states = try self.normalizeContractPostStates(function, receiver, outcome.input_post_states);
+        summary.outcome_post_states = outcomes;
+        // Receiver layout disappears at dispatch. Its liveness requirement
+        // covers the full receiver contents, which the concrete checker
+        // validates before applying this erased summary. This also keeps
+        // recursive wrapper composition from growing private field paths.
+        var required = std.array_list.Managed(facts.InputPath).init(self.allocator);
+        for (summary.required_live_inputs) |path| {
+            var erased = path;
+            if (receiver != null and path.input_index == receiver.?) erased.projections = &.{};
+            try appendInputPath(&required, erased);
+        }
+        summary.required_live_inputs = try required.toOwnedSlice();
+        return summary;
+    }
+
+    fn normalizeContractPostStates(self: *Infer, function: graph_mod.Function, receiver: ?u32, post_states: []const facts.PlacePostState) ![]const facts.PlacePostState {
+        var states = std.array_list.Managed(facts.PlacePostState).init(self.allocator);
+        for (post_states) |state| {
             var ty = self.graph.fields.items[function.input.start + state.target.input_index].ty;
             var scalar_field = receiver != null and state.target.input_index == receiver.? and state.target.projections.len != 0;
             for (state.target.projections) |projection| {
@@ -246,19 +304,7 @@ pub const Infer = struct {
                 state.value.fresh_storage_capabilities.len == 0) continue;
             try states.append(state);
         }
-        summary.input_post_states = try states.toOwnedSlice();
-        // Receiver layout disappears at dispatch. Its liveness requirement
-        // covers the full receiver contents, which the concrete checker
-        // validates before applying this erased summary. This also keeps
-        // recursive wrapper composition from growing private field paths.
-        var required = std.array_list.Managed(facts.InputPath).init(self.allocator);
-        for (summary.required_live_inputs) |path| {
-            var erased = path;
-            if (receiver != null and path.input_index == receiver.?) erased.projections = &.{};
-            try appendInputPath(&required, erased);
-        }
-        summary.required_live_inputs = try required.toOwnedSlice();
-        return summary;
+        return states.toOwnedSlice();
     }
 
     fn eraseScalarOwnershipTransfers(
@@ -326,6 +372,7 @@ pub const Infer = struct {
         self.bindings.clearRetainingCapacity();
         self.place_bindings.clearRetainingCapacity();
         self.local_address_bindings.clearRetainingCapacity();
+        self.addressed_outputs.clearRetainingCapacity();
         self.domain_invalidations.clearRetainingCapacity();
         var start = profile.timestamp(self.profile_io);
         try self.inferBlock(function_id, function.body.?, outputs);
@@ -342,7 +389,7 @@ pub const Infer = struct {
         defer if (post_exits) |*exits| exits.deinit();
         start = profile.timestamp(self.profile_io);
         try self.inferInputPostStates(function_id, function.body.?, &post_flow, &post_exits);
-        if (post_flow.reachable) try self.recordInputPostStateExit(&post_exits, &post_flow.states);
+        if (post_flow.reachable) try self.recordOutcomeExit(&post_exits, &post_flow);
 
         var post_states = if (post_exits) |*exits|
             try self.cloneInputPostStates(exits)
@@ -352,7 +399,37 @@ pub const Infer = struct {
 
         profile.accumulate(self.profile_io, start, &self.post_state_ns);
         start = profile.timestamp(self.profile_io);
-        const outcome_post_states: []const facts.OutcomePostStates = &.{};
+        // Each choice is considered independently. We never construct a product
+        // of unrelated discriminants; unknown tags retain the common may-effects.
+        var outcomes = std.array_list.Managed(facts.OutcomePostStates).init(self.allocator);
+        defer outcomes.deinit();
+        const common_domains = try self.allocator.dupe(facts.InputDomain, self.domain_invalidations.items);
+        if (post_states.items.len != 0 or common_domains.len != 0) {
+            for (0..function.output.len) |output_index| {
+                const output_ty = self.graph.fields.items[function.output.start + @as(u32, @intCast(output_index))].ty;
+                const variants = types.variants(self.graph, output_ty) orelse continue;
+                for (0..variants.len) |variant_index| {
+                    self.selected_outcome = .{ .output_index = @intCast(output_index), .variant_index = @intCast(variant_index), .binding = self.graph.binding_refs.items[function.output_bindings.start + @as(u32, @intCast(output_index))] };
+                    defer self.selected_outcome = null;
+                    self.domain_invalidations.clearRetainingCapacity();
+                    var outcome_flow = InputPostStateFlow.init(self.allocator);
+                    defer outcome_flow.deinit();
+                    var outcome_exits: ?std.array_list.Managed(facts.PlacePostState) = null;
+                    defer if (outcome_exits) |*exits| exits.deinit();
+                    try self.inferInputPostStates(function_id, function.body.?, &outcome_flow, &outcome_exits);
+                    if (outcome_flow.reachable) try self.recordOutcomeExit(&outcome_exits, &outcome_flow);
+                    try outcomes.append(.{
+                        .output_index = @intCast(output_index),
+                        .variant_index = @intCast(variant_index),
+                        .input_post_states = if (outcome_exits) |exits| try self.allocator.dupe(facts.PlacePostState, exits.items) else &.{},
+                        .invalidated_domains = try self.allocator.dupe(facts.InputDomain, self.domain_invalidations.items),
+                    });
+                }
+            }
+        }
+        self.domain_invalidations.clearRetainingCapacity();
+        try self.domain_invalidations.appendSlice(common_domains);
+        const outcome_post_states = try outcomes.toOwnedSlice();
 
         profile.accumulate(self.profile_io, start, &self.outcome_ns);
         start = profile.timestamp(self.profile_io);
@@ -1085,19 +1162,23 @@ pub const Infer = struct {
         states: std.array_list.Managed(facts.PlacePostState),
         reachable: bool = true,
         outcome_variant: ?u32 = null,
+        domains: std.array_list.Managed(facts.InputDomain),
 
         fn init(allocator: std.mem.Allocator) InputPostStateFlow {
-            return .{ .states = std.array_list.Managed(facts.PlacePostState).init(allocator) };
+            return .{ .states = std.array_list.Managed(facts.PlacePostState).init(allocator), .domains = std.array_list.Managed(facts.InputDomain).init(allocator) };
         }
 
         fn deinit(self: *InputPostStateFlow) void {
             self.states.deinit();
+            self.domains.deinit();
         }
 
         fn clone(self: *const InputPostStateFlow, allocator: std.mem.Allocator) !InputPostStateFlow {
             var states = std.array_list.Managed(facts.PlacePostState).init(allocator);
             try states.appendSlice(self.states.items);
-            return .{ .states = states, .reachable = self.reachable, .outcome_variant = self.outcome_variant };
+            var domains = std.array_list.Managed(facts.InputDomain).init(allocator);
+            try domains.appendSlice(self.domains.items);
+            return .{ .states = states, .domains = domains, .reachable = self.reachable, .outcome_variant = self.outcome_variant };
         }
     };
 
@@ -1129,6 +1210,9 @@ pub const Infer = struct {
         flow: *InputPostStateFlow,
         exits: *?std.array_list.Managed(facts.PlacePostState),
     ) anyerror!void {
+        const previous_sink = self.post_domain_sink;
+        self.post_domain_sink = &flow.domains;
+        defer self.post_domain_sink = previous_sink;
         const block = self.graph.blocks.items[@intFromEnum(block_id)];
         for (self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len]) |node_id| {
             if (!flow.reachable) break;
@@ -1153,7 +1237,27 @@ pub const Infer = struct {
                 if (!record.deferred_initialization) if (record.initialization) |initialization|
                     try self.inferInputPostStatesExpression(function_id, initialization, states, exits);
             },
-            .assignment => |assignment| try self.inferInputPostStatesExpression(function_id, assignment.value, states, exits),
+            .assignment => |assignment| {
+                const previous_forwarded = self.forwarded_variant;
+                defer self.forwarded_variant = previous_forwarded;
+                self.forwarded_variant = null;
+                if (self.selected_outcome) |selected| {
+                    if (self.outputIndex(function_id, assignment.binding)) |index| {
+                        if (index == selected.output_index) {
+                            const value_node = self.graph.node(assignment.value);
+                            if (value_node.content == .function_call or value_node.content == .virtual_call)
+                                self.forwarded_variant = selected.variant_index;
+                        }
+                    }
+                }
+                try self.inferInputPostStatesExpression(function_id, assignment.value, states, exits);
+                if (self.selected_outcome) |selected| {
+                    if (self.outputIndex(function_id, assignment.binding)) |index| {
+                        if (index == selected.output_index)
+                            flow.outcome_variant = self.forwarded_variant orelse (try self.inferExpression(function_id, assignment.value)).known_choice_variant;
+                    }
+                }
+            },
             .function_call, .virtual_call => try self.inferInputPostStatesExpression(function_id, node_id, states, exits),
             .pointer_assignment => |assignment| {
                 try self.inferInputPostStatesExpression(function_id, assignment.pointer, states, exits);
@@ -1223,22 +1327,46 @@ pub const Infer = struct {
             },
             .while_statement => |statement| {
                 try self.inferInputPostStatesExpression(function_id, statement.condition, states, exits);
+                var transfers = InputPostStateFlow.init(self.allocator);
+                defer transfers.deinit();
+                const previous_loop = self.loop_post_effects;
+                self.loop_post_effects = &transfers;
+                defer self.loop_post_effects = previous_loop;
                 var body_flow = try flow.clone(self.allocator);
                 defer body_flow.deinit();
                 try self.inferInputPostStates(function_id, statement.body, &body_flow, exits);
+                try self.joinInputPostStates(&body_flow.states, &body_flow.states, &transfers.states);
                 try self.joinInputPostStates(states, states, &body_flow.states);
+                for (body_flow.domains.items) |domain| try appendDomain(&flow.domains, domain);
+                for (transfers.domains.items) |domain| try appendDomain(&flow.domains, domain);
+                flow.outcome_variant = null;
             },
             .for_statement => |statement| {
                 if (statement.init) |initialization|
                     try self.inferInputPostStatesNode(function_id, initialization, flow, exits);
                 if (!flow.reachable) return;
                 try self.inferInputPostStatesExpression(function_id, statement.condition, states, exits);
+                var transfers = InputPostStateFlow.init(self.allocator);
+                defer transfers.deinit();
+                const previous_loop = self.loop_post_effects;
+                self.loop_post_effects = &transfers;
+                defer self.loop_post_effects = previous_loop;
                 var body_flow = try flow.clone(self.allocator);
                 defer body_flow.deinit();
                 try self.inferInputPostStates(function_id, statement.body, &body_flow, exits);
-                if (body_flow.reachable) if (statement.increment) |increment|
+                if (statement.increment) |increment| {
+                    // A continue still executes the increment. Joining it for
+                    // every loop alternative is conservative for break paths.
+                    const previous_sink = self.post_domain_sink;
+                    self.post_domain_sink = &body_flow.domains;
+                    defer self.post_domain_sink = previous_sink;
                     try self.inferInputPostStatesNode(function_id, increment, &body_flow, exits);
+                }
+                try self.joinInputPostStates(&body_flow.states, &body_flow.states, &transfers.states);
                 try self.joinInputPostStates(states, states, &body_flow.states);
+                for (body_flow.domains.items) |domain| try appendDomain(&flow.domains, domain);
+                for (transfers.domains.items) |domain| try appendDomain(&flow.domains, domain);
+                flow.outcome_variant = null;
             },
             .switch_statement => |switch_id| {
                 const statement = self.graph.switches.items[@intFromEnum(switch_id)];
@@ -1269,11 +1397,18 @@ pub const Infer = struct {
                 if (statement.expression) |expression|
                     try self.inferInputPostStatesExpression(function_id, expression, states, exits);
                 try self.inferInputPostStatesRange(function_id, statement.cleanup, flow, exits);
-                if (flow.reachable) try self.recordInputPostStateExit(exits, states);
+                if (flow.reachable) try self.recordOutcomeExit(exits, flow);
                 flow.reachable = false;
             },
             .code_block, .value_sequence => |child| try self.inferInputPostStates(function_id, child, flow, exits),
-            .break_statement, .continue_statement, .abort_statement => flow.reachable = false,
+            .break_statement, .continue_statement => {
+                if (self.loop_post_effects) |transfers| {
+                    try self.joinInputPostStates(&transfers.states, &transfers.states, states);
+                    for (flow.domains.items) |domain| try appendDomain(&transfers.domains, domain);
+                }
+                flow.reachable = false;
+            },
+            .abort_statement => flow.reachable = false,
             .auto_deinit_binding => |auto_id| try self.applyAutoDeinitInputPostStates(function_id, auto_id, states),
             else => try self.inferInputPostStatesExpression(function_id, node_id, states, exits),
         }
@@ -1286,6 +1421,9 @@ pub const Infer = struct {
         flow: *InputPostStateFlow,
         exits: *?std.array_list.Managed(facts.PlacePostState),
     ) anyerror!void {
+        const previous_sink = self.post_domain_sink;
+        self.post_domain_sink = &flow.domains;
+        defer self.post_domain_sink = previous_sink;
         for (self.graph.node_refs.items[range.start..][0..range.len]) |node| {
             if (!flow.reachable) break;
             try self.inferInputPostStatesNode(function_id, node, flow, exits);
@@ -1302,11 +1440,20 @@ pub const Infer = struct {
         const node = self.graph.node(node_id);
         switch (node.content) {
             .value_sequence => |block| {
-                var flow: InputPostStateFlow = .{ .states = states.* };
+                var flow = InputPostStateFlow.init(self.allocator);
+                flow.states.deinit();
+                flow.states = states.*;
                 defer states.* = flow.states;
+                defer flow.domains.deinit();
+                if (self.post_domain_sink) |sink| try flow.domains.appendSlice(sink.items);
                 try self.inferInputPostStates(function_id, block, &flow, exits);
+                if (self.post_domain_sink) |sink| for (flow.domains.items) |domain| try appendDomain(sink, domain);
             },
-            .move_value, .denied_implicit_copy, .address_of => |value| try self.inferInputPostStatesExpression(function_id, value, states, exits),
+            .move_value, .denied_implicit_copy => |value| try self.inferInputPostStatesExpression(function_id, value, states, exits),
+            .address_of => |value| {
+                try self.markAddressedOutput(function_id, value);
+                try self.inferInputPostStatesExpression(function_id, value, states, exits);
+            },
             .dereference => |value| try self.inferInputPostStatesExpression(function_id, value.pointer, states, exits),
             .struct_value_literal => |literal| {
                 for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |field|
@@ -1360,11 +1507,9 @@ pub const Infer = struct {
                 var error_flow = InputPostStateFlow.init(self.allocator);
                 defer error_flow.deinit();
                 try error_flow.states.appendSlice(states.items);
-                for (self.graph.node_refs.items[propagation.cleanup_nodes.start..][0..propagation.cleanup_nodes.len]) |cleanup| {
-                    if (!error_flow.reachable) break;
-                    try self.inferInputPostStatesNode(function_id, cleanup, &error_flow, exits);
-                }
-                if (error_flow.reachable) try self.recordInputPostStateExit(exits, &error_flow.states);
+                if (self.post_domain_sink) |sink| try error_flow.domains.appendSlice(sink.items);
+                try self.inferInputPostStatesRange(function_id, propagation.cleanup_nodes, &error_flow, exits);
+                if (error_flow.reachable) try self.recordOutcomeExit(exits, &error_flow);
             },
             .error_context => |context_id| {
                 const context = self.graph.error_contexts.items[@intFromEnum(context_id)];
@@ -1372,22 +1517,26 @@ pub const Infer = struct {
                 var error_flow = InputPostStateFlow.init(self.allocator);
                 defer error_flow.deinit();
                 try error_flow.states.appendSlice(states.items);
+                if (self.post_domain_sink) |sink| try error_flow.domains.appendSlice(sink.items);
                 try self.inferInputPostStatesExpression(function_id, context.context, &error_flow.states, exits);
-                for (self.graph.node_refs.items[context.cleanup_nodes.start..][0..context.cleanup_nodes.len]) |cleanup| {
-                    if (!error_flow.reachable) break;
-                    try self.inferInputPostStatesNode(function_id, cleanup, &error_flow, exits);
-                }
-                if (error_flow.reachable) try self.recordInputPostStateExit(exits, &error_flow.states);
+                try self.inferInputPostStatesRange(function_id, context.cleanup_nodes, &error_flow, exits);
+                if (error_flow.reachable) try self.recordOutcomeExit(exits, &error_flow);
             },
             .function_call => |call| {
+                const forwarded = self.forwarded_variant;
+                self.forwarded_variant = null;
                 if (call.callee_value) |value| try self.inferInputPostStatesExpression(function_id, value, states, exits);
                 try self.inferInputPostStatesExpression(function_id, call.input, states, exits);
+                self.forwarded_variant = forwarded;
                 try self.applyInputPostStatesFromFunctionCall(function_id, call.callee, call.input, states);
             },
             .virtual_call => |virtual_call_id| {
                 const call = self.graph.virtual_calls.items[@intFromEnum(virtual_call_id)];
+                const forwarded = self.forwarded_variant;
+                self.forwarded_variant = null;
                 try self.inferInputPostStatesExpression(function_id, call.handle, states, exits);
                 try self.inferInputPostStatesExpression(function_id, call.input, states, exits);
+                self.forwarded_variant = forwarded;
                 if (try self.virtualSummary(call.safety_methods)) |summary|
                     try self.applyInputPostStatesFromSummary(function_id, summary, call.input, states, null);
             },
@@ -1476,7 +1625,19 @@ pub const Infer = struct {
         override: ?SymbolicInputOverride,
     ) !void {
         const arguments = self.structArguments(input) orelse return;
-        try self.applyInputPostStatesFromArguments(function_id, summary, arguments, states, override);
+        var selected = summary;
+        if (self.forwarded_variant) |variant| {
+            // Forwarding a single choice keeps one selector. No correlation is
+            // inferred merely because unrelated outputs use the same tag names.
+            if (summary.outputs.len == 1) for (summary.outcome_post_states) |outcome| {
+                if (outcome.output_index == 0 and outcome.variant_index == variant) {
+                    selected.input_post_states = outcome.input_post_states;
+                    selected.invalidated_domains = outcome.invalidated_domains;
+                    break;
+                }
+            };
+        }
+        try self.applyInputPostStatesFromArguments(function_id, selected, arguments, states, override);
     }
 
     fn applyInputPostStatesFromArguments(
@@ -1494,13 +1655,13 @@ pub const Infer = struct {
                 const value = (try self.localPointeeEffect(function_id, argument)) orelse try self.inferExpression(function_id, argument);
                 for (value.domain_values) |mapped| if (mapped.domain_index == domain.domain_index) {
                     try self.recordInputPostState(states, mapped.value.input_generation_dependencies, .initialized, .{}, false, true, false, false);
-                    for (mapped.value.input_domains) |input| try appendDomain(&self.domain_invalidations, input);
+                    for (mapped.value.input_domains) |input| try appendDomain(self.post_domain_sink orelse &self.domain_invalidations, input);
                     resolved = true;
                 };
             }
             if (!resolved) {
                 const paths = try self.substituteRequiredInputPath(function_id, domain.path, arguments, override);
-                for (paths) |path| try appendDomain(&self.domain_invalidations, .{ .path = path, .domain_index = domain.domain_index });
+                for (paths) |path| try appendDomain(self.post_domain_sink orelse &self.domain_invalidations, .{ .path = path, .domain_index = domain.domain_index });
             }
         }
         for (summary.input_post_states) |post_state| {
@@ -1740,7 +1901,14 @@ pub const Infer = struct {
             try self.copyInputPostStateFlow(destination, left);
         } else {
             try self.joinInputPostStates(&destination.states, &left.states, &right.states);
+            var domains = std.array_list.Managed(facts.InputDomain).init(self.allocator);
+            defer domains.deinit();
+            for (left.domains.items) |domain| try appendDomain(&domains, domain);
+            for (right.domains.items) |domain| try appendDomain(&domains, domain);
+            destination.domains.clearRetainingCapacity();
+            try destination.domains.appendSlice(domains.items);
             destination.reachable = true;
+            destination.outcome_variant = if (left.outcome_variant == right.outcome_variant) left.outcome_variant else null;
         }
     }
 
@@ -1767,7 +1935,34 @@ pub const Infer = struct {
         _ = self;
         destination.states.clearRetainingCapacity();
         try destination.states.appendSlice(source.states.items);
+        destination.domains.clearRetainingCapacity();
+        try destination.domains.appendSlice(source.domains.items);
         destination.reachable = source.reachable;
+        destination.outcome_variant = source.outcome_variant;
+    }
+
+    fn markAddressedOutput(self: *Infer, function: graph_mod.GlobalFunctionId, node: graph_mod.GlobalNodeId) anyerror!void {
+        switch (self.graph.node(node).content) {
+            .binding_use => |binding| if (self.outputIndex(function, binding) != null) {
+                try self.addressed_outputs.put(binding, {});
+            },
+            .struct_field_access => |access| try self.markAddressedOutput(function, access.value),
+            .choice_payload_access => |access| try self.markAddressedOutput(function, access.value),
+            else => {},
+        }
+    }
+
+    fn recordOutcomeExit(self: *Infer, exits: *?std.array_list.Managed(facts.PlacePostState), flow: *const InputPostStateFlow) !void {
+        if (self.selected_outcome) |selected| {
+            // Once an output slot is exposed through a reference, an alias may
+            // change its tag. Keep every exit in that selector's may-effects
+            // until indirect writes have a branch-local discriminant model.
+            if (!self.addressed_outputs.contains(selected.binding)) {
+                if (flow.outcome_variant) |variant| if (variant != selected.variant_index) return;
+            }
+        }
+        for (flow.domains.items) |domain| try appendDomain(&self.domain_invalidations, domain);
+        try self.recordInputPostStateExit(exits, &flow.states);
     }
 
     fn recordInputPostStateExit(

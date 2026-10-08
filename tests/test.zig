@@ -10570,3 +10570,65 @@ test "feature_tests/polymorphism/114X_virtual_safety_contract_duplicate_selector
 test "feature_tests/polymorphism/115X_virtual_safety_contract_second_output_dependency" {
     try buildExpectFail("tests/feature_tests/polymorphism/115X_virtual_safety_contract_second_output_dependency", "undeclared output dependency");
 }
+
+test "feature_tests/polymorphism/116_virtual_safety_contract_outcome_generation" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/116_virtual_safety_contract_outcome_generation");
+    try runExpect("tests/feature_tests/polymorphism/116_virtual_safety_contract_outcome_generation", 0);
+}
+
+test "feature_tests/polymorphism/117X_virtual_safety_contract_outcome_invalidation" {
+    try buildExpectFail("tests/feature_tests/polymorphism/117X_virtual_safety_contract_outcome_invalidation", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/118X_virtual_safety_contract_outcome_unresolved" {
+    try buildExpectFail("tests/feature_tests/polymorphism/118X_virtual_safety_contract_outcome_unresolved", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/119X_virtual_safety_contract_outcome_later_invalidation" {
+    try buildExpectFail("tests/feature_tests/polymorphism/119X_virtual_safety_contract_outcome_later_invalidation", "reference depends on a root that has ended");
+}
+
+test "tests/feature_tests/polymorphism/120X_virtual_safety_contract_outcome_false_preservation" {
+    try buildExpectFail("tests/feature_tests/polymorphism/120X_virtual_safety_contract_outcome_false_preservation", "a storage transition is not permitted by this preservation contract");
+}
+
+test "tests/feature_tests/polymorphism/121_virtual_safety_contract_outcome_domain" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/121_virtual_safety_contract_outcome_domain");
+    try runExpect("tests/feature_tests/polymorphism/121_virtual_safety_contract_outcome_domain", 0);
+}
+
+test "tests/feature_tests/polymorphism/122X_virtual_safety_contract_outcome_domain_invalidation" {
+    try buildExpectFail("tests/feature_tests/polymorphism/122X_virtual_safety_contract_outcome_domain_invalidation", "reference depends on a root that has ended");
+}
+
+test "tests/feature_tests/polymorphism/123_virtual_safety_contract_outcome_copied_result" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/123_virtual_safety_contract_outcome_copied_result");
+    try runExpect("tests/feature_tests/polymorphism/123_virtual_safety_contract_outcome_copied_result", 0);
+}
+
+test "tests/feature_tests/polymorphism/124_virtual_safety_contract_outcome_named_output" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/124_virtual_safety_contract_outcome_named_output");
+    try runExpect("tests/feature_tests/polymorphism/124_virtual_safety_contract_outcome_named_output", 0);
+}
+
+test "tests/feature_tests/polymorphism/125_virtual_safety_contract_outcome_later_content_write" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/125_virtual_safety_contract_outcome_later_content_write");
+    try runExpect("tests/feature_tests/polymorphism/125_virtual_safety_contract_outcome_later_content_write", 0);
+}
+
+test "tests/feature_tests/polymorphism/126X_virtual_safety_contract_outcome_overwritten_result" {
+    try buildExpectFail("tests/feature_tests/polymorphism/126X_virtual_safety_contract_outcome_overwritten_result", "reference depends on a root that has ended");
+}
+
+test "tests/feature_tests/polymorphism/127_virtual_safety_contract_outcome_moved_result" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/127_virtual_safety_contract_outcome_moved_result");
+    try runExpect("tests/feature_tests/polymorphism/127_virtual_safety_contract_outcome_moved_result", 0);
+}
+
+test "feature_tests/polymorphism/128X_virtual_safety_contract_outcome_break_effect" {
+    try buildExpectFail("tests/feature_tests/polymorphism/128X_virtual_safety_contract_outcome_break_effect", "a storage transition is not permitted by this preservation contract");
+}
+
+test "feature_tests/polymorphism/129X_virtual_safety_contract_outcome_result_alias" {
+    try buildExpectFail("tests/feature_tests/polymorphism/129X_virtual_safety_contract_outcome_result_alias", "a storage transition is not permitted by this preservation contract");
+}

@@ -318,6 +318,39 @@ sufficient size and alignment and contain an initialized, valid `T`.
 > dependencies of a reference held in an opaque value; the checker retains
 > conservative storage-level dependencies instead.
 
+## Precision of safety effects
+
+Safety facts retain structural fields, choice payloads, input paths and named
+storage domains. A returned discriminant can guard effects on any input or
+output; nested choices along its payload path remain structural alternatives.
+The model does not require a symbolic formula for every branch in a function.
+
+Relations requiring conjunctions of independent discriminants, predicates over
+ordinary numeric values or disjointness of dynamically indexed elements are
+outside this precision boundary. Source code may still contain those branches.
+Their inferred summaries conservatively join possible effects rather than
+materializing combinations of all alternatives. An explicit signature requiring
+an unsupported relation receives a diagnostic; its promise is never silently
+weakened. This boundary is structural, not a limit on the number of branches,
+outputs or facts a program may contain.
+
+Conservative joins union possible dependencies, invalidations and consumption.
+They intersect guarantees of identity, preservation and initialization. They
+retain ownership and cleanup obligations and never invent storage acquisition,
+prolong local generations or make possibly consumed capabilities available.
+
+An outcome proof identifies a call and the storage generation it affected.
+Discrimination can establish that generation's survival through that call. It
+cannot undo later writes, consumption, cleanup or invalidation. Independent
+unresolved calls affecting the same generation lose their correlation
+conservatively rather than gaining a guarantee that needs both results.
+
+> [!IMPLEMENTATION]
+> Generation effects support one choice output per refinement and direct
+> single-choice forwarding. Other conditional effect dimensions and nested
+> projection selectors require further implementation. The checker retains
+> conservative effects when it cannot preserve their correlation.
+
 ## Glossary
 
 | Concept | Question answered |
