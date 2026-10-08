@@ -2116,10 +2116,12 @@ pub const CodeGenerator = struct {
             var args = [_]c.LLVMValueRef{ storage, patched_input };
             _ = c.LLVMBuildCall2(self.builder, fn_type, method, &args, 2, "");
             for (call.consumed_auto_deinits) |node| if (self.dropStateForNode(node)) |drop| self.storeDropState(drop, false);
+            for (call.initialized_auto_deinits) |node| if (self.dropStateForNode(node)) |drop| self.storeDropState(drop, true);
             return null;
         }
         const result = try self.callArgi(.{ .ref = method, .type_ref = fn_type, .return_type = output_type, .is_extern = false, .indirect_return = indirect }, patched_input, "virtual.call");
         for (call.consumed_auto_deinits) |node| if (self.dropStateForNode(node)) |drop| self.storeDropState(drop, false);
+        for (call.initialized_auto_deinits) |node| if (self.dropStateForNode(node)) |drop| self.storeDropState(drop, true);
         if (output_fields.len == 0) return null;
         if (output_fields.len == 1) {
             const field = self.graph.fields.items[output_fields.start];
@@ -2418,6 +2420,7 @@ pub const CodeGenerator = struct {
     fn markCallDropState(self: *CodeGenerator, call: anytype, result: llvm.c.LLVMValueRef, is_extern: bool) !void {
         if (call.consumes_auto_deinit) |node| if (self.dropStateForNode(node)) |drop| self.storeDropState(drop, false);
         for (call.consumed_auto_deinits) |node| if (self.dropStateForNode(node)) |drop| self.storeDropState(drop, false);
+        for (call.initialized_auto_deinits) |node| if (self.dropStateForNode(node)) |drop| self.storeDropState(drop, true);
         _ = result;
         _ = is_extern;
         if (call.initializes_auto_deinit) |node| if (self.dropStateForNode(node)) |drop| self.storeDropState(drop, true);

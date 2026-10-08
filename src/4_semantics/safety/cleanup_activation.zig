@@ -368,6 +368,7 @@ const Scanner = struct {
                 try self.node(call.input, flow);
                 if (call.consumes_auto_deinit) |value| if (try self.resolvePlace(value)) |target| try flow.disable(target);
                 for (call.consumed_auto_deinits) |value| if (try self.resolvePlace(value)) |target| try flow.disable(target);
+                for (call.initialized_auto_deinits) |value| if (try self.resolvePlace(value)) |target| flow.initialize(target);
                 if (call.initializes_auto_deinit) |value| if (try self.resolvePlace(value)) |target| flow.initialize(target);
             },
             .virtual_call => |call_id| {
@@ -375,6 +376,7 @@ const Scanner = struct {
                 try self.node(call.handle, flow);
                 try self.node(call.input, flow);
                 for (call.consumed_auto_deinits) |value| if (try self.resolvePlace(value)) |target| try flow.disable(target);
+                for (call.initialized_auto_deinits) |value| if (try self.resolvePlace(value)) |target| flow.initialize(target);
             },
             .virtualize => |value| try self.node(self.graph.virtualizes.items[@intFromEnum(value)].value, flow),
             .binary_operation => |value| {

@@ -429,6 +429,7 @@ fn appendBodyTables(allocator: std.mem.Allocator, result: *global_sg.GlobalSeman
         .safety_methods = globalVirtualRegistry(o, value.safety_methods),
         .consumes_auto_deinit = if (value.consumes_auto_deinit) |id| globalNode(o, id) else null,
         .consumed_auto_deinits = try relocateCleanupNodes(allocator, o, value.consumed_auto_deinits),
+        .initialized_auto_deinits = try relocateCleanupNodes(allocator, o, value.initialized_auto_deinits),
     });
     for (storage.reach_segments.items) |value| try result.reach_segments.append(allocator, try relocateString(module, value, o.string_base));
     for (storage.reach_alternatives.items) |value| try result.reach_alternatives.append(allocator, .{
@@ -522,6 +523,7 @@ fn relocateNode(allocator: std.mem.Allocator, module: *const module_sg.ModuleSem
                 .input = globalNode(o, value.input),
                 .consumes_auto_deinit = if (value.consumes_auto_deinit) |id| globalNode(o, id) else null,
                 .consumed_auto_deinits = try relocateCleanupNodes(allocator, o, value.consumed_auto_deinits),
+                .initialized_auto_deinits = try relocateCleanupNodes(allocator, o, value.initialized_auto_deinits),
                 .initializes_auto_deinit = if (value.initializes_auto_deinit) |id| globalNode(o, id) else null,
             } },
             .virtualize => |id| .{ .virtualize = globalVirtualize(o, id) },

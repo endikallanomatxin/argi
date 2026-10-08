@@ -22,12 +22,14 @@ pub const Contract = struct {
     outcomes: []const Outcome = &.{},
     /// Definite destruction guarantees for caller-owned input places.
     consumed_inputs: []const facts.InputPath = &.{},
+    relocations: []const Relocation = &.{},
     /// Paths are resolved domain mappings, not source field names. Ending a
     /// generation permits invalidating references, but grants no permission to
     /// consume owned resources or replace hidden dependency contents.
     invalidates: []const facts.InputPath = &.{},
     invalidated_domains: []const facts.InputDomain = &.{},
 
+    pub const Relocation = struct { destination: facts.InputPath, source: facts.InputPath };
     pub const Outcome = struct { output_index: u32, parent_variants: []const u32 = &.{}, variant_index: u32, effects: *const Contract };
 };
 
@@ -89,8 +91,13 @@ pub fn fromDeclaration(allocator: std.mem.Allocator, declaration: @import("../pr
     try appendConditionalContracts(allocator, declaration.output_count, declaration.outcomes, &.{}, invalidates, invalidated_domains, &conditional);
     const consumed_inputs = try allocator.alloc(facts.InputPath, declaration.consumed_inputs.len);
     for (declaration.consumed_inputs, consumed_inputs) |index, *path| path.* = .{ .input_index = index };
-    for (conditional.items) |outcome| @constCast(outcome.effects).consumed_inputs = consumed_inputs;
-    return .{ .outputs = outputs, .consumed_inputs = consumed_inputs, .invalidates = invalidates, .invalidated_domains = invalidated_domains, .outcomes = try conditional.toOwnedSlice(allocator) };
+    const relocations = try allocator.alloc(Contract.Relocation, declaration.relocations.len);
+    for (declaration.relocations, relocations) |declared, *relocation| relocation.* = .{ .destination = .{ .input_index = declared.destination }, .source = .{ .input_index = declared.source } };
+    for (conditional.items) |outcome| {
+        @constCast(outcome.effects).consumed_inputs = consumed_inputs;
+        @constCast(outcome.effects).relocations = relocations;
+    }
+    return .{ .outputs = outputs, .consumed_inputs = consumed_inputs, .relocations = relocations, .invalidates = invalidates, .invalidated_domains = invalidated_domains, .outcomes = try conditional.toOwnedSlice(allocator) };
 }
 
 fn appendConditionalContracts(allocator: std.mem.Allocator, output_count: u32, outcomes: []const @import("../primitives/schema.zig").MethodSafetyContract.Outcome, parents: []const u32, common_invalidates: []const facts.InputPath, common_domains: []const facts.InputDomain, result: *std.ArrayList(Contract.Outcome)) anyerror!void {
@@ -149,6 +156,7 @@ pub const Failure = struct {
         undeclared_fresh_owner,
         unsupported_post_state,
         missing_consumption,
+        missing_relocation,
         unsupported_opaque_effect,
         unsupported_capability_effect,
     },
@@ -163,6 +171,7 @@ pub const Failure = struct {
             .undeclared_ownership_transfer => "undeclared ownership transfer",
             .incompatible_referent => "the output must refer to the same storage as the declared input",
             .undeclared_fresh_owner => "undeclared fresh output ownership; declare owns(output)",
+            .missing_relocation => "cannot prove relocates: move the source into an available destination on every returning path",
             .missing_consumption => "cannot prove consumes: the input must be deinitialized on every returning path",
             .unsupported_post_state => "a storage transition is not permitted by this preservation contract",
             .unsupported_opaque_effect => "an opaque storage effect is not permitted by this preservation contract",
@@ -176,6 +185,18 @@ pub const Failure = struct {
 /// have passed the ordinary function-output check: a contract never authorizes
 /// an expired local generation or certifies physical pointer validity.
 pub fn check(contract: Contract, summary: facts.SafetySummary) ?Failure {
+    for (contract.relocations) |relocation| {
+        var source_moved = false;
+        var destination_initialized = false;
+        for (summary.input_post_states) |state| {
+            if (samePath(state.target, relocation.source) and state.initializedness == .moved and
+                !state.ends_previous_roots and emptyValue(state.value)) source_moved = true;
+            if (samePath(state.target, relocation.destination) and state.initializedness == .initialized and
+                state.requires_available_destination and state.refreshes_storage_generation and
+                !state.ends_previous_roots and exactRelocatedValue(state.value, relocation.source)) destination_initialized = true;
+        }
+        if (!source_moved or !destination_initialized) return .{ .kind = .missing_relocation, .input = relocation.destination };
+    }
     // Consumption is a guarantee, not merely permission to sometimes destroy
     // a value. A caller can disable cleanup only after every exit proves it.
     for (contract.consumed_inputs) |input| {
@@ -350,7 +371,26 @@ fn permitsDomain(contract: Contract, actual: facts.InputDomain) bool {
     return false;
 }
 
+/// Exact whole-place provenance preserves all ownership and capability facts.
+/// Additional effects cannot be hidden inside an initialization guarantee.
+fn exactRelocatedValue(actual: facts.ValueEffect, source: facts.InputPath) bool {
+    if (actual.input_place_values.len != 1 or !samePath(actual.input_place_values[0], source)) return false;
+    var remaining = actual;
+    remaining.input_place_values = &.{};
+    return emptyValue(remaining);
+}
+
 fn permitsPostState(contract: Contract, state: facts.PlacePostState) bool {
+    for (contract.relocations) |relocation| {
+        if (samePath(state.target, relocation.source)) return state.initializedness == .moved and
+            !state.ends_previous_roots and !state.refreshes_storage_generation and
+            !state.requires_available_destination and state.opaque_ownership == .none and
+            state.opaque_storage == null and !state.may_repopulate_opaque_storage and emptyValue(state.value);
+        if (samePath(state.target, relocation.destination)) return state.initializedness == .initialized and
+            !state.ends_previous_roots and state.requires_available_destination and state.refreshes_storage_generation and
+            state.opaque_ownership == .none and state.opaque_storage == null and
+            !state.may_repopulate_opaque_storage and exactRelocatedValue(state.value, relocation.source);
+    }
     if (covers(contract.consumed_inputs, state.target)) {
         // Destroying a value may update its owned fields before their final
         // cleanup. Dereferencing a borrowed field still reaches external
@@ -555,4 +595,29 @@ test "safety contracts consumption requires destruction without hidden storage r
         .may_repopulate_opaque_storage = true,
     };
     try std.testing.expectEqual(.unsupported_post_state, check(contract, .{ .input_post_states = &.{ consumed, replacement } }).?.kind);
+}
+
+test "safety contracts relocation guarantees both transitions and exact ownership provenance" {
+    const source = facts.InputPath{ .input_index = 1 };
+    const destination = facts.InputPath{ .input_index = 2 };
+    const contract = Contract{ .outputs = &.{}, .relocations = &.{.{ .destination = destination, .source = source }} };
+    const moved = facts.PlacePostState{ .target = source, .initializedness = .moved };
+    const initialized = facts.PlacePostState{
+        .target = destination,
+        .initializedness = .initialized,
+        .value = .{ .input_place_values = &.{source} },
+        .requires_available_destination = true,
+        .refreshes_storage_generation = true,
+    };
+    try std.testing.expect(check(contract, .{ .input_post_states = &.{ moved, initialized } }) == null);
+    try std.testing.expectEqual(.missing_relocation, check(contract, .{ .input_post_states = &.{initialized} }).?.kind);
+    var wrong = initialized;
+    wrong.value = .{};
+    try std.testing.expectEqual(.missing_relocation, check(contract, .{ .input_post_states = &.{ moved, wrong } }).?.kind);
+    wrong = moved;
+    wrong.ends_previous_roots = true;
+    try std.testing.expectEqual(.missing_relocation, check(contract, .{ .input_post_states = &.{ wrong, initialized } }).?.kind);
+    wrong = initialized;
+    wrong.requires_available_destination = false;
+    try std.testing.expectEqual(.missing_relocation, check(contract, .{ .input_post_states = &.{ moved, wrong } }).?.kind);
 }

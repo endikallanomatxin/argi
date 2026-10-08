@@ -240,6 +240,45 @@ through references stored in its fields. Declare other effects separately.
 > in addition to generation guards. Indexed or indirect owners without a lexical
 > cleanup identity must first be moved into a lexical owner.
 
+## Relocating into available storage
+
+`relocates(destination, source)` guarantees that every returning path moves the
+whole source value into the destination. Both inputs are mutable references to
+the same value type. The source must be initialized, and the destination must
+be available: uninitialized, deinitialized, or already moved from.
+
+```rg
+Mover: Abstract = (
+    transfer(.self: &Self, .source: $&Resource, .destination: $&Resource) -> ()
+        where relocates(destination, source)
+)
+```
+
+The source becomes moved and the destination becomes initialized. Cleanup follows
+the destination, including nested owning fields and active choice payloads.
+References to the source's old storage generation expire; transferred owning
+roots remain alive. The value retains its existing validity dependencies and
+storage capabilities. Relocation grants no new ownership, acquisition receipt,
+or extended lifetime to a borrowed resource.
+
+This is a required transition with exact source provenance. Merely initializing
+the destination with another value, destroying the source, or moving only on
+some returning paths does not satisfy the contract. Source and destination must
+resolve to distinct, non-overlapping caller places. Several clauses can describe
+independent transfers, but an input cannot participate in multiple transfers or
+also be consumed or invalidated by a common clause.
+
+An implementation can use the ordinary `relocate(source, destination)` operation
+or a wrapper whose checked summary establishes the same transition. The physical
+copy and destination passing remain codegen decisions; they do not weaken the
+lifetime obligations.
+
+> [!IMPLEMENTATION]
+> Relocation clauses currently require unconditional known-type inputs.
+> Conditional relocation, erased `Self`, and mapped opaque storage transitions
+> remain unsupported. Indexed owners without lexical cleanup identities must
+> first be moved into lexical owners.
+
 ## Owning and fallible results
 
 `owns(output)` permits fresh ownership in the output, including nested owning

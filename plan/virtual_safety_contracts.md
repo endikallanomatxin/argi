@@ -57,3 +57,17 @@ discriminants and predicates over ordinary values.
   opaque storage,
   error outcomes and aliased inputs as their contract representation becomes
   available.
+
+## Remaining storage transitions
+
+Extend known-input consumption and relocation to guarded initializedness and
+cleanup. A returned discriminant must select the entire resource transition,
+including cleanup of an ignored result. Keep generation refinement separate from
+resource availability until both dimensions share the same proven guard.
+
+Fresh initialization needs declared ownership and dependency roles for input
+post-values, rather than treating an empty destination as permission to create
+an arbitrary owner. Hidden storage needs explicit retention, transfer and empty
+state guarantees. Extend named domains before supporting erased receiver
+initialization or replacement; known layout at static dispatch must not be
+required to interpret a virtual contract.

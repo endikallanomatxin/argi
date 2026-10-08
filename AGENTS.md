@@ -295,6 +295,12 @@ feature first.
   updating cleanup, including aliases and structural fields; a call can consume
   several owners. End nested owned roots without ending borrowed dependencies.
   Cleanup annotations persist and relocate with both direct and virtual calls.
+  Relocation contracts prove a moved source and an available initialized
+  destination with exact whole-place provenance. Materialize destination facts
+  before clearing source facts. Ending the source slot generation must retain
+  transferred owned roots. Calls disable source cleanup and enable destination
+  cleanup, including aliases and fields; destinations do not require a live
+  prior value, but occupied or overlapping destinations are rejected.
   Nested generation guards retain their enclosing payload variant path. Partition
   only paths requested by declarations or forwarded results, preserving a
   conservative effect record elsewhere instead of expanding shared choice types.

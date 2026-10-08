@@ -172,19 +172,38 @@ pub const Infer = struct {
                 }
             }
             for (outputs) |*output| output.* = try self.bindVirtualReceiverValues(output.*, registry.receiver_input_index);
-            const required = try self.allocator.alloc(facts.InputPath, input_count);
-            for (required, 0..) |*path, index| path.* = .{ .input_index = @intCast(index) };
-            const post_states = try self.allocator.alloc(facts.PlacePostState, contract.invalidates.len + contract.consumed_inputs.len);
+            var required_inputs = std.array_list.Managed(facts.InputPath).init(self.allocator);
+            for (0..input_count) |index| {
+                var destination = false;
+                for (contract.relocations) |relocation| if (relocation.destination.input_index == index) {
+                    destination = true;
+                    break;
+                };
+                if (!destination) try required_inputs.append(.{ .input_index = @intCast(index) });
+            }
+            const required = try required_inputs.toOwnedSlice();
+            const post_states = try self.allocator.alloc(facts.PlacePostState, contract.invalidates.len + contract.consumed_inputs.len + contract.relocations.len * 2);
             for (contract.invalidates, post_states[0..contract.invalidates.len]) |path, *post_state| post_state.* = .{
                 .target = path,
                 .initializedness = .initialized,
                 .refreshes_storage_generation = true,
             };
-            for (contract.consumed_inputs, post_states[contract.invalidates.len..]) |path, *post_state| post_state.* = .{
+            for (contract.consumed_inputs, post_states[contract.invalidates.len..][0..contract.consumed_inputs.len]) |path, *post_state| post_state.* = .{
                 .target = path,
                 .initializedness = .deinitialized,
                 .ends_previous_roots = true,
             };
+            for (contract.relocations, 0..) |relocation, index| {
+                const offset = contract.invalidates.len + contract.consumed_inputs.len + index * 2;
+                post_states[offset] = .{ .target = relocation.source, .initializedness = .moved };
+                post_states[offset + 1] = .{
+                    .target = relocation.destination,
+                    .initializedness = .initialized,
+                    .value = .{ .input_place_values = try self.allocator.dupe(facts.InputPath, &.{relocation.source}) },
+                    .requires_available_destination = true,
+                    .refreshes_storage_generation = true,
+                };
+            }
             const invalidated_domains = try self.allocator.alloc(facts.InputDomain, declared.invalidated_domains.len);
             for (declared.invalidated_domains, invalidated_domains) |domain, *effect| effect.* = .{ .path = .{ .input_index = domain.input_index }, .domain_index = domain.domain_index };
             var conditional = std.array_list.Managed(facts.OutcomePostStates).init(self.allocator);
@@ -208,6 +227,10 @@ pub const Infer = struct {
                     var states = std.array_list.Managed(facts.PlacePostState).init(self.allocator);
                     for (effects.invalidates) |path| try states.append(.{ .target = path, .initializedness = .initialized, .refreshes_storage_generation = true });
                     for (effects.consumed_inputs) |path| try states.append(.{ .target = path, .initializedness = .deinitialized, .ends_previous_roots = true });
+                    for (effects.relocations) |relocation| {
+                        try states.append(.{ .target = relocation.source, .initializedness = .moved });
+                        try states.append(.{ .target = relocation.destination, .initializedness = .initialized, .value = .{ .input_place_values = try self.allocator.dupe(facts.InputPath, &.{relocation.source}) }, .requires_available_destination = true, .refreshes_storage_generation = true });
+                    }
                     try conditional.append(.{ .output_index = selector.output_index, .parent_variants = selector.parent_variants, .variant_index = selector.variant_index, .input_post_states = try states.toOwnedSlice(), .invalidated_domains = effects.invalidated_domains });
                 }
             }

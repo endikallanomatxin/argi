@@ -198,6 +198,7 @@ pub const MethodSafetyContract = struct {
     dependencies: []const Dependency = &.{},
     referents: []const Dependency = &.{},
     consumed_inputs: []const u32 = &.{},
+    relocations: []const Relocation = &.{},
     invalidates: []const u32 = &.{},
     domain_dependencies: []const DomainDependency = &.{},
     invalidated_domains: []const DomainInput = &.{},
@@ -206,6 +207,7 @@ pub const MethodSafetyContract = struct {
     outcomes: []const Outcome = &.{},
     source: SourceRef,
 
+    pub const Relocation = struct { destination: u32, source: u32 };
     pub const Dependency = struct { output_index: u32, input_index: u32 };
     pub const DomainInput = struct { input_index: u32, domain_index: u32 };
     pub const DomainDependency = struct { output_index: u32, input: DomainInput };
@@ -465,6 +467,8 @@ pub fn VirtualCall(comptime Ids: type) type {
         /// Safety records every consumed caller place, including aliases and
         /// multiple resource inputs. These nodes identify cleanup flags only.
         consumed_auto_deinits: []const Ids.NodeId = &.{},
+        /// Returning calls enable these destination cleanup flags.
+        initialized_auto_deinits: []const Ids.NodeId = &.{},
     };
 }
 
@@ -571,6 +575,8 @@ pub fn Node(comptime Ids: type) type {
                 /// Safety records every consumed caller place, including aliases and
                 /// multiple resource inputs. These nodes identify cleanup flags only.
                 consumed_auto_deinits: []const Ids.NodeId = &.{},
+                /// Returning calls enable these destination cleanup flags.
+                initialized_auto_deinits: []const Ids.NodeId = &.{},
                 initializes_auto_deinit: ?Ids.NodeId = null,
             },
             virtualize: Ids.VirtualizeId,

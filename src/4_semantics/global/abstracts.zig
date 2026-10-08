@@ -1267,6 +1267,15 @@ pub const Resolver = struct {
                 break;
             }
         }
+        for (contract.relocations) |relocation| {
+            const destination = self.graph.semanticType(self.graph.fields.items[inputs.start + relocation.destination].ty);
+            const source = self.graph.semanticType(self.graph.fields.items[inputs.start + relocation.source].ty);
+            if (destination != .pointer or source != .pointer or destination.pointer.mutability != .read_write or source.pointer.mutability != .read_write) return "relocates requires mutable reference source and destination inputs";
+            if (!global_types.equal(self.graph, destination.pointer.child, source.pointer.child)) return "relocates requires matching source and destination value types";
+            if (erased_self and global_types.equal(self.graph, destination.pointer.child, abstract_ty)) return "relocates on erased Self requires receiver cleanup identities; use known resource inputs";
+            for (contract.consumed_inputs) |consumed| if (consumed == relocation.destination or consumed == relocation.source) return "relocates and consumes cannot target the same input";
+            for (contract.invalidates) |invalidated| if (invalidated == relocation.destination or invalidated == relocation.source) return "relocates already defines its source and destination generations";
+        }
         for (contract.consumed_inputs) |input_index| {
             const input_ty = self.graph.semanticType(self.graph.fields.items[inputs.start + input_index].ty);
             if (input_ty != .pointer or input_ty.pointer.mutability != .read_write) {

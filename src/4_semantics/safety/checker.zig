@@ -1120,7 +1120,13 @@ pub const SafetyChecker = struct {
         defer self.allocator.free(values);
         for (argument_nodes, 0..) |field_id, index| {
             const field = self.graph.value_fields.items[@intFromEnum(field_id)];
-            values[index] = try self.evaluate(caller, field.value, state);
+            const summary = if (self.active_summaries) |engine| engine.summaryFor(call.callee) else null;
+            const destination = if (callee.safety_primitive == .relocate) index == 1 else if (summary) |effects| initializesInput(effects, index) else false;
+            const node = self.graph.node(field.value);
+            values[index] = if (destination and node.content == .address_of)
+                try self.evaluateAddress(caller, node.source, node.content.address_of, state, true)
+            else
+                try self.evaluate(caller, field.value, state);
         }
 
         if (callee.flags.has_foreign_capability) {
@@ -1175,10 +1181,12 @@ pub const SafetyChecker = struct {
         arguments: []const facts.ValueFacts,
         state: *FunctionState,
     ) !void {
-        const consumed = try self.consumedCleanupNodes(summary, argument_ids, arguments, state);
+        const consumed = try self.callCleanupNodes(summary, argument_ids, arguments, state, false);
+        const initialized = try self.callCleanupNodes(summary, argument_ids, arguments, state, true);
         const node = &self.graph.nodes.items[@intFromEnum(call_node)];
         if (node.content != .function_call) return;
         node.content.function_call.consumed_auto_deinits = consumed;
+        node.content.function_call.initialized_auto_deinits = initialized;
         for (summary.input_post_states) |post_state| {
             if (post_state.target.projections.len != 0 or post_state.target.input_index >= argument_ids.len) continue;
             const field = self.graph.value_fields.items[@intFromEnum(argument_ids[post_state.target.input_index])];
@@ -1190,15 +1198,31 @@ pub const SafetyChecker = struct {
         }
     }
 
+    fn initializesInput(summary: facts.SafetySummary, index: usize) bool {
+        for (summary.input_post_states) |post| if (post.target.input_index == index and
+            post.target.projections.len == 0 and post.requires_available_destination and
+            post.initializedness == .initialized) return true;
+        return false;
+    }
+
+    fn cleanupTransition(post: facts.PlacePostState) bool {
+        return post.requires_available_destination or post.initializedness == .moved or
+            (post.initializedness == .deinitialized and post.ends_previous_roots);
+    }
+
     fn validateConsumedInputAliasing(self: *SafetyChecker, source: primitives.SourceRef, summary: facts.SafetySummary, ids: []const graph_mod.GlobalValueFieldId, arguments: []const facts.ValueFacts, state: *FunctionState) !bool {
         for (summary.input_post_states, 0..) |post, index| {
-            if (post.initializedness != .deinitialized or !post.ends_previous_roots) continue;
+            if (!cleanupTransition(post)) continue;
             const target = try self.resolveSummaryInputPath(post.target, ids, arguments, state) orelse continue;
+            if (post.initializedness == .moved and self.initializednessAtPlace(state, target) != .initialized) {
+                try self.report(source, "relocation requires an initialized source; initialize it before transferring its owner", .{});
+                return false;
+            }
             for (summary.input_post_states[0..index]) |previous| {
-                if (previous.initializedness != .deinitialized or !previous.ends_previous_roots or previous.target.input_index == post.target.input_index) continue;
+                if (!cleanupTransition(previous) or previous.target.input_index == post.target.input_index) continue;
                 const other = try self.resolveSummaryInputPath(previous.target, ids, arguments, state) orelse continue;
                 if (target.isPrefixOf(other) or other.isPrefixOf(target)) {
-                    try self.report(source, "consumed inputs alias the same storage; provide distinct owners or consume it once", .{});
+                    try self.report(source, "consumed inputs alias the same storage; provide distinct owners for consumption or relocation", .{});
                     return false;
                 }
             }
@@ -1206,11 +1230,13 @@ pub const SafetyChecker = struct {
         return true;
     }
 
-    fn consumedCleanupNodes(self: *SafetyChecker, summary: facts.SafetySummary, ids: []const graph_mod.GlobalValueFieldId, arguments: []const facts.ValueFacts, state: *FunctionState) ![]const graph_mod.GlobalNodeId {
+    fn callCleanupNodes(self: *SafetyChecker, summary: facts.SafetySummary, ids: []const graph_mod.GlobalValueFieldId, arguments: []const facts.ValueFacts, state: *FunctionState, initializing: bool) ![]const graph_mod.GlobalNodeId {
         var targets = std.array_list.Managed(facts.Place).init(self.allocator);
         defer targets.deinit();
         for (summary.input_post_states) |post| {
-            if (post.initializedness != .deinitialized or !post.ends_previous_roots) continue;
+            if (initializing) {
+                if (!post.requires_available_destination or post.initializedness != .initialized) continue;
+            } else if (post.initializedness != .moved and (post.initializedness != .deinitialized or !post.ends_previous_roots)) continue;
             if (try self.resolveSummaryInputPath(post.target, ids, arguments, state)) |target| try appendPlaceFact(&targets, target);
         }
         var nodes = std.array_list.Managed(graph_mod.GlobalNodeId).init(self.allocator);
@@ -2075,7 +2101,7 @@ pub const SafetyChecker = struct {
                 try collectOwnedRoots(previous, &owned);
                 _ = try self.endRoots(source, state, owned.items);
             };
-            if (post_state.initializedness == .deinitialized)
+            if (post_state.initializedness == .deinitialized or post_state.initializedness == .moved)
                 try self.endStorageGenerationsUnder(source, state, target);
             if (post_state.refreshes_storage_generation or
                 (!post_state.requires_available_destination and reinitializes_dead_place))
@@ -3640,11 +3666,17 @@ pub const SafetyChecker = struct {
         var candidate = try state.clone(self.allocator, if (self.collect_stats) &self.stats else null);
         defer candidate.deinit();
         const diagnostic_count = self.diagnostics.list.items.len;
+        const inference = self.active_summary_inference orelse return error.MissingSafetySummary;
+        const summary = try inference.virtualSummary(call.safety_methods) orelse return error.MissingVirtualSafetyContract;
         var values = try self.allocator.alloc(facts.ValueFacts, argument_nodes.len);
         defer self.allocator.free(values);
         for (argument_nodes, 0..) |field_id, index| {
             const field = self.graph.value_fields.items[@intFromEnum(field_id)];
-            values[index] = try self.evaluate(caller, field.value, &candidate);
+            const node = self.graph.node(field.value);
+            values[index] = if (initializesInput(summary, index) and node.content == .address_of)
+                try self.evaluateAddress(caller, node.source, node.content.address_of, &candidate, true)
+            else
+                try self.evaluate(caller, field.value, &candidate);
         }
 
         if (call.self_input_index >= values.len) return .{};
@@ -3660,11 +3692,11 @@ pub const SafetyChecker = struct {
                 }
             }
         }
-        const inference = self.active_summary_inference orelse return error.MissingSafetySummary;
-        const summary = try inference.virtualSummary(call.safety_methods) orelse return error.MissingVirtualSafetyContract;
         if (!try self.validateConsumedInputAliasing(input_node.source, summary, argument_nodes, values, &candidate)) return .{};
-        const consumed = try self.consumedCleanupNodes(summary, argument_nodes, values, &candidate);
+        const consumed = try self.callCleanupNodes(summary, argument_nodes, values, &candidate, false);
+        const initialized = try self.callCleanupNodes(summary, argument_nodes, values, &candidate, true);
         self.graph.virtual_calls.items[@intFromEnum(id)].consumed_auto_deinits = consumed;
+        self.graph.virtual_calls.items[@intFromEnum(id)].initialized_auto_deinits = initialized;
         const result = (try self.applyVirtualContractSummary(call, input_node.source, argument_nodes, values, &candidate)) orelse facts.ValueFacts{};
         if (self.diagnostics.list.items.len != diagnostic_count) return .{};
         self.commitState(state, &candidate);

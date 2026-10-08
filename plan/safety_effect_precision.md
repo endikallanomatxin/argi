@@ -98,6 +98,8 @@ separate. A useful model needs to describe:
 
 These effects should work unconditionally or under the supported outcome guard.
 Do not add a separate restricted vocabulary for payload clauses. `consumes(input)` names definite destruction through a mutable reference.
+`relocates(destination, source)` names exact ownership-preserving initialization
+of an available destination from a mutable-reference source.
 Keyword choices for storing and initializing effects remain unresolved.
 
 Common clauses apply to all outcomes. Conditional clauses add permissions and

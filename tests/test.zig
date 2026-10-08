@@ -10822,3 +10822,55 @@ test "feature_tests/polymorphism/172_virtual_consumes_reinitialize" {
     try expectSuccessfulBuild("tests/feature_tests/polymorphism/172_virtual_consumes_reinitialize");
     try runExpect("tests/feature_tests/polymorphism/172_virtual_consumes_reinitialize", 0);
 }
+
+test "feature_tests/polymorphism/173_virtual_relocates" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/173_virtual_relocates");
+    try runExpect("tests/feature_tests/polymorphism/173_virtual_relocates", 0);
+}
+
+test "feature_tests/polymorphism/174X_virtual_relocates_missing" {
+    try buildExpectFail("tests/feature_tests/polymorphism/174X_virtual_relocates_missing", "cannot prove relocates");
+}
+
+test "feature_tests/polymorphism/175X_virtual_relocates_occupied" {
+    try buildExpectFail("tests/feature_tests/polymorphism/175X_virtual_relocates_occupied", "relocate destination is initialized");
+}
+
+test "feature_tests/polymorphism/176X_virtual_relocates_use_after" {
+    try buildExpectFail("tests/feature_tests/polymorphism/176X_virtual_relocates_use_after", "moved");
+}
+
+test "feature_tests/polymorphism/177X_virtual_relocates_alias" {
+    try buildExpectFail("tests/feature_tests/polymorphism/177X_virtual_relocates_alias", "alias the same storage");
+}
+
+test "feature_tests/polymorphism/178_virtual_relocates_aliases" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/178_virtual_relocates_aliases");
+    try runExpect("tests/feature_tests/polymorphism/178_virtual_relocates_aliases", 0);
+}
+
+test "feature_tests/polymorphism/179X_virtual_relocates_readonly" {
+    try buildExpectFail("tests/feature_tests/polymorphism/179X_virtual_relocates_readonly", "relocates requires mutable reference");
+}
+
+test "feature_tests/polymorphism/180_virtual_relocates_fields" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/180_virtual_relocates_fields");
+    try runExpect("tests/feature_tests/polymorphism/180_virtual_relocates_fields", 0);
+}
+
+test "feature_tests/polymorphism/181X_virtual_relocates_conditional_body" {
+    try buildExpectFail("tests/feature_tests/polymorphism/181X_virtual_relocates_conditional_body", "cannot prove relocates");
+}
+
+test "feature_tests/polymorphism/182X_virtual_relocates_old_reference" {
+    try buildExpectFail("tests/feature_tests/polymorphism/182X_virtual_relocates_old_reference", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/183_virtual_relocates_allocation" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/183_virtual_relocates_allocation");
+    try runExpect("tests/feature_tests/polymorphism/183_virtual_relocates_allocation", 0);
+}
+
+test "feature_tests/polymorphism/184X_virtual_relocates_guarded" {
+    try buildExpectFail("tests/feature_tests/polymorphism/184X_virtual_relocates_guarded", "conditional relocates requires guarded resource state and cleanup");
+}
