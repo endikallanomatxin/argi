@@ -312,6 +312,11 @@ feature first.
   transferred owned roots. Calls disable source cleanup and enable destination
   cleanup, including aliases and fields; destinations do not require a live
   prior value, but occupied or overlapping destinations are rejected.
+  Conditional relocation cleanup annotations carry an enable/disable action:
+  source and destination flags follow the returned selector even when discarded.
+  Cleanup activation retains every potentially initialized destination. A
+  conditional initialization joined with an untouched available destination is
+  maybe-initialized and must not acquire provenance from the empty input slot.
   Nested generation guards retain their enclosing payload variant path. Partition
   only paths requested by declarations or forwarded results, preserving a
   conservative effect record elsewhere instead of expanding shared choice types.

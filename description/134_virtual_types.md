@@ -299,10 +299,17 @@ or a wrapper whose checked summary establishes the same transition. The physical
 copy and destination passing remain codegen decisions; they do not weaken the
 lifetime obligations.
 
+Inside `on result ..variant`, relocation guarantees apply only to the selected
+outcome. The result selects the source and destination availability together;
+cleanup follows the actual transition even when the caller discards the result.
+A preserving outcome leaves the source initialized and the destination available.
+
 > [!IMPLEMENTATION]
 > Relocation clauses currently require unconditional known-type inputs.
-> Conditional relocation, erased `Self`, and mapped opaque storage transitions
-> remain unsupported. Indexed owners without lexical cleanup identities must
+> Concrete conditional relocation selects runtime cleanup from distinct returned
+> variants, but caller availability remains conservative. Conditional abstract
+> clauses, erased `Self`, and mapped opaque storage transitions remain
+> unsupported. Indexed owners without lexical cleanup identities must
 > first be moved into lexical owners.
 
 ## Owning and fallible results

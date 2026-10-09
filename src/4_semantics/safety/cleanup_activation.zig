@@ -364,14 +364,17 @@ const Scanner = struct {
                 try flow.disable(target);
             },
             .function_call => |call| {
-                // Outcome-specific consumption retains possible cleanup here.
-                // Codegen selects its flag from the actual returned tag.
+                // Conditional transitions retain every possible cleanup here.
+                // Codegen selects the actual flags from the returned tags.
                 if (call.callee_value) |value| try self.node(value, flow);
                 try self.node(call.input, flow);
                 if (call.consumes_auto_deinit) |value| if (try self.resolvePlace(value)) |target| try flow.disable(target);
                 for (call.consumed_auto_deinits) |value| if (try self.resolvePlace(value)) |target| try flow.disable(target);
                 for (call.initialized_auto_deinits) |value| if (try self.resolvePlace(value)) |target| flow.initialize(target);
                 if (call.initializes_auto_deinit) |value| if (try self.resolvePlace(value)) |target| flow.initialize(target);
+                for (call.outcome_cleanups) |cleanup| if (cleanup.enabled) {
+                    if (try self.resolvePlace(cleanup.place)) |target| flow.initialize(target);
+                };
             },
             .virtual_call => |call_id| {
                 const call = self.graph.virtual_calls.items[@intFromEnum(call_id)];
@@ -379,6 +382,9 @@ const Scanner = struct {
                 try self.node(call.input, flow);
                 for (call.consumed_auto_deinits) |value| if (try self.resolvePlace(value)) |target| try flow.disable(target);
                 for (call.initialized_auto_deinits) |value| if (try self.resolvePlace(value)) |target| flow.initialize(target);
+                for (call.outcome_cleanups) |cleanup| if (cleanup.enabled) {
+                    if (try self.resolvePlace(cleanup.place)) |target| flow.initialize(target);
+                };
             },
             .virtualize => |value| try self.node(self.graph.virtualizes.items[@intFromEnum(value)].value, flow),
             .binary_operation => |value| {

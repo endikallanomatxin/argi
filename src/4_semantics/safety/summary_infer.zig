@@ -2121,7 +2121,9 @@ pub const Infer = struct {
                     left_state.may_repopulate_opaque_storage or right_state.may_repopulate_opaque_storage;
                 self.joinOpaqueOwnershipEffect(&merged, left_state, right_state);
             } else {
-                if (left_state.initializedness != .initialized) {
+                // An untouched relocation destination remains available. It
+                // contributes no initialized value to the joined post-state.
+                if (left_state.initializedness != .initialized or left_state.requires_available_destination) {
                     merged.initializedness = .maybe_initialized;
                 } else {
                     merged.value = try self.mergeValueEffects(
@@ -2141,7 +2143,7 @@ pub const Infer = struct {
         for (right.items) |right_state| {
             if (self.findInputPostState(left.items, right_state.target) != null) continue;
             var merged = right_state;
-            if (right_state.initializedness != .initialized) {
+            if (right_state.initializedness != .initialized or right_state.requires_available_destination) {
                 merged.initializedness = .maybe_initialized;
             } else {
                 merged.value = try self.mergeValueEffects(

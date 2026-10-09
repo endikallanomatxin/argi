@@ -61,9 +61,11 @@ discriminants and predicates over ordinary values.
 
 ## Remaining storage transitions
 
-Extend relocation to guarded initializedness and cleanup. A returned discriminant
-must select the entire source/destination transition, including cleanup of an
-ignored result. Extend conditional consumption refinement to opaque effects and
+Extend relocation to guarded initializedness and abstract outcome clauses.
+Concrete calls already select source and destination cleanup from returned
+discriminants, including ignored results; caller availability remains
+conservative until the paired transition has a checked refinement model.
+Extend conditional consumption refinement to opaque effects and
 replacement post-values without restoring caller snapshots.
 
 Fresh initialization needs declared ownership and dependency roles for input

@@ -673,6 +673,7 @@ fn relocateOutcomeCleanups(allocator: std.mem.Allocator, o: Offsets, cleanups: [
         .output_index = cleanup.output_index,
         .parent_variants = try allocator.dupe(u32, cleanup.parent_variants),
         .variant_index = cleanup.variant_index,
+        .enabled = cleanup.enabled,
     };
     return result;
 }

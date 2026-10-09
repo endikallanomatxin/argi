@@ -2459,7 +2459,7 @@ pub const CodeGenerator = struct {
                     choice = c.LLVMBuildExtractValue(self.builder, choice, index + 1, "cleanup.outcome.payload");
                 }
             }
-            self.storeDropState(drop, false);
+            self.storeDropState(drop, cleanup.enabled);
             _ = c.LLVMBuildBr(self.builder, done);
             c.LLVMPositionBuilderAtEnd(self.builder, done);
         }

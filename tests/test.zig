@@ -10876,6 +10876,28 @@ test "feature_tests/polymorphism/184X_virtual_relocates_guarded" {
     try buildExpectFail("tests/feature_tests/polymorphism/184X_virtual_relocates_guarded", "conditional relocates requires guarded resource state and cleanup");
 }
 
+test "feature_tests/polymorphism/212_conditional_relocates_discard" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/212_conditional_relocates_discard");
+    try runExpect("tests/feature_tests/polymorphism/212_conditional_relocates_discard", 0);
+}
+
+test "feature_tests/polymorphism/213X_conditional_relocates_ambiguous" {
+    try buildExpectFail("tests/feature_tests/polymorphism/213X_conditional_relocates_ambiguous", "cannot select cleanup for conditional relocation");
+}
+
+test "feature_tests/polymorphism/214X_conditional_relocates_unselected" {
+    try buildExpectFail("tests/feature_tests/polymorphism/214X_conditional_relocates_unselected", "maybe_initialized and cannot be used");
+}
+
+test "feature_tests/polymorphism/215X_conditional_relocates_old_reference" {
+    try buildExpectFail("tests/feature_tests/polymorphism/215X_conditional_relocates_old_reference", "maybe_initialized and cannot be used");
+}
+
+test "feature_tests/polymorphism/216_conditional_relocates_large" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/216_conditional_relocates_large");
+    try runExpect("tests/feature_tests/polymorphism/216_conditional_relocates_large", 0);
+}
+
 test "feature_tests/polymorphism/185_virtual_referent_local_chain" {
     try expectSuccessfulBuild("tests/feature_tests/polymorphism/185_virtual_referent_local_chain");
     try runExpect("tests/feature_tests/polymorphism/185_virtual_referent_local_chain", 0);

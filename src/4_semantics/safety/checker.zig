@@ -1193,7 +1193,7 @@ pub const SafetyChecker = struct {
             if (post_state.target.projections.len != 0 or post_state.target.input_index >= argument_ids.len) continue;
             const field = self.graph.value_fields.items[@intFromEnum(argument_ids[post_state.target.input_index])];
             if (self.graph.nodes.items[@intFromEnum(field.value)].content != .address_of or self.rootBinding(field.value) == null) continue;
-            if (post_state.requires_available_destination)
+            if (post_state.requires_available_destination and post_state.initializedness == .initialized)
                 node.content.function_call.initializes_auto_deinit = field.value;
             if (post_state.initializedness == .deinitialized or post_state.initializedness == .moved)
                 node.content.function_call.consumes_auto_deinit = field.value;
@@ -1202,14 +1202,12 @@ pub const SafetyChecker = struct {
 
     fn initializesInput(summary: facts.SafetySummary, index: usize) bool {
         for (summary.input_post_states) |post| if (post.target.input_index == index and
-            post.target.projections.len == 0 and post.requires_available_destination and
-            post.initializedness == .initialized) return true;
+            post.target.projections.len == 0 and post.requires_available_destination) return true;
         return false;
     }
 
-    /// Only definite destruction on a represented exit can suppress cleanup.
-    /// The fallback's possible destruction is insufficient: an ignored result
-    /// must still destroy the resource on its preserving alternatives.
+    /// A represented exit can disable source cleanup or enable destination
+    /// cleanup. Possible transitions in the fallback cannot select either flag.
     fn callOutcomeCleanups(self: *SafetyChecker, summary: facts.SafetySummary, ids: []const graph_mod.GlobalValueFieldId, arguments: []const facts.ValueFacts, state: *FunctionState) ![]const primitives.OutcomeCleanup(graph_mod.Ids) {
         var result = std.array_list.Managed(primitives.OutcomeCleanup(graph_mod.Ids)).init(self.allocator);
         // A possible consumption without an exact result partition cannot be
@@ -1217,7 +1215,12 @@ pub const SafetyChecker = struct {
         // Projected may-states also describe opaque backing-storage replacement;
         // they do not establish consumption of the whole input owner.
         for (summary.input_post_states) |post| {
-            if (post.initializedness != .maybe_initialized or !post.ends_previous_roots or post.target.projections.len != 0) continue;
+            if (post.initializedness != .maybe_initialized or post.target.projections.len != 0) continue;
+            var relocation_source = false;
+            for (summary.outcome_post_states) |outcome| for (outcome.input_post_states) |selected| {
+                if (sameInputPath(selected.target, post.target) and selected.initializedness == .moved) relocation_source = true;
+            };
+            if (!post.ends_previous_roots and !post.requires_available_destination and !relocation_source) continue;
             const target = try self.resolveSummaryInputPath(post.target, ids, arguments, state) orelse continue;
             var owns_cleanup = false;
             for (self.graph.auto_deinits.items) |cleanup| if (cleanup.binding == target.root) {
@@ -1234,7 +1237,9 @@ pub const SafetyChecker = struct {
                     for (outcome.input_post_states) |selected| {
                         if (!sameInputPath(selected.target, post.target)) continue;
                         ambiguous = ambiguous or selected.initializedness == .maybe_initialized;
-                        definite = definite or (selected.initializedness == .deinitialized and selected.ends_previous_roots);
+                        definite = definite or selected.initializedness == .moved or
+                            (selected.initializedness == .initialized and selected.requires_available_destination) or
+                            (selected.initializedness == .deinitialized and selected.ends_previous_roots);
                     }
                 }
                 if (definite and !ambiguous) {
@@ -1242,14 +1247,23 @@ pub const SafetyChecker = struct {
                     break;
                 }
             }
-            if (!represented) try self.report(self.graph.binding(target.root).source, "cannot select cleanup for conditional consumption; return a distinct result variant on each consuming or preserving path, or consume a moved lexical owner", .{});
+            if (!represented) {
+                if (post.requires_available_destination or relocation_source) {
+                    try self.report(self.graph.binding(target.root).source, "cannot select cleanup for conditional relocation; return a distinct result variant on each relocating or preserving path", .{});
+                } else try self.report(self.graph.binding(target.root).source, "cannot select cleanup for conditional consumption; return a distinct result variant on each consuming or preserving path, or consume a moved lexical owner", .{});
+            }
         }
         for (summary.outcome_post_states) |outcome| {
             for (outcome.input_post_states) |post| {
-                if (post.initializedness != .deinitialized or !post.ends_previous_roots) continue;
+                const initializing = post.requires_available_destination and post.initializedness == .initialized;
+                const relinquishing = post.initializedness == .moved or
+                    (post.initializedness == .deinitialized and post.ends_previous_roots);
+                if (!initializing and !relinquishing) continue;
                 var unconditional = false;
                 for (summary.input_post_states) |common| if (sameInputPath(common.target, post.target) and
-                    common.initializedness == .deinitialized and common.ends_previous_roots)
+                    common.initializedness == post.initializedness and
+                    common.requires_available_destination == post.requires_available_destination and
+                    common.ends_previous_roots == post.ends_previous_roots)
                 {
                     unconditional = true;
                     break;
@@ -1263,7 +1277,7 @@ pub const SafetyChecker = struct {
                     };
                     continue;
                 };
-                try result.append(.{ .place = node, .output_index = outcome.output_index, .parent_variants = outcome.parent_variants, .variant_index = outcome.variant_index });
+                try result.append(.{ .place = node, .output_index = outcome.output_index, .parent_variants = outcome.parent_variants, .variant_index = outcome.variant_index, .enabled = initializing });
             }
         }
         return result.toOwnedSlice();

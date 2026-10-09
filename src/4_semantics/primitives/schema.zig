@@ -460,6 +460,7 @@ pub fn OutcomeCleanup(comptime Ids: type) type {
         output_index: u32,
         parent_variants: []const u32 = &.{},
         variant_index: u32,
+        enabled: bool = false,
     };
 }
 
