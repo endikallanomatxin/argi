@@ -41,11 +41,15 @@ pub const GenerationOutcome = struct {
     generation: ValidityRootId,
     guard: u64,
     invalidates: bool,
+    /// Resource proofs retain identities, never snapshots of caller values.
+    resource_state: ?value_state.Initializedness = null,
+    owned_roots: []const ValidityRootId = &.{},
     source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 },
 
     pub fn eql(self: GenerationOutcome, other: GenerationOutcome) bool {
         return self.generation == other.generation and self.guard == other.guard and
-            self.invalidates == other.invalidates and self.storage.eql(other.storage);
+            self.invalidates == other.invalidates and self.resource_state == other.resource_state and
+            std.mem.eql(ValidityRootId, self.owned_roots, other.owned_roots) and self.storage.eql(other.storage);
     }
 };
 

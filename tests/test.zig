@@ -10792,8 +10792,9 @@ test "feature_tests/polymorphism/165_virtual_consumes_fields" {
     try runExpect("tests/feature_tests/polymorphism/165_virtual_consumes_fields", 0);
 }
 
-test "feature_tests/polymorphism/168X_virtual_consumes_guarded" {
-    try buildExpectFail("tests/feature_tests/polymorphism/168X_virtual_consumes_guarded", "conditional consumes requires guarded resource state and cleanup");
+test "feature_tests/polymorphism/168_virtual_consumes_guarded" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/168_virtual_consumes_guarded");
+    try runExpect("tests/feature_tests/polymorphism/168_virtual_consumes_guarded", 0);
 }
 
 test "feature_tests/polymorphism/169X_virtual_consumes_erased_self" {
@@ -10936,4 +10937,62 @@ test "feature_tests/polymorphism/197_conditional_consumption_multiple_owners" {
 
 test "feature_tests/polymorphism/198X_conditional_consumption_aliased_owners" {
     try buildExpectFail("tests/feature_tests/polymorphism/198X_conditional_consumption_aliased_owners", "consumed inputs alias the same storage");
+}
+
+test "feature_tests/polymorphism/199_conditional_consumption_preserving_state" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/199_conditional_consumption_preserving_state");
+    try runExpect("tests/feature_tests/polymorphism/199_conditional_consumption_preserving_state", 0);
+}
+
+test "feature_tests/polymorphism/200_virtual_conditional_consumption" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/200_virtual_conditional_consumption");
+    try runExpect("tests/feature_tests/polymorphism/200_virtual_conditional_consumption", 0);
+}
+
+test "feature_tests/polymorphism/201X_virtual_conditional_consumption_missing" {
+    try buildExpectFail("tests/feature_tests/polymorphism/201X_virtual_conditional_consumption_missing", "cannot prove consumes");
+}
+
+test "feature_tests/polymorphism/202X_conditional_consumption_use_after" {
+    try buildExpectFail("tests/feature_tests/polymorphism/202X_conditional_consumption_use_after", "deinitialized");
+}
+
+test "feature_tests/polymorphism/203X_conditional_consumption_before_selection" {
+    try buildExpectFail("tests/feature_tests/polymorphism/203X_conditional_consumption_before_selection", "maybe_initialized");
+}
+
+test "feature_tests/polymorphism/204X_conditional_consumption_stale_result" {
+    try buildExpectFail("tests/feature_tests/polymorphism/204X_conditional_consumption_stale_result", "maybe_initialized");
+}
+
+test "feature_tests/polymorphism/205X_conditional_consumption_expired_field" {
+    try buildExpectFail("tests/feature_tests/polymorphism/205X_conditional_consumption_expired_field", "root that has ended");
+}
+
+test "feature_tests/polymorphism/206_conditional_consumption_allocation" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/206_conditional_consumption_allocation");
+    try runExpect("tests/feature_tests/polymorphism/206_conditional_consumption_allocation", 0);
+}
+
+test "feature_tests/polymorphism/207_virtual_conditional_consumption_outputs" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/207_virtual_conditional_consumption_outputs");
+    try runExpect("tests/feature_tests/polymorphism/207_virtual_conditional_consumption_outputs", 0);
+}
+
+test "feature_tests/polymorphism/208_virtual_nested_conditional_consumption" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/208_virtual_nested_conditional_consumption");
+    try runExpect("tests/feature_tests/polymorphism/208_virtual_nested_conditional_consumption", 0);
+}
+
+test "feature_tests/polymorphism/209X_virtual_conditional_consumption_wrong_variant" {
+    try buildExpectFail("tests/feature_tests/polymorphism/209X_virtual_conditional_consumption_wrong_variant", "storage transition is not permitted");
+}
+
+test "feature_tests/polymorphism/210_virtual_nested_consumption_inherited" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/210_virtual_nested_consumption_inherited");
+    try runExpect("tests/feature_tests/polymorphism/210_virtual_nested_consumption_inherited", 0);
+}
+
+test "feature_tests/polymorphism/211X_conditional_consumption_replaces_dependency" {
+    try buildExpectFail("tests/feature_tests/polymorphism/211X_conditional_consumption_replaces_dependency", "maybe_initialized");
 }

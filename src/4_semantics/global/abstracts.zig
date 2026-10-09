@@ -1198,6 +1198,7 @@ pub const Resolver = struct {
         if (try self.methodSafetyContractFailure(inputs, .{ .start = 0, .len = 0 }, output_type, abstract_ty, located, .{
             .output_count = 0,
             .dependencies = outcome.dependencies,
+            .consumed_inputs = outcome.consumed_inputs,
             .domain_dependencies = outcome.domain_dependencies,
             .invalidates = outcome.invalidates,
             .invalidated_domains = outcome.invalidated_domains,

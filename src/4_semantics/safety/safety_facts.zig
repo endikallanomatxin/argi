@@ -151,6 +151,8 @@ pub const SafetySummary = struct {
 };
 
 pub const OutcomePostStates = struct {
+    /// A selector with no returning exit has vacuous post-state guarantees.
+    reachable: bool = true,
     /// Tags of the enclosing payload choices, from outermost to innermost.
     parent_variants: []const u32 = &.{},
     output_index: u32 = 0,

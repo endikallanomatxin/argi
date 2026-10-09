@@ -211,8 +211,10 @@ Editor: Abstract = (
 ## Consuming resources
 
 `consumes(input)` guarantees that a resource passed by mutable reference is
-fully deinitialized on every returning path. It ends the resource's previous
-owned generations, including those nested in fields or choice payloads. The
+fully deinitialized on every returning path to which the clause applies.
+Inside `on output ..variant`, the guarantee applies only to that variant,
+including when the selector follows nested choice payloads. It ends the resource's
+previous owned generations, including those nested in fields or choice payloads. The
 caller then has an uninitialized place and may assign a new owner to it.
 Automatic cleanup does not destroy the consumed value again.
 
@@ -234,17 +236,35 @@ nested resources does not end borrowed external resources or authorize writes
 through references stored in its fields. Declare other effects separately.
 
 > [!IMPLEMENTATION]
-> Consumption currently requires an unconditional clause and a known input type.
-> Consuming erased `Self`, named domains, or only selected result outcomes remains
-> unsupported. Conditional consumption needs guarded initializedness and cleanup,
-> in addition to generation guards. Indexed or indirect owners without a lexical
+> Consumption currently requires a known input type. Consuming erased `Self` or
+> named domains remains unsupported. Indexed or indirect owners without a lexical
 > cleanup identity must first be moved into a lexical owner.
 
 > Ordinary concrete calls can already select cleanup from inferred result
 > variants, including when the result is ignored. Whole-input conditional
 > destruction without a proven result partition is rejected rather than risking
-> duplicate destruction. Resource use after such a call remains conservative;
-> selecting a preserving variant does not yet restore its initialized state.
+> duplicate destruction. Selecting a preserving variant establishes availability
+> only for the current generation guarded by that call. Copies and moves of the
+> result retain the proof; later writes, consumption or independent pending calls
+> cannot be undone by selecting an older result. Refinement uses the current
+> caller facts and never restores a saved value or storage snapshot.
+> Resource refinement remains conservative for conditional opaque effects,
+> replacements and conditions requiring several independent discriminants.
+
+```rg
+ConditionalReleaser: Abstract = (
+    release(.self: &Self, .resource: $&Resource) -> (.result: ?Int32) where {
+        on result ..some { consumes(resource) }
+        on result ..none {}
+    }
+)
+```
+
+Before selecting the result, the caller cannot use `resource`: it may already
+have been destroyed. In `..none`, the resource remains initialized. In `..some`,
+it is deinitialized and can receive a new owner. Automatic cleanup follows the
+actual result even when the caller ignores it. An empty nested `on` block retains
+the consumption guarantees of its enclosing clauses.
 
 ## Relocating into available storage
 

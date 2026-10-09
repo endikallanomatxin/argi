@@ -88,33 +88,34 @@ pub fn fromDeclaration(allocator: std.mem.Allocator, declaration: @import("../pr
     const invalidated_domains = try allocator.alloc(facts.InputDomain, declaration.invalidated_domains.len);
     for (declaration.invalidated_domains, invalidated_domains) |domain, *input| input.* = .{ .path = .{ .input_index = domain.input_index }, .domain_index = domain.domain_index };
     var conditional: std.ArrayList(Contract.Outcome) = .empty;
-    try appendConditionalContracts(allocator, declaration.output_count, declaration.outcomes, &.{}, invalidates, invalidated_domains, &conditional);
     const consumed_inputs = try allocator.alloc(facts.InputPath, declaration.consumed_inputs.len);
     for (declaration.consumed_inputs, consumed_inputs) |index, *path| path.* = .{ .input_index = index };
+    try appendConditionalContracts(allocator, declaration.output_count, declaration.outcomes, &.{}, invalidates, invalidated_domains, consumed_inputs, &conditional);
     const relocations = try allocator.alloc(Contract.Relocation, declaration.relocations.len);
     for (declaration.relocations, relocations) |declared, *relocation| relocation.* = .{ .destination = .{ .input_index = declared.destination }, .source = .{ .input_index = declared.source } };
     for (conditional.items) |outcome| {
-        @constCast(outcome.effects).consumed_inputs = consumed_inputs;
         @constCast(outcome.effects).relocations = relocations;
     }
     return .{ .outputs = outputs, .consumed_inputs = consumed_inputs, .relocations = relocations, .invalidates = invalidates, .invalidated_domains = invalidated_domains, .outcomes = try conditional.toOwnedSlice(allocator) };
 }
 
-fn appendConditionalContracts(allocator: std.mem.Allocator, output_count: u32, outcomes: []const @import("../primitives/schema.zig").MethodSafetyContract.Outcome, parents: []const u32, common_invalidates: []const facts.InputPath, common_domains: []const facts.InputDomain, result: *std.ArrayList(Contract.Outcome)) anyerror!void {
+fn appendConditionalContracts(allocator: std.mem.Allocator, output_count: u32, outcomes: []const @import("../primitives/schema.zig").MethodSafetyContract.Outcome, parents: []const u32, common_invalidates: []const facts.InputPath, common_domains: []const facts.InputDomain, common_consumed: []const facts.InputPath, result: *std.ArrayList(Contract.Outcome)) anyerror!void {
     for (outcomes) |outcome| {
         const effects = try allocator.create(Contract);
         effects.* = try fromDeclaration(allocator, .{
             .output_count = output_count,
             .invalidates = outcome.invalidates,
+            .consumed_inputs = outcome.consumed_inputs,
             .invalidated_domains = outcome.invalidated_domains,
             .source = outcome.source,
         });
         effects.invalidates = try std.mem.concat(allocator, facts.InputPath, &.{ common_invalidates, effects.invalidates });
         effects.invalidated_domains = try std.mem.concat(allocator, facts.InputDomain, &.{ common_domains, effects.invalidated_domains });
+        effects.consumed_inputs = try std.mem.concat(allocator, facts.InputPath, &.{ common_consumed, effects.consumed_inputs });
         const variant = outcome.variant_index orelse return error.UnresolvedOutcomeContract;
         try result.append(allocator, .{ .output_index = outcome.output_index, .parent_variants = parents, .variant_index = variant, .effects = effects });
         const child_parents = try std.mem.concat(allocator, u32, &.{ parents, &.{variant} });
-        try appendConditionalContracts(allocator, output_count, outcome.outcomes, child_parents, effects.invalidates, effects.invalidated_domains, result);
+        try appendConditionalContracts(allocator, output_count, outcome.outcomes, child_parents, effects.invalidates, effects.invalidated_domains, effects.consumed_inputs, result);
     }
 }
 
@@ -241,8 +242,26 @@ pub fn check(contract: Contract, summary: facts.SafetySummary) ?Failure {
         }
         if (!permitted) return .{ .kind = .unsupported_post_state, .input = state.target };
     }
+    for (contract.outcomes) |required| {
+        if (required.effects.consumed_inputs.len == 0) continue;
+        var represented = false;
+        for (summary.outcome_post_states) |actual| if (selectorCovers(required, actual)) {
+            represented = true;
+            break;
+        };
+        if (!represented) return .{ .kind = .missing_consumption, .input = required.effects.consumed_inputs[0] };
+    }
     for (summary.outcome_post_states) |outcome| {
+        if (!outcome.reachable) continue;
         const allowed = effectsForSelector(contract, outcome);
+        for (allowed.consumed_inputs) |input| {
+            var consumed = false;
+            for (outcome.input_post_states) |state| if (samePath(state.target, input) and state.initializedness == .deinitialized and state.ends_previous_roots) {
+                consumed = true;
+                break;
+            };
+            if (!consumed) return .{ .kind = .missing_consumption, .input = input, .outcome = .{ .output_index = outcome.output_index, .parent_variants = outcome.parent_variants, .variant_index = outcome.variant_index } };
+        }
         for (outcome.input_post_states) |state| {
             if (!permitsPostState(allowed, state)) return .{ .kind = .unsupported_post_state, .input = state.target, .outcome = .{ .output_index = outcome.output_index, .parent_variants = outcome.parent_variants, .variant_index = outcome.variant_index } };
         }
@@ -398,7 +417,7 @@ fn permitsPostState(contract: Contract, state: facts.PlacePostState) bool {
         for (state.target.projections) |projection| if (projection == .dereference) return false;
         if (state.opaque_ownership != .none or state.opaque_storage != null or state.requires_available_destination or
             state.may_repopulate_opaque_storage) return false;
-        if (state.initializedness == .deinitialized or state.initializedness == .moved) return emptyValue(state.value);
+        if (state.initializedness == .deinitialized or state.initializedness == .moved or state.initializedness == .maybe_initialized) return emptyValue(state.value);
         return state.initializedness == .initialized and emptyValue(state.value);
     }
 

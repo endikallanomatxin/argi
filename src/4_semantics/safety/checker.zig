@@ -307,7 +307,9 @@ pub const SafetyChecker = struct {
                     }
                     if (types.variants(self.graph, selected_ty)) |variants| if (outcome.variant_index < variants.len) {
                         const variant = self.graph.variants.items[variants.start + outcome.variant_index];
-                        try self.report(declared.source, "cannot prove preservation for on {s} ..{s}; declare its generation effects or preserve the input on every continuing path", .{ self.graph.text(output.name), self.graph.text(variant.name) });
+                        if (failure.kind == .missing_consumption) {
+                            try self.report(declared.source, "cannot prove consumes for on {s} ..{s}; deinitialize the input on every path returning this variant", .{ self.graph.text(output.name), self.graph.text(variant.name) });
+                        } else try self.report(declared.source, "cannot prove preservation for on {s} ..{s}; declare its generation effects or preserve the input on every continuing path", .{ self.graph.text(output.name), self.graph.text(variant.name) });
                     };
                 }
             }
@@ -1861,6 +1863,7 @@ pub const SafetyChecker = struct {
         for (summary.outcome_post_states) |outcome| {
             var preserves = false;
             for (summary.input_post_states) |post| {
+                if (consumptionSelectedBy(summary, post, outcome.output_index)) preserves = true;
                 if (!post.refreshes_storage_generation) continue;
                 var invalidates = false;
                 for (outcome.input_post_states) |branch_post| if (sameInputPath(branch_post.target, post.target) and branch_post.refreshes_storage_generation) {
@@ -1892,7 +1895,16 @@ pub const SafetyChecker = struct {
         defer deferred.deinit();
         var common = std.array_list.Managed(facts.PlacePostState).init(self.allocator);
         defer common.deinit();
+        var resources = std.array_list.Managed(facts.PlacePostState).init(self.allocator);
+        defer resources.deinit();
+        for (summary.input_post_states) |post| if (consumptionSelectedBy(summary, post, output_index)) try resources.append(post);
         for (summary.input_post_states) |post| {
+            var resource_effect = false;
+            for (resources.items) |resource| if (inputPathCovers(resource.target, post.target)) {
+                resource_effect = true;
+                break;
+            };
+            if (resource_effect) continue;
             // Only a pure generation change can be postponed independently of
             // input contents. Everything else retains its conservative effect.
             var pure = post;
@@ -1949,7 +1961,7 @@ pub const SafetyChecker = struct {
         common_summary.invalidated_domains = common_domains.items;
         try self.applySummaryEffects(source, common_summary, argument_ids, arguments, state);
         var result = try self.instantiateSummaryOutputs(summary.outputs, arguments, state);
-        if (deferred.items.len == 0 and deferred_domains.items.len == 0) return result;
+        if (deferred.items.len == 0 and deferred_domains.items.len == 0 and resources.items.len == 0) return result;
         var choice: *facts.ValueFacts = &result;
         if (summary.outputs.len != 1) {
             const fields = try self.allocator.dupe(facts.FieldFacts, result.fields);
@@ -1964,6 +1976,49 @@ pub const SafetyChecker = struct {
         }
         const guard = self.next_outcome_guard;
         self.next_outcome_guard += 1;
+        for (resources.items) |post| {
+            const storage = try self.resolveSummaryInputPath(post.target, argument_ids, arguments, state) orelse continue;
+            if (self.initializednessAtPlace(state, storage) != .initialized) continue;
+            const previous = self.valueAtPlace(state, storage) orelse continue;
+            const generation = try self.storageGeneration(state, storage);
+            var owned = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+            defer owned.deinit();
+            try collectOwnedRoots(previous, &owned);
+            const owned_roots = try owned.toOwnedSlice();
+            var available = state.tracker.roots.items[@intFromEnum(generation)].state == .alive;
+            for (owned_roots) |root| available = available and state.tracker.roots.items[@intFromEnum(root)].state == .alive;
+            if (!available) {
+                try self.applySummaryEffects(source, .{ .outputs = &.{}, .input_post_states = &.{post} }, argument_ids, arguments, state);
+                continue;
+            }
+            // Retain current facts in the caller, but make availability and
+            // owned generations uncertain until this call's result is selected.
+            try self.setPlace(state, storage, .maybe_initialized, previous);
+            state.tracker.roots.items[@intFromEnum(generation)].state = .maybe_alive;
+            state.tracker.roots.items[@intFromEnum(generation)].outcome_guard = guard;
+            for (owned_roots) |root| if (state.tracker.roots.items[@intFromEnum(root)].state == .alive) {
+                state.tracker.roots.items[@intFromEnum(root)].state = .maybe_alive;
+                state.tracker.roots.items[@intFromEnum(root)].outcome_guard = guard;
+            };
+            for (summary.outcome_post_states) |outcome| {
+                if (outcome.output_index != output_index) continue;
+                var consumes = false;
+                for (outcome.input_post_states) |selected| if (sameInputPath(post.target, selected.target) and selected.initializedness == .deinitialized) {
+                    consumes = true;
+                    break;
+                };
+                try self.attachOutcomeGeneration(choice, outcome.parent_variants, outcome.variant_index, .{ .storage = storage, .generation = generation, .guard = guard, .invalidates = consumes, .resource_state = if (consumes) .deinitialized else .initialized, .owned_roots = owned_roots, .source = source });
+                for (state.storage_generations.items) |child| {
+                    if (child.storage.eql(storage) or !storage.isPrefixOf(child.storage)) continue;
+                    const entry = &state.tracker.roots.items[@intFromEnum(child.generation)];
+                    if (entry.state == .alive) {
+                        entry.state = .maybe_alive;
+                        entry.outcome_guard = guard;
+                    }
+                    if (entry.outcome_guard == guard) try self.attachOutcomeGeneration(choice, outcome.parent_variants, outcome.variant_index, .{ .storage = child.storage, .generation = child.generation, .guard = guard, .invalidates = consumes, .source = source });
+                }
+            }
+        }
         var storages = std.array_list.Managed(facts.Place).init(self.allocator);
         defer storages.deinit();
         for (deferred.items) |post| {
@@ -1996,6 +2051,42 @@ pub const SafetyChecker = struct {
             }
         }
         return result;
+    }
+
+    fn inputPathCovers(parent: facts.InputPath, child: facts.InputPath) bool {
+        if (parent.input_index != child.input_index or parent.projections.len > child.projections.len) return false;
+        for (parent.projections, child.projections[0..parent.projections.len]) |a, b| if (!a.eql(b)) return false;
+        // Borrowed fields reach external storage; consuming their containing
+        // owner must not postpone or discard effects on that referent.
+        for (child.projections[parent.projections.len..]) |projection| if (projection == .dereference) return false;
+        return true;
+    }
+
+    /// The finite boundary admits only definite destruction or preservation
+    /// selected by one output. Replacements and unrelated predicates retain
+    /// their conservative post-state rather than recovering caller snapshots.
+    fn consumptionSelectedBy(summary: facts.SafetySummary, post: facts.PlacePostState, output_index: u32) bool {
+        if (summary.opaque_storage_effects.len != 0 or summary.opaque_storage_empties.len != 0 or summary.storage_capability_uses.len != 0) return false;
+        if (post.initializedness != .maybe_initialized or !post.ends_previous_roots or post.target.projections.len != 0) return false;
+        var consumes = false;
+        for (summary.outcome_post_states) |outcome| {
+            if (outcome.output_index != output_index) continue;
+            var destroys = false;
+            for (outcome.input_post_states) |selected| if (sameInputPath(post.target, selected.target) and selected.initializedness == .deinitialized and selected.ends_previous_roots) {
+                destroys = true;
+                break;
+            };
+            for (outcome.input_post_states) |selected| {
+                // Preserving availability is not a promise that the old field
+                // facts survived replacement. Keep such branches conservative
+                // until conditional post-values have their own checked model.
+                if (!destroys and inputPathCovers(post.target, selected.target)) return false;
+                if (!sameInputPath(post.target, selected.target)) continue;
+                if (selected.initializedness != .deinitialized or !selected.ends_previous_roots or selected.refreshes_storage_generation or !facts.isEmptyValue(selected.value)) return false;
+                consumes = true;
+            }
+        }
+        return consumes;
     }
 
     fn attachOutcomeGeneration(self: *SafetyChecker, value: *facts.ValueFacts, parents: []const u32, leaf: u32, proof: facts.GenerationOutcome) anyerror!void {
@@ -5033,6 +5124,25 @@ pub const SafetyChecker = struct {
             };
             root.outcome_guard = 0;
             if (!current) continue;
+            if (outcome.resource_state) |initializedness| {
+                if (self.initializednessAtPlace(state, outcome.storage) != .maybe_initialized) continue;
+                if (initializedness == .deinitialized) {
+                    _ = try self.endRoots(outcome.source, state, outcome.owned_roots);
+                    try self.endStorageGenerationsUnder(outcome.source, state, outcome.storage);
+                    try self.setPlace(state, outcome.storage, .deinitialized, .{});
+                } else {
+                    root.state = .alive;
+                    for (outcome.owned_roots) |owned| {
+                        const entry = &state.tracker.roots.items[@intFromEnum(owned)];
+                        if (entry.state == .maybe_alive and entry.outcome_guard == outcome.guard) {
+                            entry.state = .alive;
+                            entry.outcome_guard = 0;
+                        }
+                    }
+                    if (self.getPlace(state, outcome.storage)) |place| place.initializedness = .initialized;
+                }
+                continue;
+            }
             if (outcome.invalidates) {
                 try self.refreshStorageGenerationChecked(outcome.source, state, outcome.storage);
             } else root.state = .alive;

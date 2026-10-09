@@ -300,6 +300,12 @@ feature first.
   cleanup in activation summaries; never disable it unconditionally from a
   may-consume effect. Reject whole-input conditional destruction without a
   proven result partition.
+  Conditional consumes clauses retain current caller facts behind a call and
+  generation guard. Selecting a preserving result confirms initializedness and
+  existing owned roots; a consuming result ends them. Never restore snapshots,
+  revive an overwritten generation or reuse proofs from independent calls.
+  Nested clauses inherit common consumption guarantees. Conformance checks
+  every reachable selected exit; unreachable selectors have vacuous guarantees.
   Relocation contracts prove a moved source and an available initialized
   destination with exact whole-place provenance. Materialize destination facts
   before clearing source facts. Ending the source slot generation must retain

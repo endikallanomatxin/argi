@@ -30,17 +30,17 @@ discriminants and predicates over ordinary values.
 
 - Extend guarded generation summaries to branch-assigned outputs and
   intermediate results, choice tests on computed expressions and error
-  propagation. Direct forwarding,
-  bound discrimination, moves and copies preserve call provenance; more complex
+  propagation. Direct forwarding, bound discrimination, moves and copies
+  preserve call provenance; more complex
   flows must remain conservative without reviving expired roots.
 - Extend `on output ..variant` to effects on other outputs.
   Use shared effect records rather than eagerly enumerating a Cartesian product
   of output variants. Distinguish effect permissions from required guarantees;
   common clauses apply to all outcomes and conditional clauses add obligations.
 - Extend compatibility checking with allowed dependency storage,
-  initialization and outcome-specific storage guarantees. Extend unconditional
-  known-input `consumes` to guarded resource states and cleanup identities for
-  erased receivers, indexed owners and mapped domains.
+  initialization and outcome-specific storage guarantees. Extend known-input
+  `consumes` to cleanup identities for erased receivers, indexed owners and
+  mapped domains.
   Extend generation-only `invalidates` to checked aggregate/result facts after
   invalidation without dropping existing ownership or field facts.
 - Extend mapped domain effects to owned and opaque storage transitions.
@@ -61,10 +61,10 @@ discriminants and predicates over ordinary values.
 
 ## Remaining storage transitions
 
-Extend known-input consumption and relocation to guarded initializedness and
-cleanup. A returned discriminant must select the entire resource transition,
-including cleanup of an ignored result. Keep generation refinement separate from
-resource availability until both dimensions share the same proven guard.
+Extend relocation to guarded initializedness and cleanup. A returned discriminant
+must select the entire source/destination transition, including cleanup of an
+ignored result. Extend conditional consumption refinement to opaque effects and
+replacement post-values without restoring caller snapshots.
 
 Fresh initialization needs declared ownership and dependency roles for input
 post-values, rather than treating an empty destination as permission to create

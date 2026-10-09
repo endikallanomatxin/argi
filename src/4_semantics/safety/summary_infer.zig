@@ -214,7 +214,7 @@ pub const Infer = struct {
             for (contract.outcomes) |outcome| try wanted.append(.{ .output_index = outcome.output_index, .parent_variants = outcome.parent_variants, .variant_index = outcome.variant_index });
             for (outputs, 0..) |_, output_index| {
                 var guarded_generation = false;
-                for (contract.outcomes) |outcome| if (outcome.output_index == output_index and (outcome.effects.invalidates.len != 0 or outcome.effects.invalidated_domains.len != 0)) {
+                for (contract.outcomes) |outcome| if (outcome.output_index == output_index and (outcome.effects.invalidates.len != 0 or outcome.effects.invalidated_domains.len != 0 or outcome.effects.consumed_inputs.len != 0)) {
                     guarded_generation = true;
                     break;
                 };
@@ -240,7 +240,11 @@ pub const Infer = struct {
             try fallback_domains.appendSlice(invalidated_domains);
             for (conditional.items) |outcome| {
                 for (outcome.input_post_states) |post| {
-                    if (self.findInputPostState(fallback_states.items, post.target) == null) try fallback_states.append(post);
+                    if (self.findInputPostState(fallback_states.items, post.target) == null) {
+                        var fallback = post;
+                        if (fallback.initializedness == .deinitialized) fallback.initializedness = .maybe_initialized;
+                        try fallback_states.append(fallback);
+                    }
                 }
                 for (outcome.invalidated_domains) |domain| try appendDomain(&fallback_domains, domain);
             }
@@ -257,7 +261,7 @@ pub const Infer = struct {
         var wanted = std.array_list.Managed(outcome_selectors.Selector).init(self.allocator);
         try wanted.appendSlice(self.requested_selectors.get(method) orelse &.{});
         for (contract.outcomes) |outcome| {
-            if (outcome.effects.invalidates.len == 0 and outcome.effects.invalidated_domains.len == 0) continue;
+            if (outcome.effects.invalidates.len == 0 and outcome.effects.invalidated_domains.len == 0 and outcome.effects.consumed_inputs.len == 0) continue;
             const selector = outcome_selectors.Selector{ .output_index = outcome.output_index, .parent_variants = outcome.parent_variants, .variant_index = outcome.variant_index };
             var duplicate = false;
             for (wanted.items) |existing| if (existing.output_index == selector.output_index and existing.variant_index == selector.variant_index and std.mem.eql(u32, existing.parent_variants, selector.parent_variants)) {
@@ -599,7 +603,8 @@ pub const Infer = struct {
         var outcomes = std.array_list.Managed(facts.OutcomePostStates).init(self.allocator);
         defer outcomes.deinit();
         const common_domains = try self.allocator.dupe(facts.InputDomain, self.domain_invalidations.items);
-        if (post_states.items.len != 0 or common_domains.len != 0) {
+        const requested_outcomes = if (self.requested_selectors.get(function_id)) |requested| requested.len != 0 else false;
+        if (post_states.items.len != 0 or common_domains.len != 0 or requested_outcomes) {
             for (0..function.output.len) |output_index| {
                 const output_ty = self.graph.fields.items[function.output.start + @as(u32, @intCast(output_index))].ty;
                 var wanted = std.array_list.Managed(outcome_selectors.Selector).init(self.allocator);
@@ -622,6 +627,7 @@ pub const Infer = struct {
                     try self.inferInputPostStates(function_id, function.body.?, &outcome_flow, &outcome_exits);
                     if (outcome_flow.reachable) try self.recordOutcomeExit(&outcome_exits, &outcome_flow);
                     try outcomes.append(.{
+                        .reachable = outcome_exits != null,
                         .output_index = @intCast(output_index),
                         .parent_variants = selector.parent_variants,
                         .variant_index = selector.variant_index,

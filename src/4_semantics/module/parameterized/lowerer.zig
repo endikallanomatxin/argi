@@ -363,10 +363,6 @@ pub const Context = struct {
                         try self.contractError(statement, "conditional relocates requires guarded resource state and cleanup; use an unconditional clause for now");
                         unreachable;
                     }
-                    if (effect.consumed_inputs.len != 0) {
-                        try self.contractError(statement, "conditional consumes requires guarded resource state and cleanup; use an unconditional consumes clause for now");
-                        unreachable;
-                    }
                     if (effect.referents.len != 0 or effect.transfers.len != 0) {
                         try self.contractError(statement, "conditional refers_to and transfers require more precise outcome proofs");
                         unreachable;
@@ -395,6 +391,7 @@ pub const Context = struct {
                         .dependencies = effect.dependencies,
                         .domain_dependencies = effect.domain_dependencies,
                         .owned_outputs = effect.owned_outputs,
+                        .consumed_inputs = effect.consumed_inputs,
                         .invalidates = effect.invalidates,
                         .invalidated_domains = effect.invalidated_domains,
                         .outcomes = effect.outcomes,
