@@ -240,6 +240,12 @@ through references stored in its fields. Declare other effects separately.
 > in addition to generation guards. Indexed or indirect owners without a lexical
 > cleanup identity must first be moved into a lexical owner.
 
+> Ordinary concrete calls can already select cleanup from inferred result
+> variants, including when the result is ignored. Whole-input conditional
+> destruction without a proven result partition is rejected rather than risking
+> duplicate destruction. Resource use after such a call remains conservative;
+> selecting a preserving variant does not yet restore its initialized state.
+
 ## Relocating into available storage
 
 `relocates(destination, source)` guarantees that every returning path moves the

@@ -430,6 +430,7 @@ fn appendBodyTables(allocator: std.mem.Allocator, result: *global_sg.GlobalSeman
         .consumes_auto_deinit = if (value.consumes_auto_deinit) |id| globalNode(o, id) else null,
         .consumed_auto_deinits = try relocateCleanupNodes(allocator, o, value.consumed_auto_deinits),
         .initialized_auto_deinits = try relocateCleanupNodes(allocator, o, value.initialized_auto_deinits),
+        .outcome_cleanups = try relocateOutcomeCleanups(allocator, o, value.outcome_cleanups),
     });
     for (storage.reach_segments.items) |value| try result.reach_segments.append(allocator, try relocateString(module, value, o.string_base));
     for (storage.reach_alternatives.items) |value| try result.reach_alternatives.append(allocator, .{
@@ -524,6 +525,7 @@ fn relocateNode(allocator: std.mem.Allocator, module: *const module_sg.ModuleSem
                 .consumes_auto_deinit = if (value.consumes_auto_deinit) |id| globalNode(o, id) else null,
                 .consumed_auto_deinits = try relocateCleanupNodes(allocator, o, value.consumed_auto_deinits),
                 .initialized_auto_deinits = try relocateCleanupNodes(allocator, o, value.initialized_auto_deinits),
+                .outcome_cleanups = try relocateOutcomeCleanups(allocator, o, value.outcome_cleanups),
                 .initializes_auto_deinit = if (value.initializes_auto_deinit) |id| globalNode(o, id) else null,
             } },
             .virtualize => |id| .{ .virtualize = globalVirtualize(o, id) },
@@ -661,6 +663,17 @@ pub fn globalBinding(o: Offsets, id: module_entities.ModuleBindingId) global_sg.
 fn relocateCleanupNodes(allocator: std.mem.Allocator, o: Offsets, nodes: []const module_entities.ModuleNodeId) ![]const global_sg.GlobalNodeId {
     const result = try allocator.alloc(global_sg.GlobalNodeId, nodes.len);
     for (nodes, result) |node, *relocated| relocated.* = globalNode(o, node);
+    return result;
+}
+
+fn relocateOutcomeCleanups(allocator: std.mem.Allocator, o: Offsets, cleanups: []const primitives.OutcomeCleanup(module_entities.Ids)) ![]const primitives.OutcomeCleanup(global_sg.Ids) {
+    const result = try allocator.alloc(primitives.OutcomeCleanup(global_sg.Ids), cleanups.len);
+    for (cleanups, result) |cleanup, *relocated| relocated.* = .{
+        .place = globalNode(o, cleanup.place),
+        .output_index = cleanup.output_index,
+        .parent_variants = try allocator.dupe(u32, cleanup.parent_variants),
+        .variant_index = cleanup.variant_index,
+    };
     return result;
 }
 

@@ -28,8 +28,9 @@ implementation. Its structural boundary retains individual discriminants and
 nested payload paths, but conservatively forgets conjunctions of independent
 discriminants and predicates over ordinary values.
 
-- Extend guarded generation summaries to branch-assigned intermediate results,
-  choice tests on computed expressions and error propagation. Direct forwarding,
+- Extend guarded generation summaries to branch-assigned outputs and
+  intermediate results, choice tests on computed expressions and error
+  propagation. Direct forwarding,
   bound discrimination, moves and copies preserve call provenance; more complex
   flows must remain conservative without reviving expired roots.
 - Extend `on output ..variant` to effects on other outputs.

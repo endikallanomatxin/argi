@@ -173,6 +173,7 @@ pub fn virtualCall(comptime Ids: type, value: primitives.VirtualCall(Ids), bound
     try require(verify.optionalIdFits(value.consumes_auto_deinit, bounds.nodes));
     for (value.consumed_auto_deinits) |node_id| try require(verify.idFits(node_id, bounds.nodes));
     for (value.initialized_auto_deinits) |node_id| try require(verify.idFits(node_id, bounds.nodes));
+    for (value.outcome_cleanups) |cleanup| try require(verify.idFits(cleanup.place, bounds.nodes));
 }
 
 pub fn reachAlternative(comptime Ids: type, value: primitives.ReachAlternative(Ids), bounds: Bounds) !void {
@@ -251,6 +252,7 @@ pub fn node(comptime Ids: type, value: primitives.Node(Ids), bounds: Bounds) !vo
             try require(verify.optionalIdFits(item.consumes_auto_deinit, bounds.nodes));
             for (item.consumed_auto_deinits) |node_id| try require(verify.idFits(node_id, bounds.nodes));
             for (item.initialized_auto_deinits) |node_id| try require(verify.idFits(node_id, bounds.nodes));
+            for (item.outcome_cleanups) |cleanup| try require(verify.idFits(cleanup.place, bounds.nodes));
             try require(verify.optionalIdFits(item.initializes_auto_deinit, bounds.nodes));
         },
         .virtualize => |id| try require(verify.idFits(id, bounds.virtualizes)),

@@ -4313,7 +4313,7 @@ test "feature_tests/ownership/201X_nested_argument_propagates_input_post_state" 
 test "feature_tests/ownership/202X_conditional_expression_joins_input_post_state" {
     try buildExpectFail(
         "tests/feature_tests/ownership/202X_conditional_expression_joins_input_post_state",
-        "place rooted at 'allocation' is maybe_initialized and cannot be used",
+        "cannot select cleanup for conditional consumption",
     );
 }
 
@@ -10899,4 +10899,41 @@ test "feature_tests/polymorphism/189X_virtual_referent_wrong_local" {
 
 test "feature_tests/polymorphism/190X_virtual_transfer_reconstructed_local" {
     try buildExpectFail("tests/feature_tests/polymorphism/190X_virtual_transfer_reconstructed_local", "cannot prove transfers");
+}
+
+test "feature_tests/polymorphism/191_conditional_consumption_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/191_conditional_consumption_cleanup");
+    try runExpect("tests/feature_tests/polymorphism/191_conditional_consumption_cleanup", 0);
+}
+
+test "feature_tests/polymorphism/192_conditional_consumption_cleanup_alias" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/192_conditional_consumption_cleanup_alias");
+    try runExpect("tests/feature_tests/polymorphism/192_conditional_consumption_cleanup_alias", 0);
+}
+
+test "feature_tests/polymorphism/193_conditional_consumption_cleanup_large" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/193_conditional_consumption_cleanup_large");
+    try runExpect("tests/feature_tests/polymorphism/193_conditional_consumption_cleanup_large", 0);
+}
+
+test "feature_tests/polymorphism/194_conditional_consumption_cleanup_outputs" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/194_conditional_consumption_cleanup_outputs");
+    try runExpect("tests/feature_tests/polymorphism/194_conditional_consumption_cleanup_outputs", 0);
+}
+
+test "feature_tests/polymorphism/195X_conditional_consumption_unselected_cleanup" {
+    try buildExpectFail("tests/feature_tests/polymorphism/195X_conditional_consumption_unselected_cleanup", "cannot select cleanup for conditional consumption");
+}
+
+test "feature_tests/polymorphism/196X_conditional_consumption_ambiguous_cleanup" {
+    try buildExpectFail("tests/feature_tests/polymorphism/196X_conditional_consumption_ambiguous_cleanup", "cannot select cleanup for conditional consumption");
+}
+
+test "feature_tests/polymorphism/197_conditional_consumption_multiple_owners" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/197_conditional_consumption_multiple_owners");
+    try runExpect("tests/feature_tests/polymorphism/197_conditional_consumption_multiple_owners", 0);
+}
+
+test "feature_tests/polymorphism/198X_conditional_consumption_aliased_owners" {
+    try buildExpectFail("tests/feature_tests/polymorphism/198X_conditional_consumption_aliased_owners", "consumed inputs alias the same storage");
 }

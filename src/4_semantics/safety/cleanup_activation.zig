@@ -364,6 +364,8 @@ const Scanner = struct {
                 try flow.disable(target);
             },
             .function_call => |call| {
+                // Outcome-specific consumption retains possible cleanup here.
+                // Codegen selects its flag from the actual returned tag.
                 if (call.callee_value) |value| try self.node(value, flow);
                 try self.node(call.input, flow);
                 if (call.consumes_auto_deinit) |value| if (try self.resolvePlace(value)) |target| try flow.disable(target);

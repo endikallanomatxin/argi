@@ -361,7 +361,7 @@ pub const CodeGenerator = struct {
                 const result_storage = c.LLVMBuildAlloca(self.builder, symbol.return_type, "call.return.storage");
                 var args = [_]c.LLVMValueRef{ result_storage, input.value_ref };
                 _ = c.LLVMBuildCall2(self.builder, symbol.type_ref, symbol.ref, &args, 2, "");
-                const result = if (call.initializes_auto_deinit != null)
+                const result = if (call.initializes_auto_deinit != null or call.outcome_cleanups.len != 0)
                     c.LLVMBuildLoad2(self.builder, symbol.return_type, result_storage, "call.status")
                 else
                     null;
@@ -2117,11 +2117,16 @@ pub const CodeGenerator = struct {
             _ = c.LLVMBuildCall2(self.builder, fn_type, method, &args, 2, "");
             for (call.consumed_auto_deinits) |node| if (self.dropStateForNode(node)) |drop| self.storeDropState(drop, false);
             for (call.initialized_auto_deinits) |node| if (self.dropStateForNode(node)) |drop| self.storeDropState(drop, true);
+            if (call.outcome_cleanups.len != 0) {
+                const result = c.LLVMBuildLoad2(self.builder, output_type, storage, "virtual.cleanup.result");
+                try self.markOutcomeCleanups(call.outcome_cleanups, result, output_fields);
+            }
             return null;
         }
         const result = try self.callArgi(.{ .ref = method, .type_ref = fn_type, .return_type = output_type, .is_extern = false, .indirect_return = indirect }, patched_input, "virtual.call");
         for (call.consumed_auto_deinits) |node| if (self.dropStateForNode(node)) |drop| self.storeDropState(drop, false);
         for (call.initialized_auto_deinits) |node| if (self.dropStateForNode(node)) |drop| self.storeDropState(drop, true);
+        try self.markOutcomeCleanups(call.outcome_cleanups, result, output_fields);
         if (output_fields.len == 0) return null;
         if (output_fields.len == 1) {
             const field = self.graph.fields.items[output_fields.start];
@@ -2421,9 +2426,43 @@ pub const CodeGenerator = struct {
         if (call.consumes_auto_deinit) |node| if (self.dropStateForNode(node)) |drop| self.storeDropState(drop, false);
         for (call.consumed_auto_deinits) |node| if (self.dropStateForNode(node)) |drop| self.storeDropState(drop, false);
         for (call.initialized_auto_deinits) |node| if (self.dropStateForNode(node)) |drop| self.storeDropState(drop, true);
-        _ = result;
+        if (call.outcome_cleanups.len != 0) {
+            const callee = self.graph.function(call.callee);
+            try self.markOutcomeCleanups(call.outcome_cleanups, result, callee.output);
+        }
         _ = is_extern;
         if (call.initializes_auto_deinit) |node| if (self.dropStateForNode(node)) |drop| self.storeDropState(drop, true);
+    }
+
+    /// Cleanup follows the runtime result even when the result is discarded.
+    /// Inspect nested tags only after all enclosing payloads are selected; an
+    /// inactive payload is not an initialized value that can be read eagerly.
+    fn markOutcomeCleanups(self: *CodeGenerator, cleanups: []const primitives.OutcomeCleanup(graph_mod.Ids), result: llvm.c.LLVMValueRef, outputs: graph_mod.FieldRange) !void {
+        for (cleanups) |cleanup| {
+            const drop = self.dropStateForNode(cleanup.place) orelse continue;
+            if (cleanup.output_index >= outputs.len) return CodegenError.InvalidType;
+            var ty = self.graph.fields.items[outputs.start + cleanup.output_index].ty;
+            var choice = c.LLVMBuildExtractValue(self.builder, result, cleanup.output_index, "cleanup.result");
+            const function = c.LLVMGetBasicBlockParent(c.LLVMGetInsertBlock(self.builder));
+            const done = c.LLVMAppendBasicBlock(function, "cleanup.outcome.done");
+            for (0..cleanup.parent_variants.len + 1) |depth| {
+                const index = if (depth < cleanup.parent_variants.len) cleanup.parent_variants[depth] else cleanup.variant_index;
+                const variants = types.variants(self.graph, ty) orelse return CodegenError.InvalidType;
+                if (index >= variants.len) return CodegenError.InvalidType;
+                const selected = c.LLVMAppendBasicBlock(function, "cleanup.outcome.selected");
+                const tag = if (self.isCEnum(ty)) choice else c.LLVMBuildExtractValue(self.builder, choice, 0, "cleanup.outcome.tag");
+                const matches = c.LLVMBuildICmp(self.builder, c.LLVMIntEQ, tag, c.LLVMConstInt(c.LLVMInt32Type(), index, 0), "cleanup.outcome.matches");
+                _ = c.LLVMBuildCondBr(self.builder, matches, selected, done);
+                c.LLVMPositionBuilderAtEnd(self.builder, selected);
+                if (depth < cleanup.parent_variants.len) {
+                    ty = self.graph.variants.items[variants.start + index].payload_type orelse return CodegenError.InvalidType;
+                    choice = c.LLVMBuildExtractValue(self.builder, choice, index + 1, "cleanup.outcome.payload");
+                }
+            }
+            self.storeDropState(drop, false);
+            _ = c.LLVMBuildBr(self.builder, done);
+            c.LLVMPositionBuilderAtEnd(self.builder, done);
+        }
     }
 
     fn genAutoDeinit(self: *CodeGenerator, auto_id: graph_mod.GlobalAutoDeinitId) !void {

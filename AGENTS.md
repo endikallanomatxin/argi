@@ -295,6 +295,11 @@ feature first.
   updating cleanup, including aliases and structural fields; a call can consume
   several owners. End nested owned roots without ending borrowed dependencies.
   Cleanup annotations persist and relocate with both direct and virtual calls.
+  Outcome-specific consumption selects caller cleanup flags from the returned
+  discriminant even for ignored results and indirect returns. Keep possible
+  cleanup in activation summaries; never disable it unconditionally from a
+  may-consume effect. Reject whole-input conditional destruction without a
+  proven result partition.
   Relocation contracts prove a moved source and an available initialized
   destination with exact whole-place provenance. Materialize destination facts
   before clearing source facts. Ending the source slot generation must retain

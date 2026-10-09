@@ -451,6 +451,17 @@ pub fn Virtualize(comptime Ids: type) type {
     };
 }
 
+/// A returned choice selects whether the caller still owns cleanup of a place.
+/// Parent variants guard nested payload tags before their values are inspected.
+pub fn OutcomeCleanup(comptime Ids: type) type {
+    return struct {
+        place: Ids.NodeId,
+        output_index: u32,
+        parent_variants: []const u32 = &.{},
+        variant_index: u32,
+    };
+}
+
 pub fn VirtualCall(comptime Ids: type) type {
     return struct {
         handle: Ids.NodeId,
@@ -469,6 +480,7 @@ pub fn VirtualCall(comptime Ids: type) type {
         consumed_auto_deinits: []const Ids.NodeId = &.{},
         /// Returning calls enable these destination cleanup flags.
         initialized_auto_deinits: []const Ids.NodeId = &.{},
+        outcome_cleanups: []const OutcomeCleanup(Ids) = &.{},
     };
 }
 
@@ -577,6 +589,7 @@ pub fn Node(comptime Ids: type) type {
                 consumed_auto_deinits: []const Ids.NodeId = &.{},
                 /// Returning calls enable these destination cleanup flags.
                 initialized_auto_deinits: []const Ids.NodeId = &.{},
+                outcome_cleanups: []const OutcomeCleanup(Ids) = &.{},
                 initializes_auto_deinit: ?Ids.NodeId = null,
             },
             virtualize: Ids.VirtualizeId,

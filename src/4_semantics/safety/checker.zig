@@ -1181,10 +1181,12 @@ pub const SafetyChecker = struct {
     ) !void {
         const consumed = try self.callCleanupNodes(summary, argument_ids, arguments, state, false);
         const initialized = try self.callCleanupNodes(summary, argument_ids, arguments, state, true);
+        const outcomes = try self.callOutcomeCleanups(summary, argument_ids, arguments, state);
         const node = &self.graph.nodes.items[@intFromEnum(call_node)];
         if (node.content != .function_call) return;
         node.content.function_call.consumed_auto_deinits = consumed;
         node.content.function_call.initialized_auto_deinits = initialized;
+        node.content.function_call.outcome_cleanups = outcomes;
         for (summary.input_post_states) |post_state| {
             if (post_state.target.projections.len != 0 or post_state.target.input_index >= argument_ids.len) continue;
             const field = self.graph.value_fields.items[@intFromEnum(argument_ids[post_state.target.input_index])];
@@ -1203,9 +1205,71 @@ pub const SafetyChecker = struct {
         return false;
     }
 
+    /// Only definite destruction on a represented exit can suppress cleanup.
+    /// The fallback's possible destruction is insufficient: an ignored result
+    /// must still destroy the resource on its preserving alternatives.
+    fn callOutcomeCleanups(self: *SafetyChecker, summary: facts.SafetySummary, ids: []const graph_mod.GlobalValueFieldId, arguments: []const facts.ValueFacts, state: *FunctionState) ![]const primitives.OutcomeCleanup(graph_mod.Ids) {
+        var result = std.array_list.Managed(primitives.OutcomeCleanup(graph_mod.Ids)).init(self.allocator);
+        // A possible consumption without an exact result partition cannot be
+        // implemented by either always keeping or always disabling cleanup.
+        // Projected may-states also describe opaque backing-storage replacement;
+        // they do not establish consumption of the whole input owner.
+        for (summary.input_post_states) |post| {
+            if (post.initializedness != .maybe_initialized or !post.ends_previous_roots or post.target.projections.len != 0) continue;
+            const target = try self.resolveSummaryInputPath(post.target, ids, arguments, state) orelse continue;
+            var owns_cleanup = false;
+            for (self.graph.auto_deinits.items) |cleanup| if (cleanup.binding == target.root) {
+                owns_cleanup = true;
+                break;
+            };
+            if (!owns_cleanup) continue;
+            var represented = false;
+            for (summary.outcome_post_states) |candidate| {
+                var definite = false;
+                var ambiguous = false;
+                for (summary.outcome_post_states) |outcome| {
+                    if (outcome.output_index != candidate.output_index) continue;
+                    for (outcome.input_post_states) |selected| {
+                        if (!sameInputPath(selected.target, post.target)) continue;
+                        ambiguous = ambiguous or selected.initializedness == .maybe_initialized;
+                        definite = definite or (selected.initializedness == .deinitialized and selected.ends_previous_roots);
+                    }
+                }
+                if (definite and !ambiguous) {
+                    represented = true;
+                    break;
+                }
+            }
+            if (!represented) try self.report(self.graph.binding(target.root).source, "cannot select cleanup for conditional consumption; return a distinct result variant on each consuming or preserving path, or consume a moved lexical owner", .{});
+        }
+        for (summary.outcome_post_states) |outcome| {
+            for (outcome.input_post_states) |post| {
+                if (post.initializedness != .deinitialized or !post.ends_previous_roots) continue;
+                var unconditional = false;
+                for (summary.input_post_states) |common| if (sameInputPath(common.target, post.target) and
+                    common.initializedness == .deinitialized and common.ends_previous_roots)
+                {
+                    unconditional = true;
+                    break;
+                };
+                if (unconditional) continue;
+                const target = try self.resolveSummaryInputPath(post.target, ids, arguments, state) orelse continue;
+                const node = try self.cleanupNodeForPlace(target) orelse {
+                    for (self.graph.auto_deinits.items) |cleanup| if (cleanup.binding == target.root) {
+                        try self.report(self.graph.binding(target.root).source, "conditional consumption needs a lexical cleanup place; move the indexed or indirect owner into a local value first", .{});
+                        break;
+                    };
+                    continue;
+                };
+                try result.append(.{ .place = node, .output_index = outcome.output_index, .parent_variants = outcome.parent_variants, .variant_index = outcome.variant_index });
+            }
+        }
+        return result.toOwnedSlice();
+    }
+
     fn cleanupTransition(post: facts.PlacePostState) bool {
         return post.requires_available_destination or post.initializedness == .moved or
-            (post.initializedness == .deinitialized and post.ends_previous_roots);
+            ((post.initializedness == .deinitialized or post.initializedness == .maybe_initialized) and post.ends_previous_roots);
     }
 
     fn validateConsumedInputAliasing(self: *SafetyChecker, source: primitives.SourceRef, summary: facts.SafetySummary, ids: []const graph_mod.GlobalValueFieldId, arguments: []const facts.ValueFacts, state: *FunctionState) !bool {
@@ -3693,8 +3757,10 @@ pub const SafetyChecker = struct {
         if (!try self.validateConsumedInputAliasing(input_node.source, summary, argument_nodes, values, &candidate)) return .{};
         const consumed = try self.callCleanupNodes(summary, argument_nodes, values, &candidate, false);
         const initialized = try self.callCleanupNodes(summary, argument_nodes, values, &candidate, true);
+        const outcomes = try self.callOutcomeCleanups(summary, argument_nodes, values, &candidate);
         self.graph.virtual_calls.items[@intFromEnum(id)].consumed_auto_deinits = consumed;
         self.graph.virtual_calls.items[@intFromEnum(id)].initialized_auto_deinits = initialized;
+        self.graph.virtual_calls.items[@intFromEnum(id)].outcome_cleanups = outcomes;
         const result = (try self.applyVirtualContractSummary(call, input_node.source, argument_nodes, values, &candidate)) orelse facts.ValueFacts{};
         if (self.diagnostics.list.items.len != diagnostic_count) return .{};
         self.commitState(state, &candidate);
