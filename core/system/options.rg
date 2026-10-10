@@ -2,10 +2,13 @@
 ..missing_option_value
 
 ArgumentSource: Abstract = (
-    length(.self: &Self) -> (.count: UIntNative)
+    length(.self: &Self) -> (.count: UIntNative) where {}
     get(.self: &Self, .index: UIntNative) -> (
         .result : Errable#(StringView, (..out_of_bounds))
-    )
+    ) where {
+        on result ..ok { depends_on(result, self) }
+        on result ..error { depends_on(result, error_tracer) }
+    }
 )
 
 Arguments implements ArgumentSource

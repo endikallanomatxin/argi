@@ -120,7 +120,7 @@ outcomes retain their controlling output and nested payload path. Callers attach
 proofs to the current generation and refine them through that result; stable
 lexical forwarding preserves the relation in wrapper summaries.
 
-The next storage dimensions must retain variant-indexed return effects,
+Further storage dimensions must retain variant-indexed return effects,
 including normal and early-return cleanup, before computing the unconditional
 fallback. Adding clauses or output facts alone cannot recover correlations after
 a branch join. Initializedness, ownership, capability use and cleanup must agree
@@ -128,9 +128,10 @@ on the same guard instead of postponing only generation invalidation.
 
 Instantiate guarded effects against actual caller storage identities. Keep
 output payload views separate from the authoritative input transitions. Common
-unconditional consumption already establishes deinitialized caller places;
-conditional consumption must additionally track which cleanup remains active
-until discrimination, including when the result is ignored.
+unconditional consumption establishes deinitialized caller places. Conditional
+consumption and whole-place relocation also retain selected caller resource
+states and cleanup flags, including when the result is ignored. Extending these
+effects to opaque storage must preserve that agreement.
 
 Required behavior includes:
 
@@ -222,8 +223,9 @@ https://rust-lang.github.io/polonius/rules/loans.html
    and choice tests on computed expressions. Keep conservative fallback for
    unproven relations and output slots that may be rewritten.
 2. Add checked storing/initializing effects and opaque owner obligations. Extend
-   unconditional known-input consumption to outcome guards and erased storage,
-   keeping resource state and cleanup correlated with the selected outcome.
+   existing conditional known-input consumption and relocation to erased storage
+   only with representable post-values and cleanup identities, keeping resource
+   state and cleanup correlated with the selected outcome.
 3. Measure representation growth and reevaluations using core-sized examples;
    retain selective structural partitions rather than products of independent
    output discriminants.

@@ -11134,6 +11134,15 @@ test "feature_tests/polymorphism/210_virtual_nested_consumption_inherited" {
     try runExpect("tests/feature_tests/polymorphism/210_virtual_nested_consumption_inherited", 0);
 }
 
+test "feature_tests/polymorphism/244_core_argument_source" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/244_core_argument_source");
+    try runExpect("tests/feature_tests/polymorphism/244_core_argument_source", 0);
+}
+
+test "feature_tests/polymorphism/245X_core_argument_source_escape" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/245X_core_argument_source_escape", "function output cannot depend on a local storage generation", "failed without a diagnostic");
+}
+
 test "feature_tests/polymorphism/211X_conditional_consumption_replaces_dependency" {
     try buildExpectFail("tests/feature_tests/polymorphism/211X_conditional_consumption_replaces_dependency", "maybe_initialized");
 }

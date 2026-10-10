@@ -23,6 +23,12 @@ permissions and ownership transfers are separate obligations.
 
 ## Remaining work
 
+Keep unsupported relations conservative and require explicit contracts for
+erasure. Before extending the vocabulary, identify a concrete core
+operation that needs the additional precision. In particular, keep `Resizable`
+statically dispatched until its hidden ownership transitions can be expressed;
+adding dependency permissions alone would not describe insertion or removal.
+
 Use [the precision study](safety_effect_precision.md) to guide the next effects
 implementation. Its structural boundary retains individual discriminants and
 nested payload paths, but conservatively forgets conjunctions of independent

@@ -453,6 +453,13 @@ An unannotated abstract can still select a statically known implementation,
 but cannot be erased into a virtual handle. Adding an implementation does not
 change the safety obligations of existing virtual calls.
 
+Core's `ArgumentSource` illustrates borrowed results: `length` has an empty
+contract, while `get` permits its successful `StringView` to depend on `self`
+and its error to depend on `error_tracer`. Both native `Arguments` and borrowed
+`CliArgumentViews` satisfy this signature. A virtual conversion preserves the
+source's dependencies; a wrapper returning `get` cannot outlive locally owned
+argument storage merely because the receiver's concrete layout was erased.
+
 Private concrete receiver fields are not fields of the virtual handle. A
 returned borrow still depends on the receiver's storage; erasing its layout
 must not erase that lifetime dependency. See `34_safety_model.md` for roots,
