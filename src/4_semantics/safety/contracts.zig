@@ -90,32 +90,58 @@ pub fn fromDeclaration(allocator: std.mem.Allocator, declaration: @import("../pr
     var conditional: std.ArrayList(Contract.Outcome) = .empty;
     const consumed_inputs = try allocator.alloc(facts.InputPath, declaration.consumed_inputs.len);
     for (declaration.consumed_inputs, consumed_inputs) |index, *path| path.* = .{ .input_index = index };
-    try appendConditionalContracts(allocator, declaration.output_count, declaration.outcomes, &.{}, invalidates, invalidated_domains, consumed_inputs, &conditional);
     const relocations = try allocator.alloc(Contract.Relocation, declaration.relocations.len);
     for (declaration.relocations, relocations) |declared, *relocation| relocation.* = .{ .destination = .{ .input_index = declared.destination }, .source = .{ .input_index = declared.source } };
-    for (conditional.items) |outcome| {
-        @constCast(outcome.effects).relocations = relocations;
-    }
+    try appendConditionalContracts(allocator, declaration.output_count, declaration.outcomes, &.{}, invalidates, invalidated_domains, consumed_inputs, relocations, &conditional);
     return .{ .outputs = outputs, .consumed_inputs = consumed_inputs, .relocations = relocations, .invalidates = invalidates, .invalidated_domains = invalidated_domains, .outcomes = try conditional.toOwnedSlice(allocator) };
 }
 
-fn appendConditionalContracts(allocator: std.mem.Allocator, output_count: u32, outcomes: []const @import("../primitives/schema.zig").MethodSafetyContract.Outcome, parents: []const u32, common_invalidates: []const facts.InputPath, common_domains: []const facts.InputDomain, common_consumed: []const facts.InputPath, result: *std.ArrayList(Contract.Outcome)) anyerror!void {
+fn appendConditionalContracts(allocator: std.mem.Allocator, output_count: u32, outcomes: []const @import("../primitives/schema.zig").MethodSafetyContract.Outcome, parents: []const u32, common_invalidates: []const facts.InputPath, common_domains: []const facts.InputDomain, common_consumed: []const facts.InputPath, common_relocations: []const Contract.Relocation, result: *std.ArrayList(Contract.Outcome)) anyerror!void {
     for (outcomes) |outcome| {
         const effects = try allocator.create(Contract);
         effects.* = try fromDeclaration(allocator, .{
             .output_count = output_count,
             .invalidates = outcome.invalidates,
             .consumed_inputs = outcome.consumed_inputs,
+            .relocations = outcome.relocations,
             .invalidated_domains = outcome.invalidated_domains,
             .source = outcome.source,
         });
         effects.invalidates = try std.mem.concat(allocator, facts.InputPath, &.{ common_invalidates, effects.invalidates });
         effects.invalidated_domains = try std.mem.concat(allocator, facts.InputDomain, &.{ common_domains, effects.invalidated_domains });
         effects.consumed_inputs = try std.mem.concat(allocator, facts.InputPath, &.{ common_consumed, effects.consumed_inputs });
+        // Selected exits retain every enclosing transfer guarantee, including
+        // those declared before an otherwise empty nested selector.
+        effects.relocations = try std.mem.concat(allocator, Contract.Relocation, &.{ common_relocations, effects.relocations });
         const variant = outcome.variant_index orelse return error.UnresolvedOutcomeContract;
         try result.append(allocator, .{ .output_index = outcome.output_index, .parent_variants = parents, .variant_index = variant, .effects = effects });
         const child_parents = try std.mem.concat(allocator, u32, &.{ parents, &.{variant} });
-        try appendConditionalContracts(allocator, output_count, outcome.outcomes, child_parents, effects.invalidates, effects.invalidated_domains, effects.consumed_inputs, result);
+        try appendConditionalContracts(allocator, output_count, outcome.outcomes, child_parents, effects.invalidates, effects.invalidated_domains, effects.consumed_inputs, effects.relocations, result);
+    }
+}
+
+test "relocation declarations retain common and nested guarantees" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const source = @import("../primitives/schema.zig").SourceRef{ .file_index = 0, .offset = 0 };
+    const contract = try fromDeclaration(arena.allocator(), .{
+        .output_count = 1,
+        .source = source,
+        .relocations = &.{.{ .source = 0, .destination = 1 }},
+        .outcomes = &.{.{
+            .variant = .{ .start = 0, .len = 0 },
+            .variant_index = 0,
+            .source = source,
+            .relocations = &.{.{ .source = 2, .destination = 3 }},
+            .outcomes = &.{.{ .variant = .{ .start = 0, .len = 0 }, .variant_index = 1, .source = source }},
+        }},
+    });
+    try std.testing.expectEqual(@as(usize, 1), contract.relocations.len);
+    try std.testing.expectEqual(@as(usize, 2), contract.outcomes.len);
+    for (contract.outcomes) |outcome| {
+        try std.testing.expectEqual(@as(usize, 2), outcome.effects.relocations.len);
+        try std.testing.expectEqual(@as(u32, 0), outcome.effects.relocations[0].source.input_index);
+        try std.testing.expectEqual(@as(u32, 2), outcome.effects.relocations[1].source.input_index);
     }
 }
 

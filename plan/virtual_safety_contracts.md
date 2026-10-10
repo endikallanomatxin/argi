@@ -30,8 +30,9 @@ discriminants and predicates over ordinary values.
 
 - Extend guarded generation summaries to branch-assigned outputs and
   intermediate results, choice tests on computed expressions and error
-  propagation. Direct forwarding, bound discrimination, moves and copies
-  preserve call provenance; more complex
+  propagation. Preserve the originating output index when a wrapper forwards
+  a field projected from a multi-output call. Direct forwarding, bound
+  discrimination, moves and copies preserve call provenance; more complex
   flows must remain conservative without reviving expired roots.
 - Extend `on output ..variant` to effects on other outputs.
   Use shared effect records rather than eagerly enumerating a Cartesian product
@@ -61,8 +62,6 @@ discriminants and predicates over ordinary values.
 
 ## Remaining storage transitions
 
-Expose relocation in abstract outcome clauses, checking inherited permissions
-and selecting complete source/destination transitions from fixed declarations.
 Extend paired refinement beyond whole-value transfers only when post-values
 can be represented without recovering old caller state.
 Extend conditional consumption refinement to opaque effects and

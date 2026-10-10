@@ -31,6 +31,7 @@ fn verifyOutcome(graph: *const graph_mod.ModuleSemanticGraph, outcome: @import("
     }
     for (outcome.owned_outputs) |index| try require(index == outcome.output_index);
     for (outcome.consumed_inputs) |index| try require(index < input_count);
+    for (outcome.relocations) |relocation| try require(relocation.destination < input_count and relocation.source < input_count);
     for (outcome.invalidates) |index| try require(index < input_count);
     for (outcome.invalidated_domains) |domain| try require(domain.input_index < input_count);
     for (outcome.outcomes) |child| {

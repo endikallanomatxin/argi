@@ -359,10 +359,6 @@ pub const Context = struct {
                     var child = requirement;
                     child.safety_contract = data.body;
                     const effect = (try self.lowerMethodSafetyContract(child, domains)).?;
-                    if (effect.relocations.len != 0) {
-                        try self.contractError(statement, "conditional relocates requires guarded resource state and cleanup; use an unconditional clause for now");
-                        unreachable;
-                    }
                     if (effect.referents.len != 0 or effect.transfers.len != 0) {
                         try self.contractError(statement, "conditional refers_to and transfers require more precise outcome proofs");
                         unreachable;
@@ -392,6 +388,7 @@ pub const Context = struct {
                         .domain_dependencies = effect.domain_dependencies,
                         .owned_outputs = effect.owned_outputs,
                         .consumed_inputs = effect.consumed_inputs,
+                        .relocations = effect.relocations,
                         .invalidates = effect.invalidates,
                         .invalidated_domains = effect.invalidated_domains,
                         .outcomes = effect.outcomes,

@@ -323,6 +323,12 @@ feature first.
   clears the speculative destination and confirms current source facts. Keep
   transferred owned roots alive in both cases, and never restore value snapshots.
   Reject overlapping conditional source inputs before applying any effects.
+  Abstract outcome relocation inherits enclosing guarantees. Build its virtual
+  summary from declarations, including available destinations and conservative
+  unselected states; implementation lists only prove conformance. Shared input
+  transitions across independent outputs require correlated facts. Alternative
+  relocation pairs sharing an input require richer post-value provenance and
+  remain unsupported.
   Nested generation guards retain their enclosing payload variant path. Partition
   only paths requested by declarations or forwarded results, preserving a
   conservative effect record elsewhere instead of expanding shared choice types.

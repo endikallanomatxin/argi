@@ -179,6 +179,9 @@ pub const Infer = struct {
                     destination = true;
                     break;
                 };
+                for (contract.outcomes) |outcome| for (outcome.effects.relocations) |relocation| {
+                    if (relocation.destination.input_index == index) destination = true;
+                };
                 if (!destination) try required_inputs.append(.{ .input_index = @intCast(index) });
             }
             const required = try required_inputs.toOwnedSlice();
@@ -214,7 +217,7 @@ pub const Infer = struct {
             for (contract.outcomes) |outcome| try wanted.append(.{ .output_index = outcome.output_index, .parent_variants = outcome.parent_variants, .variant_index = outcome.variant_index });
             for (outputs, 0..) |_, output_index| {
                 var guarded_generation = false;
-                for (contract.outcomes) |outcome| if (outcome.output_index == output_index and (outcome.effects.invalidates.len != 0 or outcome.effects.invalidated_domains.len != 0 or outcome.effects.consumed_inputs.len != 0)) {
+                for (contract.outcomes) |outcome| if (outcome.output_index == output_index and (outcome.effects.invalidates.len != 0 or outcome.effects.invalidated_domains.len != 0 or outcome.effects.consumed_inputs.len != 0 or outcome.effects.relocations.len != 0)) {
                     guarded_generation = true;
                     break;
                 };
@@ -242,7 +245,7 @@ pub const Infer = struct {
                 for (outcome.input_post_states) |post| {
                     if (self.findInputPostState(fallback_states.items, post.target) == null) {
                         var fallback = post;
-                        if (fallback.initializedness == .deinitialized) fallback.initializedness = .maybe_initialized;
+                        if (fallback.initializedness == .deinitialized or fallback.initializedness == .moved or fallback.requires_available_destination) fallback.initializedness = .maybe_initialized;
                         try fallback_states.append(fallback);
                     }
                 }
@@ -261,7 +264,7 @@ pub const Infer = struct {
         var wanted = std.array_list.Managed(outcome_selectors.Selector).init(self.allocator);
         try wanted.appendSlice(self.requested_selectors.get(method) orelse &.{});
         for (contract.outcomes) |outcome| {
-            if (outcome.effects.invalidates.len == 0 and outcome.effects.invalidated_domains.len == 0 and outcome.effects.consumed_inputs.len == 0) continue;
+            if (outcome.effects.invalidates.len == 0 and outcome.effects.invalidated_domains.len == 0 and outcome.effects.consumed_inputs.len == 0 and outcome.effects.relocations.len == 0) continue;
             const selector = outcome_selectors.Selector{ .output_index = outcome.output_index, .parent_variants = outcome.parent_variants, .variant_index = outcome.variant_index };
             var duplicate = false;
             for (wanted.items) |existing| if (existing.output_index == selector.output_index and existing.variant_index == selector.variant_index and std.mem.eql(u32, existing.parent_variants, selector.parent_variants)) {
@@ -278,6 +281,8 @@ pub const Infer = struct {
     /// state when a later binding use reveals its tag. Subsequent calls and
     /// writes still contribute their ordinary effects in source order.
     fn forwardOrigin(self: *Infer, value: graph_mod.GlobalNodeId, parents: []const u32, seen: *std.array_list.Managed(graph_mod.GlobalBindingId)) anyerror!?ForwardOrigin {
+        // TODO: Track the originating output index through projections of a
+        // multi-output call before forwarding its selected resource effects.
         return switch (self.graph.node(value).content) {
             .function_call, .virtual_call => .{ .call = value, .parent_variants = parents },
             .binding_use => |binding| blk: {

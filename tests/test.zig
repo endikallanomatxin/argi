@@ -10872,8 +10872,52 @@ test "feature_tests/polymorphism/183_virtual_relocates_allocation" {
     try runExpect("tests/feature_tests/polymorphism/183_virtual_relocates_allocation", 0);
 }
 
-test "feature_tests/polymorphism/184X_virtual_relocates_guarded" {
-    try buildExpectFail("tests/feature_tests/polymorphism/184X_virtual_relocates_guarded", "conditional relocates requires guarded resource state and cleanup");
+test "feature_tests/polymorphism/225X_virtual_relocates_wrong_outcome" {
+    try buildExpectFail("tests/feature_tests/polymorphism/225X_virtual_relocates_wrong_outcome", "storage transition is not permitted by this preservation contract");
+}
+
+test "feature_tests/polymorphism/226X_virtual_relocates_inherited_consumes" {
+    try buildExpectFail("tests/feature_tests/polymorphism/226X_virtual_relocates_inherited_consumes", "relocates and consumes cannot target the same input");
+}
+
+test "feature_tests/polymorphism/227X_virtual_relocates_inherited_duplicate" {
+    try buildExpectFail("tests/feature_tests/polymorphism/227X_virtual_relocates_inherited_duplicate", "inherited relocates clauses cannot share");
+}
+
+test "feature_tests/polymorphism/228X_virtual_relocates_occupied" {
+    try buildExpectFail("tests/feature_tests/polymorphism/228X_virtual_relocates_occupied", "relocate destination is initialized");
+}
+
+test "feature_tests/polymorphism/229X_virtual_relocates_expired_reference" {
+    try buildExpectFail("tests/feature_tests/polymorphism/229X_virtual_relocates_expired_reference", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/230_virtual_relocates_multiple_outputs" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/230_virtual_relocates_multiple_outputs");
+    try runExpect("tests/feature_tests/polymorphism/230_virtual_relocates_multiple_outputs", 0);
+}
+
+test "feature_tests/polymorphism/231_virtual_relocates_nested" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/231_virtual_relocates_nested");
+    try runExpect("tests/feature_tests/polymorphism/231_virtual_relocates_nested", 0);
+}
+
+test "feature_tests/polymorphism/232_virtual_relocates_nested_inheritance" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/232_virtual_relocates_nested_inheritance");
+    try runExpect("tests/feature_tests/polymorphism/232_virtual_relocates_nested_inheritance", 0);
+}
+
+test "feature_tests/polymorphism/233X_virtual_relocates_correlated_outputs" {
+    try buildExpectFail("tests/feature_tests/polymorphism/233X_virtual_relocates_correlated_outputs", "shared inputs across outputs require correlated result facts");
+}
+
+test "feature_tests/polymorphism/234X_virtual_relocates_alternative_destinations" {
+    try buildExpectFail("tests/feature_tests/polymorphism/234X_virtual_relocates_alternative_destinations", "alternative relocates clauses sharing an input must describe the same source and destination");
+}
+
+test "feature_tests/polymorphism/184_virtual_relocates_guarded" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/184_virtual_relocates_guarded");
+    try runExpect("tests/feature_tests/polymorphism/184_virtual_relocates_guarded", 0);
 }
 
 test "feature_tests/polymorphism/212_conditional_relocates_discard" {

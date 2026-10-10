@@ -12,6 +12,70 @@ const global_types = @import("types.zig");
 const primitives = @import("../primitives/schema.zig");
 const reach_context = @import("reach_context.zig");
 
+// Outcome clauses inherit enclosing guarantees and add their own. Compare every descendant
+// before flattening: independent outputs cannot select a shared resource state.
+fn relocationInheritanceFailure(contract: primitives.MethodSafetyContract) ?[]const u8 {
+    for (contract.outcomes) |outcome| {
+        if (relocationDescendantFailure(contract, outcome)) |reason| return reason;
+        const child = primitives.MethodSafetyContract{
+            .output_count = contract.output_count,
+            .relocations = outcome.relocations,
+            .consumed_inputs = outcome.consumed_inputs,
+            .invalidates = outcome.invalidates,
+            .outcomes = outcome.outcomes,
+            .source = outcome.source,
+        };
+        if (relocationInheritanceFailure(child)) |reason| return reason;
+        for (contract.outcomes) |other| {
+            if (outcome.output_index == other.output_index) {
+                if (relocationAlternativesOverlap(outcome, other)) return "alternative relocates clauses sharing an input must describe the same source and destination";
+                continue;
+            }
+            if (relocationAcrossOutputs(outcome, other)) return "relocation effects on shared inputs across outputs require correlated result facts";
+        }
+    }
+    return null;
+}
+
+fn relocationDescendantFailure(parent: primitives.MethodSafetyContract, child: primitives.MethodSafetyContract.Outcome) ?[]const u8 {
+    for (parent.relocations) |relocation| {
+        for (child.consumed_inputs) |input| if (input == relocation.source or input == relocation.destination) return "relocates and consumes cannot target the same input";
+        for (child.invalidates) |input| if (input == relocation.source or input == relocation.destination) return "relocates already defines its source and destination generations";
+        for (child.relocations) |nested| if (nested.source == relocation.source or nested.source == relocation.destination or nested.destination == relocation.source or nested.destination == relocation.destination) return "inherited relocates clauses cannot share source or destination inputs";
+    }
+    for (child.relocations) |relocation| {
+        for (parent.consumed_inputs) |input| if (input == relocation.source or input == relocation.destination) return "relocates and consumes cannot target the same input";
+        for (parent.invalidates) |input| if (input == relocation.source or input == relocation.destination) return "relocates already defines its source and destination generations";
+    }
+    for (child.outcomes) |nested| if (relocationDescendantFailure(parent, nested)) |reason| return reason;
+    return null;
+}
+
+fn relocationAcrossOutputs(a: primitives.MethodSafetyContract.Outcome, b: primitives.MethodSafetyContract.Outcome) bool {
+    for (a.relocations) |relocation| if (relocationConflictsWithOutcome(relocation, b, true)) return true;
+    for (a.outcomes) |child| if (relocationAcrossOutputs(child, b)) return true;
+    return false;
+}
+
+fn relocationAlternativesOverlap(a: primitives.MethodSafetyContract.Outcome, b: primitives.MethodSafetyContract.Outcome) bool {
+    for (a.relocations) |relocation| if (relocationConflictsWithOutcome(relocation, b, false)) return true;
+    for (a.outcomes) |child| if (relocationAlternativesOverlap(child, b)) return true;
+    return false;
+}
+
+fn relocationConflictsWithOutcome(relocation: primitives.MethodSafetyContract.Relocation, outcome: primitives.MethodSafetyContract.Outcome, independent_output: bool) bool {
+    for (outcome.relocations) |other| {
+        if (!independent_output and relocation.source == other.source and relocation.destination == other.destination) continue;
+        if (relocation.source == other.source or relocation.source == other.destination or relocation.destination == other.source or relocation.destination == other.destination) return true;
+    }
+    if (independent_output) {
+        for (outcome.consumed_inputs) |input| if (input == relocation.source or input == relocation.destination) return true;
+        for (outcome.invalidates) |input| if (input == relocation.source or input == relocation.destination) return true;
+    }
+    for (outcome.outcomes) |child| if (relocationConflictsWithOutcome(relocation, child, independent_output)) return true;
+    return false;
+}
+
 pub const Stats = struct {
     checks: u32 = 0,
     concrete_hits: u32 = 0,
@@ -1199,6 +1263,7 @@ pub const Resolver = struct {
             .output_count = 0,
             .dependencies = outcome.dependencies,
             .consumed_inputs = outcome.consumed_inputs,
+            .relocations = outcome.relocations,
             .domain_dependencies = outcome.domain_dependencies,
             .invalidates = outcome.invalidates,
             .invalidated_domains = outcome.invalidated_domains,
@@ -1214,6 +1279,7 @@ pub const Resolver = struct {
     }
 
     fn methodSafetyContractFailure(self: *Resolver, inputs: global_sg.FieldRange, outputs: global_sg.FieldRange, output_type: global_sg.GlobalTypeId, abstract_ty: global_sg.GlobalTypeId, located: LocatedAbstractDefinition, contract: primitives.MethodSafetyContract, erased_self: bool) !?[]const u8 {
+        if (relocationInheritanceFailure(contract)) |message| return message;
         var reason: ?[]const u8 = null;
         for (contract.outcomes, 0..) |outcome, outcome_index| {
             if (outcome.output_index >= outputs.len) return "outcome contract names an unknown output";

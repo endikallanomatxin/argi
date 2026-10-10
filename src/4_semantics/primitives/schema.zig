@@ -219,6 +219,7 @@ pub const MethodSafetyContract = struct {
         domain_dependencies: []const DomainDependency = &.{},
         owned_outputs: []const u32 = &.{},
         consumed_inputs: []const u32 = &.{},
+        relocations: []const Relocation = &.{},
         invalidates: []const u32 = &.{},
         invalidated_domains: []const DomainInput = &.{},
         /// Nested selectors follow the selected payload, never another output.

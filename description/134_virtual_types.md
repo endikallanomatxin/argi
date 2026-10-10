@@ -304,14 +304,31 @@ outcome. The result selects the source and destination availability together;
 cleanup follows the actual transition even when the caller discards the result.
 A preserving outcome leaves the source initialized and the destination available.
 
+```rg
+Mover: Abstract = (
+    transfer(.self: &Self, .source: $&Resource, .destination: $&Resource, .move: Bool)
+        -> (.result: ?Int32) where {
+        on result ..some { relocates(destination, source) }
+        on result ..none {}
+    }
+)
+```
+
+Nested selectors inherit enclosing relocation guarantees. The selected output
+may be one of several results; the same rules apply to indirect returns.
+Relocations sharing inputs across independent output discriminants require
+correlated result facts and are outside this model's precision boundary.
+Alternative relocations sharing an input must name the same source and
+destination; selecting between different ownership destinations requires richer
+post-value facts and remains unsupported.
+
 > [!IMPLEMENTATION]
-> Relocation clauses currently require unconditional known-type inputs.
-> Concrete conditional relocation selects cleanup and refines both known caller
+> Relocation clauses require known-type inputs.
+> Conditional relocation selects cleanup and refines both known caller
 > places from one returned discriminant. Proofs retain both current storage
 > generations; overwrites and independent calls cannot replay them. Partial
 > replacements and unrepresented effects retain conservative availability.
-> Conditional abstract clauses, erased `Self`, and mapped opaque storage
-> transitions remain
+> Erased `Self` and mapped opaque storage transitions remain
 > unsupported. Indexed owners without lexical cleanup identities must
 > first be moved into lexical owners.
 
