@@ -187,16 +187,7 @@ pub const Failure = struct {
 /// an expired local generation or certifies physical pointer validity.
 pub fn check(contract: Contract, summary: facts.SafetySummary) ?Failure {
     for (contract.relocations) |relocation| {
-        var source_moved = false;
-        var destination_initialized = false;
-        for (summary.input_post_states) |state| {
-            if (samePath(state.target, relocation.source) and state.initializedness == .moved and
-                !state.ends_previous_roots and emptyValue(state.value)) source_moved = true;
-            if (samePath(state.target, relocation.destination) and state.initializedness == .initialized and
-                state.requires_available_destination and state.refreshes_storage_generation and
-                !state.ends_previous_roots and exactRelocatedValue(state.value, relocation.source)) destination_initialized = true;
-        }
-        if (!source_moved or !destination_initialized) return .{ .kind = .missing_relocation, .input = relocation.destination };
+        if (!provesRelocation(relocation, summary.input_post_states)) return .{ .kind = .missing_relocation, .input = relocation.destination };
     }
     // Consumption is a guarantee, not merely permission to sometimes destroy
     // a value. A caller can disable cleanup only after every exit proves it.
@@ -238,11 +229,19 @@ pub fn check(contract: Contract, summary: facts.SafetySummary) ?Failure {
                 has_proof = true;
                 break;
             };
-            if (has_proof and permitsPostState(outcome.effects.*, state)) permitted = true;
+            if (has_proof and permitsMayPostState(outcome.effects.*, state)) permitted = true;
         }
         if (!permitted) return .{ .kind = .unsupported_post_state, .input = state.target };
     }
     for (contract.outcomes) |required| {
+        for (required.effects.relocations) |relocation| {
+            var represented = false;
+            for (summary.outcome_post_states) |actual| if (selectorCovers(required, actual)) {
+                represented = true;
+                break;
+            };
+            if (!represented) return .{ .kind = .missing_relocation, .input = relocation.destination };
+        }
         if (required.effects.consumed_inputs.len == 0) continue;
         var represented = false;
         for (summary.outcome_post_states) |actual| if (selectorCovers(required, actual)) {
@@ -254,6 +253,9 @@ pub fn check(contract: Contract, summary: facts.SafetySummary) ?Failure {
     for (summary.outcome_post_states) |outcome| {
         if (!outcome.reachable) continue;
         const allowed = effectsForSelector(contract, outcome);
+        for (allowed.relocations) |relocation| {
+            if (!provesRelocation(relocation, outcome.input_post_states)) return .{ .kind = .missing_relocation, .input = relocation.destination, .outcome = .{ .output_index = outcome.output_index, .parent_variants = outcome.parent_variants, .variant_index = outcome.variant_index } };
+        }
         for (allowed.consumed_inputs) |input| {
             var consumed = false;
             for (outcome.input_post_states) |state| if (samePath(state.target, input) and state.initializedness == .deinitialized and state.ends_previous_roots) {
@@ -397,6 +399,41 @@ fn exactRelocatedValue(actual: facts.ValueEffect, source: facts.InputPath) bool 
     var remaining = actual;
     remaining.input_place_values = &.{};
     return emptyValue(remaining);
+}
+
+fn provesRelocation(relocation: Contract.Relocation, states: []const facts.PlacePostState) bool {
+    var source_moved = false;
+    var destination_initialized = false;
+    const permission = Contract{ .outputs = &.{}, .relocations = &.{relocation} };
+    for (states) |state| {
+        if (!permitsPostState(permission, state)) continue;
+        if (samePath(state.target, relocation.source)) source_moved = true;
+        if (samePath(state.target, relocation.destination)) destination_initialized = true;
+    }
+    return source_moved and destination_initialized;
+}
+
+/// A union of exit effects is not a guarantee. Only the fallback can admit a
+/// possibly moved source or initialized destination; each represented exit
+/// must independently prove the complete transition and exact provenance.
+fn permitsMayPostState(contract: Contract, state: facts.PlacePostState) bool {
+    if (permitsPostState(contract, state)) return true;
+    if (state.initializedness != .maybe_initialized) return false;
+    for (contract.relocations) |relocation| {
+        var definite = state;
+        if (samePath(state.target, relocation.source)) {
+            var value = state.value;
+            for (value.input_place_values) |path| if (!samePath(path, relocation.source)) return false;
+            value.input_place_values = &.{};
+            if (!emptyValue(value)) return false;
+            definite.initializedness = .moved;
+            definite.value = .{};
+        } else if (samePath(state.target, relocation.destination)) {
+            definite.initializedness = .initialized;
+        } else continue;
+        return permitsPostState(contract, definite);
+    }
+    return false;
 }
 
 fn permitsPostState(contract: Contract, state: facts.PlacePostState) bool {
@@ -639,4 +676,75 @@ test "safety contracts relocation guarantees both transitions and exact ownershi
     wrong = initialized;
     wrong.requires_available_destination = false;
     try std.testing.expectEqual(.missing_relocation, check(contract, .{ .input_post_states = &.{ moved, wrong } }).?.kind);
+}
+
+test "safety contracts conditional relocation requires both transitions on the selected exit" {
+    const source = facts.InputPath{ .input_index = 1 };
+    const destination = facts.InputPath{ .input_index = 2 };
+    const relocation = Contract{ .outputs = &.{}, .relocations = &.{.{ .destination = destination, .source = source }} };
+    const preserving = Contract{ .outputs = &.{} };
+    const contract = Contract{
+        .outputs = &.{ .{}, .{} },
+        .outcomes = &.{
+            .{ .output_index = 1, .variant_index = 0, .effects = &relocation },
+            .{ .output_index = 1, .variant_index = 1, .effects = &preserving },
+        },
+    };
+    const moved = facts.PlacePostState{ .target = source, .initializedness = .moved };
+    const initialized = facts.PlacePostState{
+        .target = destination,
+        .initializedness = .initialized,
+        .value = .{ .input_place_values = &.{source} },
+        .requires_available_destination = true,
+        .refreshes_storage_generation = true,
+    };
+    var possible_source = moved;
+    possible_source.initializedness = .maybe_initialized;
+    possible_source.value = .{ .input_place_values = &.{source} };
+    var possible_destination = initialized;
+    possible_destination.initializedness = .maybe_initialized;
+    var exits = [_]facts.OutcomePostStates{
+        .{ .output_index = 1, .variant_index = 0, .input_post_states = &.{ moved, initialized } },
+        .{ .output_index = 1, .variant_index = 1, .input_post_states = &.{} },
+    };
+    const summary = facts.SafetySummary{
+        .outputs = &.{ .{}, .{} },
+        .input_post_states = &.{ possible_source, possible_destination },
+        .outcome_post_states = &exits,
+    };
+    try std.testing.expect(check(contract, summary) == null);
+
+    exits[0].input_post_states = &.{initialized};
+    try std.testing.expectEqual(.missing_relocation, check(contract, summary).?.kind);
+    exits[0].input_post_states = &.{ moved, possible_destination };
+    try std.testing.expectEqual(.missing_relocation, check(contract, summary).?.kind);
+    var wrong = initialized;
+    wrong.value = .{};
+    exits[0].input_post_states = &.{ moved, wrong };
+    try std.testing.expectEqual(.missing_relocation, check(contract, summary).?.kind);
+    exits[0].input_post_states = &.{ moved, initialized };
+    var invalid_union = summary;
+    var foreign_source = possible_source;
+    foreign_source.value = .{ .input_place_values = &.{destination} };
+    invalid_union.input_post_states = &.{ foreign_source, possible_destination };
+    try std.testing.expectEqual(.unsupported_post_state, check(contract, invalid_union).?.kind);
+    exits[1].input_post_states = &.{ moved, initialized };
+    try std.testing.expectEqual(.unsupported_post_state, check(contract, summary).?.kind);
+
+    var missing = summary;
+    missing.input_post_states = &.{};
+    missing.outcome_post_states = &.{exits[1]};
+    try std.testing.expectEqual(.missing_relocation, check(contract, missing).?.kind);
+    missing.outcome_post_states = &.{.{ .output_index = 1, .variant_index = 0, .reachable = false, .input_post_states = &.{} }};
+    try std.testing.expect(check(contract, missing) == null);
+
+    const nested = Contract{
+        .outputs = &.{ .{}, .{} },
+        .outcomes = &.{.{ .output_index = 1, .parent_variants = &.{0}, .variant_index = 0, .effects = &relocation }},
+    };
+    var nested_summary = summary;
+    nested_summary.outcome_post_states = &.{.{ .output_index = 1, .parent_variants = &.{0}, .variant_index = 0, .input_post_states = &.{ moved, initialized } }};
+    try std.testing.expect(check(nested, nested_summary) == null);
+    nested_summary.outcome_post_states = &.{.{ .output_index = 1, .parent_variants = &.{1}, .variant_index = 0, .input_post_states = &.{ moved, initialized } }};
+    try std.testing.expect(check(nested, nested_summary) != null);
 }
