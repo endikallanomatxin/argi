@@ -10915,6 +10915,47 @@ test "feature_tests/polymorphism/234X_virtual_relocates_alternative_destinations
     try buildExpectFail("tests/feature_tests/polymorphism/234X_virtual_relocates_alternative_destinations", "alternative relocates clauses sharing an input must describe the same source and destination");
 }
 
+test "feature_tests/polymorphism/235_virtual_relocates_forwarded_output" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/235_virtual_relocates_forwarded_output");
+    try runExpect("tests/feature_tests/polymorphism/235_virtual_relocates_forwarded_output", 0);
+}
+
+test "feature_tests/polymorphism/236_relocates_forwarded_output_moves" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/236_relocates_forwarded_output_moves");
+    try runExpect("tests/feature_tests/polymorphism/236_relocates_forwarded_output_moves", 0);
+}
+
+test "feature_tests/polymorphism/237X_relocates_forwarded_output_old_reference" {
+    try buildExpectFail("tests/feature_tests/polymorphism/237X_relocates_forwarded_output_old_reference", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/238X_forwarded_output_retains_other_effects" {
+    try buildExpectFail("tests/feature_tests/polymorphism/238X_forwarded_output_retains_other_effects", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/239X_forwarded_output_intervening_call" {
+    try buildExpectFail("tests/feature_tests/polymorphism/239X_forwarded_output_intervening_call", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/240X_forwarded_output_rewritten" {
+    try buildExpectFail("tests/feature_tests/polymorphism/240X_forwarded_output_rewritten", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/241_forwarded_output_preserves_selected_generation" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/241_forwarded_output_preserves_selected_generation");
+    try runExpect("tests/feature_tests/polymorphism/241_forwarded_output_preserves_selected_generation", 0);
+}
+
+test "feature_tests/polymorphism/242_forwarded_output_content_write" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/242_forwarded_output_content_write");
+    try runExpect("tests/feature_tests/polymorphism/242_forwarded_output_content_write", 0);
+}
+
+test "feature_tests/polymorphism/243_relocates_forwarded_output_repackaged" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/243_relocates_forwarded_output_repackaged");
+    try runExpect("tests/feature_tests/polymorphism/243_relocates_forwarded_output_repackaged", 0);
+}
+
 test "feature_tests/polymorphism/184_virtual_relocates_guarded" {
     try expectSuccessfulBuild("tests/feature_tests/polymorphism/184_virtual_relocates_guarded");
     try runExpect("tests/feature_tests/polymorphism/184_virtual_relocates_guarded", 0);

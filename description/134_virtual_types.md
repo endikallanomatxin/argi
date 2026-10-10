@@ -306,8 +306,7 @@ A preserving outcome leaves the source initialized and the destination available
 
 ```rg
 Mover: Abstract = (
-    transfer(.self: &Self, .source: $&Resource, .destination: $&Resource, .move: Bool)
-        -> (.result: ?Int32) where {
+    transfer(.self: &Self, .source: $&Resource, .destination: $&Resource, .move: Bool) -> (.result: ?Int32) where {
         on result ..some { relocates(destination, source) }
         on result ..none {}
     }
@@ -519,7 +518,11 @@ permission to use the same pre-call generation only while that generation remain
 current. Later invalidation or result replacement cannot restore an older root.
 
 Copies and moves of a call result retain its outcome condition through lexical
-bindings. Wrapping that value in another choice retains the condition along its
+bindings. Selecting a field of a multi-output result retains the identity of
+that output. A wrapper can forward it through stable lexical bindings while
+effects belonging to unselected outputs remain conservative. Selecting one
+output does not establish the conditions of another output.
+Wrapping that value in another choice retains the condition along its
 payload path. Each function exit must establish its own result relation: a return
 of a different default or error does not establish a pending call's outcome.
 Intervening operations retain their effects, so forwarding an earlier preserving

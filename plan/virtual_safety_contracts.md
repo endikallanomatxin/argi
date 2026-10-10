@@ -30,8 +30,7 @@ discriminants and predicates over ordinary values.
 
 - Extend guarded generation summaries to branch-assigned outputs and
   intermediate results, choice tests on computed expressions and error
-  propagation. Preserve the originating output index when a wrapper forwards
-  a field projected from a multi-output call. Direct forwarding, bound
+  propagation. Direct forwarding, bound
   discrimination, moves and copies preserve call provenance; more complex
   flows must remain conservative without reviving expired roots.
 - Extend `on output ..variant` to effects on other outputs.

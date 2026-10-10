@@ -48,7 +48,12 @@ pub const Infer = struct {
     post_domain_sink: ?*std.array_list.Managed(facts.InputDomain) = null,
     loop_post_effects: ?*InputPostStateFlow = null,
 
-    const ForwardOrigin = struct { call: graph_mod.GlobalNodeId, parent_variants: []const u32 = &.{} };
+    const ForwardOrigin = struct {
+        call: graph_mod.GlobalNodeId,
+        // A multi-output call is a result record until one field is selected.
+        output_index: ?u32 = 0,
+        parent_variants: []const u32 = &.{},
+    };
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -281,10 +286,21 @@ pub const Infer = struct {
     /// state when a later binding use reveals its tag. Subsequent calls and
     /// writes still contribute their ordinary effects in source order.
     fn forwardOrigin(self: *Infer, value: graph_mod.GlobalNodeId, parents: []const u32, seen: *std.array_list.Managed(graph_mod.GlobalBindingId)) anyerror!?ForwardOrigin {
-        // TODO: Track the originating output index through projections of a
-        // multi-output call before forwarding its selected resource effects.
         return switch (self.graph.node(value).content) {
-            .function_call, .virtual_call => .{ .call = value, .parent_variants = parents },
+            .function_call => |call| .{ .call = value, .output_index = if (self.graph.function(call.callee).output.len == 1) 0 else null, .parent_variants = parents },
+            .virtual_call => |id| blk: {
+                const call = self.graph.virtual_calls.items[@intFromEnum(id)];
+                const contract = self.graph.virtual_registries.items[@intFromEnum(call.safety_methods)].safety_contract orelse break :blk null;
+                break :blk .{ .call = value, .output_index = if (contract.output_count == 1) 0 else null, .parent_variants = parents };
+            },
+            .struct_field_access => |field| blk: {
+                var origin = try self.forwardOrigin(field.value, parents, seen) orelse break :blk null;
+                // Only the call's result record selects an output. A field
+                // inside a returned value does not inherit its discriminant.
+                if (origin.output_index != null or origin.parent_variants.len != parents.len) break :blk null;
+                origin.output_index = field.field_index;
+                break :blk origin;
+            },
             .binding_use => |binding| blk: {
                 if (std.mem.indexOfScalar(graph_mod.GlobalBindingId, seen.items, binding) != null) break :blk null;
                 const initialization = if (self.cleanup) |cleanup| cleanup.stableInitializer(binding) else null;
@@ -314,10 +330,11 @@ pub const Infer = struct {
             .assignment => |assignment| {
                 if (assignment.binding != selected.binding) continue;
                 const origin = try self.expressionForwardOrigin(assignment.value) orelse continue;
+                const origin_output = origin.output_index orelse continue;
                 if (origin.parent_variants.len > selected.parent_variants.len or
                     !std.mem.eql(u32, origin.parent_variants, selected.parent_variants[0..origin.parent_variants.len])) continue;
                 self.selected_forward = .{ .call = origin.call, .selector = .{
-                    .output_index = 0,
+                    .output_index = origin_output,
                     .parent_variants = selected.parent_variants[origin.parent_variants.len..],
                     .variant_index = selected.variant_index,
                 } };
@@ -376,15 +393,16 @@ pub const Infer = struct {
 
     fn forwardingExpressionSelectors(self: *Infer, value: graph_mod.GlobalNodeId, output_index: u32, parents: []const u32, wanted: *std.array_list.Managed(outcome_selectors.Selector)) anyerror!void {
         const origin = try self.expressionForwardOrigin(value) orelse return;
+        const origin_output = origin.output_index orelse return;
         const enclosing = try std.mem.concat(self.allocator, u32, &.{ parents, origin.parent_variants });
         const summary = switch (self.graph.node(origin.call).content) {
             .function_call => |call| self.engine.summaryFor(call.callee),
             .virtual_call => |id| try self.virtualSummary(self.graph.virtual_calls.items[@intFromEnum(id)].safety_methods),
             else => unreachable,
         } orelse return;
-        if (summary.outputs.len != 1) return;
+        if (origin_output >= summary.outputs.len) return;
         for (summary.outcome_post_states) |outcome| {
-            if (outcome.output_index != 0) continue;
+            if (outcome.output_index != origin_output) continue;
             try wanted.append(.{ .output_index = output_index, .parent_variants = try std.mem.concat(self.allocator, u32, &.{ enclosing, outcome.parent_variants }), .variant_index = outcome.variant_index });
         }
     }
@@ -1499,7 +1517,7 @@ pub const Infer = struct {
                         const known = try self.knownOutcome(try self.inferExpression(function_id, assignment.value), selected.parent_variants);
                         flow.outcome_parent_mismatch = known.mismatch;
                         const origin = try self.expressionForwardOrigin(assignment.value);
-                        const selected_origin = if (self.selected_forward) |forwarded| if (origin) |actual| actual.call == forwarded.call else false else false;
+                        const selected_origin = if (self.selected_forward) |forwarded| if (origin) |actual| actual.call == forwarded.call and actual.output_index == forwarded.selector.output_index else false else false;
                         flow.outcome_variant = if (selected_origin and self.selected_forward_applied and !known.mismatch) selected.variant_index else known.variant;
                     }
                 };
@@ -1887,6 +1905,44 @@ pub const Infer = struct {
         try self.applyInputPostStatesFromSummary(function_id, summary, input, states, null);
     }
 
+    fn selectForwardedEffects(self: *Infer, summary: facts.SafetySummary, selected: facts.OutcomePostStates) !facts.SafetySummary {
+        var result = summary;
+        if (summary.outputs.len == 1) {
+            result.input_post_states = selected.input_post_states;
+            result.invalidated_domains = selected.invalidated_domains;
+            return result;
+        }
+        // One output can refine only its own effects. Retain the may-union for
+        // unrelated outputs and shared targets instead of inventing correlation.
+        var states = std.array_list.Managed(facts.PlacePostState).init(self.allocator);
+        for (summary.input_post_states) |state| {
+            var governed = false;
+            var shared = false;
+            for (summary.outcome_post_states) |outcome| {
+                if (self.findInputPostState(outcome.input_post_states, state.target) == null) continue;
+                if (outcome.output_index == selected.output_index) governed = true else shared = true;
+            }
+            if (!governed or shared) try states.append(state);
+        }
+        for (selected.input_post_states) |state| {
+            if (self.findInputPostState(states.items, state.target) == null) try states.append(state);
+        }
+        var domains = std.array_list.Managed(facts.InputDomain).init(self.allocator);
+        for (summary.invalidated_domains) |domain| {
+            var governed = false;
+            var shared = false;
+            for (summary.outcome_post_states) |outcome| for (outcome.invalidated_domains) |effect| {
+                if (effect.domain_index != domain.domain_index or !self.inputPathEqual(effect.path, domain.path)) continue;
+                if (outcome.output_index == selected.output_index) governed = true else shared = true;
+            };
+            if (!governed or shared) try appendDomain(&domains, domain);
+        }
+        for (selected.invalidated_domains) |domain| try appendDomain(&domains, domain);
+        result.input_post_states = try states.toOwnedSlice();
+        result.invalidated_domains = try domains.toOwnedSlice();
+        return result;
+    }
+
     fn applyInputPostStatesFromSummary(
         self: *Infer,
         function_id: graph_mod.GlobalFunctionId,
@@ -1900,14 +1956,13 @@ pub const Infer = struct {
         if (self.forwarded_outcome) |selector| {
             // Forwarding a single choice keeps one selector. No correlation is
             // inferred merely because unrelated outputs use the same tag names.
-            if (summary.outputs.len == 1) for (summary.outcome_post_states) |outcome| {
-                if (outcome.output_index == 0 and outcome.variant_index == selector.variant_index and std.mem.eql(u32, outcome.parent_variants, selector.parent_variants)) {
+            for (summary.outcome_post_states) |outcome| {
+                if (outcome.output_index == selector.output_index and outcome.variant_index == selector.variant_index and std.mem.eql(u32, outcome.parent_variants, selector.parent_variants)) {
                     self.forwarded_leaf_selected = true;
-                    selected.input_post_states = outcome.input_post_states;
-                    selected.invalidated_domains = outcome.invalidated_domains;
+                    selected = try self.selectForwardedEffects(summary, outcome);
                     break;
                 }
-            };
+            }
         }
         try self.applyInputPostStatesFromArguments(function_id, selected, arguments, states, override);
     }
@@ -3714,7 +3769,7 @@ pub const Infer = struct {
         effect: facts.ValueEffect,
     ) !facts.ValueEffect {
         const ty = self.graph.node(node_id).ty orelse return effect;
-        if (!self.typeContainsPointer(ty)) return self.scalar_storage_effect(effect);
+        if (!self.typeContainsPointer(ty)) return self.scalar_read_effect(effect);
         return self.withOpaqueGenerationDependencies(try self.inferOpaqueReadInputPaths(function_id, node_id), effect);
     }
 
@@ -4404,6 +4459,28 @@ pub const Infer = struct {
         };
     }
 
+    fn scalar_read_effect(self: *Infer, effect: facts.ValueEffect) anyerror!facts.ValueEffect {
+        var result = try self.scalar_storage_effect(effect);
+        // Reading numeric contents grants no ownership or validity relation,
+        // but retains the copied discriminant and the paths to nested choices.
+        result.known_choice_variant = effect.known_choice_variant;
+        const fields = try self.allocator.alloc(facts.OutputFieldEffect, effect.fields.len);
+        for (effect.fields, fields) |field, *projected| {
+            const value = try self.allocator.create(facts.ValueEffect);
+            value.* = try self.scalar_read_effect(field.value.*);
+            projected.* = .{ .index = field.index, .value = value };
+        }
+        result.fields = fields;
+        const variants = try self.allocator.alloc(facts.OutputVariantEffect, effect.variants.len);
+        for (effect.variants, variants) |variant, *projected| {
+            const value = try self.allocator.create(facts.ValueEffect);
+            value.* = try self.scalar_read_effect(variant.value.*);
+            projected.* = .{ .index = variant.index, .value = value };
+        }
+        result.variants = variants;
+        return result;
+    }
+
     fn overlay_capability_outputs(self: *Infer, destination: facts.ValueEffect, origin: facts.ValueEffect, ty: graph_mod.GlobalTypeId) anyerror!facts.ValueEffect {
         var result = destination;
         if (self.graph.semanticType(ty) == .builtin) {
@@ -4882,6 +4959,86 @@ test "opaque ownership post-state joins preserve storage correlation" {
 fn joinInitializedness(left: value_state.Initializedness, right: value_state.Initializedness) value_state.Initializedness {
     if (left == right) return left;
     return .maybe_initialized;
+}
+
+test "numeric projected values retain choices without ownership or validity" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var engine = summaries.Engine.init(allocator);
+    defer engine.deinit();
+    var infer = Infer.init(allocator, undefined, &engine);
+    defer infer.deinit();
+    const payload = facts.ValueEffect{
+        .fresh_cleanup_obligation = true,
+        .input_owned_roots = &.{.{ .input_index = 0 }},
+        .input_dependencies = &.{.{ .path = .{ .input_index = 0 }, .validity_only = true }},
+        .input_storage_capabilities = &.{.{ .input_index = 1 }},
+    };
+    const choice = facts.ValueEffect{
+        .known_choice_variant = 1,
+        .variants = &.{.{ .index = 1, .value = &payload }},
+    };
+    const effect = try infer.scalar_read_effect(.{ .fields = &.{.{ .index = 2, .value = &choice }} });
+    const projected = effect.fields[0].value.*;
+    try std.testing.expectEqual(@as(u32, 2), effect.fields[0].index);
+    try std.testing.expectEqual(@as(?u32, 1), projected.known_choice_variant);
+    try std.testing.expectEqual(@as(usize, 1), projected.variants.len);
+    const read = projected.variants[0].value.*;
+    try std.testing.expect(!read.fresh_cleanup_obligation);
+    try std.testing.expectEqual(@as(usize, 0), read.input_owned_roots.len);
+    try std.testing.expectEqual(@as(usize, 0), read.input_dependencies.len);
+    try std.testing.expectEqual(@as(usize, 1), read.input_storage_capabilities.len);
+}
+
+test "forwarded output preserves unrelated and shared may effects" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var engine = summaries.Engine.init(allocator);
+    defer engine.deinit();
+    var infer = Infer.init(allocator, undefined, &engine);
+    defer infer.deinit();
+    const summary = facts.SafetySummary{
+        .outputs = &.{ .{}, .{} },
+        .input_post_states = &.{
+            .{ .target = .{ .input_index = 0 }, .initializedness = .maybe_initialized },
+            .{ .target = .{ .input_index = 1 }, .initializedness = .maybe_initialized },
+            .{ .target = .{ .input_index = 2 }, .initializedness = .maybe_initialized },
+            .{ .target = .{ .input_index = 3 }, .initializedness = .initialized },
+        },
+        .invalidated_domains = &.{
+            .{ .path = .{ .input_index = 0 }, .domain_index = 0 },
+            .{ .path = .{ .input_index = 1 }, .domain_index = 0 },
+            .{ .path = .{ .input_index = 2 }, .domain_index = 0 },
+        },
+        .outcome_post_states = &.{
+            .{ .output_index = 0, .variant_index = 1, .input_post_states = &.{
+                .{ .target = .{ .input_index = 0 }, .initializedness = .moved },
+                .{ .target = .{ .input_index = 2 }, .initializedness = .initialized },
+            }, .invalidated_domains = &.{
+                .{ .path = .{ .input_index = 0 }, .domain_index = 0 },
+                .{ .path = .{ .input_index = 2 }, .domain_index = 0 },
+            } },
+            .{ .output_index = 0, .variant_index = 0, .input_post_states = &.{} },
+            .{ .output_index = 1, .variant_index = 1, .input_post_states = &.{
+                .{ .target = .{ .input_index = 1 }, .initializedness = .moved },
+                .{ .target = .{ .input_index = 2 }, .initializedness = .initialized },
+            }, .invalidated_domains = &.{
+                .{ .path = .{ .input_index = 1 }, .domain_index = 0 },
+                .{ .path = .{ .input_index = 2 }, .domain_index = 0 },
+            } },
+        },
+    };
+    const preserving = try infer.selectForwardedEffects(summary, summary.outcome_post_states[1]);
+    try std.testing.expectEqual(@as(usize, 3), preserving.input_post_states.len);
+    try std.testing.expect(infer.findInputPostState(preserving.input_post_states, .{ .input_index = 0 }) == null);
+    try std.testing.expectEqual(.maybe_initialized, infer.findInputPostState(preserving.input_post_states, .{ .input_index = 1 }).?.initializedness);
+    try std.testing.expectEqual(.maybe_initialized, infer.findInputPostState(preserving.input_post_states, .{ .input_index = 2 }).?.initializedness);
+    try std.testing.expectEqual(@as(usize, 2), preserving.invalidated_domains.len);
+    const moving = try infer.selectForwardedEffects(summary, summary.outcome_post_states[0]);
+    try std.testing.expectEqual(.moved, infer.findInputPostState(moving.input_post_states, .{ .input_index = 0 }).?.initializedness);
+    try std.testing.expectEqual(.maybe_initialized, infer.findInputPostState(moving.input_post_states, .{ .input_index = 2 }).?.initializedness);
 }
 
 test "virtual safety contract scalar summaries do not read implementations" {

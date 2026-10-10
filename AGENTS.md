@@ -337,6 +337,11 @@ feature first.
   reference-exposed intermediate bindings lose provenance. Apply the selected
   call's effects at its original position and retain every intervening effect;
   do not reconstruct or restore caller state at the eventual binding use.
+  Projections of multi-output result records retain the selected output index;
+  fields inside a single returned value do not select another output. Retain
+  unrelated and shared may-effects when refining one returned discriminant.
+  Numeric field reads preserve choice shape for those proofs without granting
+  ownership or reference validity.
   Exact reference and ownership identity proofs also follow ordered lexical
   initializers in straight-line bodies. Require explicit whole-value moves for
   ownership links and a single output assignment. Keep this proof independent
