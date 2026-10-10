@@ -1283,21 +1283,30 @@ pub const SafetyChecker = struct {
         return result.toOwnedSlice();
     }
 
-    fn cleanupTransition(post: facts.PlacePostState) bool {
+    fn mayMoveInput(summary: facts.SafetySummary, post: facts.PlacePostState) bool {
+        if (post.initializedness == .moved) return true;
+        for (summary.outcome_post_states) |outcome| for (outcome.input_post_states) |selected| {
+            if (sameInputPath(selected.target, post.target) and selected.initializedness == .moved) return true;
+        };
+        return false;
+    }
+
+    fn cleanupTransition(summary: facts.SafetySummary, post: facts.PlacePostState) bool {
         return post.requires_available_destination or post.initializedness == .moved or
+            mayMoveInput(summary, post) or
             ((post.initializedness == .deinitialized or post.initializedness == .maybe_initialized) and post.ends_previous_roots);
     }
 
     fn validateConsumedInputAliasing(self: *SafetyChecker, source: primitives.SourceRef, summary: facts.SafetySummary, ids: []const graph_mod.GlobalValueFieldId, arguments: []const facts.ValueFacts, state: *FunctionState) !bool {
         for (summary.input_post_states, 0..) |post, index| {
-            if (!cleanupTransition(post)) continue;
+            if (!cleanupTransition(summary, post)) continue;
             const target = try self.resolveSummaryInputPath(post.target, ids, arguments, state) orelse continue;
-            if (post.initializedness == .moved and self.initializednessAtPlace(state, target) != .initialized) {
+            if (mayMoveInput(summary, post) and self.initializednessAtPlace(state, target) != .initialized) {
                 try self.report(source, "relocation requires an initialized source; initialize it before transferring its owner", .{});
                 return false;
             }
             for (summary.input_post_states[0..index]) |previous| {
-                if (!cleanupTransition(previous) or previous.target.input_index == post.target.input_index) continue;
+                if (!cleanupTransition(summary, previous) or previous.target.input_index == post.target.input_index) continue;
                 const other = try self.resolveSummaryInputPath(previous.target, ids, arguments, state) orelse continue;
                 if (target.isPrefixOf(other) or other.isPrefixOf(target)) {
                     try self.report(source, "consumed inputs alias the same storage; provide distinct owners for consumption or relocation", .{});
@@ -1869,15 +1878,16 @@ pub const SafetyChecker = struct {
         return self.diagnostics.list.items.len == before;
     }
 
-    /// Delay only generation transitions whose complete alternatives are known.
-    /// Value writes, resource consumption and capabilities still use the common
-    /// conservative summary. A guard never restores a saved caller snapshot.
+    /// Guard only represented generation changes and whole-resource transitions.
+    /// Unrepresented value writes and capabilities retain their conservative
+    /// summary. A guard never restores a saved caller snapshot.
     fn applyOutcomeSummary(self: *SafetyChecker, source: primitives.SourceRef, summary: facts.SafetySummary, argument_ids: []const graph_mod.GlobalValueFieldId, arguments: []const facts.ValueFacts, state: *FunctionState) !facts.ValueFacts {
         var selector: ?u32 = null;
         for (summary.outcome_post_states) |outcome| {
             var preserves = false;
             for (summary.input_post_states) |post| {
                 if (consumptionSelectedBy(summary, post, outcome.output_index)) preserves = true;
+                if (relocationSelectedBy(summary, post, outcome.output_index) != null) preserves = true;
                 if (!post.refreshes_storage_generation) continue;
                 var invalidates = false;
                 for (outcome.input_post_states) |branch_post| if (sameInputPath(branch_post.target, post.target) and branch_post.refreshes_storage_generation) {
@@ -1911,9 +1921,16 @@ pub const SafetyChecker = struct {
         defer common.deinit();
         var resources = std.array_list.Managed(facts.PlacePostState).init(self.allocator);
         defer resources.deinit();
+        var relocations = std.array_list.Managed(facts.PlacePostState).init(self.allocator);
+        defer relocations.deinit();
+        for (summary.input_post_states) |post| if (relocationSelectedBy(summary, post, output_index) != null) try relocations.append(post);
         for (summary.input_post_states) |post| if (consumptionSelectedBy(summary, post, output_index)) try resources.append(post);
         for (summary.input_post_states) |post| {
             var resource_effect = false;
+            for (relocations.items) |destination| {
+                const moved_source = relocationSelectedBy(summary, destination, output_index).?;
+                if (inputPathCovers(destination.target, post.target) or inputPathCovers(moved_source, post.target)) resource_effect = true;
+            }
             for (resources.items) |resource| if (inputPathCovers(resource.target, post.target)) {
                 resource_effect = true;
                 break;
@@ -1975,7 +1992,7 @@ pub const SafetyChecker = struct {
         common_summary.invalidated_domains = common_domains.items;
         try self.applySummaryEffects(source, common_summary, argument_ids, arguments, state);
         var result = try self.instantiateSummaryOutputs(summary.outputs, arguments, state);
-        if (deferred.items.len == 0 and deferred_domains.items.len == 0 and resources.items.len == 0) return result;
+        if (deferred.items.len == 0 and deferred_domains.items.len == 0 and resources.items.len == 0 and relocations.items.len == 0) return result;
         var choice: *facts.ValueFacts = &result;
         if (summary.outputs.len != 1) {
             const fields = try self.allocator.dupe(facts.FieldFacts, result.fields);
@@ -1990,6 +2007,7 @@ pub const SafetyChecker = struct {
         }
         const guard = self.next_outcome_guard;
         self.next_outcome_guard += 1;
+        for (relocations.items) |destination| try self.guardRelocation(source, summary, destination, output_index, argument_ids, arguments, state, choice, guard);
         for (resources.items) |post| {
             const storage = try self.resolveSummaryInputPath(post.target, argument_ids, arguments, state) orelse continue;
             if (self.initializednessAtPlace(state, storage) != .initialized) continue;
@@ -2065,6 +2083,132 @@ pub const SafetyChecker = struct {
             }
         }
         return result;
+    }
+
+    /// Relocation is one paired transition selected by one discriminant. The
+    /// finite boundary excludes partial values and replacement effects, so a
+    /// preserving exit confirms current facts instead of restoring snapshots.
+    fn relocationSelectedBy(summary: facts.SafetySummary, destination: facts.PlacePostState, output_index: u32) ?facts.InputPath {
+        if (summary.opaque_storage_effects.len != 0 or summary.opaque_storage_empties.len != 0 or summary.storage_capability_uses.len != 0) return null;
+        if (destination.target.projections.len != 0 or destination.initializedness != .maybe_initialized or
+            !destination.requires_available_destination or !destination.refreshes_storage_generation or
+            destination.ends_previous_roots or destination.opaque_ownership != .none or destination.opaque_storage != null or
+            destination.may_repopulate_opaque_storage or destination.value.input_place_values.len != 1) return null;
+        const source = destination.value.input_place_values[0];
+        if (source.projections.len != 0 or source.input_index == destination.target.input_index) return null;
+        var value = destination.value;
+        value.input_place_values = &.{};
+        if (!facts.isEmptyValue(value)) return null;
+        for (summary.input_post_states) |post| {
+            if ((inputPathCovers(source, post.target) and !sameInputPath(source, post.target)) or
+                (inputPathCovers(destination.target, post.target) and !sameInputPath(destination.target, post.target))) return null;
+        }
+        var source_found = false;
+        for (summary.input_post_states) |post| if (sameInputPath(source, post.target)) {
+            if (post.initializedness != .maybe_initialized or post.ends_previous_roots or post.refreshes_storage_generation or
+                post.requires_available_destination or post.opaque_ownership != .none or post.opaque_storage != null or post.may_repopulate_opaque_storage) return null;
+            value = post.value;
+            for (value.input_place_values) |path| if (!sameInputPath(path, source)) return null;
+            value.input_place_values = &.{};
+            if (!facts.isEmptyValue(value)) return null;
+            source_found = true;
+        };
+        if (!source_found) return null;
+        var moves = false;
+        for (summary.outcome_post_states) |outcome| {
+            if (outcome.output_index != output_index) continue;
+            var moved = false;
+            var initialized = false;
+            for (outcome.input_post_states) |post| {
+                if (inputPathCovers(source, post.target)) {
+                    if (!sameInputPath(source, post.target) or post.initializedness != .moved or
+                        post.ends_previous_roots or post.refreshes_storage_generation or post.requires_available_destination or
+                        post.opaque_ownership != .none or post.opaque_storage != null or post.may_repopulate_opaque_storage or !facts.isEmptyValue(post.value)) return null;
+                    moved = true;
+                }
+                if (inputPathCovers(destination.target, post.target)) {
+                    if (!sameInputPath(destination.target, post.target) or post.initializedness != .initialized or
+                        !post.requires_available_destination or !post.refreshes_storage_generation or post.ends_previous_roots or
+                        post.opaque_ownership != .none or post.opaque_storage != null or post.may_repopulate_opaque_storage or
+                        post.value.input_place_values.len != 1 or !sameInputPath(post.value.input_place_values[0], source)) return null;
+                    value = post.value;
+                    value.input_place_values = &.{};
+                    if (!facts.isEmptyValue(value)) return null;
+                    initialized = true;
+                }
+            }
+            if (moved != initialized) return null;
+            moves = moves or moved;
+        }
+        return if (moves) source else null;
+    }
+
+    fn guardRelocation(self: *SafetyChecker, source: primitives.SourceRef, summary: facts.SafetySummary, destination: facts.PlacePostState, output_index: u32, ids: []const graph_mod.GlobalValueFieldId, arguments: []const facts.ValueFacts, state: *FunctionState, choice: *facts.ValueFacts, guard: u64) !void {
+        const moved_source = relocationSelectedBy(summary, destination, output_index).?;
+        const source_place = try self.resolveSummaryInputPath(moved_source, ids, arguments, state);
+        const destination_place = try self.resolveSummaryInputPath(destination.target, ids, arguments, state);
+        if (source_place != null and destination_place != null) {
+            const from = source_place.?;
+            const to = destination_place.?;
+            if (from.isPrefixOf(to) or to.isPrefixOf(from)) {
+                try self.report(source, "relocation requires distinct, non-overlapping source and destination storage", .{});
+                return;
+            }
+            if (self.initializednessAtPlace(state, from) == .initialized and self.valueAtPlace(state, from) != null) {
+                const available_state = self.initializednessAtPlace(state, to);
+                if (!try self.requireAvailableRelocationDestination(source, available_state)) return;
+                const generation = try self.storageGeneration(state, from);
+                const current = self.valueAtPlace(state, from).?;
+                var owned = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+                defer owned.deinit();
+                try collectOwnedRoots(current, &owned);
+                var alive = state.tracker.isAlive(generation);
+                for (owned.items) |root| alive = alive and state.tracker.isAlive(root);
+                if (alive) {
+                    // Materialize transferred facts while the source remains
+                    // available. Both slots become pending; the owner roots
+                    // themselves survive either outcome of the same transfer.
+                    try self.refreshStorageGenerationChecked(source, state, to);
+                    const destination_generation = try self.storageGeneration(state, to);
+                    try self.setPlace(state, to, .maybe_initialized, current);
+                    try self.setPlace(state, from, .maybe_initialized, current);
+                    for (&[_]facts.ValidityRootId{ generation, destination_generation }) |root| {
+                        state.tracker.roots.items[@intFromEnum(root)].state = .maybe_alive;
+                        state.tracker.roots.items[@intFromEnum(root)].outcome_guard = guard;
+                    }
+                    for (summary.outcome_post_states) |outcome| {
+                        if (outcome.output_index != output_index) continue;
+                        var moved = false;
+                        for (outcome.input_post_states) |post| {
+                            if (sameInputPath(post.target, moved_source) and post.initializedness == .moved) moved = true;
+                        }
+                        try self.attachOutcomeGeneration(choice, outcome.parent_variants, outcome.variant_index, .{
+                            .storage = from,
+                            .generation = generation,
+                            .guard = guard,
+                            .invalidates = moved,
+                            .relocation = .{ .destination = to, .generation = destination_generation, .available_state = available_state, .moved = moved },
+                            .source = source,
+                        });
+                        for (state.storage_generations.items) |child| {
+                            if (child.storage.eql(from) or !from.isPrefixOf(child.storage)) continue;
+                            const entry = &state.tracker.roots.items[@intFromEnum(child.generation)];
+                            if (entry.state == .alive) {
+                                entry.state = .maybe_alive;
+                                entry.outcome_guard = guard;
+                            }
+                            if (entry.outcome_guard == guard) try self.attachOutcomeGeneration(choice, outcome.parent_variants, outcome.variant_index, .{ .storage = child.storage, .generation = child.generation, .guard = guard, .invalidates = moved, .source = source });
+                        }
+                    }
+                    return;
+                }
+            }
+        }
+        var posts = std.array_list.Managed(facts.PlacePostState).init(self.allocator);
+        defer posts.deinit();
+        for (summary.input_post_states) |post| if (sameInputPath(post.target, moved_source)) try posts.append(post);
+        try posts.append(destination);
+        try self.applySummaryEffects(source, .{ .outputs = &.{}, .input_post_states = posts.items }, ids, arguments, state);
     }
 
     fn inputPathCovers(parent: facts.InputPath, child: facts.InputPath) bool {
@@ -5138,6 +5282,34 @@ pub const SafetyChecker = struct {
             };
             root.outcome_guard = 0;
             if (!current) continue;
+            if (outcome.relocation) |relocation| {
+                if (@intFromEnum(relocation.generation) >= state.tracker.roots.items.len) continue;
+                const destination_root = &state.tracker.roots.items[@intFromEnum(relocation.generation)];
+                if (destination_root.state != .maybe_alive or destination_root.outcome_guard != outcome.guard or
+                    self.initializednessAtPlace(state, outcome.storage) != .maybe_initialized or
+                    self.initializednessAtPlace(state, relocation.destination) != .maybe_initialized) continue;
+                var destination_current = false;
+                for (state.storage_generations.items) |generation| if (generation.storage.eql(relocation.destination) and
+                    generation.generation == relocation.generation and !generation.needs_current_generation)
+                {
+                    destination_current = true;
+                    break;
+                };
+                if (!destination_current) continue;
+                destination_root.outcome_guard = 0;
+                if (relocation.moved) {
+                    try self.endStorageGenerationsUnder(outcome.source, state, outcome.storage);
+                    try self.setPlace(state, outcome.storage, .moved, .{});
+                    destination_root.state = .alive;
+                    if (self.getPlace(state, relocation.destination)) |place| place.initializedness = .initialized;
+                } else {
+                    try self.endStorageGenerationsUnder(outcome.source, state, relocation.destination);
+                    try self.setPlace(state, relocation.destination, relocation.available_state, .{});
+                    root.state = .alive;
+                    if (self.getPlace(state, outcome.storage)) |place| place.initializedness = .initialized;
+                }
+                continue;
+            }
             if (outcome.resource_state) |initializedness| {
                 if (self.initializednessAtPlace(state, outcome.storage) != .maybe_initialized) continue;
                 if (initializedness == .deinitialized) {
@@ -6952,6 +7124,58 @@ test "generation outcome proofs cannot be replayed after another call or invalid
     state.tracker.roots.items[@intFromEnum(generation)].outcome_guard = 1;
     try checker.activate_conditional_resources(&state, preserved);
     try std.testing.expect(!state.tracker.isAlive(generation));
+}
+
+test "relocation refinement validates both generations and preserves the transferred owner" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(allocator, undefined, undefined);
+    defer checker.deinit();
+    for (0..4) |scenario| {
+        var state = SafetyChecker.FunctionState.init(allocator);
+        defer state.deinit();
+        const from = facts.Place{ .root = @enumFromInt(0) };
+        const to = facts.Place{ .root = @enumFromInt(1) };
+        const generation = try checker.storageGeneration(&state, from);
+        const destination_generation = try checker.storageGeneration(&state, to);
+        const owner = try state.tracker.establish(.fresh);
+        const value = facts.ValueFacts{ .owned_roots = &.{owner} };
+        try checker.setPlace(&state, from, .maybe_initialized, value);
+        try checker.setPlace(&state, to, .maybe_initialized, value);
+        for (&[_]facts.ValidityRootId{ generation, destination_generation }) |root| {
+            state.tracker.roots.items[@intFromEnum(root)].state = .maybe_alive;
+            state.tracker.roots.items[@intFromEnum(root)].outcome_guard = 7;
+        }
+        const proof = facts.ValueFacts{ .generation_outcomes = &.{.{
+            .storage = from,
+            .generation = generation,
+            .guard = 7,
+            .invalidates = scenario == 0,
+            .relocation = .{ .destination = to, .generation = destination_generation, .available_state = .deinitialized, .moved = scenario == 0 },
+        }} };
+        if (scenario == 2) state.tracker.roots.items[@intFromEnum(destination_generation)].outcome_guard = 8;
+        if (scenario == 3) try checker.refreshStorageGeneration(&state, to);
+        try checker.activate_conditional_resources(&state, proof);
+        try std.testing.expect(state.tracker.isAlive(owner));
+        if (scenario == 0) {
+            try std.testing.expectEqual(value_state.Initializedness.moved, checker.initializednessAtPlace(&state, from));
+            try std.testing.expectEqual(value_state.Initializedness.initialized, checker.initializednessAtPlace(&state, to));
+            try std.testing.expect(!state.tracker.isAlive(generation));
+            try std.testing.expect(state.tracker.isAlive(destination_generation));
+            try std.testing.expectEqual(owner, checker.valueAtPlace(&state, to).?.owned_roots[0]);
+        } else if (scenario == 1) {
+            try std.testing.expectEqual(value_state.Initializedness.initialized, checker.initializednessAtPlace(&state, from));
+            try std.testing.expectEqual(value_state.Initializedness.deinitialized, checker.initializednessAtPlace(&state, to));
+            try std.testing.expect(state.tracker.isAlive(generation));
+            try std.testing.expect(!state.tracker.isAlive(destination_generation));
+            try std.testing.expectEqual(owner, checker.valueAtPlace(&state, from).?.owned_roots[0]);
+        } else {
+            try std.testing.expectEqual(value_state.Initializedness.maybe_initialized, checker.initializednessAtPlace(&state, from));
+            try std.testing.expectEqual(value_state.Initializedness.maybe_initialized, checker.initializednessAtPlace(&state, to));
+            try std.testing.expect(!state.tracker.isAlive(generation));
+        }
+    }
 }
 
 test "outer payload selection does not activate owners in an unresolved inner choice" {

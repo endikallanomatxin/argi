@@ -44,9 +44,25 @@ pub const GenerationOutcome = struct {
     /// Resource proofs retain identities, never snapshots of caller values.
     resource_state: ?value_state.Initializedness = null,
     owned_roots: []const ValidityRootId = &.{},
+    relocation: ?Relocation = null,
     source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 },
 
+    pub const Relocation = struct {
+        destination: Place,
+        generation: ValidityRootId,
+        available_state: value_state.Initializedness,
+        moved: bool,
+
+        fn eql(self: Relocation, other: Relocation) bool {
+            return self.destination.eql(other.destination) and self.generation == other.generation and
+                self.available_state == other.available_state and self.moved == other.moved;
+        }
+    };
+
     pub fn eql(self: GenerationOutcome, other: GenerationOutcome) bool {
+        if (self.relocation) |relocation| {
+            if (other.relocation == null or !relocation.eql(other.relocation.?)) return false;
+        } else if (other.relocation != null) return false;
         return self.generation == other.generation and self.guard == other.guard and
             self.invalidates == other.invalidates and self.resource_state == other.resource_state and
             std.mem.eql(ValidityRootId, self.owned_roots, other.owned_roots) and self.storage.eql(other.storage);

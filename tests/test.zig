@@ -10890,12 +10890,46 @@ test "feature_tests/polymorphism/214X_conditional_relocates_unselected" {
 }
 
 test "feature_tests/polymorphism/215X_conditional_relocates_old_reference" {
-    try buildExpectFail("tests/feature_tests/polymorphism/215X_conditional_relocates_old_reference", "maybe_initialized and cannot be used");
+    try buildExpectFail("tests/feature_tests/polymorphism/215X_conditional_relocates_old_reference", "reference depends on a root that has ended");
 }
 
 test "feature_tests/polymorphism/216_conditional_relocates_large" {
     try expectSuccessfulBuild("tests/feature_tests/polymorphism/216_conditional_relocates_large");
     try runExpect("tests/feature_tests/polymorphism/216_conditional_relocates_large", 0);
+}
+
+test "feature_tests/polymorphism/217_conditional_relocates_refinement" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/217_conditional_relocates_refinement");
+    try runExpect("tests/feature_tests/polymorphism/217_conditional_relocates_refinement", 0);
+}
+
+test "feature_tests/polymorphism/218X_conditional_relocates_moved_source" {
+    try buildExpectFail("tests/feature_tests/polymorphism/218X_conditional_relocates_moved_source", "moved and cannot be used");
+}
+
+test "feature_tests/polymorphism/219X_conditional_relocates_preserved_destination" {
+    try buildExpectFail("tests/feature_tests/polymorphism/219X_conditional_relocates_preserved_destination", "value was deinitialized");
+}
+
+test "feature_tests/polymorphism/220X_conditional_relocates_old_result" {
+    try buildExpectFail("tests/feature_tests/polymorphism/220X_conditional_relocates_old_result", "maybe_initialized and cannot be used");
+}
+
+test "feature_tests/polymorphism/221_conditional_relocates_allocation" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/221_conditional_relocates_allocation");
+    try runExpect("tests/feature_tests/polymorphism/221_conditional_relocates_allocation", 0);
+}
+
+test "feature_tests/polymorphism/222X_conditional_relocates_local_escape" {
+    try buildExpectFail("tests/feature_tests/polymorphism/222X_conditional_relocates_local_escape", "local storage generation");
+}
+
+test "feature_tests/polymorphism/223X_conditional_relocates_shared_source" {
+    try buildExpectFail("tests/feature_tests/polymorphism/223X_conditional_relocates_shared_source", "alias the same storage");
+}
+
+test "feature_tests/polymorphism/224X_conditional_relocates_scope_reference" {
+    try buildExpectFail("tests/feature_tests/polymorphism/224X_conditional_relocates_scope_reference", "reference depends on a root that has ended");
 }
 
 test "feature_tests/polymorphism/185_virtual_referent_local_chain" {

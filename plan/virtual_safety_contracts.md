@@ -61,10 +61,10 @@ discriminants and predicates over ordinary values.
 
 ## Remaining storage transitions
 
-Extend relocation to guarded initializedness and abstract outcome clauses.
-Concrete calls already select source and destination cleanup from returned
-discriminants, including ignored results; caller availability remains
-conservative until the paired transition has a checked refinement model.
+Expose relocation in abstract outcome clauses, checking inherited permissions
+and selecting complete source/destination transitions from fixed declarations.
+Extend paired refinement beyond whole-value transfers only when post-values
+can be represented without recovering old caller state.
 Extend conditional consumption refinement to opaque effects and
 replacement post-values without restoring caller snapshots.
 

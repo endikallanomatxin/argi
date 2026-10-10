@@ -39,4 +39,30 @@ main() -> (.status_code: Int32 = 0) := {
         transfer_if($&source, $&destination, false)
     }
     if drops != 4 { status_code = 2 }
+
+    if true {
+        source ::= Resource(43)
+        destination ::= Resource(0)
+        deinit($&destination)
+        result ::= transfer_if($&source, $&destination, true)
+
+        match result.result {
+            ..some _ { if destination.value != 43 { status_code = 3 } }
+            ..none { if source.value != 43 { status_code = 4 } }
+        }
+    }
+    if drops != 6 { status_code = 5 }
+
+    if true {
+        source ::= Resource(44)
+        destination ::= Resource(0)
+        deinit($&destination)
+        result ::= transfer_if($&source, $&destination, false)
+
+        match result.result {
+            ..some _ { if destination.value != 44 { status_code = 6 } }
+            ..none { if source.value != 44 { status_code = 7 } }
+        }
+    }
+    if drops != 8 { status_code = 8 }
 }

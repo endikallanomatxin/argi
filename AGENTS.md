@@ -317,6 +317,12 @@ feature first.
   Cleanup activation retains every potentially initialized destination. A
   conditional initialization joined with an untouched available destination is
   maybe-initialized and must not acquire provenance from the empty input slot.
+  Relocation refinement is a paired proof of both current slot generations.
+  Materialize destination facts before making both places pending. Selecting a
+  moving result clears the source and enables the destination; preservation
+  clears the speculative destination and confirms current source facts. Keep
+  transferred owned roots alive in both cases, and never restore value snapshots.
+  Reject overlapping conditional source inputs before applying any effects.
   Nested generation guards retain their enclosing payload variant path. Partition
   only paths requested by declarations or forwarded results, preserving a
   conservative effect record elsewhere instead of expanding shared choice types.

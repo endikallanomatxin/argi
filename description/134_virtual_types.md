@@ -306,9 +306,12 @@ A preserving outcome leaves the source initialized and the destination available
 
 > [!IMPLEMENTATION]
 > Relocation clauses currently require unconditional known-type inputs.
-> Concrete conditional relocation selects runtime cleanup from distinct returned
-> variants, but caller availability remains conservative. Conditional abstract
-> clauses, erased `Self`, and mapped opaque storage transitions remain
+> Concrete conditional relocation selects cleanup and refines both known caller
+> places from one returned discriminant. Proofs retain both current storage
+> generations; overwrites and independent calls cannot replay them. Partial
+> replacements and unrepresented effects retain conservative availability.
+> Conditional abstract clauses, erased `Self`, and mapped opaque storage
+> transitions remain
 > unsupported. Indexed owners without lexical cleanup identities must
 > first be moved into lexical owners.
 
