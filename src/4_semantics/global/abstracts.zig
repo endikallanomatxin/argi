@@ -125,6 +125,15 @@ pub const ImplementationConflict = struct {
     source: primitives.SourceRef,
 };
 
+pub const ParticipantConformanceFailure = struct {
+    source: primitives.SourceRef,
+    contract_name: []const u8,
+    reason: []const u8,
+    operation: ?[]const u8 = null,
+    input: ?global_sg.GlobalTypeId = null,
+    output: ?global_sg.GlobalTypeId = null,
+};
+
 pub const RequirementFailure = struct {
     ambiguous: bool = false,
     abstract_decl: global_sg.GlobalDeclId,
@@ -190,6 +199,7 @@ pub const Resolver = struct {
     generics: *generic_mod.Resolver,
     field_storage_conflict: ?AbstractFieldStorageConflict = null,
     virtual_signature_failure: ?VirtualSignatureFailure = null,
+    participant_conformance_failure: ?ParticipantConformanceFailure = null,
     stats: Stats = .{},
     profile_implementation_scans: bool = false,
     profile_io: ?std.Io = null,
@@ -388,6 +398,11 @@ pub const Resolver = struct {
         const abstract_use = self.abstractUse(abstract_ty) orelse return null;
         const abstract_decl = abstract_use.declaration;
         const located = self.findAbstractDefinition(abstract_decl) orelse return null;
+        if (located.definition.participants.len != 0) {
+            self.virtual_signature_failure = .{ .source = self.sourceFor(module_index, reference.source), .method_name = "to_virtual", .reason = "explicit participants require joint virtual evidence, which is not supported yet" };
+            return null;
+        }
+
         const literal = switch (self.graph.nodes.items[@intFromEnum(input)].content) {
             .struct_value_literal => |value| value,
             else => return null,
@@ -474,12 +489,28 @@ pub const Resolver = struct {
         expected_input: global_sg.GlobalTypeId,
         expected_output: global_sg.GlobalTypeId,
     ) MethodSelection {
+        return self.selectConcreteMethodVisible(name, expected_input, expected_output, null);
+    }
+
+    fn selectConcreteMethodVisible(
+        self: *Resolver,
+        name: []const u8,
+        expected_input: global_sg.GlobalTypeId,
+        expected_output: global_sg.GlobalTypeId,
+        module_index: ?usize,
+    ) MethodSelection {
         const expected_inputs = global_types.fields(self.graph, expected_input) orelse return .missing;
         const expected_outputs = global_types.fields(self.graph, expected_output) orelse return .missing;
         var found: ?global_sg.GlobalFunctionId = null;
         for (self.graph.functions.items, 0..) |function, raw| {
             const function_id: global_sg.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
             if (self.isAbstractContractInstance(function_id)) continue;
+            if (module_index) |context| {
+                // Cached generic instances are implementations, not new overloads.
+                if (function.flags.is_generic_instantiation or function.flags.is_c_function_pointer or function.flags.is_abstract_dispatch) continue;
+                if (self.graph.declaration(function.declaration).constructor_type != null) continue;
+                if (!self.core.declarationVisible(context, function.declaration, null)) continue;
+            }
             const declaration = self.graph.declarations.items[@intFromEnum(function.declaration)];
             if (!std.mem.eql(u8, self.graph.text(declaration.name), name)) continue;
             if (!self.inputFieldsSatisfyRequirement(expected_inputs, function.input)) continue;
@@ -489,7 +520,13 @@ pub const Resolver = struct {
             found = function_id;
         }
         const selected = found orelse return .missing;
-        if (!self.outputFieldsSatisfyRequirement(expected_outputs, self.graph.functions.items[@intFromEnum(selected)].output))
+        const actual_outputs = self.graph.functions.items[@intFromEnum(selected)].output;
+        if (module_index != null) {
+            if (expected_outputs.len != actual_outputs.len) return .incompatible_output;
+            for (0..expected_outputs.len) |index| {
+                if (!global_types.equal(self.graph, self.graph.fields.items[expected_outputs.start + index].ty, self.graph.fields.items[actual_outputs.start + index].ty)) return .incompatible_output;
+            }
+        } else if (!self.outputFieldsSatisfyRequirement(expected_outputs, actual_outputs))
             return .incompatible_output;
         return .{ .function = selected };
     }
@@ -1481,7 +1518,7 @@ pub const Resolver = struct {
                 reason = "invalidates requires a mutable reference input";
                 break;
             }
-            if (global_types.equal(self.graph, input_ty.pointer.child, abstract_ty)) {
+            if (located.definition.participants.len == 0 and global_types.equal(self.graph, input_ty.pointer.child, abstract_ty)) {
                 reason = "invalidating erased Self requires a mapped storage domain; name a known reference input instead";
                 break;
             }
@@ -1655,6 +1692,9 @@ pub const Resolver = struct {
         depth: u8,
     ) !bool {
         if (depth >= 64) return false;
+        if (self.findAbstractDefinition(abstract_decl)) |located| {
+            if (located.definition.participants.len != 0) return false;
+        }
         const key = ImplementationKey{ .concrete = concrete, .abstract_decl = abstract_decl };
         if (self.known_implementations.contains(key)) {
             self.cached_implementation_hits += 1;
@@ -1763,6 +1803,178 @@ pub const Resolver = struct {
             }
         }
         return null;
+    }
+
+    fn conformanceArgumentFailure(err: anyerror) ?[]const u8 {
+        return switch (err) {
+            error.TooManyGenericArguments => "too many arguments",
+            error.UnknownGenericArgument => "unknown argument name",
+            error.DuplicateGenericArgument => "duplicate argument",
+            error.MissingGenericArgument => "missing argument",
+            error.GenericArgumentKindMismatch => "argument kind does not match its parameter",
+            else => null,
+        };
+    }
+
+    fn publishConformanceArguments(self: *Resolver, located: LocatedAbstractDefinition, parameters: primitives.Range(ir.ComptimeParameterId), bindings: *generic_mod.Resolver.Bindings) !primitives.Range(global_sg.GlobalGenericArgId) {
+        const module = &self.modules[located.module_index];
+        const start: u32 = @intCast(self.graph.generic_arguments.items.len);
+        for (module.semantic.parameterized_storage.comptime_parameters.items[parameters.start..][0..parameters.len], 0..) |parameter, index| {
+            const raw = parameters.start + @as(u32, @intCast(index));
+            const name = try self.graph.addString(self.allocator, module.text(parameter.name));
+            try self.graph.generic_arguments.append(self.allocator, .{
+                .name = name,
+                .value = switch (parameter.kind) {
+                    .type => .{ .type = bindings.types[raw].? },
+                    .comptime_int => .{ .comptime_int = bindings.ints[raw].? },
+                },
+            });
+        }
+        return .{ .start = start, .len = parameters.len };
+    }
+
+    pub fn findParticipantUnaryUseFailure(self: *Resolver) !?ParticipantConformanceFailure {
+        for (self.modules, 0..) |*module, module_index| {
+            const storage = &module.semantic.parameterized_storage;
+            for (storage.abstract_definitions.items) |definition| {
+                for (storage.abstract_constraints.items[definition.composition.start..][0..definition.composition.len]) |composed| {
+                    const declaration = self.resolveDeclarationRef(module_index, composed.abstract_ref, .abstract_type) catch |err| switch (err) {
+                        error.UnknownGlobalDeclaration, error.AmbiguousGlobalDeclaration, error.UnknownModuleReference, error.AmbiguousModuleReference => continue,
+                        else => return err,
+                    };
+                    const located = self.findAbstractDefinition(declaration) orelse continue;
+                    if (located.definition.participants.len == 0) continue;
+                    return .{
+                        .source = self.sourceFor(module_index, composed.source),
+                        .contract_name = self.modules[located.module_index].text(self.modules[located.module_index].declarations.items[@intFromEnum(located.definition.declaration)].name),
+                        .reason = "composition of explicit participant contracts is not supported yet",
+                    };
+                }
+            }
+            inline for (.{ storage.abstract_implementations.items, storage.parameterized_abstract_implementations.items, storage.abstract_defaults.items, storage.parameterized_abstract_defaults.items }) |relations| {
+                for (relations) |relation| {
+                    const declaration = self.resolveDeclarationRef(module_index, relation.abstract_ref, .abstract_type) catch |err| switch (err) {
+                        error.UnknownGlobalDeclaration, error.AmbiguousGlobalDeclaration, error.UnknownModuleReference, error.AmbiguousModuleReference => continue,
+                        else => return err,
+                    };
+                    const located = self.findAbstractDefinition(declaration) orelse continue;
+                    if (located.definition.participants.len == 0) continue;
+                    return .{
+                        .source = self.sourceFor(module_index, relation.source),
+                        .contract_name = self.modules[located.module_index].text(self.modules[located.module_index].declarations.items[@intFromEnum(located.definition.declaration)].name),
+                        .reason = "explicit participant contracts require standalone satisfies declarations",
+                    };
+                }
+            }
+        }
+        return null;
+    }
+
+    pub fn validateParticipantConformances(self: *Resolver) !void {
+        for (self.modules, 0..) |*module, module_index| {
+            for (module.semantic.parameterized_storage.contract_conformances.items) |conformance| {
+                const contract_name = module.text(switch (conformance.contract_ref) {
+                    .module => |declaration| module.declarations.items[@intFromEnum(declaration)].name,
+                    .external => |external| module.semantic.external_refs.items[@intFromEnum(external)].name,
+                });
+                var failure: ParticipantConformanceFailure = .{ .source = self.sourceFor(module_index, conformance.source), .contract_name = contract_name, .reason = "" };
+                const declaration = self.resolveDeclarationRef(module_index, conformance.contract_ref, .abstract_type) catch |err| {
+                    failure.reason = switch (err) {
+                        error.UnknownGlobalDeclaration => "unknown or inaccessible contract",
+                        error.AmbiguousGlobalDeclaration => "ambiguous contract name",
+                        else => return err,
+                    };
+                    self.participant_conformance_failure = failure;
+                    return;
+                };
+                const located = self.findAbstractDefinition(declaration) orelse return error.InvalidContractDeclaration;
+                if (located.definition.participants.len == 0) {
+                    failure.reason = "standalone satisfies requires a contract with explicit participants";
+                    self.participant_conformance_failure = failure;
+                    return;
+                }
+                const storage = &self.modules[located.module_index].semantic.parameterized_storage;
+                var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
+                defer bindings.deinit(self.allocator);
+                const participants = try self.generics.relocateModuleArguments(module_index, conformance.participants);
+                self.generics.bindGlobalArguments(located.module_index, located.definition.participants, participants, &bindings) catch |err| {
+                    failure.reason = conformanceArgumentFailure(err) orelse return err;
+                    self.participant_conformance_failure = failure;
+                    return;
+                };
+                const associated = try self.generics.relocateModuleArguments(module_index, conformance.associated_arguments);
+                self.generics.bindGlobalArguments(located.module_index, located.definition.parameters, associated, &bindings) catch |err| {
+                    failure.reason = conformanceArgumentFailure(err) orelse return err;
+                    self.participant_conformance_failure = failure;
+                    return;
+                };
+                inline for (.{ located.definition.participants, located.definition.parameters }) |parameters| {
+                    for (parameters.start..parameters.start + parameters.len) |raw| {
+                        const parameter = storage.comptime_parameters.items[raw];
+                        if (parameter.constraint) |constraint| {
+                            if (!try self.inferConstraintBindings(located.module_index, constraint, bindings.types[raw].?, &bindings)) {
+                                failure.reason = "a participant or associated type does not satisfy its declared bound";
+                                self.participant_conformance_failure = failure;
+                                return;
+                            }
+                        }
+                    }
+                }
+                for (self.graph.contract_conformances.items) |previous| {
+                    if (previous.declaration != declaration) continue;
+                    var equal = true;
+                    for (0..located.definition.participants.len) |position| {
+                        const actual = bindings.types[located.definition.participants.start + position].?;
+                        const old = self.graph.generic_arguments.items[previous.participants.start + position].value.type;
+                        if (!global_types.equal(self.graph, actual, old)) {
+                            equal = false;
+                            break;
+                        }
+                    }
+                    if (equal) {
+                        failure.reason = "ambiguous conformances for the same participant tuple";
+                        self.participant_conformance_failure = failure;
+                        return;
+                    }
+                }
+                var operations: std.ArrayList(global_sg.GlobalFunctionId) = .empty;
+                defer operations.deinit(self.allocator);
+                const first = bindings.types[located.definition.participants.start].?;
+                for (storage.abstract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len]) |requirement| {
+                    const name = self.modules[located.module_index].text(requirement.name);
+                    const input = try self.generics.instantiateParameterizedType(located.module_index, requirement.input, &bindings, null);
+                    const output = try self.generics.instantiateParameterizedType(located.module_index, requirement.output, &bindings, null);
+                    const selected = self.selectConcreteMethodVisible(name, input, output, module_index);
+                    if (selected != .function) {
+                        failure.operation = name;
+                        failure.input = input;
+                        failure.output = output;
+                        failure.reason = switch (selected) {
+                            .missing => "missing operation",
+                            .ambiguous => "ambiguous operation",
+                            .incompatible_output => "operation returns an incompatible associated result",
+                            .function => unreachable,
+                        };
+                        self.participant_conformance_failure = failure;
+                        return;
+                    }
+                    try self.recordStaticSafetyContract(located, requirement, &bindings, first, selected.function, output, failure.source);
+                    try operations.append(self.allocator, selected.function);
+                }
+                // Publish evidence only after every required signature has been selected.
+                const canonical_participants = try self.publishConformanceArguments(located, located.definition.participants, &bindings);
+                const canonical_associated = try self.publishConformanceArguments(located, located.definition.parameters, &bindings);
+                const operation_start: u32 = @intCast(self.graph.function_refs.items.len);
+                try self.graph.function_refs.appendSlice(self.allocator, operations.items);
+                try self.graph.contract_conformances.append(self.allocator, .{
+                    .declaration = declaration,
+                    .participants = canonical_participants,
+                    .associated_arguments = canonical_associated,
+                    .operations = .{ .start = operation_start, .len = @intCast(operations.items.len) },
+                    .source = failure.source,
+                });
+            }
+        }
     }
 
     pub fn findConcreteRequirementFailure(self: *Resolver) !?RequirementFailure {

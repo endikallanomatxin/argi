@@ -526,7 +526,7 @@ pub const Syntaxer = struct {
                 });
                 try self.scratch.append(self.allocator, try self.addNode(.abstract_function_requirement, name.token, .{ .extra = extra }));
             } else {
-                try self.scratch.append(self.allocator, try self.addNode(.type_name, name.token, .{ .unused = .{ 0, 0 } }));
+                try self.scratch.append(self.allocator, try self.addNode(.type_name, name.token, .{ .token_and_optional_token = .{ .token = name.token, .optional = .none } }));
             }
 
             self.skipNewLinesAndComments();
@@ -1986,6 +1986,23 @@ pub const Syntaxer = struct {
             generic_params = try self.parseGenericParamNames();
         }
 
+        if (std.mem.eql(u8, name.text, "satisfies") and self.currentContent() == .identifier) {
+            if (is_once) return SyntaxerError.ExpectedDeclarationOrAssignment;
+            const contract_type = (try self.parseType()) orelse return SyntaxerError.ExpectedConformanceType;
+            const associated_arguments: ?syn.NodeIndex = if (self.tokenIs(.equal)) blk: {
+                self.advanceOne();
+                break :blk try self.parseStructTypeFields(true);
+            } else null;
+            const extra = try self.addExtra(syn.GenericValueExtra{
+                .generic_params_start = generic_params.start,
+                .generic_params_end = generic_params.end,
+                .generic_params_struct = syn.OptionalNodeIndex.init(generic_params_struct),
+                .value = contract_type,
+                .safety_contract = syn.OptionalNodeIndex.init(associated_arguments),
+            });
+            return try self.addNode(.contract_conformance, name.token, .{ .extra = extra });
+        }
+
         // Build identifier node to parse postfix (for p.x, p& etc.)
         const ident_node = try self.addNode(.identifier, name.token, .{ .unused = .{ 0, 0 } });
         const lhs_with_postfix = try self.parsePostfix(ident_node);
@@ -2089,7 +2106,16 @@ pub const Syntaxer = struct {
             const ty_opt = try self.parseType();
 
             if (ty_opt) |ty| {
-                const type_name = if (self.file.tag(ty) == .type_name) self.tokenText(self.contentAt(@intFromEnum(self.file.mainToken(ty))).identifier) else "";
+                var participants_struct: ?syn.NodeIndex = null;
+                var marker = ty;
+                if (self.file.syntaxType(ty)) |syntax_type| if (syntax_type == .generic) {
+                    const base = syntax_type.generic.base;
+                    if (self.file.tag(base) == .type_name and std.mem.eql(u8, self.tokenText(self.contentAt(@intFromEnum(self.file.mainToken(base))).identifier), "contract")) {
+                        marker = base;
+                        participants_struct = syntax_type.generic.arguments;
+                    }
+                };
+                const type_name = if (self.file.tag(marker) == .type_name) self.tokenText(self.contentAt(@intFromEnum(self.file.mainToken(marker))).identifier) else "";
                 if (std.mem.eql(u8, type_name, "CIncomplete")) {
                     if (generic_params.start != generic_params.end or generic_params_struct != null)
                         return SyntaxerError.IncompleteTypeCannotBeParameterized;
@@ -2132,6 +2158,7 @@ pub const Syntaxer = struct {
                         domains = body.domains;
                     }
                     const extra = try self.addExtra(syn.AbstractExtra{
+                        .participants_struct = syn.OptionalNodeIndex.init(participants_struct),
                         .generic_params_start = generic_params.start,
                         .generic_params_end = generic_params.end,
                         .generic_params_struct = syn.OptionalNodeIndex.init(generic_params_struct),

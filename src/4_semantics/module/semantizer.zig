@@ -97,7 +97,7 @@ pub fn finishLinked(
     const bodies = try body_lowerer.lowerMissingFunctions(allocator, graph, files, diagnostics);
     const generic_operators = try generic_operator_lowerer.lower(graph, files);
     const identity_stats = try function_identity_lowerer.lower(graph, files, diagnostics);
-    const relation_stats = try abstract_relation_lowerer.lower(allocator, graph, files);
+    const relation_stats = try abstract_relation_lowerer.lowerDiagnosed(allocator, graph, files, diagnostics);
     const generic_calls = try generic_call_args_lowerer.lower(allocator, graph, files);
 
     graph.semantic.local_semantics_complete = true;

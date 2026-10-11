@@ -66,6 +66,10 @@ pub fn roots(
         if (entrypoint or trace_runtime or function.flags.is_c_export or function.flags.uses_inferred_error_reasons)
             _ = try result.include(@enumFromInt(@as(u32, @intCast(raw))));
     }
+    for (graph.contract_conformances.items) |conformance| {
+        for (graph.function_refs.items[conformance.operations.start..][0..conformance.operations.len]) |method|
+            _ = try result.include(method);
+    }
     return result;
 }
 

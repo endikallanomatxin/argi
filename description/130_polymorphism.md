@@ -29,6 +29,8 @@ many specializations can increase code size. `Virtual` can represent
 heterogeneous values behind one interface, at the cost of indirect calls.
 
 > [!IMPLEMENTATION]
-> Contracts currently preserve the existing unary model. Legacy
-> [abstract types](133_abstract_types.md) remain supported during migration.
-> Multi-participant conformance selection and joint virtual evidence are pending.
+> Contracts support concrete participant tuples with associated types and
+> constants, checked operations and static safety proofs. Legacy
+> [abstract types](133_abstract_types.md) retain unary generic and virtual behavior
+> during migration. Generic tuple specialization, associated projections and
+> joint virtual evidence are pending.

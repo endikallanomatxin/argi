@@ -409,3 +409,45 @@ test "frontend module cache separates platform branches by compilation target" {
     try std.testing.expectEqual(@as(usize, 1), reused.hits);
     try std.testing.expectEqualStrings(windows.ir, reused.ir);
 }
+
+test "frontend module cache preserves participant tuples and associated arguments" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try @import("../test_support.zig").tmpRootPath(&tmp);
+    defer std.testing.allocator.free(root);
+    const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code =
+        \\Product#(.Result: Type): contract#(.Left: Type, .Right: Type) = (
+        \\    multiply(.left: Left, .right: Right) -> (.value: Result) where {}
+        \\)
+        \\satisfies Product#(Int32, Int64) = (.Result: Int32)
+        \\multiply(.left: Int32, .right: Int64) -> (.value: Int32) := { value = 0 }
+        \\main() -> (.status_code: Int32) := { status_code = multiply(0, 7).value }
+        \\
+    }};
+    {
+        var cold = ModuleCache.init(std.testing.allocator, .{});
+        defer cold.deinit();
+        try cold.enablePersistence(std.testing.io, root);
+        const result = try expectCleanEquivalent(&files, &cold);
+        defer result.deinit();
+        try std.testing.expectEqual(@as(?anyerror, null), result.failure);
+        try std.testing.expectEqual(@as(usize, 0), cold.disk_write_failures);
+    }
+    var warm = ModuleCache.init(std.testing.allocator, .{});
+    defer warm.deinit();
+    try warm.enablePersistence(std.testing.io, root);
+    const result = try expectCleanEquivalent(&files, &warm);
+    defer result.deinit();
+    try std.testing.expectEqual(@as(?anyerror, null), result.failure);
+    try std.testing.expectEqual(@as(usize, 1), result.hits);
+    try std.testing.expectEqual(@as(usize, 0), result.misses);
+    try std.testing.expectEqual(@as(usize, 0), warm.disk_rejections);
+
+    var invalid = files;
+    invalid[0].code = try std.mem.replaceOwned(u8, std.testing.allocator, files[0].code, ".Result: Int32)", ".Result: Int64)");
+    defer std.testing.allocator.free(invalid[0].code);
+    const rejected = try expectCleanEquivalent(&invalid, &warm);
+    defer rejected.deinit();
+    try std.testing.expect(rejected.failure != null);
+    try std.testing.expect(std.mem.indexOf(u8, rejected.diagnostics, "incompatible associated result") != null);
+}

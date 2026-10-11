@@ -11648,3 +11648,153 @@ test "feature_tests/contracts/13_virtual_positional" {
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
+
+test "feature_tests/contracts/14_participant_tuple" {
+    const test_path = "tests/feature_tests/contracts/14_participant_tuple";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/contracts/15X_tuple_wrong_result" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/15X_tuple_wrong_result", "operation returns an incompatible associated result", "panic");
+}
+
+test "feature_tests/contracts/16X_tuple_missing_operation" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/16X_tuple_missing_operation", "missing operation", "panic");
+}
+
+test "feature_tests/contracts/17X_tuple_ambiguous_operation" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/17X_tuple_ambiguous_operation", "ambiguous operation", "panic");
+}
+
+test "feature_tests/contracts/18X_duplicate_tuple" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/18X_duplicate_tuple", "ambiguous conformances for the same participant tuple", "panic");
+}
+
+test "feature_tests/contracts/19X_missing_participant" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/19X_missing_participant", "missing argument", "panic");
+}
+
+test "feature_tests/contracts/20X_unknown_participant" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/20X_unknown_participant", "unknown argument name", "panic");
+}
+
+test "feature_tests/contracts/21X_participant_kind" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/21X_participant_kind", "argument kind does not match its parameter", "panic");
+}
+
+test "feature_tests/contracts/22X_missing_associated" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/22X_missing_associated", "missing argument", "panic");
+}
+
+test "feature_tests/contracts/23X_explicit_self" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/23X_explicit_self", "use named participants instead of Self", "panic");
+}
+
+test "feature_tests/contracts/24X_duplicate_parameter" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/24X_duplicate_parameter", "duplicate participant or associated parameter name", "panic");
+}
+
+test "feature_tests/contracts/25X_generic_tuple" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/25X_generic_tuple", "generic participant conformances are not supported yet", "panic");
+}
+
+test "feature_tests/contracts/26X_legacy_tuple_relation" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/26X_legacy_tuple_relation", "explicit participant contracts require standalone satisfies declarations", "panic");
+}
+
+test "feature_tests/contracts/27X_standalone_legacy" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/27X_standalone_legacy", "standalone satisfies requires a contract with explicit participants", "panic");
+}
+
+test "feature_tests/contracts/28X_unknown_contract" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/28X_unknown_contract", "unknown or inaccessible contract", "panic");
+}
+
+test "feature_tests/contracts/29_tuple_borrow" {
+    const test_path = "tests/feature_tests/contracts/29_tuple_borrow";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/contracts/30X_tuple_borrow_dependency" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/30X_tuple_borrow_dependency", "undeclared output dependency", "panic");
+}
+
+test "feature_tests/contracts/31_tuple_constants_and_order" {
+    const test_path = "tests/feature_tests/contracts/31_tuple_constants_and_order";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/contracts/32X_tuple_virtual" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/32X_tuple_virtual", "explicit participants require joint virtual evidence", "panic");
+}
+
+test "feature_tests/contracts/33_tuple_associated_bound" {
+    const test_path = "tests/feature_tests/contracts/33_tuple_associated_bound";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/contracts/34X_tuple_associated_bound" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/34X_tuple_associated_bound", "does not satisfy its declared bound", "panic");
+}
+
+test "feature_tests/contracts/35_tuple_nested_types" {
+    const test_path = "tests/feature_tests/contracts/35_tuple_nested_types";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/contracts/36_tuple_imported_identity" {
+    const test_path = "tests/feature_tests/contracts/36_tuple_imported_identity";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/contracts/37X_tuple_invisible_operation" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/37X_tuple_invisible_operation", "missing operation", "panic");
+}
+
+test "feature_tests/contracts/38X_tuple_generic_legacy_relation" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/38X_tuple_generic_legacy_relation", "explicit participant contracts require standalone satisfies declarations", "panic");
+}
+
+test "feature_tests/contracts/39_tuple_input_invalidation" {
+    const test_path = "tests/feature_tests/contracts/39_tuple_input_invalidation";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/contracts/40X_empty_participants" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/40X_empty_participants", "at least one named participant", "panic");
+}
+
+test "feature_tests/contracts/41X_value_participant" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/41X_value_participant", "participants must be named Type parameters", "panic");
+}
+
+test "feature_tests/contracts/42X_duplicate_participant_argument" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/42X_duplicate_participant_argument", "duplicate argument", "panic");
+}
+
+test "feature_tests/contracts/43X_associated_kind" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/43X_associated_kind", "argument kind does not match its parameter", "panic");
+}
+
+test "feature_tests/contracts/44X_extra_participant" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/44X_extra_participant", "too many arguments", "panic");
+}
+
+test "feature_tests/contracts/45X_legacy_composed_tuple" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/45X_legacy_composed_tuple", "composition of explicit participant contracts is not supported yet", "panic");
+}
+
+test "feature_tests/contracts/46X_tuple_default" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/46X_tuple_default", "explicit participant contracts require standalone satisfies declarations", "panic");
+}
+
+test "feature_tests/contracts/47X_tuple_result_identity" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/47X_tuple_result_identity", "operation returns an incompatible associated result", "panic");
+}

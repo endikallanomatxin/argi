@@ -413,6 +413,8 @@ pub fn semantizeWithOptions(
     };
     _ = try control.materializeSugarTypes();
 
+    try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, try abstracts.findParticipantUnaryUseFailure());
+
     if (options.diagnostics) |diagnostics| {
         if (try abstracts.findConcreteImplementationConflict()) |conflict| {
             var concrete_name = std.array_list.Managed(u8).init(allocator);
@@ -499,6 +501,8 @@ pub fn semantizeWithOptions(
         }
     }
 
+    try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, abstracts.participant_conformance_failure);
+
     const total = totalPending(modules);
     const resolved = try allocator.alloc(bool, total);
     defer allocator.free(resolved);
@@ -514,6 +518,9 @@ pub fn semantizeWithOptions(
             pending_resolution_stats.initial(operation);
         };
     }
+    // Explicit conformance bodies must be checked even if main never calls them.
+    try abstracts.validateParticipantConformances();
+    try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, abstracts.participant_conformance_failure);
     var reachable_storage: reachability_mod.FunctionSet = undefined;
     var reachable: ?*reachability_mod.FunctionSet = null;
     if (!options.exhaustive_function_bodies) {
@@ -3415,4 +3422,22 @@ fn reportGenericArgumentFailure(graph: *const global_sg.GlobalSemanticGraph, dia
         break;
     }
     try sink.add(diagnosticLocation(graph, sink, source), .semantic, "{s} for type '{s}'", .{ failure.reason, graph.text(declaration.name) });
+}
+
+fn reportParticipantConformanceFailure(allocator: std.mem.Allocator, graph: *const global_sg.GlobalSemanticGraph, diagnostics: ?*diagnostics_mod.Diagnostics, optional: ?abstract_mod.ParticipantConformanceFailure) !void {
+    const failure = optional orelse return;
+    if (diagnostics) |bag| {
+        var message = std.array_list.Managed(u8).init(allocator);
+        defer message.deinit();
+        try appendFormatted(&message, allocator, "invalid conformance for contract '{s}': {s}", .{ failure.contract_name, failure.reason });
+        if (failure.operation) |operation| {
+            try appendFormatted(&message, allocator, "\n  required operation: {s} ", .{operation});
+            try appendFieldShape(&message, graph, global_types.fields(graph, failure.input.?).?);
+            try message.appendSlice(" -> ");
+            try appendFieldShape(&message, graph, global_types.fields(graph, failure.output.?).?);
+        }
+        try bag.add(diagnosticLocation(graph, bag, failure.source), .semantic, "{s}", .{message.items});
+        return error.Reported;
+    }
+    return error.InvalidParticipantConformance;
 }

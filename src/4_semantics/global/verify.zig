@@ -60,6 +60,17 @@ pub fn verifyGlobal(graph: *const graph_mod.GlobalSemanticGraph) !void {
             }
         }
     }
+    for (graph.contract_conformances.items) |value| {
+        try require(verify.idFits(value.declaration, graph.declarations.items.len));
+        try require(graph.declarations.items[@intFromEnum(value.declaration)].kind == .abstract_type);
+        try require(verify.rangeFits(value.participants, graph.generic_arguments.items.len));
+        try require(value.participants.len != 0);
+        try require(verify.rangeFits(value.operations, graph.function_refs.items.len));
+        for (graph.function_refs.items[value.operations.start..][0..value.operations.len]) |method| try require(verify.idFits(method, graph.functions.items.len));
+        for (graph.generic_arguments.items[value.participants.start..][0..value.participants.len]) |argument| try require(argument.value == .type);
+        try require(verify.rangeFits(value.associated_arguments, graph.generic_arguments.items.len));
+        try require(verify.sourceFits(value.source, graph.files.items.len));
+    }
     for (graph.abstract_safety_conformances.items) |value| {
         try require(verify.idFits(value.method, graph.functions.items.len));
         try require(verify.sourceFits(value.source, graph.files.items.len));

@@ -27,9 +27,9 @@ participants. Generic associated projections remain symbolic until sufficient
 participant information is known.
 
 > [!QUESTION]
-> The declaration syntax separating participant parameters from associated
-> elements, the spelling of associated projections, and exact specificity rules
-> remain to be settled. They must integrate with existing compile-time parameters.
+> Associated projection syntax and exact specialization rules remain to be
+> settled. The concrete participant syntax below is the current implementation
+> surface; it must remain compatible with existing compile-time parameters.
 > Restrictions do not require a general constraint solver or arbitrary inference.
 
 ## Operations and dispatch
@@ -92,6 +92,55 @@ including relations between participants. Erasure cannot weaken lifetime,
 ownership or aliasing obligations. A returned loan still depends on its concrete
 referents and their storage generations.
 
+## Concrete participant syntax
+
+Declare associated parameters on the contract name and participant parameters
+on the `contract#(...)` marker. Standalone `satisfies` supplies the participant
+tuple first, followed by its associated arguments:
+
+```rg
+Product#(.Result: Type): contract#(.Left: Type, .Right: Type) = (
+    multiply(.left: &Left, .right: &Right) -> (.value: Result) where {}
+)
+
+Row: Type = (.value: Int32)
+Column: Type = (.value: Int32)
+
+satisfies Product#(Row, Column) = (.Result: Int32)
+
+multiply(.left: &Row, .right: &Column) -> (.value: Int32) := {
+    value = left&.value * right&.value
+}
+```
+
+Participants are named type parameters, including when there is only one.
+Requirements use those names directly; `Self` is rejected. Associated parameters
+may be types or integers and may have bounds referencing participant parameters.
+Both groups are registered before their bounds are lowered. Conformance arguments
+use the usual named or positional compile-time syntax; omitting `= (...)` is valid
+when the contract has no associated parameters.
+
+The complete concrete tuple identifies a conformance. Reordering named arguments
+does not create another identity; repeating a tuple is an ambiguity even if its
+associated arguments differ. Reversing distinct participant types creates a
+different tuple. Participant types may themselves be generic instantiations.
+
+Conformance checks concrete operation signatures in the declaring module's
+ordinary visibility context, then checks associated outputs and safety promises.
+Its operations are analyzed even when no executable root calls them, so unused
+conformance declarations cannot bypass safety checking. Imported contracts keep
+their defining declaration identity. Tuple evidence is compile-time metadata;
+ordinary calls keep their existing lowering and allocate no evidence at runtime.
+
+> [!IMPLEMENTATION]
+> Explicit participant conformances currently require concrete tuples and
+> concrete operation implementations. Generic conformances, specialized tuple
+> selection, associated projections and tuple bounds in generic functions remain
+> pending. Storage domains, composition and virtual conversion of explicit
+> participant contracts are rejected until joint mappings and evidence are
+> represented. Unary compatibility syntax below continues to support the
+> existing generic and virtual machinery independently.
+
 ## Unary migration syntax
 
 The first migration surface preserves the existing unary implementation model:
@@ -127,8 +176,9 @@ participant. Functions remain ordinary declarations outside the contract.
 > Requirements still use `Self`. Unary handles accept `Virtual#(.contract: Name)`
 > and `to_virtual#(.contract: Name)`, as well as positional arguments and the
 > legacy `.abstract` label; these spellings produce the same handle type.
-> Participant tuples, associated declarations/projections, specialized
-> conformance selection and joint virtual packages are not implemented.
+> This compatibility surface is distinct from explicit participant tuples.
+> Associated projections, specialized tuple conformance selection and joint
+> virtual packages are not implemented.
 > Existing unary associated arguments remain unique per concrete type and
 > contract; conflicting arguments are errors, not specialized conformances.
 > Diagnostics still describe these internal declarations as abstracts.

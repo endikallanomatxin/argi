@@ -65,6 +65,10 @@ pub const AbstractRequirement = struct {
 };
 
 pub const AbstractDefinition = struct {
+    participants: primitives.Range(ComptimeParameterId) = .{ .start = 0, .len = 0 },
+    // TODO: Prove included unary requirements; currently retained for validation
+    // of unsupported composition across the explicit participant boundary.
+    composition: primitives.Range(AbstractConstraintId) = .{ .start = 0, .len = 0 },
     declaration: entities.ModuleDeclId,
     parameters: primitives.Range(ComptimeParameterId),
     requirements: primitives.Range(AbstractRequirementId),
@@ -98,6 +102,14 @@ pub const ParameterizedAbstractImplementation = struct {
     domains: []const DomainMapping = &.{},
 };
 
+// Tuple evidence keeps selector arguments separate from associated outputs.
+pub const ContractConformance = struct {
+    contract_ref: DeclarationRef,
+    participants: entities.GenericArgRange,
+    associated_arguments: entities.GenericArgRange,
+    source: primitives.SourceRef,
+};
+
 pub const AbstractDefault = struct {
     abstract_ref: DeclarationRef,
     ty: entities.ModuleTypeId,
@@ -122,6 +134,7 @@ pub const Storage = struct {
     abstract_arguments: std.ArrayList(AbstractArgument) = .empty,
     abstract_implementations: std.ArrayList(AbstractImplementation) = .empty,
     parameterized_abstract_implementations: std.ArrayList(ParameterizedAbstractImplementation) = .empty,
+    contract_conformances: std.ArrayList(ContractConformance) = .empty,
     abstract_defaults: std.ArrayList(AbstractDefault) = .empty,
     parameterized_abstract_defaults: std.ArrayList(ParameterizedAbstractDefault) = .empty,
 
@@ -136,6 +149,7 @@ pub const Storage = struct {
         self.abstract_arguments.deinit(allocator);
         self.abstract_implementations.deinit(allocator);
         self.parameterized_abstract_implementations.deinit(allocator);
+        self.contract_conformances.deinit(allocator);
         self.abstract_defaults.deinit(allocator);
         self.parameterized_abstract_defaults.deinit(allocator);
         self.* = .{};
@@ -152,6 +166,7 @@ pub const Storage = struct {
             self.abstract_arguments.items.len * @sizeOf(AbstractArgument) +
             self.abstract_implementations.items.len * @sizeOf(AbstractImplementation) +
             self.parameterized_abstract_implementations.items.len * @sizeOf(ParameterizedAbstractImplementation) +
+            self.contract_conformances.items.len * @sizeOf(ContractConformance) +
             self.abstract_defaults.items.len * @sizeOf(AbstractDefault) +
             self.parameterized_abstract_defaults.items.len * @sizeOf(ParameterizedAbstractDefault);
     }

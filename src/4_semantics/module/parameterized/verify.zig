@@ -129,6 +129,13 @@ pub fn verifyParameterizedForms(graph: *const graph_mod.ModuleSemanticGraph) !vo
     for (storage.abstract_definitions.items) |definition| {
         try require(verify.idFits(definition.declaration, graph.declarations.items.len));
         try require(verify.rangeFits(definition.parameters, storage.comptime_parameters.items.len));
+        try require(verify.rangeFits(definition.participants, storage.comptime_parameters.items.len));
+        try require(verify.rangeFits(definition.composition, storage.abstract_constraints.items.len));
+        for (storage.comptime_parameters.items[definition.participants.start..][0..definition.participants.len]) |parameter| try require(parameter.kind == .type);
+        if (definition.participants.len != 0 and definition.parameters.len != 0) {
+            try require(definition.parameters.start + definition.parameters.len <= definition.participants.start or
+                definition.participants.start + definition.participants.len <= definition.parameters.start);
+        }
         try require(verify.rangeFits(definition.requirements, storage.abstract_requirements.items.len));
         for (definition.domains) |domain| try require(verify.stringFits(domain, graph.strings.items));
         for (storage.abstract_requirements.items[definition.requirements.start..][0..definition.requirements.len]) |requirement| if (requirement.safety_contract) |contract| {
@@ -159,6 +166,13 @@ pub fn verifyParameterizedForms(graph: *const graph_mod.ModuleSemanticGraph) !vo
         try require(verify.rangeFits(parameterized.arguments, storage.ir.generic_arguments.items.len));
         try require(verify.sourceFits(parameterized.source, graph.file_offsets.items.len));
         try verifyDomainMappings(graph, parameterized.domains);
+    }
+
+    for (storage.contract_conformances.items) |conformance| {
+        try declarationRef(graph, conformance.contract_ref);
+        try require(verify.rangeFits(conformance.participants, views.genericArgumentCount(graph)));
+        try require(verify.rangeFits(conformance.associated_arguments, views.genericArgumentCount(graph)));
+        try require(verify.sourceFits(conformance.source, graph.file_offsets.items.len));
     }
 
     for (storage.abstract_defaults.items) |default| {

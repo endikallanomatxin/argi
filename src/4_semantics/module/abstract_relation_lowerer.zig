@@ -24,18 +24,29 @@ pub fn lower(
     graph: *graph_mod.ModuleSemanticGraph,
     files: []const graph_mod.FileInput,
 ) !Stats {
+    return lowerDiagnosed(allocator, graph, files, null);
+}
+
+pub fn lowerDiagnosed(
+    allocator: std.mem.Allocator,
+    graph: *graph_mod.ModuleSemanticGraph,
+    files: []const graph_mod.FileInput,
+    diagnostics: ?*@import("../../1_base/diagnostic.zig").Diagnostics,
+) !Stats {
     var ctx = Context{
         .allocator = allocator,
         .graph = graph,
         .files = files,
         .writer = writer_mod.Writer.init(allocator, graph),
         .params = std.array_list.Managed(Param).init(allocator),
+        .diagnostics = diagnostics,
     };
     defer ctx.params.deinit();
     return ctx.run();
 }
 
 const Context = struct {
+    diagnostics: ?*@import("../../1_base/diagnostic.zig").Diagnostics = null,
     allocator: std.mem.Allocator,
     graph: *graph_mod.ModuleSemanticGraph,
     files: []const graph_mod.FileInput,
@@ -52,6 +63,10 @@ const Context = struct {
             self.tree = file.tree;
             self.source = file.source;
             for (self.tree.roots) |node| switch (self.tree.tag(node)) {
+                .contract_conformance => {
+                    try self.lowerConformance(node, self.tree.contractConformance(node).?);
+                    stats.implementations += 1;
+                },
                 .abstract_implements => {
                     const relation = self.tree.abstractImplements(node).?;
                     if (hasParams(relation.generic_params, relation.generic_params_struct)) {
@@ -76,6 +91,56 @@ const Context = struct {
             };
         }
         return stats;
+    }
+
+    fn conformanceError(self: *Context, node: syn.NodeIndex, message: []const u8) !void {
+        if (self.diagnostics) |bag| {
+            try bag.add(self.tree.location(node), .semantic, "{s}", .{message});
+            return error.Reported;
+        }
+        return error.InvalidContractConformance;
+    }
+
+    fn lowerConformance(self: *Context, node: syn.NodeIndex, relation: syn.ContractConformance) !void {
+        if (hasParams(relation.generic_params, relation.generic_params_struct))
+            try self.conformanceError(node, "generic participant conformances are not supported yet");
+        const syntax_type = self.tree.syntaxType(relation.contract_type) orelse return error.ExpectedContractType;
+        const base_node = if (syntax_type == .generic) syntax_type.generic.base else relation.contract_type;
+        const base = self.tree.syntaxType(base_node) orelse return error.ExpectedContractType;
+        if (base != .name) try self.conformanceError(node, "satisfies requires a named contract");
+        const name = self.tree.tokenTextFromSource(self.source, base.name.name_token);
+        const reference = try self.declarationRef(base_node, name, .abstract);
+        const participants = try self.lowerConformanceArguments(if (syntax_type == .generic) syntax_type.generic.arguments else null);
+        const associated = try self.lowerConformanceArguments(relation.associated_arguments);
+        try self.graph.semantic.parameterized_storage.contract_conformances.append(self.allocator, .{
+            .contract_ref = reference,
+            .participants = participants,
+            .associated_arguments = associated,
+            .source = self.sourceRef(node),
+        });
+    }
+
+    fn lowerConformanceArguments(self: *Context, optional: ?syn.NodeIndex) !entities.GenericArgRange {
+        var arguments: std.ArrayList(entities.GenericArgument) = .empty;
+        defer arguments.deinit(self.allocator);
+        if (optional) |node| {
+            for (self.tree.structTypeLiteral(node).?.fields) |field_node| {
+                const field = self.tree.structTypeField(field_node).?;
+                const value: entities.GenericArgument.Value = if (field.type_node) |type_node|
+                    .{ .type = try self.lowerModuleType(type_node) }
+                else if (field.default_value) |value_node|
+                    .{ .comptime_int = try self.evalInt(value_node) }
+                else
+                    return error.InvalidContractArgument;
+                try arguments.append(self.allocator, .{
+                    .name = try self.writer.addString(type_arguments.name(self.tree, self.source, field, "")),
+                    .value = value,
+                });
+            }
+        }
+        const start: u32 = @intCast(@import("views.zig").genericArgumentCount(self.graph));
+        for (arguments.items) |argument| _ = try self.writer.addGenericArgument(argument);
+        return .{ .start = start, .len = @intCast(arguments.items.len) };
     }
 
     fn lowerImplementation(self: *Context, node: syn.NodeIndex, relation: syn.AbstractImplements) !void {

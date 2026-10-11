@@ -84,6 +84,12 @@ dispatch rather than reverse inference of abstract-associated arguments.
 Contract checking and overload resolution must agree on which callable
 implementation satisfies a requirement. See [Multiple dispatch](131_multiple_dispatch.md).
 
+> [!IMPLEMENTATION]
+> Body-declared composition names are retained, but the compiler does not yet
+> inherit and prove their operation requirements. Explicit contract-to-contract
+> conformance relations remain the compatibility path. An explicit participant
+> contract cannot be included in a unary contract body.
+
 ## Collection contracts
 
 `Indexable`, `IndexableMutable`, `IndexableValue`, and `Resizable` describe

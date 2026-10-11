@@ -93,6 +93,15 @@ pub const AbstractSafetyConformance = struct {
     domains: []const primitives.StorageDomainMapping = &.{},
     source: primitives.SourceRef,
 };
+// Static tuple evidence owns canonical declaration-order arguments. It has no
+// erased receiver and participates in the ordinary append-only checkpoints.
+pub const ContractConformance = struct {
+    declaration: GlobalDeclId,
+    participants: primitives.Range(GlobalGenericArgId),
+    associated_arguments: primitives.Range(GlobalGenericArgId),
+    operations: primitives.Range(GlobalFunctionId) = .{ .start = 0, .len = 0 },
+    source: primitives.SourceRef,
+};
 pub const ReachAlternative = primitives.ReachAlternative(Ids);
 pub const Reach = primitives.Reach(Ids);
 pub const NullableUnwrap = primitives.NullableUnwrap(Ids);
@@ -248,6 +257,7 @@ pub const GlobalSemanticGraph = struct {
     virtual_registries: std.ArrayList(VirtualMethodRegistry) = .empty,
     virtualizes: std.ArrayList(Virtualize) = .empty,
     abstract_safety_conformances: std.ArrayList(AbstractSafetyConformance) = .empty,
+    contract_conformances: std.ArrayList(ContractConformance) = .empty,
     virtual_calls: std.ArrayList(VirtualCall) = .empty,
     reach_segments: std.ArrayList(StringRange) = .empty,
     reach_alternatives: std.ArrayList(ReachAlternative) = .empty,
@@ -325,6 +335,7 @@ pub const GlobalSemanticGraph = struct {
             &self.nullable_unwraps,      &self.testing_expect_errors, &self.error_propagations,         &self.error_contexts,
             &self.node_refs,             &self.type_refs,             &self.binding_refs,               &self.function_refs,
             &self.virtual_registry_refs, &self.strings,               &self.roots,                      &self.abstract_safety_conformances,
+            &self.contract_conformances,
         }) |list| list.deinit(allocator);
         self.* = .{};
     }
@@ -646,6 +657,7 @@ pub const GlobalSemanticGraph = struct {
             self.virtual_registries.items.len * @sizeOf(VirtualMethodRegistry) +
             self.virtualizes.items.len * @sizeOf(Virtualize) +
             self.abstract_safety_conformances.items.len * @sizeOf(AbstractSafetyConformance) +
+            self.contract_conformances.items.len * @sizeOf(ContractConformance) +
             self.virtual_calls.items.len * @sizeOf(VirtualCall) +
             self.reach_segments.items.len * @sizeOf(StringRange) +
             self.reach_alternatives.items.len * @sizeOf(ReachAlternative) +
@@ -773,6 +785,12 @@ test "semantic graph checkpoint restores append-only pools and name indexes" {
         .ty = null,
         .content = .break_statement,
     });
+    try graph.contract_conformances.append(allocator, .{
+        .declaration = @enumFromInt(0),
+        .participants = .{ .start = 0, .len = 0 },
+        .associated_arguments = .{ .start = 0, .len = 0 },
+        .source = .{ .file_index = 0, .offset = 0 },
+    });
     _ = try graph.declarationsNamed(allocator, "discarded");
     _ = try graph.functionsNamed(allocator, "discarded");
 
@@ -780,6 +798,7 @@ test "semantic graph checkpoint restores append-only pools and name indexes" {
     try std.testing.expectEqual(@as(usize, 1), graph.declarations.items.len);
     try std.testing.expectEqual(@as(usize, 1), graph.functions.items.len);
     try std.testing.expectEqual(@as(usize, 0), graph.nodes.items.len);
+    try std.testing.expectEqual(@as(usize, 0), graph.contract_conformances.items.len);
     try std.testing.expectEqual(@as(usize, 0), (try graph.declarationsNamed(allocator, "discarded")).len);
     try std.testing.expectEqual(@as(usize, 0), (try graph.functionsNamed(allocator, "discarded")).len);
 

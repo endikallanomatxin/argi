@@ -183,6 +183,7 @@ fn linkedAbstractMatches(
 const PipeOperandOverride = struct { syntax: syn.NodeIndex, value: ir.ParameterizedNodeId };
 
 pub const Context = struct {
+    has_contract_participants: bool = false,
     in_defer: bool = false,
     defer_loop_depth: u32 = 0,
     diagnostics: ?*@import("../../../1_base/diagnostic.zig").Diagnostics = null,
@@ -278,7 +279,37 @@ pub const Context = struct {
                     const abstract = self.tree.abstractDeclaration(declaration_node) orelse continue;
                     self.parameters.clearRetainingCapacity();
                     self.abstract_parameters.clearRetainingCapacity();
-                    const params = try self.lowerParameters(abstract.generic_params, abstract.generic_params_struct);
+                    const params = try self.registerParameters(abstract.generic_params, abstract.generic_params_struct);
+                    self.has_contract_participants = abstract.participants_struct != null;
+                    defer self.has_contract_participants = false;
+                    const participants = if (abstract.participants_struct) |participant_node| blk: {
+                        const literal = self.tree.structTypeLiteral(participant_node).?;
+                        if (literal.fields.len == 0) try self.contractError(declaration_node, "contract requires at least one named participant");
+                        for (literal.fields) |field_node| {
+                            const field = self.tree.structTypeField(field_node).?;
+                            if (field.position != null or field.type_node == null or !isTypeParameter(self.tree, self.source, field) or field.default_value != null)
+                                try self.contractError(field_node, "contract participants must be named Type parameters without defaults");
+                        }
+                        const range = try self.registerParameters(literal.fields, participant_node);
+                        for (self.parameters.items, 0..) |parameter_binding, position| {
+                            if (std.mem.eql(u8, parameter_binding.name, "Self")) try self.contractError(declaration_node, "explicit contract participants cannot be named Self");
+                            for (self.parameters.items[0..position]) |previous| {
+                                if (std.mem.eql(u8, previous.name, parameter_binding.name)) try self.contractError(declaration_node, "duplicate participant or associated parameter name");
+                            }
+                        }
+                        if (abstract.domains.len != 0) try self.contractError(declaration_node, "storage domains on explicit contract participants are not supported yet");
+                        if (abstract.requires_abstracts.len != 0) try self.contractError(declaration_node, "composition of explicit participant contracts is not supported yet");
+                        break :blk range;
+                    } else primitives.Range(ir.ComptimeParameterId){ .start = 0, .len = 0 };
+                    // Both groups are visible before any bound is lowered.
+                    try self.lowerParameterBounds(params, abstract.generic_params_struct);
+                    try self.lowerParameterBounds(participants, abstract.participants_struct);
+                    const composition_start: u32 = @intCast(self.graph.semantic.parameterized_storage.abstract_constraints.items.len);
+                    for (abstract.requires_abstracts) |composed| _ = try self.lowerAbstractConstraint(composed);
+                    const composition: primitives.Range(parameterized_storage.AbstractConstraintId) = .{
+                        .start = composition_start,
+                        .len = @intCast(abstract.requires_abstracts.len),
+                    };
                     const req_start: u32 = @intCast(self.graph.semantic.parameterized_storage.abstract_requirements.items.len);
                     var domains: std.ArrayList(primitives.StringRange) = .empty;
                     defer domains.deinit(self.allocator);
@@ -308,6 +339,8 @@ pub const Context = struct {
                     try self.graph.semantic.parameterized_storage.abstract_definitions.append(self.allocator, .{
                         .declaration = decl_id,
                         .parameters = params,
+                        .participants = participants,
+                        .composition = composition,
                         .requirements = .{
                             .start = req_start,
                             .len = @intCast(self.graph.semantic.parameterized_storage.abstract_requirements.items.len - req_start),
@@ -687,6 +720,32 @@ pub const Context = struct {
     }
 
     fn lowerParameters(self: *Context, params: []const syn.NodeIndex, params_struct: ?syn.NodeIndex) !primitives.Range(ir.ComptimeParameterId) {
+        const range = try self.registerParameters(params, params_struct);
+        try self.lowerParameterBounds(range, params_struct);
+        return range;
+    }
+
+    fn lowerParameterBounds(self: *Context, range: primitives.Range(ir.ComptimeParameterId), params_struct: ?syn.NodeIndex) !void {
+        const struct_node = params_struct orelse return;
+        const literal = self.tree.structTypeLiteral(struct_node) orelse return error.InvalidGenericParameters;
+        const start = range.start;
+        for (literal.fields, 0..) |field_node, offset| {
+            const field = self.tree.structTypeField(field_node) orelse return error.InvalidGenericParameter;
+            const value_type_node = field.type_node orelse return error.InvalidGenericParameter;
+            const parameter_record = &self.graph.semantic.parameterized_storage.comptime_parameters.items[
+                start + @as(u32, @intCast(offset))
+            ];
+            switch (parameter_record.kind) {
+                .comptime_int => parameter_record.value_type = try self.lowerType(value_type_node, false),
+                .type => {
+                    if (!isTypeBuiltin(self.tree, self.source, value_type_node))
+                        parameter_record.constraint = try self.lowerAbstractConstraint(value_type_node);
+                },
+            }
+        }
+    }
+
+    fn registerParameters(self: *Context, params: []const syn.NodeIndex, params_struct: ?syn.NodeIndex) !primitives.Range(ir.ComptimeParameterId) {
         const start: u32 = @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len);
         if (params_struct) |struct_node| {
             const literal = self.tree.structTypeLiteral(struct_node) orelse return error.InvalidGenericParameters;
@@ -706,21 +765,6 @@ pub const Context = struct {
                     .kind = kind,
                 });
                 try self.parameters.append(.{ .name = name_text, .id = id, .kind = kind });
-            }
-
-            for (literal.fields, 0..) |field_node, offset| {
-                const field = self.tree.structTypeField(field_node) orelse return error.InvalidGenericParameter;
-                const value_type_node = field.type_node orelse return error.InvalidGenericParameter;
-                const parameter_record = &self.graph.semantic.parameterized_storage.comptime_parameters.items[
-                    start + @as(u32, @intCast(offset))
-                ];
-                switch (parameter_record.kind) {
-                    .comptime_int => parameter_record.value_type = try self.lowerType(value_type_node, false),
-                    .type => {
-                        if (!isTypeBuiltin(self.tree, self.source, value_type_node))
-                            parameter_record.constraint = try self.lowerAbstractConstraint(value_type_node);
-                    },
-                }
             }
         } else {
             for (params) |param_node| {
@@ -924,7 +968,13 @@ pub const Context = struct {
 
     fn lowerNamedType(self: *Context, owner: syn.NodeIndex, name_token: syn.TokenIndex, qualifier: ?syn.TokenIndex, allow_self: bool) !ir.ParameterizedTypeId {
         const name = self.tree.tokenTextFromSource(self.source, name_token);
-        if (allow_self and std.mem.eql(u8, name, "Self")) return self.addType(.abstract_self);
+        if (allow_self and qualifier == null and std.mem.eql(u8, name, "Self")) {
+            if (self.has_contract_participants) {
+                try self.contractError(owner, "use named participants instead of Self in this contract");
+                unreachable;
+            }
+            return self.addType(.abstract_self);
+        }
         if (qualifier == null) {
             if (self.parameter(name)) |binding| if (binding.kind == .type) return self.addType(.{ .parameter = binding.id });
             if (primitives.builtinTypeNamedForTarget(name, self.graph.target.stdTarget())) |builtin| {
