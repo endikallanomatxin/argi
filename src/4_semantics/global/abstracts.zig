@@ -21,6 +21,14 @@ fn opaqueStorageTransitionConflict(contract: anytype, storage: primitives.Method
     return false;
 }
 
+fn conditionalOpaqueEmptyConflict(contract: primitives.MethodSafetyContract, outcomes: []const primitives.MethodSafetyContract.Outcome) bool {
+    for (outcomes) |outcome| {
+        for (outcome.emptied_inputs) |storage| if (opaqueStorageTransitionConflict(contract, storage)) return true;
+        if (conditionalOpaqueEmptyConflict(contract, outcome.outcomes)) return true;
+    }
+    return false;
+}
+
 // Exact identity clauses apply to the complete output, including its payloads.
 // Conditional provenance cannot weaken an enclosing identity guarantee.
 fn outcomeHasStorageSource(outcomes: []const primitives.MethodSafetyContract.Outcome, output_index: u32) bool {
@@ -1282,6 +1290,7 @@ pub const Resolver = struct {
             .output_count = 0,
             .dependencies = outcome.dependencies,
             .storage_sources = outcome.storage_sources,
+            .emptied_inputs = outcome.emptied_inputs,
             .consumed_inputs = outcome.consumed_inputs,
             .relocations = outcome.relocations,
             .domain_dependencies = outcome.domain_dependencies,
@@ -1315,6 +1324,7 @@ pub const Resolver = struct {
         if (relocationInheritanceFailure(contract)) |message| return message;
         for (contract.transfers) |transfer| if (outcomeHasStorageSource(contract.outcomes, transfer.output_index)) return "from_storage cannot be combined with exact transfers for the same output";
         for (contract.referents) |referent| if (outcomeHasStorageSource(contract.outcomes, referent.output_index)) return "from_storage cannot be combined with exact refers_to for the same output";
+        if (conditionalOpaqueEmptyConflict(contract, contract.outcomes)) return "opaque storage clauses cannot overlap generation replacement, consumption or relocation";
         for (contract.retained_inputs, 0..) |retained, retained_index| {
             if (self.opaqueStorageInputFailure(inputs, abstract_ty, retained.storage, true, erased_self, located.definition.domains.len)) |message| return message;
             if (self.graph.semanticType(self.graph.fields.items[inputs.start + retained.input].ty) == .pointer) return "retains currently requires a value input; wrap borrowed references in a value instead of moving through a reference input";

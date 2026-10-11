@@ -105,8 +105,9 @@ retention, `from_storage(output, storage)` permits hidden output provenance,
 and `empties(storage)` guarantees discharge of hidden dependencies. None proves
 runtime slot occupancy or exact hidden value identity. Outcome-selected
 `from_storage` permissions follow nested payload choices.
-Initialization effects and conditional retention or empty-state transitions need
-further modeling. Known storage inputs and single-storage receiver domains
+Initialization effects and conditional retention need further modeling.
+Selected empty-state guarantees retain current caller storage and call guards;
+emptying does not restore snapshots or erase extracted values' dependencies. Known storage inputs and single-storage receiver domains
 share these effects; grouped domains and
 reference mappings require more precise storage identities.
 

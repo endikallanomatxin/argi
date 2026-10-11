@@ -11321,3 +11321,61 @@ test "feature_tests/polymorphism/282X_conditional_storage_inherited_identity" {
 test "feature_tests/polymorphism/283X_conditional_storage_other_output" {
     try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/283X_conditional_storage_other_output", "conditional effects on other outputs require correlated result facts", "failed without a diagnostic");
 }
+
+test "feature_tests/polymorphism/284_conditional_storage_empty" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/284_conditional_storage_empty");
+    try runExpect("tests/feature_tests/polymorphism/284_conditional_storage_empty", 0);
+}
+
+test "feature_tests/polymorphism/285X_conditional_storage_empty_unselected" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/285X_conditional_storage_empty_unselected", "function output cannot depend on a local storage generation", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/286_conditional_storage_empty_returned_owner" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/286_conditional_storage_empty_returned_owner");
+    try runExpect("tests/feature_tests/polymorphism/286_conditional_storage_empty_returned_owner", 0);
+}
+
+test "feature_tests/polymorphism/287X_conditional_storage_empty_repopulated" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/287X_conditional_storage_empty_repopulated", "function output cannot depend on a local storage generation", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/288X_conditional_storage_empty_second_call" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/288X_conditional_storage_empty_second_call", "function output cannot depend on a local storage generation", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/289X_conditional_storage_empty_missing" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/289X_conditional_storage_empty_missing", "cannot prove empties", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/290_concrete_conditional_storage_empty" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/290_concrete_conditional_storage_empty");
+    try runExpect("tests/feature_tests/polymorphism/290_concrete_conditional_storage_empty", 0);
+}
+
+test "feature_tests/polymorphism/291_nested_conditional_storage_empty" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/291_nested_conditional_storage_empty");
+    try runExpect("tests/feature_tests/polymorphism/291_nested_conditional_storage_empty", 0);
+}
+
+test "feature_tests/polymorphism/292X_conditional_storage_empty_preserving_result" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/292X_conditional_storage_empty_preserving_result", "function output cannot depend on a local storage generation", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/293X_conditional_storage_empty_overwritten_result" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/293X_conditional_storage_empty_overwritten_result", "function output cannot depend on a local storage generation", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/294_conditional_storage_empty_known_input" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/294_conditional_storage_empty_known_input");
+    try runExpect("tests/feature_tests/polymorphism/294_conditional_storage_empty_known_input", 0);
+}
+
+test "feature_tests/polymorphism/295_conditional_storage_extraction_and_empty" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/295_conditional_storage_extraction_and_empty");
+    try runExpect("tests/feature_tests/polymorphism/295_conditional_storage_extraction_and_empty", 0);
+}
+
+test "feature_tests/polymorphism/296X_conditional_storage_extracted_local_escape" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/296X_conditional_storage_extracted_local_escape", "function output cannot depend on a local storage generation", "failed without a diagnostic");
+}

@@ -27,6 +27,7 @@ pub const Infer = struct {
     outcome_ns: u64 = 0,
     opaque_ns: u64 = 0,
     unbound_opaque_dependencies: facts.ValueEffect = .{},
+    opaque_empty_seen: bool = false,
     virtual_summary_ns: u64 = 0,
     evaluations: u64 = 0,
     summary_changes: u64 = 0,
@@ -229,7 +230,7 @@ pub const Infer = struct {
             for (contract.outcomes) |outcome| try wanted.append(.{ .output_index = outcome.output_index, .parent_variants = outcome.parent_variants, .variant_index = outcome.variant_index });
             for (outputs, 0..) |_, output_index| {
                 var guarded_generation = false;
-                for (contract.outcomes) |outcome| if (outcome.output_index == output_index and (outcome.effects.invalidates.len != 0 or outcome.effects.invalidated_domains.len != 0 or outcome.effects.consumed_inputs.len != 0 or outcome.effects.relocations.len != 0)) {
+                for (contract.outcomes) |outcome| if (outcome.output_index == output_index and (outcome.effects.invalidates.len != 0 or outcome.effects.invalidated_domains.len != 0 or outcome.effects.consumed_inputs.len != 0 or outcome.effects.relocations.len != 0 or outcome.effects.emptied_inputs.len != 0)) {
                     guarded_generation = true;
                     break;
                 };
@@ -246,7 +247,7 @@ pub const Infer = struct {
                         try states.append(.{ .target = relocation.source, .initializedness = .moved });
                         try states.append(.{ .target = relocation.destination, .initializedness = .initialized, .value = .{ .input_place_values = try self.allocator.dupe(facts.InputPath, &.{relocation.source}) }, .requires_available_destination = true, .refreshes_storage_generation = true });
                     }
-                    try conditional.append(.{ .output_index = selector.output_index, .parent_variants = selector.parent_variants, .variant_index = selector.variant_index, .input_post_states = try states.toOwnedSlice(), .invalidated_domains = effects.invalidated_domains });
+                    try conditional.append(.{ .output_index = selector.output_index, .parent_variants = selector.parent_variants, .variant_index = selector.variant_index, .input_post_states = try states.toOwnedSlice(), .invalidated_domains = effects.invalidated_domains, .opaque_storage_empties = effects.emptied_inputs });
                 }
             }
             var fallback_states = std.array_list.Managed(facts.PlacePostState).init(self.allocator);
@@ -281,7 +282,7 @@ pub const Infer = struct {
         var wanted = std.array_list.Managed(outcome_selectors.Selector).init(self.allocator);
         try wanted.appendSlice(self.requested_selectors.get(method) orelse &.{});
         for (contract.outcomes) |outcome| {
-            if (outcome.effects.invalidates.len == 0 and outcome.effects.invalidated_domains.len == 0 and outcome.effects.consumed_inputs.len == 0 and outcome.effects.relocations.len == 0) continue;
+            if (outcome.effects.invalidates.len == 0 and outcome.effects.invalidated_domains.len == 0 and outcome.effects.consumed_inputs.len == 0 and outcome.effects.relocations.len == 0 and outcome.effects.emptied_inputs.len == 0) continue;
             const selector = outcome_selectors.Selector{ .output_index = outcome.output_index, .parent_variants = outcome.parent_variants, .variant_index = outcome.variant_index };
             var duplicate = false;
             for (wanted.items) |existing| if (existing.output_index == selector.output_index and existing.variant_index == selector.variant_index and std.mem.eql(u32, existing.parent_variants, selector.parent_variants)) {
@@ -647,20 +648,34 @@ pub const Infer = struct {
 
         profile.accumulate(self.profile_io, start, &self.post_state_ns);
         start = profile.timestamp(self.profile_io);
+        var opaque_storage_effects = std.array_list.Managed(facts.OpaqueStorageEffect).init(self.allocator);
+        defer opaque_storage_effects.deinit();
+        self.opaque_empty_seen = false;
+        const opaque_storage_empties = try self.inferOpaqueStorageEffects(
+            function_id,
+            function.body.?,
+            &opaque_storage_effects,
+        );
+        const has_opaque_empty_effect = self.opaque_empty_seen;
+        profile.accumulate(self.profile_io, start, &self.opaque_ns);
+        start = profile.timestamp(self.profile_io);
         // Each choice is considered independently. We never construct a product
         // of unrelated discriminants; unknown tags retain the common may-effects.
         var outcomes = std.array_list.Managed(facts.OutcomePostStates).init(self.allocator);
         defer outcomes.deinit();
         const common_domains = try self.allocator.dupe(facts.InputDomain, self.domain_invalidations.items);
         const requested_outcomes = if (self.requested_selectors.get(function_id)) |requested| requested.len != 0 else false;
-        if (post_states.items.len != 0 or common_domains.len != 0 or requested_outcomes) {
+        var forwarded_selectors = std.array_list.Managed(outcome_selectors.Selector).init(self.allocator);
+        defer forwarded_selectors.deinit();
+        try self.forwardingSelectors(function_id, function.body.?, &forwarded_selectors);
+        if (post_states.items.len != 0 or common_domains.len != 0 or requested_outcomes or has_opaque_empty_effect or forwarded_selectors.items.len != 0) {
             for (0..function.output.len) |output_index| {
                 const output_ty = self.graph.fields.items[function.output.start + @as(u32, @intCast(output_index))].ty;
                 var wanted = std.array_list.Managed(outcome_selectors.Selector).init(self.allocator);
                 defer wanted.deinit();
                 try wanted.appendSlice(self.requested_selectors.get(function_id) orelse &.{});
                 for (previous.outcome_post_states) |outcome| try wanted.append(.{ .output_index = outcome.output_index, .parent_variants = outcome.parent_variants, .variant_index = outcome.variant_index });
-                try self.forwardingSelectors(function_id, function.body.?, &wanted);
+                try wanted.appendSlice(forwarded_selectors.items);
                 for (try outcome_selectors.partition(self.allocator, self.graph, @intCast(output_index), output_ty, wanted.items)) |selector| {
                     self.selected_outcome = .{ .output_index = @intCast(output_index), .parent_variants = selector.parent_variants, .variant_index = selector.variant_index, .binding = self.graph.binding_refs.items[function.output_bindings.start + @as(u32, @intCast(output_index))] };
                     defer self.selected_outcome = null;
@@ -675,13 +690,25 @@ pub const Infer = struct {
                     defer if (outcome_exits) |*exits| exits.deinit();
                     try self.inferInputPostStates(function_id, function.body.?, &outcome_flow, &outcome_exits);
                     if (outcome_flow.reachable) try self.recordOutcomeExit(&outcome_exits, &outcome_flow);
+                    // The same selected call is interpreted at its original position.
+                    // Empty-state guarantees intersect returning exits independently
+                    // of generation may-effects and never recover caller snapshots.
+                    const selected_domains = try self.allocator.dupe(facts.InputDomain, self.domain_invalidations.items);
+                    self.selected_forward_applied = false;
+                    var selected_opaque_effects = std.array_list.Managed(facts.OpaqueStorageEffect).init(self.allocator);
+                    defer selected_opaque_effects.deinit();
+                    const selected_empties = if (has_opaque_empty_effect)
+                        try self.inferOpaqueStorageEffects(function_id, function.body.?, &selected_opaque_effects)
+                    else
+                        opaque_storage_empties;
                     try outcomes.append(.{
                         .reachable = outcome_exits != null,
                         .output_index = @intCast(output_index),
                         .parent_variants = selector.parent_variants,
                         .variant_index = selector.variant_index,
                         .input_post_states = if (outcome_exits) |exits| try self.allocator.dupe(facts.PlacePostState, exits.items) else &.{},
-                        .invalidated_domains = try self.allocator.dupe(facts.InputDomain, self.domain_invalidations.items),
+                        .invalidated_domains = selected_domains,
+                        .opaque_storage_empties = selected_empties,
                     });
                 }
             }
@@ -692,14 +719,6 @@ pub const Infer = struct {
 
         profile.accumulate(self.profile_io, start, &self.outcome_ns);
         start = profile.timestamp(self.profile_io);
-        var opaque_storage_effects = std.array_list.Managed(facts.OpaqueStorageEffect).init(self.allocator);
-        defer opaque_storage_effects.deinit();
-        const opaque_storage_empties = try self.inferOpaqueStorageEffects(
-            function_id,
-            function.body.?,
-            &opaque_storage_effects,
-        );
-        profile.accumulate(self.profile_io, start, &self.opaque_ns);
         // Local hidden domains have no input path. Until exact returned-domain
         // identity is represented, retain their possible input provenance on
         // owning or reference-containing outputs. Cleanup obligations alone
@@ -1492,6 +1511,8 @@ pub const Infer = struct {
     const OpaqueEmptyState = struct {
         emptied: std.array_list.Managed(facts.InputPath),
         reachable: bool = true,
+        outcome_variant: ?u32 = null,
+        outcome_parent_mismatch: bool = false,
 
         fn init(allocator: std.mem.Allocator) OpaqueEmptyState {
             return .{ .emptied = std.array_list.Managed(facts.InputPath).init(allocator) };
@@ -1506,6 +1527,8 @@ pub const Infer = struct {
             errdefer result.deinit();
             try result.emptied.appendSlice(self.emptied.items);
             result.reachable = self.reachable;
+            result.outcome_variant = self.outcome_variant;
+            result.outcome_parent_mismatch = self.outcome_parent_mismatch;
             return result;
         }
     };
@@ -1947,6 +1970,7 @@ pub const Infer = struct {
 
     fn selectForwardedEffects(self: *Infer, summary: facts.SafetySummary, selected: facts.OutcomePostStates) !facts.SafetySummary {
         var result = summary;
+        result.opaque_storage_empties = try std.mem.concat(self.allocator, facts.InputPath, &.{ summary.opaque_storage_empties, selected.opaque_storage_empties });
         if (summary.outputs.len == 1) {
             result.input_post_states = selected.input_post_states;
             result.invalidated_domains = selected.invalidated_domains;
@@ -2443,7 +2467,7 @@ pub const Infer = struct {
         var exits: ?std.array_list.Managed(facts.InputPath) = null;
         defer if (exits) |*emptied| emptied.deinit();
         try self.inferOpaqueEmptyBlock(function_id, block_id, effects, &state, &exits);
-        if (state.reachable) try self.recordOpaqueEmptyExit(&exits, state.emptied.items);
+        if (state.reachable) try self.recordOpaqueEmptyExit(&exits, &state);
 
         const emptied = if (exits) |*items|
             try self.allocator.dupe(facts.InputPath, items.items)
@@ -2485,7 +2509,16 @@ pub const Infer = struct {
                 if (!record.deferred_initialization) if (record.initialization) |initialization|
                     try self.inferOpaqueEmptyExpression(function_id, initialization, effects, state, exits);
             },
-            .assignment => |assignment| try self.inferOpaqueEmptyExpression(function_id, assignment.value, effects, state, exits),
+            .assignment => |assignment| {
+                try self.inferOpaqueEmptyExpression(function_id, assignment.value, effects, state, exits);
+                if (self.selected_outcome) |selected| if (assignment.binding == selected.binding) {
+                    const known = try self.knownOutcome(try self.inferExpression(function_id, assignment.value), selected.parent_variants);
+                    state.outcome_parent_mismatch = known.mismatch;
+                    const origin = try self.expressionForwardOrigin(assignment.value);
+                    const selected_origin = if (self.selected_forward) |forwarded| if (origin) |actual| actual.call == forwarded.call and actual.output_index == forwarded.selector.output_index else false else false;
+                    state.outcome_variant = if (selected_origin and self.selected_forward_applied and !known.mismatch) selected.variant_index else known.variant;
+                };
+            },
             .function_call, .virtual_call => try self.inferOpaqueEmptyExpression(function_id, node_id, effects, state, exits),
             .if_statement => |statement| {
                 try self.inferOpaqueEmptyExpression(function_id, statement.condition, effects, state, exits);
@@ -2504,6 +2537,8 @@ pub const Infer = struct {
                 defer body_state.deinit();
                 try self.inferOpaqueEmptyBlock(function_id, statement.body, effects, &body_state, exits);
                 state.emptied.clearRetainingCapacity();
+                state.outcome_variant = null;
+                state.outcome_parent_mismatch = false;
             },
             .for_statement => |statement| {
                 if (statement.init) |initialization|
@@ -2516,6 +2551,8 @@ pub const Infer = struct {
                 if (body_state.reachable) if (statement.increment) |increment|
                     try self.inferOpaqueEmptyNode(function_id, increment, effects, &body_state, exits);
                 state.emptied.clearRetainingCapacity();
+                state.outcome_variant = null;
+                state.outcome_parent_mismatch = false;
             },
             .switch_statement => |switch_id| {
                 const statement = self.graph.switches.items[@intFromEnum(switch_id)];
@@ -2545,24 +2582,30 @@ pub const Infer = struct {
                 if (statement.expression) |expression|
                     try self.inferOpaqueEmptyExpression(function_id, expression, effects, state, exits);
                 try self.inferOpaqueEmptyRange(function_id, statement.cleanup, effects, state, exits);
-                if (state.reachable) try self.recordOpaqueEmptyExit(exits, state.emptied.items);
+                if (state.reachable) try self.recordOpaqueEmptyExit(exits, state);
                 state.reachable = false;
             },
             .struct_field_store => |store| {
                 try self.inferOpaqueEmptyExpression(function_id, store.struct_ptr, effects, state, exits);
                 try self.inferOpaqueEmptyExpression(function_id, store.value, effects, state, exits);
                 state.emptied.clearRetainingCapacity();
+                state.outcome_variant = null;
+                state.outcome_parent_mismatch = false;
             },
             .array_store => |store| {
                 try self.inferOpaqueEmptyExpression(function_id, store.array_ptr, effects, state, exits);
                 try self.inferOpaqueEmptyExpression(function_id, store.index, effects, state, exits);
                 try self.inferOpaqueEmptyExpression(function_id, store.value, effects, state, exits);
                 state.emptied.clearRetainingCapacity();
+                state.outcome_variant = null;
+                state.outcome_parent_mismatch = false;
             },
             .pointer_assignment => |assignment| {
                 try self.inferOpaqueEmptyExpression(function_id, assignment.pointer, effects, state, exits);
                 try self.inferOpaqueEmptyExpression(function_id, assignment.value, effects, state, exits);
                 state.emptied.clearRetainingCapacity();
+                state.outcome_variant = null;
+                state.outcome_parent_mismatch = false;
             },
             .code_block, .value_sequence => |child| try self.inferOpaqueEmptyBlock(function_id, child, effects, state, exits),
             .break_statement, .continue_statement, .abort_statement => state.reachable = false,
@@ -2706,27 +2749,37 @@ pub const Infer = struct {
                 try self.inferOpaqueEmptyExpression(function_id, propagation.errable_value, effects, state, exits);
                 var error_state = try state.clone(self.allocator);
                 defer error_state.deinit();
+                error_state.outcome_variant = null;
+                error_state.outcome_parent_mismatch = false;
                 try self.inferOpaqueEmptyRange(function_id, propagation.cleanup_nodes, effects, &error_state, exits);
-                if (error_state.reachable) try self.recordOpaqueEmptyExit(exits, error_state.emptied.items);
+                if (error_state.reachable) try self.recordOpaqueEmptyExit(exits, &error_state);
             },
             .error_context => |context_id| {
                 const context = self.graph.error_contexts.items[@intFromEnum(context_id)];
                 try self.inferOpaqueEmptyExpression(function_id, context.errable_value, effects, state, exits);
                 var error_state = try state.clone(self.allocator);
                 defer error_state.deinit();
+                error_state.outcome_variant = null;
+                error_state.outcome_parent_mismatch = false;
                 try self.inferOpaqueEmptyExpression(function_id, context.context, effects, &error_state, exits);
                 try self.inferOpaqueEmptyRange(function_id, context.cleanup_nodes, effects, &error_state, exits);
-                if (error_state.reachable) try self.recordOpaqueEmptyExit(exits, error_state.emptied.items);
+                if (error_state.reachable) try self.recordOpaqueEmptyExit(exits, &error_state);
             },
             .function_call => |call| {
                 if (call.callee_value) |value| try self.inferOpaqueEmptyExpression(function_id, value, effects, state, exits);
                 try self.inferOpaqueEmptyExpression(function_id, call.input, effects, state, exits);
+                const previous_forwarded = self.forwarded_outcome;
+                self.forwarded_outcome = if (self.selected_forward) |origin| if (origin.call == node_id) origin.selector else null else null;
+                defer self.forwarded_outcome = previous_forwarded;
                 try self.applyOpaqueEmptyFunctionCall(function_id, call.callee, call.input, effects, state);
             },
             .virtual_call => |virtual_call_id| {
                 const call = self.graph.virtual_calls.items[@intFromEnum(virtual_call_id)];
                 try self.inferOpaqueEmptyExpression(function_id, call.handle, effects, state, exits);
                 try self.inferOpaqueEmptyExpression(function_id, call.input, effects, state, exits);
+                const previous_forwarded = self.forwarded_outcome;
+                self.forwarded_outcome = if (self.selected_forward) |origin| if (origin.call == node_id) origin.selector else null else null;
+                defer self.forwarded_outcome = previous_forwarded;
                 if (try self.virtualSummary(call.safety_methods)) |summary|
                     try self.applyOpaqueEmptySummary(function_id, summary, call.input, effects, state, null);
             },
@@ -2802,7 +2855,15 @@ pub const Infer = struct {
         override: ?SymbolicInputOverride,
     ) !void {
         const arguments = self.structArguments(input) orelse return;
-        try self.applyOpaqueEmptySummaryArguments(function_id, summary, arguments, effects, state, override);
+        var selected = summary;
+        if (self.forwarded_outcome) |selector| for (summary.outcome_post_states) |outcome| {
+            if (outcome.output_index == selector.output_index and outcome.variant_index == selector.variant_index and std.mem.eql(u32, outcome.parent_variants, selector.parent_variants)) {
+                selected = try self.selectForwardedEffects(summary, outcome);
+                self.selected_forward_applied = true;
+                break;
+            }
+        };
+        try self.applyOpaqueEmptySummaryArguments(function_id, selected, arguments, effects, state, override);
     }
 
     fn applyOpaqueEmptySummaryArguments(
@@ -2815,6 +2876,10 @@ pub const Infer = struct {
         override: ?SymbolicInputOverride,
     ) !void {
         if (self.summaryMayRepopulateOpaqueStorage(summary)) state.emptied.clearRetainingCapacity();
+        for (summary.outcome_post_states) |outcome| if (outcome.opaque_storage_empties.len != 0) {
+            self.opaque_empty_seen = true;
+            break;
+        };
         for (summary.opaque_storage_effects) |effect| {
             if (effect.storage.input_index >= arguments.len) continue;
             const storages = try self.substituteRequiredInputPath(function_id, effect.storage, arguments, override);
@@ -2865,6 +2930,7 @@ pub const Infer = struct {
         state: *OpaqueEmptyState,
         storages: []const facts.InputPath,
     ) !void {
+        if (storages.len != 0) self.opaque_empty_seen = true;
         for (storages) |storage| try self.recordOpaqueStorageRelease(&state.emptied, storage);
     }
 
@@ -2884,6 +2950,8 @@ pub const Infer = struct {
         const joined = try self.intersectInputPaths(left.emptied.items, right.emptied.items);
         destination.emptied.clearRetainingCapacity();
         try destination.emptied.appendSlice(joined);
+        destination.outcome_variant = if (left.outcome_variant == right.outcome_variant) left.outcome_variant else null;
+        destination.outcome_parent_mismatch = left.outcome_parent_mismatch and right.outcome_parent_mismatch;
         destination.reachable = true;
     }
 
@@ -2911,13 +2979,20 @@ pub const Infer = struct {
         destination.emptied.clearRetainingCapacity();
         try destination.emptied.appendSlice(source.emptied.items);
         destination.reachable = source.reachable;
+        destination.outcome_variant = source.outcome_variant;
+        destination.outcome_parent_mismatch = source.outcome_parent_mismatch;
     }
 
     fn recordOpaqueEmptyExit(
         self: *Infer,
         exits: *?std.array_list.Managed(facts.InputPath),
-        emptied: []const facts.InputPath,
+        state: *const OpaqueEmptyState,
     ) !void {
+        if (self.selected_outcome) |selected| if (!self.addressed_outputs.contains(selected.binding)) {
+            if (state.outcome_parent_mismatch) return;
+            if (state.outcome_variant) |variant| if (variant != selected.variant_index) return;
+        };
+        const emptied = state.emptied.items;
         if (exits.*) |*current| {
             const joined = try self.intersectInputPaths(current.items, emptied);
             current.clearRetainingCapacity();

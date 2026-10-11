@@ -100,15 +100,16 @@ pub fn fromDeclaration(allocator: std.mem.Allocator, declaration: @import("../pr
     for (declaration.consumed_inputs, consumed_inputs) |index, *path| path.* = .{ .input_index = index };
     const relocations = try allocator.alloc(Contract.Relocation, declaration.relocations.len);
     for (declaration.relocations, relocations) |declared, *relocation| relocation.* = .{ .destination = .{ .input_index = declared.destination }, .source = .{ .input_index = declared.source } };
-    try appendConditionalContracts(allocator, declaration.output_count, declaration.outcomes, &.{}, invalidates, invalidated_domains, consumed_inputs, relocations, &conditional);
+
     const retained = try allocator.alloc(Contract.Retention, declaration.retained_inputs.len);
     for (declaration.retained_inputs, retained) |declared, *retention| retention.* = .{ .storage = storageInputPath(declared.storage), .input = .{ .input_index = declared.input } };
     const emptied = try allocator.alloc(facts.InputPath, declaration.emptied_inputs.len);
     for (declaration.emptied_inputs, emptied) |input, *path| path.* = storageInputPath(input);
+    try appendConditionalContracts(allocator, declaration.output_count, declaration.outcomes, &.{}, invalidates, invalidated_domains, consumed_inputs, relocations, emptied, &conditional);
     return .{ .outputs = outputs, .consumed_inputs = consumed_inputs, .relocations = relocations, .retained_inputs = retained, .emptied_inputs = emptied, .invalidates = invalidates, .invalidated_domains = invalidated_domains, .outcomes = try conditional.toOwnedSlice(allocator) };
 }
 
-fn appendConditionalContracts(allocator: std.mem.Allocator, output_count: u32, outcomes: []const @import("../primitives/schema.zig").MethodSafetyContract.Outcome, parents: []const u32, common_invalidates: []const facts.InputPath, common_domains: []const facts.InputDomain, common_consumed: []const facts.InputPath, common_relocations: []const Contract.Relocation, result: *std.ArrayList(Contract.Outcome)) anyerror!void {
+fn appendConditionalContracts(allocator: std.mem.Allocator, output_count: u32, outcomes: []const @import("../primitives/schema.zig").MethodSafetyContract.Outcome, parents: []const u32, common_invalidates: []const facts.InputPath, common_domains: []const facts.InputDomain, common_consumed: []const facts.InputPath, common_relocations: []const Contract.Relocation, common_emptied: []const facts.InputPath, result: *std.ArrayList(Contract.Outcome)) anyerror!void {
     for (outcomes) |outcome| {
         const effects = try allocator.create(Contract);
         effects.* = try fromDeclaration(allocator, .{
@@ -116,6 +117,7 @@ fn appendConditionalContracts(allocator: std.mem.Allocator, output_count: u32, o
             .invalidates = outcome.invalidates,
             .consumed_inputs = outcome.consumed_inputs,
             .relocations = outcome.relocations,
+            .emptied_inputs = outcome.emptied_inputs,
             .invalidated_domains = outcome.invalidated_domains,
             .source = outcome.source,
         });
@@ -125,10 +127,11 @@ fn appendConditionalContracts(allocator: std.mem.Allocator, output_count: u32, o
         // Selected exits retain every enclosing transfer guarantee, including
         // those declared before an otherwise empty nested selector.
         effects.relocations = try std.mem.concat(allocator, Contract.Relocation, &.{ common_relocations, effects.relocations });
+        effects.emptied_inputs = try std.mem.concat(allocator, facts.InputPath, &.{ common_emptied, effects.emptied_inputs });
         const variant = outcome.variant_index orelse return error.UnresolvedOutcomeContract;
         try result.append(allocator, .{ .output_index = outcome.output_index, .parent_variants = parents, .variant_index = variant, .effects = effects });
         const child_parents = try std.mem.concat(allocator, u32, &.{ parents, &.{variant} });
-        try appendConditionalContracts(allocator, output_count, outcome.outcomes, child_parents, effects.invalidates, effects.invalidated_domains, effects.consumed_inputs, effects.relocations, result);
+        try appendConditionalContracts(allocator, output_count, outcome.outcomes, child_parents, effects.invalidates, effects.invalidated_domains, effects.consumed_inputs, effects.relocations, effects.emptied_inputs, result);
     }
 }
 
@@ -175,8 +178,14 @@ pub fn effectsForSelector(contract: Contract, selector: anytype) Contract {
         }
     }
     selected.retained_inputs = contract.retained_inputs;
-    selected.emptied_inputs = contract.emptied_inputs;
+
     return selected;
+}
+
+fn permitsEmptyStorage(contract: Contract, storage: facts.InputPath) bool {
+    if (containsExactPath(contract.emptied_inputs, storage)) return true;
+    for (contract.outcomes) |outcome| if (containsExactPath(outcome.effects.emptied_inputs, storage)) return true;
+    return false;
 }
 
 fn inheritOutputPermissions(allocator: std.mem.Allocator, output: *Output, common: Output) anyerror!void {
@@ -279,6 +288,14 @@ pub fn check(contract: Contract, summary: facts.SafetySummary) ?Failure {
         if (!permitted) return .{ .kind = .unsupported_post_state, .input = state.target };
     }
     for (contract.outcomes) |required| {
+        for (required.effects.emptied_inputs) |storage| {
+            var represented = false;
+            for (summary.outcome_post_states) |actual| if (selectorCovers(required, actual)) {
+                represented = true;
+                break;
+            };
+            if (!represented) return .{ .kind = .missing_empty_storage, .input = storage };
+        }
         for (required.effects.relocations) |relocation| {
             var represented = false;
             for (summary.outcome_post_states) |actual| if (selectorCovers(required, actual)) {
@@ -298,6 +315,8 @@ pub fn check(contract: Contract, summary: facts.SafetySummary) ?Failure {
     for (summary.outcome_post_states) |outcome| {
         if (!outcome.reachable) continue;
         const allowed = effectsForSelector(contract, outcome);
+        for (allowed.emptied_inputs) |storage| if (!containsExactPath(outcome.opaque_storage_empties, storage) and !containsExactPath(summary.opaque_storage_empties, storage)) return .{ .kind = .missing_empty_storage, .input = storage, .outcome = .{ .output_index = outcome.output_index, .parent_variants = outcome.parent_variants, .variant_index = outcome.variant_index } };
+        for (outcome.opaque_storage_empties) |storage| if (!containsExactPath(allowed.emptied_inputs, storage)) return .{ .kind = .unsupported_opaque_effect, .input = storage };
         for (allowed.relocations) |relocation| {
             if (!provesRelocation(relocation, outcome.input_post_states)) return .{ .kind = .missing_relocation, .input = relocation.destination, .outcome = .{ .output_index = outcome.output_index, .parent_variants = outcome.parent_variants, .variant_index = outcome.variant_index } };
         }
@@ -318,7 +337,7 @@ pub fn check(contract: Contract, summary: facts.SafetySummary) ?Failure {
         if (!permitsRetention(contract, effect.storage, effect.hidden_dependencies)) return .{ .kind = .unsupported_opaque_effect, .input = effect.storage };
     }
     for (summary.opaque_storage_empties) |path| {
-        if (!containsExactPath(contract.emptied_inputs, path)) return .{ .kind = .unsupported_opaque_effect, .input = path };
+        if (!permitsEmptyStorage(contract, path)) return .{ .kind = .unsupported_opaque_effect, .input = path };
     }
     for (contract.emptied_inputs) |path| {
         if (!containsExactPath(summary.opaque_storage_empties, path)) return .{ .kind = .missing_empty_storage, .input = path };
@@ -918,4 +937,38 @@ test "conditional opaque sources retain common and nested permissions" {
     try std.testing.expectEqual(.undeclared_dependency, check(contract, .{
         .outputs = &.{.{ .variants = &.{.{ .index = 1, .value = &hidden }} }},
     }).?.kind);
+}
+
+test "conditional opaque empty guarantees are checked per selected exit" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const source = @import("../primitives/schema.zig").SourceRef{ .file_index = 0, .offset = 0 };
+    const storage = facts.InputPath{ .input_index = 1 };
+    const contract = try fromDeclaration(arena.allocator(), .{
+        .output_count = 1,
+        .source = source,
+        .outcomes = &.{.{
+            .variant = .{ .start = 0, .len = 0 },
+            .variant_index = 1,
+            .source = source,
+            .emptied_inputs = &.{.{ .input_index = 1 }},
+        }},
+    });
+    const exits = [_]facts.OutcomePostStates{
+        .{ .variant_index = 0, .input_post_states = &.{} },
+        .{ .variant_index = 1, .input_post_states = &.{}, .opaque_storage_empties = &.{storage} },
+    };
+    try std.testing.expect(check(contract, .{ .outputs = &.{.{}}, .outcome_post_states = &exits }) == null);
+    const missing = [_]facts.OutcomePostStates{
+        .{ .variant_index = 0, .input_post_states = &.{} },
+        .{ .variant_index = 1, .input_post_states = &.{} },
+    };
+    try std.testing.expectEqual(.missing_empty_storage, check(contract, .{ .outputs = &.{.{}}, .outcome_post_states = &missing }).?.kind);
+    const wrong = [_]facts.OutcomePostStates{
+        .{ .variant_index = 0, .input_post_states = &.{}, .opaque_storage_empties = &.{storage} },
+        exits[1],
+    };
+    try std.testing.expectEqual(.unsupported_opaque_effect, check(contract, .{ .outputs = &.{.{}}, .outcome_post_states = &wrong }).?.kind);
+    const unreachable_exits = [_]facts.OutcomePostStates{.{ .variant_index = 1, .reachable = false, .input_post_states = &.{} }};
+    try std.testing.expect(check(contract, .{ .outputs = &.{.{}}, .outcome_post_states = &unreachable_exits }) == null);
 }

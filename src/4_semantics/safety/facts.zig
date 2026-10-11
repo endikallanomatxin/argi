@@ -41,6 +41,9 @@ pub const GenerationOutcome = struct {
     generation: ValidityRootId,
     guard: u64,
     invalidates: bool,
+    /// Discharge only hidden contents guarded by this call and generation.
+    /// This does not end, initialize or restore a resource.
+    empties_opaque_storage: bool = false,
     /// Resource proofs retain identities, never snapshots of caller values.
     resource_state: ?value_state.Initializedness = null,
     owned_roots: []const ValidityRootId = &.{},
@@ -64,7 +67,7 @@ pub const GenerationOutcome = struct {
             if (other.relocation == null or !relocation.eql(other.relocation.?)) return false;
         } else if (other.relocation != null) return false;
         return self.generation == other.generation and self.guard == other.guard and
-            self.invalidates == other.invalidates and self.resource_state == other.resource_state and
+            self.invalidates == other.invalidates and self.empties_opaque_storage == other.empties_opaque_storage and self.resource_state == other.resource_state and
             std.mem.eql(ValidityRootId, self.owned_roots, other.owned_roots) and self.storage.eql(other.storage);
     }
 };

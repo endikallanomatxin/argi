@@ -126,7 +126,8 @@ pub fn summaryEql(a: facts.SafetySummary, b: facts.SafetySummary) bool {
     for (a.required_live_inputs, b.required_live_inputs) |left, right| if (!inputPathEql(left, right)) return false;
     for (a.input_post_states, b.input_post_states) |left, right| if (!postStateEql(left, right)) return false;
     for (a.outcome_post_states, b.outcome_post_states) |left, right| {
-        if (left.reachable != right.reachable or !std.mem.eql(u32, left.parent_variants, right.parent_variants) or left.output_index != right.output_index or left.variant_index != right.variant_index or left.input_post_states.len != right.input_post_states.len or left.invalidated_domains.len != right.invalidated_domains.len) return false;
+        if (left.reachable != right.reachable or !std.mem.eql(u32, left.parent_variants, right.parent_variants) or left.output_index != right.output_index or left.variant_index != right.variant_index or left.input_post_states.len != right.input_post_states.len or left.invalidated_domains.len != right.invalidated_domains.len or left.opaque_storage_empties.len != right.opaque_storage_empties.len) return false;
+        for (left.opaque_storage_empties, right.opaque_storage_empties) |a_path, b_path| if (!inputPathEql(a_path, b_path)) return false;
         for (left.invalidated_domains, right.invalidated_domains) |a_domain, b_domain| if (a_domain.domain_index != b_domain.domain_index or !inputPathEql(a_domain.path, b_domain.path)) return false;
         for (left.input_post_states, right.input_post_states) |left_state, right_state|
             if (!postStateEql(left_state, right_state)) return false;
@@ -301,4 +302,11 @@ test "nested effect equality preserves root paths and explicit dependencies" {
     ));
     try std.testing.expect(!valueEffectEql(.{ .explicit_dependency = true }, .{}));
     try std.testing.expect(!valueEffectEql(.{ .fresh_cleanup_obligation = true }, .{}));
+}
+
+test "summary equality includes selected opaque empty guarantees" {
+    const absent = facts.OutcomePostStates{ .variant_index = 0, .input_post_states = &.{} };
+    const empty = facts.OutcomePostStates{ .variant_index = 0, .input_post_states = &.{}, .opaque_storage_empties = &.{.{ .input_index = 1 }} };
+    try std.testing.expect(!summaryEql(.{ .outcome_post_states = &.{absent} }, .{ .outcome_post_states = &.{empty} }));
+    try std.testing.expect(summaryEql(.{ .outcome_post_states = &.{empty} }, .{ .outcome_post_states = &.{empty} }));
 }

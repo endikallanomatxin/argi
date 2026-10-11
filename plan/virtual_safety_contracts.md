@@ -34,6 +34,10 @@ implementation. Its structural boundary retains individual discriminants and
 nested payload paths, but conservatively forgets conjunctions of independent
 discriminants and predicates over ordinary values.
 
+- Include hidden receiver contents in call-site liveness checks, independently
+  of the output escape checks. Whole-receiver requirements must consult opaque
+  dependency state through wrappers and mapped domains before a method can use
+  stored values whose external referents have ended.
 - Extend guarded generation summaries to branch-assigned outputs and
   intermediate results, choice tests on computed expressions and error
   propagation. Direct forwarding, bound
@@ -70,7 +74,7 @@ discriminants and predicates over ordinary values.
 
 Extend paired refinement beyond whole-value transfers only when post-values
 can be represented without recovering old caller state.
-Extend conditional consumption refinement to opaque effects and
+Extend conditional consumption refinement to hidden ownership retention and
 replacement post-values without restoring caller snapshots.
 
 Unconditional known-input retention and extraction preserve hidden provenance;
@@ -85,10 +89,7 @@ outputs retain those obligations even after a later empty-state guarantee.
 
 Fresh initialization needs declared ownership and dependency roles for input
 post-values, rather than treating an empty destination as permission to create
-an arbitrary owner. Hidden storage still needs exact transfer, conditional
-retention and
-empty-state guarantees. Outcome-selected extraction provenance already follows
-nested payload choices without implying those input transitions. Extend named
-domains before supporting erased receiver
+an arbitrary owner. Hidden storage still needs exact transfer and conditional
+retention guarantees. Extend named domains before supporting erased receiver
 initialization or replacement; known layout at static dispatch must not be
 required to interpret a virtual contract.

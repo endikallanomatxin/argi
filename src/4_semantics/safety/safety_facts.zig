@@ -162,6 +162,7 @@ pub const OutcomePostStates = struct {
     variant_index: u32,
     input_post_states: []const PlacePostState,
     invalidated_domains: []const InputDomain = &.{},
+    opaque_storage_empties: []const InputPath = &.{},
 };
 
 pub const OpaqueStorageEffect = struct {

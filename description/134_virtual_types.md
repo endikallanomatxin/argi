@@ -248,7 +248,7 @@ through references stored in its fields. Declare other effects separately.
 > result retain the proof; later writes, consumption or independent pending calls
 > cannot be undone by selecting an older result. Refinement uses the current
 > caller facts and never restores a saved value or storage snapshot.
-> Resource refinement remains conservative for conditional opaque effects,
+> Resource refinement remains conservative for conditional hidden retention,
 > replacements and conditions requiring several independent discriminants.
 
 ```rg
@@ -447,6 +447,29 @@ destroy a returned owner. Implementations must destroy or transfer their stored
 values before declaring the domain empty. Trusted opaque operations retain
 their obligations to maintain occupancy and exactly-once cleanup.
 
+Inside `on output ..variant`, `empties` guarantees discharge only on the selected
+outcome. Nested clauses inherit common and enclosing empty-state guarantees.
+Until that outcome is selected, the caller retains the storage's possible hidden
+dependencies. Copies and moves of the result preserve the proof; overwriting it
+removes that proof. A later insertion, replacement of the storage generation or
+independent pending call cannot be undone by selecting an older result.
+
+```rg
+Drain: Abstract = (
+    domain contents
+
+    drain(.self: $&Self) -> (.result: ?Int32) where {
+        on result ..some { empties(self.contents) }
+        on result ..none {}
+    }
+)
+```
+
+Emptying discharges the storage's dependency obligations, not the dependencies
+of a previously extracted value. It neither destroys the backing owner nor
+creates or restores a storage generation. Implementations prove the guarantee
+on every returning exit of the selected outcome, after normal cleanup.
+
 For example, a single-slot protocol can publish these effects independently of
 the implementation's representation:
 
@@ -501,10 +524,11 @@ extraction. Returning the collection cannot hide a local referent either.
 > [!IMPLEMENTATION]
 > These clauses support unconditional effects on known storage inputs and
 > mapped receiver domains naming a single storage field, including nested fields.
-> `from_storage` also supports outcome-selected payloads and nested choices.
+> `from_storage` supports outcome-selected payloads and nested choices;
+> `empties` supports corresponding selected storage guarantees.
 > `retains` requires a value input; wrap borrowed references in a value rather
-> than using it to move an owner through a reference. Conditional `retains` and
-> `empties` require correlated storage post-states and are rejected. Grouped domain
+> than using it to move an owner through a reference. Conditional `retains`
+> requires correlated ownership transitions and remains rejected. Grouped domain
 > mappings require exact hidden transfer identities. Domain mappings crossing
 > or selecting reference fields require referent identities and are rejected.
 > Naming erased `Self` directly does not name its storage; select a domain.
@@ -595,9 +619,9 @@ storage generations, and opaque storage.
 > generation changes. Generation refinement supports bound result discrimination
 > and forwarding through stable lexical bindings and direct repackaging. Wrappers
 > with rewritten or exposed intermediate results conservatively join effects.
-> Conditional hidden storage transitions, grouped opaque domain mappings and clauses affecting other
-> outputs remain to be implemented. Nested payload selectors support dependencies, fresh ownership
-> and generation changes.
+> Conditional hidden retention, grouped opaque domain mappings and clauses affecting
+> other outputs remain to be implemented. Nested payload selectors support dependencies,
+> fresh ownership, generation changes and empty-state guarantees.
 > Independent payload selectors on several outputs are supported; generation
 > effects requiring independent result correlations are conservatively joined.
 

@@ -53,6 +53,7 @@ pub const SafetyChecker = struct {
     const OpaqueStorage = struct {
         storage: facts.Place,
         hidden_dependencies: []const facts.ValidityRootId,
+        outcome_guard: u64 = 0,
         // Identity only: a moved owner's slot can disappear before output
         // checks. These roots associate hidden contents without keeping any
         // resource or lexical generation alive.
@@ -376,10 +377,11 @@ pub const SafetyChecker = struct {
         return null;
     }
 
-    fn resolveContractOpaqueStorage(self: *SafetyChecker, contract: *@import("contracts.zig").Contract, mappings: []const primitives.StorageDomainMapping, method: graph_mod.GlobalFunctionId, source: primitives.SourceRef) !bool {
+    fn resolveContractOpaqueStorage(self: *SafetyChecker, contract: *@import("contracts.zig").Contract, mappings: []const primitives.StorageDomainMapping, method: graph_mod.GlobalFunctionId, source: primitives.SourceRef) anyerror!bool {
         for (@constCast(contract.retained_inputs)) |*retained| retained.storage = try self.resolveOpaqueContractPath(retained.storage, mappings, method, source) orelse return false;
         for (@constCast(contract.emptied_inputs)) |*empty| empty.* = try self.resolveOpaqueContractPath(empty.*, mappings, method, source) orelse return false;
         for (@constCast(contract.outputs)) |*output| if (!try self.resolveOpaqueOutputStorage(output, mappings, method, source)) return false;
+        for (contract.outcomes) |outcome| if (!try self.resolveContractOpaqueStorage(@constCast(outcome.effects), mappings, method, source)) return false;
         return true;
     }
 
@@ -1902,6 +1904,9 @@ pub const SafetyChecker = struct {
                 // through that reference also requires the hidden receiver
                 // envelope stored inside it, including captured field roots.
                 // Preserve this obligation across ordinary wrapper functions.
+                // TODO: Include mapped opaque contents in whole-receiver
+                // liveness checks; reconstructing fields alone does not read
+                // the separate hidden-dependency state.
                 if (self.valueAtPlace(state, storage)) |stored| {
                     if (stored.virtual_methods.len != 0) try self.requireLive(@enumFromInt(0), source, stored, state);
                     for (stored.domains) |domain| for (domain.storages) |target| {
@@ -1937,14 +1942,79 @@ pub const SafetyChecker = struct {
             capture = true;
             break;
         };
-        if (!capture) return self.applyOutcomeSummaryEffects(source, summary, argument_ids, arguments, state);
+        if (!capture) {
+            const result = try self.applyOutcomeSummaryEffects(source, summary, argument_ids, arguments, state);
+            return self.attachSummaryOpaqueEmptyProofs(source, summary, argument_ids, arguments, state, result);
+        }
         // Capture only the hidden contents' provenance before emptying them.
         // Returned owners keep these obligations; no caller place is restored.
         const effects = try self.allocator.alloc(facts.ValueEffect, summary.outputs.len);
         for (summary.outputs, effects) |output, *effect| effect.* = try self.opaqueOutputDependencies(output);
         const hidden = try self.instantiateSummaryOutputs(effects, arguments, state);
         const result = try self.applyOutcomeSummaryEffects(source, summary, argument_ids, arguments, state);
-        return self.mergeValueFacts(result, hidden);
+        var combined = try self.mergeValueFacts(result, hidden);
+        // This adds provenance to the same result, rather than joining two
+        // possible values. Keep its existing discriminant proofs intact.
+        try self.preserveResultOutcomeProofs(&combined, result);
+        return self.attachSummaryOpaqueEmptyProofs(source, summary, argument_ids, arguments, state, combined);
+    }
+
+    fn preserveResultOutcomeProofs(self: *SafetyChecker, value: *facts.ValueFacts, result: facts.ValueFacts) anyerror!void {
+        value.generation_outcomes = result.generation_outcomes;
+        const fields = try self.allocator.dupe(facts.FieldFacts, value.fields);
+        value.fields = fields;
+        for (fields) |*field| for (result.fields) |original| if (field.index == original.index) {
+            const child = try self.allocator.create(facts.ValueFacts);
+            child.* = field.value.*;
+            field.value = child;
+            try self.preserveResultOutcomeProofs(child, original.value.*);
+            break;
+        };
+        const variants = try self.allocator.dupe(facts.VariantFacts, value.variants);
+        value.variants = variants;
+        for (variants) |*variant| for (result.variants) |original| if (variant.index == original.index) {
+            const child = try self.allocator.create(facts.ValueFacts);
+            child.* = variant.value.*;
+            variant.value = child;
+            try self.preserveResultOutcomeProofs(child, original.value.*);
+            break;
+        };
+    }
+
+    fn attachSummaryOpaqueEmptyProofs(self: *SafetyChecker, source: primitives.SourceRef, summary: facts.SafetySummary, argument_ids: []const graph_mod.GlobalValueFieldId, arguments: []const facts.ValueFacts, state: *FunctionState, initial: facts.ValueFacts) !facts.ValueFacts {
+        var result = initial;
+        const guard = self.next_outcome_guard;
+        self.next_outcome_guard += 1;
+        for (summary.outcome_post_states) |outcome| {
+            if (!outcome.reachable) continue;
+            for (outcome.opaque_storage_empties) |path| {
+                const storage = try self.resolveSummaryOpaqueStoragePath(path, argument_ids, arguments, state) orelse continue;
+                // An unconditional guarantee has already discharged this domain.
+                // Otherwise keep its current dependencies until the tag is known.
+                var guarded = false;
+                for (state.opaque_storages.items) |*domain| if (domain.storage.eql(storage) and domain.hidden_dependencies.len != 0) {
+                    domain.outcome_guard = guard;
+                    guarded = true;
+                    break;
+                };
+                if (!guarded) continue;
+                const generation = try self.storageGeneration(state, storage);
+                const proof = facts.GenerationOutcome{ .storage = storage, .generation = generation, .guard = guard, .invalidates = false, .empties_opaque_storage = true, .source = source };
+                if (summary.outputs.len == 1) {
+                    try self.attachOutcomeGeneration(&result, outcome.parent_variants, outcome.variant_index, proof);
+                } else {
+                    const fields = try self.allocator.dupe(facts.FieldFacts, result.fields);
+                    result.fields = fields;
+                    for (fields) |*field| if (field.index == outcome.output_index) {
+                        const value = try self.allocator.create(facts.ValueFacts);
+                        value.* = field.value.*;
+                        field.value = value;
+                        try self.attachOutcomeGeneration(value, outcome.parent_variants, outcome.variant_index, proof);
+                    };
+                }
+            }
+        }
+        return result;
     }
 
     fn hasOpaqueOutputDependencies(effect: facts.ValueEffect) bool {
@@ -3669,6 +3739,7 @@ pub const SafetyChecker = struct {
             try merged.appendSlice(opaque_storage.hidden_dependencies);
             for (dependencies) |dependency| try appendRootFact(&merged, dependency);
             opaque_storage.hidden_dependencies = try merged.toOwnedSlice();
+            opaque_storage.outcome_guard = 0;
             var combined = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
             try combined.appendSlice(opaque_storage.owner_roots);
             for (owners.items) |root| try appendRootFact(&combined, root);
@@ -3685,6 +3756,7 @@ pub const SafetyChecker = struct {
         for (state.opaque_storages.items) |*opaque_storage| {
             if (!opaque_storage.storage.eql(storage)) continue;
             opaque_storage.hidden_dependencies = &.{};
+            opaque_storage.outcome_guard = 0;
             return;
         }
     }
@@ -4912,6 +4984,16 @@ pub const SafetyChecker = struct {
             try self.mergeOpaqueOwnerRoots(&joined, opaque_storage.storage, opaque_storage.owner_roots);
         }
 
+        for (joined.opaque_storages.items) |*domain| {
+            for (left.opaque_storages.items) |a| if (a.storage.eql(domain.storage)) {
+                for (right.opaque_storages.items) |b| if (b.storage.eql(domain.storage) and a.outcome_guard == b.outcome_guard) {
+                    domain.outcome_guard = a.outcome_guard;
+                    break;
+                };
+                break;
+            };
+        }
+
         for (left.choice_active.items) |candidate| for (right.choice_active.items) |other| {
             if (candidate.storage.eql(other.storage) and candidate.variant_index == other.variant_index) {
                 try joined.choice_active.append(candidate);
@@ -5427,6 +5509,18 @@ pub const SafetyChecker = struct {
 
     fn activate_conditional_resources(self: *SafetyChecker, state: *FunctionState, value: facts.ValueFacts) !void {
         for (value.generation_outcomes) |outcome| {
+            if (outcome.empties_opaque_storage) {
+                var current = false;
+                for (state.storage_generations.items) |generation| if (generation.storage.eql(outcome.storage) and generation.generation == outcome.generation and !generation.needs_current_generation and state.tracker.isAlive(generation.generation)) {
+                    current = true;
+                    break;
+                };
+                if (current) for (state.opaque_storages.items) |domain| if (domain.storage.eql(outcome.storage) and domain.outcome_guard == outcome.guard) {
+                    self.markOpaqueStorageEmpty(state, outcome.storage);
+                    break;
+                };
+                continue;
+            }
             if (@intFromEnum(outcome.generation) >= state.tracker.roots.items.len) continue;
             const root = &state.tracker.roots.items[@intFromEnum(outcome.generation)];
             if (root.state != .maybe_alive or root.outcome_guard != outcome.guard) continue;
@@ -5982,6 +6076,7 @@ fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChe
             break;
         };
         const other = matching orelse return false;
+        if (opaque_storage.outcome_guard != other.outcome_guard) return false;
         if (opaque_storage.hidden_dependencies.len != other.hidden_dependencies.len) return false;
         for (opaque_storage.hidden_dependencies) |dependency|
             if (!containsRoot(other.hidden_dependencies, dependency)) return false;
@@ -7422,4 +7517,69 @@ test "consuming a value ends nested owned roots while preserving borrowed depend
     try std.testing.expect(!state.tracker.isAlive(owned));
     try std.testing.expect(state.tracker.isAlive(borrowed));
     try std.testing.expectEqual(value_state.Initializedness.deinitialized, checker.initializednessAtPlace(&state, storage));
+}
+
+test "conditional opaque empty proofs retain current call and storage identity" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var diags = diagnostics.Diagnostics.init(&allocator, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(allocator, &diags, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const storage = facts.Place{ .root = @enumFromInt(0) };
+    const other = facts.Place{ .root = @enumFromInt(1) };
+    const dependency = try state.tracker.establish(.fresh);
+    const later_dependency = try state.tracker.establish(.fresh);
+    const generation = try checker.storageGeneration(&state, storage);
+    try checker.mergeOpaqueStorage(&state, storage, &.{dependency});
+    try checker.mergeOpaqueStorage(&state, other, &.{later_dependency});
+    const summary = facts.SafetySummary{
+        .outputs = &.{.{ .variants = &.{ .{ .index = 0, .value = &.{} }, .{ .index = 1, .value = &.{} } } }},
+        .outcome_post_states = &.{
+            .{ .variant_index = 0, .input_post_states = &.{} },
+            .{ .variant_index = 1, .input_post_states = &.{}, .opaque_storage_empties = &.{.{ .input_index = 0 }} },
+        },
+    };
+    const arguments = [_]facts.ValueFacts{.{ .referenced_place = storage }};
+    const source = primitives.SourceRef{ .file_index = 0, .offset = 0 };
+    const result = try checker.applyOutcomeSummary(source, summary, &.{}, &arguments, &state);
+    try std.testing.expectEqual(@as(usize, 1), state.opaque_storages.items[0].hidden_dependencies.len);
+    try checker.activate_conditional_resources(&state, result.variants[0].value.*);
+    try std.testing.expectEqual(@as(usize, 1), state.opaque_storages.items[0].hidden_dependencies.len);
+    try checker.activate_conditional_resources(&state, result.variants[1].value.*);
+    try std.testing.expectEqual(@as(usize, 0), state.opaque_storages.items[0].hidden_dependencies.len);
+    try std.testing.expectEqual(@as(usize, 1), state.opaque_storages.items[1].hidden_dependencies.len);
+    try std.testing.expect(state.tracker.isAlive(dependency));
+    try std.testing.expect(state.tracker.isAlive(generation));
+
+    try checker.mergeOpaqueStorage(&state, storage, &.{dependency});
+    const before_write = try checker.applyOutcomeSummary(source, summary, &.{}, &arguments, &state);
+    try checker.mergeOpaqueStorage(&state, storage, &.{later_dependency});
+    try checker.activate_conditional_resources(&state, before_write.variants[1].value.*);
+    try std.testing.expectEqual(@as(usize, 2), state.opaque_storages.items[0].hidden_dependencies.len);
+
+    const first = try checker.applyOutcomeSummary(source, summary, &.{}, &arguments, &state);
+    const second = try checker.applyOutcomeSummary(source, summary, &.{}, &arguments, &state);
+    try checker.activate_conditional_resources(&state, first.variants[1].value.*);
+    try std.testing.expectEqual(@as(usize, 2), state.opaque_storages.items[0].hidden_dependencies.len);
+    try checker.activate_conditional_resources(&state, second.variants[1].value.*);
+    try std.testing.expectEqual(@as(usize, 0), state.opaque_storages.items[0].hidden_dependencies.len);
+
+    try checker.mergeOpaqueStorage(&state, storage, &.{dependency});
+    const independent_first = try checker.applyOutcomeSummary(source, summary, &.{}, &arguments, &state);
+    const independent_other = try checker.applyOutcomeSummary(source, summary, &.{}, &.{.{ .referenced_place = other }}, &state);
+    try checker.activate_conditional_resources(&state, independent_first.variants[1].value.*);
+    try std.testing.expectEqual(@as(usize, 0), state.opaque_storages.items[0].hidden_dependencies.len);
+    try std.testing.expectEqual(@as(usize, 1), state.opaque_storages.items[1].hidden_dependencies.len);
+    try checker.activate_conditional_resources(&state, independent_other.variants[1].value.*);
+    try std.testing.expectEqual(@as(usize, 0), state.opaque_storages.items[1].hidden_dependencies.len);
+
+    try checker.mergeOpaqueStorage(&state, storage, &.{dependency});
+    const before_generation = try checker.applyOutcomeSummary(source, summary, &.{}, &arguments, &state);
+    try checker.refreshStorageGeneration(&state, storage);
+    try checker.activate_conditional_resources(&state, before_generation.variants[1].value.*);
+    try std.testing.expectEqual(@as(usize, 1), state.opaque_storages.items[0].hidden_dependencies.len);
 }

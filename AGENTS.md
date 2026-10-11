@@ -351,8 +351,12 @@ feature first.
   Conditional from_storage clauses are payload provenance permissions, not
   storage post-states. Persist their sources on outcome declarations, inherit
   common sources into nested payloads and reject inherited exact-identity
-  conflicts. Conditional retains and empties still require correlated hidden
-  storage transitions; accepting provenance must not imply those transitions.
+  conflicts. Conditional empties guarantees live on OutcomePostStates and
+  intersect selected returning exits after cleanup. Caller proofs carry the
+  current storage generation and opaque call guard; insertion, replacement or
+  a second pending call must defeat an older proof. Emptying discharges current
+  hidden dependencies without ending owners or restoring snapshots. Conditional
+  retains still requires correlated ownership transitions.
   Outcome contracts select a named output and variant, not the first result.
   Keep that output index through syntax-free IR, relocation, cached snapshots,
   conformance and summary equality. Common clauses apply to every outcome;
