@@ -327,8 +327,8 @@ post-value facts and remains unsupported.
 > places from one returned discriminant. Proofs retain both current storage
 > generations; overwrites and independent calls cannot replay them. Partial
 > replacements and unrepresented effects retain conservative availability.
-> Erased `Self` and mapped opaque storage transitions remain
-> unsupported. Indexed owners without lexical cleanup identities must
+> Relocation of erased `Self` or mapped storage remains unsupported.
+> Indexed owners without lexical cleanup identities must
 > first be moved into lexical owners.
 
 ## Owning and fallible results
@@ -451,14 +451,42 @@ target the same storage or overlap consumption, relocation or generation
 replacement. `from_storage` does not establish the exact reference or ownership
 identity promised by `refers_to` or `transfers`.
 
+Storage sources may also name receiver domains. For example, a collection whose
+representation stays inside `Self` can declare:
+
+```rg
+SlotProtocol#(.item: Type): Abstract = (
+    domain contents
+
+    put(.self: $&Self, .value: item) -> ()
+        where retains(self.contents, value)
+    take(.self: $&Self) -> (.value: item) where {
+        owns(value)
+        from_storage(value, self.contents)
+        empties(self.contents)
+    }
+)
+```
+
+Each implementation maps `contents` to its concrete storage. Calls through a
+virtual use that mapped identity; retaining into one domain or emptying it does
+not affect another domain. The mapping neither transfers the receiver nor
+grants permission to replace or destroy its backing owner. References hidden in
+the stored value remain lifetime obligations through erasure, wrappers and
+extraction. Returning the collection cannot hide a local referent either.
+
 > [!IMPLEMENTATION]
-> These clauses currently support unconditional effects on known storage inputs.
+> These clauses support unconditional effects on known storage inputs and
+> mapped receiver domains naming a single storage field, including nested fields.
 > `retains` requires a value input; wrap borrowed references in a value rather
 > than using it to move an owner through a reference. Conditional hidden effects
-> require correlated storage post-states and are rejected. Virtual effects on
-> erased `Self` require mapped hidden storage identities and are also rejected.
-> Returned owners whose hidden storage has no named input domain conservatively
-> carry all possible retained input dependencies. Extraction preserves those
+> require correlated storage post-states and are rejected. Grouped domain
+> mappings require exact hidden transfer identities. Domain mappings crossing
+> or selecting reference fields require referent identities and are rejected.
+> Naming erased `Self` directly does not name its storage; select a domain.
+> Outputs that own storage or contain references conservatively carry possible
+> retained input dependencies of local hidden domains without an input identity.
+> Extraction preserves those
 > dependencies; emptying the returned owner cannot yet discharge this union.
 
 ## Receiver storage domains
@@ -543,7 +571,7 @@ storage generations, and opaque storage.
 > generation changes. Generation refinement supports bound result discrimination
 > and forwarding through stable lexical bindings and direct repackaging. Wrappers
 > with rewritten or exposed intermediate results conservatively join effects.
-> Conditional or mapped hidden storage transitions and clauses affecting other
+> Conditional hidden storage transitions, grouped opaque domain mappings and clauses affecting other
 > outputs remain to be implemented. Nested payload selectors support dependencies, fresh ownership
 > and generation changes.
 > Independent payload selectors on several outputs are supported; generation

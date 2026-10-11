@@ -45,12 +45,12 @@ discriminants and predicates over ordinary values.
   common clauses apply to all outcomes and conditional clauses add obligations.
 - Extend compatibility checking with initialization and outcome-specific hidden
   storage guarantees. Extend unconditional known-input retention and empty
-  guarantees to mapped domains. Extend known-input
+  guarantees to grouped domains and mappings through reference fields. Extend known-input
   `consumes` to cleanup identities for erased receivers, indexed owners and
   mapped domains.
   Extend generation-only `invalidates` to checked aggregate/result facts after
   invalidation without dropping existing ownership or field facts.
-- Extend mapped domain effects to owned and opaque storage transitions.
+- Extend mapped domain effects to exact ownership transfer and initialization.
   Broad dependency permissions must not become permission to transfer
   ownership, replace generations or manufacture safe references.
 - Extend exact identity and ownership transfer proofs beyond straight-line
@@ -76,9 +76,12 @@ replacement post-values without restoring caller snapshots.
 Unconditional known-input retention and extraction preserve hidden provenance;
 they do not guarantee which runtime slot is occupied or which value is extracted.
 Extend exact hidden ownership transfer proofs before exposing those guarantees.
+Single-storage receiver domains retain those effects through erasure. Extend
+their identity representation before admitting grouped opaque storage or mappings
+through references.
 Represent returned hidden domains before discharging their conservative union
-of possible input dependencies. Until then, both returned owners and extracted
-values retain those obligations even after a later empty-state guarantee.
+of possible input dependencies. Until then, owners and reference-containing
+outputs retain those obligations even after a later empty-state guarantee.
 
 Fresh initialization needs declared ownership and dependency roles for input
 post-values, rather than treating an empty destination as permission to create

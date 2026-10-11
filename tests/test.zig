@@ -11190,6 +11190,78 @@ test "feature_tests/polymorphism/260_virtual_multiple_storage_sources" {
     try runExpect("tests/feature_tests/polymorphism/260_virtual_multiple_storage_sources", 0);
 }
 
+test "feature_tests/polymorphism/262_virtual_internal_storage" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/262_virtual_internal_storage");
+    try runExpect("tests/feature_tests/polymorphism/262_virtual_internal_storage", 0);
+}
+
+test "feature_tests/polymorphism/263X_internal_storage_extracted_local_escape" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/263X_internal_storage_extracted_local_escape", "function output cannot depend on a local storage generation", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/264X_internal_storage_retained_local_escape" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/264X_internal_storage_retained_local_escape", "function output cannot depend on a local storage generation", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/265_internal_storage_returned_owner" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/265_internal_storage_returned_owner");
+    try runExpect("tests/feature_tests/polymorphism/265_internal_storage_returned_owner", 0);
+}
+
+test "feature_tests/polymorphism/266X_internal_storage_grouped_domain" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/266X_internal_storage_grouped_domain", "opaque storage effects require one mapped storage identity", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/267X_internal_storage_readonly_receiver" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/267X_internal_storage_readonly_receiver", "retains and empties require mutable storage references", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/268X_internal_storage_reference_mapping" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/268X_internal_storage_reference_mapping", "opaque storage domain mappings cannot select reference fields", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/269_internal_storage_owning_payload" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/269_internal_storage_owning_payload");
+    try runExpect("tests/feature_tests/polymorphism/269_internal_storage_owning_payload", 0);
+}
+
+test "feature_tests/polymorphism/270X_internal_storage_old_owner_alias" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/270X_internal_storage_old_owner_alias", "opaque ownership storage requires no live external aliases to the consumed root", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/271_internal_storage_independent_domains" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/271_internal_storage_independent_domains");
+    try runExpect("tests/feature_tests/polymorphism/271_internal_storage_independent_domains", 0);
+}
+
+test "feature_tests/polymorphism/272X_internal_storage_wrong_domain" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/272X_internal_storage_wrong_domain", "storage transition is not permitted", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/273_internal_storage_nested_mapping" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/273_internal_storage_nested_mapping");
+    try runExpect("tests/feature_tests/polymorphism/273_internal_storage_nested_mapping", 0);
+}
+
+test "feature_tests/polymorphism/274_virtual_internal_storage_layouts" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/274_virtual_internal_storage_layouts");
+    try runExpect("tests/feature_tests/polymorphism/274_virtual_internal_storage_layouts", 0);
+}
+
+test "feature_tests/polymorphism/275X_internal_storage_plain_value_escape" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/275X_internal_storage_plain_value_escape", "function output cannot depend on a local storage generation", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/276_internal_storage_plain_value" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/276_internal_storage_plain_value");
+    try runExpect("tests/feature_tests/polymorphism/276_internal_storage_plain_value", 0);
+}
+
+test "feature_tests/polymorphism/277_virtual_generic_internal_storage" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/277_virtual_generic_internal_storage");
+    try runExpect("tests/feature_tests/polymorphism/277_virtual_generic_internal_storage", 0);
+}
+
 test "feature_tests/polymorphism/261X_multiple_storage_second_local_escape" {
     try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/261X_multiple_storage_second_local_escape", "function output cannot depend on a local storage generation", "failed without a diagnostic");
 }

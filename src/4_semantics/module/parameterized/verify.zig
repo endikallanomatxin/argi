@@ -95,9 +95,9 @@ pub fn verifyParameterizedForms(graph: *const graph_mod.ModuleSemanticGraph) !vo
                 try require(transfer.input_index < input.resolved.structural.fields.len);
             }
             for (contract.invalidates) |index| try require(index < input.resolved.structural.fields.len);
-            for (contract.retained_inputs) |retained| try require(retained.storage < input.resolved.structural.fields.len and retained.input < input.resolved.structural.fields.len);
-            for (contract.emptied_inputs) |index| try require(index < input.resolved.structural.fields.len);
-            for (contract.storage_sources) |source| try require(source.output_index < contract.output_count and source.input_index < input.resolved.structural.fields.len);
+            for (contract.retained_inputs) |retained| try require(retained.storage.input_index < input.resolved.structural.fields.len and retained.input < input.resolved.structural.fields.len);
+            for (contract.emptied_inputs) |empty| try require(empty.input_index < input.resolved.structural.fields.len);
+            for (contract.storage_sources) |source| try require(source.output_index < contract.output_count and source.storage.input_index < input.resolved.structural.fields.len);
             for (contract.relocations) |relocation| try require(relocation.destination < input.resolved.structural.fields.len and relocation.source < input.resolved.structural.fields.len);
             for (contract.consumed_inputs) |index| try require(index < input.resolved.structural.fields.len);
             for (contract.domain_dependencies) |dependency| {

@@ -262,6 +262,7 @@ pub const SafetyChecker = struct {
     fn validateAbstractSafetyContract(self: *SafetyChecker, inference: *summary_infer.Infer, declared: primitives.MethodSafetyContract, method: graph_mod.GlobalFunctionId, receiver: ?u32, domains: []const primitives.StorageDomainMapping, source: primitives.SourceRef) !void {
         const contracts = @import("contracts.zig");
         var contract = try contracts.fromDeclaration(self.allocator, declared);
+        if (!try self.resolveContractOpaqueStorage(&contract, domains, method, source)) return;
         for (@constCast(contract.outputs)) |*output| try self.resolveContractDomains(output, domains);
         try self.resolveContractInvalidations(&contract, domains);
         const function = self.graph.function(method);
@@ -344,6 +345,48 @@ pub const SafetyChecker = struct {
         };
         contract.invalidates = try invalidates.toOwnedSlice(self.allocator);
         for (contract.outcomes) |outcome| try self.resolveContractInvalidations(@constCast(outcome.effects), mappings);
+    }
+
+    fn resolveOpaqueContractPath(self: *SafetyChecker, path: facts.InputPath, mappings: []const primitives.StorageDomainMapping, method: graph_mod.GlobalFunctionId, source: primitives.SourceRef) !?facts.InputPath {
+        const domain = path.storage_domain orelse return path;
+        for (mappings) |mapping| if (mapping.domain_index == domain) {
+            if (mapping.paths.len != 1) {
+                try self.report(source, "opaque storage effects require one mapped storage identity per domain; grouped domains require exact hidden transfer proofs", .{});
+                return null;
+            }
+            const fields = mapping.paths[0].fields;
+            const function = self.graph.function(method);
+            var ty = self.graph.semanticType(self.graph.fields.items[function.input.start + path.input_index].ty).pointer.child;
+            for (fields) |field| {
+                if (self.graph.semanticType(ty) == .pointer) {
+                    try self.report(source, "opaque storage domain mappings cannot cross reference fields; use a known storage input until referent identities are represented", .{});
+                    return null;
+                }
+                ty = self.fieldTypeAt(ty, field) orelse return error.MissingVirtualStorageDomain;
+            }
+            if (self.graph.semanticType(ty) == .pointer) {
+                try self.report(source, "opaque storage domain mappings cannot select reference fields; map an owned storage field instead", .{});
+                return null;
+            }
+            const projections = try self.allocator.alloc(facts.Projection, fields.len);
+            for (fields, projections) |field, *projection| projection.* = .{ .field = field };
+            return .{ .input_index = path.input_index, .projections = projections };
+        };
+        try self.report(source, "opaque storage effect has no concrete domain mapping", .{});
+        return null;
+    }
+
+    fn resolveContractOpaqueStorage(self: *SafetyChecker, contract: *@import("contracts.zig").Contract, mappings: []const primitives.StorageDomainMapping, method: graph_mod.GlobalFunctionId, source: primitives.SourceRef) !bool {
+        for (@constCast(contract.retained_inputs)) |*retained| retained.storage = try self.resolveOpaqueContractPath(retained.storage, mappings, method, source) orelse return false;
+        for (@constCast(contract.emptied_inputs)) |*empty| empty.* = try self.resolveOpaqueContractPath(empty.*, mappings, method, source) orelse return false;
+        for (@constCast(contract.outputs)) |*output| if (!try self.resolveOpaqueOutputStorage(output, mappings, method, source)) return false;
+        return true;
+    }
+
+    fn resolveOpaqueOutputStorage(self: *SafetyChecker, output: *@import("contracts.zig").Output, mappings: []const primitives.StorageDomainMapping, method: graph_mod.GlobalFunctionId, source: primitives.SourceRef) anyerror!bool {
+        for (@constCast(output.storage_sources)) |*path| path.* = try self.resolveOpaqueContractPath(path.*, mappings, method, source) orelse return false;
+        for (output.outcomes) |outcome| if (!try self.resolveOpaqueOutputStorage(@constCast(outcome.value), mappings, method, source)) return false;
+        return true;
     }
 
     fn resolveContractDomains(self: *SafetyChecker, output: *@import("contracts.zig").Output, domains: []const primitives.StorageDomainMapping) anyerror!void {
@@ -2262,7 +2305,7 @@ pub const SafetyChecker = struct {
     }
 
     fn inputPathCovers(parent: facts.InputPath, child: facts.InputPath) bool {
-        if (parent.input_index != child.input_index or parent.projections.len > child.projections.len) return false;
+        if (parent.input_index != child.input_index or parent.storage_domain != child.storage_domain or parent.projections.len > child.projections.len) return false;
         for (parent.projections, child.projections[0..parent.projections.len]) |a, b| if (!a.eql(b)) return false;
         // Borrowed fields reach external storage; consuming their containing
         // owner must not postpone or discard effects on that referent.
@@ -2426,7 +2469,7 @@ pub const SafetyChecker = struct {
                     projected;
 
                 if (post_state.opaque_storage) |opaque_path| {
-                    const storage = try self.resolveSummaryInputPath(opaque_path, argument_ids, arguments, state) orelse continue;
+                    const storage = try self.resolveSummaryOpaqueStoragePath(opaque_path, argument_ids, arguments, state) orelse continue;
                     try self.closeOpaqueOwnedRoots(source, value, state, consumed);
                     if (consumed) |target| try self.markMoved(state, target, .{}, source);
                     try self.hideOpaqueDependencies(state, storage, value);
@@ -2537,6 +2580,14 @@ pub const SafetyChecker = struct {
         arguments: []const facts.ValueFacts,
         state: *FunctionState,
     ) !?facts.Place {
+        if (path.storage_domain) |domain| {
+            if (path.input_index >= arguments.len) return null;
+            const receiver = try self.projectValueFacts(arguments[path.input_index], path.projections);
+            const storages = try self.domainStorage(receiver, domain, state);
+            // Declaration conformance requires one mapped storage identity.
+            if (storages.len != 1) return error.MissingVirtualStorageDomain;
+            return storages[0];
+        }
         if (try self.resolveSummaryInputPath(path, argument_ids, arguments, state)) |storage| return storage;
         if (path.input_index >= argument_ids.len or path.input_index >= arguments.len) return null;
         const argument = self.graph.value_fields.items[@intFromEnum(argument_ids[path.input_index])].value;
@@ -2648,8 +2699,7 @@ pub const SafetyChecker = struct {
         }
         for (effect.opaque_storage_dependencies) |input_path| {
             if (input_path.input_index >= arguments.len) continue;
-            var storage = arguments[input_path.input_index].referenced_place orelse continue;
-            for (input_path.projections) |projection| storage = try self.project(storage, projection);
+            const storage = try self.resolveSummaryOpaqueStoragePath(input_path, &.{}, arguments, state) orelse continue;
             try self.collectReturnedStorageDependencies(state, storage, hidden);
             for (state.opaque_storages.items) |opaque_storage| {
                 if (!opaque_storage.storage.eql(storage)) continue;
@@ -2725,8 +2775,7 @@ pub const SafetyChecker = struct {
         }
         for (effect.opaque_storage_dependencies) |input_path| {
             if (input_path.input_index >= arguments.len) continue;
-            var storage = arguments[input_path.input_index].referenced_place orelse continue;
-            for (input_path.projections) |projection| storage = try self.project(storage, projection);
+            const storage = try self.resolveSummaryOpaqueStoragePath(input_path, &.{}, arguments, state) orelse continue;
             var returned_dependencies = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
             defer returned_dependencies.deinit();
             try self.collectReturnedStorageDependencies(state, storage, &returned_dependencies);
@@ -6087,6 +6136,36 @@ test "opaque summary runtime recovers hidden external dependencies" {
     try std.testing.expect(state.tracker.isAlive(moved_out.owned_roots[0]));
 }
 
+test "opaque receiver effects select only their mapped storage domain" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var diags = diagnostics.Diagnostics.init(&allocator, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(allocator, &diags, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const first = facts.Place{ .root = @enumFromInt(0) };
+    const second = facts.Place{ .root = @enumFromInt(1) };
+    const first_dependency = try state.tracker.establish(.fresh);
+    const second_dependency = try state.tracker.establish(.fresh);
+    try checker.mergeOpaqueStorage(&state, first, &.{first_dependency});
+    try checker.mergeOpaqueStorage(&state, second, &.{second_dependency});
+    const receiver = facts.ValueFacts{ .domains = &.{
+        .{ .domain_index = 0, .storages = &.{first} },
+        .{ .domain_index = 1, .storages = &.{second} },
+    } };
+    const extracted = try checker.applyOutcomeSummary(.{ .file_index = 0, .offset = 0 }, .{
+        .outputs = &.{.{ .opaque_storage_dependencies = &.{.{ .input_index = 0, .storage_domain = 1 }} }},
+        .opaque_storage_empties = &.{.{ .input_index = 0, .storage_domain = 1 }},
+    }, &.{}, &.{receiver}, &state);
+    try std.testing.expect(valueDependsOnRoot(extracted, second_dependency));
+    try std.testing.expect(!valueDependsOnRoot(extracted, first_dependency));
+    try std.testing.expectEqualSlices(facts.ValidityRootId, &.{first_dependency}, state.opaque_storages.items[0].hidden_dependencies);
+    try std.testing.expectEqual(@as(usize, 0), state.opaque_storages.items[1].hidden_dependencies.len);
+}
+
 test "opaque primitives move ownership through domain state" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -7211,7 +7290,7 @@ fn mergeDomainFacts(allocator: std.mem.Allocator, left: []const facts.DomainFact
 }
 
 fn sameInputPath(left: facts.InputPath, right: facts.InputPath) bool {
-    if (left.input_index != right.input_index or left.projections.len != right.projections.len) return false;
+    if (left.input_index != right.input_index or left.storage_domain != right.storage_domain or left.projections.len != right.projections.len) return false;
     for (left.projections, right.projections) |a, b| if (!a.eql(b)) return false;
     return true;
 }

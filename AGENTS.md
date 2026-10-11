@@ -365,8 +365,14 @@ feature first.
   effects until their post-states and cleanup identities are representable.
   Opaque domain owner IDs survive lexical slot cleanup for escape detection;
   these IDs never keep a resource or storage generation alive. When a local
-  domain has no summary input path, owning outputs conservatively retain its
+  domain has no summary input path, owning and reference-containing outputs retain its
   possible hidden input provenance. Later extraction must preserve that union.
+  Opaque summary paths can select a receiver storage domain after projecting
+  the receiver. The domain selector is symbolic and is never a physical Place
+  projection. Conformance resolves it to one concrete field path; virtual calls
+  resolve it through the handle's existing domain identities. Keep it distinct
+  in summary equality, substitution and deduplication. Grouped storage and
+  mappings through references require additional transfer identities.
 
 - Moving `for ~ item in collection` loops consume through `OwningIterable`.
   Global semantizing wraps the iterator declaration and loop in one lexical

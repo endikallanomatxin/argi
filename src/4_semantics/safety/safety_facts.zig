@@ -33,6 +33,9 @@ pub const ValidityRootEstablishment = union(enum) {
 pub const InputPath = struct {
     input_index: u32,
     projections: []const place.Projection = &.{},
+    /// Opaque effects may select a named domain after projecting the receiver.
+    /// This is a symbolic storage identity, never a physical Place projection.
+    storage_domain: ?u32 = null,
 };
 
 pub const InputDependency = struct {

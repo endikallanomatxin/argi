@@ -12,11 +12,11 @@ const global_types = @import("types.zig");
 const primitives = @import("../primitives/schema.zig");
 const reach_context = @import("reach_context.zig");
 
-fn opaqueStorageTransitionConflict(contract: anytype, storage: u32) bool {
-    for (contract.consumed_inputs) |input| if (input == storage) return true;
-    for (contract.invalidates) |input| if (input == storage) return true;
-    for (contract.invalidated_domains) |domain| if (domain.input_index == storage) return true;
-    for (contract.relocations) |relocation| if (relocation.source == storage or relocation.destination == storage) return true;
+fn opaqueStorageTransitionConflict(contract: anytype, storage: primitives.MethodSafetyContract.StorageInput) bool {
+    for (contract.consumed_inputs) |input| if (input == storage.input_index) return true;
+    for (contract.invalidates) |input| if (input == storage.input_index) return true;
+    for (contract.invalidated_domains) |domain| if (domain.input_index == storage.input_index and (storage.domain_index == null or storage.domain_index.? == domain.domain_index)) return true;
+    for (contract.relocations) |relocation| if (relocation.source == storage.input_index or relocation.destination == storage.input_index) return true;
     for (contract.outcomes) |outcome| if (opaqueStorageTransitionConflict(outcome, storage)) return true;
     return false;
 }
@@ -1287,30 +1287,35 @@ pub const Resolver = struct {
         return null;
     }
 
-    fn opaqueStorageInputFailure(self: *Resolver, inputs: global_sg.FieldRange, abstract_ty: global_sg.GlobalTypeId, index: u32, mutable: bool, erased_self: bool) ?[]const u8 {
-        const ty = self.graph.semanticType(self.graph.fields.items[inputs.start + index].ty);
+    fn opaqueStorageInputFailure(self: *Resolver, inputs: global_sg.FieldRange, abstract_ty: global_sg.GlobalTypeId, storage: primitives.MethodSafetyContract.StorageInput, mutable: bool, erased_self: bool, domain_count: usize) ?[]const u8 {
+        const ty = self.graph.semanticType(self.graph.fields.items[inputs.start + storage.input_index].ty);
         if (ty != .pointer) return "opaque storage clauses require a reference to a known storage input";
         if (mutable and ty.pointer.mutability != .read_write) return "retains and empties require mutable storage references";
-        if (erased_self and global_types.equal(self.graph, ty.pointer.child, abstract_ty)) return "opaque storage clauses on erased Self require mapped hidden storage identities; use a known storage input";
+        if (storage.domain_index) |domain| {
+            if (domain >= domain_count) return "unknown Abstract storage domain";
+            if (!global_types.equal(self.graph, ty.pointer.child, abstract_ty)) return "opaque storage domains must be rooted at the Self receiver";
+            return null;
+        }
+        if (erased_self and global_types.equal(self.graph, ty.pointer.child, abstract_ty)) return "opaque storage clauses on erased Self require mapped hidden storage identities; select a Self domain or use a known storage input";
         return null;
     }
 
     fn methodSafetyContractFailure(self: *Resolver, inputs: global_sg.FieldRange, outputs: global_sg.FieldRange, output_type: global_sg.GlobalTypeId, abstract_ty: global_sg.GlobalTypeId, located: LocatedAbstractDefinition, contract: primitives.MethodSafetyContract, erased_self: bool) !?[]const u8 {
         if (relocationInheritanceFailure(contract)) |message| return message;
         for (contract.retained_inputs, 0..) |retained, retained_index| {
-            if (self.opaqueStorageInputFailure(inputs, abstract_ty, retained.storage, true, erased_self)) |message| return message;
+            if (self.opaqueStorageInputFailure(inputs, abstract_ty, retained.storage, true, erased_self, located.definition.domains.len)) |message| return message;
             if (self.graph.semanticType(self.graph.fields.items[inputs.start + retained.input].ty) == .pointer) return "retains currently requires a value input; wrap borrowed references in a value instead of moving through a reference input";
             for (contract.retained_inputs[0..retained_index]) |other| if (other.input == retained.input) return "a retained value input requires one storage identity";
             for (contract.transfers) |transfer| if (transfer.input_index == retained.input) return "retains cannot also promise an exact output transfer of the same input";
-            for (contract.emptied_inputs) |empty| if (empty == retained.storage) return "retains and empties cannot target the same storage";
+            for (contract.emptied_inputs) |empty| if (std.meta.eql(empty, retained.storage)) return "retains and empties cannot target the same storage";
             if (opaqueStorageTransitionConflict(contract, retained.storage)) return "opaque storage clauses cannot overlap generation replacement, consumption or relocation";
         }
         for (contract.emptied_inputs) |empty| {
-            if (self.opaqueStorageInputFailure(inputs, abstract_ty, empty, true, erased_self)) |message| return message;
+            if (self.opaqueStorageInputFailure(inputs, abstract_ty, empty, true, erased_self, located.definition.domains.len)) |message| return message;
             if (opaqueStorageTransitionConflict(contract, empty)) return "opaque storage clauses cannot overlap generation replacement, consumption or relocation";
         }
         for (contract.storage_sources) |source| {
-            if (self.opaqueStorageInputFailure(inputs, abstract_ty, source.input_index, false, erased_self)) |message| return message;
+            if (self.opaqueStorageInputFailure(inputs, abstract_ty, source.storage, false, erased_self, located.definition.domains.len)) |message| return message;
             for (contract.transfers) |transfer| if (transfer.output_index == source.output_index) return "from_storage cannot be combined with exact transfers for the same output";
             for (contract.referents) |referent| if (referent.output_index == source.output_index) return "from_storage cannot be combined with exact refers_to for the same output";
         }

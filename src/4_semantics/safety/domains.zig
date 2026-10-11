@@ -68,7 +68,7 @@ pub fn pathsFor(mappings: []const Mapping, domain: DomainId) ?[]const facts.Inpu
 }
 
 fn overlaps(a: facts.InputPath, b: facts.InputPath) bool {
-    if (a.input_index != b.input_index) return false;
+    if (a.input_index != b.input_index or a.storage_domain != b.storage_domain) return false;
     const shared = @min(a.projections.len, b.projections.len);
     for (a.projections[0..shared], b.projections[0..shared]) |x, y| {
         if (x == .dynamic_index and (y == .dynamic_index or y == .static_index)) continue;

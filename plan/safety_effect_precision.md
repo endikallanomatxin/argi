@@ -100,11 +100,13 @@ These effects should work unconditionally or under the supported outcome guard.
 Do not add a separate restricted vocabulary for payload clauses. `consumes(input)` names definite destruction through a mutable reference.
 `relocates(destination, source)` names exact ownership-preserving initialization
 of an available destination from a mutable-reference source.
-Unconditional known-input `retains(storage, value)` permits hidden input
+Unconditional `retains(storage, value)` permits hidden input
 retention, `from_storage(output, storage)` permits hidden output provenance,
 and `empties(storage)` guarantees discharge of hidden dependencies. None proves
 runtime slot occupancy or exact hidden value identity. Initialization effects
-and conditional or mapped hidden transitions need further modeling.
+and conditional hidden transitions need further modeling. Known storage inputs
+and single-storage receiver domains share these effects; grouped domains and
+reference mappings require more precise storage identities.
 
 Common clauses apply to all outcomes. Conditional clauses add permissions and
 obligations. An empty error clause preserves generations only when no common

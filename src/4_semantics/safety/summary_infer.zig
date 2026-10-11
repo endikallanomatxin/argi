@@ -2381,7 +2381,7 @@ pub const Infer = struct {
 
     fn inputPathEqual(self: *Infer, left: facts.InputPath, right: facts.InputPath) bool {
         _ = self;
-        if (left.input_index != right.input_index or left.projections.len != right.projections.len) return false;
+        if (left.input_index != right.input_index or left.storage_domain != right.storage_domain or left.projections.len != right.projections.len) return false;
         for (left.projections, right.projections) |a, b| if (!std.meta.eql(a, b)) return false;
         return true;
     }
@@ -3024,7 +3024,7 @@ pub const Infer = struct {
 
     fn inputPathPrefix(self: *Infer, prefix: facts.InputPath, path: facts.InputPath) bool {
         _ = self;
-        if (prefix.input_index != path.input_index or prefix.projections.len > path.projections.len) return false;
+        if (prefix.input_index != path.input_index or prefix.storage_domain != path.storage_domain or prefix.projections.len > path.projections.len) return false;
         for (prefix.projections, path.projections[0..prefix.projections.len]) |left, right|
             if (!std.meta.eql(left, right)) return false;
         return true;
@@ -3352,6 +3352,24 @@ pub const Infer = struct {
         arguments: []const graph_mod.ValueField,
         override: ?SymbolicInputOverride,
     ) ![]const facts.InputPath {
+        if (path.storage_domain) |domain_index| {
+            if (path.input_index >= arguments.len) return &.{};
+            const argument = arguments[path.input_index].value;
+            var value = (try self.localPointeeEffect(function_id, argument)) orelse try self.inferExpression(function_id, argument);
+            for (path.projections) |projection| value = try self.projectValueEffect(value, projection);
+            for (value.domain_values) |mapped| if (mapped.domain_index == domain_index) {
+                var sources = std.array_list.Managed(facts.InputPath).init(self.allocator);
+                for (mapped.value.input_generation_dependencies) |source| try appendInputPath(&sources, source);
+                for (mapped.value.input_domains) |source| try appendInputPath(&sources, .{ .input_index = source.path.input_index, .projections = source.path.projections, .storage_domain = source.domain_index });
+                return sources.toOwnedSlice();
+            };
+            var receiver = path;
+            receiver.storage_domain = null;
+            const paths = try self.substituteInputPath(function_id, receiver, arguments, override, .validity);
+            const result = try self.allocator.dupe(facts.InputPath, paths);
+            for (result) |*source| source.storage_domain = domain_index;
+            return result;
+        }
         return self.substituteInputPath(function_id, path, arguments, override, .validity);
     }
 
@@ -4203,6 +4221,7 @@ pub const Infer = struct {
         const result = try self.allocator.alloc(facts.InputPath, paths.len);
         for (paths, 0..) |path, index| result[index] = .{
             .input_index = path.input_index,
+            .storage_domain = path.storage_domain,
             .projections = try self.appendProjection(path.projections, projection),
         };
         return result;
@@ -4691,6 +4710,7 @@ pub const Infer = struct {
 fn containsInputDependency(haystack: []const facts.InputDependency, needle: facts.InputDependency) bool {
     for (haystack) |candidate| {
         if (candidate.path.input_index != needle.path.input_index or
+            candidate.path.storage_domain != needle.path.storage_domain or
             candidate.transfers_ownership != needle.transfers_ownership or
             candidate.validity_only != needle.validity_only or
             candidate.path.projections.len != needle.path.projections.len) continue;
@@ -4731,7 +4751,7 @@ fn pointerUseOperand(content: graph_mod.Node.Content) ?graph_mod.GlobalNodeId {
 
 fn appendInputPath(list: *std.array_list.Managed(facts.InputPath), path: facts.InputPath) !void {
     for (list.items) |existing| {
-        if (existing.input_index != path.input_index or existing.projections.len != path.projections.len) continue;
+        if (existing.input_index != path.input_index or existing.storage_domain != path.storage_domain or existing.projections.len != path.projections.len) continue;
         var equal = true;
         for (existing.projections, path.projections) |left, right| if (!std.meta.eql(left, right)) {
             equal = false;
@@ -5213,7 +5233,7 @@ test "large numeric literals keep no per-element summary records" {
 
 fn appendDomain(list: *std.array_list.Managed(facts.InputDomain), domain: facts.InputDomain) !void {
     for (list.items) |existing| {
-        if (existing.domain_index != domain.domain_index or existing.path.input_index != domain.path.input_index or existing.path.projections.len != domain.path.projections.len) continue;
+        if (existing.domain_index != domain.domain_index or existing.path.input_index != domain.path.input_index or existing.path.storage_domain != domain.path.storage_domain or existing.path.projections.len != domain.path.projections.len) continue;
         var same = true;
         for (existing.path.projections, domain.path.projections) |x, y| if (!x.eql(y)) {
             same = false;

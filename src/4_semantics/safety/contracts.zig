@@ -64,7 +64,7 @@ pub fn fromDeclaration(allocator: std.mem.Allocator, declaration: @import("../pr
         for (declaration.transfers) |transfer| if (transfer.output_index == index) try transfers.append(allocator, .{ .input_index = transfer.input_index });
         output.ownership_transfers = try transfers.toOwnedSlice(allocator);
         var storage_sources: std.ArrayList(facts.InputPath) = .empty;
-        for (declaration.storage_sources) |source| if (source.output_index == index) try storage_sources.append(allocator, .{ .input_index = source.input_index });
+        for (declaration.storage_sources) |source| if (source.output_index == index) try storage_sources.append(allocator, storageInputPath(source.storage));
         output.storage_sources = try storage_sources.toOwnedSlice(allocator);
     }
     const invalidates = try allocator.alloc(facts.InputPath, declaration.invalidates.len);
@@ -101,9 +101,9 @@ pub fn fromDeclaration(allocator: std.mem.Allocator, declaration: @import("../pr
     for (declaration.relocations, relocations) |declared, *relocation| relocation.* = .{ .destination = .{ .input_index = declared.destination }, .source = .{ .input_index = declared.source } };
     try appendConditionalContracts(allocator, declaration.output_count, declaration.outcomes, &.{}, invalidates, invalidated_domains, consumed_inputs, relocations, &conditional);
     const retained = try allocator.alloc(Contract.Retention, declaration.retained_inputs.len);
-    for (declaration.retained_inputs, retained) |declared, *retention| retention.* = .{ .storage = .{ .input_index = declared.storage }, .input = .{ .input_index = declared.input } };
+    for (declaration.retained_inputs, retained) |declared, *retention| retention.* = .{ .storage = storageInputPath(declared.storage), .input = .{ .input_index = declared.input } };
     const emptied = try allocator.alloc(facts.InputPath, declaration.emptied_inputs.len);
-    for (declaration.emptied_inputs, emptied) |index, *path| path.* = .{ .input_index = index };
+    for (declaration.emptied_inputs, emptied) |input, *path| path.* = storageInputPath(input);
     return .{ .outputs = outputs, .consumed_inputs = consumed_inputs, .relocations = relocations, .retained_inputs = retained, .emptied_inputs = emptied, .invalidates = invalidates, .invalidated_domains = invalidated_domains, .outcomes = try conditional.toOwnedSlice(allocator) };
 }
 
@@ -389,8 +389,12 @@ fn checkValue(allowed: Output, actual: facts.ValueEffect) ?Failure {
     return null;
 }
 
+fn storageInputPath(input: @import("../primitives/schema.zig").MethodSafetyContract.StorageInput) facts.InputPath {
+    return .{ .input_index = input.input_index, .storage_domain = input.domain_index };
+}
+
 fn samePath(a: facts.InputPath, b: facts.InputPath) bool {
-    if (a.input_index != b.input_index or a.projections.len != b.projections.len) return false;
+    if (a.input_index != b.input_index or a.storage_domain != b.storage_domain or a.projections.len != b.projections.len) return false;
     for (a.projections, b.projections) |x, y| if (!x.eql(y)) return false;
     return true;
 }
@@ -454,7 +458,7 @@ fn retainedValueAllowed(contract: Contract, storage: facts.InputPath, value: fac
 
 fn covers(allowed: []const facts.InputPath, actual: facts.InputPath) bool {
     for (allowed) |path| {
-        if (path.input_index != actual.input_index or path.projections.len > actual.projections.len) continue;
+        if (path.input_index != actual.input_index or path.storage_domain != actual.storage_domain or path.projections.len > actual.projections.len) continue;
         var matches = true;
         for (path.projections, actual.projections[0..path.projections.len]) |a, b| {
             if (!a.eql(b)) {

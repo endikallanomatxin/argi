@@ -213,9 +213,19 @@ fn postStateEql(a: facts.PlacePostState, b: facts.PlacePostState) bool {
 }
 
 fn inputPathEql(a: facts.InputPath, b: facts.InputPath) bool {
-    if (a.input_index != b.input_index or a.projections.len != b.projections.len) return false;
+    if (a.input_index != b.input_index or a.storage_domain != b.storage_domain or a.projections.len != b.projections.len) return false;
     for (a.projections, b.projections) |left, right| if (!std.meta.eql(left, right)) return false;
     return true;
+}
+
+test "opaque storage summary identity includes its receiver domain" {
+    const plain = facts.InputPath{ .input_index = 0 };
+    const first = facts.InputPath{ .input_index = 0, .storage_domain = 0 };
+    const second = facts.InputPath{ .input_index = 0, .storage_domain = 1 };
+    const effect = facts.ValueEffect{ .opaque_storage_dependencies = &.{first} };
+    try std.testing.expect(!valueEffectEql(effect, .{ .opaque_storage_dependencies = &.{plain} }));
+    try std.testing.expect(!valueEffectEql(effect, .{ .opaque_storage_dependencies = &.{second} }));
+    try std.testing.expect(!summaryEql(.{ .opaque_storage_empties = &.{first} }, .{ .opaque_storage_empties = &.{second} }));
 }
 
 test "summary engine reinfers only reverse dependencies" {

@@ -205,13 +205,15 @@ pub const MethodSafetyContract = struct {
     owned_outputs: []const u32 = &.{},
     transfers: []const Dependency = &.{},
     retained_inputs: []const Retention = &.{},
-    emptied_inputs: []const u32 = &.{},
-    storage_sources: []const Dependency = &.{},
+    emptied_inputs: []const StorageInput = &.{},
+    storage_sources: []const StorageDependency = &.{},
     outcomes: []const Outcome = &.{},
     source: SourceRef,
 
     pub const Relocation = struct { destination: u32, source: u32 };
-    pub const Retention = struct { storage: u32, input: u32 };
+    pub const StorageInput = struct { input_index: u32, domain_index: ?u32 = null };
+    pub const Retention = struct { storage: StorageInput, input: u32 };
+    pub const StorageDependency = struct { output_index: u32, storage: StorageInput };
     pub const Dependency = struct { output_index: u32, input_index: u32 };
     pub const DomainInput = struct { input_index: u32, domain_index: u32 };
     pub const DomainDependency = struct { output_index: u32, input: DomainInput };
