@@ -278,8 +278,11 @@ feature first.
   independently of the concrete-summary worklist. Implementation lists serve
   runtime reachability and conformance, never dispatch effect inference.
   Receiver validity captures the actual erased referent and its generations,
-  not the local slot holding a virtual handle. Summary place paths distinguish
-  a reference-valued field's slot from its pointee with explicit dereference
+  not the local slot holding a virtual handle. Whole-receiver virtual calls also
+  validate external dependencies in mapped opaque storage; reconstructing fields
+  alone does not include hidden contents. Confirmed empty outcomes discharge
+  those contents without ending the backing allocation. Summary place paths
+  distinguish a reference-valued field's slot from its pointee with explicit dereference
   projections; writing through the reference must preserve the field's facts.
   Choice-indexed generation effects retain input post-states and domain
   invalidations separately from payload provenance. Infer exit effects after

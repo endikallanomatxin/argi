@@ -1899,15 +1899,17 @@ pub const SafetyChecker = struct {
                 value.dependencies = try dependencies.toOwnedSlice();
                 break;
             };
+            try self.requireMappedOpaqueContentsLive(source, value, state);
             if (value.referenced_place) |storage| {
                 // Referencing the wrapper checks its slot generation. Calling
                 // through that reference also requires the hidden receiver
                 // envelope stored inside it, including captured field roots.
                 // Preserve this obligation across ordinary wrapper functions.
-                // TODO: Include mapped opaque contents in whole-receiver
-                // liveness checks; reconstructing fields alone does not read
-                // the separate hidden-dependency state.
+                // Mapped contents live separately from field facts. Reading
+                // the receiver requires their external referents as well;
+                // allocation metadata alone does not carry that obligation.
                 if (self.valueAtPlace(state, storage)) |stored| {
+                    try self.requireMappedOpaqueContentsLive(source, stored, state);
                     if (stored.virtual_methods.len != 0) try self.requireLive(@enumFromInt(0), source, stored, state);
                     for (stored.domains) |domain| for (domain.storages) |target| {
                         const generation = try self.storageGeneration(state, target);
@@ -1931,6 +1933,21 @@ pub const SafetyChecker = struct {
             }
         }
         return self.diagnostics.list.items.len == before;
+    }
+
+    fn requireMappedOpaqueContentsLive(self: *SafetyChecker, source: primitives.SourceRef, receiver: facts.ValueFacts, state: *FunctionState) !void {
+        for (receiver.domains) |domain| for (domain.storages) |target| {
+            for (state.opaque_storages.items) |opaque_storage| {
+                if (!target.isPrefixOf(opaque_storage.storage)) continue;
+                for (opaque_storage.hidden_dependencies) |dependency| {
+                    if (self.opaqueDependencyIsInternalToStorage(state, opaque_storage.storage, dependency)) continue;
+                    if (state.tracker.roots.items[@intFromEnum(dependency)].state != .alive) {
+                        try self.report(source, "receiver contents depend on a root that has ended", .{});
+                        break;
+                    }
+                }
+            }
+        };
     }
 
     /// Guard only represented generation changes and whole-resource transitions.

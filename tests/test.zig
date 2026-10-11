@@ -11379,3 +11379,11 @@ test "feature_tests/polymorphism/295_conditional_storage_extraction_and_empty" {
 test "feature_tests/polymorphism/296X_conditional_storage_extracted_local_escape" {
     try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/296X_conditional_storage_extracted_local_escape", "function output cannot depend on a local storage generation", "failed without a diagnostic");
 }
+
+test "feature_tests/polymorphism/297X_virtual_receiver_ended_opaque_contents" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/297X_virtual_receiver_ended_opaque_contents", "receiver contents depend on a root that has ended", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/298X_direct_virtual_receiver_ended_opaque_contents" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/298X_direct_virtual_receiver_ended_opaque_contents", "receiver contents depend on a root that has ended", "failed without a diagnostic");
+}

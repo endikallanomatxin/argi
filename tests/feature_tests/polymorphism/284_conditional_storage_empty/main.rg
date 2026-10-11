@@ -68,6 +68,8 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         if drops != 1 { status_code = 3 }
     }
 
+    _ ::= forward_drain($&slot, false)
+
     {
         drops :: Int32 = 0
         put($&implementation, Tracked($&drops))
