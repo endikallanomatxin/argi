@@ -50,7 +50,14 @@ pub const SafetyChecker = struct {
         generation: facts.ValidityRootId,
         needs_current_generation: bool = false,
     };
-    const OpaqueStorage = struct { storage: facts.Place, hidden_dependencies: []const facts.ValidityRootId };
+    const OpaqueStorage = struct {
+        storage: facts.Place,
+        hidden_dependencies: []const facts.ValidityRootId,
+        // Identity only: a moved owner's slot can disappear before output
+        // checks. These roots associate hidden contents without keeping any
+        // resource or lexical generation alive.
+        owner_roots: []const facts.ValidityRootId = &.{},
+    };
     const ChoiceActive = struct { storage: facts.Place, variant_index: u32 };
     const ChoiceRejected = struct { storage: facts.Place, variant_index: u32 };
     const ChoiceTemporaryActive = struct { expression: graph_mod.GlobalNodeId, variant_index: u32 };
@@ -1882,6 +1889,49 @@ pub const SafetyChecker = struct {
     /// Unrepresented value writes and capabilities retain their conservative
     /// summary. A guard never restores a saved caller snapshot.
     fn applyOutcomeSummary(self: *SafetyChecker, source: primitives.SourceRef, summary: facts.SafetySummary, argument_ids: []const graph_mod.GlobalValueFieldId, arguments: []const facts.ValueFacts, state: *FunctionState) !facts.ValueFacts {
+        var capture = false;
+        for (summary.outputs) |output| if (hasOpaqueOutputDependencies(output)) {
+            capture = true;
+            break;
+        };
+        if (!capture) return self.applyOutcomeSummaryEffects(source, summary, argument_ids, arguments, state);
+        // Capture only the hidden contents' provenance before emptying them.
+        // Returned owners keep these obligations; no caller place is restored.
+        const effects = try self.allocator.alloc(facts.ValueEffect, summary.outputs.len);
+        for (summary.outputs, effects) |output, *effect| effect.* = try self.opaqueOutputDependencies(output);
+        const hidden = try self.instantiateSummaryOutputs(effects, arguments, state);
+        const result = try self.applyOutcomeSummaryEffects(source, summary, argument_ids, arguments, state);
+        return self.mergeValueFacts(result, hidden);
+    }
+
+    fn hasOpaqueOutputDependencies(effect: facts.ValueEffect) bool {
+        if (effect.opaque_storage_dependencies.len != 0) return true;
+        for (effect.fields) |field| if (hasOpaqueOutputDependencies(field.value.*)) return true;
+        for (effect.variants) |variant| if (hasOpaqueOutputDependencies(variant.value.*)) return true;
+        return false;
+    }
+
+    fn opaqueOutputDependencies(self: *SafetyChecker, effect: facts.ValueEffect) anyerror!facts.ValueEffect {
+        if (!hasOpaqueOutputDependencies(effect)) return .{};
+        var result = facts.ValueEffect{ .opaque_storage_dependencies = effect.opaque_storage_dependencies, .known_choice_variant = effect.known_choice_variant };
+        const fields = try self.allocator.alloc(facts.OutputFieldEffect, effect.fields.len);
+        for (effect.fields, fields) |field, *output| {
+            const value = try self.allocator.create(facts.ValueEffect);
+            value.* = try self.opaqueOutputDependencies(field.value.*);
+            output.* = .{ .index = field.index, .value = value };
+        }
+        result.fields = fields;
+        const variants = try self.allocator.alloc(facts.OutputVariantEffect, effect.variants.len);
+        for (effect.variants, variants) |variant, *output| {
+            const value = try self.allocator.create(facts.ValueEffect);
+            value.* = try self.opaqueOutputDependencies(variant.value.*);
+            output.* = .{ .index = variant.index, .value = value };
+        }
+        result.variants = variants;
+        return result;
+    }
+
+    fn applyOutcomeSummaryEffects(self: *SafetyChecker, source: primitives.SourceRef, summary: facts.SafetySummary, argument_ids: []const graph_mod.GlobalValueFieldId, arguments: []const facts.ValueFacts, state: *FunctionState) !facts.ValueFacts {
         var selector: ?u32 = null;
         for (summary.outcome_post_states) |outcome| {
             var preserves = false;
@@ -2600,6 +2650,7 @@ pub const SafetyChecker = struct {
             if (input_path.input_index >= arguments.len) continue;
             var storage = arguments[input_path.input_index].referenced_place orelse continue;
             for (input_path.projections) |projection| storage = try self.project(storage, projection);
+            try self.collectReturnedStorageDependencies(state, storage, hidden);
             for (state.opaque_storages.items) |opaque_storage| {
                 if (!opaque_storage.storage.eql(storage)) continue;
                 for (opaque_storage.hidden_dependencies) |dependency|
@@ -2676,6 +2727,10 @@ pub const SafetyChecker = struct {
             if (input_path.input_index >= arguments.len) continue;
             var storage = arguments[input_path.input_index].referenced_place orelse continue;
             for (input_path.projections) |projection| storage = try self.project(storage, projection);
+            var returned_dependencies = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+            defer returned_dependencies.deinit();
+            try self.collectReturnedStorageDependencies(state, storage, &returned_dependencies);
+            for (returned_dependencies.items) |root| try appendDependencyFact(&dependencies, .{ .root = root });
             for (state.opaque_storages.items) |opaque_storage| {
                 if (!opaque_storage.storage.eql(storage)) continue;
                 for (opaque_storage.hidden_dependencies) |dependency|
@@ -3556,17 +3611,24 @@ pub const SafetyChecker = struct {
         storage: facts.Place,
         dependencies: []const facts.ValidityRootId,
     ) !void {
+        var owners = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+        defer owners.deinit();
+        if (self.valueAtPlace(state, storage)) |value| try collectOwnedRoots(value, &owners);
         for (state.opaque_storages.items) |*opaque_storage| {
             if (!opaque_storage.storage.eql(storage)) continue;
             var merged = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
             try merged.appendSlice(opaque_storage.hidden_dependencies);
             for (dependencies) |dependency| try appendRootFact(&merged, dependency);
             opaque_storage.hidden_dependencies = try merged.toOwnedSlice();
+            var combined = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+            try combined.appendSlice(opaque_storage.owner_roots);
+            for (owners.items) |root| try appendRootFact(&combined, root);
+            opaque_storage.owner_roots = try combined.toOwnedSlice();
             return;
         }
         var hidden = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
         for (dependencies) |dependency| try appendRootFact(&hidden, dependency);
-        try state.opaque_storages.append(.{ .storage = storage, .hidden_dependencies = try hidden.toOwnedSlice() });
+        try state.opaque_storages.append(.{ .storage = storage, .hidden_dependencies = try hidden.toOwnedSlice(), .owner_roots = try owners.toOwnedSlice() });
     }
 
     fn markOpaqueStorageEmpty(self: *SafetyChecker, state: *FunctionState, storage: facts.Place) void {
@@ -3574,6 +3636,18 @@ pub const SafetyChecker = struct {
         for (state.opaque_storages.items) |*opaque_storage| {
             if (!opaque_storage.storage.eql(storage)) continue;
             opaque_storage.hidden_dependencies = &.{};
+            return;
+        }
+    }
+
+    fn mergeOpaqueOwnerRoots(self: *SafetyChecker, state: *FunctionState, storage: facts.Place, roots: []const facts.ValidityRootId) !void {
+        if (roots.len == 0) return;
+        for (state.opaque_storages.items) |*domain| {
+            if (!domain.storage.eql(storage)) continue;
+            var owners = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+            try owners.appendSlice(domain.owner_roots);
+            for (roots) |root| try appendRootFact(&owners, root);
+            domain.owner_roots = try owners.toOwnedSlice();
             return;
         }
     }
@@ -3603,6 +3677,30 @@ pub const SafetyChecker = struct {
         for (provenances.items) |provenance| try appendRootFact(hidden, provenance.generation);
         for (value.fields) |field| try self.collectOpaqueHiddenDependencies(state, field.value.*, hidden);
         for (value.variants) |variant| try self.collectOpaqueHiddenDependencies(state, variant.value.*, hidden);
+    }
+
+    fn collectReturnedStorageDependencies(
+        self: *SafetyChecker,
+        state: *FunctionState,
+        storage: facts.Place,
+        hidden: *std.array_list.Managed(facts.ValidityRootId),
+    ) !void {
+        const stored = self.valueAtPlace(state, storage) orelse return;
+        // Returned owners conservatively carry hidden input provenance as
+        // ordinary dependencies until summaries can name returned domains.
+        // Extraction must retain those roots, without retaining backing owners
+        // or the lexical slot holding the storage.
+        var candidates = std.array_list.Managed(facts.ValidityRootId).init(self.allocator);
+        defer candidates.deinit();
+        try self.collectOpaqueHiddenDependencies(state, stored, &candidates);
+        for (candidates.items) |root| {
+            if (valueContainsOwnedRoot(stored, root)) continue;
+            var slot_generation = false;
+            for (state.storage_generations.items) |entry| {
+                if (storage.isPrefixOf(entry.storage) and entry.generation == root) slot_generation = true;
+            }
+            if (!slot_generation) try appendRootFact(hidden, root);
+        }
     }
 
     fn hideOpaqueDependencies(self: *SafetyChecker, state: *FunctionState, storage: facts.Place, value: facts.ValueFacts) !void {
@@ -4577,6 +4675,10 @@ pub const SafetyChecker = struct {
         for (state.opaque_storages.items) |domain| {
             const stored = self.valueAtPlace(state, domain.storage) orelse facts.ValueFacts{};
             var carries_domain = valueSharesOwnedDependency(value, stored);
+            for (domain.owner_roots) |root| if (valueContainsOwnedRoot(value, root) or valueDependsOnRoot(value, root)) {
+                carries_domain = true;
+                break;
+            };
             if (!carries_domain) if (self.functionInputIndex(function, domain.storage.root)) |input_index| {
                 // Pointer input seeds describe an unknown caller referent.
                 // Symbolic output paths identify which input domain escapes;
@@ -4752,10 +4854,14 @@ pub const SafetyChecker = struct {
         for (left.lexical_storage_generations.items) |root| try appendRootFact(&joined.lexical_storage_generations, root);
         for (right.lexical_storage_generations.items) |root| try appendRootFact(&joined.lexical_storage_generations, root);
 
-        for (left.opaque_storages.items) |opaque_storage|
+        for (left.opaque_storages.items) |opaque_storage| {
             try self.mergeOpaqueStorage(&joined, opaque_storage.storage, opaque_storage.hidden_dependencies);
-        for (right.opaque_storages.items) |opaque_storage|
+            try self.mergeOpaqueOwnerRoots(&joined, opaque_storage.storage, opaque_storage.owner_roots);
+        }
+        for (right.opaque_storages.items) |opaque_storage| {
             try self.mergeOpaqueStorage(&joined, opaque_storage.storage, opaque_storage.hidden_dependencies);
+            try self.mergeOpaqueOwnerRoots(&joined, opaque_storage.storage, opaque_storage.owner_roots);
+        }
 
         for (left.choice_active.items) |candidate| for (right.choice_active.items) |other| {
             if (candidate.storage.eql(other.storage) and candidate.variant_index == other.variant_index) {
@@ -5830,6 +5936,8 @@ fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChe
         if (opaque_storage.hidden_dependencies.len != other.hidden_dependencies.len) return false;
         for (opaque_storage.hidden_dependencies) |dependency|
             if (!containsRoot(other.hidden_dependencies, dependency)) return false;
+        if (opaque_storage.owner_roots.len != other.owner_roots.len) return false;
+        for (opaque_storage.owner_roots) |root| if (!containsRoot(other.owner_roots, root)) return false;
     }
     for (left.choice_active.items) |candidate| {
         var found = false;
@@ -5947,7 +6055,9 @@ test "opaque summary runtime recovers hidden external dependencies" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
-    var checker = SafetyChecker.init(allocator, undefined, undefined);
+    var diags = diagnostics.Diagnostics.init(&allocator, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(allocator, &diags, undefined);
     defer checker.deinit();
     var state = SafetyChecker.FunctionState.init(allocator);
     defer state.deinit();
@@ -5961,17 +6071,20 @@ test "opaque summary runtime recovers hidden external dependencies" {
     try checker.setPlace(&state, storage, .initialized, .{ .owned_roots = &.{backing} });
     try checker.mergeOpaqueStorage(&state, storage, &.{ backing, generation, external });
 
-    const moved_out = try checker.instantiateOutput(.{
-        .opaque_storage_dependencies = &.{.{ .input_index = 0 }},
-        .fresh_owned_roots = &.{91},
-    }, &.{.{ .referenced_place = storage }}, &state);
+    const moved_out = try checker.applyOutcomeSummary(.{ .file_index = 0, .offset = 0 }, .{
+        .outputs = &.{.{
+            .opaque_storage_dependencies = &.{.{ .input_index = 0 }},
+            .fresh_owned_roots = &.{91},
+        }},
+        .opaque_storage_empties = &.{.{ .input_index = 0 }},
+    }, &.{}, &.{.{ .referenced_place = storage }}, &state);
     try std.testing.expect(valueDependsOnRoot(moved_out, external));
     try std.testing.expect(!valueDependsOnRoot(moved_out, backing));
     try std.testing.expect(!valueDependsOnRoot(moved_out, generation));
     try std.testing.expectEqual(@as(usize, 1), moved_out.owned_roots.len);
 
-    checker.markOpaqueStorageEmpty(&state, storage);
     try std.testing.expectEqual(@as(usize, 0), state.opaque_storages.items[0].hidden_dependencies.len);
+    try std.testing.expect(state.tracker.isAlive(moved_out.owned_roots[0]));
 }
 
 test "opaque primitives move ownership through domain state" {
@@ -6213,8 +6326,8 @@ test "rich safety join preserves all compact state dimensions" {
     try right.ownership_edges.append(.{ .owner = changing, .owned = right_dependency });
     try left.storage_generations.append(.{ .storage = storage, .generation = left_dependency });
     try right.storage_generations.append(.{ .storage = storage, .generation = right_dependency });
-    try left.opaque_storages.append(.{ .storage = storage, .hidden_dependencies = &.{left_dependency} });
-    try right.opaque_storages.append(.{ .storage = storage, .hidden_dependencies = &.{right_dependency} });
+    try left.opaque_storages.append(.{ .storage = storage, .hidden_dependencies = &.{left_dependency}, .owner_roots = &.{left_dependency} });
+    try right.opaque_storages.append(.{ .storage = storage, .hidden_dependencies = &.{right_dependency}, .owner_roots = &.{right_dependency} });
     try left.choice_active.append(.{ .storage = storage, .variant_index = 2 });
     try right.choice_active.append(.{ .storage = storage, .variant_index = 2 });
     try left.choice_rejected.append(.{ .storage = storage, .variant_index = 1 });
@@ -6232,6 +6345,8 @@ test "rich safety join preserves all compact state dimensions" {
     try std.testing.expectEqual(@as(usize, 1), joined.opaque_storages.items.len);
     try std.testing.expect(containsRoot(joined.opaque_storages.items[0].hidden_dependencies, left_dependency));
     try std.testing.expect(containsRoot(joined.opaque_storages.items[0].hidden_dependencies, right_dependency));
+    try std.testing.expect(containsRoot(joined.opaque_storages.items[0].owner_roots, left_dependency));
+    try std.testing.expect(containsRoot(joined.opaque_storages.items[0].owner_roots, right_dependency));
     try std.testing.expectEqual(@as(usize, 1), joined.choice_active.items.len);
     try std.testing.expectEqual(@as(usize, 1), joined.choice_rejected.items.len);
 }
