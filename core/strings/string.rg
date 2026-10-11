@@ -675,7 +675,7 @@ operator + (
     result = concat_views(.left = left, .right = right)
 }
 
-String implements FalliblyCopyable#(.reasons: (..out_of_memory))
+String satisfies FalliblyCopyable#(.reasons: (..out_of_memory))
 
 operator + (
         .left      : &StringView,

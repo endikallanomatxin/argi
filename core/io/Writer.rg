@@ -1,4 +1,4 @@
-Writer: Abstract = (
+Writer: contract = (
     write_byte(.self: $&Self, .byte: UInt8) -> (
         .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) where {

@@ -179,5 +179,5 @@ deallocate(
         .alignment : UIntNative
     ) -> () := {}
 
-ArenaAllocator implements Allocator
-ArenaAllocator implements Deallocator
+ArenaAllocator satisfies Allocator
+ArenaAllocator satisfies Deallocator

@@ -8,8 +8,8 @@ Matrix#(.rows: UIntNative, .cols: UIntNative, .t: Type: Scalar): Type = (
     )
 )
 
-Vector#(.n: UIntNative, .t: Type: Scalar) implements ImplicitlyCopyable
-Matrix#(.rows: UIntNative, .cols: UIntNative, .t: Type: Scalar) implements ImplicitlyCopyable
+Vector#(.n: UIntNative, .t: Type: Scalar) satisfies ImplicitlyCopyable
+Matrix#(.rows: UIntNative, .cols: UIntNative, .t: Type: Scalar) satisfies ImplicitlyCopyable
 
 Vector init#(
         .n : UIntNative,

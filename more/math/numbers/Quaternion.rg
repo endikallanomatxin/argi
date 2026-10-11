@@ -1,4 +1,4 @@
-Quaternion: Abstract = (
+Quaternion: contract = (
     operator + (.left: Self, .right: Self) -> (.result: Self)
     operator - (.left: Self, .right: Self) -> (.result: Self)
     operator * (.left: Self, .right: Self) -> (.result: Self)
@@ -6,11 +6,11 @@ Quaternion: Abstract = (
     ...
 )
 
-Quaternion8 implements Quaternion
-Quaternion16 implements Quaternion
-Quaternion32 implements Quaternion
-Quaternion64 implements Quaternion
-Quaternion128 implements Quaternion
+Quaternion8 satisfies Quaternion
+Quaternion16 satisfies Quaternion
+Quaternion32 satisfies Quaternion
+Quaternion64 satisfies Quaternion
+Quaternion128 satisfies Quaternion
 Quaternion defaultsto Quaternion32
 
-Quaternion implements Number
+Quaternion satisfies Number

@@ -152,7 +152,7 @@ copy#(
     result = ..ok ~out
 }
 
-DynamicArray#(.t: Type: InfalliblyCopyable) implements FalliblyCopyable#(
+DynamicArray#(.t: Type: InfalliblyCopyable) satisfies FalliblyCopyable#(
     .reasons : (..out_of_memory)
 )
 
@@ -202,7 +202,7 @@ copy#(
     result = ..ok ~out
 }
 
-DynamicArray#(.t: Type: FalliblyCopyable#(.reasons: element_reasons)) implements FalliblyCopyable#(
+DynamicArray#(.t: Type: FalliblyCopyable#(.reasons: element_reasons)) satisfies FalliblyCopyable#(
     .reasons : choice_union#(.a: element_reasons, .b: (..out_of_memory)),
 )
 
@@ -729,7 +729,7 @@ _trusted_dynamic_array_set#(
     _invalidate_dynamic_array_shape#(.t: t)(.array = array)
 }
 
-DynamicArray#(.t: Type) implements Indexable#(.t: t)
-DynamicArray#(.t: Type) implements IndexableMutable#(.t: t)
-DynamicArray#(.t: Type: ImplicitlyCopyable) implements IndexableValue#(.t: t)
-DynamicArray#(.t: Type) implements Resizable#(.t: t)
+DynamicArray#(.t: Type) satisfies Indexable#(.t: t)
+DynamicArray#(.t: Type) satisfies IndexableMutable#(.t: t)
+DynamicArray#(.t: Type: ImplicitlyCopyable) satisfies IndexableValue#(.t: t)
+DynamicArray#(.t: Type) satisfies Resizable#(.t: t)

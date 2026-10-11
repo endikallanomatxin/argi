@@ -8,7 +8,7 @@ VersionView: Type = (
     ._pre_end   : UIntNative
 )
 
-VersionView implements ImplicitlyCopyable
+VersionView satisfies ImplicitlyCopyable
 
 _digit(.byte: UInt8) -> (.ok: Bool) := { ok = byte >= 48 and byte <= 57 }
 

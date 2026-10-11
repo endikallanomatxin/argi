@@ -5,21 +5,21 @@ HashMapEntry#(.key: Type: ImplicitlyCopyable, .value: Type: ImplicitlyCopyable):
     .value : value
 )
 
-HashMapEntry#(.key: Type: ImplicitlyCopyable, .value: Type: ImplicitlyCopyable) implements ImplicitlyCopyable
+HashMapEntry#(.key: Type: ImplicitlyCopyable, .value: Type: ImplicitlyCopyable) satisfies ImplicitlyCopyable
 
 HashMapROEntry#(.key: Type: ImplicitlyCopyable, .value: Type: ImplicitlyCopyable): Type = (
     .key   : &key,
     .value : &value
 )
 
-HashMapROEntry#(.key: Type: ImplicitlyCopyable, .value: Type: ImplicitlyCopyable) implements ImplicitlyCopyable
+HashMapROEntry#(.key: Type: ImplicitlyCopyable, .value: Type: ImplicitlyCopyable) satisfies ImplicitlyCopyable
 
 HashMapRWEntry#(.key: Type: ImplicitlyCopyable, .value: Type: ImplicitlyCopyable): Type = (
     .key   : &key,
     .value : $&value
 )
 
-HashMapRWEntry#(.key: Type: ImplicitlyCopyable, .value: Type: ImplicitlyCopyable) implements ImplicitlyCopyable
+HashMapRWEntry#(.key: Type: ImplicitlyCopyable, .value: Type: ImplicitlyCopyable) satisfies ImplicitlyCopyable
 
 _hash_map_next_index#(
         .key    : Type: ImplicitlyCopyable,
@@ -45,7 +45,7 @@ HashMap#(
     .key    : Type: ImplicitlyCopyable,
     .value  : Type: ImplicitlyCopyable,
     .policy : Type: HashPolicy#(.key: key)
-) implements Iterable#(.t: HashMapEntry#(.key: key, .value: value))
+) satisfies Iterable#(.t: HashMapEntry#(.key: key, .value: value))
 
 HashMapIterator#(
     .key    : Type: ImplicitlyCopyable,
@@ -60,7 +60,7 @@ HashMapIterator#(
     .key    : Type: ImplicitlyCopyable,
     .value  : Type: ImplicitlyCopyable,
     .policy : Type: HashPolicy#(.key: key)
-) implements Iterator#(.t: HashMapEntry#(.key: key, .value: value))
+) satisfies Iterator#(.t: HashMapEntry#(.key: key, .value: value))
 
 to_iterator#(
         .key    : Type: ImplicitlyCopyable,
@@ -131,7 +131,7 @@ HashMapKeyIterator#(
     .key    : Type: ImplicitlyCopyable,
     .value  : Type: ImplicitlyCopyable,
     .policy : Type: HashPolicy#(.key: key)
-) implements Iterator#(.t: key)
+) satisfies Iterator#(.t: key)
 
 to_key_iterator#(
         .key    : Type: ImplicitlyCopyable,
@@ -202,7 +202,7 @@ HashMapValueIterator#(
     .key    : Type: ImplicitlyCopyable,
     .value  : Type: ImplicitlyCopyable,
     .policy : Type: HashPolicy#(.key: key)
-) implements Iterator#(.t: value)
+) satisfies Iterator#(.t: value)
 
 to_value_iterator#(
         .key    : Type: ImplicitlyCopyable,
@@ -275,7 +275,7 @@ HashMapROEntryIterator#(
     .key    : Type: ImplicitlyCopyable,
     .value  : Type: ImplicitlyCopyable,
     .policy : Type: HashPolicy#(.key: key)
-) implements Iterator#(.t: HashMapROEntry#(.key: key, .value: value))
+) satisfies Iterator#(.t: HashMapROEntry#(.key: key, .value: value))
 
 to_ro_entry_iterator#(
         .key    : Type: ImplicitlyCopyable,
@@ -361,7 +361,7 @@ HashMapRWEntryIterator#(
     .key    : Type: ImplicitlyCopyable,
     .value  : Type: ImplicitlyCopyable,
     .policy : Type: HashPolicy#(.key: key)
-) implements Iterator#(.t: HashMapRWEntry#(.key: key, .value: value))
+) satisfies Iterator#(.t: HashMapRWEntry#(.key: key, .value: value))
 
 to_rw_entry_iterator#(
         .key    : Type: ImplicitlyCopyable,

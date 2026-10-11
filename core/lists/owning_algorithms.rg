@@ -1,5 +1,5 @@
 -- Comparisons borrow elements so ordering never consumes their resources.
-BorrowedOrderPolicy#(.t: Type): Abstract = (
+BorrowedOrderPolicy#(.t: Type): contract = (
     less(.self: &Self, .left: &t, .right: &t) -> (.ok: Bool)
 )
 

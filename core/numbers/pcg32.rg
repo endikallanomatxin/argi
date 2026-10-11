@@ -4,7 +4,7 @@ Pcg32: Type = (
     ._state : UInt64
 )
 
-Pcg32 implements ImplicitlyCopyable
+Pcg32 satisfies ImplicitlyCopyable
 
 _pcg_advance(.state: UInt64) -> (.next: UInt64) := {
     low ::= state % 4294967296

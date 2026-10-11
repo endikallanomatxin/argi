@@ -105,4 +105,4 @@ read_byte#(
     }
 }
 
-BufferedReader#(.base_type: Type: Reader) implements Reader
+BufferedReader#(.base_type: Type: Reader) satisfies Reader

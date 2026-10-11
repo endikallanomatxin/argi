@@ -1,9 +1,9 @@
 -- Memory cursors implement the stream protocols without acquiring capabilities
 -- or storage. They retain the same backing-view lifetime as binary operations.
-ByteReader implements Reader
-ByteReader implements BlockReader
-ByteWriter implements Writer
-ByteWriter implements BlockWriter
+ByteReader satisfies Reader
+ByteReader satisfies BlockReader
+ByteWriter satisfies Writer
+ByteWriter satisfies BlockWriter
 
 read_byte(
         .self : $&ByteReader

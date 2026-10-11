@@ -1,4 +1,4 @@
-Iterator#(.t: Type): Abstract = (
+Iterator#(.t: Type): contract = (
     has_next(.self: &Self) -> (.ok: Bool)
     next(.self: $&Self) -> (.value: t)
 )

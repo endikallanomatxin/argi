@@ -1,6 +1,6 @@
 FloatClass: Type = (..zero, ..subnormal, ..normal, ..infinity, ..nan)
 
-FloatClass implements ImplicitlyCopyable
+FloatClass satisfies ImplicitlyCopyable
 
 -- Inspect IEEE fields rather than comparing values: NaN comparisons and
 -- negative zero must not erase the classification or sign bit.

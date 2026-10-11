@@ -1,5 +1,5 @@
 -- Block protocols preserve partial operations through static and virtual use.
-BlockReader: Abstract = (
+BlockReader: contract = (
     read_block(.self: $&Self, .buffer: ArrayView#(.t: UInt8)) -> (
         .result : Errable#(UIntNative, (..stream_read_failed))
     ) where {
@@ -8,7 +8,7 @@ BlockReader: Abstract = (
     }
 )
 
-BlockWriter: Abstract = (
+BlockWriter: contract = (
     write_block(.self: $&Self, .buffer: ArrayViewRO#(.t: UInt8)) -> (
         .result : Errable#(UIntNative, (..stream_write_failed, ..stream_flush_failed))
     ) where {
@@ -47,14 +47,14 @@ _writer_block#(
     result = ..ok index
 }
 
-File implements BlockReader
-File implements BlockWriter
-ProcessStream implements BlockReader
-ProcessStream implements BlockWriter
-BufferedReader#(.base_type: Type: Reader) implements BlockReader
-BufferedWriter#(.base_type: Type: Writer) implements BlockWriter
-TcpConnection implements BlockReader
-TcpConnection implements BlockWriter
+File satisfies BlockReader
+File satisfies BlockWriter
+ProcessStream satisfies BlockReader
+ProcessStream satisfies BlockWriter
+BufferedReader#(.base_type: Type: Reader) satisfies BlockReader
+BufferedWriter#(.base_type: Type: Writer) satisfies BlockWriter
+TcpConnection satisfies BlockReader
+TcpConnection satisfies BlockWriter
 
 ..unexpected_eof
 ..invalid_stream_buffer
@@ -169,11 +169,11 @@ copy_stream(
 
 ReadUntilEnd: Type = (..delimiter, ..end, ..limit)
 
-ReadUntilEnd implements ImplicitlyCopyable
+ReadUntilEnd satisfies ImplicitlyCopyable
 
 ReadUntil: Type = (.count: UIntNative, .termination: ReadUntilEnd)
 
-ReadUntil implements ImplicitlyCopyable
+ReadUntil satisfies ImplicitlyCopyable
 
 read_until(
         .self      : $&Reader,

@@ -1,30 +1,30 @@
-InfalliblyCopyable: Abstract = (
+InfalliblyCopyable: contract = (
     copy(.self: &Self) -> (.value: Self)
 )
 
-FalliblyCopyable#(.reasons: Type): Abstract = (
+FalliblyCopyable#(.reasons: Type): contract = (
     copy(.self: &Self, .allocator: $&Allocator) -> (.result: Errable#(Self, reasons))
 )
 
-ImplicitlyCopyable: Abstract = ()
+ImplicitlyCopyable: contract = ()
 
-ImplicitlyCopyable implements InfalliblyCopyable
+ImplicitlyCopyable satisfies InfalliblyCopyable
 
-Int8 implements ImplicitlyCopyable
-Int16 implements ImplicitlyCopyable
-Int32 implements ImplicitlyCopyable
-Int64 implements ImplicitlyCopyable
-UIntNative implements ImplicitlyCopyable
-UInt8 implements ImplicitlyCopyable
-UInt16 implements ImplicitlyCopyable
-UInt32 implements ImplicitlyCopyable
-UInt64 implements ImplicitlyCopyable
-Float16 implements ImplicitlyCopyable
-Float32 implements ImplicitlyCopyable
-Float64 implements ImplicitlyCopyable
-Char implements ImplicitlyCopyable
-Bool implements ImplicitlyCopyable
-Void implements ImplicitlyCopyable
+Int8 satisfies ImplicitlyCopyable
+Int16 satisfies ImplicitlyCopyable
+Int32 satisfies ImplicitlyCopyable
+Int64 satisfies ImplicitlyCopyable
+UIntNative satisfies ImplicitlyCopyable
+UInt8 satisfies ImplicitlyCopyable
+UInt16 satisfies ImplicitlyCopyable
+UInt32 satisfies ImplicitlyCopyable
+UInt64 satisfies ImplicitlyCopyable
+Float16 satisfies ImplicitlyCopyable
+Float32 satisfies ImplicitlyCopyable
+Float64 satisfies ImplicitlyCopyable
+Char satisfies ImplicitlyCopyable
+Bool satisfies ImplicitlyCopyable
+Void satisfies ImplicitlyCopyable
 
 copy#(.t: Type: ImplicitlyCopyable)(.self: &t) -> (.value: t) := {
     value = self&

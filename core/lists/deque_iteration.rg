@@ -1,8 +1,8 @@
 -- Iterators retain both the owner and the shape generation at creation.
 DequeIterator#(.t: Type): Type = (._owner: &Deque#(.t: t), ._index: UIntNative)
 
-DequeIterator#(.t: Type: ImplicitlyCopyable) implements Iterator#(.t: t)
-Deque#(.t: Type: ImplicitlyCopyable) implements Iterable#(.t: t)
+DequeIterator#(.t: Type: ImplicitlyCopyable) satisfies Iterator#(.t: t)
+Deque#(.t: Type: ImplicitlyCopyable) satisfies Iterable#(.t: t)
 
 to_iterator#(
         .t : Type: ImplicitlyCopyable
@@ -31,8 +31,8 @@ next#(.t: Type: ImplicitlyCopyable)(.self: $&DequeIterator#(.t: t)) -> (.value: 
 
 DequeROPointerIterator#(.t: Type): Type = (._owner: &Deque#(.t: t), ._index: UIntNative)
 
-DequeROPointerIterator#(.t: Type) implements Iterator#(.t: &t)
-Deque#(.t: Type) implements ROPointerIterable#(.t: t)
+DequeROPointerIterator#(.t: Type) satisfies Iterator#(.t: &t)
+Deque#(.t: Type) satisfies ROPointerIterable#(.t: t)
 
 to_ro_pointer_iterator#(
         .t : Type
@@ -65,8 +65,8 @@ next#(.t: Type)(.self: $&DequeROPointerIterator#(.t: t)) -> (.value: &t) := {
 
 DequeRWPointerIterator#(.t: Type): Type = (._owner: $&Deque#(.t: t), ._index: UIntNative)
 
-DequeRWPointerIterator#(.t: Type) implements Iterator#(.t: $&t)
-Deque#(.t: Type) implements RWPointerIterable#(.t: t)
+DequeRWPointerIterator#(.t: Type) satisfies Iterator#(.t: $&t)
+Deque#(.t: Type) satisfies RWPointerIterable#(.t: t)
 
 to_rw_pointer_iterator#(
         .t : Type

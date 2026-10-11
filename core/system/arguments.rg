@@ -13,8 +13,8 @@ ArgumentsIterator: Type = (
     .index : UIntNative
 )
 
-ArgumentsIterator implements Iterator#(.t: StringView)
-Arguments implements Iterable#(.t: StringView)
+ArgumentsIterator satisfies Iterator#(.t: StringView)
+Arguments satisfies Iterable#(.t: StringView)
 
 once Arguments init(.ffi: $&ForeignFunctionInterface = reach ffi) -> (.result: Arguments) := {
     result = (

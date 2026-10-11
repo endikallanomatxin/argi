@@ -1,6 +1,6 @@
 OwnedHashMapBorrow#(.key: Type, .value: Type): Type = (.key: &key, .value: &value)
 
-OwnedHashMapBorrow#(.key: Type, .value: Type) implements ImplicitlyCopyable
+OwnedHashMapBorrow#(.key: Type, .value: Type) satisfies ImplicitlyCopyable
 
 OwnedHashMapIterator#(.key: Type, .value: Type, .policy: Type: BorrowedHashPolicy#(.key: key)): Type = (
     ._owner      : &OwnedHashMap#(.key: key, .value: value, .policy: policy),
@@ -8,10 +8,10 @@ OwnedHashMapIterator#(.key: Type, .value: Type, .policy: Type: BorrowedHashPolic
     ._index      : UIntNative
 )
 
-OwnedHashMapIterator#(.key: Type, .value: Type, .policy: Type: BorrowedHashPolicy#(.key: key)) implements Iterator#(
+OwnedHashMapIterator#(.key: Type, .value: Type, .policy: Type: BorrowedHashPolicy#(.key: key)) satisfies Iterator#(
     .t : OwnedHashMapBorrow#(.key: key, .value: value)
 )
-OwnedHashMap#(.key: Type, .value: Type, .policy: Type: BorrowedHashPolicy#(.key: key)) implements Iterable#(
+OwnedHashMap#(.key: Type, .value: Type, .policy: Type: BorrowedHashPolicy#(.key: key)) satisfies Iterable#(
     .t : OwnedHashMapBorrow#(.key: key, .value: value)
 )
 
@@ -90,10 +90,10 @@ OwnedHashSetIterator#(.key: Type, .policy: Type: BorrowedHashPolicy#(.key: key))
     ._entries : OwnedHashMapIterator#(.key: key, .value: _HashSetValue, .policy: policy)
 )
 
-OwnedHashSetIterator#(.key: Type, .policy: Type: BorrowedHashPolicy#(.key: key)) implements Iterator#(
+OwnedHashSetIterator#(.key: Type, .policy: Type: BorrowedHashPolicy#(.key: key)) satisfies Iterator#(
     .t : &key
 )
-OwnedHashSet#(.key: Type, .policy: Type: BorrowedHashPolicy#(.key: key)) implements ROPointerIterable#(
+OwnedHashSet#(.key: Type, .policy: Type: BorrowedHashPolicy#(.key: key)) satisfies ROPointerIterable#(
     .t : key
 )
 

@@ -3,7 +3,7 @@ StringView: Type = (
     .length : UIntNative
 )
 
-StringView implements ImplicitlyCopyable
+StringView satisfies ImplicitlyCopyable
 
 string_view_byte_address(
         .self  : &StringView,

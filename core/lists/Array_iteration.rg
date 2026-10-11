@@ -13,12 +13,12 @@ ArrayRWPointerIterator#(.n: UIntNative, .t: Type): Type = (
     .index : UIntNative
 )
 
-ArrayIterator#(.n: UIntNative, .t: Type) implements Iterator#(.t: t)
-ArrayROPointerIterator#(.n: UIntNative, .t: Type) implements Iterator#(.t: &t)
-ArrayRWPointerIterator#(.n: UIntNative, .t: Type) implements Iterator#(.t: $&t)
-Array#(.n: UIntNative, .t: Type) implements Iterable#(.t: t)
-Array#(.n: UIntNative, .t: Type) implements ROPointerIterable#(.t: t)
-Array#(.n: UIntNative, .t: Type) implements RWPointerIterable#(.t: t)
+ArrayIterator#(.n: UIntNative, .t: Type) satisfies Iterator#(.t: t)
+ArrayROPointerIterator#(.n: UIntNative, .t: Type) satisfies Iterator#(.t: &t)
+ArrayRWPointerIterator#(.n: UIntNative, .t: Type) satisfies Iterator#(.t: $&t)
+Array#(.n: UIntNative, .t: Type) satisfies Iterable#(.t: t)
+Array#(.n: UIntNative, .t: Type) satisfies ROPointerIterable#(.t: t)
+Array#(.n: UIntNative, .t: Type) satisfies RWPointerIterable#(.t: t)
 
 to_iterator#(
         .n : UIntNative,

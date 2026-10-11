@@ -1,4 +1,4 @@
-Int: Abstract = (
+Int: contract = (
     -- float(_) : Float
     -- operator +(_, _) : Int
     -- operator -(_, _) : Int
@@ -10,25 +10,25 @@ Int: Abstract = (
 )
 
 -- Signed integers
-Int8 implements Int
-Int16 implements Int
-Int32 implements Int
-Int64 implements Int
+Int8 satisfies Int
+Int16 satisfies Int
+Int32 satisfies Int
+Int64 satisfies Int
 
 -- Unsigned integers
-UInt8 implements Int
-UInt16 implements Int
-UInt32 implements Int
-UInt64 implements Int
-UIntNative implements Int
+UInt8 satisfies Int
+UInt16 satisfies Int
+UInt32 satisfies Int
+UInt64 satisfies Int
+UIntNative satisfies Int
 
-UInt: Abstract = ()
+UInt: contract = ()
 
-UInt8 implements UInt
-UInt16 implements UInt
-UInt32 implements UInt
-UInt64 implements UInt
-UIntNative implements UInt
+UInt8 satisfies UInt
+UInt16 satisfies UInt
+UInt32 satisfies UInt
+UInt64 satisfies UInt
+UIntNative satisfies UInt
 
 -- TODO: Think if having SignedInteger and UnsignedInteger as abstracts is a
 -- good idea. I think it is not very useful. But consider.

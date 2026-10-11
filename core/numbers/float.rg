@@ -1,4 +1,4 @@
-Float: Abstract = (
+Float: contract = (
     -- operator +(_, _) : _
     -- operator -(_, _) : _
     -- operator *(_, _) : _
@@ -7,9 +7,9 @@ Float: Abstract = (
     -- ...
 )
 
-Float16 implements Float
-Float32 implements Float
-Float64 implements Float
+Float16 satisfies Float
+Float32 satisfies Float
+Float64 satisfies Float
 
 -- TODO: support Float128 and Float8
 

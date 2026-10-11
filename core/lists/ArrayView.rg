@@ -16,8 +16,8 @@ ArrayViewRO#(.t: Type): Type = (
     ._length : UIntNative
 )
 
-ArrayView#(.t: Type) implements ImplicitlyCopyable
-ArrayViewRO#(.t: Type) implements ImplicitlyCopyable
+ArrayView#(.t: Type) satisfies ImplicitlyCopyable
+ArrayViewRO#(.t: Type) satisfies ImplicitlyCopyable
 
 length#(.t: Type)(.self: &ArrayView#(.t: t)) -> (.count: UIntNative) := {
     count = self&._length
@@ -231,11 +231,11 @@ set#(
     result = ..ok Void()
 }
 
-ArrayView#(.t: Type) implements Indexable#(.t: t)
-ArrayViewRO#(.t: Type) implements Indexable#(.t: t)
-ArrayView#(.t: Type) implements IndexableMutable#(.t: t)
-ArrayView#(.t: Type: ImplicitlyCopyable) implements IndexableValue#(.t: t)
-ArrayViewRO#(.t: Type: ImplicitlyCopyable) implements IndexableValue#(.t: t)
+ArrayView#(.t: Type) satisfies Indexable#(.t: t)
+ArrayViewRO#(.t: Type) satisfies Indexable#(.t: t)
+ArrayView#(.t: Type) satisfies IndexableMutable#(.t: t)
+ArrayView#(.t: Type: ImplicitlyCopyable) satisfies IndexableValue#(.t: t)
+ArrayViewRO#(.t: Type: ImplicitlyCopyable) satisfies IndexableValue#(.t: t)
 
 get#(
         .t : Type: ImplicitlyCopyable

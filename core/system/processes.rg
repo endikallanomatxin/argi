@@ -53,11 +53,11 @@ once ProcessManager init(.ffi: $&ForeignFunctionInterface = reach ffi) -> (.resu
 
 ProcessStreamMode: Type = (..inherit, ..pipe, ..discard)
 
-ProcessStreamMode implements ImplicitlyCopyable
+ProcessStreamMode satisfies ImplicitlyCopyable
 
 ProcessExitStatus: Type = (..exited(.code: UInt32), ..signaled(.signal: UInt32))
 
-ProcessExitStatus implements ImplicitlyCopyable
+ProcessExitStatus satisfies ImplicitlyCopyable
 
 ..invalid_process_argument
 ..process_spawn_failed
@@ -72,8 +72,8 @@ ProcessStream: Type = (
     ._writable : Bool
 )
 
-ProcessStream implements Reader
-ProcessStream implements Writer
+ProcessStream satisfies Reader
+ProcessStream satisfies Writer
 
 Process: Type = (
     ._ffi    : $&ForeignFunctionInterface

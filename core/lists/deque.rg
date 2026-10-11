@@ -236,7 +236,7 @@ get#(
     result = ..ok pointer&
 }
 
-Deque#(.t: Type) implements Indexable#(.t: t)
+Deque#(.t: Type) satisfies Indexable#(.t: t)
 
 Deque deinit#(.t: Type)(.self: $&Deque#(.t: t), .allocator: $&Allocator = reach allocator) -> () := {
     deinit(.self = $&self&._ring, .allocator = allocator)

@@ -104,4 +104,4 @@ flush#(
     result = buffered_writer_flush(self)
 }
 
-BufferedWriter#(.base_type: Type: Writer) implements Writer
+BufferedWriter#(.base_type: Type: Writer) satisfies Writer

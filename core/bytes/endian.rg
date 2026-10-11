@@ -1,7 +1,7 @@
 -- Bytes are decoded explicitly, independently of alignment and target layout.
 ByteOrder: Type = (..little, ..big)
 
-ByteOrder implements ImplicitlyCopyable
+ByteOrder satisfies ImplicitlyCopyable
 
 _binary_range(.length: UIntNative, .offset: UIntNative, .width: UIntNative) -> (.ok: Bool) := {
     ok = false

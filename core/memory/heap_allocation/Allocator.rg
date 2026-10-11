@@ -1,6 +1,6 @@
 ..out_of_memory
 
-Allocator: Abstract = (
+Allocator: contract = (
     allocate(.self: $&Self, .size: UIntNative, .alignment: UIntNative) -> (
         .result : Errable#(Allocation, (..out_of_memory))
     ) where {
@@ -25,7 +25,7 @@ _require_allocation_alignment(.alignment: UIntNative) -> () := {
     if remaining != 1 { abort }
 }
 
-Deallocator: Abstract = (
+Deallocator: contract = (
     deallocate(
         .self      : $&Self,
         .data      : RawPointer#(.t: UInt8),
@@ -117,8 +117,8 @@ deallocate(
     aligned_free(.address = data.address, .ffi = self&.ffi)
 }
 
-CAllocator implements Allocator
-CAllocator implements Deallocator
+CAllocator satisfies Allocator
+CAllocator satisfies Deallocator
 
 -- Heap storage needs no region lifetime beyond its own root. This initialized
 -- marker gives the uniform anchor field a stable lifetime without making the

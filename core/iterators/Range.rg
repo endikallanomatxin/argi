@@ -10,8 +10,8 @@ RangeIterator#(.t: Type): Type = (
     .step    : t
 )
 
-Range#(.t: Type) implements Iterable#(.t: t)
-RangeIterator#(.t: Type) implements Iterator#(.t: t)
+Range#(.t: Type) satisfies Iterable#(.t: t)
+RangeIterator#(.t: Type) satisfies Iterator#(.t: t)
 
 Range init#(
         .t : Type

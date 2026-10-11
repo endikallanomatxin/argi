@@ -94,4 +94,4 @@ deallocate(
     }
 }
 
-Memory implements Deallocator
+Memory satisfies Deallocator

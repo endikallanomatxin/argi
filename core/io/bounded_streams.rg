@@ -13,11 +13,11 @@ _bounded_stream_maximum() -> (.value: UIntNative) := {
 
 StreamCopyEnd: Type = (..end, ..limit)
 
-StreamCopyEnd implements ImplicitlyCopyable
+StreamCopyEnd satisfies ImplicitlyCopyable
 
 StreamCopyResult: Type = (.count: UIntNative, .termination: StreamCopyEnd)
 
-StreamCopyResult implements ImplicitlyCopyable
+StreamCopyResult satisfies ImplicitlyCopyable
 ..size_limit_exceeded
 
 -- A limit is a stopping point, not an assertion that the source ended. No

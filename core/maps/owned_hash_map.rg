@@ -6,15 +6,15 @@ _owned_hash_discard#(.t: Type)(.value: t, .allocator: $&Allocator) -> () := {
 }
 
 -- Ownership-bearing keys are hashed by reference, never copied for lookup.
-BorrowedHashPolicy#(.key: Type): Abstract = (
+BorrowedHashPolicy#(.key: Type): contract = (
     hash(.self: &Self, .key: &key) -> (.hash: UIntNative)
     eql(.self: &Self, .left: &key, .right: &key) -> (.ok: Bool)
 )
 
 StringHashPolicy: Type = ()
 
-StringHashPolicy implements ImplicitlyCopyable
-StringHashPolicy implements BorrowedHashPolicy#(.key: String)
+StringHashPolicy satisfies ImplicitlyCopyable
+StringHashPolicy satisfies BorrowedHashPolicy#(.key: String)
 
 hash(.self: &StringHashPolicy, .key: &String) -> (.hash: UIntNative) := {
     text ::= as_view(key)
@@ -25,7 +25,7 @@ eql(.self: &StringHashPolicy, .left: &String, .right: &String) -> (.ok: Bool) :=
     ok = equals(.left = as_view(left), .right = as_view(right)).ok
 }
 
-Int32HashPolicy implements BorrowedHashPolicy#(.key: Int32)
+Int32HashPolicy satisfies BorrowedHashPolicy#(.key: Int32)
 
 hash(.self: &Int32HashPolicy, .key: &Int32) -> (.hash: UIntNative) := {
     remaining :: Int32 = key&
@@ -50,7 +50,7 @@ eql(.self: &Int32HashPolicy, .left: &Int32, .right: &Int32) -> (.ok: Bool) := {
     ok = left&== right&
 }
 
-UIntNativeHashPolicy implements BorrowedHashPolicy#(.key: UIntNative)
+UIntNativeHashPolicy satisfies BorrowedHashPolicy#(.key: UIntNative)
 
 hash(.self: &UIntNativeHashPolicy, .key: &UIntNative) -> (.hash: UIntNative) := { hash = key&}
 
@@ -65,7 +65,7 @@ OwnedHashMapEntry#(.key: Type, .value: Type): Type = (.key: key, .value: value)
 
 _OwnedHashSlot: Type = (.state: UInt8, .hash: UIntNative)
 
-_OwnedHashSlot implements ImplicitlyCopyable
+_OwnedHashSlot satisfies ImplicitlyCopyable
 
 _OwnedHashTable: Type = (._entries: Allocation, ._slots: DynamicArray#(.t: _OwnedHashSlot))
 

@@ -1,7 +1,7 @@
 ..invalid_option
 ..missing_option_value
 
-ArgumentSource: Abstract = (
+ArgumentSource: contract = (
     length(.self: &Self) -> (.count: UIntNative) where {}
     get(.self: &Self, .index: UIntNative) -> (
         .result : Errable#(StringView, (..out_of_bounds))
@@ -11,11 +11,11 @@ ArgumentSource: Abstract = (
     }
 )
 
-Arguments implements ArgumentSource
+Arguments satisfies ArgumentSource
 
 CliArgumentViews: Type = (._values: ArrayViewRO#(.t: StringView))
 
-CliArgumentViews implements ArgumentSource
+CliArgumentViews satisfies ArgumentSource
 
 CliArgumentViews init(.values: ArrayViewRO#(.t: StringView)) -> (.result: CliArgumentViews) := {
     result = (._values = values)
@@ -36,11 +36,11 @@ get(
 
 CliOption: Type = (.name: StringView, .value: ?StringView, .short: Bool)
 
-CliOption implements ImplicitlyCopyable
+CliOption satisfies ImplicitlyCopyable
 
 CliArgument: Type = (..option CliOption, ..positional StringView)
 
-CliArgument implements ImplicitlyCopyable
+CliArgument satisfies ImplicitlyCopyable
 
 -- Tokenize options without a schema: --name=value, --name, short groups,
 -- positionals, and --. Names and attached values borrow the source. Schema

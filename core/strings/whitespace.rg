@@ -2,8 +2,8 @@
 -- repeated separators never produce empty tokens.
 StringWhitespaceIterator: Type = (._text: StringView, ._start: UIntNative)
 
-StringWhitespaceIterator implements Iterator#(.t: StringView)
-StringWhitespaceIterator implements Iterable#(.t: StringView)
+StringWhitespaceIterator satisfies Iterator#(.t: StringView)
+StringWhitespaceIterator satisfies Iterable#(.t: StringView)
 
 -- Iteration copies the remaining cursor state and preserves source lifetimes.
 to_iterator(.value: &StringWhitespaceIterator) -> (.iterator: StringWhitespaceIterator) := {

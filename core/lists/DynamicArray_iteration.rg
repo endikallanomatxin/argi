@@ -15,12 +15,12 @@ DynamicArrayRWPointerIterator#(.t: Type): Type = (
     ._index : UIntNative
 )
 
-DynamicArrayIterator#(.t: Type: ImplicitlyCopyable) implements Iterator#(.t: t)
-DynamicArrayROPointerIterator#(.t: Type) implements Iterator#(.t: &t)
-DynamicArrayRWPointerIterator#(.t: Type) implements Iterator#(.t: $&t)
-DynamicArray#(.t: Type: ImplicitlyCopyable) implements Iterable#(.t: t)
-DynamicArray#(.t: Type) implements ROPointerIterable#(.t: t)
-DynamicArray#(.t: Type) implements RWPointerIterable#(.t: t)
+DynamicArrayIterator#(.t: Type: ImplicitlyCopyable) satisfies Iterator#(.t: t)
+DynamicArrayROPointerIterator#(.t: Type) satisfies Iterator#(.t: &t)
+DynamicArrayRWPointerIterator#(.t: Type) satisfies Iterator#(.t: $&t)
+DynamicArray#(.t: Type: ImplicitlyCopyable) satisfies Iterable#(.t: t)
+DynamicArray#(.t: Type) satisfies ROPointerIterable#(.t: t)
+DynamicArray#(.t: Type) satisfies RWPointerIterable#(.t: t)
 
 to_iterator#(
         .t : Type: ImplicitlyCopyable

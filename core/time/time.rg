@@ -2,11 +2,11 @@
 -- meaningful. Private fields prevent mixing Unix time into this domain.
 MonotonicInstant: Type = (._nanoseconds: UInt64)
 
-MonotonicInstant implements ImplicitlyCopyable
+MonotonicInstant satisfies ImplicitlyCopyable
 
 UnixTimestamp: Type = (._seconds: Int64, ._nanoseconds: UInt32)
 
-UnixTimestamp implements ImplicitlyCopyable
+UnixTimestamp satisfies ImplicitlyCopyable
 
 UnixTimestamp init(.seconds: Int64) -> (.result: UnixTimestamp) := {
     result = (._seconds = seconds, ._nanoseconds = 0)

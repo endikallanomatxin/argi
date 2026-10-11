@@ -2,7 +2,7 @@
 -- reading ahead; the source can be used again after the adapter loan ends.
 LimitedReader#(.t: Type: BlockReader): Type = (._source: $&t, ._remaining: UIntNative)
 
-LimitedReader#(.t: Type: BlockReader) implements BlockReader
+LimitedReader#(.t: Type: BlockReader) satisfies BlockReader
 
 LimitedReader init#(
         .t : Type: BlockReader
@@ -43,7 +43,7 @@ read_block#(
 }
 
 -- The block adapter also supports byte consumers without reading ahead.
-LimitedReader#(.t: Type: BlockReader) implements Reader
+LimitedReader#(.t: Type: BlockReader) satisfies Reader
 
 read_byte#(
         .t : Type: BlockReader
@@ -61,7 +61,7 @@ read_byte#(
 -- Byte-only sources need no block protocol. The budget counts delivered bytes.
 LimitedByteReader#(.t: Type: Reader): Type = (._source: $&t, ._remaining: UIntNative)
 
-LimitedByteReader#(.t: Type: Reader) implements Reader
+LimitedByteReader#(.t: Type: Reader) satisfies Reader
 
 LimitedByteReader init#(
         .t : Type: Reader

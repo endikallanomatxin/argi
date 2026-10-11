@@ -17,7 +17,7 @@ mul#(.t: Type: Float)(.a: Complex#(.t: t), .b: Complex#(.t: t)) -> (.out: Comple
 
 -- Example using abstracts.
 
-Complex: Abstract = (
+Complex: contract = (
     operator + (.left: Self, .right: Self) -> (.result: Self)
     operator - (.left: Self, .right: Self) -> (.result: Self)
     operator * (.left: Self, .right: Self) -> (.result: Self)
@@ -25,14 +25,14 @@ Complex: Abstract = (
     ...
 )
 
-Complex8 implements Complex
-Complex16 implements Complex
-Complex32 implements Complex
-Complex64 implements Complex
-Complex128 implements Complex
+Complex8 satisfies Complex
+Complex16 satisfies Complex
+Complex32 satisfies Complex
+Complex64 satisfies Complex
+Complex128 satisfies Complex
 -- The number in the name is the size of each COMPONENT of the number.
 Complex defaultsto Complex32
 
-Complex implements Number
+Complex satisfies Number
 
 -- TODO: Consider how to implement this.

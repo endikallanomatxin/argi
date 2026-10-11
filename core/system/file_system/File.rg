@@ -4,7 +4,7 @@ FileOpenMode: Type = (
     ..append
 )
 
-FileOpenMode implements ImplicitlyCopyable
+FileOpenMode satisfies ImplicitlyCopyable
 ..file_open_failed
 
 File: Type = (
@@ -310,8 +310,8 @@ write(
     result = ..ok wrote
 }
 
-File implements Reader
-File implements Writer
+File satisfies Reader
+File satisfies Writer
 
 write_block(
         .self   : $&File,

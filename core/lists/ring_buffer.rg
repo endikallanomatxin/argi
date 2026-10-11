@@ -121,7 +121,7 @@ get_ro_ref#(
     result = ..ok borrowed
 }
 
-RingBuffer#(.t: Type) implements Indexable#(.t: t)
+RingBuffer#(.t: Type) satisfies Indexable#(.t: t)
 
 push#(
         .t : Type

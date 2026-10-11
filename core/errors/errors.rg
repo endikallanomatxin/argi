@@ -2,7 +2,7 @@
 -- retain reader strings or references to a context expression.
 SourceLocationId: Type = (.value: UInt32)
 
-SourceLocationId implements ImplicitlyCopyable
+SourceLocationId satisfies ImplicitlyCopyable
 
 SourceLocation: Type = (
     .source_file : &Char
@@ -11,7 +11,7 @@ SourceLocation: Type = (
     .column      : UIntNative
 )
 
-SourceLocation implements ImplicitlyCopyable
+SourceLocation satisfies ImplicitlyCopyable
 
 -- These two core operations are lowered to executable metadata by codegen.
 error_location_id() -> (.location: SourceLocationId) := {
@@ -22,7 +22,7 @@ source_location(.id: SourceLocationId) -> (.location: SourceLocation) := {
     location = (.source_file = "", .source_line = "", .line = 0, .column = 0)
 }
 
-ErrorTracer: Abstract = (
+ErrorTracer: contract = (
     add_context(.self: $&Self, .location: SourceLocationId, .context: StringView) -> () where {}
     reset_context(.self: $&Self) -> () where {}
     report(.self: $&Self, .writer: $&Virtual#(.abstract: Writer)) -> (
@@ -36,7 +36,7 @@ ErrorTracer: Abstract = (
 -- The virtual wrapper and its receiver both have program lifetime.
 NoopErrorTracer: Type = (.marker: UInt8 = 0)
 
-NoopErrorTracer implements ErrorTracer
+NoopErrorTracer satisfies ErrorTracer
 noop_error_tracer_storage :: NoopErrorTracer = (.marker = 0)
 noop_error_tracer :: Virtual#(.abstract: ErrorTracer) = to_virtual#(.abstract: ErrorTracer)(
     .value = $&noop_error_tracer_storage
@@ -57,7 +57,7 @@ report(
 
 ErrorTrace: Type = (.tracer: $&Virtual#(.abstract: ErrorTracer))
 
-ErrorTrace implements ImplicitlyCopyable
+ErrorTrace satisfies ImplicitlyCopyable
 
 Error#(.reasons: Type): Type = (.reason: reasons, .trace: ErrorTrace)
 
@@ -103,7 +103,7 @@ _add_error_context_text(.trace: ErrorTrace, .location: SourceLocationId, .contex
 
 ErrorTraceEntry: Type = (.location: SourceLocationId, .context_length: UIntNative)
 
-ErrorTraceEntry implements ImplicitlyCopyable
+ErrorTraceEntry satisfies ImplicitlyCopyable
 
 -- Fixed slots bound both context copy work and memory use. The first half
 -- retains early frames; the second half replaces recent frames in a ring.
@@ -116,7 +116,7 @@ FixedSizeErrorTracer: Type = (
     ._dropped  : Bool
 )
 
-FixedSizeErrorTracer implements ErrorTracer
+FixedSizeErrorTracer satisfies ErrorTracer
 
 _error_trace_stride() -> (.size: UIntNative) := {
     size = size_of(.type = ErrorTraceEntry) + 128

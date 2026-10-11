@@ -6,8 +6,8 @@ DynamicArrayOwningIterator#(.t: Type): Type = (
     ._end        : UIntNative
 )
 
-DynamicArray#(.t: Type) implements OwningIterable#(.t: t)
-DynamicArrayOwningIterator#(.t: Type) implements Iterator#(.t: t)
+DynamicArray#(.t: Type) satisfies OwningIterable#(.t: t)
+DynamicArrayOwningIterator#(.t: Type) satisfies Iterator#(.t: t)
 
 to_owning_iterator#(
         .t : Type
@@ -50,8 +50,8 @@ DynamicArrayOwningIterator deinit#(
 
 DequeOwningIterator#(.t: Type): Type = (._owner: Deque#(.t: t))
 
-Deque#(.t: Type) implements OwningIterable#(.t: t)
-DequeOwningIterator#(.t: Type) implements Iterator#(.t: t)
+Deque#(.t: Type) satisfies OwningIterable#(.t: t)
+DequeOwningIterator#(.t: Type) satisfies Iterator#(.t: t)
 
 to_owning_iterator#(.t: Type)(.value: Deque#(.t: t)) -> (.iterator: DequeOwningIterator#(.t: t)) := {
     iterator = (._owner = ~value)

@@ -1,20 +1,20 @@
 -- A strict weak order: irreflexive and transitive, with transitive equivalence
 -- when neither direction is less. Results remain stable during an algorithm.
-OrderPolicy#(.t: Type: ImplicitlyCopyable): Abstract = (
+OrderPolicy#(.t: Type: ImplicitlyCopyable): contract = (
     less(.self: &Self, .left: t, .right: t) -> (.ok: Bool)
 )
 
 Int32OrderPolicy: Type = ()
 
-Int32OrderPolicy implements ImplicitlyCopyable
-Int32OrderPolicy implements OrderPolicy#(.t: Int32)
+Int32OrderPolicy satisfies ImplicitlyCopyable
+Int32OrderPolicy satisfies OrderPolicy#(.t: Int32)
 
 less(.self: &Int32OrderPolicy, .left: Int32, .right: Int32) -> (.ok: Bool) := { ok = left < right }
 
 UIntNativeOrderPolicy: Type = ()
 
-UIntNativeOrderPolicy implements ImplicitlyCopyable
-UIntNativeOrderPolicy implements OrderPolicy#(.t: UIntNative)
+UIntNativeOrderPolicy satisfies ImplicitlyCopyable
+UIntNativeOrderPolicy satisfies OrderPolicy#(.t: UIntNative)
 
 less(.self: &UIntNativeOrderPolicy, .left: UIntNative, .right: UIntNative) -> (.ok: Bool) := {
     ok = [
@@ -25,8 +25,8 @@ less(.self: &UIntNativeOrderPolicy, .left: UIntNative, .right: UIntNative) -> (.
 
 StringViewOrderPolicy: Type = ()
 
-StringViewOrderPolicy implements ImplicitlyCopyable
-StringViewOrderPolicy implements OrderPolicy#(.t: StringView)
+StringViewOrderPolicy satisfies ImplicitlyCopyable
+StringViewOrderPolicy satisfies OrderPolicy#(.t: StringView)
 
 less(.self: &StringViewOrderPolicy, .left: StringView, .right: StringView) -> (.ok: Bool) := {
     index :: UIntNative = 0

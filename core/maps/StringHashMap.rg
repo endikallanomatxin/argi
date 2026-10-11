@@ -4,7 +4,7 @@ StringHashMapEntry#(.value: Type): Type = (
     .next  : UIntNative
 )
 
-StringHashMapEntry#(.value: Type: ImplicitlyCopyable) implements ImplicitlyCopyable
+StringHashMapEntry#(.value: Type: ImplicitlyCopyable) satisfies ImplicitlyCopyable
 
 StringHashMap#(.value: Type): Type = (
     --

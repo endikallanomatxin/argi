@@ -394,5 +394,5 @@ has_live_allocations(.self: &GeneralPurposeAllocator) -> (.has_live: Bool) := {
     has_live = self&._bucket_head != 0 or self&._large_head != 0
 }
 
-GeneralPurposeAllocator implements Allocator
-GeneralPurposeAllocator implements Deallocator
+GeneralPurposeAllocator satisfies Allocator
+GeneralPurposeAllocator satisfies Deallocator

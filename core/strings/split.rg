@@ -7,8 +7,8 @@ StringSplitIterator: Type = (
     ._done      : Bool
 )
 
-StringSplitIterator implements Iterator#(.t: StringView)
-StringSplitIterator implements Iterable#(.t: StringView)
+StringSplitIterator satisfies Iterator#(.t: StringView)
+StringSplitIterator satisfies Iterable#(.t: StringView)
 
 -- A borrowed traversal starts from the current cursor without advancing it.
 to_iterator(.value: &StringSplitIterator) -> (.iterator: StringSplitIterator) := {

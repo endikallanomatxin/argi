@@ -2,10 +2,10 @@ HashSetIterator#(.key: Type: ImplicitlyCopyable, .policy: Type: HashPolicy#(.key
     ._keys : HashMapKeyIterator#(.key: key, .value: _HashSetValue, .policy: policy)
 )
 
-HashSetIterator#(.key: Type: ImplicitlyCopyable, .policy: Type: HashPolicy#(.key: key)) implements Iterator#(
+HashSetIterator#(.key: Type: ImplicitlyCopyable, .policy: Type: HashPolicy#(.key: key)) satisfies Iterator#(
     .t : key
 )
-HashSet#(.key: Type: ImplicitlyCopyable, .policy: Type: HashPolicy#(.key: key)) implements Iterable#(
+HashSet#(.key: Type: ImplicitlyCopyable, .policy: Type: HashPolicy#(.key: key)) satisfies Iterable#(
     .t : key
 )
 

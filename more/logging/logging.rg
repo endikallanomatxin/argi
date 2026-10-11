@@ -1,10 +1,10 @@
 LogLevel: Type = (..debug, ..info, ..warning, ..error)
 
-LogLevel implements ImplicitlyCopyable
+LogLevel satisfies ImplicitlyCopyable
 
 LogReasons: Type = (..stream_write_failed, ..stream_flush_failed)
 
-Logger: Abstract = (
+Logger: contract = (
     log(.self: $&Self, .level: LogLevel, .message: StringView) -> (
         .result : Errable#(Void, LogReasons)
     )
@@ -53,7 +53,7 @@ _write_record(
 
 FileLogger#(.t: Type: Writer): Type = (._writer: $&t, .minimum: LogLevel)
 
-FileLogger#(.t: Type: Writer) implements Logger
+FileLogger#(.t: Type: Writer) satisfies Logger
 
 FileLogger init#(
         .t : Type: Writer
@@ -91,7 +91,7 @@ StdLogger#(.out: Type: Writer, .err: Type: Writer): Type = (
     .minimum : LogLevel
 )
 
-StdLogger#(.out: Type: Writer, .err: Type: Writer) implements Logger
+StdLogger#(.out: Type: Writer, .err: Type: Writer) satisfies Logger
 
 StdLogger init#(
         .out : Type: Writer,
@@ -122,7 +122,7 @@ log#(
 
 NullLogger: Type = ()
 
-NullLogger implements Logger
+NullLogger satisfies Logger
 
 log(
         .self    : $&NullLogger,

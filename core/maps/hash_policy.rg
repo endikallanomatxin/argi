@@ -1,14 +1,14 @@
 -- Equal keys must have equal hashes. Both operations must remain stable while
 -- keys are stored; borrowed key bytes must remain live and unchanged.
-HashPolicy#(.key: Type: ImplicitlyCopyable): Abstract = (
+HashPolicy#(.key: Type: ImplicitlyCopyable): contract = (
     hash(.self: &Self, .key: key) -> (.hash: UIntNative)
     eql(.self: &Self, .left: key, .right: key) -> (.ok: Bool)
 )
 
 UIntNativeHashPolicy: Type = ()
 
-UIntNativeHashPolicy implements ImplicitlyCopyable
-UIntNativeHashPolicy implements HashPolicy#(.key: UIntNative)
+UIntNativeHashPolicy satisfies ImplicitlyCopyable
+UIntNativeHashPolicy satisfies HashPolicy#(.key: UIntNative)
 
 hash(.self: &UIntNativeHashPolicy, .key: UIntNative) -> (.hash: UIntNative) := { hash = key }
 
@@ -21,8 +21,8 @@ eql(.self: &UIntNativeHashPolicy, .left: UIntNative, .right: UIntNative) -> (.ok
 
 Int32HashPolicy: Type = ()
 
-Int32HashPolicy implements ImplicitlyCopyable
-Int32HashPolicy implements HashPolicy#(.key: Int32)
+Int32HashPolicy satisfies ImplicitlyCopyable
+Int32HashPolicy satisfies HashPolicy#(.key: Int32)
 
 hash(.self: &Int32HashPolicy, .key: Int32) -> (.hash: UIntNative) := {
     -- Encode all signed bits numerically, including the minimum value,
@@ -49,8 +49,8 @@ eql(.self: &Int32HashPolicy, .left: Int32, .right: Int32) -> (.ok: Bool) := { ok
 
 StringViewHashPolicy: Type = ()
 
-StringViewHashPolicy implements ImplicitlyCopyable
-StringViewHashPolicy implements HashPolicy#(.key: StringView)
+StringViewHashPolicy satisfies ImplicitlyCopyable
+StringViewHashPolicy satisfies HashPolicy#(.key: StringView)
 
 hash(.self: &StringViewHashPolicy, .key: StringView) -> (.hash: UIntNative) := {
     hash = string_hash_map_hash(.key = &key).hash

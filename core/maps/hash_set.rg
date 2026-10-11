@@ -1,6 +1,6 @@
 _HashSetValue: Type = ()
 
-_HashSetValue implements ImplicitlyCopyable
+_HashSetValue satisfies ImplicitlyCopyable
 
 -- Membership uses the map's collision handling, storage, and key lifetimes.
 HashSet#(.key: Type: ImplicitlyCopyable, .policy: Type: HashPolicy#(.key: key)): Type = (

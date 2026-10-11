@@ -56,4 +56,4 @@ allocate(
     }
 }
 
-PageAllocator implements Allocator
+PageAllocator satisfies Allocator
