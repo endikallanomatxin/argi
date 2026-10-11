@@ -367,19 +367,26 @@ conservatively rather than gaining a guarantee that needs both results.
 > guarded summaries; proving only a stricter subset of the declared condition
 > is insufficient. Existing output contracts use this proof path after concrete
 > domain resolution; unreachable output partitions have vacuous guarantees.
-> Concrete bodies consisting of stable terminal matches can infer joint
-> by-value entry-input conditions for output provenance. The caller selects them
-> from known entry variants; wrappers with literal selectors preserve the selected
-> output facts. Unknown tags, reassignment and unrepresented effects retain the
-> unconditional summary. Source-level input/mixed contract syntax, general joint
-> output inference and mutation/cleanup refinement still need integration;
-> unsupported clauses remain rejected.
-> Generation effects support one choice output per refinement and direct
-> forwarding through one payload path, stable lexical bindings and direct
-> repackaging. Other
-> conditional effect dimensions and selectors through output fields require
-> further implementation. The checker retains
-> conservative effects when it cannot preserve their correlation.
+> Stable terminal matches and branches can infer joint structural entry/input
+> and output conditions for dependency provenance. Abstract `on` clauses accept
+> named inputs and outputs, including nested conjunctions and permissions on a
+> different output. Reference-input tags are captured before call effects;
+> later reads or mutations cannot establish the entry condition.
+> The caller selects entry-only effects before execution and refines returned
+> dependencies once all output terms from the same call are known. Copies retain
+> correlation; overwritten values and independent calls do not. Straight-line
+> wrappers can forward the exact outputs of one call while preserving their
+> input/output coordinates. Reassignment, unknown control flow, additional
+> effects and nontrivial cleanup keep the unconditional summary.
+> General guards carry complete effect records. Payload refinement changes
+> dependencies only; it never creates ownership, acquisition receipts or a new
+> storage generation. Generation and opaque-state refinement retain the existing
+> single-output/payload-path proof rules. Effects requiring several independent
+> result correlations remain conservative, and joint conditional consumption or
+> relocation is rejected because cleanup also requires exact caller identities.
+> Conditional hidden retention and selectors through arbitrary output fields
+> require further implementation. These restrictions are structural proof
+> boundaries, not configurable complexity budgets.
 
 ## Glossary
 

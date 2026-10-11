@@ -153,7 +153,7 @@ pub fn refreshOutcomeGuards(allocator: std.mem.Allocator, summary: facts.SafetyS
 }
 
 pub fn summaryEql(a: facts.SafetySummary, b: facts.SafetySummary) bool {
-    if (a.guarded_effects.len != b.guarded_effects.len) return false;
+    if (a.guarded_returns_complete != b.guarded_returns_complete or a.guarded_effects.len != b.guarded_effects.len) return false;
     for (a.guarded_effects, b.guarded_effects) |left, right| {
         if (left.origin != right.origin or !left.conditions.eql(right.conditions) or !summaryEql(left.effects.*, right.effects.*)) return false;
     }

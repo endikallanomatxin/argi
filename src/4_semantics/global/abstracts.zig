@@ -1307,6 +1307,31 @@ pub const Resolver = struct {
         return null;
     }
 
+    fn generalOutcomeClauseFailure(self: *Resolver, inputs: global_sg.FieldRange, outputs: global_sg.FieldRange, output_type: global_sg.GlobalTypeId, abstract_ty: global_sg.GlobalTypeId, located: LocatedAbstractDefinition, outcome: primitives.MethodSafetyContract.Outcome, erased_self: bool) anyerror!?[]const u8 {
+        // Cleanup transitions need exact caller owner identities, beyond a
+        // conjunction of payload provenance permissions.
+        if (outcome.consumed_inputs.len != 0 or outcome.relocations.len != 0)
+            return "joint choice conditions cannot conditionally consume or relocate owners; use a single output choice for the ownership transition";
+        if (outcome.input_index) |input| {
+            if (input >= inputs.len) return "choice condition names an unknown input";
+        } else if (outcome.output_index >= outputs.len) return "choice condition names an unknown output";
+        if (try self.methodSafetyContractFailure(inputs, outputs, output_type, abstract_ty, located, .{
+            .output_count = outputs.len,
+            .dependencies = outcome.dependencies,
+            .domain_dependencies = outcome.domain_dependencies,
+            .owned_outputs = outcome.owned_outputs,
+            .storage_sources = outcome.storage_sources,
+            .emptied_inputs = outcome.emptied_inputs,
+            .consumed_inputs = outcome.consumed_inputs,
+            .relocations = outcome.relocations,
+            .invalidates = outcome.invalidates,
+            .invalidated_domains = outcome.invalidated_domains,
+            .source = outcome.source,
+        }, erased_self)) |message| return message;
+        for (outcome.outcomes) |child| if (try self.generalOutcomeClauseFailure(inputs, outputs, output_type, abstract_ty, located, child, erased_self)) |message| return message;
+        return null;
+    }
+
     fn opaqueStorageInputFailure(self: *Resolver, inputs: global_sg.FieldRange, abstract_ty: global_sg.GlobalTypeId, storage: primitives.MethodSafetyContract.StorageInput, mutable: bool, erased_self: bool, domain_count: usize) ?[]const u8 {
         const ty = self.graph.semanticType(self.graph.fields.items[inputs.start + storage.input_index].ty);
         if (ty != .pointer) return "opaque storage clauses require a reference to a known storage input";
@@ -1344,6 +1369,10 @@ pub const Resolver = struct {
         }
         var reason: ?[]const u8 = null;
         for (contract.outcomes, 0..) |outcome, outcome_index| {
+            if (contract.general_conditions) {
+                if (try self.generalOutcomeClauseFailure(inputs, outputs, output_type, abstract_ty, located, outcome, erased_self)) |message| return message;
+                continue;
+            }
             if (outcome.output_index >= outputs.len) return "outcome contract names an unknown output";
             const output_ty = self.graph.fields.items[outputs.start + outcome.output_index].ty;
             if (try self.outcomeSafetyContractFailure(inputs, output_ty, output_type, abstract_ty, located, outcome, erased_self)) |message| return message;
@@ -2331,7 +2360,7 @@ pub const Resolver = struct {
         const requirement = self.modules[located.module_index].semantic.parameterized_storage.abstract_requirements.items[located.definition.requirements.start + method_index];
         if (requirement.safety_contract) |declared| {
             const instance = (try self.requirementInstanceForAbstractUse(use, abstract_ty, located, requirement, @intCast(method_index))) orelse return error.InvalidAbstractRequirement;
-            self.graph.virtual_registries.items[@intFromEnum(registry_id)].safety_contract = try self.globalSafetyContract(located.module_index, declared, instance.output);
+            self.graph.virtual_registries.items[@intFromEnum(registry_id)].safety_contract = try self.globalSafetyContract(located.module_index, declared, global_types.fields(self.graph, instance.input) orelse return error.InvalidAbstractRequirementInput, instance.output);
         }
 
         var implementations: std.ArrayList(global_sg.GlobalFunctionId) = .empty;
@@ -2379,13 +2408,64 @@ pub const Resolver = struct {
         outcome.outcomes = children;
     }
 
-    fn globalSafetyContract(self: *Resolver, module_index: usize, declared: primitives.MethodSafetyContract, output_type: global_sg.GlobalTypeId) !primitives.MethodSafetyContract {
+    const SelectedContractChoice = struct {
+        input_index: ?u32,
+        output_index: u32,
+        payload: ?global_sg.GlobalTypeId,
+        variants: []const u32,
+    };
+
+    fn globalGeneralOutcome(self: *Resolver, module_index: usize, outcome: *primitives.MethodSafetyContract.Outcome, inputs: global_sg.FieldRange, outputs: global_sg.FieldRange, parents: []const SelectedContractChoice) anyerror!void {
+        const fields = if (outcome.input_index != null) inputs else outputs;
+        const index = outcome.input_index orelse outcome.output_index;
+        if (index >= fields.len) return error.InvalidOutcomeContract;
+        var ty = self.graph.fields.items[fields.start + index].ty;
+        if (outcome.input_index != null and self.graph.semanticType(ty) == .pointer) {
+            outcome.input_dereference = true;
+            ty = self.graph.semanticType(ty).pointer.child;
+        }
+        var ancestors: []const u32 = &.{};
+        var parent_index = parents.len;
+        while (parent_index != 0) {
+            parent_index -= 1;
+            const parent = parents[parent_index];
+            if (parent.input_index != outcome.input_index or parent.output_index != outcome.output_index) continue;
+            ty = parent.payload orelse return error.InvalidOutcomeContract;
+            ancestors = parent.variants;
+            break;
+        }
+        const hit = global_types.findVariant(self.graph, ty, self.modules[module_index].text(outcome.variant)) orelse return error.UnknownOutcomeContractVariant;
+        outcome.variant_index = hit.index;
+        outcome.variant = hit.variant.name;
+        outcome.parent_variants = ancestors;
+        outcome.source = self.sourceFor(module_index, outcome.source);
+        const selected: SelectedContractChoice = .{
+            .input_index = outcome.input_index,
+            .output_index = outcome.output_index,
+            .payload = hit.variant.payload_type,
+            .variants = try std.mem.concat(self.allocator, u32, &.{ ancestors, &.{hit.index} }),
+        };
+        const context = try std.mem.concat(self.allocator, SelectedContractChoice, &.{ parents, &.{selected} });
+        const children = try self.allocator.dupe(primitives.MethodSafetyContract.Outcome, outcome.outcomes);
+        for (children, 0..) |*child, child_index| {
+            try self.globalGeneralOutcome(module_index, child, inputs, outputs, context);
+            for (children[0..child_index]) |previous| if (previous.input_index == child.input_index and previous.output_index == child.output_index and previous.variant_index == child.variant_index) return error.DuplicateOutcomeContract;
+        }
+        outcome.outcomes = children;
+    }
+
+    fn globalSafetyContract(self: *Resolver, module_index: usize, declared: primitives.MethodSafetyContract, inputs: global_sg.FieldRange, output_type: global_sg.GlobalTypeId) !primitives.MethodSafetyContract {
         var contract = declared;
         contract.source = self.sourceFor(module_index, contract.source);
         if (declared.outcomes.len != 0) {
             const fields = global_types.fields(self.graph, output_type) orelse return error.InvalidAbstractRequirementOutput;
             const outcomes = try self.allocator.dupe(primitives.MethodSafetyContract.Outcome, declared.outcomes);
             for (outcomes, 0..) |*outcome, index| {
+                if (declared.general_conditions) {
+                    try self.globalGeneralOutcome(module_index, outcome, inputs, fields, &.{});
+                    for (outcomes[0..index]) |previous| if (previous.input_index == outcome.input_index and previous.output_index == outcome.output_index and previous.variant_index == outcome.variant_index) return error.DuplicateOutcomeContract;
+                    continue;
+                }
                 if (outcome.output_index >= fields.len) return error.InvalidOutcomeContract;
                 const output_ty = self.graph.fields.items[fields.start + outcome.output_index].ty;
                 try self.globalSafetyOutcome(module_index, outcome, output_ty);
@@ -2404,7 +2484,7 @@ pub const Resolver = struct {
             self.virtual_signature_failure = .{ .source = source, .method_name = self.modules[located.module_index].text(requirement.name), .reason = reason, .static_contract = true };
             return;
         }
-        const contract = self.globalSafetyContract(located.module_index, declared, output) catch |err| switch (err) {
+        const contract = self.globalSafetyContract(located.module_index, declared, function.input, output) catch |err| switch (err) {
             error.UnknownOutcomeContractVariant, error.DuplicateOutcomeContract, error.InvalidOutcomeContract => {
                 self.virtual_signature_failure = .{
                     .source = source,

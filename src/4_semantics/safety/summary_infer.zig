@@ -170,6 +170,11 @@ pub const Infer = struct {
             // fixed point. Only an explicit referent clause can select an input's
             // storage; dependency permissions alone never establish aliases.
             const contract = try @import("contracts.zig").fromDeclaration(self.allocator, declared);
+            if (contract.general_conditions) {
+                const result = try self.generalVirtualSummary(registry_id, contract);
+                try self.virtual_summaries.put(registry_id, result);
+                return result;
+            }
             const outputs = try self.allocator.alloc(facts.ValueEffect, contract.outputs.len);
             for (contract.outputs, outputs, 0..) |allowed, *output, index| {
                 if (registry.contract_output_type) |ty| {
@@ -283,8 +288,53 @@ pub const Infer = struct {
         return error.MissingVirtualSafetyContract;
     }
 
+    fn generalVirtualSummary(self: *Infer, registry_id: graph_mod.GlobalVirtualRegistryId, contract: contracts.Contract) !facts.SafetySummary {
+        var result = try self.generalContractEffects(registry_id, try contracts.possibleEffects(self.allocator, contract));
+        const guarded = try self.allocator.alloc(facts.GuardedSafetyEffects, contract.guarded_effects.len);
+        for (contract.guarded_effects, guarded) |clause, *target| {
+            const effects = try self.allocator.create(facts.SafetySummary);
+            effects.* = try self.generalContractEffects(registry_id, try contracts.effectsUnderConditions(self.allocator, contract, clause.conditions));
+            target.* = .{ .conditions = clause.conditions, .effects = effects };
+        }
+        result.guarded_effects = guarded;
+        return result;
+    }
+
+    fn generalContractEffects(self: *Infer, registry_id: graph_mod.GlobalVirtualRegistryId, contract: contracts.Contract) !facts.SafetySummary {
+        const registry = self.graph.virtual_registries.items[@intFromEnum(registry_id)];
+        const output_ty = registry.contract_output_type orelse return error.InvalidContractOutput;
+        const fields = types.fields(self.graph, output_ty) orelse return error.InvalidContractOutput;
+        const outputs = try self.allocator.alloc(facts.ValueEffect, contract.outputs.len);
+        for (contract.outputs, outputs, 0..) |allowed, *output, index| {
+            output.* = try @import("contract_outputs.zig").build(self.allocator, self.graph, self.graph.fields.items[fields.start + index].ty, allowed, @as(usize, @truncate(std.hash.Wyhash.hash(@intFromEnum(registry_id), std.mem.asBytes(&index)))));
+            output.* = try self.bindVirtualReceiverValues(output.*, registry.receiver_input_index);
+        }
+        var required: std.ArrayList(facts.InputPath) = .empty;
+        for (0..registry.contract_input_count orelse return error.InvalidContractInput) |index| {
+            var destination = false;
+            for (contract.relocations) |relocation| if (relocation.destination.input_index == index) {
+                destination = true;
+                break;
+            };
+            if (!destination) try required.append(self.allocator, .{ .input_index = @intCast(index) });
+        }
+        var states: std.ArrayList(facts.PlacePostState) = .empty;
+        for (contract.invalidates) |path| try states.append(self.allocator, .{ .target = path, .initializedness = .initialized, .refreshes_storage_generation = true });
+        for (contract.consumed_inputs) |path| try states.append(self.allocator, .{ .target = path, .initializedness = .deinitialized, .ends_previous_roots = true });
+        for (contract.relocations) |relocation| {
+            try states.append(self.allocator, .{ .target = relocation.source, .initializedness = .moved });
+            try states.append(self.allocator, .{ .target = relocation.destination, .initializedness = .initialized, .value = .{ .input_place_values = try self.allocator.dupe(facts.InputPath, &.{relocation.source}) }, .requires_available_destination = true, .refreshes_storage_generation = true });
+        }
+        var retained: std.ArrayList(facts.OpaqueStorageEffect) = .empty;
+        for (contract.retained_inputs) |retention| {
+            try states.append(self.allocator, .{ .target = retention.input, .initializedness = .initialized, .opaque_ownership = .conditional, .opaque_storage = retention.storage });
+            try retained.append(self.allocator, .{ .storage = retention.storage, .hidden_dependencies = .{ .input_dependencies = try self.allocator.dupe(facts.InputDependency, &.{.{ .path = retention.input, .transfers_ownership = true }}) } });
+        }
+        return .{ .outputs = outputs, .required_live_inputs = try required.toOwnedSlice(self.allocator), .input_post_states = try states.toOwnedSlice(self.allocator), .invalidated_domains = contract.invalidated_domains, .opaque_storage_empties = contract.emptied_inputs, .opaque_storage_effects = try retained.toOwnedSlice(self.allocator) };
+    }
+
     fn requestContractSelectors(self: *Infer, method: graph_mod.GlobalFunctionId, declared: primitives.MethodSafetyContract) !void {
-        if (declared.outcomes.len == 0) return;
+        if (declared.outcomes.len == 0 or declared.general_conditions) return;
         const contract = try contracts.fromDeclaration(self.allocator, declared);
         var wanted = std.array_list.Managed(outcome_selectors.Selector).init(self.allocator);
         try wanted.appendSlice(self.requested_selectors.get(method) orelse &.{});
@@ -484,8 +534,19 @@ pub const Infer = struct {
             try appendInputPath(&required, erased);
         }
         summary.required_live_inputs = try required.toOwnedSlice();
-        // General outcome records must be rebuilt from the normalized view,
-        // not retain receiver-layout facts captured before conformance mapping.
+        const guards = try self.allocator.dupe(facts.GuardedSafetyEffects, summary.guarded_effects);
+        for (guards) |*guard| {
+            if (guard.origin != .general) continue;
+            const effects = try self.allocator.create(facts.SafetySummary);
+            effects.* = guard.effects.*;
+            const guarded_outputs = try self.allocator.alloc(facts.ValueEffect, effects.outputs.len);
+            for (effects.outputs, guarded_outputs) |output, *target| target.* = try self.eraseScalarOwnershipTransfers(function, output);
+            effects.outputs = guarded_outputs;
+            effects.input_post_states = try self.normalizeContractPostStates(function, receiver, effects.input_post_states);
+            guard.effects = effects;
+        }
+        summary.guarded_effects = guards;
+        // Derived outcome records must use the normalized concrete view too.
         return try summaries.refreshOutcomeGuards(self.allocator, summary);
     }
 
@@ -818,8 +879,110 @@ pub const Infer = struct {
             .opaque_storage_empties = opaque_storage_empties,
             .invalidated_domains = try self.domain_invalidations.toOwnedSlice(),
         };
-        summary.guarded_effects = try self.inferEntryChoiceOutputGuards(function_id, summary);
+        summary.guarded_effects = try self.inferEntryChoiceOutputGuards(function_id, summary, &summary.guarded_returns_complete);
+        if (summary.guarded_effects.len == 0) summary.guarded_effects = try self.inferForwardedGeneralGuards(function_id, summary, &summary.guarded_returns_complete);
         return summaries.refreshOutcomeGuards(self.allocator, summary);
+    }
+
+    /// Forward exact outputs of one call through a straight-line wrapper.
+    /// Reject additional effects: entry selectors describe the original call,
+    /// and cannot be reconstructed from a mutable argument at a later use.
+    fn inferForwardedGeneralGuards(self: *Infer, function_id: graph_mod.GlobalFunctionId, summary: facts.SafetySummary, complete: *bool) ![]const facts.GuardedSafetyEffects {
+        const function = self.graph.function(function_id);
+        if (function.body == null or summary.outputs.len == 0) return &.{};
+        const block = self.graph.blocks.items[@intFromEnum(function.body.?)];
+        const origins = try self.allocator.alloc(?ForwardOrigin, summary.outputs.len);
+        @memset(origins, null);
+        var source_call: ?graph_mod.GlobalNodeId = null;
+        for (self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len]) |node| switch (self.graph.node(node).content) {
+            .binding_declaration => |binding| {
+                const declaration = self.graph.binding(binding);
+                if (declaration.deferred_initialization or declaration.initialization == null) continue;
+                const initializer = declaration.initialization.?;
+                const origin = try self.expressionForwardOrigin(initializer) orelse {
+                    if (!self.entryOutputExpressionSafe(initializer)) return &.{};
+                    continue;
+                };
+                if (source_call != null and source_call.? != origin.call) return &.{};
+                source_call = origin.call;
+            },
+            .assignment => |assignment| {
+                const index = self.outputIndex(function_id, assignment.binding) orelse return &.{};
+                if (origins[index] != null) return &.{};
+                const origin = try self.expressionForwardOrigin(assignment.value) orelse return &.{};
+                if (origin.output_index == null or origin.parent_variants.len != 0) return &.{};
+                if (source_call != null and source_call.? != origin.call) return &.{};
+                source_call = origin.call;
+                origins[index] = origin;
+            },
+            .auto_deinit_binding => |id| {
+                const cleanup = self.graph.auto_deinits.items[@intFromEnum(id)];
+                if (cleanup.deinit_fn != null or cleanup.fields.len != 0) return &.{};
+            },
+            .return_statement => |ret| if (ret.expression != null or ret.cleanup.len != 0) return &.{},
+            else => return &.{},
+        };
+        for (origins) |origin| if (origin == null) return &.{};
+        const call_node = source_call orelse return &.{};
+        const called = switch (self.graph.node(call_node).content) {
+            .function_call => |call| .{ self.engine.summaryFor(call.callee) orelse return &.{}, call.input },
+            .virtual_call => |id| blk: {
+                const call = self.graph.virtual_calls.items[@intFromEnum(id)];
+                break :blk .{ try self.virtualSummary(call.safety_methods) orelse return &.{}, call.input };
+            },
+            else => return &.{},
+        };
+        const arguments = self.structArguments(called[1]) orelse return &.{};
+        for (arguments) |argument| if (!self.entryOutputExpressionSafe(argument.value)) return &.{};
+        var guards: std.ArrayList(facts.GuardedSafetyEffects) = .empty;
+        for (called[0].guarded_effects) |guarded| {
+            if (guarded.origin != .general or guarded.conditions.impossible) continue;
+            var terms: std.ArrayList(facts.ChoiceCondition) = .empty;
+            var supported = true;
+            for (guarded.conditions.terms) |condition| {
+                if (condition.subject == .output) {
+                    var mapped = false;
+                    for (origins, 0..) |origin, index| if (origin.?.output_index.? == condition.index) {
+                        var term = condition;
+                        term.index = @intCast(index);
+                        try terms.append(self.allocator, term);
+                        mapped = true;
+                    };
+                    if (!mapped) {
+                        supported = false;
+                        break;
+                    }
+                } else {
+                    if (condition.index >= arguments.len) {
+                        supported = false;
+                        break;
+                    }
+                    const argument = arguments[condition.index].value;
+                    const paths = try self.inferInputPaths(function_id, argument);
+                    if (paths.len != 1 or paths[0].storage_domain != null) {
+                        supported = false;
+                        break;
+                    }
+                    var term = condition;
+                    term.index = paths[0].input_index;
+                    term.projections = try std.mem.concat(self.allocator, facts.Projection, &.{ paths[0].projections, condition.projections });
+                    try terms.append(self.allocator, term);
+                }
+            }
+            if (!supported) return &.{};
+            const outputs = try self.allocator.alloc(facts.ValueEffect, origins.len);
+            for (origins, outputs) |origin, *output| {
+                const effect = guarded.effects.outputs[origin.?.output_index.?];
+                output.* = try self.rebaseFreshSources(try self.substituteOutput(function_id, effect, arguments), call_node);
+            }
+            const effects = try self.allocator.create(facts.SafetySummary);
+            effects.* = summary;
+            effects.outputs = outputs;
+            effects.guarded_effects = &.{};
+            try guards.append(self.allocator, .{ .conditions = try @import("choice_conditions.zig").normalize(self.allocator, terms.items), .effects = effects });
+        }
+        complete.* = called[0].guarded_returns_complete;
+        return try guards.toOwnedSlice(self.allocator);
     }
 
     const EntryOutputFlow = struct {
@@ -839,17 +1002,9 @@ pub const Infer = struct {
     /// Stable selection bodies can publish entry guards without symbolic
     /// execution of arbitrary operations. Other dimensions retain the ordinary
     /// conservative summary; unsupported control flow discards this precision.
-    fn inferEntryChoiceOutputGuards(self: *Infer, function_id: graph_mod.GlobalFunctionId, summary: facts.SafetySummary) ![]const facts.GuardedSafetyEffects {
+    fn inferEntryChoiceOutputGuards(self: *Infer, function_id: graph_mod.GlobalFunctionId, summary: facts.SafetySummary, complete: *bool) ![]const facts.GuardedSafetyEffects {
         const function = self.graph.function(function_id);
         if (summary.outputs.len == 0 or function.input.start + function.input.len > self.graph.fields.items.len) return &.{};
-        var has_choice_input = false;
-        for (self.graph.fields.items[function.input.start..][0..function.input.len]) |input| {
-            if (@intFromEnum(input.ty) < self.graph.types.items.len and types.variants(self.graph, input.ty) != null) {
-                has_choice_input = true;
-                break;
-            }
-        }
-        if (!has_choice_input) return &.{};
         const output_facts = try self.allocator.alloc(facts.ValueEffect, summary.outputs.len);
         @memset(output_facts, .{});
         const initialized = try self.allocator.alloc(bool, summary.outputs.len);
@@ -859,15 +1014,21 @@ pub const Infer = struct {
         defer guards.deinit(self.allocator);
         if (!try self.inferEntryOutputBlock(function_id, function.body.?, &flow, summary, &guards)) return &.{};
         if (flow.reachable) try self.recordEntryOutputGuard(flow, summary, &guards);
+        // Avoid publishing a duplicate unconditional record for simple bodies.
+        var conditional = false;
+        for (guards.items) |guard| conditional = conditional or guard.conditions.terms.len != 0;
+        if (!conditional) return &.{};
+        complete.* = true;
         return guards.toOwnedSlice(self.allocator);
     }
 
     fn recordEntryOutputGuard(self: *Infer, flow: EntryOutputFlow, summary: facts.SafetySummary, guards: *std.ArrayList(facts.GuardedSafetyEffects)) !void {
-        if (flow.conditions.impossible or flow.conditions.terms.len == 0) return;
+        if (flow.conditions.impossible) return;
         for (flow.initialized) |initialized| if (!initialized) return;
+        const conditions = try @import("choice_conditions.zig").conjoin(self.allocator, flow.conditions, try contracts.knownOutputConditions(self.allocator, flow.outputs));
         // Keep one complete approximation for each established entry relation.
         // Multiple exits with the same relation must join their output facts.
-        for (guards.items) |guarded| if (guarded.conditions.eql(flow.conditions)) {
+        for (guards.items) |guarded| if (guarded.conditions.eql(conditions)) {
             const effects = @constCast(guarded.effects);
             const outputs = try self.allocator.dupe(facts.ValueEffect, effects.outputs);
             for (outputs, flow.outputs) |*output, other| output.* = try self.mergeValueEffects(output.*, other);
@@ -878,12 +1039,13 @@ pub const Infer = struct {
         effects.* = summary;
         effects.guarded_effects = &.{};
         effects.outputs = try self.allocator.dupe(facts.ValueEffect, flow.outputs);
-        try guards.append(self.allocator, .{ .conditions = flow.conditions, .effects = effects });
+        try guards.append(self.allocator, .{ .conditions = conditions, .effects = effects });
     }
 
     fn entryOutputExpressionSafe(self: *Infer, value: graph_mod.GlobalNodeId) bool {
         return switch (self.graph.node(value).content) {
-            .binding_use => true,
+            .binding_use, .int_literal, .float_literal, .char_literal, .bool_literal => true,
+            .dereference => |read| self.entryOutputExpressionSafe(read.pointer),
             .denied_implicit_copy => |child| self.entryOutputExpressionSafe(child),
             .choice_literal => |literal| if (literal.payload) |child| self.entryOutputExpressionSafe(child) else true,
             .struct_value_literal => |literal| blk: {
@@ -891,6 +1053,15 @@ pub const Infer = struct {
                     if (!self.entryOutputExpressionSafe(field.value)) break :blk false;
                 break :blk true;
             },
+            else => false,
+        };
+    }
+
+    fn entryConditionExpressionSafe(self: *Infer, node_id: graph_mod.GlobalNodeId) bool {
+        if (self.entryOutputExpressionSafe(node_id)) return true;
+        return switch (self.graph.node(node_id).content) {
+            .comparison => |op| self.entryConditionExpressionSafe(op.left) and self.entryConditionExpressionSafe(op.right),
+            .logical_operation => |op| self.entryConditionExpressionSafe(op.left) and self.entryConditionExpressionSafe(op.right),
             else => false,
         };
     }
@@ -932,17 +1103,38 @@ pub const Infer = struct {
                     flow.outputs[output] = try self.inferExpression(function_id, assignment.value);
                     flow.initialized[output] = true;
                 },
+                .if_statement => |statement| {
+                    if (!self.entryConditionExpressionSafe(statement.condition)) return false;
+                    var left = try flow.clone(self.allocator);
+                    if (!try self.inferEntryOutputBlock(function_id, statement.then_block, &left, summary, guards)) return false;
+                    var right = try flow.clone(self.allocator);
+                    if (statement.else_block) |child| {
+                        if (!try self.inferEntryOutputBlock(function_id, child, &right, summary, guards)) return false;
+                    }
+                    for ([_]EntryOutputFlow{ left, right }) |branch| if (branch.reachable) {
+                        for (branch.initialized) |initialized| if (!initialized) return false;
+                        try self.recordEntryOutputGuard(branch, summary, guards);
+                    };
+                    flow.reachable = false;
+                },
                 .switch_statement => |switch_id| {
                     const statement = self.graph.switches.items[@intFromEnum(switch_id)];
                     const paths = try self.inferInputPaths(function_id, statement.expression);
-                    if (paths.len != 1 or paths[0].projections.len != 0 or paths[0].storage_domain != null) return false;
-                    const function = self.graph.function(function_id);
-                    const ty = self.graph.fields.items[function.input.start + paths[0].input_index].ty;
+                    if (paths.len != 1 or paths[0].storage_domain != null) return false;
+                    for (paths[0].projections) |projection| if (projection == .dynamic_index) return false;
+                    const ty = self.inputPathType(function_id, paths[0]) orelse return false;
                     if (types.variants(self.graph, ty) == null or !statement.exhaustive or statement.default_block != null) return false;
                     for (self.graph.switch_cases.items[statement.cases.start..][0..statement.cases.len]) |case| {
                         const variant = self.variantIndex(ty, case.variant) orelse return false;
                         var branch = try flow.clone(self.allocator);
-                        branch.conditions = try @import("choice_conditions.zig").conjoin(self.allocator, flow.conditions, try @import("choice_conditions.zig").normalize(self.allocator, &.{.{ .subject = .entry_input, .index = paths[0].input_index, .variant_index = variant }}));
+                        // Summary input paths address a reference's referent;
+                        // selector coordinates explicitly distinguish its slot.
+                        const input_type = self.graph.fields.items[self.graph.function(function_id).input.start + paths[0].input_index].ty;
+                        const selector_path = if (self.graph.semanticType(input_type) == .pointer)
+                            try std.mem.concat(self.allocator, facts.Projection, &.{ &.{.dereference}, paths[0].projections })
+                        else
+                            paths[0].projections;
+                        branch.conditions = try @import("choice_conditions.zig").conjoin(self.allocator, flow.conditions, try @import("choice_conditions.zig").normalize(self.allocator, &.{.{ .subject = .entry_input, .index = paths[0].input_index, .projections = selector_path, .variant_index = variant }}));
                         if (!try self.inferEntryOutputBlock(function_id, case.body, &branch, summary, guards)) return false;
                         if (branch.reachable) {
                             // A suffix after the switch needs a general

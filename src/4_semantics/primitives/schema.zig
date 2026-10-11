@@ -194,6 +194,8 @@ pub const SourceRef = struct {
 /// Syntax-free method contract coordinates survive associated specialization.
 /// Source provenance is relocated together with the defining module.
 pub const MethodSafetyContract = struct {
+    /// General selectors may combine entry inputs and distinct returned values.
+    general_conditions: bool = false,
     output_count: u32,
     dependencies: []const Dependency = &.{},
     referents: []const Dependency = &.{},
@@ -218,7 +220,11 @@ pub const MethodSafetyContract = struct {
     pub const DomainInput = struct { input_index: u32, domain_index: u32 };
     pub const DomainDependency = struct { output_index: u32, input: DomainInput };
     pub const Outcome = struct {
+        input_index: ?u32 = null,
+        input_dereference: bool = false,
         output_index: u32 = 0,
+        /// Resolved ancestor tags for this selector, independent of other terms.
+        parent_variants: []const u32 = &.{},
         variant: StringRange,
         variant_index: ?u32 = null,
         dependencies: []const Dependency = &.{},
@@ -230,7 +236,7 @@ pub const MethodSafetyContract = struct {
         relocations: []const Relocation = &.{},
         invalidates: []const u32 = &.{},
         invalidated_domains: []const DomainInput = &.{},
-        /// Nested selectors follow the selected payload, never another output.
+        /// Repeated selectors follow their payload; other selectors conjoin.
         outcomes: []const Outcome = &.{},
         source: SourceRef,
     };

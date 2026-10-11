@@ -19,6 +19,7 @@ pub const Output = struct {
 /// Resource consumption and hidden-state replacement require their own checked
 /// permissions; unsupported effects are rejected, never silently discarded.
 pub const Contract = struct {
+    general_conditions: bool = false,
     outputs: []const Output,
     outcomes: []const Outcome = &.{},
     /// Each complete conditional contract must be proved under its whole guard.
@@ -45,6 +46,17 @@ pub const Contract = struct {
 };
 
 pub fn fromDeclaration(allocator: std.mem.Allocator, declaration: @import("../primitives/schema.zig").MethodSafetyContract) anyerror!Contract {
+    if (declaration.general_conditions) {
+        var common = declaration;
+        common.general_conditions = false;
+        common.outcomes = &.{};
+        var result = try fromDeclaration(allocator, common);
+        var guarded: std.ArrayList(Contract.Guarded) = .empty;
+        try appendGeneralContracts(allocator, declaration.outcomes, .{}, result, &guarded);
+        result.general_conditions = true;
+        result.guarded_effects = try guarded.toOwnedSlice(allocator);
+        return result;
+    }
     const outputs = try allocator.alloc(Output, declaration.output_count);
     for (outputs, 0..) |*output, index| {
         var paths: std.ArrayList(facts.InputPath) = .empty;
@@ -114,6 +126,162 @@ pub fn fromDeclaration(allocator: std.mem.Allocator, declaration: @import("../pr
     for (declaration.emptied_inputs, emptied) |input, *path| path.* = storageInputPath(input);
     try appendConditionalContracts(allocator, declaration.output_count, declaration.outcomes, &.{}, invalidates, invalidated_domains, consumed_inputs, relocations, emptied, &conditional);
     return .{ .outputs = outputs, .consumed_inputs = consumed_inputs, .relocations = relocations, .retained_inputs = retained, .emptied_inputs = emptied, .invalidates = invalidates, .invalidated_domains = invalidated_domains, .outcomes = try conditional.toOwnedSlice(allocator) };
+}
+
+fn appendGeneralContracts(allocator: std.mem.Allocator, outcomes: []const @import("../primitives/schema.zig").MethodSafetyContract.Outcome, enclosing: facts.ChoiceConditions, common: Contract, result: *std.ArrayList(Contract.Guarded)) anyerror!void {
+    for (outcomes) |outcome| {
+        const offset: usize = if (outcome.input_dereference) 1 else 0;
+        const projections = try allocator.alloc(@import("place.zig").Projection, outcome.parent_variants.len + offset);
+        if (offset != 0) projections[0] = .dereference;
+        for (outcome.parent_variants, projections[offset..]) |variant, *projection| projection.* = .{ .variant = variant };
+        const selector = try @import("choice_conditions.zig").normalize(allocator, &.{.{
+            .subject = if (outcome.input_index != null) .entry_input else .output,
+            .index = outcome.input_index orelse outcome.output_index,
+            .projections = projections,
+            .variant_index = outcome.variant_index orelse return error.UnresolvedOutcomeContract,
+        }});
+        const conditions = try @import("choice_conditions.zig").conjoin(allocator, enclosing, selector);
+        var clause = try fromDeclaration(allocator, .{
+            .output_count = @intCast(common.outputs.len),
+            .dependencies = outcome.dependencies,
+            .domain_dependencies = outcome.domain_dependencies,
+            .owned_outputs = outcome.owned_outputs,
+            .storage_sources = outcome.storage_sources,
+            .emptied_inputs = outcome.emptied_inputs,
+            .consumed_inputs = outcome.consumed_inputs,
+            .relocations = outcome.relocations,
+            .invalidates = outcome.invalidates,
+            .invalidated_domains = outcome.invalidated_domains,
+            .source = outcome.source,
+        });
+        const outputs = try allocator.dupe(Output, clause.outputs);
+        for (outputs, 0..) |*output, index| {
+            var selected: ?facts.ChoiceCondition = null;
+            for (conditions.terms) |term| if (term.subject == .output and term.index == index and (selected == null or term.projections.len > selected.?.projections.len)) {
+                selected = term;
+            };
+            if (selected) |term| {
+                const leaf = try allocator.create(Output);
+                leaf.* = output.*;
+                output.* = .{ .outcomes = try allocator.dupe(Output.Outcome, &.{.{ .variant_index = term.variant_index, .value = leaf }}) };
+                var depth = term.projections.len;
+                while (depth != 0) {
+                    depth -= 1;
+                    const child = try allocator.create(Output);
+                    child.* = output.*;
+                    output.* = .{ .outcomes = try allocator.dupe(Output.Outcome, &.{.{ .variant_index = term.projections[depth].variant, .value = child }}) };
+                }
+            }
+        }
+        clause.outputs = outputs;
+        const effects = try allocator.create(Contract);
+        effects.* = try mergeContracts(allocator, common, clause);
+        try result.append(allocator, .{ .conditions = conditions, .effects = effects });
+        try appendGeneralContracts(allocator, outcome.outcomes, conditions, effects.*, result);
+    }
+}
+
+pub fn mergeContracts(allocator: std.mem.Allocator, a: Contract, b: Contract) anyerror!Contract {
+    if (a.outputs.len != b.outputs.len) return error.InvalidContractOutput;
+    const outputs = try allocator.alloc(Output, a.outputs.len);
+    for (a.outputs, b.outputs, outputs) |left, right, *output| output.* = try mergeOutputs(allocator, left, right);
+    return .{
+        .outputs = outputs,
+        .consumed_inputs = try mergeEffectSets(allocator, facts.InputPath, a.consumed_inputs, b.consumed_inputs),
+        .relocations = try mergeEffectSets(allocator, Contract.Relocation, a.relocations, b.relocations),
+        .retained_inputs = try mergeEffectSets(allocator, Contract.Retention, a.retained_inputs, b.retained_inputs),
+        .emptied_inputs = try mergeEffectSets(allocator, facts.InputPath, a.emptied_inputs, b.emptied_inputs),
+        .invalidates = try mergeEffectSets(allocator, facts.InputPath, a.invalidates, b.invalidates),
+        .invalidated_domains = try mergeEffectSets(allocator, facts.InputDomain, a.invalidated_domains, b.invalidated_domains),
+    };
+}
+
+fn effectPathEqual(a: facts.InputPath, b: facts.InputPath) bool {
+    if (a.input_index != b.input_index or a.storage_domain != b.storage_domain or a.projections.len != b.projections.len) return false;
+    for (a.projections, b.projections) |left, right| if (!std.meta.eql(left, right)) return false;
+    return true;
+}
+
+fn effectEqual(comptime T: type, a: T, b: T) bool {
+    if (T == facts.InputPath) return effectPathEqual(a, b);
+    if (T == facts.InputDomain) return a.domain_index == b.domain_index and effectPathEqual(a.path, b.path);
+    if (T == Contract.Relocation) return effectPathEqual(a.source, b.source) and effectPathEqual(a.destination, b.destination);
+    if (T == Contract.Retention) return effectPathEqual(a.storage, b.storage) and effectPathEqual(a.input, b.input);
+    @compileError("Unsupported contract effect set");
+}
+
+fn mergeEffectSets(allocator: std.mem.Allocator, comptime T: type, a: []const T, b: []const T) ![]const T {
+    var result: std.ArrayList(T) = .empty;
+    for ([_][]const T{ a, b }) |set| for (set) |effect| {
+        var duplicate = false;
+        for (result.items) |existing| if (effectEqual(T, existing, effect)) {
+            duplicate = true;
+            break;
+        };
+        if (!duplicate) try result.append(allocator, effect);
+    };
+    return try result.toOwnedSlice(allocator);
+}
+
+fn mergeOutputs(allocator: std.mem.Allocator, a: Output, b: Output) anyerror!Output {
+    var outcomes: std.ArrayList(Output.Outcome) = .empty;
+    try outcomes.appendSlice(allocator, a.outcomes);
+    for (b.outcomes) |right| {
+        var found = false;
+        for (outcomes.items) |*left| if (left.variant_index == right.variant_index) {
+            const merged = try allocator.create(Output);
+            merged.* = try mergeOutputs(allocator, left.value.*, right.value.*);
+            left.value = merged;
+            found = true;
+            break;
+        };
+        if (!found) try outcomes.append(allocator, right);
+    }
+    return .{
+        .dependencies = try std.mem.concat(allocator, facts.InputPath, &.{ a.dependencies, b.dependencies }),
+        .ownership_transfers = try std.mem.concat(allocator, facts.InputPath, &.{ a.ownership_transfers, b.ownership_transfers }),
+        .storage_sources = try std.mem.concat(allocator, facts.InputPath, &.{ a.storage_sources, b.storage_sources }),
+        .referent = a.referent orelse b.referent,
+        .domains = try std.mem.concat(allocator, facts.InputDomain, &.{ a.domains, b.domains }),
+        .fresh_owner = a.fresh_owner or b.fresh_owner,
+        .outcomes = try outcomes.toOwnedSlice(allocator),
+    };
+}
+
+/// Close a guard over every still-compatible conditional permission. A parent
+/// clause alone must not erase dependencies introduced by unresolved children.
+pub fn effectsUnderConditions(allocator: std.mem.Allocator, contract: Contract, known: facts.ChoiceConditions) !Contract {
+    var result = contract;
+    result.general_conditions = false;
+    result.guarded_effects = &.{};
+    for (contract.guarded_effects) |guarded| {
+        const status = guarded.conditions.evaluate(known);
+        if (status == .contradicted) continue;
+        var effects = guarded.effects.*;
+        if (status != .satisfied) {
+            effects.consumed_inputs = &.{};
+            effects.relocations = &.{};
+            effects.emptied_inputs = &.{};
+        }
+        result = try mergeContracts(allocator, result, effects);
+    }
+    return result;
+}
+
+/// Unknown dispatch uses all possible permissions, never conditional guarantees.
+pub fn possibleEffects(allocator: std.mem.Allocator, contract: Contract) !Contract {
+    var result = contract;
+    result.general_conditions = false;
+    result.guarded_effects = &.{};
+    for (contract.guarded_effects) |guarded| {
+        if (guarded.conditions.impossible) continue;
+        var permissions = guarded.effects.*;
+        permissions.consumed_inputs = &.{};
+        permissions.relocations = &.{};
+        permissions.emptied_inputs = &.{};
+        result = try mergeContracts(allocator, result, permissions);
+    }
+    return result;
 }
 
 fn appendConditionalContracts(allocator: std.mem.Allocator, output_count: u32, outcomes: []const @import("../primitives/schema.zig").MethodSafetyContract.Outcome, parents: []const u32, common_invalidates: []const facts.InputPath, common_domains: []const facts.InputDomain, common_consumed: []const facts.InputPath, common_relocations: []const Contract.Relocation, common_emptied: []const facts.InputPath, result: *std.ArrayList(Contract.Outcome)) anyerror!void {
@@ -293,6 +461,7 @@ pub const Failure = struct {
 /// have passed the ordinary function-output check: a contract never authorizes
 /// an expired local generation or certifies physical pointer validity.
 pub fn check(contract: Contract, summary: facts.SafetySummary) ?Failure {
+    if (contract.general_conditions) return checkGeneralContract(contract, summary);
     for (contract.relocations) |relocation| {
         if (!provesRelocation(relocation, summary.input_post_states)) return .{ .kind = .missing_relocation, .input = relocation.destination };
     }
@@ -404,6 +573,70 @@ pub fn check(contract: Contract, summary: facts.SafetySummary) ?Failure {
         .input = summary.storage_capability_conflicts[0].first,
     };
     return checkGuardedRelations(contract.guarded_effects, summary);
+}
+
+fn checkGeneralContract(contract: Contract, summary: facts.SafetySummary) ?Failure {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    var represented = false;
+    for (summary.guarded_effects) |actual| {
+        if (actual.origin != .general or actual.conditions.impossible) continue;
+        represented = true;
+        if (checkGeneralRegion(arena.allocator(), contract, actual.conditions, actual.effects.*) catch return .{ .kind = .missing_choice_relation }) |failure| return failure;
+    }
+    if (!represented or !summary.guarded_returns_complete) {
+        var fallback = summary;
+        fallback.guarded_effects = &.{};
+        const known = knownOutputConditions(arena.allocator(), summary.outputs) catch return .{ .kind = .missing_choice_relation };
+        if (checkGeneralRegion(arena.allocator(), contract, known, fallback) catch return .{ .kind = .missing_choice_relation }) |failure| return failure;
+    }
+    return null;
+}
+
+fn checkGeneralRegion(allocator: std.mem.Allocator, contract: Contract, conditions: facts.ChoiceConditions, summary: facts.SafetySummary) !?Failure {
+    var allowed = contract;
+    allowed.general_conditions = false;
+    allowed.guarded_effects = &.{};
+    for (contract.guarded_effects) |clause| if (conditions.implies(clause.conditions)) {
+        allowed = try mergeContracts(allocator, allowed, clause.effects.*);
+    };
+    var actual = summary;
+    actual.guarded_effects = &.{};
+    actual.outcome_post_states = &.{};
+    if (check(allowed, actual)) |failure| {
+        var result = failure;
+        result.conditions = conditions;
+        return result;
+    }
+    // A region with unresolved selectors may not use their permissions. It
+    // still has to establish promises for every compatible selected exit.
+    for (contract.guarded_effects) |required| {
+        if (required.conditions.evaluate(conditions) != .unknown) continue;
+        allowed.consumed_inputs = try std.mem.concat(allocator, facts.InputPath, &.{ allowed.consumed_inputs, required.effects.consumed_inputs });
+        allowed.relocations = try std.mem.concat(allocator, Contract.Relocation, &.{ allowed.relocations, required.effects.relocations });
+        allowed.emptied_inputs = try std.mem.concat(allocator, facts.InputPath, &.{ allowed.emptied_inputs, required.effects.emptied_inputs });
+    }
+    if (check(allowed, actual)) |failure| {
+        var result = failure;
+        result.conditions = conditions;
+        return result;
+    }
+    return null;
+}
+
+pub fn knownOutputConditions(allocator: std.mem.Allocator, outputs: []const facts.ValueEffect) !facts.ChoiceConditions {
+    var terms: std.ArrayList(facts.ChoiceCondition) = .empty;
+    defer terms.deinit(allocator);
+    for (outputs, 0..) |output, index| try appendKnownOutputConditions(allocator, output, @intCast(index), &.{}, &terms);
+    return @import("choice_conditions.zig").normalize(allocator, terms.items);
+}
+
+fn appendKnownOutputConditions(allocator: std.mem.Allocator, value: facts.ValueEffect, index: u32, projections: []const @import("place.zig").Projection, terms: *std.ArrayList(facts.ChoiceCondition)) anyerror!void {
+    if (value.known_choice_variant) |variant| {
+        try terms.append(allocator, .{ .subject = .output, .index = index, .projections = projections, .variant_index = variant });
+        for (value.variants) |payload| if (payload.index == variant) try appendKnownOutputConditions(allocator, payload.value.*, index, try std.mem.concat(allocator, @import("place.zig").Projection, &.{ projections, &.{.{ .variant = variant }} }), terms);
+    }
+    for (value.fields) |field| try appendKnownOutputConditions(allocator, field.value.*, index, try std.mem.concat(allocator, @import("place.zig").Projection, &.{ projections, &.{.{ .field = field.index }} }), terms);
 }
 
 /// A declared conjunction can use an approximation proved under a weaker
@@ -1226,4 +1459,38 @@ test "outcome conversion partitions nested contracts at leaves and retains enclo
     }
     try std.testing.expectEqual(@as(usize, 1), converted.guarded_effects[0].effects.consumed_inputs.len);
     try std.testing.expectEqual(@as(usize, 0), converted.guarded_effects[1].effects.consumed_inputs.len);
+}
+
+test "general conformance cannot mistake sparse promises for complete return coverage" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const condition = try @import("choice_conditions.zig").normalize(allocator, &.{.{ .subject = .output, .index = 0, .variant_index = 1 }});
+    const allowed: Contract = .{ .outputs = &.{.{ .dependencies = &.{.{ .input_index = 0 }} }} };
+    const precise: facts.SafetySummary = .{ .outputs = &.{.{ .input_dependencies = &.{.{ .path = .{ .input_index = 0 } }} }} };
+    const contract: Contract = .{ .general_conditions = true, .outputs = &.{.{}}, .guarded_effects = &.{.{ .conditions = condition, .effects = &allowed }} };
+    var summary: facts.SafetySummary = .{
+        .outputs = &.{.{ .input_dependencies = &.{.{ .path = .{ .input_index = 1 } }} }},
+        .guarded_effects = &.{.{ .conditions = condition, .effects = &precise }},
+    };
+    try std.testing.expectEqual(Failure.Kind.undeclared_dependency, check(contract, summary).?.kind);
+    // Exhaustive body inference can validate the selected regions directly.
+    summary.guarded_returns_complete = true;
+    try std.testing.expect(check(contract, summary) == null);
+}
+
+test "inherited general contract transitions apply once" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const common: Contract = .{
+        .outputs = &.{.{}},
+        .consumed_inputs = &.{.{ .input_index = 0 }},
+        .relocations = &.{.{ .source = .{ .input_index = 1 }, .destination = .{ .input_index = 2 } }},
+        .retained_inputs = &.{.{ .storage = .{ .input_index = 3 }, .input = .{ .input_index = 4 } }},
+    };
+    const merged = try mergeContracts(allocator, common, common);
+    try std.testing.expectEqual(@as(usize, 1), merged.consumed_inputs.len);
+    try std.testing.expectEqual(@as(usize, 1), merged.relocations.len);
+    try std.testing.expectEqual(@as(usize, 1), merged.retained_inputs.len);
 }

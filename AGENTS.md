@@ -370,9 +370,10 @@ feature first.
   effect record while the unconditional summary remains conservative. Normalize
   ancestor payload tags, duplicates and contradictions without enumerating a
   product of independent choices. Conditions and effects belong to the immutable
-  summary arena. Existing outcome records remain the caller compatibility path
-  until mixed guard inference, contracts and cleanup refinement are integrated. General conformance
-  requires a complete approximation under the declared conjunction or a weaker
+  summary arena. Existing outcome records remain the resource-cleanup compatibility path.
+  Distinguish exhaustive inferred return regions from sparse declaration guards;
+  sparse promises never establish coverage of all concrete returns. General
+  conformance requires a complete approximation under the declared conjunction or a weaker
   proven condition. A stronger condition covers only some promised exits and
   cannot establish the contract. Missing independent singleton evidence cannot
   be assembled into a joint guarantee. Conditional payload permissions and
@@ -391,9 +392,18 @@ feature first.
   Outcome contracts select a named output and variant, not the first result.
   Keep that output index through syntax-free IR, relocation, cached snapshots,
   conformance and summary equality. Common clauses apply to every outcome;
-  an empty `on` block does not erase their permissions. Cross-output or
-  input-state conditions require correlated call-result facts before they can
-  be accepted; payload provenance alone cannot represent those obligations.
+  an empty `on` block does not erase their permissions. General `on` clauses
+  select named inputs at call entry and named outputs at return. Nested distinct
+  selectors conjoin, while repeating a selector follows its payload. Capture
+  entry tags and guarded output dependencies before applying any call effects.
+  Returned selector evidence has one call identity; copies preserve it, joins
+  intersect it, and overwrites discard it. Reconstruct authoritative fields
+  before gathering evidence, and require the full conjunction when narrowing
+  payload validity. Never change owned roots, acquisition capabilities or caller
+  generations from a payload proof. Exact straight-line forwarding of one call's
+  outputs remaps their indices and stable input paths; additional effects lose
+  this precision. Keep joint generation/opaque effects conservative. Reject joint
+  conditional consumes/relocates until caller cleanup identities are modeled.
 
 - Unconditional opaque contracts distinguish `retains(storage, value)` input
   provenance, `from_storage(output, storage)` hidden output dependencies and

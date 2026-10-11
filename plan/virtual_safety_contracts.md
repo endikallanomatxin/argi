@@ -34,28 +34,28 @@ implementation. Its structural boundary admits conjunctions of choice variants
 from entry inputs and returned outputs, including fields and nested payloads.
 Predicates over ordinary values and dynamic element relations remain conservative.
 
-- Connect the general guarded summary representation to contract lowering,
-  declaration/conformance proofs and caller refinement. Existing outcome
-  partitions already publish shared guarded records. General conformance checks
-  complete guards, keeping permissions and guarantees separate. Existing output
-  declarations now publish complete conditional contracts after domain resolution
-  and normalization; unreachable outcomes retain vacuous guarantees. Extend source
-  lowering to entry-input and cross-output conditions. Stable terminal selection
-  bodies infer joint by-value entry guards for output provenance, and literal
-  selectors compose through wrappers. Extend that proof to general forwarding,
-  mutable-reference selectors and guarded resource effects. Retain call-entry
-  evidence independently of mutable post-values.
-  Keep every cleanup and storage transition correlated with the full guard.
+- General dependency contracts are connected to source lowering, declaration
+  and conformance proofs, virtual summaries and caller refinement. Named input
+  selectors retain entry evidence, named output selectors retain call identity,
+  and nested distinct selectors form conjunctions. Cross-output dependency
+  permissions, reference-input selection and exact straight-line forwarding are
+  covered by positive and negative fixtures. Exhaustive inferred return regions
+  remain distinct from sparse conditional promises.
+  Extend this representation to jointly guarded resource effects, with cleanup
+  and storage transitions correlated with the full guard. Joint conditional
+  consumption/relocation is currently rejected; generation and opaque effects
+  retain conservative fallback rather than pretending payload proofs provide
+  owner identities.
 
 - Extend guarded generation summaries to branch-assigned outputs and
   intermediate results, choice tests on computed expressions and error
   propagation. Direct forwarding, bound
   discrimination, moves and copies preserve call provenance; more complex
   flows must remain conservative without reviving expired roots.
-- Extend `on output ..variant` to effects on other outputs.
-  Use shared effect records rather than eagerly enumerating a Cartesian product
-  of output variants. Distinguish effect permissions from required guarantees;
-  common clauses apply to all outcomes and conditional clauses add obligations.
+- Extend structural selectors to record fields in source contracts. Preserve
+  shared effect records rather than enumerating a Cartesian product of variants.
+  Keep permissions separate from guarantees; common clauses apply to every
+  outcome and conditional clauses add obligations.
 - Extend compatibility checking with initialization and outcome-specific hidden
   storage guarantees. Extend unconditional known-input retention and empty
   guarantees to grouped domains and mappings through reference fields. Extend known-input

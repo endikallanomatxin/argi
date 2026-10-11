@@ -29,6 +29,29 @@ Input terms describe call entry, not the current tag of a mutable referent.
 Copies can retain evidence; replacement and generation changes cannot recreate
 missing historical conditions or revive old resources.
 
+## Implemented structural dependency contracts
+
+Abstract `on` clauses now select named entry inputs and named outputs. Nested
+selectors conjoin; repeating one selector follows its payload. Conditions can
+permit dependencies on another output. Reference-input tags are captured before
+call effects, and callers require all output selectors from the same call before
+narrowing payload dependencies. Copies preserve correlation; replacement,
+independent calls and later invalidation do not establish an older proof.
+
+Stable terminal selections infer input/output conjunctions. Exact straight-line
+wrappers forward one call's output coordinates and stable input paths. Conformance
+distinguishes exhaustive inferred return regions from sparse declaration promises;
+partial coverage cannot hide an undeclared dependency. The frontend cache wire
+version includes these declaration coordinates.
+
+This completes dependency-contract lowering and caller correlation for named
+inputs/outputs and nested payloads. It does not finish every effect dimension
+listed below. Joint generation and opaque effects remain conservative; joint
+conditional consumption/relocation is explicitly rejected until caller cleanup
+identities can be represented. Existing single-output ownership transitions
+remain checked and supported. Arbitrary field-selector syntax and the richer
+composition/hidden-state goals below remain separate work.
+
 ## Recommended completion criterion
 
 The public contract language should express every externally relevant safety
@@ -284,5 +307,6 @@ https://rust-lang.github.io/polonius/rules/loans.html
 3. Measure representation growth and reevaluations using core-sized examples;
    retain selective structural partitions rather than products of independent
    output discriminants.
-4. Complete entry-input and mixed guards, conformance and caller cleanup under
-   shared conditions before considering numeric predicates.
+4. Extend the implemented entry-input/mixed dependency guards to correlated
+   generation, opaque-state and caller cleanup effects before considering numeric
+   predicates. Keep rejected owner transitions explicit in diagnostics.

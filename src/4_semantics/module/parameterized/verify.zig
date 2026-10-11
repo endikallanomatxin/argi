@@ -18,26 +18,25 @@ fn verifyDomainMappings(graph: *const graph_mod.ModuleSemanticGraph, mappings: [
 }
 
 fn verifyOutcome(graph: *const graph_mod.ModuleSemanticGraph, outcome: @import("../../primitives/schema.zig").MethodSafetyContract.Outcome, output_count: usize, input_count: usize) anyerror!void {
-    try require(outcome.output_index < output_count);
+    if (outcome.input_index) |input| try require(input < input_count) else try require(outcome.output_index < output_count);
     try require(verify.stringFits(outcome.variant, graph.strings.items));
     try require(verify.sourceFits(outcome.source, graph.file_offsets.items.len));
     for (outcome.dependencies) |dependency| {
-        try require(dependency.output_index == outcome.output_index);
+        try require(dependency.output_index < output_count);
         try require(dependency.input_index <= input_count);
     }
     for (outcome.domain_dependencies) |dependency| {
-        try require(dependency.output_index == outcome.output_index);
+        try require(dependency.output_index < output_count);
         try require(dependency.input.input_index < input_count);
     }
-    for (outcome.storage_sources) |source| try require(source.output_index == outcome.output_index and source.storage.input_index < input_count);
+    for (outcome.storage_sources) |source| try require(source.output_index < output_count and source.storage.input_index < input_count);
     for (outcome.emptied_inputs) |storage| try require(storage.input_index < input_count);
-    for (outcome.owned_outputs) |index| try require(index == outcome.output_index);
+    for (outcome.owned_outputs) |index| try require(index < output_count);
     for (outcome.consumed_inputs) |index| try require(index < input_count);
     for (outcome.relocations) |relocation| try require(relocation.destination < input_count and relocation.source < input_count);
     for (outcome.invalidates) |index| try require(index < input_count);
     for (outcome.invalidated_domains) |domain| try require(domain.input_index < input_count);
     for (outcome.outcomes) |child| {
-        try require(child.output_index == outcome.output_index);
         try verifyOutcome(graph, child, output_count, input_count);
     }
 }

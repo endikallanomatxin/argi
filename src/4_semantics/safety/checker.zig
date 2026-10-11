@@ -265,6 +265,7 @@ pub const SafetyChecker = struct {
         var contract = try contracts.fromDeclaration(self.allocator, declared);
         if (!try self.resolveContractOpaqueStorage(&contract, domains, method, source)) return;
         for (@constCast(contract.outputs)) |*output| try self.resolveContractDomains(output, domains);
+        for (contract.guarded_effects) |guarded| for (@constCast(guarded.effects.outputs)) |*output| try self.resolveContractDomains(output, domains);
         try self.resolveContractInvalidations(&contract, domains);
         const function = self.graph.function(method);
         for (declared.referents) |referent| {
@@ -351,6 +352,7 @@ pub const SafetyChecker = struct {
         };
         contract.invalidates = try invalidates.toOwnedSlice(self.allocator);
         for (contract.outcomes) |outcome| try self.resolveContractInvalidations(@constCast(outcome.effects), mappings);
+        for (contract.guarded_effects) |guarded| try self.resolveContractInvalidations(@constCast(guarded.effects), mappings);
     }
 
     fn resolveOpaqueContractPath(self: *SafetyChecker, path: facts.InputPath, mappings: []const primitives.StorageDomainMapping, method: graph_mod.GlobalFunctionId, source: primitives.SourceRef) !?facts.InputPath {
@@ -387,6 +389,7 @@ pub const SafetyChecker = struct {
         for (@constCast(contract.emptied_inputs)) |*empty| empty.* = try self.resolveOpaqueContractPath(empty.*, mappings, method, source) orelse return false;
         for (@constCast(contract.outputs)) |*output| if (!try self.resolveOpaqueOutputStorage(output, mappings, method, source)) return false;
         for (contract.outcomes) |outcome| if (!try self.resolveContractOpaqueStorage(@constCast(outcome.effects), mappings, method, source)) return false;
+        for (contract.guarded_effects) |guarded| if (!try self.resolveContractOpaqueStorage(@constCast(guarded.effects), mappings, method, source)) return false;
         return true;
     }
 
@@ -846,7 +849,8 @@ pub const SafetyChecker = struct {
                 const place = self.getPlace(state, storage) orelse break :blk .{};
                 try self.requirePlaceInitialized(function, node.source, storage, place.initializedness, state);
                 try self.requireDescendantsInitialized(function, node.source, storage, state);
-                const value = try self.reconstructPlaceValue(state, storage, place.value);
+                var value = try self.refineGeneralValue(try self.reconstructPlaceValue(state, storage, place.value), state);
+                value.known_choice_variant = self.activeVariant(state, storage) orelse value.known_choice_variant;
                 if (valueHasDeadExplicitDependencyForUse(value, state, isPointer(self.graph, self.graph.binding(binding).ty)))
                     try self.report(node.source, "{s} depends on a root that has ended", .{if (isPointer(self.graph, self.graph.binding(binding).ty)) "reference" else "value"});
                 break :blk value;
@@ -892,7 +896,7 @@ pub const SafetyChecker = struct {
                     if (self.valueAtPlace(state, storage)) |value| {
                         try self.requireDescendantsInitialized(function, node.source, storage, state);
                         const provenance = try self.opaqueProvenanceCarriedByAccess(access.value, state);
-                        break :blk try self.addOpaqueReadEnvelope(try self.reconstructPlaceValue(state, storage, value), node.ty, provenance);
+                        break :blk try self.addOpaqueReadEnvelope(try self.refineGeneralValue(try self.reconstructPlaceValue(state, storage, value), state), node.ty, provenance);
                     }
                 }
                 const aggregate = try self.evaluate(function, access.value, state);
@@ -1230,7 +1234,9 @@ pub const SafetyChecker = struct {
         if (!try self.validateSummaryRequiredLive(source, summary, values, state)) return facts.ValueFacts{};
         if (!try self.validateConsumedInputAliasing(source, summary, argument_nodes, values, state)) return facts.ValueFacts{};
         if (call_node) |node| try self.recordFunctionCallAutoDeinit(node, summary, argument_nodes, values, state);
-        return try self.applyOutcomeSummary(source, summary, argument_nodes, values, state);
+        const prepared = try self.prepareGeneralValueGuards(summary, values, state);
+        const result = try self.applyOutcomeSummary(source, summary, argument_nodes, values, state);
+        return try self.attachGeneralValueGuards(summary, prepared, result);
     }
 
     /// Input conditions are evaluated before applying any call effect. Reading
@@ -1271,6 +1277,7 @@ pub const SafetyChecker = struct {
                 if (self.initializednessAtPlace(state, target) != .initialized) return null;
                 const stored = self.valueAtPlace(state, target) orelse return null;
                 value = try self.reconstructPlaceValue(state, target, stored);
+                value.known_choice_variant = self.activeVariant(state, target) orelse value.known_choice_variant;
             },
             .field, .static_index => {
                 const index: usize = if (projection == .field) projection.field else projection.static_index;
@@ -1293,6 +1300,157 @@ pub const SafetyChecker = struct {
             .dynamic_index => return null,
         };
         return value;
+    }
+
+    const PreparedValueGuard = struct { output_index: u32, proof: facts.GuardedValueFacts };
+
+    /// Capture historical entry tags and payload provenance before the call can
+    /// replace any input. Later tag tests only provide output evidence.
+    fn prepareGeneralValueGuards(self: *SafetyChecker, summary: facts.SafetySummary, arguments: []const facts.ValueFacts, state: *FunctionState) ![]const PreparedValueGuard {
+        var prepared: std.ArrayList(PreparedValueGuard) = .empty;
+        const call = self.next_outcome_guard;
+        self.next_outcome_guard += 1;
+        for (summary.guarded_effects) |guarded| {
+            if (guarded.origin != .general or guarded.conditions.impossible) continue;
+            var known: std.ArrayList(facts.ChoiceCondition) = .empty;
+            defer known.deinit(self.allocator);
+            for (guarded.conditions.terms) |condition| {
+                if (condition.subject != .entry_input or condition.index >= arguments.len) continue;
+                if (try self.entryConditionValue(arguments[condition.index], condition.projections, state)) |value| if (value.known_choice_variant) |variant| {
+                    var observed = condition;
+                    observed.variant_index = variant;
+                    try known.append(self.allocator, observed);
+                };
+            }
+            const entry = try @import("choice_conditions.zig").normalize(self.allocator, known.items);
+            for (guarded.effects.outputs, 0..) |effect, index| {
+                if (effectHasFreshRoles(effect)) continue;
+                const value = try self.allocator.create(facts.ValueFacts);
+                value.* = try self.instantiateOutput(effect, arguments, state);
+                try prepared.append(self.allocator, .{ .output_index = @intCast(index), .proof = .{ .call = call, .conditions = guarded.conditions, .entry_facts = entry, .value = value } });
+            }
+        }
+        return try prepared.toOwnedSlice(self.allocator);
+    }
+
+    fn attachGeneralValueGuards(self: *SafetyChecker, summary: facts.SafetySummary, prepared: []const PreparedValueGuard, initial: facts.ValueFacts) !facts.ValueFacts {
+        if (prepared.len == 0) return initial;
+        const call = prepared[0].proof.call;
+        var result = initial;
+        if (summary.outputs.len == 1) {
+            try self.attachCallSelectors(&result, call, 0, &.{});
+        } else {
+            const fields = try self.allocator.dupe(facts.FieldFacts, result.fields);
+            result.fields = fields;
+            for (fields) |*field| {
+                const value = try self.allocator.create(facts.ValueFacts);
+                value.* = field.value.*;
+                field.value = value;
+                try self.attachCallSelectors(value, call, field.index, &.{});
+            }
+        }
+        for (prepared) |item| {
+            if (summary.outputs.len == 1) {
+                result.guarded_values = try std.mem.concat(self.allocator, facts.GuardedValueFacts, &.{ result.guarded_values, &.{item.proof} });
+            } else {
+                for (@constCast(result.fields)) |*field| if (field.index == item.output_index) {
+                    const target = @constCast(field.value);
+                    target.guarded_values = try std.mem.concat(self.allocator, facts.GuardedValueFacts, &.{ target.guarded_values, &.{item.proof} });
+                };
+            }
+        }
+        return result;
+    }
+
+    fn effectHasFreshRoles(effect: facts.ValueEffect) bool {
+        if (effect.fresh_owned_roots.len != 0 or effect.fresh_dependencies.len != 0 or effect.fresh_storage_capabilities.len != 0 or effect.fresh_cleanup_obligation) return true;
+        for (effect.fields) |field| if (effectHasFreshRoles(field.value.*)) return true;
+        for (effect.variants) |variant| if (effectHasFreshRoles(variant.value.*)) return true;
+        return false;
+    }
+
+    fn attachCallSelectors(self: *SafetyChecker, value: *facts.ValueFacts, call: u64, index: u32, projections: []const facts.Projection) anyerror!void {
+        if (value.variants.len != 0) {
+            const selector: facts.CallChoiceSelector = .{ .call = call, .selector = .{ .subject = .output, .index = index, .projections = projections, .variant_index = 0 } };
+            value.choice_selectors = try std.mem.concat(self.allocator, facts.CallChoiceSelector, &.{ value.choice_selectors, &.{selector} });
+            const variants = try self.allocator.dupe(facts.VariantFacts, value.variants);
+            value.variants = variants;
+            for (variants) |*variant| {
+                const child = try self.allocator.create(facts.ValueFacts);
+                child.* = variant.value.*;
+                variant.value = child;
+                var observation = selector;
+                observation.selector.variant_index = variant.index;
+                child.choice_observations = try std.mem.concat(self.allocator, facts.CallChoiceSelector, &.{ child.choice_observations, &.{observation} });
+                try self.attachCallSelectors(child, call, index, try std.mem.concat(self.allocator, facts.Projection, &.{ projections, &.{.{ .variant = variant.index }} }));
+            }
+        }
+        const fields = try self.allocator.dupe(facts.FieldFacts, value.fields);
+        value.fields = fields;
+        for (fields) |*field| {
+            const child = try self.allocator.create(facts.ValueFacts);
+            child.* = field.value.*;
+            field.value = child;
+            try self.attachCallSelectors(child, call, index, try std.mem.concat(self.allocator, facts.Projection, &.{ projections, &.{.{ .field = field.index }} }));
+        }
+    }
+
+    fn collectCallChoiceFacts(self: *SafetyChecker, state: *FunctionState, storage: facts.Place, value: facts.ValueFacts, call: u64, terms: *std.ArrayList(facts.ChoiceCondition)) anyerror!void {
+        if (self.initializednessAtPlace(state, storage) != .initialized) return;
+        for (value.choice_observations) |observation| if (observation.call == call) try terms.append(self.allocator, observation.selector);
+        const active = self.activeVariant(state, storage) orelse value.known_choice_variant;
+        if (active) |variant| {
+            for (value.choice_selectors) |selector| if (selector.call == call) {
+                var observed = selector.selector;
+                observed.variant_index = variant;
+                try terms.append(self.allocator, observed);
+            };
+            for (value.variants) |payload| if (payload.index == variant) try self.collectCallChoiceFacts(state, try self.project(storage, .{ .variant = variant }), payload.value.*, call, terms);
+        }
+        for (value.fields) |field| try self.collectCallChoiceFacts(state, try self.project(storage, .{ .field = field.index }), field.value.*, call, terms);
+    }
+
+    fn refineGeneralValue(self: *SafetyChecker, initial: facts.ValueFacts, state: *FunctionState) anyerror!facts.ValueFacts {
+        var selected: ?facts.GuardedValueFacts = null;
+        for (initial.guarded_values) |guarded| {
+            var terms: std.ArrayList(facts.ChoiceCondition) = .empty;
+            defer terms.deinit(self.allocator);
+            try terms.appendSlice(self.allocator, guarded.entry_facts.terms);
+            // Root places are reconstructed so an overwritten field cannot
+            // contribute a discriminant retained in an older aggregate fact.
+            for (state.places.items) |place| {
+                if (place.storage.projections.len != 0 or place.initializedness != .initialized) continue;
+                try self.collectCallChoiceFacts(state, place.storage, try self.reconstructPlaceValue(state, place.storage, place.value), guarded.call, &terms);
+            }
+            const known = try @import("choice_conditions.zig").normalize(self.allocator, terms.items);
+            if (guarded.conditions.evaluate(known) != .satisfied) continue;
+            if (selected == null or guarded.conditions.implies(selected.?.conditions)) selected = guarded;
+        }
+        if (selected) |guarded| return self.refineValidityEnvelope(initial, guarded.value.*);
+        return initial;
+    }
+
+    fn refineValidityEnvelope(self: *SafetyChecker, initial: facts.ValueFacts, precise: facts.ValueFacts) anyerror!facts.ValueFacts {
+        var result = initial;
+        result.dependencies = precise.dependencies;
+        result.explicit_dependency = precise.explicit_dependency;
+        const fields = try self.allocator.dupe(facts.FieldFacts, initial.fields);
+        result.fields = fields;
+        for (fields) |*field| for (precise.fields) |other| if (field.index == other.index) {
+            const child = try self.allocator.create(facts.ValueFacts);
+            child.* = try self.refineValidityEnvelope(field.value.*, other.value.*);
+            field.value = child;
+            break;
+        };
+        const variants = try self.allocator.dupe(facts.VariantFacts, initial.variants);
+        result.variants = variants;
+        for (variants) |*variant| for (precise.variants) |other| if (variant.index == other.index) {
+            const child = try self.allocator.create(facts.ValueFacts);
+            child.* = try self.refineValidityEnvelope(variant.value.*, other.value.*);
+            variant.value = child;
+            break;
+        };
+        return result;
     }
 
     fn recordFunctionCallAutoDeinit(
@@ -3287,6 +3445,21 @@ pub const SafetyChecker = struct {
 
     fn mergeValueFacts(self: *SafetyChecker, left: facts.ValueFacts, right: facts.ValueFacts) !facts.ValueFacts {
         const domains = try mergeDomainFacts(self.allocator, left.domains, right.domains);
+        var choice_selectors: std.ArrayList(facts.CallChoiceSelector) = .empty;
+        var choice_observations: std.ArrayList(facts.CallChoiceSelector) = .empty;
+        var guarded_values: std.ArrayList(facts.GuardedValueFacts) = .empty;
+        for (left.choice_selectors) |a| for (right.choice_selectors) |b| if (a.eql(b)) {
+            try choice_selectors.append(self.allocator, a);
+            break;
+        };
+        for (left.choice_observations) |a| for (right.choice_observations) |b| if (a.eql(b)) {
+            try choice_observations.append(self.allocator, a);
+            break;
+        };
+        for (left.guarded_values) |a| for (right.guarded_values) |b| if (a.eql(b)) {
+            try guarded_values.append(self.allocator, a);
+            break;
+        };
         var generation_outcomes = std.array_list.Managed(facts.GenerationOutcome).init(self.allocator);
         for (left.generation_outcomes) |outcome| for (right.generation_outcomes) |other| {
             if (outcome.eql(other)) {
@@ -3362,6 +3535,9 @@ pub const SafetyChecker = struct {
             .virtual_methods = if (std.mem.eql(graph_mod.GlobalFunctionId, left.virtual_methods, right.virtual_methods)) left.virtual_methods else &.{},
             .domains = domains,
             .generation_outcomes = try generation_outcomes.toOwnedSlice(),
+            .choice_selectors = try choice_selectors.toOwnedSlice(self.allocator),
+            .choice_observations = try choice_observations.toOwnedSlice(self.allocator),
+            .guarded_values = try guarded_values.toOwnedSlice(self.allocator),
         };
     }
 
@@ -4360,7 +4536,7 @@ pub const SafetyChecker = struct {
         state: *FunctionState,
     ) !?facts.ValueFacts {
         const inference = self.active_summary_inference orelse return null;
-        const summary = try inference.virtualSummary(call.safety_methods) orelse return error.MissingVirtualSafetyContract;
+        const summary = try self.selectEntryGuardedSummary(try inference.virtualSummary(call.safety_methods) orelse return error.MissingVirtualSafetyContract, values, state);
         // Private receiver projections are erased at a virtual boundary.
         // Validate the receiver contents as well as the handle lifetime.
         if (call.self_input_index < values.len) {
@@ -4376,7 +4552,9 @@ pub const SafetyChecker = struct {
         const previous_capabilities = self.active_fresh_capabilities;
         self.active_fresh_capabilities = &call_capabilities;
         defer self.active_fresh_capabilities = previous_capabilities;
-        return try self.applyOutcomeSummary(source, summary, argument_nodes, values, state);
+        const prepared = try self.prepareGeneralValueGuards(summary, values, state);
+        const result = try self.applyOutcomeSummary(source, summary, argument_nodes, values, state);
+        return try self.attachGeneralValueGuards(summary, prepared, result);
     }
 
     fn applyAutoDeinit(
@@ -4843,7 +5021,7 @@ pub const SafetyChecker = struct {
 
     fn requireLive(self: *SafetyChecker, function: graph_mod.GlobalFunctionId, source: primitives.SourceRef, value: facts.ValueFacts, state: *FunctionState) !void {
         _ = function;
-        if (!state.tracker.dependenciesAreAlive(value)) try self.report(source, "reference depends on a root that has ended", .{});
+        if (!state.tracker.dependenciesAreAlive(try self.refineGeneralValue(value, state))) try self.report(source, "reference depends on a root that has ended", .{});
     }
 
     fn rejectEscapingLocalRoots(
@@ -6243,6 +6421,10 @@ fn valueFactsEqual(left: facts.ValueFacts, right: facts.ValueFacts) bool {
         left.fields.len != right.fields.len or
         left.variants.len != right.variants.len or
         left.opaque_provenance.len != right.opaque_provenance.len or left.generation_outcomes.len != right.generation_outcomes.len) return false;
+    if (left.choice_selectors.len != right.choice_selectors.len or left.choice_observations.len != right.choice_observations.len or left.guarded_values.len != right.guarded_values.len) return false;
+    for (left.choice_selectors, right.choice_selectors) |a, b| if (!a.eql(b)) return false;
+    for (left.choice_observations, right.choice_observations) |a, b| if (!a.eql(b)) return false;
+    for (left.guarded_values, right.guarded_values) |a, b| if (!a.eql(b)) return false;
     for (left.generation_outcomes, right.generation_outcomes) |a, b| if (!a.eql(b)) return false;
     for (left.dependencies, right.dependencies) |a, b| if (a.root != b.root) return false;
     for (left.owned_roots, right.owned_roots) |a, b| if (a != b) return false;
@@ -7744,4 +7926,28 @@ test "mutable entry choice observations do not follow post call mutations or mis
     try std.testing.expectEqual(@as(?u32, 1), before.known_choice_variant);
     try std.testing.expectEqual(@as(?u32, 2), after.known_choice_variant);
     try std.testing.expect((try checker.entryConditionValue(before, &.{.{ .field = 42 }}, &state)) == null);
+}
+
+test "mixed dependency guards capture mutable entry facts before replacement" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(allocator, undefined, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const place = facts.Place{ .root = @enumFromInt(0) };
+    try checker.setPlace(&state, place, .initialized, .{ .known_choice_variant = 1 });
+    const arguments = [_]facts.ValueFacts{.{ .referenced_place = place }};
+    const conditions = try @import("choice_conditions.zig").normalize(allocator, &.{
+        .{ .subject = .entry_input, .index = 0, .projections = &.{.dereference}, .variant_index = 1 },
+        .{ .subject = .output, .index = 0, .variant_index = 0 },
+    });
+    const precise: facts.SafetySummary = .{ .outputs = &.{.{}} };
+    const summary: facts.SafetySummary = .{ .outputs = &.{.{}}, .guarded_effects = &.{.{ .conditions = conditions, .effects = &precise }} };
+    const prepared = try checker.prepareGeneralValueGuards(summary, &arguments, &state);
+    try checker.setPlace(&state, place, .initialized, .{ .known_choice_variant = 2 });
+    try std.testing.expectEqual(@as(usize, 1), prepared.len);
+    try std.testing.expectEqual(@as(u32, 1), prepared[0].proof.entry_facts.terms[0].variant_index);
+    try std.testing.expectEqual(@as(?u32, 2), (try checker.entryConditionValue(arguments[0], &.{.dereference}, &state)).?.known_choice_variant);
 }

@@ -10556,7 +10556,7 @@ test "feature_tests/polymorphism/111_virtual_safety_contract_named_outputs" {
 }
 
 test "feature_tests/polymorphism/112X_virtual_safety_contract_unknown_selector" {
-    try buildExpectFail("tests/feature_tests/polymorphism/112X_virtual_safety_contract_unknown_selector", "on must select a named method output");
+    try buildExpectFail("tests/feature_tests/polymorphism/112X_virtual_safety_contract_unknown_selector", "on must select a named method input or output");
 }
 
 test "feature_tests/polymorphism/113X_virtual_safety_contract_scalar_selector" {
@@ -11318,10 +11318,10 @@ test "feature_tests/polymorphism/282X_conditional_storage_inherited_identity" {
     try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/282X_conditional_storage_inherited_identity", "from_storage cannot be combined with exact transfers for the same output", "failed without a diagnostic");
 }
 
-test "feature_tests/polymorphism/283X_conditional_storage_other_output" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/283X_conditional_storage_other_output", "conditional effects on other outputs require correlated result facts", "failed without a diagnostic");
+test "feature_tests/polymorphism/283_conditional_storage_other_output" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/283_conditional_storage_other_output");
+    try runExpect("tests/feature_tests/polymorphism/283_conditional_storage_other_output", 0);
 }
-
 test "feature_tests/polymorphism/284_conditional_storage_empty" {
     try expectSuccessfulBuild("tests/feature_tests/polymorphism/284_conditional_storage_empty");
     try runExpect("tests/feature_tests/polymorphism/284_conditional_storage_empty", 0);
@@ -11447,4 +11447,72 @@ test "tests/feature_tests/polymorphism/311_input_choice_literal_wrapper" {
 
 test "feature_tests/polymorphism/312X_input_choice_enclosing_result_rewrite" {
     try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/312X_input_choice_enclosing_result_rewrite", "root that has ended", "failed without a diagnostic");
+}
+
+test "tests/feature_tests/polymorphism/313_abstract_input_choice_contract" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/313_abstract_input_choice_contract");
+    try runExpect("tests/feature_tests/polymorphism/313_abstract_input_choice_contract", 0);
+}
+
+test "tests/feature_tests/polymorphism/314_abstract_joint_output_contract" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/314_abstract_joint_output_contract");
+    try runExpect("tests/feature_tests/polymorphism/314_abstract_joint_output_contract", 0);
+}
+
+test "tests/feature_tests/polymorphism/315X_abstract_joint_output_partial_proof" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/315X_abstract_joint_output_partial_proof", "root that has ended", "failed without a diagnostic");
+}
+
+test "tests/feature_tests/polymorphism/316X_abstract_joint_output_wrong_implementation" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/316X_abstract_joint_output_wrong_implementation", "Abstract safety contract", "failed without a diagnostic");
+}
+
+test "tests/feature_tests/polymorphism/317X_abstract_joint_output_overwritten_selector" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/317X_abstract_joint_output_overwritten_selector", "root that has ended", "failed without a diagnostic");
+}
+
+test "tests/feature_tests/polymorphism/318_abstract_joint_output_copied_selectors" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/318_abstract_joint_output_copied_selectors");
+    try runExpect("tests/feature_tests/polymorphism/318_abstract_joint_output_copied_selectors", 0);
+}
+
+test "tests/feature_tests/polymorphism/319X_abstract_joint_output_independent_call" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/319X_abstract_joint_output_independent_call", "root that has ended", "failed without a diagnostic");
+}
+
+test "tests/feature_tests/polymorphism/320_abstract_joint_output_forwarding" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/320_abstract_joint_output_forwarding");
+    try runExpect("tests/feature_tests/polymorphism/320_abstract_joint_output_forwarding", 0);
+}
+
+test "tests/feature_tests/polymorphism/321_abstract_reference_input_entry_choice" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/321_abstract_reference_input_entry_choice");
+    try runExpect("tests/feature_tests/polymorphism/321_abstract_reference_input_entry_choice", 0);
+}
+
+test "tests/feature_tests/polymorphism/322_abstract_joint_input_choices" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/322_abstract_joint_input_choices");
+    try runExpect("tests/feature_tests/polymorphism/322_abstract_joint_input_choices", 0);
+}
+
+test "tests/feature_tests/polymorphism/323_abstract_mixed_input_output_choices" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/323_abstract_mixed_input_output_choices");
+    try runExpect("tests/feature_tests/polymorphism/323_abstract_mixed_input_output_choices", 0);
+}
+
+test "tests/feature_tests/polymorphism/324X_abstract_joint_output_later_invalidation" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/324X_abstract_joint_output_later_invalidation", "root that has ended", "failed without a diagnostic");
+}
+
+test "tests/feature_tests/polymorphism/325X_abstract_input_choice_wrong_implementation" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/325X_abstract_input_choice_wrong_implementation", "undeclared output dependency", "failed without a diagnostic");
+}
+
+test "tests/feature_tests/polymorphism/326X_abstract_joint_conditional_consumption" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/326X_abstract_joint_conditional_consumption", "joint choice conditions cannot conditionally consume or relocate owners", "failed without a diagnostic");
+}
+
+test "tests/feature_tests/polymorphism/327_abstract_input_guards_common_consumption" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/327_abstract_input_guards_common_consumption");
+    try runExpect("tests/feature_tests/polymorphism/327_abstract_input_guards_common_consumption", 0);
 }

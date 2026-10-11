@@ -322,6 +322,7 @@ pub const Context = struct {
 
     fn lowerMethodSafetyContract(self: *Context, requirement: syn.AbstractFunctionRequirement, domains: []const primitives.StringRange) anyerror!?primitives.MethodSafetyContract {
         const node = requirement.safety_contract orelse return null;
+        var general_conditions = false;
         var outcomes: std.ArrayList(primitives.MethodSafetyContract.Outcome) = .empty;
         defer outcomes.deinit(self.allocator);
         var dependencies: std.ArrayList(primitives.MethodSafetyContract.Dependency) = .empty;
@@ -358,10 +359,16 @@ pub const Context = struct {
                         const field = self.tree.structTypeField(field_node).?;
                         if (std.mem.eql(u8, output_name, self.tree.tokenTextFromSource(self.source, field.name_token))) output_index = @intCast(index);
                     }
-                    if (output_index == null) {
-                        try self.contractError(statement, "on must select a named method output");
+                    var input_index: ?u32 = null;
+                    if (output_index == null) for (self.tree.structTypeLiteral(requirement.input).?.fields, 0..) |field_node, index| {
+                        const field = self.tree.structTypeField(field_node).?;
+                        if (std.mem.eql(u8, output_name, self.tree.tokenTextFromSource(self.source, field.name_token))) input_index = @intCast(index);
+                    };
+                    if (output_index == null and input_index == null) {
+                        try self.contractError(statement, "on must select a named method input or output");
                         unreachable;
                     }
+                    if (input_index != null) general_conditions = true;
                     var child = requirement;
                     child.safety_contract = data.body;
                     const effect = (try self.lowerMethodSafetyContract(child, domains)).?;
@@ -373,30 +380,25 @@ pub const Context = struct {
                         try self.contractError(statement, "conditional refers_to and transfers require more precise outcome proofs");
                         unreachable;
                     }
+                    general_conditions = general_conditions or effect.general_conditions;
                     for (effect.outcomes) |nested| {
-                        if (nested.output_index != output_index.?) {
-                            try self.contractError(statement, "nested on must follow the selected output payload");
-                            unreachable;
-                        }
+                        if (nested.input_index != input_index or (input_index == null and nested.output_index != output_index.?)) general_conditions = true;
                     }
-                    for (effect.dependencies) |dependency| if (dependency.output_index != output_index.?) {
-                        try self.contractError(statement, "conditional effects on other outputs require correlated result facts");
-                        unreachable;
+                    for (effect.dependencies) |dependency| if (output_index == null or dependency.output_index != output_index.?) {
+                        general_conditions = true;
                     };
-                    for (effect.domain_dependencies) |dependency| if (dependency.output_index != output_index.?) {
-                        try self.contractError(statement, "conditional effects on other outputs require correlated result facts");
-                        unreachable;
+                    for (effect.domain_dependencies) |dependency| if (output_index == null or dependency.output_index != output_index.?) {
+                        general_conditions = true;
                     };
-                    for (effect.storage_sources) |source| if (source.output_index != output_index.?) {
-                        try self.contractError(statement, "conditional effects on other outputs require correlated result facts");
-                        unreachable;
+                    for (effect.storage_sources) |source| if (output_index == null or source.output_index != output_index.?) {
+                        general_conditions = true;
                     };
-                    for (effect.owned_outputs) |owned| if (owned != output_index.?) {
-                        try self.contractError(statement, "conditional effects on other outputs require correlated result facts");
-                        unreachable;
+                    for (effect.owned_outputs) |owned| if (output_index == null or owned != output_index.?) {
+                        general_conditions = true;
                     };
                     try outcomes.append(self.allocator, .{
-                        .output_index = output_index.?,
+                        .input_index = input_index,
+                        .output_index = output_index orelse 0,
                         .variant = try self.writer.addString(self.tree.tokenTextFromSource(self.source, data.variant)),
                         .dependencies = effect.dependencies,
                         .domain_dependencies = effect.domain_dependencies,
@@ -417,6 +419,7 @@ pub const Context = struct {
             }
         } else try self.lowerDependencyClause(requirement, node, &dependencies, &referents, &invalidates, domains, &domain_dependencies, &invalidated_domains, &owned_outputs, &transfers, &consumed_inputs, &relocations, &retained_inputs, &emptied_inputs, &storage_sources);
         return .{
+            .general_conditions = general_conditions,
             .outcomes = try outcomes.toOwnedSlice(self.allocator),
             .output_count = @intCast(self.tree.structTypeLiteral(requirement.output).?.fields.len),
             .dependencies = try dependencies.toOwnedSlice(self.allocator),

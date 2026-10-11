@@ -75,6 +75,26 @@ pub const GenerationOutcome = struct {
     }
 };
 
+pub const CallChoiceSelector = struct {
+    call: u64,
+    selector: ChoiceCondition,
+
+    pub fn eql(a: CallChoiceSelector, b: CallChoiceSelector) bool {
+        return a.call == b.call and a.selector.eql(b.selector);
+    }
+};
+
+pub const GuardedValueFacts = struct {
+    call: u64,
+    conditions: ChoiceConditions,
+    entry_facts: ChoiceConditions,
+    value: *const ValueFacts,
+
+    pub fn eql(a: GuardedValueFacts, b: GuardedValueFacts) bool {
+        return a.call == b.call and a.value == b.value and a.conditions.eql(b.conditions) and a.entry_facts.eql(b.entry_facts);
+    }
+};
+
 pub const ValueFacts = struct {
     /// A user-declared dependency must be checked on ordinary value reads,
     /// including scalars. Other dependencies retain their operation-specific
@@ -96,6 +116,9 @@ pub const ValueFacts = struct {
     virtual_methods: []const graph.GlobalFunctionId = &.{},
     domains: []const DomainFacts = &.{},
     generation_outcomes: []const GenerationOutcome = &.{},
+    choice_selectors: []const CallChoiceSelector = &.{},
+    choice_observations: []const CallChoiceSelector = &.{},
+    guarded_values: []const GuardedValueFacts = &.{},
 
     pub fn referenceCopy(self: ValueFacts) ValueFacts {
         return .{
@@ -109,6 +132,9 @@ pub const ValueFacts = struct {
             .virtual_methods = self.virtual_methods,
             .domains = self.domains,
             .generation_outcomes = self.generation_outcomes,
+            .choice_selectors = self.choice_selectors,
+            .choice_observations = self.choice_observations,
+            .guarded_values = self.guarded_values,
         };
     }
 
@@ -122,6 +148,8 @@ pub const ValueFacts = struct {
             .integer_address = self.integer_address,
             .foreign_storage = self.foreign_storage,
             .storage_capabilities = self.storage_capabilities,
+            .choice_selectors = self.choice_selectors,
+            .choice_observations = self.choice_observations,
         };
     }
 };

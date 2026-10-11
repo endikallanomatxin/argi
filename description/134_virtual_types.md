@@ -620,11 +620,17 @@ storage generations, and opaque storage.
 > generation changes. Generation refinement supports bound result discrimination
 > and forwarding through stable lexical bindings and direct repackaging. Wrappers
 > with rewritten or exposed intermediate results conservatively join effects.
-> Conditional hidden retention, grouped opaque domain mappings and clauses affecting
-> other outputs remain to be implemented. Nested payload selectors support dependencies,
+> Conditional hidden retention and grouped opaque domain mappings require
+> additional owner identity proofs. Nested payload selectors support dependencies,
 > fresh ownership, generation changes and empty-state guarantees.
-> Independent payload selectors on several outputs are supported; generation
-> effects requiring independent result correlations are conservatively joined.
+> Input selectors, nested payload selectors and conjunctions across named inputs
+> and outputs support dependency permissions, including permissions on another
+> output. Entry-only conditions can select a complete summary before the call.
+> Output discrimination narrows payload dependencies after every required
+> selector has been established. Generation and hidden-state effects involving
+> several independent results remain conservatively joined. Conditional owner
+> consumption and relocation require a single output choice; joint declarations
+> are rejected rather than publishing incomplete cleanup transitions.
 
 For example, a fixed `Readable#(.item: Int32)` contract can occupy a virtual
 handle. Conversion checks the concrete type's declared associated arguments,
@@ -636,7 +642,8 @@ Nested `on` clauses conjoin structural variant conditions. Repeating the
 selected output follows its payload; selecting another named input or output
 adds a condition on that value. Input conditions refer to call-entry variants,
 so a later mutation or tag test cannot establish the original input condition.
-All selectors of a joint guarantee must be proven for the same call. For an `Errable#(?&Int32, Reasons)` output, an inner `on result ..some`
+All selectors of a joint guarantee must be proven for the same call.
+For an `Errable#(?&Int32, Reasons)` output, an inner `on result ..some`
 can permit `depends_on(result, self)` while `..none` has no such dependency.
 Permissions on the outer payload also apply to its nested alternatives.
 
@@ -649,6 +656,37 @@ get(.self: &Self) -> (.result: Errable#(?&Int32, Reasons)) where {
     on result ..error { depends_on(result, error_tracer) }
 }
 ```
+
+A condition on a named input selects its variant at call entry. An output
+condition selects its returned variant. Nesting different selectors requires
+both conditions; it does not enumerate combinations of unrelated choices.
+
+```argi
+choose(.self: &Self, .mode: Selection, .permission: Permission,
+       .left: &Int32, .right: &Int32) -> (.result: &Int32) where {
+    on mode ..left {
+        on permission ..allow { depends_on(result, left) }
+        on permission ..deny { depends_on(result, right) }
+    }
+    on mode ..right { depends_on(result, right) }
+}
+
+split(.self: &Self, .left: &Int32, .right: &Int32) -> (
+    .first: Outcome, .second: Outcome, .value: &Int32
+) where {
+    on first ..yes {
+        on second ..yes { depends_on(value, left) }
+        on second ..no { depends_on(value, right) }
+    }
+    on first ..no { depends_on(value, right) }
+}
+```
+
+For `split`, inspecting `first` alone cannot establish the `left` dependency.
+The caller must also inspect `second` from that same call. Copies of those
+selectors preserve their call identity; overwrites and selectors from another
+call cannot supply missing evidence. Common clauses apply to every selected
+alternative, including an empty `on` block.
 
 `owns(result)` inside a nested outcome permits fresh ownership only in that
 selected payload. The implementation must declare this permission even when
@@ -676,9 +714,12 @@ Intervening operations retain their effects, so forwarding an earlier preserving
 result never erases a later invalidation or an ordinary content write.
 
 > [!IMPLEMENTATION]
-> The current contract lowering accepts output selectors following one payload
-> path. Entry-input selectors and conjunctions across distinct values are part
-> of the intended model but are not yet accepted by that lowering.
+> Concrete dependency inference retains structural choice relations in stable
+> terminal selections and straight-line forwarding of one call's exact outputs.
+> It does not encode arbitrary numeric predicates or execute bodies symbolically.
+> Unsupported operations keep the unconditional approximation. A declaration
+> that needs a relation the body cannot prove is rejected with a safety-contract
+> diagnostic; it never grants a lifetime merely because the author wrote it.
 > Forwarding through intermediate bindings currently requires stable lexical
 > initializers and one output assignment on every returning path. Reassigned,
 > reference-exposed or loop-produced intermediate values lose provenance
