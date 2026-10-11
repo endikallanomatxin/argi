@@ -400,6 +400,66 @@ older result selects a preservation branch. Aliased input names describe the sam
 actual storage; a preservation clause for one name cannot cancel an invalidation
 through another name.
 
+## Hidden storage contents
+
+`retains(storage, value)` permits a storage input to retain the validity
+dependencies and ownership of a by-value input in its hidden contents. It is
+an upper bound: an implementation may discard the value instead. Moving the
+input into the call already transfers its local ownership; this clause does
+not consume another caller-owned place through a reference. It permits neither
+fresh acquisitions nor replacement of the storage's generation.
+Callers cannot keep live aliases to the precise owned roots of a value that may
+enter opaque storage. Declaring retention does not preserve that precise identity.
+
+`from_storage(output, storage)` permits an output to depend on the external
+dependencies carried by that storage's hidden contents. It does not identify a
+slot address or borrow the backing allocation itself. Declare `owns(output)`
+separately when extraction returns an owner. This is a provenance permission,
+not a guarantee that a particular stored value was returned.
+
+`empties(storage)` guarantees that the storage has no retained hidden
+dependencies on every returning path. It does not free the backing storage or
+destroy a returned owner. Implementations must destroy or transfer their stored
+values before declaring the domain empty. Trusted opaque operations retain
+their obligations to maintain occupancy and exactly-once cleanup.
+
+For example, a single-slot protocol can publish these effects independently of
+the implementation's representation:
+
+```rg
+SlotProtocol#(.item: Type): Abstract = (
+    put(.self: &Self, .storage: $&Allocation, .slot: $&item, .value: item) -> () where {
+        retains(storage, value)
+    }
+    take(.self: &Self, .storage: $&Allocation, .slot: $&item) -> (.value: item) where {
+        owns(value)
+        from_storage(value, storage)
+        empties(storage)
+    }
+)
+```
+
+An extracted owner's external dependencies remain valid obligations after the
+storage becomes empty. A borrowing element cannot escape a local referent by
+being stored and extracted through a virtual call. Conversely, an extracted
+value that does not borrow its backing allocation can survive release of that
+allocation. Unrelated storage inputs retain their own hidden dependencies.
+
+`retains` and `empties` require mutable storage references. They cannot both
+target the same storage or overlap consumption, relocation or generation
+replacement. `from_storage` does not establish the exact reference or ownership
+identity promised by `refers_to` or `transfers`.
+
+> [!IMPLEMENTATION]
+> These clauses currently support unconditional effects on known storage inputs.
+> `retains` requires a value input; wrap borrowed references in a value rather
+> than using it to move an owner through a reference. Conditional hidden effects
+> require correlated storage post-states and are rejected. Virtual effects on
+> erased `Self` require mapped hidden storage identities and are also rejected.
+> Returned owners whose hidden storage has no named input domain conservatively
+> carry all possible retained input dependencies. Extraction preserves those
+> dependencies; emptying the returned owner cannot yet discharge this union.
+
 ## Receiver storage domains
 
 An abstract can name storage domains without exposing concrete fields. Its
@@ -482,8 +542,8 @@ storage generations, and opaque storage.
 > generation changes. Generation refinement supports bound result discrimination
 > and forwarding through stable lexical bindings and direct repackaging. Wrappers
 > with rewritten or exposed intermediate results conservatively join effects.
-> Hidden storage transitions and clauses affecting other outputs remain to be
-> implemented. Nested payload selectors support dependencies, fresh ownership
+> Conditional or mapped hidden storage transitions and clauses affecting other
+> outputs remain to be implemented. Nested payload selectors support dependencies, fresh ownership
 > and generation changes.
 > Independent payload selectors on several outputs are supported; generation
 > effects requiring independent result correlations are conservatively joined.

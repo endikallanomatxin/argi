@@ -355,6 +355,19 @@ feature first.
   input-state conditions require correlated call-result facts before they can
   be accepted; payload provenance alone cannot represent those obligations.
 
+- Unconditional opaque contracts distinguish `retains(storage, value)` input
+  provenance, `from_storage(output, storage)` hidden output dependencies and
+  `empties(storage)` guarantees. They do not prove runtime slot occupancy or
+  exact hidden owner identity. Retention takes by-value inputs and grants no
+  fresh acquisition or caller-place consumption. Capture opaque output
+  provenance before applying empty effects; this retains returned dependencies
+  without restoring any caller storage. Reject conditional and erased receiver
+  effects until their post-states and cleanup identities are representable.
+  Opaque domain owner IDs survive lexical slot cleanup for escape detection;
+  these IDs never keep a resource or storage generation alive. When a local
+  domain has no summary input path, owning outputs conservatively retain its
+  possible hidden input provenance. Later extraction must preserve that union.
+
 - Moving `for ~ item in collection` loops consume through `OwningIterable`.
   Global semantizing wraps the iterator declaration and loop in one lexical
   block; synthetic iterator owners inherit the source item's captured cleanup

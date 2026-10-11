@@ -30,6 +30,7 @@ const Builder = struct {
         var result = facts.ValueEffect{
             .input_dependencies = try dependencies.toOwnedSlice(self.allocator),
             .input_domains = allowed.domains,
+            .opaque_storage_dependencies = allowed.storage_sources,
             .explicit_dependency = allowed.dependencies.len != 0 or allowed.domains.len != 0,
         };
         if (allowed.ownership_transfers.len != 0) return result;

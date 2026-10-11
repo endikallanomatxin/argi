@@ -7,6 +7,7 @@ const facts = @import("safety_facts.zig");
 pub const Output = struct {
     dependencies: []const facts.InputPath = &.{},
     ownership_transfers: []const facts.InputPath = &.{},
+    storage_sources: []const facts.InputPath = &.{},
     referent: ?facts.InputPath = null,
     domains: []const facts.InputDomain = &.{},
     fresh_owner: bool = false,
@@ -23,6 +24,8 @@ pub const Contract = struct {
     /// Definite destruction guarantees for caller-owned input places.
     consumed_inputs: []const facts.InputPath = &.{},
     relocations: []const Relocation = &.{},
+    retained_inputs: []const Retention = &.{},
+    emptied_inputs: []const facts.InputPath = &.{},
     /// Paths are resolved domain mappings, not source field names. Ending a
     /// generation permits invalidating references, but grants no permission to
     /// consume owned resources or replace hidden dependency contents.
@@ -30,6 +33,7 @@ pub const Contract = struct {
     invalidated_domains: []const facts.InputDomain = &.{},
 
     pub const Relocation = struct { destination: facts.InputPath, source: facts.InputPath };
+    pub const Retention = struct { storage: facts.InputPath, input: facts.InputPath };
     pub const Outcome = struct { output_index: u32, parent_variants: []const u32 = &.{}, variant_index: u32, effects: *const Contract };
 };
 
@@ -59,6 +63,9 @@ pub fn fromDeclaration(allocator: std.mem.Allocator, declaration: @import("../pr
         var transfers: std.ArrayList(facts.InputPath) = .empty;
         for (declaration.transfers) |transfer| if (transfer.output_index == index) try transfers.append(allocator, .{ .input_index = transfer.input_index });
         output.ownership_transfers = try transfers.toOwnedSlice(allocator);
+        var storage_sources: std.ArrayList(facts.InputPath) = .empty;
+        for (declaration.storage_sources) |source| if (source.output_index == index) try storage_sources.append(allocator, .{ .input_index = source.input_index });
+        output.storage_sources = try storage_sources.toOwnedSlice(allocator);
     }
     const invalidates = try allocator.alloc(facts.InputPath, declaration.invalidates.len);
     for (outputs, 0..) |*target, output_index| {
@@ -93,7 +100,11 @@ pub fn fromDeclaration(allocator: std.mem.Allocator, declaration: @import("../pr
     const relocations = try allocator.alloc(Contract.Relocation, declaration.relocations.len);
     for (declaration.relocations, relocations) |declared, *relocation| relocation.* = .{ .destination = .{ .input_index = declared.destination }, .source = .{ .input_index = declared.source } };
     try appendConditionalContracts(allocator, declaration.output_count, declaration.outcomes, &.{}, invalidates, invalidated_domains, consumed_inputs, relocations, &conditional);
-    return .{ .outputs = outputs, .consumed_inputs = consumed_inputs, .relocations = relocations, .invalidates = invalidates, .invalidated_domains = invalidated_domains, .outcomes = try conditional.toOwnedSlice(allocator) };
+    const retained = try allocator.alloc(Contract.Retention, declaration.retained_inputs.len);
+    for (declaration.retained_inputs, retained) |declared, *retention| retention.* = .{ .storage = .{ .input_index = declared.storage }, .input = .{ .input_index = declared.input } };
+    const emptied = try allocator.alloc(facts.InputPath, declaration.emptied_inputs.len);
+    for (declaration.emptied_inputs, emptied) |index, *path| path.* = .{ .input_index = index };
+    return .{ .outputs = outputs, .consumed_inputs = consumed_inputs, .relocations = relocations, .retained_inputs = retained, .emptied_inputs = emptied, .invalidates = invalidates, .invalidated_domains = invalidated_domains, .outcomes = try conditional.toOwnedSlice(allocator) };
 }
 
 fn appendConditionalContracts(allocator: std.mem.Allocator, output_count: u32, outcomes: []const @import("../primitives/schema.zig").MethodSafetyContract.Outcome, parents: []const u32, common_invalidates: []const facts.InputPath, common_domains: []const facts.InputDomain, common_consumed: []const facts.InputPath, common_relocations: []const Contract.Relocation, result: *std.ArrayList(Contract.Outcome)) anyerror!void {
@@ -162,6 +173,8 @@ pub fn effectsForSelector(contract: Contract, selector: anytype) Contract {
             depth = outcome.parent_variants.len;
         }
     }
+    selected.retained_inputs = contract.retained_inputs;
+    selected.emptied_inputs = contract.emptied_inputs;
     return selected;
 }
 
@@ -171,6 +184,7 @@ fn inheritOutputPermissions(allocator: std.mem.Allocator, output: *Output, commo
     output.fresh_owner = output.fresh_owner or common.fresh_owner;
     output.referent = common.referent;
     output.ownership_transfers = common.ownership_transfers;
+    output.storage_sources = common.storage_sources;
     for (output.outcomes) |outcome| try inheritOutputPermissions(allocator, @constCast(outcome.value), common);
 }
 
@@ -184,6 +198,7 @@ pub const Failure = struct {
         unsupported_post_state,
         missing_consumption,
         missing_relocation,
+        missing_empty_storage,
         unsupported_opaque_effect,
         unsupported_capability_effect,
     },
@@ -200,6 +215,7 @@ pub const Failure = struct {
             .undeclared_fresh_owner => "undeclared fresh output ownership; declare owns(output)",
             .missing_relocation => "cannot prove relocates: move the source into an available destination on every returning path",
             .missing_consumption => "cannot prove consumes: the input must be deinitialized on every returning path",
+            .missing_empty_storage => "cannot prove empties: discharge the storage's hidden contents on every returning path",
             .unsupported_post_state => "a storage transition is not permitted by this preservation contract",
             .unsupported_opaque_effect => "an opaque storage effect is not permitted by this preservation contract",
             .unsupported_capability_effect => "storage capability consumption is not permitted by this contract",
@@ -295,14 +311,15 @@ pub fn check(contract: Contract, summary: facts.SafetySummary) ?Failure {
         }
         for (outcome.invalidated_domains) |domain| if (!permitsDomain(allowed, domain)) return .{ .kind = .unsupported_post_state, .input = domain.path, .outcome = .{ .output_index = outcome.output_index, .parent_variants = outcome.parent_variants, .variant_index = outcome.variant_index } };
     }
-    if (summary.opaque_storage_effects.len != 0) return .{
-        .kind = .unsupported_opaque_effect,
-        .input = summary.opaque_storage_effects[0].storage,
-    };
-    if (summary.opaque_storage_empties.len != 0) return .{
-        .kind = .unsupported_opaque_effect,
-        .input = summary.opaque_storage_empties[0],
-    };
+    for (summary.opaque_storage_effects) |effect| {
+        if (!permitsRetention(contract, effect.storage, effect.hidden_dependencies)) return .{ .kind = .unsupported_opaque_effect, .input = effect.storage };
+    }
+    for (summary.opaque_storage_empties) |path| {
+        if (!containsExactPath(contract.emptied_inputs, path)) return .{ .kind = .unsupported_opaque_effect, .input = path };
+    }
+    for (contract.emptied_inputs) |path| {
+        if (!containsExactPath(summary.opaque_storage_empties, path)) return .{ .kind = .missing_empty_storage, .input = path };
+    }
     if (summary.storage_capability_uses.len != 0) return .{
         .kind = .unsupported_capability_effect,
         .input = summary.storage_capability_uses[0].target,
@@ -342,12 +359,14 @@ fn checkValue(allowed: Output, actual: facts.ValueEffect) ?Failure {
         actual.input_place_values,
         actual.input_owned_roots,
         actual.opaque_generation_dependencies,
-        actual.opaque_storage_dependencies,
     };
     for (dependencies) |paths| {
         for (paths) |path| {
             if (!covers(allowed.dependencies, path)) return .{ .kind = .undeclared_dependency, .input = path };
         }
+    }
+    for (actual.opaque_storage_dependencies) |path| {
+        if (!covers(allowed.storage_sources, path) and !covers(allowed.dependencies, path)) return .{ .kind = .undeclared_dependency, .input = path };
     }
     for (actual.fields) |field| {
         if (checkValue(allowed, field.value.*)) |failure| return failure;
@@ -396,6 +415,41 @@ fn hasExactReferent(actual: facts.ValueEffect, expected: facts.InputPath) bool {
         established = true;
     }
     return established;
+}
+
+fn containsExactPath(paths: []const facts.InputPath, target: facts.InputPath) bool {
+    for (paths) |path| if (samePath(path, target)) return true;
+    return false;
+}
+
+/// Retention is an upper bound on hidden input provenance, including ownership
+/// already transferred by value. It grants no fresh resource or generation.
+fn permitsRetention(contract: Contract, storage: facts.InputPath, value: facts.ValueEffect) bool {
+    var represented = false;
+    for (contract.retained_inputs) |retained| if (samePath(retained.storage, storage)) {
+        represented = true;
+        break;
+    };
+    if (!represented) return false;
+    return retainedValueAllowed(contract, storage, value);
+}
+
+fn retainedPathAllowed(contract: Contract, storage: facts.InputPath, path: facts.InputPath) bool {
+    for (contract.retained_inputs) |retained| {
+        if (samePath(retained.storage, storage) and covers(&.{retained.input}, path)) return true;
+    }
+    return false;
+}
+
+fn retainedValueAllowed(contract: Contract, storage: facts.InputPath, value: facts.ValueEffect) bool {
+    if (value.fresh_cleanup_obligation or value.fresh_dependencies.len != 0 or value.fresh_owned_roots.len != 0 or value.fresh_storage_capabilities.len != 0 or value.unavailable_fresh_storage.len != 0 or value.input_domains.len != 0 or value.domain_values.len != 0) return false;
+    for (value.input_dependencies) |dependency| if (!retainedPathAllowed(contract, storage, dependency.path)) return false;
+    for ([_][]const facts.InputPath{ value.input_places, value.input_generation_dependencies, value.input_captured_storages, value.input_receiver_values, value.input_place_values, value.input_owned_roots, value.input_storage_capabilities, value.opaque_generation_dependencies, value.opaque_storage_dependencies }) |paths| {
+        for (paths) |path| if (!retainedPathAllowed(contract, storage, path)) return false;
+    }
+    for (value.fields) |field| if (!retainedValueAllowed(contract, storage, field.value.*)) return false;
+    for (value.variants) |variant| if (!retainedValueAllowed(contract, storage, variant.value.*)) return false;
+    return true;
 }
 
 fn covers(allowed: []const facts.InputPath, actual: facts.InputPath) bool {
@@ -463,6 +517,19 @@ fn permitsMayPostState(contract: Contract, state: facts.PlacePostState) bool {
 }
 
 fn permitsPostState(contract: Contract, state: facts.PlacePostState) bool {
+    for (contract.retained_inputs) |retained| {
+        if (!samePath(state.target, retained.input)) continue;
+        // These inputs are passed by value. Consuming their local owner into
+        // opaque storage creates no additional caller-place cleanup transition.
+        if (state.opaque_ownership == .none and state.opaque_storage == null and
+            (state.initializedness == .moved or state.initializedness == .deinitialized) and
+            !state.refreshes_storage_generation and !state.requires_available_destination and
+            !state.may_repopulate_opaque_storage and emptyValue(state.value)) return true;
+        if (state.opaque_ownership != .definite and state.opaque_ownership != .conditional) continue;
+        if (state.opaque_storage) |storage| if (samePath(storage, retained.storage)) return state.initializedness == .initialized and !state.ends_previous_roots and
+            !state.refreshes_storage_generation and !state.requires_available_destination and
+            !state.may_repopulate_opaque_storage and emptyValue(state.value);
+    }
     for (contract.relocations) |relocation| {
         if (samePath(state.target, relocation.source)) return state.initializedness == .moved and
             !state.ends_previous_roots and !state.refreshes_storage_generation and
@@ -588,6 +655,35 @@ test "safety contracts reject undeclared transitions on individual outcomes" {
         .outcome_post_states = &.{.{ .variant_index = 1, .input_post_states = &.{state} }},
     }).?.kind);
     try std.testing.expect(check(allowed, .{ .outputs = &.{.{}}, .input_post_states = &.{.{ .target = .{ .input_index = 0 }, .initializedness = .initialized }} }) == null);
+}
+
+test "opaque retention permits only declared input provenance" {
+    const storage = facts.InputPath{ .input_index = 1 };
+    const input = facts.InputPath{ .input_index = 2 };
+    const unrelated = facts.InputPath{ .input_index = 3 };
+    const contract = Contract{ .outputs = &.{}, .retained_inputs = &.{.{ .storage = storage, .input = input }} };
+    const retained = facts.ValueEffect{ .input_dependencies = &.{.{ .path = input, .transfers_ownership = true }} };
+    try std.testing.expect(check(contract, .{ .opaque_storage_effects = &.{.{ .storage = storage, .hidden_dependencies = retained }} }) == null);
+    try std.testing.expect(check(contract, .{ .opaque_storage_effects = &.{.{ .storage = unrelated, .hidden_dependencies = retained }} }) != null);
+    const nested = facts.ValueEffect{ .fields = &.{.{ .index = 0, .value = &.{ .input_generation_dependencies = &.{unrelated} } }} };
+    try std.testing.expect(check(contract, .{ .opaque_storage_effects = &.{.{ .storage = storage, .hidden_dependencies = nested }} }) != null);
+    try std.testing.expect(check(contract, .{ .opaque_storage_effects = &.{.{ .storage = storage, .hidden_dependencies = .{ .fresh_owned_roots = &.{1} } }} }) != null);
+}
+
+test "opaque empty guarantees require every returning exit" {
+    const storage = facts.InputPath{ .input_index = 1 };
+    const contract = Contract{ .outputs = &.{}, .emptied_inputs = &.{storage} };
+    try std.testing.expectEqual(.missing_empty_storage, check(contract, .{}).?.kind);
+    try std.testing.expect(check(contract, .{ .opaque_storage_empties = &.{storage} }) == null);
+    try std.testing.expect(check(.{ .outputs = &.{} }, .{ .opaque_storage_empties = &.{storage} }) != null);
+}
+
+test "opaque output provenance does not authorize backing storage references" {
+    const storage = facts.InputPath{ .input_index = 1 };
+    const contract = Contract{ .outputs = &.{.{ .storage_sources = &.{storage} }} };
+    try std.testing.expect(check(contract, .{ .outputs = &.{.{ .opaque_storage_dependencies = &.{storage} }} }) == null);
+    try std.testing.expect(check(contract, .{ .outputs = &.{.{ .input_places = &.{storage} }} }) != null);
+    try std.testing.expect(check(contract, .{ .outputs = &.{.{ .input_dependencies = &.{.{ .path = storage, .transfers_ownership = true }} }} }) != null);
 }
 
 test "safety contracts reject hidden storage and capability effects" {

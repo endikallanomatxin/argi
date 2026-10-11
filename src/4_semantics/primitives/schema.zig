@@ -204,10 +204,14 @@ pub const MethodSafetyContract = struct {
     invalidated_domains: []const DomainInput = &.{},
     owned_outputs: []const u32 = &.{},
     transfers: []const Dependency = &.{},
+    retained_inputs: []const Retention = &.{},
+    emptied_inputs: []const u32 = &.{},
+    storage_sources: []const Dependency = &.{},
     outcomes: []const Outcome = &.{},
     source: SourceRef,
 
     pub const Relocation = struct { destination: u32, source: u32 };
+    pub const Retention = struct { storage: u32, input: u32 };
     pub const Dependency = struct { output_index: u32, input_index: u32 };
     pub const DomainInput = struct { input_index: u32, domain_index: u32 };
     pub const DomainDependency = struct { output_index: u32, input: DomainInput };

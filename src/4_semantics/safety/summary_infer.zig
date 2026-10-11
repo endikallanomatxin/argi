@@ -26,6 +26,7 @@ pub const Infer = struct {
     post_state_ns: u64 = 0,
     outcome_ns: u64 = 0,
     opaque_ns: u64 = 0,
+    unbound_opaque_dependencies: facts.ValueEffect = .{},
     virtual_summary_ns: u64 = 0,
     evaluations: u64 = 0,
     summary_changes: u64 = 0,
@@ -173,7 +174,7 @@ pub const Infer = struct {
                         .path = path,
                         .validity_only = if (allowed.referent) |referent| path.input_index != referent.input_index else true,
                     };
-                    output.* = .{ .input_dependencies = dependencies, .input_domains = allowed.domains, .explicit_dependency = dependencies.len != 0 or allowed.domains.len != 0 };
+                    output.* = .{ .input_dependencies = dependencies, .input_domains = allowed.domains, .opaque_storage_dependencies = allowed.storage_sources, .explicit_dependency = dependencies.len != 0 or allowed.domains.len != 0 };
                 }
             }
             for (outputs) |*output| output.* = try self.bindVirtualReceiverValues(output.*, registry.receiver_input_index);
@@ -190,7 +191,7 @@ pub const Infer = struct {
                 if (!destination) try required_inputs.append(.{ .input_index = @intCast(index) });
             }
             const required = try required_inputs.toOwnedSlice();
-            const post_states = try self.allocator.alloc(facts.PlacePostState, contract.invalidates.len + contract.consumed_inputs.len + contract.relocations.len * 2);
+            const post_states = try self.allocator.alloc(facts.PlacePostState, contract.invalidates.len + contract.consumed_inputs.len + contract.relocations.len * 2 + contract.retained_inputs.len);
             for (contract.invalidates, post_states[0..contract.invalidates.len]) |path, *post_state| post_state.* = .{
                 .target = path,
                 .initializedness = .initialized,
@@ -212,6 +213,12 @@ pub const Infer = struct {
                     .refreshes_storage_generation = true,
                 };
             }
+            for (contract.retained_inputs, post_states[contract.invalidates.len + contract.consumed_inputs.len + contract.relocations.len * 2 ..]) |retention, *post| post.* = .{
+                .target = retention.input,
+                .initializedness = .initialized,
+                .opaque_ownership = .conditional,
+                .opaque_storage = retention.storage,
+            };
             const invalidated_domains = try self.allocator.alloc(facts.InputDomain, declared.invalidated_domains.len);
             for (declared.invalidated_domains, invalidated_domains) |domain, *effect| effect.* = .{ .path = .{ .input_index = domain.input_index }, .domain_index = domain.domain_index };
             var conditional = std.array_list.Managed(facts.OutcomePostStates).init(self.allocator);
@@ -256,7 +263,12 @@ pub const Infer = struct {
                 }
                 for (outcome.invalidated_domains) |domain| try appendDomain(&fallback_domains, domain);
             }
-            const result = facts.SafetySummary{ .outputs = outputs, .required_live_inputs = required, .input_post_states = try fallback_states.toOwnedSlice(), .invalidated_domains = try fallback_domains.toOwnedSlice(), .outcome_post_states = try conditional.toOwnedSlice() };
+            var retained = std.array_list.Managed(facts.OpaqueStorageEffect).init(self.allocator);
+            for (contract.retained_inputs) |retention| try retained.append(.{
+                .storage = retention.storage,
+                .hidden_dependencies = .{ .input_dependencies = try self.allocator.dupe(facts.InputDependency, &.{.{ .path = retention.input, .transfers_ownership = true }}) },
+            });
+            const result = facts.SafetySummary{ .outputs = outputs, .required_live_inputs = required, .input_post_states = try fallback_states.toOwnedSlice(), .invalidated_domains = try fallback_domains.toOwnedSlice(), .outcome_post_states = try conditional.toOwnedSlice(), .opaque_storage_effects = try retained.toOwnedSlice(), .opaque_storage_empties = contract.emptied_inputs };
             try self.virtual_summaries.put(registry_id, result);
             return result;
         }
@@ -469,7 +481,8 @@ pub const Infer = struct {
 
     fn normalizeContractPostStates(self: *Infer, function: graph_mod.Function, receiver: ?u32, post_states: []const facts.PlacePostState) ![]const facts.PlacePostState {
         var states = std.array_list.Managed(facts.PlacePostState).init(self.allocator);
-        for (post_states) |state| {
+        for (post_states) |original_state| {
+            var state = original_state;
             var ty = self.graph.fields.items[function.input.start + state.target.input_index].ty;
             var scalar_field = receiver != null and state.target.input_index == receiver.? and state.target.projections.len != 0;
             for (state.target.projections) |projection| {
@@ -506,6 +519,18 @@ pub const Infer = struct {
                     },
                 }
             }
+            // A numeric content write cannot introduce hidden dependencies
+            // when its value has no capability or lifetime facts. Conservative
+            // opaque-access markers are not additional storage permissions.
+            const numeric_contents = switch (self.graph.semanticType(ty)) {
+                .builtin => |builtin| switch (builtin) {
+                    .Int8, .Int16, .Int32, .Int64, .UIntNative, .UInt8, .UInt16, .UInt32, .UInt64, .Float16, .Float32, .Float64, .Char, .Bool => true,
+                    else => false,
+                },
+                else => false,
+            };
+            if (numeric_contents and facts.isEmptyValue(state.value))
+                state.may_repopulate_opaque_storage = false;
             // Scalar receiver fields are implementation details, not fields of
             // the erased Virtual handle. They carry no published borrow state.
             if (scalar_field and !self.typeContainsPointer(ty) and
@@ -596,6 +621,7 @@ pub const Infer = struct {
         self.local_address_bindings.clearRetainingCapacity();
         self.addressed_outputs.clearRetainingCapacity();
         self.domain_invalidations.clearRetainingCapacity();
+        self.unbound_opaque_dependencies = .{};
         var start = profile.timestamp(self.profile_io);
         try self.inferBlock(function_id, function.body.?, outputs);
         profile.accumulate(self.profile_io, start, &self.output_ns);
@@ -674,6 +700,12 @@ pub const Infer = struct {
             &opaque_storage_effects,
         );
         profile.accumulate(self.profile_io, start, &self.opaque_ns);
+        // Local hidden domains have no input path. Until exact returned-domain
+        // identity is represented, retain their possible input provenance on
+        // owning outputs. This is a conservative union, never fresh ownership.
+        for (outputs) |*output| if (effectOwnsValue(output.*)) {
+            output.* = try self.mergeValueEffects(output.*, self.unbound_opaque_dependencies);
+        };
 
         if (function.flags.is_deinit) {
             const input_fields = self.graph.fields.items[function.input.start..][0..function.input.len];
@@ -2795,10 +2827,29 @@ pub const Infer = struct {
         storages: []const facts.InputPath,
         hidden: facts.ValueEffect,
     ) !void {
+        if (storages.len == 0) self.unbound_opaque_dependencies = try self.mergeValueEffects(self.unbound_opaque_dependencies, try self.flattenHiddenDependencies(hidden));
         for (storages) |storage| {
             self.removeOpaqueStorageRelease(&state.emptied, storage);
             try self.recordOpaqueStorageEffect(effects, storage, hidden);
         }
+    }
+
+    fn effectOwnsValue(effect: facts.ValueEffect) bool {
+        if (effect.fresh_cleanup_obligation or effect.fresh_owned_roots.len != 0) return true;
+        for (effect.input_dependencies) |dependency| if (dependency.transfers_ownership) return true;
+        for (effect.fields) |field| if (effectOwnsValue(field.value.*)) return true;
+        for (effect.variants) |variant| if (effectOwnsValue(variant.value.*)) return true;
+        return false;
+    }
+
+    fn flattenHiddenDependencies(self: *Infer, effect: facts.ValueEffect) anyerror!facts.ValueEffect {
+        const dependencies = try self.dependencyOnlyEffect(effect);
+        var result = try self.validityOnlyEffect(dependencies);
+        result.fields = &.{};
+        result.variants = &.{};
+        for (dependencies.fields) |field| result = try self.mergeValueEffects(result, try self.flattenHiddenDependencies(field.value.*));
+        for (dependencies.variants) |variant| result = try self.mergeValueEffects(result, try self.flattenHiddenDependencies(variant.value.*));
+        return result;
     }
 
     fn recordOpaqueStorageEmpties(

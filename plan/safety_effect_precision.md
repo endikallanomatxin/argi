@@ -100,7 +100,11 @@ These effects should work unconditionally or under the supported outcome guard.
 Do not add a separate restricted vocabulary for payload clauses. `consumes(input)` names definite destruction through a mutable reference.
 `relocates(destination, source)` names exact ownership-preserving initialization
 of an available destination from a mutable-reference source.
-Keyword choices for storing and initializing effects remain unresolved.
+Unconditional known-input `retains(storage, value)` permits hidden input
+retention, `from_storage(output, storage)` permits hidden output provenance,
+and `empties(storage)` guarantees discharge of hidden dependencies. None proves
+runtime slot occupancy or exact hidden value identity. Initialization effects
+and conditional or mapped hidden transitions need further modeling.
 
 Common clauses apply to all outcomes. Conditional clauses add permissions and
 obligations. An empty error clause preserves generations only when no common
@@ -222,7 +226,8 @@ https://rust-lang.github.io/polonius/rules/loans.html
 1. Extend forwarding to branch-assigned intermediate results, error propagation
    and choice tests on computed expressions. Keep conservative fallback for
    unproven relations and output slots that may be rewritten.
-2. Add checked storing/initializing effects and opaque owner obligations. Extend
+2. Extend hidden retention and extraction with exact ownership identities and
+   checked initialization effects. Extend
    existing conditional known-input consumption and relocation to erased storage
    only with representable post-values and cleanup identities, keeping resource
    state and cleanup correlated with the selected outcome.

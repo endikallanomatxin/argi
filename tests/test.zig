@@ -11134,6 +11134,65 @@ test "feature_tests/polymorphism/210_virtual_nested_consumption_inherited" {
     try runExpect("tests/feature_tests/polymorphism/210_virtual_nested_consumption_inherited", 0);
 }
 
+test "feature_tests/polymorphism/246_virtual_opaque_storage" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/246_virtual_opaque_storage");
+    try runExpect("tests/feature_tests/polymorphism/246_virtual_opaque_storage", 0);
+}
+
+test "feature_tests/polymorphism/247X_opaque_storage_missing_empty" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/247X_opaque_storage_missing_empty", "cannot prove empties", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/248X_opaque_storage_conditional" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/248X_opaque_storage_conditional", "conditional opaque storage clauses require correlated hidden storage post-states", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/249X_opaque_storage_erased_receiver" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/249X_opaque_storage_erased_receiver", "opaque storage clauses on erased Self require mapped hidden storage identities", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/250X_opaque_storage_wrong_input" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/250X_opaque_storage_wrong_input", "storage transition is not permitted", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/251X_opaque_storage_extracted_local_escape" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/251X_opaque_storage_extracted_local_escape", "function output cannot depend on a local storage generation", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/252X_opaque_storage_retained_local_escape" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/252X_opaque_storage_retained_local_escape", "function output cannot depend on a local storage generation", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/253X_opaque_storage_backing_reference" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/253X_opaque_storage_backing_reference", "undeclared output dependency", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/254X_opaque_storage_branch_empty" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/254X_opaque_storage_branch_empty", "cannot prove empties", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/255_opaque_storage_discards_input" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/255_opaque_storage_discards_input");
+    try runExpect("tests/feature_tests/polymorphism/255_opaque_storage_discards_input", 0);
+}
+
+test "feature_tests/polymorphism/256X_opaque_storage_old_owner_reference" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/256X_opaque_storage_old_owner_reference", "opaque ownership storage requires no live external aliases to the consumed root", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/257_opaque_storage_returned_owner" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/257_opaque_storage_returned_owner");
+    try runExpect("tests/feature_tests/polymorphism/257_opaque_storage_returned_owner", 0);
+}
+
+test "feature_tests/polymorphism/258X_opaque_storage_forwarded_local_escape" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/258X_opaque_storage_forwarded_local_escape", "function output cannot depend on a local storage generation", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/259X_opaque_storage_forwarded_extraction_escape" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/259X_opaque_storage_forwarded_extraction_escape", "function output cannot depend on a local storage generation", "failed without a diagnostic");
+}
+
 test "feature_tests/polymorphism/244_core_argument_source" {
     try expectSuccessfulBuild("tests/feature_tests/polymorphism/244_core_argument_source");
     try runExpect("tests/feature_tests/polymorphism/244_core_argument_source", 0);

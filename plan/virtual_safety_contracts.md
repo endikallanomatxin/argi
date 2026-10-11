@@ -43,8 +43,9 @@ discriminants and predicates over ordinary values.
   Use shared effect records rather than eagerly enumerating a Cartesian product
   of output variants. Distinguish effect permissions from required guarantees;
   common clauses apply to all outcomes and conditional clauses add obligations.
-- Extend compatibility checking with allowed dependency storage,
-  initialization and outcome-specific storage guarantees. Extend known-input
+- Extend compatibility checking with initialization and outcome-specific hidden
+  storage guarantees. Extend unconditional known-input retention and empty
+  guarantees to mapped domains. Extend known-input
   `consumes` to cleanup identities for erased receivers, indexed owners and
   mapped domains.
   Extend generation-only `invalidates` to checked aggregate/result facts after
@@ -58,8 +59,8 @@ discriminants and predicates over ordinary values.
   pointer as the receiver address. Mapped virtual results require proven input
   identity relations; extend output domain mappings before admitting arbitrary
   fresh or dependency-only handles.
-- Extend declaration checking to the new storage effect clauses, retaining
-  diagnostics for implicit error-tracer inputs.
+- Extend declaration checking alongside further storage effect clauses,
+  retaining diagnostics for implicit error-tracer inputs.
 - Extend independence and conformance fixtures to conditional owner transfers,
   opaque storage,
   error outcomes and aliased inputs as their contract representation becomes
@@ -72,9 +73,16 @@ can be represented without recovering old caller state.
 Extend conditional consumption refinement to opaque effects and
 replacement post-values without restoring caller snapshots.
 
+Unconditional known-input retention and extraction preserve hidden provenance;
+they do not guarantee which runtime slot is occupied or which value is extracted.
+Extend exact hidden ownership transfer proofs before exposing those guarantees.
+Represent returned hidden domains before discharging their conservative union
+of possible input dependencies. Until then, both returned owners and extracted
+values retain those obligations even after a later empty-state guarantee.
+
 Fresh initialization needs declared ownership and dependency roles for input
 post-values, rather than treating an empty destination as permission to create
-an arbitrary owner. Hidden storage needs explicit retention, transfer and empty
-state guarantees. Extend named domains before supporting erased receiver
+an arbitrary owner. Hidden storage still needs exact transfer and conditional
+empty-state guarantees. Extend named domains before supporting erased receiver
 initialization or replacement; known layout at static dispatch must not be
 required to interpret a virtual contract.
