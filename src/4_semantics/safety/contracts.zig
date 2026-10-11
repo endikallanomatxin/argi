@@ -21,6 +21,8 @@ pub const Output = struct {
 pub const Contract = struct {
     outputs: []const Output,
     outcomes: []const Outcome = &.{},
+    /// Each complete conditional contract must be proved under its whole guard.
+    guarded_effects: []const Guarded = &.{},
     /// Definite destruction guarantees for caller-owned input places.
     consumed_inputs: []const facts.InputPath = &.{},
     relocations: []const Relocation = &.{},
@@ -31,6 +33,11 @@ pub const Contract = struct {
     /// consume owned resources or replace hidden dependency contents.
     invalidates: []const facts.InputPath = &.{},
     invalidated_domains: []const facts.InputDomain = &.{},
+
+    pub const Guarded = struct {
+        conditions: facts.ChoiceConditions,
+        effects: *const Contract,
+    };
 
     pub const Relocation = struct { destination: facts.InputPath, source: facts.InputPath };
     pub const Retention = struct { storage: facts.InputPath, input: facts.InputPath };
@@ -201,7 +208,7 @@ fn inheritOutputPermissions(allocator: std.mem.Allocator, output: *Output, commo
 }
 
 pub const Failure = struct {
-    kind: enum {
+    pub const Kind = enum {
         output_count,
         undeclared_dependency,
         undeclared_ownership_transfer,
@@ -213,13 +220,17 @@ pub const Failure = struct {
         missing_empty_storage,
         unsupported_opaque_effect,
         unsupported_capability_effect,
-    },
+        missing_choice_relation,
+    };
+    kind: Kind,
     output_index: ?u32 = null,
+    conditions: ?facts.ChoiceConditions = null,
     input: ?facts.InputPath = null,
     outcome: ?struct { output_index: u32, parent_variants: []const u32 = &.{}, variant_index: u32 } = null,
 
     pub fn description(self: Failure) []const u8 {
         return switch (self.kind) {
+            .missing_choice_relation => "cannot prove the complete input/output choice condition; partial selector evidence is insufficient",
             .output_count => "the number of outputs differs",
             .undeclared_dependency => "undeclared output dependency",
             .undeclared_ownership_transfer => "undeclared ownership transfer",
@@ -240,6 +251,7 @@ pub const Failure = struct {
 /// have passed the ordinary function-output check: a contract never authorizes
 /// an expired local generation or certifies physical pointer validity.
 pub fn check(contract: Contract, summary: facts.SafetySummary) ?Failure {
+    if (checkGuardedRelations(contract.guarded_effects, summary)) |failure| return failure;
     for (contract.relocations) |relocation| {
         if (!provesRelocation(relocation, summary.input_post_states)) return .{ .kind = .missing_relocation, .input = relocation.destination };
     }
@@ -350,6 +362,39 @@ pub fn check(contract: Contract, summary: facts.SafetySummary) ?Failure {
         .kind = .unsupported_capability_effect,
         .input = summary.storage_capability_conflicts[0].first,
     };
+    return null;
+}
+
+/// A declared conjunction can use an approximation proved under a weaker
+/// condition, but not one proved only under a stricter subset of its exits.
+/// The unconditional summary is also a valid proof when it already establishes
+/// the requested guarantee. Unrelated singleton partitions cannot be combined.
+pub fn checkGuardedRelations(required: []const Contract.Guarded, summary: facts.SafetySummary) ?Failure {
+    for (required) |relation| {
+        if (relation.conditions.impossible) continue;
+        var has_partition = false;
+        var last_failure: ?Failure = null;
+        for (summary.guarded_effects) |actual| {
+            if (!relation.conditions.implies(actual.conditions)) continue;
+            has_partition = true;
+            if (check(relation.effects.*, actual.effects.*)) |failure| {
+                last_failure = failure;
+            } else {
+                last_failure = null;
+                break;
+            }
+        }
+        if (has_partition and last_failure == null) continue;
+        var fallback = summary;
+        fallback.guarded_effects = &.{};
+        if (check(relation.effects.*, fallback) == null) continue;
+        if (last_failure) |failure| {
+            var result = failure;
+            result.conditions = relation.conditions;
+            return result;
+        }
+        return .{ .kind = .missing_choice_relation, .conditions = relation.conditions };
+    }
     return null;
 }
 
@@ -971,4 +1016,85 @@ test "conditional opaque empty guarantees are checked per selected exit" {
     try std.testing.expectEqual(.unsupported_opaque_effect, check(contract, .{ .outputs = &.{.{}}, .outcome_post_states = &wrong }).?.kind);
     const unreachable_exits = [_]facts.OutcomePostStates{.{ .variant_index = 1, .reachable = false, .input_post_states = &.{} }};
     try std.testing.expect(check(contract, .{ .outputs = &.{.{}}, .outcome_post_states = &unreachable_exits }) == null);
+}
+
+test "joint safety contracts require one complete conditional proof" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const choices = @import("choice_conditions.zig");
+    const input = try choices.normalize(allocator, &.{.{ .subject = .entry_input, .index = 0, .variant_index = 1 }});
+    const output = try choices.normalize(allocator, &.{.{ .subject = .output, .index = 0, .variant_index = 2 }});
+    const joint = try choices.conjoin(allocator, input, output);
+    const empty_storage = [_]facts.InputPath{.{ .input_index = 1 }};
+    const effects: Contract = .{ .outputs = &.{}, .emptied_inputs = &empty_storage };
+    const required = [_]Contract.Guarded{.{ .conditions = joint, .effects = &effects }};
+    const empty: facts.SafetySummary = .{};
+    const emptied: facts.SafetySummary = .{ .opaque_storage_empties = &empty_storage };
+    const correct: facts.SafetySummary = .{ .guarded_effects = &.{.{ .conditions = joint, .effects = &emptied }} };
+    try std.testing.expect(checkGuardedRelations(&required, correct) == null);
+    try std.testing.expect(check(.{ .outputs = &.{}, .guarded_effects = &required }, correct) == null);
+    try std.testing.expectEqual(Failure.Kind.missing_choice_relation, check(.{ .outputs = &.{}, .guarded_effects = &required }, empty).?.kind);
+    try std.testing.expectEqual(Failure.Kind.missing_choice_relation, checkGuardedRelations(&required, empty).?.kind);
+    const unrelated: facts.SafetySummary = .{ .guarded_effects = &.{
+        .{ .conditions = input, .effects = &empty },
+        .{ .conditions = output, .effects = &empty },
+    } };
+    try std.testing.expect(checkGuardedRelations(&required, unrelated) != null);
+    // A guarantee already established under an input condition remains true
+    // when an output condition is also selected.
+    const weaker: facts.SafetySummary = .{ .guarded_effects = &.{.{ .conditions = input, .effects = &emptied }} };
+    try std.testing.expect(checkGuardedRelations(&required, weaker) == null);
+    const stronger = try choices.conjoin(allocator, joint, try choices.normalize(allocator, &.{.{ .subject = .output, .index = 1, .variant_index = 3 }}));
+    const partial: facts.SafetySummary = .{ .guarded_effects = &.{.{ .conditions = stronger, .effects = &emptied }} };
+    try std.testing.expect(checkGuardedRelations(&required, partial) != null);
+    try std.testing.expect(checkGuardedRelations(&required, emptied) == null);
+}
+
+test "guarded conformance reports violations and ignores contradictory selectors" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const choices = @import("choice_conditions.zig");
+    const guard = try choices.normalize(allocator, &.{.{ .subject = .output, .index = 0, .variant_index = 1 }});
+    const effects: Contract = .{ .outputs = &.{}, .consumed_inputs = &.{.{ .input_index = 0 }} };
+    const empty: facts.SafetySummary = .{};
+    const invalid: facts.SafetySummary = .{ .guarded_effects = &.{.{ .conditions = guard, .effects = &empty }} };
+    const required = [_]Contract.Guarded{.{ .conditions = guard, .effects = &effects }};
+    const failure = checkGuardedRelations(&required, invalid).?;
+    try std.testing.expectEqual(Failure.Kind.missing_consumption, failure.kind);
+    try std.testing.expect(failure.conditions.?.eql(guard));
+    try std.testing.expect(checkGuardedRelations(&.{.{ .conditions = .{ .impossible = true }, .effects = &effects }}, empty) == null);
+}
+
+test "joint guards distinguish effect permissions from resource guarantees" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const choices = @import("choice_conditions.zig");
+    const condition = try choices.normalize(allocator, &.{
+        .{ .subject = .entry_input, .index = 0, .variant_index = 1 },
+        .{ .subject = .output, .index = 1, .variant_index = 2 },
+    });
+    const effects: Contract = .{
+        .outputs = &.{.{ .dependencies = &.{.{ .input_index = 0 }} }},
+        .invalidates = &.{.{ .input_index = 1 }},
+    };
+    const permitted: facts.SafetySummary = .{
+        .outputs = &.{.{ .input_dependencies = &.{.{ .path = .{ .input_index = 0 } }} }},
+        .input_post_states = &.{.{ .target = .{ .input_index = 1 }, .initializedness = .initialized, .refreshes_storage_generation = true }},
+    };
+    const required = [_]Contract.Guarded{.{ .conditions = condition, .effects = &effects }};
+    var summary: facts.SafetySummary = .{ .outputs = &.{.{}}, .guarded_effects = &.{.{ .conditions = condition, .effects = &permitted }} };
+    try std.testing.expect(checkGuardedRelations(&required, summary) == null);
+    var bad = permitted;
+    bad.outputs = &.{.{ .input_dependencies = &.{.{ .path = .{ .input_index = 3 } }} }};
+    // Both unconditional and selected facts contain the undeclared dependency;
+    // no complete sound approximation can establish the contract.
+    summary.outputs = bad.outputs;
+    summary.guarded_effects = &.{.{ .conditions = condition, .effects = &bad }};
+    try std.testing.expectEqual(Failure.Kind.undeclared_dependency, checkGuardedRelations(&required, summary).?.kind);
+    var consumes = effects;
+    consumes.consumed_inputs = &.{.{ .input_index = 1 }};
+    try std.testing.expectEqual(Failure.Kind.missing_consumption, checkGuardedRelations(&.{.{ .conditions = condition, .effects = &consumes }}, summary).?.kind);
 }

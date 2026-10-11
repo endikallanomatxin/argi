@@ -36,7 +36,10 @@ Predicates over ordinary values and dynamic element relations remain conservativ
 
 - Connect the general guarded summary representation to contract lowering,
   declaration/conformance proofs and caller refinement. Existing outcome
-  partitions already publish shared guarded records; complete joint inference
+  partitions already publish shared guarded records. General conformance checks
+  complete guards, keeping permissions and guarantees separate; declaration
+  lowering must still publish full conditional contracts rather than reuse the
+  legacy payload/post-state views as interchangeable records. Complete joint inference
   and retain call-entry input evidence independently of mutable post-values.
   Keep every cleanup and storage transition correlated with the full guard.
 

@@ -371,7 +371,12 @@ feature first.
   ancestor payload tags, duplicates and contradictions without enumerating a
   product of independent choices. Conditions and effects belong to the immutable
   summary arena. Existing outcome records remain the caller compatibility path
-  until mixed guard inference, contracts and cleanup refinement are integrated.
+  until mixed guard inference, contracts and cleanup refinement are integrated. General conformance
+  requires a complete approximation under the declared conjunction or a weaker
+  proven condition. A stronger condition covers only some promised exits and
+  cannot establish the contract. Missing independent singleton evidence cannot
+  be assembled into a joint guarantee. Conditional payload permissions and
+  authoritative input effects must both survive declaration conversion.
   Outcome contracts select a named output and variant, not the first result.
   Keep that output index through syntax-free IR, relocation, cached snapshots,
   conformance and summary equality. Common clauses apply to every outcome;

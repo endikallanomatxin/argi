@@ -363,8 +363,11 @@ conservatively rather than gaining a guarantee that needs both results.
 > General summary guards represent conjunctions of entry-input and output
 > selectors, with shared records for every effect dimension. Existing outcome
 > partitions are published in this representation alongside their conservative
-> fallback. General input/mixed contract syntax, joint output inference and
-> caller refinement still need integration; unsupported clauses remain rejected.
+> fallback. General conditional contracts can be checked against complete
+> guarded summaries; proving only a stricter subset of the declared condition
+> is insufficient. Source-level input/mixed contract syntax, joint output
+> inference and caller refinement still need integration; unsupported clauses
+> remain rejected.
 > Generation effects support one choice output per refinement and direct
 > forwarding through one payload path, stable lexical bindings and direct
 > repackaging. Other
