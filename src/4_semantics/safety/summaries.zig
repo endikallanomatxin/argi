@@ -132,17 +132,30 @@ pub fn withOutcomeGuards(allocator: std.mem.Allocator, summary: facts.SafetySumm
         effects.input_post_states = outcome.input_post_states;
         effects.invalidated_domains = outcome.invalidated_domains;
         effects.opaque_storage_empties = outcome.opaque_storage_empties;
-        try guards.append(allocator, .{ .conditions = condition, .effects = effects });
+        try guards.append(allocator, .{ .origin = .outcome_partition, .conditions = condition, .effects = effects });
     }
     var result = summary;
     result.guarded_effects = try guards.toOwnedSlice(allocator);
     return result;
 }
 
+/// Refresh only the compatibility records affected by domain normalization.
+/// General conjunctive records remain immutable and retain their identities.
+pub fn refreshOutcomeGuards(allocator: std.mem.Allocator, summary: facts.SafetySummary) !facts.SafetySummary {
+    var general: std.ArrayList(facts.GuardedSafetyEffects) = .empty;
+    defer general.deinit(allocator);
+    for (summary.guarded_effects) |guarded| if (guarded.origin == .general) try general.append(allocator, guarded);
+    var result = summary;
+    result.guarded_effects = &.{};
+    result = try withOutcomeGuards(allocator, result);
+    result.guarded_effects = try std.mem.concat(allocator, facts.GuardedSafetyEffects, &.{ general.items, result.guarded_effects });
+    return result;
+}
+
 pub fn summaryEql(a: facts.SafetySummary, b: facts.SafetySummary) bool {
     if (a.guarded_effects.len != b.guarded_effects.len) return false;
     for (a.guarded_effects, b.guarded_effects) |left, right| {
-        if (!left.conditions.eql(right.conditions) or !summaryEql(left.effects.*, right.effects.*)) return false;
+        if (left.origin != right.origin or !left.conditions.eql(right.conditions) or !summaryEql(left.effects.*, right.effects.*)) return false;
     }
     if (!domainsEql(a.invalidated_domains, b.invalidated_domains)) return false;
     if (a.storage_capability_conflicts.len != b.storage_capability_conflicts.len) return false;
@@ -407,4 +420,30 @@ test "legacy outcome summaries publish nested output conditions with a conservat
     try std.testing.expectEqual(@as(usize, 1), represented.guarded_effects[0].effects.required_opaque_inputs.len);
     try std.testing.expectEqual(@as(usize, 1), represented.guarded_effects[0].effects.opaque_storage_empties.len);
     try std.testing.expect(summaryEql(represented, try withOutcomeGuards(arena.allocator(), represented)));
+}
+
+test "outcome guard refresh preserves general conjunctions and replaces stale mapped effects" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const conditions = try @import("choice_conditions.zig").normalize(allocator, &.{
+        .{ .subject = .entry_input, .index = 0, .variant_index = 1 },
+        .{ .subject = .output, .index = 1, .variant_index = 2 },
+    });
+    const independent: facts.SafetySummary = .{ .required_opaque_inputs = &.{.{ .input_index = 3 }} };
+    const initial: facts.SafetySummary = .{ .outcome_post_states = &.{.{ .output_index = 0, .variant_index = 1, .input_post_states = &.{} }} };
+    var converted = try withOutcomeGuards(allocator, initial);
+    const stale = converted.guarded_effects[0].effects;
+    converted.guarded_effects = try std.mem.concat(allocator, facts.GuardedSafetyEffects, &.{
+        &.{.{ .conditions = conditions, .effects = &independent }},
+        converted.guarded_effects,
+    });
+    converted.outcome_post_states = &.{.{ .output_index = 0, .variant_index = 1, .input_post_states = &.{.{ .target = .{ .input_index = 4 }, .initializedness = .initialized, .refreshes_storage_generation = true }} }};
+    const refreshed = try refreshOutcomeGuards(allocator, converted);
+    try std.testing.expectEqual(@as(usize, 2), refreshed.guarded_effects.len);
+    try std.testing.expect(refreshed.guarded_effects[0].effects == &independent);
+    try std.testing.expect(refreshed.guarded_effects[0].conditions.eql(conditions));
+    try std.testing.expectEqual(@as(u32, 4), refreshed.guarded_effects[1].effects.input_post_states[0].target.input_index);
+    try std.testing.expectEqual(@as(usize, 0), stale.input_post_states.len);
+    try std.testing.expect(summaryEql(refreshed, try refreshOutcomeGuards(allocator, refreshed)));
 }

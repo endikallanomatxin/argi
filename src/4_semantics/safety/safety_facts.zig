@@ -145,6 +145,9 @@ pub const ChoiceConditions = @import("choice_conditions.zig").ChoiceConditions;
 /// A complete approximation under an explicitly represented conjunction.
 /// Effects are shared between guards and contain no graph binding identities.
 pub const GuardedSafetyEffects = struct {
+    /// Derived compatibility records can be refreshed after receiver mapping
+    /// without discarding independently inferred entry or joint conditions.
+    origin: enum { general, outcome_partition } = .general,
     conditions: ChoiceConditions,
     effects: *const SafetySummary,
 };

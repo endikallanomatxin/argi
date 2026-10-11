@@ -365,8 +365,10 @@ conservatively rather than gaining a guarantee that needs both results.
 > partitions are published in this representation alongside their conservative
 > fallback. General conditional contracts can be checked against complete
 > guarded summaries; proving only a stricter subset of the declared condition
-> is insufficient. Source-level input/mixed contract syntax, joint output
-> inference and caller refinement still need integration; unsupported clauses
+> is insufficient. Existing output contracts use this proof path after concrete
+> domain resolution; unreachable output partitions have vacuous guarantees.
+> Source-level input/mixed contract syntax, joint output inference and caller
+> refinement still need integration; unsupported clauses
 > remain rejected.
 > Generation effects support one choice output per refinement and direct
 > forwarding through one payload path, stable lexical bindings and direct

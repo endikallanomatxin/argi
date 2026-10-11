@@ -376,7 +376,11 @@ feature first.
   proven condition. A stronger condition covers only some promised exits and
   cannot establish the contract. Missing independent singleton evidence cannot
   be assembled into a joint guarantee. Conditional payload permissions and
-  authoritative input effects must both survive declaration conversion.
+  authoritative input effects must both survive declaration conversion. Convert
+  legacy output contracts only after resolving domains and normalizing concrete
+  summaries. Refresh derived outcome guards without replacing independent general
+  guards. Unreachable output selectors establish vacuous guarantees, including
+  when they occur inside a conjunction.
   Outcome contracts select a named output and variant, not the first result.
   Keep that output index through syntax-free IR, relocation, cached snapshots,
   conformance and summary equality. Common clauses apply to every outcome;

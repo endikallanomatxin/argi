@@ -299,6 +299,11 @@ pub const SafetyChecker = struct {
             }
             summary.outcome_post_states = outcomes;
         }
+        // Domain paths and scalar invalidation normalization precede the
+        // general proof conversion. Raw payload views are not interchangeable
+        // with complete conditional contracts.
+        contract = try contracts.withOutcomeGuards(self.allocator, contract);
+        summary = try summary_engine.refreshOutcomeGuards(self.allocator, summary);
         if (contracts.check(contract, summary)) |failure| {
             const method_name = self.graph.text(self.graph.declaration(function.declaration).name);
             if (failure.input) |path| {

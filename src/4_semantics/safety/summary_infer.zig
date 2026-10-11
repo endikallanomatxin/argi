@@ -484,7 +484,9 @@ pub const Infer = struct {
             try appendInputPath(&required, erased);
         }
         summary.required_live_inputs = try required.toOwnedSlice();
-        return summary;
+        // General outcome records must be rebuilt from the normalized view,
+        // not retain receiver-layout facts captured before conformance mapping.
+        return try summaries.refreshOutcomeGuards(self.allocator, summary);
     }
 
     fn normalizeContractPostStates(self: *Infer, function: graph_mod.Function, receiver: ?u32, post_states: []const facts.PlacePostState) ![]const facts.PlacePostState {

@@ -174,6 +174,48 @@ pub fn selectorCovers(expected: anytype, actual: anytype) bool {
     return expected.variant_index == selected;
 }
 
+/// Translate the declaration's payload and input-transition views together.
+/// This runs after concrete domain resolution so both views retain actual
+/// input paths. Conditional records inherit common provenance permissions;
+/// selected guarantees remain distinct from the unconditional contract.
+pub fn withOutcomeGuards(allocator: std.mem.Allocator, contract: Contract) !Contract {
+    if (contract.guarded_effects.len != 0 or contract.outcomes.len == 0) return contract;
+    var guarded: std.ArrayList(Contract.Guarded) = .empty;
+    defer guarded.deinit(allocator);
+    for (contract.outcomes) |outcome| {
+        // A refined payload is partitioned at its leaves. Their contracts
+        // already inherit every enclosing guarantee; the parent is not an
+        // additional unconditional preservation promise over differing leaves.
+        var refined = false;
+        for (contract.outcomes) |child| {
+            if (child.output_index != outcome.output_index or child.parent_variants.len <= outcome.parent_variants.len) continue;
+            if (std.mem.eql(u32, child.parent_variants[0..outcome.parent_variants.len], outcome.parent_variants) and child.parent_variants[outcome.parent_variants.len] == outcome.variant_index) {
+                refined = true;
+                break;
+            }
+        }
+        if (refined) continue;
+        const projections = try allocator.alloc(@import("place.zig").Projection, outcome.parent_variants.len);
+        for (outcome.parent_variants, projections) |variant, *projection| projection.* = .{ .variant = variant };
+        const conditions = try @import("choice_conditions.zig").normalize(allocator, &.{.{
+            .subject = .output,
+            .index = outcome.output_index,
+            .projections = projections,
+            .variant_index = outcome.variant_index,
+        }});
+        const effects = try allocator.create(Contract);
+        effects.* = outcome.effects.*;
+        effects.outputs = contract.outputs;
+        effects.retained_inputs = contract.retained_inputs;
+        effects.outcomes = &.{};
+        effects.guarded_effects = &.{};
+        try guarded.append(allocator, .{ .conditions = conditions, .effects = effects });
+    }
+    var result = contract;
+    result.guarded_effects = try guarded.toOwnedSlice(allocator);
+    return result;
+}
+
 pub fn effectsForSelector(contract: Contract, selector: anytype) Contract {
     var selected = contract;
     var depth: ?usize = null;
@@ -251,7 +293,6 @@ pub const Failure = struct {
 /// have passed the ordinary function-output check: a contract never authorizes
 /// an expired local generation or certifies physical pointer validity.
 pub fn check(contract: Contract, summary: facts.SafetySummary) ?Failure {
-    if (checkGuardedRelations(contract.guarded_effects, summary)) |failure| return failure;
     for (contract.relocations) |relocation| {
         if (!provesRelocation(relocation, summary.input_post_states)) return .{ .kind = .missing_relocation, .input = relocation.destination };
     }
@@ -362,7 +403,7 @@ pub fn check(contract: Contract, summary: facts.SafetySummary) ?Failure {
         .kind = .unsupported_capability_effect,
         .input = summary.storage_capability_conflicts[0].first,
     };
-    return null;
+    return checkGuardedRelations(contract.guarded_effects, summary);
 }
 
 /// A declared conjunction can use an approximation proved under a weaker
@@ -371,7 +412,7 @@ pub fn check(contract: Contract, summary: facts.SafetySummary) ?Failure {
 /// the requested guarantee. Unrelated singleton partitions cannot be combined.
 pub fn checkGuardedRelations(required: []const Contract.Guarded, summary: facts.SafetySummary) ?Failure {
     for (required) |relation| {
-        if (relation.conditions.impossible) continue;
+        if (relation.conditions.impossible or guardHasUnreachableOutcome(relation.conditions, summary)) continue;
         var has_partition = false;
         var last_failure: ?Failure = null;
         for (summary.guarded_effects) |actual| {
@@ -396,6 +437,24 @@ pub fn checkGuardedRelations(required: []const Contract.Guarded, summary: facts.
         return .{ .kind = .missing_choice_relation, .conditions = relation.conditions };
     }
     return null;
+}
+
+fn guardHasUnreachableOutcome(conditions: facts.ChoiceConditions, summary: facts.SafetySummary) bool {
+    for (summary.outcome_post_states) |outcome| {
+        if (outcome.reachable) continue;
+        for (conditions.terms) |term| {
+            if (term.subject != .output or term.index != outcome.output_index or term.variant_index != outcome.variant_index or term.projections.len != outcome.parent_variants.len) continue;
+            var matches = true;
+            for (term.projections, outcome.parent_variants) |projection, variant| {
+                if (projection != .variant or projection.variant != variant) {
+                    matches = false;
+                    break;
+                }
+            }
+            if (matches) return true;
+        }
+    }
+    return false;
 }
 
 fn checkValue(allowed: Output, actual: facts.ValueEffect) ?Failure {
@@ -1097,4 +1156,74 @@ test "joint guards distinguish effect permissions from resource guarantees" {
     var consumes = effects;
     consumes.consumed_inputs = &.{.{ .input_index = 1 }};
     try std.testing.expectEqual(Failure.Kind.missing_consumption, checkGuardedRelations(&.{.{ .conditions = condition, .effects = &consumes }}, summary).?.kind);
+}
+
+test "legacy contracts convert payload permissions and authoritative input guarantees together" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const source = @import("../primitives/schema.zig").SourceRef{ .file_index = 0, .offset = 0 };
+    const declared = try fromDeclaration(allocator, .{
+        .output_count = 1,
+        .source = source,
+        .dependencies = &.{.{ .output_index = 0, .input_index = 1 }},
+        .outcomes = &.{.{
+            .variant = .{ .start = 0, .len = 0 },
+            .variant_index = 0,
+            .emptied_inputs = &.{.{ .input_index = 0 }},
+            .source = source,
+        }},
+    });
+    const converted = try withOutcomeGuards(allocator, declared);
+    try std.testing.expectEqual(@as(usize, 1), converted.guarded_effects.len);
+    const effects = converted.guarded_effects[0].effects;
+    try std.testing.expectEqual(@as(usize, 1), effects.outputs.len);
+    try std.testing.expectEqual(@as(u32, 1), effects.outputs[0].dependencies[0].input_index);
+    try std.testing.expectEqual(@as(u32, 0), effects.emptied_inputs[0].input_index);
+    try std.testing.expectEqual(@as(usize, 0), converted.emptied_inputs.len);
+}
+
+test "unreachable legacy output guards establish vacuous joint guarantees" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const conditions = try @import("choice_conditions.zig").normalize(allocator, &.{
+        .{ .subject = .entry_input, .index = 0, .variant_index = 1 },
+        .{ .subject = .output, .index = 1, .projections = &.{.{ .variant = 2 }}, .variant_index = 3 },
+    });
+    const guarantee: Contract = .{ .outputs = &.{}, .emptied_inputs = &.{.{ .input_index = 0 }} };
+    const summary: facts.SafetySummary = .{ .outcome_post_states = &.{.{ .reachable = false, .output_index = 1, .parent_variants = &.{2}, .variant_index = 3, .input_post_states = &.{} }} };
+    try std.testing.expect(checkGuardedRelations(&.{.{ .conditions = conditions, .effects = &guarantee }}, summary) == null);
+    var reachable = summary;
+    reachable.outcome_post_states = &.{.{ .output_index = 1, .parent_variants = &.{2}, .variant_index = 3, .input_post_states = &.{} }};
+    try std.testing.expect(checkGuardedRelations(&.{.{ .conditions = conditions, .effects = &guarantee }}, reachable) != null);
+}
+
+test "outcome conversion partitions nested contracts at leaves and retains enclosing guarantees" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const source = @import("../primitives/schema.zig").SourceRef{ .file_index = 0, .offset = 0 };
+    const declared = try fromDeclaration(allocator, .{
+        .output_count = 1,
+        .source = source,
+        .outcomes = &.{.{
+            .variant = .{ .start = 0, .len = 0 },
+            .variant_index = 0,
+            .emptied_inputs = &.{.{ .input_index = 0 }},
+            .source = source,
+            .outcomes = &.{
+                .{ .variant = .{ .start = 0, .len = 0 }, .variant_index = 0, .source = source, .consumed_inputs = &.{1} },
+                .{ .variant = .{ .start = 0, .len = 0 }, .variant_index = 1, .source = source },
+            },
+        }},
+    });
+    const converted = try withOutcomeGuards(allocator, declared);
+    try std.testing.expectEqual(@as(usize, 2), converted.guarded_effects.len);
+    for (converted.guarded_effects) |guarded| {
+        try std.testing.expectEqual(@as(usize, 2), guarded.conditions.terms.len);
+        try std.testing.expectEqual(@as(u32, 0), guarded.effects.emptied_inputs[0].input_index);
+    }
+    try std.testing.expectEqual(@as(usize, 1), converted.guarded_effects[0].effects.consumed_inputs.len);
+    try std.testing.expectEqual(@as(usize, 0), converted.guarded_effects[1].effects.consumed_inputs.len);
 }
