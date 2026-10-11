@@ -806,7 +806,7 @@ pub const Infer = struct {
             post.value = try self.mark_unavailable_fresh_storage(post.value, counts);
         };
 
-        return summaries.withOutcomeGuards(self.allocator, .{
+        var summary: facts.SafetySummary = .{
             .outputs = outputs,
             .storage_capability_uses = try capability_uses.toOwnedSlice(),
             .storage_capability_conflicts = try capability_conflicts.toOwnedSlice(),
@@ -817,7 +817,160 @@ pub const Infer = struct {
             .opaque_storage_effects = try opaque_storage_effects.toOwnedSlice(),
             .opaque_storage_empties = opaque_storage_empties,
             .invalidated_domains = try self.domain_invalidations.toOwnedSlice(),
-        });
+        };
+        summary.guarded_effects = try self.inferEntryChoiceOutputGuards(function_id, summary);
+        return summaries.refreshOutcomeGuards(self.allocator, summary);
+    }
+
+    const EntryOutputFlow = struct {
+        conditions: facts.ChoiceConditions = .{},
+        outputs: []facts.ValueEffect,
+        initialized: []bool,
+        reachable: bool = true,
+
+        fn clone(self: EntryOutputFlow, allocator: std.mem.Allocator) !EntryOutputFlow {
+            var result = self;
+            result.outputs = try allocator.dupe(facts.ValueEffect, self.outputs);
+            result.initialized = try allocator.dupe(bool, self.initialized);
+            return result;
+        }
+    };
+
+    /// Stable selection bodies can publish entry guards without symbolic
+    /// execution of arbitrary operations. Other dimensions retain the ordinary
+    /// conservative summary; unsupported control flow discards this precision.
+    fn inferEntryChoiceOutputGuards(self: *Infer, function_id: graph_mod.GlobalFunctionId, summary: facts.SafetySummary) ![]const facts.GuardedSafetyEffects {
+        const function = self.graph.function(function_id);
+        if (summary.outputs.len == 0 or function.input.start + function.input.len > self.graph.fields.items.len) return &.{};
+        var has_choice_input = false;
+        for (self.graph.fields.items[function.input.start..][0..function.input.len]) |input| {
+            if (@intFromEnum(input.ty) < self.graph.types.items.len and types.variants(self.graph, input.ty) != null) {
+                has_choice_input = true;
+                break;
+            }
+        }
+        if (!has_choice_input) return &.{};
+        const output_facts = try self.allocator.alloc(facts.ValueEffect, summary.outputs.len);
+        @memset(output_facts, .{});
+        const initialized = try self.allocator.alloc(bool, summary.outputs.len);
+        @memset(initialized, false);
+        var flow = EntryOutputFlow{ .outputs = output_facts, .initialized = initialized };
+        var guards: std.ArrayList(facts.GuardedSafetyEffects) = .empty;
+        defer guards.deinit(self.allocator);
+        if (!try self.inferEntryOutputBlock(function_id, function.body.?, &flow, summary, &guards)) return &.{};
+        if (flow.reachable) try self.recordEntryOutputGuard(flow, summary, &guards);
+        return guards.toOwnedSlice(self.allocator);
+    }
+
+    fn recordEntryOutputGuard(self: *Infer, flow: EntryOutputFlow, summary: facts.SafetySummary, guards: *std.ArrayList(facts.GuardedSafetyEffects)) !void {
+        if (flow.conditions.impossible or flow.conditions.terms.len == 0) return;
+        for (flow.initialized) |initialized| if (!initialized) return;
+        // Keep one complete approximation for each established entry relation.
+        // Multiple exits with the same relation must join their output facts.
+        for (guards.items) |guarded| if (guarded.conditions.eql(flow.conditions)) {
+            const effects = @constCast(guarded.effects);
+            const outputs = try self.allocator.dupe(facts.ValueEffect, effects.outputs);
+            for (outputs, flow.outputs) |*output, other| output.* = try self.mergeValueEffects(output.*, other);
+            effects.outputs = outputs;
+            return;
+        };
+        const effects = try self.allocator.create(facts.SafetySummary);
+        effects.* = summary;
+        effects.guarded_effects = &.{};
+        effects.outputs = try self.allocator.dupe(facts.ValueEffect, flow.outputs);
+        try guards.append(self.allocator, .{ .conditions = flow.conditions, .effects = effects });
+    }
+
+    fn entryOutputExpressionSafe(self: *Infer, value: graph_mod.GlobalNodeId) bool {
+        return switch (self.graph.node(value).content) {
+            .binding_use => true,
+            .denied_implicit_copy => |child| self.entryOutputExpressionSafe(child),
+            .choice_literal => |literal| if (literal.payload) |child| self.entryOutputExpressionSafe(child) else true,
+            .struct_value_literal => |literal| blk: {
+                for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |field|
+                    if (!self.entryOutputExpressionSafe(field.value)) break :blk false;
+                break :blk true;
+            },
+            else => false,
+        };
+    }
+
+    fn entryOutputSuffixSafe(self: *Infer, node_id: graph_mod.GlobalNodeId) bool {
+        return switch (self.graph.node(node_id).content) {
+            .return_statement => |ret| ret.expression == null and ret.cleanup.len == 0,
+            .auto_deinit_binding => |id| blk: {
+                const cleanup = self.graph.auto_deinits.items[@intFromEnum(id)];
+                break :blk cleanup.deinit_fn == null and cleanup.fields.len == 0;
+            },
+            else => false,
+        };
+    }
+
+    fn inferEntryOutputBlock(self: *Infer, function_id: graph_mod.GlobalFunctionId, block_id: graph_mod.GlobalBlockId, flow: *EntryOutputFlow, summary: facts.SafetySummary, guards: *std.ArrayList(facts.GuardedSafetyEffects)) anyerror!bool {
+        const block = self.graph.blocks.items[@intFromEnum(block_id)];
+        const nodes = self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len];
+        // Source blocks identify their last statement as ret_val too. Its
+        // ordered effects are handled below; an independent expression result
+        // would require a separate proof before this precision can apply.
+        if (block.ret_val) |value| if (std.mem.indexOfScalar(graph_mod.GlobalNodeId, nodes, value) == null) return false;
+        for (self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len]) |node_id| {
+            if (!flow.reachable) {
+                if (!self.entryOutputSuffixSafe(node_id)) return false;
+                continue;
+            }
+            switch (self.graph.node(node_id).content) {
+                .binding_declaration => |binding| {
+                    const record = self.graph.binding(binding);
+                    if (record.initialization) |value| if (!record.deferred_initialization and !self.entryOutputExpressionSafe(value)) return false;
+                },
+                .assignment => |assignment| {
+                    const output = self.outputIndex(function_id, assignment.binding) orelse return false;
+                    if (!self.entryOutputExpressionSafe(assignment.value)) return false;
+                    // Reassigning an output remains conservative: another
+                    // branch may already have established a different value.
+                    if (flow.initialized[output]) return false;
+                    flow.outputs[output] = try self.inferExpression(function_id, assignment.value);
+                    flow.initialized[output] = true;
+                },
+                .switch_statement => |switch_id| {
+                    const statement = self.graph.switches.items[@intFromEnum(switch_id)];
+                    const paths = try self.inferInputPaths(function_id, statement.expression);
+                    if (paths.len != 1 or paths[0].projections.len != 0 or paths[0].storage_domain != null) return false;
+                    const function = self.graph.function(function_id);
+                    const ty = self.graph.fields.items[function.input.start + paths[0].input_index].ty;
+                    if (types.variants(self.graph, ty) == null or !statement.exhaustive or statement.default_block != null) return false;
+                    for (self.graph.switch_cases.items[statement.cases.start..][0..statement.cases.len]) |case| {
+                        const variant = self.variantIndex(ty, case.variant) orelse return false;
+                        var branch = try flow.clone(self.allocator);
+                        branch.conditions = try @import("choice_conditions.zig").conjoin(self.allocator, flow.conditions, try @import("choice_conditions.zig").normalize(self.allocator, &.{.{ .subject = .entry_input, .index = paths[0].input_index, .variant_index = variant }}));
+                        if (!try self.inferEntryOutputBlock(function_id, case.body, &branch, summary, guards)) return false;
+                        if (branch.reachable) {
+                            // A suffix after the switch needs a general
+                            // control-flow join; retain only terminal selections.
+                            var terminal = true;
+                            for (branch.initialized) |initialized| terminal = terminal and initialized;
+                            if (!terminal) return false;
+                            try self.recordEntryOutputGuard(branch, summary, guards);
+                        }
+                    }
+                    // Only final cleanup or bare returns may follow this
+                    // selection. An intervening effect loses the relation.
+                    flow.reachable = false;
+                },
+                .code_block => |child| if (!try self.inferEntryOutputBlock(function_id, child, flow, summary, guards)) return false,
+                .return_statement => |ret| {
+                    if (ret.expression != null or ret.cleanup.len != 0) return false;
+                    try self.recordEntryOutputGuard(flow.*, summary, guards);
+                    flow.reachable = false;
+                },
+                .auto_deinit_binding => |id| {
+                    const cleanup = self.graph.auto_deinits.items[@intFromEnum(id)];
+                    if (cleanup.deinit_fn != null or cleanup.fields.len != 0) return false;
+                },
+                else => return false,
+            }
+        }
+        return true;
     }
 
     fn inferBlock(
@@ -3723,7 +3876,36 @@ pub const Infer = struct {
             return self.substituteOutput(function_id, effect, arguments);
         }
         const summary = self.engine.summaryFor(callee) orelse return .{};
-        return self.substitute_summary_outputs(function_id, summary.outputs, arguments, call_node);
+        var outputs = summary.outputs;
+        var selected: ?facts.ChoiceConditions = null;
+        for (summary.guarded_effects) |guarded| {
+            if (guarded.conditions.impossible) continue;
+            var established = true;
+            for (guarded.conditions.terms) |condition| {
+                if (condition.subject != .entry_input or condition.projections.len != 0 or condition.index >= arguments.len) {
+                    established = false;
+                    break;
+                }
+                var node = arguments[condition.index].value;
+                while (self.graph.node(node).content == .denied_implicit_copy) node = self.graph.node(node).content.denied_implicit_copy;
+                const literal = switch (self.graph.node(node).content) {
+                    .choice_literal => |value| value,
+                    else => {
+                        established = false;
+                        break;
+                    },
+                };
+                if (self.variantIndex(literal.choice_type, literal.variant) != condition.variant_index) {
+                    established = false;
+                    break;
+                }
+            }
+            if (established and (selected == null or guarded.conditions.implies(selected.?))) {
+                outputs = guarded.effects.outputs;
+                selected = guarded.conditions;
+            }
+        }
+        return self.substitute_summary_outputs(function_id, outputs, arguments, call_node);
     }
 
     fn substitute_summary_outputs(self: *Infer, function: graph_mod.GlobalFunctionId, outputs: []const facts.ValueEffect, arguments: []const graph_mod.ValueField, call_node: graph_mod.GlobalNodeId) !facts.ValueEffect {

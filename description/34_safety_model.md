@@ -367,9 +367,13 @@ conservatively rather than gaining a guarantee that needs both results.
 > guarded summaries; proving only a stricter subset of the declared condition
 > is insufficient. Existing output contracts use this proof path after concrete
 > domain resolution; unreachable output partitions have vacuous guarantees.
-> Source-level input/mixed contract syntax, joint output inference and caller
-> refinement still need integration; unsupported clauses
-> remain rejected.
+> Concrete bodies consisting of stable terminal matches can infer joint
+> by-value entry-input conditions for output provenance. The caller selects them
+> from known entry variants; wrappers with literal selectors preserve the selected
+> output facts. Unknown tags, reassignment and unrepresented effects retain the
+> unconditional summary. Source-level input/mixed contract syntax, general joint
+> output inference and mutation/cleanup refinement still need integration;
+> unsupported clauses remain rejected.
 > Generation effects support one choice output per refinement and direct
 > forwarding through one payload path, stable lexical bindings and direct
 > repackaging. Other

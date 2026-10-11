@@ -11413,3 +11413,38 @@ test "feature_tests/polymorphism/303_concrete_opaque_contents_live" {
 test "feature_tests/polymorphism/304X_opaque_cleanup_ended_referent" {
     try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/304X_opaque_cleanup_ended_referent", "opaque contents depend on a root that has ended", "failed without a diagnostic");
 }
+
+test "feature_tests/polymorphism/305_input_choice_reference_selection" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/305_input_choice_reference_selection");
+    try runExpect("tests/feature_tests/polymorphism/305_input_choice_reference_selection", 0);
+}
+
+test "feature_tests/polymorphism/306X_input_choice_selected_expired_reference" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/306X_input_choice_selected_expired_reference", "root that has ended", "failed without a diagnostic");
+}
+
+test "tests/feature_tests/polymorphism/307_joint_input_choice_reference_selection" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/307_joint_input_choice_reference_selection");
+    try runExpect("tests/feature_tests/polymorphism/307_joint_input_choice_reference_selection", 0);
+}
+
+test "tests/feature_tests/polymorphism/308X_joint_input_choice_selected_expired_reference" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/308X_joint_input_choice_selected_expired_reference", "root that has ended", "failed without a diagnostic");
+}
+
+test "tests/feature_tests/polymorphism/309X_input_choice_rewritten_result" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/309X_input_choice_rewritten_result", "root that has ended", "failed without a diagnostic");
+}
+
+test "tests/feature_tests/polymorphism/310X_input_choice_unknown_result" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/310X_input_choice_unknown_result", "root that has ended", "failed without a diagnostic");
+}
+
+test "tests/feature_tests/polymorphism/311_input_choice_literal_wrapper" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/311_input_choice_literal_wrapper");
+    try runExpect("tests/feature_tests/polymorphism/311_input_choice_literal_wrapper", 0);
+}
+
+test "feature_tests/polymorphism/312X_input_choice_enclosing_result_rewrite" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/312X_input_choice_enclosing_result_rewrite", "root that has ended", "failed without a diagnostic");
+}

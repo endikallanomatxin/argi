@@ -380,7 +380,14 @@ feature first.
   legacy output contracts only after resolving domains and normalizing concrete
   summaries. Refresh derived outcome guards without replacing independent general
   guards. Unreachable output selectors establish vacuous guarantees, including
-  when they occur inside a conjunction.
+  when they occur inside a conjunction. Stable terminal selection bodies can infer
+  by-value entry-choice conjunctions for output provenance. Reject unsupported
+  statements, result rewrites and nontrivial cleanup from this precision path;
+  keep every other effect dimension conservative. Inspect block node order rather
+  than numeric node IDs, and validate suffixes in enclosing blocks too. Source
+  block ret_val can identify the final statement already visited. Literal choice
+  arguments can select proven output approximations during summary substitution;
+  do not use a later mutable binding value as evidence for an earlier call.
   Outcome contracts select a named output and variant, not the first result.
   Keep that output index through syntax-free IR, relocation, cached snapshots,
   conformance and summary equality. Common clauses apply to every outcome;

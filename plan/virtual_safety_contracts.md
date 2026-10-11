@@ -40,8 +40,11 @@ Predicates over ordinary values and dynamic element relations remain conservativ
   complete guards, keeping permissions and guarantees separate. Existing output
   declarations now publish complete conditional contracts after domain resolution
   and normalization; unreachable outcomes retain vacuous guarantees. Extend source
-  lowering to entry-input and cross-output conditions. Complete joint inference
-  and retain call-entry input evidence independently of mutable post-values.
+  lowering to entry-input and cross-output conditions. Stable terminal selection
+  bodies infer joint by-value entry guards for output provenance, and literal
+  selectors compose through wrappers. Extend that proof to general forwarding,
+  mutable-reference selectors and guarded resource effects. Retain call-entry
+  evidence independently of mutable post-values.
   Keep every cleanup and storage transition correlated with the full guard.
 
 - Extend guarded generation summaries to branch-assigned outputs and
