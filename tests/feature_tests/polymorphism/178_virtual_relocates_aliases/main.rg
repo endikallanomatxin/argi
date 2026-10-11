@@ -1,0 +1,38 @@
+Mover: Abstract = (
+    transfer(.self: &Self, .source: $&Resource, .destination: $&Resource) -> ()
+    where relocates(destination, source)
+)
+
+Manager: Type = (.unused: Int32)
+
+Manager implements Mover
+
+Resource: Type = (.value: Int32)
+
+Resource deinit(.self: $&Resource) -> () := { drops = drops + 1 }
+
+drops :: Int32 = 0
+
+transfer(.self: &Manager, .source: $&Resource, .destination: $&Resource) -> () := {
+    relocate(source, destination)
+}
+
+transfer_owned(.mover: &Virtual#(Mover), .source: $&Resource, .destination: $&Resource) -> () := {
+    transfer(mover, source, destination)
+}
+
+main() -> (.status_code: Int32 = 0) := {
+    manager ::= Manager(0)
+    mover ::= to_virtual#(Mover)(&manager)
+
+    if true {
+        source ::= Resource(42)
+        destination ::= Resource(0)
+        deinit($&destination)
+        source_alias ::= $&source
+        destination_alias ::= $&destination
+        transfer_owned(&mover, source_alias, destination_alias)
+        if destination.value != 42 { status_code = 2 }
+    }
+    if drops != 2 { status_code = 1 }
+}

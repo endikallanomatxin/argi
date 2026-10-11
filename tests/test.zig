@@ -4313,7 +4313,7 @@ test "feature_tests/ownership/201X_nested_argument_propagates_input_post_state" 
 test "feature_tests/ownership/202X_conditional_expression_joins_input_post_state" {
     try buildExpectFail(
         "tests/feature_tests/ownership/202X_conditional_expression_joins_input_post_state",
-        "place rooted at 'allocation' is maybe_initialized and cannot be used",
+        "cannot select cleanup for conditional consumption",
     );
 }
 
@@ -4585,17 +4585,17 @@ test "feature_tests/polymorphism/29X_virtual_dependency_escape" {
     );
 }
 
-test "feature_tests/polymorphism/30X_virtual_dependency_union" {
+test "feature_tests/polymorphism/30X_virtual_declared_dependency_escape" {
     try buildExpectFail(
-        "tests/feature_tests/polymorphism/30X_virtual_dependency_union",
+        "tests/feature_tests/polymorphism/30X_virtual_declared_dependency_escape",
         "function output cannot depend on a local storage generation that ends before return",
     );
 }
 
-test "feature_tests/polymorphism/31X_virtual_incompatible_deinit" {
+test "feature_tests/polymorphism/31X_virtual_contract_rejects_deinit" {
     try buildExpectFail(
-        "tests/feature_tests/polymorphism/31X_virtual_incompatible_deinit",
-        "cannot form Virtual value because an Abstract method has incompatible safety effects across implementations",
+        "tests/feature_tests/polymorphism/31X_virtual_contract_rejects_deinit",
+        "violates its Abstract safety contract",
     );
 }
 
@@ -4625,72 +4625,72 @@ test "feature_tests/polymorphism/40X_virtual_nested_aggregate_borrow" {
     );
 }
 
-test "feature_tests/ownership/219_virtual_post_state_allows_optional_self_mutation" {
-    const test_path = "tests/feature_tests/ownership/219_virtual_post_state_allows_optional_self_mutation";
+test "feature_tests/ownership/219_virtual_preservation_allows_self_mutation" {
+    const test_path = "tests/feature_tests/ownership/219_virtual_preservation_allows_self_mutation";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
 
-test "feature_tests/ownership/220X_virtual_post_state_dependency_union" {
+test "feature_tests/ownership/220X_virtual_contract_rejects_hidden_dependency" {
     try buildExpectFail(
-        "tests/feature_tests/ownership/220X_virtual_post_state_dependency_union",
-        "reference depends on a root that has ended",
+        "tests/feature_tests/ownership/220X_virtual_contract_rejects_hidden_dependency",
+        "violates its Abstract safety contract",
     );
 }
 
-test "feature_tests/ownership/221X_virtual_post_state_initializedness_join" {
+test "feature_tests/ownership/221X_virtual_contract_rejects_conditional_deinit" {
     try buildExpectFail(
-        "tests/feature_tests/ownership/221X_virtual_post_state_initializedness_join",
-        "cannot form Virtual value because an Abstract method has incompatible safety effects across implementations",
+        "tests/feature_tests/ownership/221X_virtual_contract_rejects_conditional_deinit",
+        "violates its Abstract safety contract",
     );
 }
 
-test "feature_tests/ownership/222X_virtual_conditional_opaque_ownership_same_storage" {
+test "feature_tests/ownership/222X_virtual_contract_rejects_conditional_opaque_transfer" {
     try buildExpectFail(
-        "tests/feature_tests/ownership/222X_virtual_conditional_opaque_ownership_same_storage",
-        "cannot form Virtual value because an Abstract method has incompatible safety effects across implementations",
+        "tests/feature_tests/ownership/222X_virtual_contract_rejects_conditional_opaque_transfer",
+        "violates its Abstract safety contract",
     );
 }
 
-test "feature_tests/ownership/222X_virtual_conditional_opaque_ownership_same_storage_invalidates_source" {
+test "feature_tests/ownership/222X_virtual_contract_rejects_opaque_source_transfer" {
     try buildExpectFail(
-        "tests/feature_tests/ownership/222X_virtual_conditional_opaque_ownership_same_storage_invalidates_source",
-        "cannot form Virtual value because an Abstract method has incompatible safety effects across implementations",
+        "tests/feature_tests/ownership/222X_virtual_contract_rejects_opaque_source_transfer",
+        "violates its Abstract safety contract",
     );
 }
 
-test "feature_tests/ownership/223X_virtual_opaque_ownership_different_storages_incompatible" {
+test "feature_tests/ownership/223X_virtual_contract_rejects_ambiguous_opaque_storage" {
     try buildExpectFail(
-        "tests/feature_tests/ownership/223X_virtual_opaque_ownership_different_storages_incompatible",
-        "cannot form Virtual value because an Abstract method has incompatible safety effects across implementations",
+        "tests/feature_tests/ownership/223X_virtual_contract_rejects_ambiguous_opaque_storage",
+        "violates its Abstract safety contract",
     );
 }
 
-test "feature_tests/ownership/224X_virtual_definite_self_destruction_incompatible" {
+test "feature_tests/ownership/224X_virtual_contract_rejects_self_destruction" {
     try buildExpectFail(
-        "tests/feature_tests/ownership/224X_virtual_definite_self_destruction_incompatible",
-        "cannot form Virtual value because an Abstract method has incompatible safety effects across implementations",
+        "tests/feature_tests/ownership/224X_virtual_contract_rejects_self_destruction",
+        "violates its Abstract safety contract",
     );
 }
 
-test "feature_tests/ownership/225X_virtual_receiver_uses_self_input_index" {
+test "feature_tests/ownership/225X_virtual_contract_nonleading_receiver" {
     try buildExpectFail(
-        "tests/feature_tests/ownership/225X_virtual_receiver_uses_self_input_index",
-        "reference depends on a root that has ended",
+        "tests/feature_tests/ownership/225X_virtual_contract_nonleading_receiver",
+        "violates its Abstract safety contract",
     );
 }
 
-test "feature_tests/ownership/226X_virtual_conditional_opaque_ownership_drop_state_incompatible" {
+test "feature_tests/ownership/226X_virtual_contract_rejects_conditional_opaque_drop" {
     try buildExpectFail(
-        "tests/feature_tests/ownership/226X_virtual_conditional_opaque_ownership_drop_state_incompatible",
-        "cannot form Virtual value because an Abstract method has incompatible safety effects across implementations",
+        "tests/feature_tests/ownership/226X_virtual_contract_rejects_conditional_opaque_drop",
+        "violates its Abstract safety contract",
     );
 }
 
-test "feature_tests/ownership/227X_virtual_definite_opaque_ownership_drop_state_incompatible" {
+test "feature_tests/ownership/227X_virtual_contract_rejects_opaque_drop" {
     try buildExpectFail(
-        "tests/feature_tests/ownership/227X_virtual_definite_opaque_ownership_drop_state_incompatible",
-        "cannot form Virtual value because an Abstract method has incompatible safety effects across implementations",
+        "tests/feature_tests/ownership/227X_virtual_contract_rejects_opaque_drop",
+        "violates its Abstract safety contract",
     );
 }
 
@@ -4706,8 +4706,8 @@ test "feature_tests/ownership/229_virtual_mutation_preserves_stored_reference" {
     try runExpect(test_path, 0);
 }
 
-test "feature_tests/ownership/230_virtual_unchanged_alternative_preserves_pointee_facts" {
-    const test_path = "tests/feature_tests/ownership/230_virtual_unchanged_alternative_preserves_pointee_facts";
+test "feature_tests/ownership/230_virtual_preservation_retains_pointee_facts" {
+    const test_path = "tests/feature_tests/ownership/230_virtual_preservation_retains_pointee_facts";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
@@ -6775,8 +6775,8 @@ test "safety wrapper parity for fallible initialization outcomes" {
 
 test "safety wrapper parity for recursion and virtual dispatch" {
     try expectSafetyWrapperParity("tests/feature_tests/polymorphism/41_recursive_virtual_summaries", null);
-    try expectSafetyWrapperParity("tests/feature_tests/ownership/220X_virtual_post_state_dependency_union", "reference depends on a root that has ended");
-    try expectSafetyWrapperParity("tests/feature_tests/polymorphism/30X_virtual_dependency_union", "function output cannot depend on a local storage generation that ends before return");
+    try expectSafetyWrapperParity("tests/feature_tests/ownership/220X_virtual_contract_rejects_hidden_dependency", "violates its Abstract safety contract");
+    try expectSafetyWrapperParity("tests/feature_tests/polymorphism/30X_virtual_declared_dependency_escape", "function output cannot depend on a local storage generation that ends before return");
 }
 
 test "feature_tests/basics/27X_mixed_width_arithmetic" {
@@ -6803,7 +6803,7 @@ test "safety statistics preserve composed allocator behavior" {
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
     try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
-    for ([_][]const u8{ "summary inference:", "summary bytes requested:", "retained worklist bytes:", "virtual summary time:", "virtual receiver lookup:", "state copy time:" }) |label|
+    for ([_][]const u8{ "summary inference:", "summary bytes requested:", "retained worklist bytes:", "virtual contract summary time:", "state copy time:" }) |label|
         try expect(std.mem.indexOf(u8, result.stderr, label) != null);
     try run(path);
 }
@@ -10359,4 +10359,1160 @@ test "feature_tests/ownership/358X_return_local_expression" {
 
 test "feature_tests/ownership/359X_return_local_error_trace" {
     try buildExpectFail("tests/feature_tests/ownership/359X_return_local_error_trace", "local storage generation");
+}
+
+test "feature_tests/polymorphism/68_virtual_safety_contract" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/68_virtual_safety_contract");
+    try runExpect("tests/feature_tests/polymorphism/68_virtual_safety_contract", 0);
+}
+
+test "feature_tests/polymorphism/69X_virtual_safety_contract_dependency" {
+    try buildExpectFail("tests/feature_tests/polymorphism/69X_virtual_safety_contract_dependency", "undeclared output dependency involving input 'other'");
+}
+
+test "feature_tests/polymorphism/70X_virtual_safety_contract_unknown_name" {
+    try buildExpectFail("tests/feature_tests/polymorphism/70X_virtual_safety_contract_unknown_name", "depends_on dependencies must name method inputs");
+}
+
+test "feature_tests/polymorphism/71_virtual_safety_contract_preservation" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/71_virtual_safety_contract_preservation");
+    try runExpect("tests/feature_tests/polymorphism/71_virtual_safety_contract_preservation", 0);
+}
+
+test "feature_tests/polymorphism/72_virtual_safety_contract_block" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/72_virtual_safety_contract_block");
+    try runExpect("tests/feature_tests/polymorphism/72_virtual_safety_contract_block", 0);
+}
+
+test "feature_tests/polymorphism/73X_virtual_safety_contract_invalidation" {
+    try buildExpectFail("tests/feature_tests/polymorphism/73X_virtual_safety_contract_invalidation", "storage transition is not permitted by this preservation contract");
+}
+
+test "feature_tests/polymorphism/74X_virtual_safety_contract_output_name" {
+    try buildExpectFail("tests/feature_tests/polymorphism/74X_virtual_safety_contract_output_name", "the first depends_on argument must name a method output");
+}
+
+test "feature_tests/polymorphism/75_virtual_safety_contract_associated" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/75_virtual_safety_contract_associated");
+    try runExpect("tests/feature_tests/polymorphism/75_virtual_safety_contract_associated", 0);
+}
+
+test "feature_tests/polymorphism/76X_virtual_safety_contract_receiver_generation" {
+    try buildExpectFail("tests/feature_tests/polymorphism/76X_virtual_safety_contract_receiver_generation", "root that has ended");
+}
+
+test "feature_tests/polymorphism/77X_virtual_safety_contract_transitive_generation" {
+    try buildExpectFail("tests/feature_tests/polymorphism/77X_virtual_safety_contract_transitive_generation", "root that has ended");
+}
+
+test "feature_tests/polymorphism/78_virtual_safety_contract_referent" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/78_virtual_safety_contract_referent");
+    try runExpect("tests/feature_tests/polymorphism/78_virtual_safety_contract_referent", 0);
+}
+
+test "feature_tests/polymorphism/79X_virtual_safety_contract_referent_branch" {
+    try buildExpectFail("tests/feature_tests/polymorphism/79X_virtual_safety_contract_referent_branch", "cannot prove refers_to");
+}
+
+test "feature_tests/polymorphism/80X_virtual_safety_contract_referent_type" {
+    try buildExpectFail("tests/feature_tests/polymorphism/80X_virtual_safety_contract_referent_type", "matching input and output referent types");
+}
+
+test "feature_tests/polymorphism/81X_virtual_safety_contract_referent_mutability" {
+    try buildExpectFail("tests/feature_tests/polymorphism/81X_virtual_safety_contract_referent_mutability", "cannot grant mutable access");
+}
+
+test "feature_tests/polymorphism/82_virtual_safety_contract_invalidate_input" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/82_virtual_safety_contract_invalidate_input");
+    try runExpect("tests/feature_tests/polymorphism/82_virtual_safety_contract_invalidate_input", 0);
+}
+
+test "feature_tests/polymorphism/83X_virtual_safety_contract_invalidate_alias" {
+    try buildExpectFail("tests/feature_tests/polymorphism/83X_virtual_safety_contract_invalidate_alias", "root that has ended");
+}
+
+test "feature_tests/polymorphism/84X_virtual_safety_contract_invalidate_readonly" {
+    try buildExpectFail("tests/feature_tests/polymorphism/84X_virtual_safety_contract_invalidate_readonly", "invalidates requires a mutable reference input");
+}
+
+test "feature_tests/polymorphism/85X_virtual_safety_contract_invalidate_self" {
+    try buildExpectFail("tests/feature_tests/polymorphism/85X_virtual_safety_contract_invalidate_self", "invalidating erased Self requires a mapped storage domain");
+}
+
+test "feature_tests/polymorphism/86_virtual_safety_contract_domains" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/86_virtual_safety_contract_domains");
+    try runExpect("tests/feature_tests/polymorphism/86_virtual_safety_contract_domains", 0);
+}
+
+test "feature_tests/polymorphism/87X_virtual_safety_contract_domain_borrow" {
+    try buildExpectFail("tests/feature_tests/polymorphism/87X_virtual_safety_contract_domain_borrow", "root that has ended");
+}
+
+test "feature_tests/polymorphism/88X_virtual_safety_contract_domain_wrong_field" {
+    try buildExpectFail("tests/feature_tests/polymorphism/88X_virtual_safety_contract_domain_wrong_field", "undeclared output dependency");
+}
+
+test "feature_tests/polymorphism/89X_virtual_safety_contract_domain_overlap" {
+    try buildExpectFail("tests/feature_tests/polymorphism/89X_virtual_safety_contract_domain_overlap", "storage domains overlap");
+}
+
+test "feature_tests/polymorphism/90X_virtual_safety_contract_domain_missing" {
+    try buildExpectFail("tests/feature_tests/polymorphism/90X_virtual_safety_contract_domain_missing", "every Abstract storage domain requires exactly one implementation mapping");
+}
+
+test "feature_tests/polymorphism/91_virtual_safety_contract_domain_local_conversion" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/91_virtual_safety_contract_domain_local_conversion");
+    try runExpect("tests/feature_tests/polymorphism/91_virtual_safety_contract_domain_local_conversion", 0);
+}
+
+test "feature_tests/polymorphism/92X_virtual_safety_contract_domain_local_escape" {
+    try buildExpectFail("tests/feature_tests/polymorphism/92X_virtual_safety_contract_domain_local_escape", "local storage generation");
+}
+
+test "feature_tests/polymorphism/93_virtual_safety_contract_domain_sibling" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/93_virtual_safety_contract_domain_sibling");
+    try runExpect("tests/feature_tests/polymorphism/93_virtual_safety_contract_domain_sibling", 0);
+}
+
+test "feature_tests/polymorphism/94_virtual_safety_contract_domain_associated" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/94_virtual_safety_contract_domain_associated");
+    try runExpect("tests/feature_tests/polymorphism/94_virtual_safety_contract_domain_associated", 0);
+}
+
+test "feature_tests/polymorphism/95X_virtual_safety_contract_domain_alias" {
+    try buildExpectFail("tests/feature_tests/polymorphism/95X_virtual_safety_contract_domain_alias", "storage domains share a storage generation");
+}
+
+test "feature_tests/polymorphism/96_virtual_safety_contract_fresh_owner" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/96_virtual_safety_contract_fresh_owner");
+    try runExpect("tests/feature_tests/polymorphism/96_virtual_safety_contract_fresh_owner", 0);
+}
+
+test "feature_tests/polymorphism/97_virtual_safety_contract_transfer_owner" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/97_virtual_safety_contract_transfer_owner");
+    try runExpect("tests/feature_tests/polymorphism/97_virtual_safety_contract_transfer_owner", 0);
+}
+
+test "feature_tests/polymorphism/98_virtual_safety_contract_outcome_dependencies" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/98_virtual_safety_contract_outcome_dependencies");
+    try runExpect("tests/feature_tests/polymorphism/98_virtual_safety_contract_outcome_dependencies", 0);
+}
+
+test "feature_tests/polymorphism/99X_virtual_safety_contract_outcome_wrong" {
+    try buildExpectFail("tests/feature_tests/polymorphism/99X_virtual_safety_contract_outcome_wrong", "unknown output variant");
+}
+
+test "feature_tests/polymorphism/100X_static_safety_contract_dependency" {
+    try buildExpectFail("tests/feature_tests/polymorphism/100X_static_safety_contract_dependency", "undeclared output dependency");
+}
+
+test "feature_tests/polymorphism/101_static_safety_contract_domains" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/101_static_safety_contract_domains");
+    try runExpect("tests/feature_tests/polymorphism/101_static_safety_contract_domains", 0);
+}
+
+test "feature_tests/polymorphism/102_static_safety_contract_associated" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/102_static_safety_contract_associated");
+    try runExpect("tests/feature_tests/polymorphism/102_static_safety_contract_associated", 0);
+}
+
+test "feature_tests/polymorphism/103X_static_safety_contract_readonly" {
+    try buildExpectFail("tests/feature_tests/polymorphism/103X_static_safety_contract_readonly", "invalidates requires a mutable reference input");
+}
+
+test "feature_tests/polymorphism/104X_static_safety_contract_reference_transfer" {
+    try buildExpectFail("tests/feature_tests/polymorphism/104X_static_safety_contract_reference_transfer", "transfers requires a by-value owning input");
+}
+
+test "feature_tests/polymorphism/105X_virtual_safety_contract_undeclared_owner" {
+    try buildExpectFail("tests/feature_tests/polymorphism/105X_virtual_safety_contract_undeclared_owner", "undeclared fresh output ownership");
+}
+
+test "feature_tests/polymorphism/106X_virtual_safety_contract_domain_result_unknown" {
+    try buildExpectFail("tests/feature_tests/polymorphism/106X_virtual_safety_contract_domain_result_unknown", "preserve its domain identities");
+}
+
+test "feature_tests/polymorphism/107_virtual_safety_contract_domain_result_transfer" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/107_virtual_safety_contract_domain_result_transfer");
+    try runExpect("tests/feature_tests/polymorphism/107_virtual_safety_contract_domain_result_transfer", 0);
+}
+
+test "feature_tests/polymorphism/108X_virtual_safety_contract_domain_result_invalidation" {
+    try buildExpectFail("tests/feature_tests/polymorphism/108X_virtual_safety_contract_domain_result_invalidation", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/109_virtual_safety_contract_domain_result_referent" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/109_virtual_safety_contract_domain_result_referent");
+    try runExpect("tests/feature_tests/polymorphism/109_virtual_safety_contract_domain_result_referent", 0);
+}
+
+test "feature_tests/polymorphism/110X_virtual_safety_contract_missing" {
+    try buildExpectFail("tests/feature_tests/polymorphism/110X_virtual_safety_contract_missing", "virtual methods require a declared safety contract");
+}
+
+test "feature_tests/polymorphism/111_virtual_safety_contract_named_outputs" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/111_virtual_safety_contract_named_outputs");
+    try runExpect("tests/feature_tests/polymorphism/111_virtual_safety_contract_named_outputs", 0);
+}
+
+test "feature_tests/polymorphism/112X_virtual_safety_contract_unknown_selector" {
+    try buildExpectFail("tests/feature_tests/polymorphism/112X_virtual_safety_contract_unknown_selector", "on must select a named method input or output");
+}
+
+test "feature_tests/polymorphism/113X_virtual_safety_contract_scalar_selector" {
+    try buildExpectFail("tests/feature_tests/polymorphism/113X_virtual_safety_contract_scalar_selector", "on requires a choice-valued output");
+}
+
+test "feature_tests/polymorphism/114X_virtual_safety_contract_duplicate_selector" {
+    try buildExpectFail("tests/feature_tests/polymorphism/114X_virtual_safety_contract_duplicate_selector", "duplicate outcome contract");
+}
+
+test "feature_tests/polymorphism/115X_virtual_safety_contract_second_output_dependency" {
+    try buildExpectFail("tests/feature_tests/polymorphism/115X_virtual_safety_contract_second_output_dependency", "undeclared output dependency");
+}
+
+test "feature_tests/polymorphism/116_virtual_safety_contract_outcome_generation" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/116_virtual_safety_contract_outcome_generation");
+    try runExpect("tests/feature_tests/polymorphism/116_virtual_safety_contract_outcome_generation", 0);
+}
+
+test "feature_tests/polymorphism/117X_virtual_safety_contract_outcome_invalidation" {
+    try buildExpectFail("tests/feature_tests/polymorphism/117X_virtual_safety_contract_outcome_invalidation", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/118X_virtual_safety_contract_outcome_unresolved" {
+    try buildExpectFail("tests/feature_tests/polymorphism/118X_virtual_safety_contract_outcome_unresolved", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/119X_virtual_safety_contract_outcome_later_invalidation" {
+    try buildExpectFail("tests/feature_tests/polymorphism/119X_virtual_safety_contract_outcome_later_invalidation", "reference depends on a root that has ended");
+}
+
+test "tests/feature_tests/polymorphism/120X_virtual_safety_contract_outcome_false_preservation" {
+    try buildExpectFail("tests/feature_tests/polymorphism/120X_virtual_safety_contract_outcome_false_preservation", "a storage transition is not permitted by this preservation contract");
+}
+
+test "tests/feature_tests/polymorphism/121_virtual_safety_contract_outcome_domain" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/121_virtual_safety_contract_outcome_domain");
+    try runExpect("tests/feature_tests/polymorphism/121_virtual_safety_contract_outcome_domain", 0);
+}
+
+test "tests/feature_tests/polymorphism/122X_virtual_safety_contract_outcome_domain_invalidation" {
+    try buildExpectFail("tests/feature_tests/polymorphism/122X_virtual_safety_contract_outcome_domain_invalidation", "reference depends on a root that has ended");
+}
+
+test "tests/feature_tests/polymorphism/123_virtual_safety_contract_outcome_copied_result" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/123_virtual_safety_contract_outcome_copied_result");
+    try runExpect("tests/feature_tests/polymorphism/123_virtual_safety_contract_outcome_copied_result", 0);
+}
+
+test "tests/feature_tests/polymorphism/124_virtual_safety_contract_outcome_named_output" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/124_virtual_safety_contract_outcome_named_output");
+    try runExpect("tests/feature_tests/polymorphism/124_virtual_safety_contract_outcome_named_output", 0);
+}
+
+test "tests/feature_tests/polymorphism/125_virtual_safety_contract_outcome_later_content_write" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/125_virtual_safety_contract_outcome_later_content_write");
+    try runExpect("tests/feature_tests/polymorphism/125_virtual_safety_contract_outcome_later_content_write", 0);
+}
+
+test "tests/feature_tests/polymorphism/126X_virtual_safety_contract_outcome_overwritten_result" {
+    try buildExpectFail("tests/feature_tests/polymorphism/126X_virtual_safety_contract_outcome_overwritten_result", "reference depends on a root that has ended");
+}
+
+test "tests/feature_tests/polymorphism/127_virtual_safety_contract_outcome_moved_result" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/127_virtual_safety_contract_outcome_moved_result");
+    try runExpect("tests/feature_tests/polymorphism/127_virtual_safety_contract_outcome_moved_result", 0);
+}
+
+test "feature_tests/polymorphism/128X_virtual_safety_contract_outcome_break_effect" {
+    try buildExpectFail("tests/feature_tests/polymorphism/128X_virtual_safety_contract_outcome_break_effect", "a storage transition is not permitted by this preservation contract");
+}
+
+test "feature_tests/polymorphism/129X_virtual_safety_contract_outcome_result_alias" {
+    try buildExpectFail("tests/feature_tests/polymorphism/129X_virtual_safety_contract_outcome_result_alias", "a storage transition is not permitted by this preservation contract");
+}
+
+test "feature_tests/polymorphism/130_virtual_safety_contract_nested_payload" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/130_virtual_safety_contract_nested_payload");
+    try runExpect("tests/feature_tests/polymorphism/130_virtual_safety_contract_nested_payload", 0);
+}
+
+test "feature_tests/polymorphism/131X_virtual_safety_contract_nested_dependency" {
+    try buildExpectFail("tests/feature_tests/polymorphism/131X_virtual_safety_contract_nested_dependency", "undeclared output dependency");
+}
+
+test "feature_tests/polymorphism/132X_virtual_safety_contract_nested_variant" {
+    try buildExpectFail("tests/feature_tests/polymorphism/132X_virtual_safety_contract_nested_variant", "unknown output variant");
+}
+
+test "feature_tests/polymorphism/133X_virtual_safety_contract_nested_nonchoice" {
+    try buildExpectFail("tests/feature_tests/polymorphism/133X_virtual_safety_contract_nested_nonchoice", "choice-valued output payload");
+}
+
+test "feature_tests/polymorphism/134_virtual_safety_contract_nested_common" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/134_virtual_safety_contract_nested_common");
+    try runExpect("tests/feature_tests/polymorphism/134_virtual_safety_contract_nested_common", 0);
+}
+
+test "feature_tests/polymorphism/135_virtual_safety_contract_nested_owner_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/135_virtual_safety_contract_nested_owner_cleanup");
+    try runExpect("tests/feature_tests/polymorphism/135_virtual_safety_contract_nested_owner_cleanup", 0);
+}
+
+test "feature_tests/polymorphism/136X_virtual_safety_contract_nested_owner_undeclared" {
+    try buildExpectFail("tests/feature_tests/polymorphism/136X_virtual_safety_contract_nested_owner_undeclared", "undeclared fresh output ownership");
+}
+
+test "feature_tests/polymorphism/137_nested_choice_owner_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/137_nested_choice_owner_cleanup");
+    try runExpect("tests/feature_tests/polymorphism/137_nested_choice_owner_cleanup", 0);
+}
+
+test "feature_tests/polymorphism/138X_virtual_nested_cleanup_effect" {
+    try buildExpectFail("tests/feature_tests/polymorphism/138X_virtual_nested_cleanup_effect", "a storage transition is not permitted");
+}
+
+test "feature_tests/polymorphism/139_virtual_nested_cleanup_effect" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/139_virtual_nested_cleanup_effect");
+    try runExpect("tests/feature_tests/polymorphism/139_virtual_nested_cleanup_effect", 0);
+}
+
+test "feature_tests/polymorphism/140_virtual_nested_generation" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/140_virtual_nested_generation");
+    try runExpect("tests/feature_tests/polymorphism/140_virtual_nested_generation", 0);
+}
+
+test "feature_tests/polymorphism/141X_virtual_nested_generation_invalidated" {
+    try buildExpectFail("tests/feature_tests/polymorphism/141X_virtual_nested_generation_invalidated", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/142X_virtual_nested_generation_outer_only" {
+    try buildExpectFail("tests/feature_tests/polymorphism/142X_virtual_nested_generation_outer_only", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/143X_virtual_nested_generation_preservation" {
+    try buildExpectFail("tests/feature_tests/polymorphism/143X_virtual_nested_generation_preservation", "a storage transition is not permitted");
+}
+
+test "feature_tests/polymorphism/145X_virtual_nested_generation_overwritten" {
+    try buildExpectFail("tests/feature_tests/polymorphism/145X_virtual_nested_generation_overwritten", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/146X_virtual_nested_generation_aliased_output" {
+    try buildExpectFail("tests/feature_tests/polymorphism/146X_virtual_nested_generation_aliased_output", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/144_virtual_nested_generation_repackaged" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/144_virtual_nested_generation_repackaged");
+    try runExpect("tests/feature_tests/polymorphism/144_virtual_nested_generation_repackaged", 0);
+}
+
+test "feature_tests/polymorphism/147_virtual_nested_generation_domain" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/147_virtual_nested_generation_domain");
+    try runExpect("tests/feature_tests/polymorphism/147_virtual_nested_generation_domain", 0);
+}
+
+test "feature_tests/polymorphism/148_virtual_generation_bound_forward" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/148_virtual_generation_bound_forward");
+    try runExpect("tests/feature_tests/polymorphism/148_virtual_generation_bound_forward", 0);
+}
+
+test "feature_tests/polymorphism/149_virtual_generation_bound_move" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/149_virtual_generation_bound_move");
+    try runExpect("tests/feature_tests/polymorphism/149_virtual_generation_bound_move", 0);
+}
+
+test "feature_tests/polymorphism/150X_virtual_generation_bound_reassigned" {
+    try buildExpectFail("tests/feature_tests/polymorphism/150X_virtual_generation_bound_reassigned", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/151X_virtual_generation_bound_exposed" {
+    try buildExpectFail("tests/feature_tests/polymorphism/151X_virtual_generation_bound_exposed", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/152X_virtual_generation_bound_later_call" {
+    try buildExpectFail("tests/feature_tests/polymorphism/152X_virtual_generation_bound_later_call", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/153X_virtual_generation_bound_loop" {
+    try buildExpectFail("tests/feature_tests/polymorphism/153X_virtual_generation_bound_loop", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/154_virtual_generation_bound_repackaged" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/154_virtual_generation_bound_repackaged");
+    try runExpect("tests/feature_tests/polymorphism/154_virtual_generation_bound_repackaged", 0);
+}
+
+test "feature_tests/polymorphism/155_virtual_generation_bound_content_write" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/155_virtual_generation_bound_content_write");
+    try runExpect("tests/feature_tests/polymorphism/155_virtual_generation_bound_content_write", 0);
+}
+
+test "feature_tests/polymorphism/156X_virtual_generation_bound_early_return" {
+    try buildExpectFail("tests/feature_tests/polymorphism/156X_virtual_generation_bound_early_return", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/157X_virtual_generation_bound_early_error" {
+    try buildExpectFail("tests/feature_tests/polymorphism/157X_virtual_generation_bound_early_error", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/158_virtual_consumes" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/158_virtual_consumes");
+    try runExpect("tests/feature_tests/polymorphism/158_virtual_consumes", 0);
+}
+
+test "feature_tests/polymorphism/159X_virtual_consumes_missing" {
+    try buildExpectFail("tests/feature_tests/polymorphism/159X_virtual_consumes_missing", "cannot prove consumes");
+}
+
+test "feature_tests/polymorphism/160X_virtual_consumes_conditional_body" {
+    try buildExpectFail("tests/feature_tests/polymorphism/160X_virtual_consumes_conditional_body", "cannot prove consumes");
+}
+
+test "feature_tests/polymorphism/161X_virtual_consumes_readonly" {
+    try buildExpectFail("tests/feature_tests/polymorphism/161X_virtual_consumes_readonly", "consumes requires a mutable reference input");
+}
+
+test "feature_tests/polymorphism/162X_virtual_consumes_byvalue" {
+    try buildExpectFail("tests/feature_tests/polymorphism/162X_virtual_consumes_byvalue", "consumes requires a mutable reference input");
+}
+
+test "feature_tests/polymorphism/163X_virtual_consumes_use_after" {
+    try buildExpectFail("tests/feature_tests/polymorphism/163X_virtual_consumes_use_after", "deinitialized");
+}
+
+test "feature_tests/polymorphism/164_virtual_consumes_alias" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/164_virtual_consumes_alias");
+    try runExpect("tests/feature_tests/polymorphism/164_virtual_consumes_alias", 0);
+}
+
+test "feature_tests/polymorphism/165_virtual_consumes_fields" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/165_virtual_consumes_fields");
+    try runExpect("tests/feature_tests/polymorphism/165_virtual_consumes_fields", 0);
+}
+
+test "feature_tests/polymorphism/168_virtual_consumes_guarded" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/168_virtual_consumes_guarded");
+    try runExpect("tests/feature_tests/polymorphism/168_virtual_consumes_guarded", 0);
+}
+
+test "feature_tests/polymorphism/169X_virtual_consumes_erased_self" {
+    try buildExpectFail("tests/feature_tests/polymorphism/169X_virtual_consumes_erased_self", "consumes on erased Self requires receiver cleanup identities");
+}
+
+test "feature_tests/polymorphism/166_virtual_consumes_multiple" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/166_virtual_consumes_multiple");
+    try runExpect("tests/feature_tests/polymorphism/166_virtual_consumes_multiple", 0);
+}
+
+test "feature_tests/polymorphism/167X_virtual_consumes_multiple_alias" {
+    try buildExpectFail("tests/feature_tests/polymorphism/167X_virtual_consumes_multiple_alias", "consumed inputs alias the same storage");
+}
+
+test "feature_tests/polymorphism/170X_virtual_consumes_external_write" {
+    try buildExpectFail("tests/feature_tests/polymorphism/170X_virtual_consumes_external_write", "a storage transition is not permitted");
+}
+
+test "feature_tests/polymorphism/171_virtual_consumes_large_return" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/171_virtual_consumes_large_return");
+    try runExpect("tests/feature_tests/polymorphism/171_virtual_consumes_large_return", 0);
+}
+
+test "feature_tests/polymorphism/172_virtual_consumes_reinitialize" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/172_virtual_consumes_reinitialize");
+    try runExpect("tests/feature_tests/polymorphism/172_virtual_consumes_reinitialize", 0);
+}
+
+test "feature_tests/polymorphism/173_virtual_relocates" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/173_virtual_relocates");
+    try runExpect("tests/feature_tests/polymorphism/173_virtual_relocates", 0);
+}
+
+test "feature_tests/polymorphism/174X_virtual_relocates_missing" {
+    try buildExpectFail("tests/feature_tests/polymorphism/174X_virtual_relocates_missing", "cannot prove relocates");
+}
+
+test "feature_tests/polymorphism/175X_virtual_relocates_occupied" {
+    try buildExpectFail("tests/feature_tests/polymorphism/175X_virtual_relocates_occupied", "relocate destination is initialized");
+}
+
+test "feature_tests/polymorphism/176X_virtual_relocates_use_after" {
+    try buildExpectFail("tests/feature_tests/polymorphism/176X_virtual_relocates_use_after", "moved");
+}
+
+test "feature_tests/polymorphism/177X_virtual_relocates_alias" {
+    try buildExpectFail("tests/feature_tests/polymorphism/177X_virtual_relocates_alias", "alias the same storage");
+}
+
+test "feature_tests/polymorphism/178_virtual_relocates_aliases" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/178_virtual_relocates_aliases");
+    try runExpect("tests/feature_tests/polymorphism/178_virtual_relocates_aliases", 0);
+}
+
+test "feature_tests/polymorphism/179X_virtual_relocates_readonly" {
+    try buildExpectFail("tests/feature_tests/polymorphism/179X_virtual_relocates_readonly", "relocates requires mutable reference");
+}
+
+test "feature_tests/polymorphism/180_virtual_relocates_fields" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/180_virtual_relocates_fields");
+    try runExpect("tests/feature_tests/polymorphism/180_virtual_relocates_fields", 0);
+}
+
+test "feature_tests/polymorphism/181X_virtual_relocates_conditional_body" {
+    try buildExpectFail("tests/feature_tests/polymorphism/181X_virtual_relocates_conditional_body", "cannot prove relocates");
+}
+
+test "feature_tests/polymorphism/182X_virtual_relocates_old_reference" {
+    try buildExpectFail("tests/feature_tests/polymorphism/182X_virtual_relocates_old_reference", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/183_virtual_relocates_allocation" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/183_virtual_relocates_allocation");
+    try runExpect("tests/feature_tests/polymorphism/183_virtual_relocates_allocation", 0);
+}
+
+test "feature_tests/polymorphism/225X_virtual_relocates_wrong_outcome" {
+    try buildExpectFail("tests/feature_tests/polymorphism/225X_virtual_relocates_wrong_outcome", "storage transition is not permitted by this preservation contract");
+}
+
+test "feature_tests/polymorphism/226X_virtual_relocates_inherited_consumes" {
+    try buildExpectFail("tests/feature_tests/polymorphism/226X_virtual_relocates_inherited_consumes", "relocates and consumes cannot target the same input");
+}
+
+test "feature_tests/polymorphism/227X_virtual_relocates_inherited_duplicate" {
+    try buildExpectFail("tests/feature_tests/polymorphism/227X_virtual_relocates_inherited_duplicate", "inherited relocates clauses cannot share");
+}
+
+test "feature_tests/polymorphism/228X_virtual_relocates_occupied" {
+    try buildExpectFail("tests/feature_tests/polymorphism/228X_virtual_relocates_occupied", "relocate destination is initialized");
+}
+
+test "feature_tests/polymorphism/229X_virtual_relocates_expired_reference" {
+    try buildExpectFail("tests/feature_tests/polymorphism/229X_virtual_relocates_expired_reference", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/230_virtual_relocates_multiple_outputs" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/230_virtual_relocates_multiple_outputs");
+    try runExpect("tests/feature_tests/polymorphism/230_virtual_relocates_multiple_outputs", 0);
+}
+
+test "feature_tests/polymorphism/231_virtual_relocates_nested" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/231_virtual_relocates_nested");
+    try runExpect("tests/feature_tests/polymorphism/231_virtual_relocates_nested", 0);
+}
+
+test "feature_tests/polymorphism/232_virtual_relocates_nested_inheritance" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/232_virtual_relocates_nested_inheritance");
+    try runExpect("tests/feature_tests/polymorphism/232_virtual_relocates_nested_inheritance", 0);
+}
+
+test "feature_tests/polymorphism/233X_virtual_relocates_correlated_outputs" {
+    try buildExpectFail("tests/feature_tests/polymorphism/233X_virtual_relocates_correlated_outputs", "shared inputs across outputs require correlated result facts");
+}
+
+test "feature_tests/polymorphism/234X_virtual_relocates_alternative_destinations" {
+    try buildExpectFail("tests/feature_tests/polymorphism/234X_virtual_relocates_alternative_destinations", "alternative relocates clauses sharing an input must describe the same source and destination");
+}
+
+test "feature_tests/polymorphism/235_virtual_relocates_forwarded_output" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/235_virtual_relocates_forwarded_output");
+    try runExpect("tests/feature_tests/polymorphism/235_virtual_relocates_forwarded_output", 0);
+}
+
+test "feature_tests/polymorphism/236_relocates_forwarded_output_moves" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/236_relocates_forwarded_output_moves");
+    try runExpect("tests/feature_tests/polymorphism/236_relocates_forwarded_output_moves", 0);
+}
+
+test "feature_tests/polymorphism/237X_relocates_forwarded_output_old_reference" {
+    try buildExpectFail("tests/feature_tests/polymorphism/237X_relocates_forwarded_output_old_reference", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/238X_forwarded_output_retains_other_effects" {
+    try buildExpectFail("tests/feature_tests/polymorphism/238X_forwarded_output_retains_other_effects", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/239X_forwarded_output_intervening_call" {
+    try buildExpectFail("tests/feature_tests/polymorphism/239X_forwarded_output_intervening_call", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/240X_forwarded_output_rewritten" {
+    try buildExpectFail("tests/feature_tests/polymorphism/240X_forwarded_output_rewritten", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/241_forwarded_output_preserves_selected_generation" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/241_forwarded_output_preserves_selected_generation");
+    try runExpect("tests/feature_tests/polymorphism/241_forwarded_output_preserves_selected_generation", 0);
+}
+
+test "feature_tests/polymorphism/242_forwarded_output_content_write" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/242_forwarded_output_content_write");
+    try runExpect("tests/feature_tests/polymorphism/242_forwarded_output_content_write", 0);
+}
+
+test "feature_tests/polymorphism/243_relocates_forwarded_output_repackaged" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/243_relocates_forwarded_output_repackaged");
+    try runExpect("tests/feature_tests/polymorphism/243_relocates_forwarded_output_repackaged", 0);
+}
+
+test "feature_tests/polymorphism/184_virtual_relocates_guarded" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/184_virtual_relocates_guarded");
+    try runExpect("tests/feature_tests/polymorphism/184_virtual_relocates_guarded", 0);
+}
+
+test "feature_tests/polymorphism/212_conditional_relocates_discard" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/212_conditional_relocates_discard");
+    try runExpect("tests/feature_tests/polymorphism/212_conditional_relocates_discard", 0);
+}
+
+test "feature_tests/polymorphism/213X_conditional_relocates_ambiguous" {
+    try buildExpectFail("tests/feature_tests/polymorphism/213X_conditional_relocates_ambiguous", "cannot select cleanup for conditional relocation");
+}
+
+test "feature_tests/polymorphism/214X_conditional_relocates_unselected" {
+    try buildExpectFail("tests/feature_tests/polymorphism/214X_conditional_relocates_unselected", "maybe_initialized and cannot be used");
+}
+
+test "feature_tests/polymorphism/215X_conditional_relocates_old_reference" {
+    try buildExpectFail("tests/feature_tests/polymorphism/215X_conditional_relocates_old_reference", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/216_conditional_relocates_large" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/216_conditional_relocates_large");
+    try runExpect("tests/feature_tests/polymorphism/216_conditional_relocates_large", 0);
+}
+
+test "feature_tests/polymorphism/217_conditional_relocates_refinement" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/217_conditional_relocates_refinement");
+    try runExpect("tests/feature_tests/polymorphism/217_conditional_relocates_refinement", 0);
+}
+
+test "feature_tests/polymorphism/218X_conditional_relocates_moved_source" {
+    try buildExpectFail("tests/feature_tests/polymorphism/218X_conditional_relocates_moved_source", "moved and cannot be used");
+}
+
+test "feature_tests/polymorphism/219X_conditional_relocates_preserved_destination" {
+    try buildExpectFail("tests/feature_tests/polymorphism/219X_conditional_relocates_preserved_destination", "value was deinitialized");
+}
+
+test "feature_tests/polymorphism/220X_conditional_relocates_old_result" {
+    try buildExpectFail("tests/feature_tests/polymorphism/220X_conditional_relocates_old_result", "maybe_initialized and cannot be used");
+}
+
+test "feature_tests/polymorphism/221_conditional_relocates_allocation" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/221_conditional_relocates_allocation");
+    try runExpect("tests/feature_tests/polymorphism/221_conditional_relocates_allocation", 0);
+}
+
+test "feature_tests/polymorphism/222X_conditional_relocates_local_escape" {
+    try buildExpectFail("tests/feature_tests/polymorphism/222X_conditional_relocates_local_escape", "local storage generation");
+}
+
+test "feature_tests/polymorphism/223X_conditional_relocates_shared_source" {
+    try buildExpectFail("tests/feature_tests/polymorphism/223X_conditional_relocates_shared_source", "alias the same storage");
+}
+
+test "feature_tests/polymorphism/224X_conditional_relocates_scope_reference" {
+    try buildExpectFail("tests/feature_tests/polymorphism/224X_conditional_relocates_scope_reference", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/185_virtual_referent_local_chain" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/185_virtual_referent_local_chain");
+    try runExpect("tests/feature_tests/polymorphism/185_virtual_referent_local_chain", 0);
+}
+
+test "feature_tests/polymorphism/186_virtual_transfer_local_chain" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/186_virtual_transfer_local_chain");
+    try runExpect("tests/feature_tests/polymorphism/186_virtual_transfer_local_chain", 0);
+}
+
+test "feature_tests/polymorphism/187X_virtual_referent_reassigned_local" {
+    try buildExpectFail("tests/feature_tests/polymorphism/187X_virtual_referent_reassigned_local", "cannot prove refers_to");
+}
+
+test "feature_tests/polymorphism/188X_virtual_transfer_hidden_call" {
+    try buildExpectFail("tests/feature_tests/polymorphism/188X_virtual_transfer_hidden_call", "cannot prove transfers");
+}
+
+test "feature_tests/polymorphism/189X_virtual_referent_wrong_local" {
+    try buildExpectFail("tests/feature_tests/polymorphism/189X_virtual_referent_wrong_local", "cannot prove refers_to");
+}
+
+test "feature_tests/polymorphism/190X_virtual_transfer_reconstructed_local" {
+    try buildExpectFail("tests/feature_tests/polymorphism/190X_virtual_transfer_reconstructed_local", "cannot prove transfers");
+}
+
+test "feature_tests/polymorphism/191_conditional_consumption_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/191_conditional_consumption_cleanup");
+    try runExpect("tests/feature_tests/polymorphism/191_conditional_consumption_cleanup", 0);
+}
+
+test "feature_tests/polymorphism/192_conditional_consumption_cleanup_alias" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/192_conditional_consumption_cleanup_alias");
+    try runExpect("tests/feature_tests/polymorphism/192_conditional_consumption_cleanup_alias", 0);
+}
+
+test "feature_tests/polymorphism/193_conditional_consumption_cleanup_large" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/193_conditional_consumption_cleanup_large");
+    try runExpect("tests/feature_tests/polymorphism/193_conditional_consumption_cleanup_large", 0);
+}
+
+test "feature_tests/polymorphism/194_conditional_consumption_cleanup_outputs" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/194_conditional_consumption_cleanup_outputs");
+    try runExpect("tests/feature_tests/polymorphism/194_conditional_consumption_cleanup_outputs", 0);
+}
+
+test "feature_tests/polymorphism/195X_conditional_consumption_unselected_cleanup" {
+    try buildExpectFail("tests/feature_tests/polymorphism/195X_conditional_consumption_unselected_cleanup", "cannot select cleanup for conditional consumption");
+}
+
+test "feature_tests/polymorphism/196X_conditional_consumption_ambiguous_cleanup" {
+    try buildExpectFail("tests/feature_tests/polymorphism/196X_conditional_consumption_ambiguous_cleanup", "cannot select cleanup for conditional consumption");
+}
+
+test "feature_tests/polymorphism/197_conditional_consumption_multiple_owners" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/197_conditional_consumption_multiple_owners");
+    try runExpect("tests/feature_tests/polymorphism/197_conditional_consumption_multiple_owners", 0);
+}
+
+test "feature_tests/polymorphism/198X_conditional_consumption_aliased_owners" {
+    try buildExpectFail("tests/feature_tests/polymorphism/198X_conditional_consumption_aliased_owners", "consumed inputs alias the same storage");
+}
+
+test "feature_tests/polymorphism/199_conditional_consumption_preserving_state" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/199_conditional_consumption_preserving_state");
+    try runExpect("tests/feature_tests/polymorphism/199_conditional_consumption_preserving_state", 0);
+}
+
+test "feature_tests/polymorphism/200_virtual_conditional_consumption" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/200_virtual_conditional_consumption");
+    try runExpect("tests/feature_tests/polymorphism/200_virtual_conditional_consumption", 0);
+}
+
+test "feature_tests/polymorphism/201X_virtual_conditional_consumption_missing" {
+    try buildExpectFail("tests/feature_tests/polymorphism/201X_virtual_conditional_consumption_missing", "cannot prove consumes");
+}
+
+test "feature_tests/polymorphism/202X_conditional_consumption_use_after" {
+    try buildExpectFail("tests/feature_tests/polymorphism/202X_conditional_consumption_use_after", "deinitialized");
+}
+
+test "feature_tests/polymorphism/203X_conditional_consumption_before_selection" {
+    try buildExpectFail("tests/feature_tests/polymorphism/203X_conditional_consumption_before_selection", "maybe_initialized");
+}
+
+test "feature_tests/polymorphism/204X_conditional_consumption_stale_result" {
+    try buildExpectFail("tests/feature_tests/polymorphism/204X_conditional_consumption_stale_result", "maybe_initialized");
+}
+
+test "feature_tests/polymorphism/205X_conditional_consumption_expired_field" {
+    try buildExpectFail("tests/feature_tests/polymorphism/205X_conditional_consumption_expired_field", "root that has ended");
+}
+
+test "feature_tests/polymorphism/206_conditional_consumption_allocation" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/206_conditional_consumption_allocation");
+    try runExpect("tests/feature_tests/polymorphism/206_conditional_consumption_allocation", 0);
+}
+
+test "feature_tests/polymorphism/207_virtual_conditional_consumption_outputs" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/207_virtual_conditional_consumption_outputs");
+    try runExpect("tests/feature_tests/polymorphism/207_virtual_conditional_consumption_outputs", 0);
+}
+
+test "feature_tests/polymorphism/208_virtual_nested_conditional_consumption" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/208_virtual_nested_conditional_consumption");
+    try runExpect("tests/feature_tests/polymorphism/208_virtual_nested_conditional_consumption", 0);
+}
+
+test "feature_tests/polymorphism/209X_virtual_conditional_consumption_wrong_variant" {
+    try buildExpectFail("tests/feature_tests/polymorphism/209X_virtual_conditional_consumption_wrong_variant", "storage transition is not permitted");
+}
+
+test "feature_tests/polymorphism/210_virtual_nested_consumption_inherited" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/210_virtual_nested_consumption_inherited");
+    try runExpect("tests/feature_tests/polymorphism/210_virtual_nested_consumption_inherited", 0);
+}
+
+test "feature_tests/polymorphism/246_virtual_opaque_storage" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/246_virtual_opaque_storage");
+    try runExpect("tests/feature_tests/polymorphism/246_virtual_opaque_storage", 0);
+}
+
+test "feature_tests/polymorphism/247X_opaque_storage_missing_empty" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/247X_opaque_storage_missing_empty", "cannot prove empties", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/248X_opaque_storage_conditional" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/248X_opaque_storage_conditional", "conditional opaque storage clauses require correlated hidden storage post-states", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/249X_opaque_storage_erased_receiver" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/249X_opaque_storage_erased_receiver", "opaque storage clauses on erased Self require mapped hidden storage identities", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/250X_opaque_storage_wrong_input" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/250X_opaque_storage_wrong_input", "storage transition is not permitted", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/251X_opaque_storage_extracted_local_escape" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/251X_opaque_storage_extracted_local_escape", "function output cannot depend on a local storage generation", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/252X_opaque_storage_retained_local_escape" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/252X_opaque_storage_retained_local_escape", "function output cannot depend on a local storage generation", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/253X_opaque_storage_backing_reference" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/253X_opaque_storage_backing_reference", "undeclared output dependency", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/254X_opaque_storage_branch_empty" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/254X_opaque_storage_branch_empty", "cannot prove empties", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/255_opaque_storage_discards_input" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/255_opaque_storage_discards_input");
+    try runExpect("tests/feature_tests/polymorphism/255_opaque_storage_discards_input", 0);
+}
+
+test "feature_tests/polymorphism/256X_opaque_storage_old_owner_reference" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/256X_opaque_storage_old_owner_reference", "opaque ownership storage requires no live external aliases to the consumed root", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/257_opaque_storage_returned_owner" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/257_opaque_storage_returned_owner");
+    try runExpect("tests/feature_tests/polymorphism/257_opaque_storage_returned_owner", 0);
+}
+
+test "feature_tests/polymorphism/260_virtual_multiple_storage_sources" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/260_virtual_multiple_storage_sources");
+    try runExpect("tests/feature_tests/polymorphism/260_virtual_multiple_storage_sources", 0);
+}
+
+test "feature_tests/polymorphism/262_virtual_internal_storage" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/262_virtual_internal_storage");
+    try runExpect("tests/feature_tests/polymorphism/262_virtual_internal_storage", 0);
+}
+
+test "feature_tests/polymorphism/263X_internal_storage_extracted_local_escape" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/263X_internal_storage_extracted_local_escape", "function output cannot depend on a local storage generation", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/264X_internal_storage_retained_local_escape" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/264X_internal_storage_retained_local_escape", "function output cannot depend on a local storage generation", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/265_internal_storage_returned_owner" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/265_internal_storage_returned_owner");
+    try runExpect("tests/feature_tests/polymorphism/265_internal_storage_returned_owner", 0);
+}
+
+test "feature_tests/polymorphism/266X_internal_storage_grouped_domain" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/266X_internal_storage_grouped_domain", "opaque storage effects require one mapped storage identity", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/267X_internal_storage_readonly_receiver" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/267X_internal_storage_readonly_receiver", "retains and empties require mutable storage references", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/268X_internal_storage_reference_mapping" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/268X_internal_storage_reference_mapping", "opaque storage domain mappings cannot select reference fields", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/269_internal_storage_owning_payload" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/269_internal_storage_owning_payload");
+    try runExpect("tests/feature_tests/polymorphism/269_internal_storage_owning_payload", 0);
+}
+
+test "feature_tests/polymorphism/270X_internal_storage_old_owner_alias" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/270X_internal_storage_old_owner_alias", "opaque ownership storage requires no live external aliases to the consumed root", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/271_internal_storage_independent_domains" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/271_internal_storage_independent_domains");
+    try runExpect("tests/feature_tests/polymorphism/271_internal_storage_independent_domains", 0);
+}
+
+test "feature_tests/polymorphism/272X_internal_storage_wrong_domain" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/272X_internal_storage_wrong_domain", "storage transition is not permitted", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/273_internal_storage_nested_mapping" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/273_internal_storage_nested_mapping");
+    try runExpect("tests/feature_tests/polymorphism/273_internal_storage_nested_mapping", 0);
+}
+
+test "feature_tests/polymorphism/274_virtual_internal_storage_layouts" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/274_virtual_internal_storage_layouts");
+    try runExpect("tests/feature_tests/polymorphism/274_virtual_internal_storage_layouts", 0);
+}
+
+test "feature_tests/polymorphism/275X_internal_storage_plain_value_escape" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/275X_internal_storage_plain_value_escape", "function output cannot depend on a local storage generation", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/276_internal_storage_plain_value" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/276_internal_storage_plain_value");
+    try runExpect("tests/feature_tests/polymorphism/276_internal_storage_plain_value", 0);
+}
+
+test "feature_tests/polymorphism/277_virtual_generic_internal_storage" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/277_virtual_generic_internal_storage");
+    try runExpect("tests/feature_tests/polymorphism/277_virtual_generic_internal_storage", 0);
+}
+
+test "feature_tests/polymorphism/261X_multiple_storage_second_local_escape" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/261X_multiple_storage_second_local_escape", "function output cannot depend on a local storage generation", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/258X_opaque_storage_forwarded_local_escape" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/258X_opaque_storage_forwarded_local_escape", "function output cannot depend on a local storage generation", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/259X_opaque_storage_forwarded_extraction_escape" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/259X_opaque_storage_forwarded_extraction_escape", "function output cannot depend on a local storage generation", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/244_core_argument_source" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/244_core_argument_source");
+    try runExpect("tests/feature_tests/polymorphism/244_core_argument_source", 0);
+}
+
+test "feature_tests/polymorphism/245X_core_argument_source_escape" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/245X_core_argument_source_escape", "function output cannot depend on a local storage generation", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/211X_conditional_consumption_replaces_dependency" {
+    try buildExpectFail("tests/feature_tests/polymorphism/211X_conditional_consumption_replaces_dependency", "maybe_initialized");
+}
+
+test "feature_tests/ownership/360X_opaque_plain_output_escape" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/ownership/360X_opaque_plain_output_escape", "function output cannot depend on a local storage generation", "failed without a diagnostic");
+}
+
+test "feature_tests/ownership/361_opaque_plain_output_caller" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/361_opaque_plain_output_caller");
+    try runExpect("tests/feature_tests/ownership/361_opaque_plain_output_caller", 0);
+}
+
+test "feature_tests/polymorphism/278_conditional_storage_extraction" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/278_conditional_storage_extraction");
+    try runExpect("tests/feature_tests/polymorphism/278_conditional_storage_extraction", 0);
+}
+
+test "feature_tests/polymorphism/279X_conditional_storage_extraction_escape" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/279X_conditional_storage_extraction_escape", "function output cannot depend on a local storage generation", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/280X_conditional_storage_wrong_variant" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/280X_conditional_storage_wrong_variant", "undeclared output dependency", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/281_nested_conditional_storage_extraction" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/281_nested_conditional_storage_extraction");
+    try runExpect("tests/feature_tests/polymorphism/281_nested_conditional_storage_extraction", 0);
+}
+
+test "feature_tests/polymorphism/282X_conditional_storage_inherited_identity" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/282X_conditional_storage_inherited_identity", "from_storage cannot be combined with exact transfers for the same output", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/283_conditional_storage_other_output" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/283_conditional_storage_other_output");
+    try runExpect("tests/feature_tests/polymorphism/283_conditional_storage_other_output", 0);
+}
+test "feature_tests/polymorphism/284_conditional_storage_empty" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/284_conditional_storage_empty");
+    try runExpect("tests/feature_tests/polymorphism/284_conditional_storage_empty", 0);
+}
+
+test "feature_tests/polymorphism/285X_conditional_storage_empty_unselected" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/285X_conditional_storage_empty_unselected", "function output cannot depend on a local storage generation", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/286_conditional_storage_empty_returned_owner" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/286_conditional_storage_empty_returned_owner");
+    try runExpect("tests/feature_tests/polymorphism/286_conditional_storage_empty_returned_owner", 0);
+}
+
+test "feature_tests/polymorphism/287X_conditional_storage_empty_repopulated" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/287X_conditional_storage_empty_repopulated", "function output cannot depend on a local storage generation", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/288X_conditional_storage_empty_second_call" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/288X_conditional_storage_empty_second_call", "function output cannot depend on a local storage generation", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/289X_conditional_storage_empty_missing" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/289X_conditional_storage_empty_missing", "cannot prove empties", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/290_concrete_conditional_storage_empty" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/290_concrete_conditional_storage_empty");
+    try runExpect("tests/feature_tests/polymorphism/290_concrete_conditional_storage_empty", 0);
+}
+
+test "feature_tests/polymorphism/291_nested_conditional_storage_empty" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/291_nested_conditional_storage_empty");
+    try runExpect("tests/feature_tests/polymorphism/291_nested_conditional_storage_empty", 0);
+}
+
+test "feature_tests/polymorphism/292X_conditional_storage_empty_preserving_result" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/292X_conditional_storage_empty_preserving_result", "function output cannot depend on a local storage generation", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/293X_conditional_storage_empty_overwritten_result" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/293X_conditional_storage_empty_overwritten_result", "function output cannot depend on a local storage generation", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/294_conditional_storage_empty_known_input" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/294_conditional_storage_empty_known_input");
+    try runExpect("tests/feature_tests/polymorphism/294_conditional_storage_empty_known_input", 0);
+}
+
+test "feature_tests/polymorphism/295_conditional_storage_extraction_and_empty" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/295_conditional_storage_extraction_and_empty");
+    try runExpect("tests/feature_tests/polymorphism/295_conditional_storage_extraction_and_empty", 0);
+}
+
+test "feature_tests/polymorphism/296X_conditional_storage_extracted_local_escape" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/296X_conditional_storage_extracted_local_escape", "function output cannot depend on a local storage generation", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/297X_virtual_receiver_ended_opaque_contents" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/297X_virtual_receiver_ended_opaque_contents", "receiver contents depend on a root that has ended", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/298X_direct_virtual_receiver_ended_opaque_contents" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/298X_direct_virtual_receiver_ended_opaque_contents", "receiver contents depend on a root that has ended", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/299X_static_receiver_ended_opaque_contents" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/299X_static_receiver_ended_opaque_contents", "opaque contents depend on a root that has ended", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/300X_concrete_receiver_ended_opaque_contents" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/300X_concrete_receiver_ended_opaque_contents", "opaque contents depend on a root that has ended", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/302X_concrete_read_ended_opaque_contents" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/302X_concrete_read_ended_opaque_contents", "opaque contents depend on a root that has ended", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/301_opaque_metadata_cleanup_after_referent" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/301_opaque_metadata_cleanup_after_referent");
+    try runExpect("tests/feature_tests/polymorphism/301_opaque_metadata_cleanup_after_referent", 0);
+}
+
+test "feature_tests/polymorphism/303_concrete_opaque_contents_live" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/303_concrete_opaque_contents_live");
+    try runExpect("tests/feature_tests/polymorphism/303_concrete_opaque_contents_live", 0);
+}
+
+test "feature_tests/polymorphism/304X_opaque_cleanup_ended_referent" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/304X_opaque_cleanup_ended_referent", "opaque contents depend on a root that has ended", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/305_input_choice_reference_selection" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/305_input_choice_reference_selection");
+    try runExpect("tests/feature_tests/polymorphism/305_input_choice_reference_selection", 0);
+}
+
+test "feature_tests/polymorphism/306X_input_choice_selected_expired_reference" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/306X_input_choice_selected_expired_reference", "root that has ended", "failed without a diagnostic");
+}
+
+test "tests/feature_tests/polymorphism/307_joint_input_choice_reference_selection" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/307_joint_input_choice_reference_selection");
+    try runExpect("tests/feature_tests/polymorphism/307_joint_input_choice_reference_selection", 0);
+}
+
+test "tests/feature_tests/polymorphism/308X_joint_input_choice_selected_expired_reference" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/308X_joint_input_choice_selected_expired_reference", "root that has ended", "failed without a diagnostic");
+}
+
+test "tests/feature_tests/polymorphism/309X_input_choice_rewritten_result" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/309X_input_choice_rewritten_result", "root that has ended", "failed without a diagnostic");
+}
+
+test "tests/feature_tests/polymorphism/310X_input_choice_unknown_result" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/310X_input_choice_unknown_result", "root that has ended", "failed without a diagnostic");
+}
+
+test "tests/feature_tests/polymorphism/311_input_choice_literal_wrapper" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/311_input_choice_literal_wrapper");
+    try runExpect("tests/feature_tests/polymorphism/311_input_choice_literal_wrapper", 0);
+}
+
+test "feature_tests/polymorphism/312X_input_choice_enclosing_result_rewrite" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/312X_input_choice_enclosing_result_rewrite", "root that has ended", "failed without a diagnostic");
+}
+
+test "tests/feature_tests/polymorphism/313_abstract_input_choice_contract" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/313_abstract_input_choice_contract");
+    try runExpect("tests/feature_tests/polymorphism/313_abstract_input_choice_contract", 0);
+}
+
+test "tests/feature_tests/polymorphism/314_abstract_joint_output_contract" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/314_abstract_joint_output_contract");
+    try runExpect("tests/feature_tests/polymorphism/314_abstract_joint_output_contract", 0);
+}
+
+test "tests/feature_tests/polymorphism/315X_abstract_joint_output_partial_proof" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/315X_abstract_joint_output_partial_proof", "root that has ended", "failed without a diagnostic");
+}
+
+test "tests/feature_tests/polymorphism/316X_abstract_joint_output_wrong_implementation" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/316X_abstract_joint_output_wrong_implementation", "Abstract safety contract", "failed without a diagnostic");
+}
+
+test "tests/feature_tests/polymorphism/317X_abstract_joint_output_overwritten_selector" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/317X_abstract_joint_output_overwritten_selector", "root that has ended", "failed without a diagnostic");
+}
+
+test "tests/feature_tests/polymorphism/318_abstract_joint_output_copied_selectors" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/318_abstract_joint_output_copied_selectors");
+    try runExpect("tests/feature_tests/polymorphism/318_abstract_joint_output_copied_selectors", 0);
+}
+
+test "tests/feature_tests/polymorphism/319X_abstract_joint_output_independent_call" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/319X_abstract_joint_output_independent_call", "root that has ended", "failed without a diagnostic");
+}
+
+test "tests/feature_tests/polymorphism/320_abstract_joint_output_forwarding" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/320_abstract_joint_output_forwarding");
+    try runExpect("tests/feature_tests/polymorphism/320_abstract_joint_output_forwarding", 0);
+}
+
+test "tests/feature_tests/polymorphism/321_abstract_reference_input_entry_choice" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/321_abstract_reference_input_entry_choice");
+    try runExpect("tests/feature_tests/polymorphism/321_abstract_reference_input_entry_choice", 0);
+}
+
+test "tests/feature_tests/polymorphism/322_abstract_joint_input_choices" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/322_abstract_joint_input_choices");
+    try runExpect("tests/feature_tests/polymorphism/322_abstract_joint_input_choices", 0);
+}
+
+test "tests/feature_tests/polymorphism/323_abstract_mixed_input_output_choices" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/323_abstract_mixed_input_output_choices");
+    try runExpect("tests/feature_tests/polymorphism/323_abstract_mixed_input_output_choices", 0);
+}
+
+test "tests/feature_tests/polymorphism/324X_abstract_joint_output_later_invalidation" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/324X_abstract_joint_output_later_invalidation", "root that has ended", "failed without a diagnostic");
+}
+
+test "tests/feature_tests/polymorphism/325X_abstract_input_choice_wrong_implementation" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/325X_abstract_input_choice_wrong_implementation", "undeclared output dependency", "failed without a diagnostic");
+}
+
+test "tests/feature_tests/polymorphism/326X_abstract_joint_conditional_consumption" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/326X_abstract_joint_conditional_consumption", "joint choice conditions cannot conditionally consume or relocate owners", "failed without a diagnostic");
+}
+
+test "tests/feature_tests/polymorphism/327_abstract_input_guards_common_consumption" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/327_abstract_input_guards_common_consumption");
+    try runExpect("tests/feature_tests/polymorphism/327_abstract_input_guards_common_consumption", 0);
 }

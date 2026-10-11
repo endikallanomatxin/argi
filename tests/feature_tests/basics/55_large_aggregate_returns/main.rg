@@ -1,5 +1,7 @@
-BufferSource : Abstract = (read(.self: &Self) -> (.bytes: [65536]UInt8))
-Source : Type = ()
+BufferSource: Abstract = (read(.self: &Self) -> (.bytes: [65536]UInt8) where {})
+
+Source: Type = ()
+
 Source implements BufferSource
 
 read(.self: &Source) -> (.bytes: [65536]UInt8) := {

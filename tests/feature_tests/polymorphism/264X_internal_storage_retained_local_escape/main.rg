@@ -1,0 +1,51 @@
+unsafe_allocation := import("../../_support/unsafe_allocation")
+
+Tracked: Type = (.drops: $&Int32)
+Tracked deinit(.self: $&Tracked) -> () := { self&.drops& = self&.drops& + 1 }
+
+SlotProtocol: Abstract = (
+    domain contents
+
+    put(.self: $&Self, .value: Tracked) -> () where retains(self.contents, value)
+    take(.self: $&Self) -> (.value: Tracked) where {
+        owns(value)
+        from_storage(value, self.contents)
+        empties(self.contents)
+    }
+)
+
+Slot: Type = (.storage: Allocation)
+Slot implements SlotProtocol where { contents(self.storage) }
+
+put(.self: $&Slot, .value: Tracked) -> () := {
+    slot ::= trusted_mutable_reinterpret_reference#(UInt8, Tracked)(
+        unsafe_allocation.trusted_allocation_byte_rw($&self&.storage, 0).reference).reference
+    trusted_opaque_move_in#(Tracked, Allocation)($&self&.storage, slot, ~value)
+}
+
+take(.self: $&Slot) -> (.value: Tracked) := {
+    slot ::= trusted_mutable_reinterpret_reference#(UInt8, Tracked)(
+        unsafe_allocation.trusted_allocation_byte_rw($&self&.storage, 0).reference).reference
+    value = trusted_opaque_move_out#(Tracked, Allocation)($&self&.storage, slot)
+    trusted_opaque_mark_empty($&self&.storage)
+}
+
+forward_put(.slot: $&Virtual#(SlotProtocol), .value: Tracked) -> () := {
+    put(slot, ~value)
+}
+
+forward_take(.slot: $&Virtual#(SlotProtocol)) -> (.value: Tracked) := {
+    value = take(slot)
+}
+
+escape(.allocator: $&GeneralPurposeAllocator) -> (.result: Slot) := {
+    drops :: Int32 = 0
+    implementation ::= Slot(unwrap_or_abort(allocate#(Tracked)(allocator)))
+    slot ::= to_virtual#(SlotProtocol)($&implementation)
+    forward_put($&slot, Tracked($&drops))
+    result = ~implementation
+}
+main(.system: System) -> () := {
+    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    result ::= escape(allocator)
+}

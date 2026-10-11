@@ -3,7 +3,13 @@
 Allocator: Abstract = (
     allocate(.self: $&Self, .size: UIntNative, .alignment: UIntNative) -> (
         .result : Errable#(Allocation, (..out_of_memory))
-    )
+    ) where {
+        on result ..ok {
+            owns(result)
+            depends_on(result, self, size, alignment)
+        }
+        on result ..error { depends_on(result, error_tracer) }
+    }
 )
 
 -- Every implementation checks this low-level precondition before acquiring
@@ -25,7 +31,7 @@ Deallocator: Abstract = (
         .data      : RawPointer#(.t: UInt8),
         .size      : UIntNative,
         .alignment : UIntNative
-    ) -> ()
+    ) -> () where {}
 )
 
 -- This compatibility overload is for callers requesting byte storage. The

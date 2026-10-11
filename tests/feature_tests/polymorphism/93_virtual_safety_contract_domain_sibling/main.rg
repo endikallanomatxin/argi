@@ -1,0 +1,41 @@
+Source: Abstract = (
+    domain storage
+    domain sibling
+    get(.self: &Self) -> (.value: &Int32) where depends_on(value, self.storage)
+    reset(.self: $&Self) -> () where invalidates(self.storage)
+)
+
+Cell: Type = (.value: Int32, .other: Int32)
+
+Cell implements Source where {
+    storage(self.value)
+    sibling(self.other)
+}
+
+get(.self: &Cell) -> (.value: &Int32) := {
+    value = &self&.value
+}
+
+reset(.self: $&Cell) -> () := {
+    self&.value = 42
+}
+
+borrow(.source: &Virtual#(Source)) -> (.value: &Int32) := {
+    value = get(source)
+}
+
+reset_source(.source: $&Virtual#(Source)) -> () := {
+    reset(source)
+}
+
+main() -> (.status_code: Int32 = 0) := {
+    cell ::= Cell(41, 9)
+    source ::= to_virtual#(Source)($&cell)
+    independent ::= &cell.other
+    before ::= borrow(&source)
+    if before&!= 41 { status_code = 1 }
+    reset_source($&source)
+    if independent&!= 9 { status_code = 1 }
+    after ::= borrow(&source)
+    if after&!= 42 { status_code = 1 }
+}

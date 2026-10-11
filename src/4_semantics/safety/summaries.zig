@@ -107,7 +107,57 @@ pub const Engine = struct {
     }
 };
 
+/// Publish legacy outcome partitions in the general condition vocabulary while
+/// retaining their unconditional fallback. The effect records are complete
+/// approximations, not patches that may erase unrepresented caller effects.
+/// Allocations belong to the immutable summary arena.
+pub fn withOutcomeGuards(allocator: std.mem.Allocator, summary: facts.SafetySummary) !facts.SafetySummary {
+    if (summary.guarded_effects.len != 0 or summary.outcome_post_states.len == 0) return summary;
+    var guards: std.ArrayList(facts.GuardedSafetyEffects) = .empty;
+    defer guards.deinit(allocator);
+    for (summary.outcome_post_states) |outcome| {
+        if (!outcome.reachable) continue;
+        const projections = try allocator.alloc(facts.Projection, outcome.parent_variants.len);
+        for (outcome.parent_variants, projections) |variant, *projection| projection.* = .{ .variant = variant };
+        const condition = try @import("choice_conditions.zig").normalize(allocator, &.{.{
+            .subject = .output,
+            .index = outcome.output_index,
+            .projections = projections,
+            .variant_index = outcome.variant_index,
+        }});
+        const effects = try allocator.create(facts.SafetySummary);
+        effects.* = summary;
+        effects.guarded_effects = &.{};
+        effects.outcome_post_states = &.{};
+        effects.input_post_states = outcome.input_post_states;
+        effects.invalidated_domains = outcome.invalidated_domains;
+        effects.opaque_storage_empties = outcome.opaque_storage_empties;
+        try guards.append(allocator, .{ .origin = .outcome_partition, .conditions = condition, .effects = effects });
+    }
+    var result = summary;
+    result.guarded_effects = try guards.toOwnedSlice(allocator);
+    return result;
+}
+
+/// Refresh only the compatibility records affected by domain normalization.
+/// General conjunctive records remain immutable and retain their identities.
+pub fn refreshOutcomeGuards(allocator: std.mem.Allocator, summary: facts.SafetySummary) !facts.SafetySummary {
+    var general: std.ArrayList(facts.GuardedSafetyEffects) = .empty;
+    defer general.deinit(allocator);
+    for (summary.guarded_effects) |guarded| if (guarded.origin == .general) try general.append(allocator, guarded);
+    var result = summary;
+    result.guarded_effects = &.{};
+    result = try withOutcomeGuards(allocator, result);
+    result.guarded_effects = try std.mem.concat(allocator, facts.GuardedSafetyEffects, &.{ general.items, result.guarded_effects });
+    return result;
+}
+
 pub fn summaryEql(a: facts.SafetySummary, b: facts.SafetySummary) bool {
+    if (a.guarded_returns_complete != b.guarded_returns_complete or a.guarded_effects.len != b.guarded_effects.len) return false;
+    for (a.guarded_effects, b.guarded_effects) |left, right| {
+        if (left.origin != right.origin or !left.conditions.eql(right.conditions) or !summaryEql(left.effects.*, right.effects.*)) return false;
+    }
+    if (!domainsEql(a.invalidated_domains, b.invalidated_domains)) return false;
     if (a.storage_capability_conflicts.len != b.storage_capability_conflicts.len) return false;
     for (a.storage_capability_conflicts, b.storage_capability_conflicts) |left, right|
         if (!inputPathEql(left.first, right.first) or !inputPathEql(left.second, right.second)) return false;
@@ -116,6 +166,7 @@ pub fn summaryEql(a: facts.SafetySummary, b: facts.SafetySummary) bool {
         if (!inputPathEql(left.target, right.target) or left.minimum != right.minimum or left.maximum != right.maximum) return false;
     if (a.outputs.len != b.outputs.len or
         a.required_live_inputs.len != b.required_live_inputs.len or
+        a.required_opaque_inputs.len != b.required_opaque_inputs.len or
         a.input_post_states.len != b.input_post_states.len or
         a.outcome_post_states.len != b.outcome_post_states.len or
         a.opaque_storage_effects.len != b.opaque_storage_effects.len or
@@ -123,9 +174,12 @@ pub fn summaryEql(a: facts.SafetySummary, b: facts.SafetySummary) bool {
 
     for (a.outputs, b.outputs) |left, right| if (!valueEffectEql(left, right)) return false;
     for (a.required_live_inputs, b.required_live_inputs) |left, right| if (!inputPathEql(left, right)) return false;
+    for (a.required_opaque_inputs, b.required_opaque_inputs) |left, right| if (!inputPathEql(left, right)) return false;
     for (a.input_post_states, b.input_post_states) |left, right| if (!postStateEql(left, right)) return false;
     for (a.outcome_post_states, b.outcome_post_states) |left, right| {
-        if (left.variant_index != right.variant_index or left.input_post_states.len != right.input_post_states.len) return false;
+        if (left.reachable != right.reachable or !std.mem.eql(u32, left.parent_variants, right.parent_variants) or left.output_index != right.output_index or left.variant_index != right.variant_index or left.input_post_states.len != right.input_post_states.len or left.invalidated_domains.len != right.invalidated_domains.len or left.opaque_storage_empties.len != right.opaque_storage_empties.len) return false;
+        for (left.opaque_storage_empties, right.opaque_storage_empties) |a_path, b_path| if (!inputPathEql(a_path, b_path)) return false;
+        for (left.invalidated_domains, right.invalidated_domains) |a_domain, b_domain| if (a_domain.domain_index != b_domain.domain_index or !inputPathEql(a_domain.path, b_domain.path)) return false;
         for (left.input_post_states, right.input_post_states) |left_state, right_state|
             if (!postStateEql(left_state, right_state)) return false;
     }
@@ -137,10 +191,16 @@ pub fn summaryEql(a: facts.SafetySummary, b: facts.SafetySummary) bool {
 }
 
 pub fn valueEffectEql(a: facts.ValueEffect, b: facts.ValueEffect) bool {
-    if (a.explicit_dependency != b.explicit_dependency or
+    if (!domainsEql(a.input_domains, b.input_domains)) return false;
+    if (a.domain_values.len != b.domain_values.len) return false;
+    for (a.domain_values, b.domain_values) |x, y| if (x.domain_index != y.domain_index or !valueEffectEql(x.value.*, y.value.*)) return false;
+    if (a.fresh_cleanup_obligation != b.fresh_cleanup_obligation or
+        a.explicit_dependency != b.explicit_dependency or
         a.input_dependencies.len != b.input_dependencies.len or
         a.input_places.len != b.input_places.len or
         a.input_generation_dependencies.len != b.input_generation_dependencies.len or
+        a.input_captured_storages.len != b.input_captured_storages.len or
+        a.input_receiver_values.len != b.input_receiver_values.len or
         a.input_place_values.len != b.input_place_values.len or
         a.input_owned_roots.len != b.input_owned_roots.len or
         a.opaque_generation_dependencies.len != b.opaque_generation_dependencies.len or
@@ -160,6 +220,8 @@ pub fn valueEffectEql(a: facts.ValueEffect, b: facts.ValueEffect) bool {
             !inputPathEql(left.path, right.path)) return false;
     }
     for (a.input_places, b.input_places) |left, right| if (!inputPathEql(left, right)) return false;
+    for (a.input_receiver_values, b.input_receiver_values) |left, right| if (!inputPathEql(left, right)) return false;
+    for (a.input_captured_storages, b.input_captured_storages) |left, right| if (!inputPathEql(left, right)) return false;
     for (a.input_generation_dependencies, b.input_generation_dependencies) |left, right| if (!inputPathEql(left, right)) return false;
     for (a.input_place_values, b.input_place_values) |left, right| if (!inputPathEql(left, right)) return false;
     for (a.input_owned_roots, b.input_owned_roots) |left, right| if (!inputPathEql(left, right)) return false;
@@ -182,6 +244,12 @@ pub fn valueEffectEql(a: facts.ValueEffect, b: facts.ValueEffect) bool {
     return true;
 }
 
+fn domainsEql(a: []const facts.InputDomain, b: []const facts.InputDomain) bool {
+    if (a.len != b.len) return false;
+    for (a, b) |x, y| if (x.domain_index != y.domain_index or !inputPathEql(x.path, y.path)) return false;
+    return true;
+}
+
 fn postStateEql(a: facts.PlacePostState, b: facts.PlacePostState) bool {
     if (!inputPathEql(a.target, b.target) or
         a.initializedness != b.initializedness or
@@ -197,9 +265,19 @@ fn postStateEql(a: facts.PlacePostState, b: facts.PlacePostState) bool {
 }
 
 fn inputPathEql(a: facts.InputPath, b: facts.InputPath) bool {
-    if (a.input_index != b.input_index or a.projections.len != b.projections.len) return false;
+    if (a.input_index != b.input_index or a.storage_domain != b.storage_domain or a.projections.len != b.projections.len) return false;
     for (a.projections, b.projections) |left, right| if (!std.meta.eql(left, right)) return false;
     return true;
+}
+
+test "opaque storage summary identity includes its receiver domain" {
+    const plain = facts.InputPath{ .input_index = 0 };
+    const first = facts.InputPath{ .input_index = 0, .storage_domain = 0 };
+    const second = facts.InputPath{ .input_index = 0, .storage_domain = 1 };
+    const effect = facts.ValueEffect{ .opaque_storage_dependencies = &.{first} };
+    try std.testing.expect(!valueEffectEql(effect, .{ .opaque_storage_dependencies = &.{plain} }));
+    try std.testing.expect(!valueEffectEql(effect, .{ .opaque_storage_dependencies = &.{second} }));
+    try std.testing.expect(!summaryEql(.{ .opaque_storage_empties = &.{first} }, .{ .opaque_storage_empties = &.{second} }));
 }
 
 test "summary engine reinfers only reverse dependencies" {
@@ -274,4 +352,98 @@ test "nested effect equality preserves root paths and explicit dependencies" {
         .{ .fields = &.{.{ .index = 0, .value = &empty }} },
     ));
     try std.testing.expect(!valueEffectEql(.{ .explicit_dependency = true }, .{}));
+    try std.testing.expect(!valueEffectEql(.{ .fresh_cleanup_obligation = true }, .{}));
+}
+
+test "summary equality includes selected opaque empty guarantees" {
+    const absent = facts.OutcomePostStates{ .variant_index = 0, .input_post_states = &.{} };
+    const empty = facts.OutcomePostStates{ .variant_index = 0, .input_post_states = &.{}, .opaque_storage_empties = &.{.{ .input_index = 1 }} };
+    try std.testing.expect(!summaryEql(.{ .outcome_post_states = &.{absent} }, .{ .outcome_post_states = &.{empty} }));
+    try std.testing.expect(summaryEql(.{ .outcome_post_states = &.{empty} }, .{ .outcome_post_states = &.{empty} }));
+}
+
+test "summary equality includes opaque content liveness requirements" {
+    const empty: facts.SafetySummary = .{};
+    const first: facts.SafetySummary = .{ .required_opaque_inputs = &.{.{ .input_index = 0 }} };
+    const second: facts.SafetySummary = .{ .required_opaque_inputs = &.{.{ .input_index = 1 }} };
+    try std.testing.expect(!summaryEql(empty, first));
+    try std.testing.expect(!summaryEql(first, second));
+    try std.testing.expect(summaryEql(first, first));
+}
+
+test "guarded summaries retain input output conjunctions and every effect dimension" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const conditions = @import("choice_conditions.zig");
+    const guard = try conditions.normalize(allocator, &.{
+        .{ .subject = .entry_input, .index = 0, .variant_index = 1 },
+        .{ .subject = .output, .index = 0, .variant_index = 2 },
+        .{ .subject = .output, .index = 1, .variant_index = 3 },
+    });
+    const empty: facts.SafetySummary = .{};
+    const effects: facts.SafetySummary = .{
+        .outputs = &.{.{ .input_place_values = &.{.{ .input_index = 0 }} }},
+        .required_live_inputs = &.{.{ .input_index = 0 }},
+        .required_opaque_inputs = &.{.{ .input_index = 1 }},
+        .opaque_storage_empties = &.{.{ .input_index = 2 }},
+    };
+    const summary: facts.SafetySummary = .{ .guarded_effects = &.{.{ .conditions = guard, .effects = &effects }} };
+    try std.testing.expect(!summaryEql(empty, summary));
+    try std.testing.expect(summaryEql(summary, summary));
+    var changed_effects = effects;
+    changed_effects.required_opaque_inputs = &.{};
+    const changed: facts.SafetySummary = .{ .guarded_effects = &.{.{ .conditions = guard, .effects = &changed_effects }} };
+    try std.testing.expect(!summaryEql(summary, changed));
+    const input_only = try conditions.normalize(allocator, guard.terms[0..1]);
+    const changed_guard: facts.SafetySummary = .{ .guarded_effects = &.{.{ .conditions = input_only, .effects = &effects }} };
+    try std.testing.expect(!summaryEql(summary, changed_guard));
+}
+
+test "legacy outcome summaries publish nested output conditions with a conservative fallback" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const input_states = [_]facts.PlacePostState{.{ .target = .{ .input_index = 0 }, .initializedness = .initialized, .refreshes_storage_generation = true }};
+    const original: facts.SafetySummary = .{
+        .input_post_states = &input_states,
+        .required_opaque_inputs = &.{.{ .input_index = 0 }},
+        .outcome_post_states = &.{
+            .{ .output_index = 1, .parent_variants = &.{2}, .variant_index = 3, .input_post_states = &.{}, .opaque_storage_empties = &.{.{ .input_index = 0 }} },
+            .{ .reachable = false, .output_index = 1, .variant_index = 4, .input_post_states = &.{} },
+        },
+    };
+    const represented = try withOutcomeGuards(arena.allocator(), original);
+    try std.testing.expectEqual(@as(usize, 1), represented.guarded_effects.len);
+    try std.testing.expectEqual(@as(usize, 2), represented.guarded_effects[0].conditions.terms.len);
+    try std.testing.expectEqual(@as(usize, 1), represented.input_post_states.len);
+    try std.testing.expectEqual(@as(usize, 0), represented.guarded_effects[0].effects.input_post_states.len);
+    try std.testing.expectEqual(@as(usize, 1), represented.guarded_effects[0].effects.required_opaque_inputs.len);
+    try std.testing.expectEqual(@as(usize, 1), represented.guarded_effects[0].effects.opaque_storage_empties.len);
+    try std.testing.expect(summaryEql(represented, try withOutcomeGuards(arena.allocator(), represented)));
+}
+
+test "outcome guard refresh preserves general conjunctions and replaces stale mapped effects" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const conditions = try @import("choice_conditions.zig").normalize(allocator, &.{
+        .{ .subject = .entry_input, .index = 0, .variant_index = 1 },
+        .{ .subject = .output, .index = 1, .variant_index = 2 },
+    });
+    const independent: facts.SafetySummary = .{ .required_opaque_inputs = &.{.{ .input_index = 3 }} };
+    const initial: facts.SafetySummary = .{ .outcome_post_states = &.{.{ .output_index = 0, .variant_index = 1, .input_post_states = &.{} }} };
+    var converted = try withOutcomeGuards(allocator, initial);
+    const stale = converted.guarded_effects[0].effects;
+    converted.guarded_effects = try std.mem.concat(allocator, facts.GuardedSafetyEffects, &.{
+        &.{.{ .conditions = conditions, .effects = &independent }},
+        converted.guarded_effects,
+    });
+    converted.outcome_post_states = &.{.{ .output_index = 0, .variant_index = 1, .input_post_states = &.{.{ .target = .{ .input_index = 4 }, .initializedness = .initialized, .refreshes_storage_generation = true }} }};
+    const refreshed = try refreshOutcomeGuards(allocator, converted);
+    try std.testing.expectEqual(@as(usize, 2), refreshed.guarded_effects.len);
+    try std.testing.expect(refreshed.guarded_effects[0].effects == &independent);
+    try std.testing.expect(refreshed.guarded_effects[0].conditions.eql(conditions));
+    try std.testing.expectEqual(@as(u32, 4), refreshed.guarded_effects[1].effects.input_post_states[0].target.input_index);
+    try std.testing.expectEqual(@as(usize, 0), stale.input_post_states.len);
+    try std.testing.expect(summaryEql(refreshed, try refreshOutcomeGuards(allocator, refreshed)));
 }

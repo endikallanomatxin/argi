@@ -219,6 +219,15 @@ feature first.
   one extra scratch byte and destroy partial owners on error. Reserve bounded
   capacity before consuming a chunk.
 
+- Structural automatic cleanup follows record fields and active choice payloads.
+  AutoDeinitField keeps variant projections distinct from record fields; preserve
+  that distinction in summary substitution, checker state branches, relocation,
+  and codegen. Moving a match payload disables the source choice's cleanup.
+  Summary cleanup activation follows moves and discriminants and is cached from
+  finalized GlobalSG independently of the effects worklist. Nominal constructors
+  with destructors produce cleanup obligations even for scalar-only owners,
+  including inside nested payloads; those obligations grant no fresh storage.
+
 - Owning collection operations move generic input values into lexical owners
   before fallible branches. Extract replaced or discarded structural elements
   into lexical owners as well, so their fields receive recursive cleanup.
@@ -256,6 +265,164 @@ feature first.
   not retain binding-map entry pointers across recursive expression emission.
   Bound virtual abstract identities include associated type/value arguments;
   safety implementation registries must keep those identities separate.
+
+- Abstract safety conformance is checked after concrete summaries converge.
+  Static selection and virtual table construction share declaration validation
+  and implementation proofs. Static conformance metadata belongs to GlobalSG,
+  participates in speculative checkpoints, and creates no runtime erasure.
+  Find Self receivers in the original requirement rather than guessing from
+  concrete input types: another argument can have that same concrete type.
+  Content writes in preservation protocols should update fields directly;
+  assigning the whole receiver replaces its storage generation.
+  Virtual safety summaries are generated from fixed declarations and cached
+  independently of the concrete-summary worklist. Implementation lists serve
+  runtime reachability and conformance, never dispatch effect inference.
+  Receiver validity captures the actual erased referent and its generations,
+  not the local slot holding a virtual handle. Whole-receiver virtual calls also
+  validate external dependencies in mapped opaque storage; reconstructing fields
+  alone does not include hidden contents. Confirmed empty outcomes discharge
+  those contents without ending the backing allocation. Concrete summaries
+  propagate opaque-content requirements separately from pointer liveness through
+  calls and cleanup. Trusted slot reads use backing-owner identities; reading a
+  region anchor or releasing allocation metadata does not read stored elements.
+  Summary place paths distinguish a reference-valued field's slot from its
+  pointee with explicit dereference
+  projections; writing through the reference must preserve the field's facts.
+  Choice-indexed generation effects retain input post-states and domain
+  invalidations separately from payload provenance. Infer exit effects after
+  cleanup, including loop transfers, and keep an unconditional may-effect union.
+  Caller proofs identify one call and one current generation; copies/moves retain
+  them, but overwrites, later invalidations and independent pending calls cannot
+  revive an older root. Refinement never restores caller snapshots. Output slots
+  exposed through references conservatively lose tag-based exit filtering until
+  indirect discriminant writes have a branch-local model. Resource consumption
+  and hidden-state replacement remain separate checked obligations.
+  Unconditional consumes clauses require definite deinitialization of known
+  mutable-reference inputs on every return. Resolve actual caller places before
+  updating cleanup, including aliases and structural fields; a call can consume
+  several owners. End nested owned roots without ending borrowed dependencies.
+  Cleanup annotations persist and relocate with both direct and virtual calls.
+  Outcome-specific consumption selects caller cleanup flags from the returned
+  discriminant even for ignored results and indirect returns. Keep possible
+  cleanup in activation summaries; never disable it unconditionally from a
+  may-consume effect. Reject whole-input conditional destruction without a
+  proven result partition.
+  Conditional consumes clauses retain current caller facts behind a call and
+  generation guard. Selecting a preserving result confirms initializedness and
+  existing owned roots; a consuming result ends them. Never restore snapshots,
+  revive an overwritten generation or reuse proofs from independent calls.
+  Nested clauses inherit common consumption guarantees. Conformance checks
+  every reachable selected exit; unreachable selectors have vacuous guarantees.
+  Relocation contracts prove a moved source and an available initialized
+  destination with exact whole-place provenance. Materialize destination facts
+  before clearing source facts. Ending the source slot generation must retain
+  transferred owned roots. Calls disable source cleanup and enable destination
+  cleanup, including aliases and fields; destinations do not require a live
+  prior value, but occupied or overlapping destinations are rejected.
+  Conditional relocation cleanup annotations carry an enable/disable action:
+  source and destination flags follow the returned selector even when discarded.
+  Cleanup activation retains every potentially initialized destination. A
+  conditional initialization joined with an untouched available destination is
+  maybe-initialized and must not acquire provenance from the empty input slot.
+  Relocation refinement is a paired proof of both current slot generations.
+  Materialize destination facts before making both places pending. Selecting a
+  moving result clears the source and enables the destination; preservation
+  clears the speculative destination and confirms current source facts. Keep
+  transferred owned roots alive in both cases, and never restore value snapshots.
+  Reject overlapping conditional source inputs before applying any effects.
+  Abstract outcome relocation inherits enclosing guarantees. Build its virtual
+  summary from declarations, including available destinations and conservative
+  unselected states; implementation lists only prove conformance. Shared input
+  transitions across independent outputs require correlated facts. Alternative
+  relocation pairs sharing an input require richer post-value provenance and
+  remain unsupported.
+  Nested generation guards retain their enclosing payload variant path. Partition
+  only paths requested by declarations or forwarded results, preserving a
+  conservative effect record elsewhere instead of expanding shared choice types.
+  Forwarding proofs trace stable lexical initializers to one call and require
+  the output assignment on every returning path. Reassigned, loop-produced or
+  reference-exposed intermediate bindings lose provenance. Apply the selected
+  call's effects at its original position and retain every intervening effect;
+  do not reconstruct or restore caller state at the eventual binding use.
+  Projections of multi-output result records retain the selected output index;
+  fields inside a single returned value do not select another output. Retain
+  unrelated and shared may-effects when refining one returned discriminant.
+  Numeric field reads preserve choice shape for those proofs without granting
+  ownership or reference validity.
+  Exact reference and ownership identity proofs also follow ordered lexical
+  initializers in straight-line bodies. Require explicit whole-value moves for
+  ownership links and a single output assignment. Keep this proof independent
+  of may-dependency summaries; reject calls, writes and unknown control flow.
+  Direct forwarding proofs require an output assigned once outside loops and
+  whose address has not escaped; rewrites retain unconditional may-effects.
+  Conditional from_storage clauses are payload provenance permissions, not
+  storage post-states. Persist their sources on outcome declarations, inherit
+  common sources into nested payloads and reject inherited exact-identity
+  conflicts. Conditional empties guarantees live on OutcomePostStates and
+  intersect selected returning exits after cleanup. Caller proofs carry the
+  current storage generation and opaque call guard; insertion, replacement or
+  a second pending call must defeat an older proof. Emptying discharges current
+  hidden dependencies without ending owners or restoring snapshots. Conditional
+  retains still requires correlated ownership transitions.
+  General safety guards use canonical conjunctions of structural choice selectors.
+  Entry-input and output selectors have distinct identities; inspecting a mutable
+  input after a call cannot prove its entry tag. Each guard shares a complete
+  effect record while the unconditional summary remains conservative. Normalize
+  ancestor payload tags, duplicates and contradictions without enumerating a
+  product of independent choices. Conditions and effects belong to the immutable
+  summary arena. Existing outcome records remain the resource-cleanup compatibility path.
+  Distinguish exhaustive inferred return regions from sparse declaration guards;
+  sparse promises never establish coverage of all concrete returns. General
+  conformance requires a complete approximation under the declared conjunction or a weaker
+  proven condition. A stronger condition covers only some promised exits and
+  cannot establish the contract. Missing independent singleton evidence cannot
+  be assembled into a joint guarantee. Conditional payload permissions and
+  authoritative input effects must both survive declaration conversion. Convert
+  legacy output contracts only after resolving domains and normalizing concrete
+  summaries. Refresh derived outcome guards without replacing independent general
+  guards. Unreachable output selectors establish vacuous guarantees, including
+  when they occur inside a conjunction. Stable terminal selection bodies can infer
+  by-value entry-choice conjunctions for output provenance. Reject unsupported
+  statements, result rewrites and nontrivial cleanup from this precision path;
+  keep every other effect dimension conservative. Inspect block node order rather
+  than numeric node IDs, and validate suffixes in enclosing blocks too. Source
+  block ret_val can identify the final statement already visited. Literal choice
+  arguments can select proven output approximations during summary substitution;
+  do not use a later mutable binding value as evidence for an earlier call.
+  Outcome contracts select a named output and variant, not the first result.
+  Keep that output index through syntax-free IR, relocation, cached snapshots,
+  conformance and summary equality. Common clauses apply to every outcome;
+  an empty `on` block does not erase their permissions. General `on` clauses
+  select named inputs at call entry and named outputs at return. Nested distinct
+  selectors conjoin, while repeating a selector follows its payload. Capture
+  entry tags and guarded output dependencies before applying any call effects.
+  Returned selector evidence has one call identity; copies preserve it, joins
+  intersect it, and overwrites discard it. Reconstruct authoritative fields
+  before gathering evidence, and require the full conjunction when narrowing
+  payload validity. Never change owned roots, acquisition capabilities or caller
+  generations from a payload proof. Exact straight-line forwarding of one call's
+  outputs remaps their indices and stable input paths; additional effects lose
+  this precision. Keep joint generation/opaque effects conservative. Reject joint
+  conditional consumes/relocates until caller cleanup identities are modeled.
+
+- Unconditional opaque contracts distinguish `retains(storage, value)` input
+  provenance, `from_storage(output, storage)` hidden output dependencies and
+  `empties(storage)` guarantees. They do not prove runtime slot occupancy or
+  exact hidden owner identity. Retention takes by-value inputs and grants no
+  fresh acquisition or caller-place consumption. Capture opaque output
+  provenance before applying empty effects; this retains returned dependencies
+  without restoring any caller storage. Reject conditional and erased receiver
+  effects until their post-states and cleanup identities are representable.
+  Opaque domain owner IDs survive lexical slot cleanup for escape detection;
+  these IDs never keep a resource or storage generation alive. When a local
+  domain has no summary input path, owning and reference-containing outputs retain its
+  possible hidden input provenance. Later extraction must preserve that union.
+  Opaque summary paths can select a receiver storage domain after projecting
+  the receiver. The domain selector is symbolic and is never a physical Place
+  projection. Conformance resolves it to one concrete field path; virtual calls
+  resolve it through the handle's existing domain identities. Keep it distinct
+  in summary equality, substitution and deduplication. Grouped storage and
+  mappings through references require additional transfer identities.
 
 - Moving `for ~ item in collection` loops consume through `OwningIterable`.
   Global semantizing wraps the iterator declaration and loop in one lexical

@@ -601,31 +601,9 @@ pub const Resolver = struct {
             };
         }
 
-        const fields = global_types.fields(self.graph, ty) orelse return null;
-        var direct_fields: std.ArrayList(global_sg.AutoDeinitField) = .empty;
-        defer direct_fields.deinit(self.allocator);
-        for (0..fields.len) |index| {
-            const field = self.graph.fields.items[fields.start + @as(u32, @intCast(index))];
-            const projected = try self.appendNode(
-                self.graph.nodes.items[@intFromEnum(target)].source,
-                field.ty,
-                .{ .struct_field_access = .{
-                    .value = target,
-                    .field_name = field.name,
-                    .field_index = @intCast(index),
-                } },
-            );
-            if (try self.buildAutoField(@intCast(index), projected, field.ty, context, module_index)) |auto_field|
-                try direct_fields.append(self.allocator, auto_field);
-        }
-        if (direct_fields.items.len == 0) return null;
-        const start: u32 = @intCast(self.graph.auto_deinit_fields.items.len);
-        try self.graph.auto_deinit_fields.appendSlice(self.allocator, direct_fields.items);
-        return .{
-            .binding = binding,
-            .deinit_fn = null,
-            .fields = .{ .start = start, .len = @intCast(direct_fields.items.len) },
-        };
+        const children = try self.buildAutoChildren(target, ty, context, module_index);
+        if (children.len == 0) return null;
+        return .{ .binding = binding, .deinit_fn = null, .fields = children };
     }
 
     fn buildAutoField(
@@ -635,7 +613,7 @@ pub const Resolver = struct {
         ty: global_sg.GlobalTypeId,
         context: reach_context.Context,
         module_index: usize,
-    ) !?global_sg.AutoDeinitField {
+    ) anyerror!?global_sg.AutoDeinitField {
         if (self.graph.semanticType(ty) == .pointer) return null;
         if (try self.resolveDestructor(target, context, module_index)) |resolved| {
             return .{
@@ -645,32 +623,54 @@ pub const Resolver = struct {
                 .self_field_index = resolved.self_field_index,
             };
         }
+        const children = try self.buildAutoChildren(target, ty, context, module_index);
+        if (children.len == 0) return null;
+        return .{ .field_index = field_index, .deinit_fn = null, .fields = children };
+    }
 
-        const fields = global_types.fields(self.graph, ty) orelse return null;
+    fn buildAutoChildren(
+        self: *Resolver,
+        target: global_sg.GlobalNodeId,
+        ty: global_sg.GlobalTypeId,
+        context: reach_context.Context,
+        module_index: usize,
+    ) anyerror!primitives.Range(global_sg.GlobalAutoDeinitFieldId) {
         var children: std.ArrayList(global_sg.AutoDeinitField) = .empty;
         defer children.deinit(self.allocator);
-        for (0..fields.len) |index| {
-            const field = self.graph.fields.items[fields.start + @as(u32, @intCast(index))];
-            const projected = try self.appendNode(
-                self.graph.nodes.items[@intFromEnum(target)].source,
-                field.ty,
-                .{ .struct_field_access = .{
+        const source = self.graph.node(target).source;
+        // Choices own only their active payload. Preserve the variant projection
+        // in cleanup metadata so every consumer observes the same condition.
+        if (global_types.variants(self.graph, ty)) |variants| {
+            for (0..variants.len) |index| {
+                const id: global_sg.GlobalVariantId = @enumFromInt(variants.start + @as(u32, @intCast(index)));
+                const variant = self.graph.variants.items[@intFromEnum(id)];
+                const payload = variant.payload_type orelse continue;
+                const projected = try self.appendNode(source, payload, .{ .choice_payload_access = .{
+                    .value = target,
+                    .variant = id,
+                    .payload_type = payload,
+                } });
+                if (try self.buildAutoField(@intCast(index), projected, payload, context, module_index)) |resolved| {
+                    var child = resolved;
+                    child.is_variant = true;
+                    try children.append(self.allocator, child);
+                }
+            }
+        } else if (global_types.fields(self.graph, ty)) |fields| {
+            for (0..fields.len) |index| {
+                const field = self.graph.fields.items[fields.start + @as(u32, @intCast(index))];
+                const projected = try self.appendNode(source, field.ty, .{ .struct_field_access = .{
                     .value = target,
                     .field_name = field.name,
                     .field_index = @intCast(index),
-                } },
-            );
-            if (try self.buildAutoField(@intCast(index), projected, field.ty, context, module_index)) |child|
-                try children.append(self.allocator, child);
+                } });
+                if (try self.buildAutoField(@intCast(index), projected, field.ty, context, module_index)) |child|
+                    try children.append(self.allocator, child);
+            }
         }
-        if (children.items.len == 0) return null;
-        const child_start: u32 = @intCast(self.graph.auto_deinit_fields.items.len);
+        const start: u32 = @intCast(self.graph.auto_deinit_fields.items.len);
         try self.graph.auto_deinit_fields.appendSlice(self.allocator, children.items);
-        return .{
-            .field_index = field_index,
-            .deinit_fn = null,
-            .fields = .{ .start = child_start, .len = @intCast(children.items.len) },
-        };
+        return .{ .start = start, .len = @intCast(children.items.len) };
     }
 
     fn resolveDestructor(

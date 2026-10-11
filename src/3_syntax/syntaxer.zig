@@ -459,6 +459,7 @@ pub const Syntaxer = struct {
     fn parseAbstractBody(self: *Syntaxer) SyntaxerError!struct {
         req_names: syn.NodeRange,
         req_funcs: syn.NodeRange,
+        domains: syn.NodeRange,
     } {
         if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
         self.advanceOne();
@@ -468,6 +469,17 @@ pub const Syntaxer = struct {
         defer self.scratch.shrinkRetainingCapacity(scratch_top);
 
         while (!self.tokenIs(.close_parenthesis)) {
+            if (self.currentIdentifierEquals("domain")) {
+                self.advanceOne();
+                const domain = try self.parseName();
+                try self.scratch.append(self.allocator, try self.addNode(.abstract_domain, domain.token, .{ .unused = .{ 0, 0 } }));
+                self.skipNewLinesAndComments();
+                if (self.tokenIs(.comma)) {
+                    self.advanceOne();
+                    self.skipNewLinesAndComments();
+                }
+                continue;
+            }
             var name = try self.parseName();
             var lifecycle_type: ?syn.TokenIndex = null;
             if (self.currentContent() == .identifier and (std.mem.eql(u8, self.tokenText(self.currentContent().identifier), "init") or
@@ -491,6 +503,12 @@ pub const Syntaxer = struct {
                 if (!self.tokenIs(.arrow)) return SyntaxerError.ExpectedArrow;
                 self.advanceOne();
                 const out_st = try self.parseStructTypeLiteral();
+                self.skipNewLinesAndComments();
+                const safety_contract: ?syn.NodeIndex = if (self.currentIdentifierEquals("where")) blk: {
+                    self.advanceOne();
+                    self.skipNewLinesAndComments();
+                    break :blk if (self.tokenIs(.open_brace)) try self.parseSafetyContract() else try self.parseExpression();
+                } else null;
                 const empty = try self.addNodeRange(&.{});
                 const extra = try self.addExtra(syn.FunctionExtra{
                     .name_token = name.token,
@@ -500,6 +518,7 @@ pub const Syntaxer = struct {
                     .input = in_st,
                     .output = out_st,
                     .body = .none,
+                    .safety_contract = syn.OptionalNodeIndex.init(safety_contract),
                 });
                 try self.scratch.append(self.allocator, try self.addNode(.abstract_function_requirement, name.token, .{ .extra = extra }));
             } else {
@@ -526,10 +545,48 @@ pub const Syntaxer = struct {
             const item = self.scratch.items[index];
             if (self.file.tag(item) == .abstract_function_requirement) try self.scratch.append(self.allocator, item);
         }
+        const domains_start = self.scratch.items.len;
+        index = scratch_top;
+        while (index < items_end) : (index += 1) {
+            const item = self.scratch.items[index];
+            if (self.file.tag(item) == .abstract_domain) try self.scratch.append(self.allocator, item);
+        }
         return .{
             .req_names = try self.addNodeRange(self.scratch.items[items_end..funcs_start]),
-            .req_funcs = try self.addNodeRange(self.scratch.items[funcs_start..]),
+            .req_funcs = try self.addNodeRange(self.scratch.items[funcs_start..domains_start]),
+            .domains = try self.addNodeRange(self.scratch.items[domains_start..]),
         };
+    }
+
+    fn parseSafetyContract(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
+        const open: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
+        if (!self.tokenIs(.open_brace)) return SyntaxerError.ExpectedLeftBrace;
+        self.advanceOne();
+        self.skipNewLinesAndComments();
+        const scratch_top = self.scratch.items.len;
+        defer self.scratch.shrinkRetainingCapacity(scratch_top);
+        while (!self.tokenIs(.close_brace)) {
+            if (self.currentIdentifierEquals("on")) {
+                const start: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
+                self.advanceOne();
+                const output = try self.parseName();
+                if (!self.tokenIs(.double_dot)) return SyntaxerError.ExpectedIdentifier;
+                self.advanceOne();
+                const variant = try self.parseName();
+                self.skipNewLinesAndComments();
+                const body = try self.parseSafetyContract();
+                try self.scratch.append(self.allocator, try self.addNode(.contract_outcome, start, .{ .extra = try self.addExtra(syn.ContractOutcomeExtra{ .output = output.token, .variant = variant.token, .body = body }) }));
+            } else {
+                try self.scratch.append(self.allocator, try self.parseExpression());
+            }
+            self.skipNewLinesAndComments();
+            if (self.tokenIs(.comma)) {
+                self.advanceOne();
+                self.skipNewLinesAndComments();
+            }
+        }
+        self.advanceOne();
+        return try self.addNode(.code_block, open, .{ .extra_range = try self.addNodeRange(self.scratch.items[scratch_top..]) });
     }
 
     fn parseListLiteral(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
@@ -1967,11 +2024,17 @@ pub const Syntaxer = struct {
                 if (std.mem.eql(u8, kw, "implements")) {
                     self.advanceOne();
                     const abstract_ty = (try self.parseType()).?; // required
+                    const domain_mapping: ?syn.NodeIndex = if (self.currentIdentifierEquals("where")) blk: {
+                        self.advanceOne();
+                        self.skipNewLinesAndComments();
+                        break :blk try self.parseCodeBlock();
+                    } else null;
                     const extra = try self.addExtra(syn.GenericValueExtra{
                         .generic_params_start = generic_params.start,
                         .generic_params_end = generic_params.end,
                         .generic_params_struct = syn.OptionalNodeIndex.init(generic_params_struct),
                         .value = abstract_ty,
+                        .safety_contract = syn.OptionalNodeIndex.init(domain_mapping),
                     });
                     return try self.addNode(.abstract_implements, name.token, .{ .extra = extra });
                 } else if (std.mem.eql(u8, kw, "defaultsto")) {
@@ -2031,11 +2094,13 @@ pub const Syntaxer = struct {
                 } else if (std.mem.eql(u8, type_name, "Abstract")) {
                     var req_names = try self.addNodeRange(&.{});
                     var req_funcs = try self.addNodeRange(&.{});
+                    var domains = try self.addNodeRange(&.{});
                     if (self.tokenIs(.equal)) {
                         self.advanceOne();
                         const body = try self.parseAbstractBody();
                         req_names = body.req_names;
                         req_funcs = body.req_funcs;
+                        domains = body.domains;
                     }
                     const extra = try self.addExtra(syn.AbstractExtra{
                         .generic_params_start = generic_params.start,
@@ -2045,6 +2110,8 @@ pub const Syntaxer = struct {
                         .requires_abstracts_end = req_names.end,
                         .requires_functions_start = req_funcs.start,
                         .requires_functions_end = req_funcs.end,
+                        .domains_start = domains.start,
+                        .domains_end = domains.end,
                     });
                     return try self.addNode(.abstract_declaration, name.token, .{ .extra = extra });
                 }

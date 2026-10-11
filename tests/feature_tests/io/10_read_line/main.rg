@@ -1,22 +1,26 @@
-DummyInput : Type = (
-    .index: UIntNative = 0
+DummyInput: Type = (
+    .index : UIntNative = 0
 )
 
-read_byte(.self: $&DummyInput) -> (.result: Errable#(.t: ReadByte, .reasons: (..stream_read_failed))) := {
+read_byte(
+        .self : $&DummyInput
+    ) -> (
+        .result : Errable#(.t: ReadByte, .reasons: (..stream_read_failed))
+    ) := {
     if self&.index == 0 {
-        self& = (.index = 1)
+        self&.index = 1
         result = ..ok ..ok 79
         return
     }
 
     if self&.index == 1 {
-        self& = (.index = 2)
+        self&.index = 2
         result = ..ok ..ok 75
         return
     }
 
     if self&.index == 2 {
-        self& = (.index = 3)
+        self&.index = 3
         result = ..ok ..ok 10
         return
     }
@@ -42,13 +46,13 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
-    outer ::= ~result..ok
+    outer ::= ~result ..ok
     if is(.value = outer, .variant = ..ok) {
     } else {
         status_code = 2
         return
     }
-    line ::= ~outer..ok
+    line ::= ~outer ..ok
 
     if line.length != 2 {
         status_code = 3

@@ -1,9 +1,10 @@
-Shape : Abstract = (
-    get_value(.self: &Self) -> (.value: Int32)
-    set_value(.self: $&Self, .value: Int32) -> ()
+Shape: Abstract = (
+    get_value(.self: &Self) -> (.value: Int32) where {}
+    set_value(.self: $&Self, .value: Int32) -> () where {}
 )
 
-Box : Type = (.value: Int32)
+Box: Type = (.value: Int32)
+
 Box implements Shape
 
 get_value(.self: &Box) -> (.value: Int32) := {

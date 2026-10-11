@@ -1,22 +1,20 @@
-DummyInput : Type = (
-    .index: Int32 = 0
+DummyInput: Type = (
+    .index : Int32 = 0
 )
 
 read_byte(
-    .self: $&DummyInput,
- ) -> (.result: Errable#(.t: ReadByte, .reasons: (..stream_read_failed))) := {
+        .self : $&DummyInput,
+    ) -> (
+        .result : Errable#(.t: ReadByte, .reasons: (..stream_read_failed))
+    ) := {
     if self&.index == 0 {
-        self& = (
-            .index = 1
-        )
+        self&.index = 1
         result = ..ok ..ok 79
         return
     }
 
     if self&.index == 1 {
-        self& = (
-            .index = 2
-        )
+        self&.index = 2
         result = ..ok ..ok 75
         return
     }

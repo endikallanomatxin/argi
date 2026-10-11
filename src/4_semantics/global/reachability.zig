@@ -166,6 +166,9 @@ const State = struct {
                 if (call.callee_value) |value| try self.walkNode(value);
                 try self.walkNode(call.input);
                 if (call.consumes_auto_deinit) |value| try self.walkNode(value);
+                for (call.consumed_auto_deinits) |value| try self.walkNode(value);
+                for (call.initialized_auto_deinits) |value| try self.walkNode(value);
+                for (call.outcome_cleanups) |cleanup| try self.walkNode(cleanup.place);
                 if (call.initializes_auto_deinit) |value| try self.walkNode(value);
                 try self.includeFunction(call.callee);
                 const callee = self.graph.functions.items[@intFromEnum(call.callee)];
@@ -194,6 +197,9 @@ const State = struct {
                 try self.walkNode(call.handle);
                 try self.walkNode(call.input);
                 if (call.consumes_auto_deinit) |value| try self.walkNode(value);
+                for (call.consumed_auto_deinits) |value| try self.walkNode(value);
+                for (call.initialized_auto_deinits) |value| try self.walkNode(value);
+                for (call.outcome_cleanups) |cleanup| try self.walkNode(cleanup.place);
                 const registry = self.graph.virtual_registries.items[@intFromEnum(call.safety_methods)];
                 for (self.graph.function_refs.items[registry.implementations.start..][0..registry.implementations.len]) |callee|
                     try self.includeFunction(callee);

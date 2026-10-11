@@ -1,5 +1,5 @@
 Readable#(.item: Type): Abstract = (
-    read#(.other: Type)(.self: &Self, .value: other) -> (.result: item)
+    read#(.other: Type)(.self: &Self, .value: other) -> (.result: item) where {}
 )
 Box: Type = (.value: Int32)
 Box implements Readable#(.item: Int32)

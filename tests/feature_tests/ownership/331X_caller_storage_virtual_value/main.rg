@@ -1,4 +1,4 @@
-Source: Abstract = (read(.self: &Self) -> (.result: Int32))
+Source: Abstract = (read(.self: &Self) -> (.result: Int32) where {})
 
 Local: Type = (.value: Int32)
 

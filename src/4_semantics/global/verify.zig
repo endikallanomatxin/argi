@@ -41,9 +41,43 @@ pub fn verifyGlobal(graph: *const graph_mod.GlobalSemanticGraph) !void {
     for (graph.auto_deinits.items) |value| try payload.autoDeinit(graph_mod.Ids, value, bounds);
     for (graph.virtual_registries.items) |value| {
         try payload.virtualRegistry(graph_mod.Ids, value, bounds);
+        if (value.safety_contract) |contract| {
+            try require(verify.sourceFits(contract.source, graph.files.items.len));
+            for (contract.dependencies) |dependency| try require(dependency.output_index < contract.output_count);
+            for (contract.referents) |referent| try require(referent.output_index < contract.output_count);
+            for (contract.domain_dependencies) |dependency| try require(dependency.output_index < contract.output_count);
+        }
         for (graph.function_refs.items[value.implementations.start..][0..value.implementations.len]) |method| {
             try require(verify.idFits(method, graph.functions.items.len));
             try require(value.receiver_input_index < graph.function(method).input.len);
+            if (value.safety_contract) |contract| {
+                try require(contract.output_count == graph.function(method).output.len);
+                for (contract.invalidates) |index| try require(index < graph.function(method).input.len);
+                for (contract.dependencies) |dependency| try require(dependency.input_index < graph.function(method).input.len);
+                for (contract.referents) |referent| try require(referent.input_index < graph.function(method).input.len);
+                for (contract.domain_dependencies) |dependency| try require(dependency.input.input_index < graph.function(method).input.len);
+                for (contract.invalidated_domains) |domain| try require(domain.input_index < graph.function(method).input.len);
+            }
+        }
+    }
+    for (graph.abstract_safety_conformances.items) |value| {
+        try require(verify.idFits(value.method, graph.functions.items.len));
+        try require(verify.sourceFits(value.source, graph.files.items.len));
+        try require(verify.sourceFits(value.contract.source, graph.files.items.len));
+        const method = graph.function(value.method);
+        if (value.receiver_input_index) |index| try require(index < method.input.len);
+        try require(value.contract.output_count == method.output.len);
+        for (value.contract.dependencies) |dependency| {
+            try require(dependency.output_index < method.output.len);
+            try require(dependency.input_index < method.input.len);
+        }
+        for (value.contract.referents) |dependency| {
+            try require(dependency.output_index < method.output.len);
+            try require(dependency.input_index < method.input.len);
+        }
+        for (value.contract.transfers) |transfer| {
+            try require(transfer.output_index < method.output.len);
+            try require(transfer.input_index < method.input.len);
         }
     }
     for (graph.virtualizes.items) |value| try payload.virtualize(graph_mod.Ids, value, bounds);

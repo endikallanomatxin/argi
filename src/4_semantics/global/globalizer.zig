@@ -382,6 +382,7 @@ fn appendBodyTables(allocator: std.mem.Allocator, result: *global_sg.GlobalSeman
     });
     for (storage.auto_deinit_fields.items) |value| try result.auto_deinit_fields.append(allocator, .{
         .field_index = value.field_index,
+        .is_variant = value.is_variant,
         .deinit_fn = if (value.deinit_fn) |id| globalFunction(o, id) else null,
         .input = if (value.input) |id| globalNode(o, id) else null,
         .self_field_index = value.self_field_index,
@@ -397,12 +398,20 @@ fn appendBodyTables(allocator: std.mem.Allocator, result: *global_sg.GlobalSeman
     for (storage.virtual_registries.items) |value| try result.virtual_registries.append(allocator, .{
         .implementations = relocatePoolRange(global_sg.GlobalFunctionId, o.function_ref_base, value.implementations),
         .receiver_input_index = value.receiver_input_index,
+        .contract_input_count = value.contract_input_count,
+        .contract_output_type = if (value.contract_output_type) |ty| globalType(o, ty) else null,
+        .safety_contract = if (value.safety_contract) |contract| blk: {
+            var result_contract = contract;
+            result_contract.source = globalSource(o, contract.source);
+            break :blk result_contract;
+        } else null,
     });
     for (storage.virtualizes.items) |value| try result.virtualizes.append(allocator, .{
         .value = globalNode(o, value.value),
         .concrete_type = globalType(o, value.concrete_type),
         .abstract_decl = globalDecl(o, value.abstract_decl),
         .virtual_type = globalType(o, value.virtual_type),
+        .domains = value.domains,
         .methods = relocatePoolRange(global_sg.GlobalFunctionId, o.function_ref_base, value.methods),
         .safety_methods = relocatePoolRange(global_sg.GlobalVirtualRegistryId, o.virtual_registry_ref_base, value.safety_methods),
         .source = globalSource(o, value.source),
@@ -419,6 +428,9 @@ fn appendBodyTables(allocator: std.mem.Allocator, result: *global_sg.GlobalSeman
         .self_permission = value.self_permission,
         .safety_methods = globalVirtualRegistry(o, value.safety_methods),
         .consumes_auto_deinit = if (value.consumes_auto_deinit) |id| globalNode(o, id) else null,
+        .consumed_auto_deinits = try relocateCleanupNodes(allocator, o, value.consumed_auto_deinits),
+        .initialized_auto_deinits = try relocateCleanupNodes(allocator, o, value.initialized_auto_deinits),
+        .outcome_cleanups = try relocateOutcomeCleanups(allocator, o, value.outcome_cleanups),
     });
     for (storage.reach_segments.items) |value| try result.reach_segments.append(allocator, try relocateString(module, value, o.string_base));
     for (storage.reach_alternatives.items) |value| try result.reach_alternatives.append(allocator, .{
@@ -482,7 +494,7 @@ fn appendBodyTables(allocator: std.mem.Allocator, result: *global_sg.GlobalSeman
     });
 
     for (storage.nodes.items) |node| switch (node) {
-        .resolved => |value| try result.nodes.append(allocator, try relocateNode(module, o, value)),
+        .resolved => |value| try result.nodes.append(allocator, try relocateNode(allocator, module, o, value)),
         .pending => if (mode == .allow_holes) try result.nodes.append(allocator, .{
             .source = .{ .file_index = o.file_base, .offset = 0 },
             .ty = null,
@@ -492,7 +504,7 @@ fn appendBodyTables(allocator: std.mem.Allocator, result: *global_sg.GlobalSeman
     for (storage.roots.items) |id| try result.roots.append(allocator, globalNode(o, id));
 }
 
-fn relocateNode(module: *const module_sg.ModuleSemanticGraph, o: Offsets, node: module_entities.ResolvedNode) !global_sg.Node {
+fn relocateNode(allocator: std.mem.Allocator, module: *const module_sg.ModuleSemanticGraph, o: Offsets, node: module_entities.ResolvedNode) !global_sg.Node {
     return .{
         .source = globalSource(o, node.source),
         .ty = if (node.ty) |id| globalType(o, id) else null,
@@ -511,6 +523,9 @@ fn relocateNode(module: *const module_sg.ModuleSemanticGraph, o: Offsets, node: 
                 .callee_value = if (value.callee_value) |id| globalNode(o, id) else null,
                 .input = globalNode(o, value.input),
                 .consumes_auto_deinit = if (value.consumes_auto_deinit) |id| globalNode(o, id) else null,
+                .consumed_auto_deinits = try relocateCleanupNodes(allocator, o, value.consumed_auto_deinits),
+                .initialized_auto_deinits = try relocateCleanupNodes(allocator, o, value.initialized_auto_deinits),
+                .outcome_cleanups = try relocateOutcomeCleanups(allocator, o, value.outcome_cleanups),
                 .initializes_auto_deinit = if (value.initializes_auto_deinit) |id| globalNode(o, id) else null,
             } },
             .virtualize => |id| .{ .virtualize = globalVirtualize(o, id) },
@@ -645,6 +660,24 @@ pub fn globalFunction(o: Offsets, id: module_entities.ModuleFunctionId) global_s
 pub fn globalBinding(o: Offsets, id: module_entities.ModuleBindingId) global_sg.GlobalBindingId {
     return @enumFromInt(o.binding_base + @intFromEnum(id));
 }
+fn relocateCleanupNodes(allocator: std.mem.Allocator, o: Offsets, nodes: []const module_entities.ModuleNodeId) ![]const global_sg.GlobalNodeId {
+    const result = try allocator.alloc(global_sg.GlobalNodeId, nodes.len);
+    for (nodes, result) |node, *relocated| relocated.* = globalNode(o, node);
+    return result;
+}
+
+fn relocateOutcomeCleanups(allocator: std.mem.Allocator, o: Offsets, cleanups: []const primitives.OutcomeCleanup(module_entities.Ids)) ![]const primitives.OutcomeCleanup(global_sg.Ids) {
+    const result = try allocator.alloc(primitives.OutcomeCleanup(global_sg.Ids), cleanups.len);
+    for (cleanups, result) |cleanup, *relocated| relocated.* = .{
+        .place = globalNode(o, cleanup.place),
+        .output_index = cleanup.output_index,
+        .parent_variants = try allocator.dupe(u32, cleanup.parent_variants),
+        .variant_index = cleanup.variant_index,
+        .enabled = cleanup.enabled,
+    };
+    return result;
+}
+
 pub fn globalNode(o: Offsets, id: module_entities.ModuleNodeId) global_sg.GlobalNodeId {
     return @enumFromInt(o.node_base + @intFromEnum(id));
 }

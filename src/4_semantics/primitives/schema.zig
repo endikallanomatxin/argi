@@ -191,6 +191,63 @@ pub const SourceRef = struct {
     offset: u32,
 };
 
+/// Syntax-free method contract coordinates survive associated specialization.
+/// Source provenance is relocated together with the defining module.
+pub const MethodSafetyContract = struct {
+    /// General selectors may combine entry inputs and distinct returned values.
+    general_conditions: bool = false,
+    output_count: u32,
+    dependencies: []const Dependency = &.{},
+    referents: []const Dependency = &.{},
+    consumed_inputs: []const u32 = &.{},
+    relocations: []const Relocation = &.{},
+    invalidates: []const u32 = &.{},
+    domain_dependencies: []const DomainDependency = &.{},
+    invalidated_domains: []const DomainInput = &.{},
+    owned_outputs: []const u32 = &.{},
+    transfers: []const Dependency = &.{},
+    retained_inputs: []const Retention = &.{},
+    emptied_inputs: []const StorageInput = &.{},
+    storage_sources: []const StorageDependency = &.{},
+    outcomes: []const Outcome = &.{},
+    source: SourceRef,
+
+    pub const Relocation = struct { destination: u32, source: u32 };
+    pub const StorageInput = struct { input_index: u32, domain_index: ?u32 = null };
+    pub const Retention = struct { storage: StorageInput, input: u32 };
+    pub const StorageDependency = struct { output_index: u32, storage: StorageInput };
+    pub const Dependency = struct { output_index: u32, input_index: u32 };
+    pub const DomainInput = struct { input_index: u32, domain_index: u32 };
+    pub const DomainDependency = struct { output_index: u32, input: DomainInput };
+    pub const Outcome = struct {
+        input_index: ?u32 = null,
+        input_dereference: bool = false,
+        output_index: u32 = 0,
+        /// Resolved ancestor tags for this selector, independent of other terms.
+        parent_variants: []const u32 = &.{},
+        variant: StringRange,
+        variant_index: ?u32 = null,
+        dependencies: []const Dependency = &.{},
+        domain_dependencies: []const DomainDependency = &.{},
+        owned_outputs: []const u32 = &.{},
+        storage_sources: []const StorageDependency = &.{},
+        emptied_inputs: []const StorageInput = &.{},
+        consumed_inputs: []const u32 = &.{},
+        relocations: []const Relocation = &.{},
+        invalidates: []const u32 = &.{},
+        invalidated_domains: []const DomainInput = &.{},
+        /// Repeated selectors follow their payload; other selectors conjoin.
+        outcomes: []const Outcome = &.{},
+        source: SourceRef,
+    };
+};
+
+pub const StorageDomainMapping = struct {
+    domain_index: u32,
+    paths: []const Path,
+    pub const Path = struct { fields: []const u32 };
+};
+
 /// Canonical declaration payload shared by ModuleSG and GlobalSG. Source
 /// provenance is graph-local; semantic references use the corresponding Ids
 /// namespace. Layout lives here for nominal types because `.declared` type IDs
@@ -364,6 +421,8 @@ pub fn Switch(comptime Ids: type) type {
 pub fn AutoDeinitField(comptime Ids: type) type {
     return struct {
         field_index: u32,
+        /// A choice payload uses a variant index and requires its active tag.
+        is_variant: bool = false,
         deinit_fn: ?Ids.FunctionId,
         input: ?Ids.NodeId = null,
         self_field_index: u32 = 0,
@@ -387,6 +446,11 @@ pub fn VirtualMethodRegistry(comptime Ids: type) type {
         /// Receiver position comes from the erased abstract contract. A known
         /// argument may have the same concrete type as Self after substitution.
         receiver_input_index: u32,
+        safety_contract: ?MethodSafetyContract = null,
+        /// Scalar outputs and declared input referents need no concrete receiver
+        /// layout. Their call summaries are generated without concrete bodies.
+        contract_input_count: ?u32 = null,
+        contract_output_type: ?Ids.TypeId = null,
     };
 }
 
@@ -399,6 +463,19 @@ pub fn Virtualize(comptime Ids: type) type {
         methods: Range(Ids.FunctionId),
         safety_methods: Range(Ids.VirtualRegistryId),
         source: SourceRef,
+        domains: []const StorageDomainMapping = &.{},
+    };
+}
+
+/// A returned choice selects whether the caller still owns cleanup of a place.
+/// Parent variants guard nested payload tags before their values are inspected.
+pub fn OutcomeCleanup(comptime Ids: type) type {
+    return struct {
+        place: Ids.NodeId,
+        output_index: u32,
+        parent_variants: []const u32 = &.{},
+        variant_index: u32,
+        enabled: bool = false,
     };
 }
 
@@ -415,6 +492,12 @@ pub fn VirtualCall(comptime Ids: type) type {
         self_permission: PointerMutability,
         safety_methods: Ids.VirtualRegistryId,
         consumes_auto_deinit: ?Ids.NodeId = null,
+        /// Safety records every consumed caller place, including aliases and
+        /// multiple resource inputs. These nodes identify cleanup flags only.
+        consumed_auto_deinits: []const Ids.NodeId = &.{},
+        /// Returning calls enable these destination cleanup flags.
+        initialized_auto_deinits: []const Ids.NodeId = &.{},
+        outcome_cleanups: []const OutcomeCleanup(Ids) = &.{},
     };
 }
 
@@ -518,6 +601,12 @@ pub fn Node(comptime Ids: type) type {
                 callee_value: ?Ids.NodeId = null,
                 input: Ids.NodeId,
                 consumes_auto_deinit: ?Ids.NodeId = null,
+                /// Safety records every consumed caller place, including aliases and
+                /// multiple resource inputs. These nodes identify cleanup flags only.
+                consumed_auto_deinits: []const Ids.NodeId = &.{},
+                /// Returning calls enable these destination cleanup flags.
+                initialized_auto_deinits: []const Ids.NodeId = &.{},
+                outcome_cleanups: []const OutcomeCleanup(Ids) = &.{},
                 initializes_auto_deinit: ?Ids.NodeId = null,
             },
             virtualize: Ids.VirtualizeId,

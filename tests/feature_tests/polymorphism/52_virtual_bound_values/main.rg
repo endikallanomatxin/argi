@@ -1,5 +1,5 @@
 Fixed#(.n: UIntNative, .item: Type): Abstract = (
-    read(.self: &Self) -> (.value: item)
+    read(.self: &Self) -> (.value: item) where {}
 )
 
 Integer: Type = (.value: Int32)

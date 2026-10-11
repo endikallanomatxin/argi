@@ -83,6 +83,16 @@ pub const AutoDeinit = primitives.AutoDeinit(Ids);
 pub const VirtualMethodRegistry = primitives.VirtualMethodRegistry(Ids);
 pub const Virtualize = primitives.Virtualize(Ids);
 pub const VirtualCall = primitives.VirtualCall(Ids);
+/// Static abstract selection checks the declaration without creating runtime
+/// erasure. This metadata is recorded transactionally with selected functions
+/// and consumed after their safety summaries converge.
+pub const AbstractSafetyConformance = struct {
+    method: GlobalFunctionId,
+    contract: primitives.MethodSafetyContract,
+    receiver_input_index: ?u32,
+    domains: []const primitives.StorageDomainMapping = &.{},
+    source: primitives.SourceRef,
+};
 pub const ReachAlternative = primitives.ReachAlternative(Ids);
 pub const Reach = primitives.Reach(Ids);
 pub const NullableUnwrap = primitives.NullableUnwrap(Ids);
@@ -237,6 +247,7 @@ pub const GlobalSemanticGraph = struct {
     auto_deinits: std.ArrayList(AutoDeinit) = .empty,
     virtual_registries: std.ArrayList(VirtualMethodRegistry) = .empty,
     virtualizes: std.ArrayList(Virtualize) = .empty,
+    abstract_safety_conformances: std.ArrayList(AbstractSafetyConformance) = .empty,
     virtual_calls: std.ArrayList(VirtualCall) = .empty,
     reach_segments: std.ArrayList(StringRange) = .empty,
     reach_alternatives: std.ArrayList(ReachAlternative) = .empty,
@@ -313,7 +324,7 @@ pub const GlobalSemanticGraph = struct {
             &self.virtual_calls,         &self.reach_segments,        &self.reach_alternatives,         &self.reaches,
             &self.nullable_unwraps,      &self.testing_expect_errors, &self.error_propagations,         &self.error_contexts,
             &self.node_refs,             &self.type_refs,             &self.binding_refs,               &self.function_refs,
-            &self.virtual_registry_refs, &self.strings,               &self.roots,
+            &self.virtual_registry_refs, &self.strings,               &self.roots,                      &self.abstract_safety_conformances,
         }) |list| list.deinit(allocator);
         self.* = .{};
     }
@@ -634,6 +645,7 @@ pub const GlobalSemanticGraph = struct {
             self.auto_deinits.items.len * @sizeOf(AutoDeinit) +
             self.virtual_registries.items.len * @sizeOf(VirtualMethodRegistry) +
             self.virtualizes.items.len * @sizeOf(Virtualize) +
+            self.abstract_safety_conformances.items.len * @sizeOf(AbstractSafetyConformance) +
             self.virtual_calls.items.len * @sizeOf(VirtualCall) +
             self.reach_segments.items.len * @sizeOf(StringRange) +
             self.reach_alternatives.items.len * @sizeOf(ReachAlternative) +

@@ -1,10 +1,13 @@
-View : Abstract = (
-    get(.self: &Self) -> (.value: &Int32)
+View: Abstract = (
+    get(.self: &Self) -> (.value: &Int32) where depends_on(value, self)
 )
 
-Cell : Type = (.value: Int32)
-Holder : Type = (.cell: Cell)
-Other : Type = (.cell: Cell)
+Cell: Type = (.value: Int32)
+
+Holder: Type = (.cell: Cell)
+
+Other: Type = (.cell: Cell)
+
 Holder implements View
 Other implements View
 
@@ -26,5 +29,5 @@ main() -> (.status_code: Int32 = 0) := {
     holder :: Holder = (.cell = (.value = 1))
     virtual ::= to_virtual#(.abstract: View)(.value = $&holder)
     value ::= get(.self = &virtual)
-    if value& != 1 { status_code = 1 }
+    if value&!= 1 { status_code = 1 }
 }

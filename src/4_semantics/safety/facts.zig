@@ -16,10 +16,11 @@ pub const ValidityDependency = base.ValidityDependency;
 pub const ValidityRootEstablishment = base.ValidityRootEstablishment;
 pub const InputPath = base.InputPath;
 pub const InputDependency = base.InputDependency;
+pub const InputDomain = base.InputDomain;
 pub const OutputFieldEffect = base.OutputFieldEffect;
+pub const OutputDomainEffect = base.OutputDomainEffect;
 pub const FreshEffectSource = base.FreshEffectSource;
 pub const ValueEffect = base.ValueEffect;
-pub const receiverBorrowedPlaces = base.receiverBorrowedPlaces;
 pub const OutputVariantEffect = base.OutputVariantEffect;
 pub const PlacePostState = base.PlacePostState;
 pub const OpaqueOwnershipConsumption = base.OpaqueOwnershipConsumption;
@@ -27,12 +28,71 @@ pub const StorageCapabilityUse = base.StorageCapabilityUse;
 pub const StorageCapabilityConflict = base.StorageCapabilityConflict;
 pub const FreshStorageCapabilityState = base.FreshStorageCapabilityState;
 pub const SafetySummary = base.SafetySummary;
+pub const ChoiceCondition = base.ChoiceCondition;
+pub const ChoiceConditions = base.ChoiceConditions;
+pub const GuardedSafetyEffects = base.GuardedSafetyEffects;
 pub const OutcomePostStates = base.OutcomePostStates;
 pub const OpaqueStorageEffect = base.OpaqueStorageEffect;
 
 pub const OpaqueProvenance = struct {
     storage: Place,
     generation: ValidityRootId,
+};
+
+pub const GenerationOutcome = struct {
+    storage: Place,
+    generation: ValidityRootId,
+    guard: u64,
+    invalidates: bool,
+    /// Discharge only hidden contents guarded by this call and generation.
+    /// This does not end, initialize or restore a resource.
+    empties_opaque_storage: bool = false,
+    /// Resource proofs retain identities, never snapshots of caller values.
+    resource_state: ?value_state.Initializedness = null,
+    owned_roots: []const ValidityRootId = &.{},
+    relocation: ?Relocation = null,
+    source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 },
+
+    pub const Relocation = struct {
+        destination: Place,
+        generation: ValidityRootId,
+        available_state: value_state.Initializedness,
+        moved: bool,
+
+        fn eql(self: Relocation, other: Relocation) bool {
+            return self.destination.eql(other.destination) and self.generation == other.generation and
+                self.available_state == other.available_state and self.moved == other.moved;
+        }
+    };
+
+    pub fn eql(self: GenerationOutcome, other: GenerationOutcome) bool {
+        if (self.relocation) |relocation| {
+            if (other.relocation == null or !relocation.eql(other.relocation.?)) return false;
+        } else if (other.relocation != null) return false;
+        return self.generation == other.generation and self.guard == other.guard and
+            self.invalidates == other.invalidates and self.empties_opaque_storage == other.empties_opaque_storage and self.resource_state == other.resource_state and
+            std.mem.eql(ValidityRootId, self.owned_roots, other.owned_roots) and self.storage.eql(other.storage);
+    }
+};
+
+pub const CallChoiceSelector = struct {
+    call: u64,
+    selector: ChoiceCondition,
+
+    pub fn eql(a: CallChoiceSelector, b: CallChoiceSelector) bool {
+        return a.call == b.call and a.selector.eql(b.selector);
+    }
+};
+
+pub const GuardedValueFacts = struct {
+    call: u64,
+    conditions: ChoiceConditions,
+    entry_facts: ChoiceConditions,
+    value: *const ValueFacts,
+
+    pub fn eql(a: GuardedValueFacts, b: GuardedValueFacts) bool {
+        return a.call == b.call and a.value == b.value and a.conditions.eql(b.conditions) and a.entry_facts.eql(b.entry_facts);
+    }
 };
 
 pub const ValueFacts = struct {
@@ -54,6 +114,11 @@ pub const ValueFacts = struct {
     /// this in transient safety facts lets exact dispatch survive bindings and
     /// ordinary value copies without reintroducing graph-object identity.
     virtual_methods: []const graph.GlobalFunctionId = &.{},
+    domains: []const DomainFacts = &.{},
+    generation_outcomes: []const GenerationOutcome = &.{},
+    choice_selectors: []const CallChoiceSelector = &.{},
+    choice_observations: []const CallChoiceSelector = &.{},
+    guarded_values: []const GuardedValueFacts = &.{},
 
     pub fn referenceCopy(self: ValueFacts) ValueFacts {
         return .{
@@ -65,6 +130,11 @@ pub const ValueFacts = struct {
             .referenced_place = self.referenced_place,
             .opaque_provenance = self.opaque_provenance,
             .virtual_methods = self.virtual_methods,
+            .domains = self.domains,
+            .generation_outcomes = self.generation_outcomes,
+            .choice_selectors = self.choice_selectors,
+            .choice_observations = self.choice_observations,
+            .guarded_values = self.guarded_values,
         };
     }
 
@@ -78,9 +148,16 @@ pub const ValueFacts = struct {
             .integer_address = self.integer_address,
             .foreign_storage = self.foreign_storage,
             .storage_capabilities = self.storage_capabilities,
+            .choice_selectors = self.choice_selectors,
+            .choice_observations = self.choice_observations,
         };
     }
 };
+
+/// Domain storage identities remain usable across handle copies. Current
+/// generations are looked up at the call, while returned borrows capture the
+/// old generation. Domain invalidation never transfers cleanup ownership.
+pub const DomainFacts = struct { domain_index: u32, storages: []const Place };
 
 /// Only a wholly empty value may omit its element records. In a mixed
 /// aggregate, explicit empty children prevent projection from inheriting
@@ -143,6 +220,7 @@ pub const Tracker = struct {
 
     pub fn end(self: *Tracker, id: ValidityRootId) void {
         self.roots.items[@intFromEnum(id)].state = .dead;
+        self.roots.items[@intFromEnum(id)].outcome_guard = 0;
     }
 
     pub fn isAlive(self: *const Tracker, id: ValidityRootId) bool {

@@ -1,46 +1,53 @@
-DummyOutput : Type = (
-    .write_count: Int32 = 0,
-    .flush_count: Int32 = 0
+DummyOutput: Type = (
+    .write_count : Int32 = 0,
+    .flush_count : Int32 = 0
 )
 
-write_byte(.self: $&DummyOutput, .byte: UInt8) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+write_byte(
+        .self : $&DummyOutput,
+        .byte : UInt8
+    ) -> (
+        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+    ) := {
     _ ::= byte
-    self& = (
-        .write_count = self&.write_count + 1,
-        .flush_count = self&.flush_count,
-    )
+    self&.write_count = self&.write_count + 1
     result = ..ok(.value = Void())
 }
 
-flush(.self: $&DummyOutput) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
-    self& = (
-        .write_count = self&.write_count,
-        .flush_count = self&.flush_count + 1,
-    )
+flush(
+        .self : $&DummyOutput
+    ) -> (
+        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+    ) := {
+    self&.flush_count = self&.flush_count + 1
     result = ..ok(.value = Void())
 }
 
 DummyOutput implements Writer
 
-DummyInput : Type = (
-    .index: UIntNative = 0
+DummyInput: Type = (
+    .index : UIntNative = 0
 )
 
-read_byte(.self: $&DummyInput) -> (.result: Errable#(.t: ReadByte, .reasons: (..stream_read_failed))) := {
+read_byte(
+        .self : $&DummyInput
+    ) -> (
+        .result : Errable#(.t: ReadByte, .reasons: (..stream_read_failed))
+    ) := {
     if self&.index == 0 {
-        self& = (.index = 1)
+        self&.index = 1
         result = ..ok ..ok 79
         return
     }
 
     if self&.index == 1 {
-        self& = (.index = 2)
+        self&.index = 2
         result = ..ok ..ok 75
         return
     }
 
     if self&.index == 2 {
-        self& = (.index = 3)
+        self&.index = 3
         result = ..ok ..ok 10
         return
     }
@@ -129,13 +136,13 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
             status_code = 9
             return
         }
-        ..ok ~ outer {
+        ..ok ~outer {
             match outer {
                 ..end {
                     status_code = 9
                     return
                 }
-                ..ok ~ line_payload {
+                ..ok ~line_payload {
                     line ::= ~line_payload
                     if line.length != 2 {
                         status_code = 10

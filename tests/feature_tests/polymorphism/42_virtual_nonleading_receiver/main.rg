@@ -1,10 +1,16 @@
-A : Abstract = (add(.amount: Int32, .target: $&Self) -> (.value: Int32))
-Box : Type = (.value: Int32)
+A: Abstract = (
+    add(.amount: Int32, .target: $&Self) -> (.value: Int32) where depends_on(value, amount)
+)
+
+Box: Type = (.value: Int32)
+
 Box implements A
+
 add(.amount: Int32, .target: $&Box) -> (.value: Int32) := {
     target&.value = target&.value + amount
     value = target&.value
 }
+
 main() -> (.status_code: Int32 = 0) := {
     box :: Box = (.value = 7)
     handle ::= to_virtual#(.abstract: A)(.value = $&box)

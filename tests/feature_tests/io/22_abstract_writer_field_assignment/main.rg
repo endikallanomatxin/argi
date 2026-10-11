@@ -1,27 +1,37 @@
-DummyWriter : Type = (
-    .flush_count: Int32 = 0
+DummyWriter: Type = (
+    .flush_count : Int32 = 0
 )
 
-write_byte(.self: $&DummyWriter, .byte: UInt8) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+write_byte(
+        .self : $&DummyWriter,
+        .byte : UInt8
+    ) -> (
+        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+    ) := {
     _ ::= byte
     result = ..ok(.value = Void())
 }
 
-flush(.self: $&DummyWriter) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
-    self& = (
-        .flush_count = self&.flush_count + 1
-    )
+flush(
+        .self : $&DummyWriter
+    ) -> (
+        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+    ) := {
+    self&.flush_count = self&.flush_count + 1
     result = ..ok(.value = Void())
 }
 
 DummyWriter implements Writer
 
-Holder : Type = (
-    .writer: $&Writer
+Holder: Type = (
+    .writer : $&Writer
 )
 
-Holder init(.writer: $&DummyWriter,
-) -> (.result: Holder) := {
+Holder init(
+        .writer : $&DummyWriter,
+    ) -> (
+        .result : Holder
+    ) := {
     result.writer = writer
 }
 

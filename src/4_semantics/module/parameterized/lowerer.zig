@@ -278,15 +278,29 @@ pub const Context = struct {
                     self.abstract_parameters.clearRetainingCapacity();
                     const params = try self.lowerParameters(abstract.generic_params, abstract.generic_params_struct);
                     const req_start: u32 = @intCast(self.graph.semantic.parameterized_storage.abstract_requirements.items.len);
+                    var domains: std.ArrayList(primitives.StringRange) = .empty;
+                    defer domains.deinit(self.allocator);
+                    for (abstract.domains) |domain| {
+                        const text = self.tree.tokenTextFromSource(self.source, self.tree.mainToken(domain));
+                        for (domains.items) |previous| {
+                            if (std.mem.eql(u8, self.graph.text(previous), text)) {
+                                try self.contractError(domain, "duplicate Abstract storage domain");
+                                unreachable;
+                            }
+                        }
+                        try domains.append(self.allocator, try self.writer.addString(text));
+                    }
                     for (abstract.requires_functions) |requirement_node| {
                         const requirement = self.tree.abstractFunctionRequirement(requirement_node) orelse continue;
                         const name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, requirement.name_token));
                         const input = try self.lowerType(requirement.input, true);
                         const output = try self.lowerType(requirement.output, true);
+                        const safety_contract = try self.lowerMethodSafetyContract(requirement, domains.items);
                         try self.graph.semantic.parameterized_storage.abstract_requirements.append(self.allocator, .{
                             .name = name,
                             .input = input,
                             .output = output,
+                            .safety_contract = safety_contract,
                         });
                     }
                     try self.graph.semantic.parameterized_storage.abstract_definitions.append(self.allocator, .{
@@ -296,6 +310,7 @@ pub const Context = struct {
                             .start = req_start,
                             .len = @intCast(self.graph.semantic.parameterized_storage.abstract_requirements.items.len - req_start),
                         },
+                        .domains = try domains.toOwnedSlice(self.allocator),
                     });
                     stats.abstract_definitions += 1;
                 },
@@ -303,6 +318,346 @@ pub const Context = struct {
             }
         }
         return stats;
+    }
+
+    fn lowerMethodSafetyContract(self: *Context, requirement: syn.AbstractFunctionRequirement, domains: []const primitives.StringRange) anyerror!?primitives.MethodSafetyContract {
+        const node = requirement.safety_contract orelse return null;
+        var general_conditions = false;
+        var outcomes: std.ArrayList(primitives.MethodSafetyContract.Outcome) = .empty;
+        defer outcomes.deinit(self.allocator);
+        var dependencies: std.ArrayList(primitives.MethodSafetyContract.Dependency) = .empty;
+        defer dependencies.deinit(self.allocator);
+        var referents: std.ArrayList(primitives.MethodSafetyContract.Dependency) = .empty;
+        defer referents.deinit(self.allocator);
+        var owned_outputs: std.ArrayList(u32) = .empty;
+        defer owned_outputs.deinit(self.allocator);
+        var transfers: std.ArrayList(primitives.MethodSafetyContract.Dependency) = .empty;
+        defer transfers.deinit(self.allocator);
+        var relocations: std.ArrayList(primitives.MethodSafetyContract.Relocation) = .empty;
+        defer relocations.deinit(self.allocator);
+        var retained_inputs: std.ArrayList(primitives.MethodSafetyContract.Retention) = .empty;
+        defer retained_inputs.deinit(self.allocator);
+        var emptied_inputs: std.ArrayList(primitives.MethodSafetyContract.StorageInput) = .empty;
+        defer emptied_inputs.deinit(self.allocator);
+        var storage_sources: std.ArrayList(primitives.MethodSafetyContract.StorageDependency) = .empty;
+        defer storage_sources.deinit(self.allocator);
+        var consumed_inputs: std.ArrayList(u32) = .empty;
+        defer consumed_inputs.deinit(self.allocator);
+        var invalidates: std.ArrayList(u32) = .empty;
+        defer invalidates.deinit(self.allocator);
+        var domain_dependencies: std.ArrayList(primitives.MethodSafetyContract.DomainDependency) = .empty;
+        defer domain_dependencies.deinit(self.allocator);
+        var invalidated_domains: std.ArrayList(primitives.MethodSafetyContract.DomainInput) = .empty;
+        defer invalidated_domains.deinit(self.allocator);
+        if (self.tree.codeBlock(node)) |block| {
+            for (block.statements) |statement| {
+                if (self.tree.tag(statement) == .contract_outcome) {
+                    const data = self.tree.extraData(syn.ContractOutcomeExtra, self.tree.data(statement).extra);
+                    const output_name = self.tree.tokenTextFromSource(self.source, data.output);
+                    var output_index: ?u32 = null;
+                    for (self.tree.structTypeLiteral(requirement.output).?.fields, 0..) |field_node, index| {
+                        const field = self.tree.structTypeField(field_node).?;
+                        if (std.mem.eql(u8, output_name, self.tree.tokenTextFromSource(self.source, field.name_token))) output_index = @intCast(index);
+                    }
+                    var input_index: ?u32 = null;
+                    if (output_index == null) for (self.tree.structTypeLiteral(requirement.input).?.fields, 0..) |field_node, index| {
+                        const field = self.tree.structTypeField(field_node).?;
+                        if (std.mem.eql(u8, output_name, self.tree.tokenTextFromSource(self.source, field.name_token))) input_index = @intCast(index);
+                    };
+                    if (output_index == null and input_index == null) {
+                        try self.contractError(statement, "on must select a named method input or output");
+                        unreachable;
+                    }
+                    if (input_index != null) general_conditions = true;
+                    var child = requirement;
+                    child.safety_contract = data.body;
+                    const effect = (try self.lowerMethodSafetyContract(child, domains)).?;
+                    if (effect.retained_inputs.len != 0) {
+                        try self.contractError(statement, "conditional opaque storage clauses require correlated hidden storage post-states; declare unconditional effects instead");
+                        unreachable;
+                    }
+                    if (effect.referents.len != 0 or effect.transfers.len != 0) {
+                        try self.contractError(statement, "conditional refers_to and transfers require more precise outcome proofs");
+                        unreachable;
+                    }
+                    general_conditions = general_conditions or effect.general_conditions;
+                    for (effect.outcomes) |nested| {
+                        if (nested.input_index != input_index or (input_index == null and nested.output_index != output_index.?)) general_conditions = true;
+                    }
+                    for (effect.dependencies) |dependency| if (output_index == null or dependency.output_index != output_index.?) {
+                        general_conditions = true;
+                    };
+                    for (effect.domain_dependencies) |dependency| if (output_index == null or dependency.output_index != output_index.?) {
+                        general_conditions = true;
+                    };
+                    for (effect.storage_sources) |source| if (output_index == null or source.output_index != output_index.?) {
+                        general_conditions = true;
+                    };
+                    for (effect.owned_outputs) |owned| if (output_index == null or owned != output_index.?) {
+                        general_conditions = true;
+                    };
+                    try outcomes.append(self.allocator, .{
+                        .input_index = input_index,
+                        .output_index = output_index orelse 0,
+                        .variant = try self.writer.addString(self.tree.tokenTextFromSource(self.source, data.variant)),
+                        .dependencies = effect.dependencies,
+                        .domain_dependencies = effect.domain_dependencies,
+                        .owned_outputs = effect.owned_outputs,
+                        .storage_sources = effect.storage_sources,
+                        .emptied_inputs = effect.emptied_inputs,
+                        .consumed_inputs = effect.consumed_inputs,
+                        .relocations = effect.relocations,
+                        .invalidates = effect.invalidates,
+                        .invalidated_domains = effect.invalidated_domains,
+                        .outcomes = effect.outcomes,
+                        .source = effect.source,
+                    });
+                    continue;
+                }
+                const clause = if (self.tree.tag(statement) == .expression_statement) self.tree.data(statement).node else statement;
+                try self.lowerDependencyClause(requirement, clause, &dependencies, &referents, &invalidates, domains, &domain_dependencies, &invalidated_domains, &owned_outputs, &transfers, &consumed_inputs, &relocations, &retained_inputs, &emptied_inputs, &storage_sources);
+            }
+        } else try self.lowerDependencyClause(requirement, node, &dependencies, &referents, &invalidates, domains, &domain_dependencies, &invalidated_domains, &owned_outputs, &transfers, &consumed_inputs, &relocations, &retained_inputs, &emptied_inputs, &storage_sources);
+        return .{
+            .general_conditions = general_conditions,
+            .outcomes = try outcomes.toOwnedSlice(self.allocator),
+            .output_count = @intCast(self.tree.structTypeLiteral(requirement.output).?.fields.len),
+            .dependencies = try dependencies.toOwnedSlice(self.allocator),
+            .referents = try referents.toOwnedSlice(self.allocator),
+            .consumed_inputs = try consumed_inputs.toOwnedSlice(self.allocator),
+            .relocations = try relocations.toOwnedSlice(self.allocator),
+            .retained_inputs = try retained_inputs.toOwnedSlice(self.allocator),
+            .emptied_inputs = try emptied_inputs.toOwnedSlice(self.allocator),
+            .storage_sources = try storage_sources.toOwnedSlice(self.allocator),
+            .invalidates = try invalidates.toOwnedSlice(self.allocator),
+            .domain_dependencies = try domain_dependencies.toOwnedSlice(self.allocator),
+            .invalidated_domains = try invalidated_domains.toOwnedSlice(self.allocator),
+            .owned_outputs = try owned_outputs.toOwnedSlice(self.allocator),
+            .transfers = try transfers.toOwnedSlice(self.allocator),
+            .source = self.sourceRef(node),
+        };
+    }
+
+    fn contractError(self: *Context, node: syn.NodeIndex, message: []const u8) !void {
+        if (self.diagnostics) |bag| try bag.add(self.tree.tokenLocation(self.tree.mainToken(node)), .semantic, "{s}", .{message});
+        return error.Reported;
+    }
+
+    fn lowerDependencyClause(self: *Context, requirement: syn.AbstractFunctionRequirement, node: syn.NodeIndex, dependencies: *std.ArrayList(primitives.MethodSafetyContract.Dependency), referents: *std.ArrayList(primitives.MethodSafetyContract.Dependency), invalidates: *std.ArrayList(u32), domains: []const primitives.StringRange, domain_dependencies: *std.ArrayList(primitives.MethodSafetyContract.DomainDependency), invalidated_domains: *std.ArrayList(primitives.MethodSafetyContract.DomainInput), owned_outputs: *std.ArrayList(u32), transfers: *std.ArrayList(primitives.MethodSafetyContract.Dependency), consumed_inputs: *std.ArrayList(u32), relocations: *std.ArrayList(primitives.MethodSafetyContract.Relocation), retained_inputs: *std.ArrayList(primitives.MethodSafetyContract.Retention), emptied_inputs: *std.ArrayList(primitives.MethodSafetyContract.StorageInput), storage_sources: *std.ArrayList(primitives.MethodSafetyContract.StorageDependency)) !void {
+        const call = self.tree.functionCall(node) orelse return self.contractError(node, "expected depends_on, refers_to, owns, transfers, consumes, relocates, invalidates, retains, empties or from_storage in an Abstract safety contract");
+        const name = self.tree.tokenTextFromSource(self.source, call.callee_token);
+        if ((std.mem.eql(u8, name, "retains") or std.mem.eql(u8, name, "empties") or std.mem.eql(u8, name, "from_storage")) and call.module_qualifier == null and call.type_arguments.len == 0 and call.type_arguments_struct == null) {
+            const arguments = self.tree.structValueLiteral(call.input).?;
+            const empty = std.mem.eql(u8, name, "empties");
+            const from_storage = std.mem.eql(u8, name, "from_storage");
+            if (from_storage) {
+                if (arguments.fields.len < 2) return self.contractError(node, "from_storage requires an output followed by one or more storage inputs");
+                var output_index: u32 = undefined;
+                for (arguments.fields, 0..) |argument, index| {
+                    const field = self.tree.valueField(argument).?;
+                    if (field.name_token != null) return self.contractError(argument, "safety contract arguments must be positional names");
+                    if (index == 0) {
+                        output_index = (try self.contractFieldIndex(requirement.output, field.value)) orelse return self.contractError(field.value, "from_storage must name an output first");
+                        continue;
+                    }
+                    const storage = try self.contractStorageInput(requirement, field.value, domains);
+                    var duplicate = false;
+                    for (storage_sources.items) |source| if (source.output_index == output_index and std.meta.eql(source.storage, storage)) {
+                        duplicate = true;
+                        break;
+                    };
+                    if (!duplicate) try storage_sources.append(self.allocator, .{ .output_index = output_index, .storage = storage });
+                }
+                return;
+            }
+            if (arguments.fields.len != (if (empty) @as(usize, 1) else 2)) return self.contractError(node, "empties requires one storage input; retains requires a storage input and a value input");
+            for (arguments.fields) |argument| if (self.tree.valueField(argument).?.name_token != null) return self.contractError(argument, "safety contract arguments must be positional names");
+            const storage = try self.contractStorageInput(requirement, self.tree.valueField(arguments.fields[0]).?.value, domains);
+            if (empty) {
+                for (emptied_inputs.items) |previous| if (std.meta.eql(previous, storage)) return;
+                try emptied_inputs.append(self.allocator, storage);
+            } else {
+                const value_node = self.tree.valueField(arguments.fields[1]).?.value;
+                const input = (try self.contractFieldIndex(requirement.input, value_node)) orelse return self.contractError(value_node, "retains must name a value input after its storage");
+                if (storage.input_index == input) return self.contractError(node, "retains requires distinct storage and value inputs");
+                for (retained_inputs.items) |retained| if (std.meta.eql(retained.storage, storage) and retained.input == input) return;
+                try retained_inputs.append(self.allocator, .{ .storage = storage, .input = input });
+            }
+            return;
+        }
+        const is_referent = std.mem.eql(u8, name, "refers_to");
+        if ((std.mem.eql(u8, name, "owns") or std.mem.eql(u8, name, "transfers")) and call.module_qualifier == null and call.type_arguments.len == 0 and call.type_arguments_struct == null) {
+            const arguments = self.tree.structValueLiteral(call.input).?;
+            const owns = std.mem.eql(u8, name, "owns");
+            if (arguments.fields.len != (if (owns) @as(usize, 1) else 2)) return self.contractError(node, "owns requires one output; transfers requires one output and one input");
+            const output_field = self.tree.valueField(arguments.fields[0]).?;
+            if (output_field.name_token != null) return self.contractError(node, "safety contract arguments must be positional names");
+            const output_index = (try self.contractFieldIndex(requirement.output, output_field.value)) orelse return self.contractError(node, "ownership contracts must name a method output first");
+            if (owns) {
+                var found = false;
+                for (owned_outputs.items) |existing| if (existing == output_index) {
+                    found = true;
+                    break;
+                };
+                if (!found) try owned_outputs.append(self.allocator, output_index);
+            } else {
+                const input_field = self.tree.valueField(arguments.fields[1]).?;
+                if (input_field.name_token != null) return self.contractError(node, "safety contract arguments must be positional names");
+                const input_index = (try self.contractFieldIndex(requirement.input, input_field.value)) orelse return self.contractError(node, "transfers must name a method input");
+                try transfers.append(self.allocator, .{ .input_index = input_index, .output_index = output_index });
+            }
+            return;
+        }
+
+        if (std.mem.eql(u8, name, "relocates") and call.module_qualifier == null and call.type_arguments.len == 0 and call.type_arguments_struct == null) {
+            const arguments = self.tree.structValueLiteral(call.input).?;
+            if (arguments.fields.len != 2) return self.contractError(node, "relocates requires a destination followed by a source input");
+            var inputs: [2]u32 = undefined;
+            for (arguments.fields, &inputs) |argument, *index| {
+                const field = self.tree.valueField(argument).?;
+                if (field.name_token != null) return self.contractError(argument, "safety contract arguments must be positional names");
+                index.* = (try self.contractFieldIndex(requirement.input, field.value)) orelse return self.contractError(field.value, "relocates must name method inputs");
+            }
+            if (inputs[0] == inputs[1]) return self.contractError(node, "relocates requires distinct source and destination inputs");
+            for (relocations.items) |previous| if (previous.destination == inputs[0] or previous.source == inputs[1] or previous.source == inputs[0] or previous.destination == inputs[1]) return self.contractError(node, "relocates inputs must belong to one disjoint transfer");
+            try relocations.append(self.allocator, .{ .destination = inputs[0], .source = inputs[1] });
+            return;
+        }
+
+        if (std.mem.eql(u8, name, "consumes") and call.module_qualifier == null and call.type_arguments.len == 0 and call.type_arguments_struct == null) {
+            const arguments = self.tree.structValueLiteral(call.input).?;
+            if (arguments.fields.len == 0) return self.contractError(node, "consumes requires one or more mutable reference inputs");
+            for (arguments.fields) |argument| {
+                const field = self.tree.valueField(argument).?;
+                if (field.name_token != null) return self.contractError(argument, "safety contract arguments must be positional names");
+                const index = (try self.contractFieldIndex(requirement.input, field.value)) orelse
+                    return self.contractError(field.value, "consumes must name a method input");
+                if (std.mem.indexOfScalar(u32, consumed_inputs.items, index) == null) try consumed_inputs.append(self.allocator, index);
+            }
+            return;
+        }
+
+        if (std.mem.eql(u8, name, "invalidates") and call.module_qualifier == null and call.type_arguments.len == 0 and call.type_arguments_struct == null) {
+            const arguments = self.tree.structValueLiteral(call.input).?;
+            if (arguments.fields.len == 0) return self.contractError(node, "invalidates requires one or more mutable reference inputs");
+            for (arguments.fields) |argument| {
+                const field = self.tree.valueField(argument).?;
+                if (field.name_token != null) return self.contractError(argument, "safety contract arguments must be positional names");
+                if (try self.contractDomainInput(requirement, field.value, domains)) |input| {
+                    try invalidated_domains.append(self.allocator, input);
+                    continue;
+                }
+                const index = (try self.contractFieldIndex(requirement.input, field.value)) orelse
+                    return self.contractError(field.value, "invalidates must name a method input");
+                var found = false;
+                for (invalidates.items) |existing| if (existing == index) {
+                    found = true;
+                    break;
+                };
+                if (!found) try invalidates.append(self.allocator, index);
+            }
+            return;
+        }
+        if (call.module_qualifier != null or call.type_arguments.len != 0 or call.type_arguments_struct != null or
+            (!is_referent and !std.mem.eql(u8, name, "depends_on")))
+            return self.contractError(node, "expected depends_on, refers_to, owns, transfers, consumes, relocates, invalidates, retains, empties or from_storage in an Abstract safety contract");
+        const literal = self.tree.structValueLiteral(call.input).?;
+        if (literal.fields.len < 2) return self.contractError(node, "depends_on requires an output followed by one or more inputs");
+        if (is_referent and literal.fields.len != 2) return self.contractError(node, "refers_to requires exactly one output and one reference input");
+        const output_node = self.tree.valueField(literal.fields[0]).?.value;
+        const output_index = (try self.contractFieldIndex(requirement.output, output_node)) orelse
+            return self.contractError(output_node, "the first depends_on argument must name a method output");
+        for (literal.fields[1..]) |argument| {
+            const field = self.tree.valueField(argument).?;
+            if (field.name_token != null) return self.contractError(argument, "safety contract arguments must be positional names");
+            if (try self.contractDomainInput(requirement, field.value, domains)) |input| {
+                if (is_referent) return self.contractError(field.value, "refers_to names exact reference inputs; use depends_on for storage domains");
+                try domain_dependencies.append(self.allocator, .{ .output_index = output_index, .input = input });
+                continue;
+            }
+            const input_index = (try self.contractInputIndex(requirement, field.value)) orelse
+                return self.contractError(field.value, "depends_on dependencies must name method inputs");
+            const dependency = primitives.MethodSafetyContract.Dependency{ .output_index = output_index, .input_index = input_index };
+            if (is_referent) {
+                if (input_index >= self.tree.structTypeLiteral(requirement.input).?.fields.len)
+                    return self.contractError(field.value, "refers_to requires an explicit reference input");
+                for (referents.items) |item| {
+                    if (item.output_index == output_index and item.input_index != input_index)
+                        return self.contractError(node, "an output cannot have conflicting refers_to inputs");
+                }
+                var has_referent = false;
+                for (referents.items) |item| if (item.output_index == output_index) {
+                    has_referent = true;
+                    break;
+                };
+                if (!has_referent) try referents.append(self.allocator, dependency);
+            }
+            var exists = false;
+            for (dependencies.items) |item| if (item.output_index == output_index and item.input_index == input_index) {
+                exists = true;
+                break;
+            };
+            if (!exists) try dependencies.append(self.allocator, dependency);
+        }
+        if (self.tree.valueField(literal.fields[0]).?.name_token != null)
+            return self.contractError(output_node, "safety contract arguments must be positional names");
+    }
+
+    fn contractStorageInput(self: *Context, requirement: syn.AbstractFunctionRequirement, node: syn.NodeIndex, domains: []const primitives.StringRange) !primitives.MethodSafetyContract.StorageInput {
+        if (try self.contractDomainInput(requirement, node, domains)) |domain| return .{ .input_index = domain.input_index, .domain_index = domain.domain_index };
+        const index = (try self.contractFieldIndex(requirement.input, node)) orelse {
+            try self.contractError(node, "opaque storage clauses must name a storage input or a Self domain");
+            unreachable;
+        };
+        return .{ .input_index = index };
+    }
+
+    fn contractDomainInput(self: *Context, requirement: syn.AbstractFunctionRequirement, node: syn.NodeIndex, domains: []const primitives.StringRange) !?primitives.MethodSafetyContract.DomainInput {
+        const field = self.tree.structFieldAccess(node) orelse return null;
+        const input = (try self.contractInputIndex(requirement, field.value)) orelse return self.contractDomainError(node, "storage domains must be rooted at a method input");
+        const name = self.tree.tokenTextFromSource(self.source, field.field_token);
+        for (domains, 0..) |domain, index| {
+            if (std.mem.eql(u8, self.graph.text(domain), name)) return .{ .input_index = input, .domain_index = @intCast(index) };
+        }
+        return self.contractDomainError(node, "unknown Abstract storage domain");
+    }
+
+    fn contractDomainError(self: *Context, node: syn.NodeIndex, message: []const u8) !?primitives.MethodSafetyContract.DomainInput {
+        try self.contractError(node, message);
+        unreachable;
+    }
+
+    fn contractInputIndex(self: *Context, requirement: syn.AbstractFunctionRequirement, node: syn.NodeIndex) !?u32 {
+        if (try self.contractFieldIndex(requirement.input, node)) |index| return index;
+        const name = self.tree.tokenTextFromSource(self.source, self.tree.mainToken(node));
+        if (!std.mem.eql(u8, name, "error_tracer")) return null;
+        for (self.tree.structTypeLiteral(requirement.output).?.fields) |field_node| {
+            const field = self.tree.structTypeField(field_node).?;
+            const ty = self.tree.syntaxType(field.type_node orelse continue) orelse continue;
+            const fallible = switch (ty) {
+                .inferred_errable => true,
+                .generic => |generic| blk: {
+                    const base = self.tree.syntaxType(generic.base) orelse break :blk false;
+                    break :blk base == .name and std.mem.eql(u8, self.tree.tokenTextFromSource(self.source, base.name.name_token), "Errable");
+                },
+                else => false,
+            };
+            if (fallible) return @intCast(self.tree.structTypeLiteral(requirement.input).?.fields.len);
+        }
+        return null;
+    }
+
+    fn contractFieldIndex(self: *Context, signature: syn.NodeIndex, node: syn.NodeIndex) !?u32 {
+        if (self.tree.tag(node) != .identifier) {
+            try self.contractError(node, "safety contract arguments must name method inputs or outputs");
+            unreachable;
+        }
+        const name = self.tree.tokenTextFromSource(self.source, self.tree.mainToken(node));
+        for (self.tree.structTypeLiteral(signature).?.fields, 0..) |field_node, index| {
+            const field = self.tree.structTypeField(field_node).?;
+            if (field.position == null and std.mem.eql(u8, name, self.tree.tokenTextFromSource(self.source, field.name_token))) return @intCast(index);
+        }
+        return null;
     }
 
     const GenericTypePayload = struct {
