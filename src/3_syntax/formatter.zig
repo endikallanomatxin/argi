@@ -388,7 +388,9 @@ fn operationPriority(tag: syn.Node.Tag) ?u8 {
 fn expressionSpan(tree: *const syn.FileSyntaxTree, node: syn.NodeIndex, tokens: tok.View, layout: Layout) ExpressionSpan {
     var first = firstToken(tree, node);
     var last: usize = @intFromEnum(tree.mainToken(node));
-    if (tree.literal(node)) |literal| {
+    if (tree.tag(node) == .error_report_return_block) {
+        last = layout.ends[@intFromEnum(tree.mainToken(tree.data(node).node_and_node.second))];
+    } else if (tree.literal(node)) |literal| {
         last = @intFromEnum(literal.token);
     } else if (tree.binaryOperation(node)) |binary| {
         last = @max(last, expressionSpan(tree, binary.rhs, tokens, layout).last);
@@ -470,7 +472,7 @@ fn firstToken(tree: *const syn.FileSyntaxTree, node: syn.NodeIndex) usize {
         return first;
     }
     const child: ?syn.NodeIndex = switch (tree.tag(node)) {
-        .expression_statement, .error_propagation, .error_report_return, .nullable_test, .dereference => tree.unaryOperand(node),
+        .expression_statement, .error_propagation, .error_report_return, .error_report_return_block, .nullable_test, .dereference => tree.unaryOperand(node),
         .handle_expression => tree.extraData(syn.HandleExtra, tree.data(node).extra).value,
         .struct_field_access => tree.structFieldAccess(node).?.value,
         .choice_payload_access => tree.choicePayloadAccess(node).?.value,
@@ -878,4 +880,15 @@ test "formatter preserves local error handlers" {
 
 test "formatter preserves reporting return postfix" {
     try expectFormat("main()->():={value:=attempt()!!!}\n", "main() -> () := { value := attempt()!!! }\n");
+}
+
+test "formatter preserves reporting return action blocks" {
+    try expectFormat(
+        "main()->(.status_code:Int32=0):={attempt()!!!{status_code=1}}\n",
+        "main() -> (.status_code: Int32 = 0) := { attempt()!!! { status_code = 1 } }\n",
+    );
+    try expectFormat(
+        "main()->():={if [ready()!!!{return}]{work()}}\n",
+        "main() -> () := { if [ready()!!! { return }] { work() } }\n",
+    );
 }

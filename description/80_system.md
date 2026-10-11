@@ -64,13 +64,13 @@ main(.system: System) -> () := {
 
 `!!!` unwraps success, or reports the error and returns normally from the
 containing function. It does not set a failure exit code. To exit with `1` on
-such an early return, initialize `.status_code: Int32 = 1` and set it to `0`
-only after successful work. Fallible work may remain in an ordinary helper:
+such an early return, initialize `.status_code: Int32 = 0` and assign `1` in
+an attached error block:
 
 ```rg
-main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
-    run(.system = system)!!!
-    status_code = 0
+main(.system: System) -> (.status_code: Int32 = 0) := {
+    assume writer ::= $&system.terminal&.stderr
+    write($&system.terminal&.stdout, "ready\n")!!! { status_code = 1 }
 }
 ```
 

@@ -44,12 +44,25 @@ to its underlying writer. The transfer borrows both endpoints, allocates nothing
 and leaves their owners open. Success does not promise a flushed destination;
 call `flush` explicitly to check the final output.
 
-Register `#defer flush(writer)!` just after constructing the output writer in
-an Errable-returning function to check flushing on every exit, including early
-returns. Automatic `BufferedWriter` cleanup already flushes best-effort; the
-checked deferred operation additionally propagates failures. A failed deferred
-flush replaces a pending return error, so use explicit handling when the earlier
-error must take precedence.
+A deferred checked flush handles failure locally rather than returning from
+its containing function. For a program with an explicit exit status:
+
+```rg
+#defer {
+    flush(output) handle error {
+        status_code = 1
+        report_trace(.trace = &error.trace, .writer = writer) handle ignored {}
+    }
+}
+```
+
+Here `output` is the buffered output stream and `writer` is the diagnostic
+writer. A failed flush changes the status without skipping other deferred
+actions or automatic cleanup. Automatic `BufferedWriter` cleanup already
+flushes best-effort; the explicit deferred operation additionally observes
+failures. In an Errable-returning function, a local handler may assign its
+error to the result binding; choose explicitly whether an earlier error or the
+flush failure takes precedence.
 
 Only successful reads increase the pending length. On a read failure, previously
 accepted bytes remain pending; bytes written into free space by the failed read

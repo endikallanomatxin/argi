@@ -1,8 +1,9 @@
 -- A small consumer of declarative options, owned paths and directory walking.
-run_main(.system: System) -> !Void = ..ok Void() := {
+main(.system: System) -> (.status_code: Int32 = 0) := {
+    assume writer ::= $&system.terminal&.stderr
     assume allocator := system.page_allocator
     assume file_system := system.file_system
-    assume writer ::= $&system.terminal&.stdout
+    output ::= $&system.terminal&.stdout
 
     specs ::= (
         CliSpec("help", "h", "Show help"),
@@ -29,7 +30,8 @@ run_main(.system: System) -> !Void = ..ok Void() := {
                 .program = "tree"
                 .about   = "List directory entries"
                 .specs   = view(&specs)
-            )!
+                .writer  = output
+            )!!! { status_code = 1 }
             return
         }
     }
@@ -38,7 +40,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         .source = system.args
         .specs  = view(&specs)
         .start  = 1
-    )!
+    )!!! { status_code = 1 }
 
     root ::= "."
     maximum_depth :: UIntNative = 64
@@ -47,7 +49,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
             ..none {}
             ..some entry {
                 if option.name == "root" { root = entry.value }
-                if option.name == "depth" { maximum_depth = parse_uintnative(entry.value)! }
+                if option.name == "depth" { maximum_depth = parse_uintnative(entry.value)!!! { status_code = 1 } }
             }
         }
     }
@@ -55,21 +57,16 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     walker ::= DirectoryWalker(
         .path          = root
         .maximum_depth = maximum_depth
-    )!
+    )!!! { status_code = 1 }
 
     while true {
-        match next($&walker)! {
+        match [next($&walker)!!! { status_code = 1 }] {
             ..none { break }
             ..some ~entry {
-                print(as_view(&entry.value.path))!
+                print(as_view(&entry.value.path), .writer = output)!!! { status_code = 1 }
             }
         }
     }
 
-    flush()!
-}
-
-main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
-    run_main(.system = system)!!!
-    status_code = 0
+    flush(output)!!! { status_code = 1 }
 }

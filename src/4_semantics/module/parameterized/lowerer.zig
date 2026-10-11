@@ -183,6 +183,8 @@ fn linkedAbstractMatches(
 const PipeOperandOverride = struct { syntax: syn.NodeIndex, value: ir.ParameterizedNodeId };
 
 pub const Context = struct {
+    in_defer: bool = false,
+    defer_loop_depth: u32 = 0,
     diagnostics: ?*@import("../../../1_base/diagnostic.zig").Diagnostics = null,
     allocator: std.mem.Allocator,
     graph: *graph_mod.ModuleSemanticGraph,
@@ -1223,13 +1225,34 @@ pub const Context = struct {
     }
 
     fn lowerBodyNode(self: *Context, node: syn.NodeIndex) anyerror!ir.ParameterizedNodeId {
+        // A deferred action must complete without bypassing remaining defers
+        // or automatic owner cleanup. Handle its failures locally instead.
+        if (self.in_defer) switch (self.tree.tag(node)) {
+            .return_statement, .error_propagation, .error_context, .error_report_return, .error_report_return_block => {
+                if (self.diagnostics) |bag| try bag.add(self.tree.tokenLocation(self.tree.mainToken(node)), .semantic, "cannot return or propagate errors from a deferred action; use handle to process the error locally", .{});
+                return error.Reported;
+            },
+            .break_statement, .continue_statement => if (self.defer_loop_depth == 0) {
+                if (self.diagnostics) |bag| try bag.add(self.tree.tokenLocation(self.tree.mainToken(node)), .semantic, "cannot exit an enclosing loop from a deferred action", .{});
+                return error.Reported;
+            },
+            else => {},
+        };
+
+        const previous_loop_depth = self.defer_loop_depth;
+        if (self.in_defer and (self.tree.tag(node) == .while_statement or self.tree.forStatement(node) != null)) self.defer_loop_depth += 1;
+        defer self.defer_loop_depth = previous_loop_depth;
+
         for (self.pipe_operand_overrides) |entry| if (entry.syntax == node) return entry.value;
         if (self.tree.tag(node) == .pipe_placeholder) return self.pipe_value orelse error.PipePlaceholderOutsidePipe;
         if (self.tree.tag(node) == .pipe_expression) return self.lowerPipe(node);
-        if ((self.tree.tag(node) == .handle_expression or self.tree.tag(node) == .error_report_return)) return self.lowerHandle(node);
+        if (self.tree.tag(node) == .handle_expression or self.tree.tag(node) == .error_report_return or self.tree.tag(node) == .error_report_return_block) return self.lowerHandle(node);
         if (self.tree.tag(node) == .expression_statement)
             return self.lowerBodyNode(self.tree.unaryOperand(node).?);
         if (self.tree.tag(node) == .reach_directive) return self.lowerReach(node);
+        // Standalone blocks, including deferred handlers, already have a
+        // resolved block representation; do not wrap them in an unknown op.
+        if (self.tree.codeBlock(node) != null) return self.blockAsNode(node);
         if (self.tree.matchStatement(node)) |statement| {
             const value = try self.lowerBodyNode(statement.value);
             var cases: std.ArrayList(ir.MatchCase) = .empty;
@@ -1492,6 +1515,13 @@ pub const Context = struct {
             }
         }
 
+        const previous_defer = self.in_defer;
+        if (self.tree.tag(node) == .defer_statement) {
+            self.in_defer = true;
+            self.defer_loop_depth = 0;
+        }
+        defer self.in_defer = previous_defer;
+
         var operands = std.array_list.Managed(ir.ParameterizedNodeId).init(self.allocator);
         defer operands.deinit();
         try self.collectBodyOperands(node, &operands);
@@ -1542,7 +1572,7 @@ pub const Context = struct {
     }
 
     fn lowerHandle(self: *Context, node: syn.NodeIndex) !ir.ParameterizedNodeId {
-        const reporting = self.tree.tag(node) == .error_report_return;
+        const reporting = self.tree.tag(node) == .error_report_return or self.tree.tag(node) == .error_report_return_block;
         const handle = if (reporting) syn.HandleExtra{ .value = self.tree.unaryOperand(node).?, .result_name = .none, .error_name = self.tree.mainToken(node), .body = node } else self.tree.extraData(syn.HandleExtra, self.tree.data(node).extra);
         const value = try self.lowerBodyNode(handle.value);
         const payload = try self.addPending(node, .choice_payload, &.{value}, try self.writer.addString("ok"), null, .none);
@@ -1594,6 +1624,10 @@ pub const Context = struct {
         try self.captureAssumedFields(node, input);
         const report = try self.addPending(node, .generic_call, &.{input}, try self.writer.addString("report_trace"), null, .none);
         const ret = try self.addPending(node, .return_statement, &.{}, null, null, .none);
+        if (self.tree.tag(node) == .error_report_return_block) {
+            const action = try self.blockAsNode(self.tree.data(node).node_and_node.second);
+            return self.handleBlock(&.{ report, action, ret }, null);
+        }
         return self.handleBlock(&.{ report, ret }, null);
     }
 

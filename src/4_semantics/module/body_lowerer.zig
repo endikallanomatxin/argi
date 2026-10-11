@@ -96,6 +96,8 @@ const Context = struct {
     allocator: std.mem.Allocator,
     graph: *graph_mod.ModuleSemanticGraph,
     files: []const graph_mod.FileInput,
+    in_defer: bool = false,
+    defer_loop_depth: u32 = 0,
     diagnostics: ?*diagnostics_mod.Diagnostics,
     writer: writer_mod.Writer,
     bindings: std.array_list.Managed(NamedBinding),
@@ -304,6 +306,24 @@ const Context = struct {
     }
 
     fn lowerNode(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) anyerror!Lowered {
+        // A deferred action must complete without bypassing remaining defers
+        // or automatic owner cleanup. Handle its failures locally instead.
+        if (self.in_defer) switch (self.tree.tag(node)) {
+            .return_statement, .error_propagation, .error_context, .error_report_return, .error_report_return_block => {
+                if (self.diagnostics) |bag| try bag.add(self.tree.tokenLocation(self.tree.mainToken(node)), .semantic, "cannot return or propagate errors from a deferred action; use handle to process the error locally", .{});
+                return error.Reported;
+            },
+            .break_statement, .continue_statement => if (self.defer_loop_depth == 0) {
+                if (self.diagnostics) |bag| try bag.add(self.tree.tokenLocation(self.tree.mainToken(node)), .semantic, "cannot exit an enclosing loop from a deferred action", .{});
+                return error.Reported;
+            },
+            else => {},
+        };
+
+        const previous_loop_depth = self.defer_loop_depth;
+        if (self.in_defer and (self.tree.tag(node) == .while_statement or self.tree.forStatement(node) != null)) self.defer_loop_depth += 1;
+        defer self.defer_loop_depth = previous_loop_depth;
+
         for (self.pipe_operand_overrides) |entry| if (entry.syntax == node) return entry.value;
         if (self.expression_mode == .initializer) switch (self.tree.tag(node)) {
             .literal,
@@ -359,7 +379,7 @@ const Context = struct {
             .expression_statement => self.lowerNode(self.tree.unaryOperand(node).?, expected),
             .move_expression => self.wrapUnary(node, .move_value, expected),
             .pipe_expression => self.lowerPipe(node, expected),
-            .handle_expression, .error_report_return => self.lowerHandle(node, expected),
+            .handle_expression, .error_report_return, .error_report_return_block => self.lowerHandle(node, expected),
             .unwrap_or, .unwrap_or_do => self.lowerUnwrap(node, expected),
             .function_call => self.lowerCall(node, expected),
             .code_block => self.lowerBlockNode(node),
@@ -577,7 +597,7 @@ const Context = struct {
     // is conditional. Match payloads remain branch-local and are moved into
     // that storage, so cleanup and definite initialization use ordinary flow.
     fn lowerHandle(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
-        const reporting = self.tree.tag(node) == .error_report_return;
+        const reporting = self.tree.tag(node) == .error_report_return or self.tree.tag(node) == .error_report_return_block;
         const handle = if (reporting) syn.HandleExtra{ .value = self.tree.unaryOperand(node).?, .result_name = .none, .error_name = self.tree.mainToken(node), .body = node } else self.tree.extraData(syn.HandleExtra, self.tree.data(node).extra);
         const value = try self.lowerNode(handle.value, null);
         const payload = try self.pending(node, .{ .resolve_choice_payload = .{
@@ -642,6 +662,11 @@ const Context = struct {
         const callee = try self.writer.addExternalRef(.{ .kind = .function, .module_path = null, .name = try self.writer.addString("report_trace"), .source = self.sourceRef(node) });
         const report = try self.pending(node, .{ .resolve_call = .{ .node = self.nextNodeId(), .callee = callee, .callee_value = null, .input = input.node, .expected_type = null, .visible_bindings = try self.captureVisibleBindings(), .owner_function = self.current_function } }, null);
         const ret = try self.resolved(node, try self.builtin(.Void), .{ .return_statement = .{ .expression = null, .cleanup = .{ .start = 0, .len = 0 } } });
+        if (self.tree.tag(node) == .error_report_return_block) {
+            const action = try self.lowerBlock(self.tree.data(node).node_and_node.second);
+            const action_node = try self.resolved(node, try self.builtin(.Void), .{ .code_block = action });
+            return self.writer.addBlock(.{ .nodes = try self.writer.appendNodeRefs(&.{ report.node, action_node.node, ret.node }), .ret_val = null });
+        }
         return self.writer.addBlock(.{ .nodes = try self.writer.appendNodeRefs(&.{ report.node, ret.node }), .ret_val = null });
     }
 
@@ -1214,6 +1239,12 @@ const Context = struct {
     }
 
     fn lowerDefer(self: *Context, node: syn.NodeIndex) !Lowered {
+        const previous = self.in_defer;
+        self.in_defer = true;
+        defer self.in_defer = previous;
+        const previous_loop_depth = self.defer_loop_depth;
+        self.defer_loop_depth = 0;
+        defer self.defer_loop_depth = previous_loop_depth;
         const value = try self.lowerNode(self.tree.unaryOperand(node).?, null);
         return self.pending(node, .{ .resolve_defer = .{ .node = self.nextNodeId(), .value = value.node } }, try self.builtin(.Void));
     }

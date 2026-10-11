@@ -117,6 +117,7 @@ pub const Node = struct {
         choice_payload_access,
         error_propagation,
         error_report_return,
+        error_report_return_block,
         error_context,
         nullable_test,
         index_access,
@@ -853,6 +854,7 @@ pub const FileSyntaxTree = struct {
     pub fn unaryOperand(tree: *const FileSyntaxTree, node: NodeIndex) ?NodeIndex {
         return switch (tree.tag(node)) {
             .expression_statement, .move_expression, .error_propagation, .error_report_return, .nullable_test, .defer_statement, .address_of, .address_of_mut, .dereference => tree.data(node).node,
+            .error_report_return_block => tree.data(node).node_and_node.first,
             else => null,
         };
     }

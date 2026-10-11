@@ -855,7 +855,12 @@ pub const CodeGenerator = struct {
     }
 
     fn allocateLocalBinding(self: *CodeGenerator, binding: graph_mod.GlobalBindingId, initialization: ?graph_mod.GlobalNodeId) !void {
-        if (self.bindings.contains(binding)) return;
+        if (self.bindings.get(binding)) |storage| {
+            // One deferred declaration can be emitted on several exit paths.
+            // Reuse its entry alloca, but initialize it on each executed path.
+            if (initialization) |node| try self.initializeLocalBinding(binding, storage.ref, storage.type_ref, storage.drop_state, node);
+            return;
+        }
         const record = self.graph.bindings.items[@intFromEnum(binding)];
         const type_ref = try self.toLLVMType(record.ty);
         const current_block = c.LLVMGetInsertBlock(self.builder) orelse return CodegenError.InvalidType;
@@ -869,16 +874,17 @@ pub const CodeGenerator = struct {
         const drop = try self.buildDropState(record.ty, entry_builder);
         try self.bindings.put(binding, .{ .ref = storage, .type_ref = type_ref, .ty = record.ty, .drop_state = drop });
         self.storeDropState(drop, false);
-        if (initialization) |node| {
-            if (!try self.storeLargeNode(node, storage)) {
-                const value = (try self.visitNode(node)) orelse return CodegenError.ValueNotFound;
-                if (value.type_ref != type_ref) return CodegenError.InvalidType;
-                _ = c.LLVMBuildStore(self.builder, value.value_ref, storage);
-            }
-            const stored = self.bindings.getPtr(binding).?;
-            stored.initialized = true;
-            self.storeDropState(drop, true);
+        if (initialization) |node| try self.initializeLocalBinding(binding, storage, type_ref, drop, node);
+    }
+
+    fn initializeLocalBinding(self: *CodeGenerator, binding: graph_mod.GlobalBindingId, storage: llvm.c.LLVMValueRef, type_ref: llvm.c.LLVMTypeRef, drop: ?*DropState, node: graph_mod.GlobalNodeId) !void {
+        if (!try self.storeLargeNode(node, storage)) {
+            const value = (try self.visitNode(node)) orelse return CodegenError.ValueNotFound;
+            if (value.type_ref != type_ref) return CodegenError.InvalidType;
+            _ = c.LLVMBuildStore(self.builder, value.value_ref, storage);
         }
+        self.bindings.getPtr(binding).?.initialized = true;
+        if (drop) |state| self.storeDropState(state, true);
     }
 
     fn genBlock(self: *CodeGenerator, block_id: graph_mod.GlobalBlockId) !?TypedValue {

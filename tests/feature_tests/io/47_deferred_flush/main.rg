@@ -32,13 +32,21 @@ flush(
     result = ..ok Void()
 }
 
-finish(.sink: $&Sink, .early: Bool) -> !Void = ..ok Void() := {
+finish(.sink: $&Sink, .early: Bool) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()) := {
     assume writer := sink
-    #defer flush(writer)!
+    #defer {
+        flush(writer) handle error { result = ..error ~error }
+    }
 
-    write_byte(writer, 65)!
+    write_byte(writer, 65) handle error {
+        result = ..error ~error
+        return
+    }
     if early { return }
-    write_byte(writer, 66)!
+    write_byte(writer, 66) handle error {
+        result = ..error ~error
+        return
+    }
 }
 
 run_main() -> !Void = ..ok Void() := {

@@ -118,7 +118,10 @@ pub const Resolver = struct {
     fn blockReadyForCleanup(self: *const Resolver, block_id: global_sg.GlobalBlockId) bool {
         const block = self.graph.blocks.items[@intFromEnum(block_id)];
         for (self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len]) |node_id| {
-            const node = self.graph.nodes.items[@intFromEnum(node_id)];
+            // Deferred markers hide executable bodies; their local binding
+            // types must resolve before cleanup can be finalized once.
+            const effective_node = self.deferValue(node_id) orelse node_id;
+            const node = self.graph.nodes.items[@intFromEnum(effective_node)];
             switch (node.content) {
                 .binding_declaration => |binding| if (self.graph.isBindingTypeUnresolved(binding)) return false,
                 .binding_use => |binding| if (self.graph.isBindingTypeUnresolved(binding)) return false,
@@ -449,6 +452,9 @@ pub const Resolver = struct {
                 try self.finalizeExpressionCleanup(node_id, active.items, defers.items, visible.items, owner_function, module_index);
             const node = &self.graph.nodes.items[@intFromEnum(node_id)];
             if (self.deferValue(node_id)) |deferred_value| {
+                // The marker is a no-op, but the deferred body still owns
+                // branch-local bindings and nested deferred actions.
+                try self.finalizeExpressionCleanup(deferred_value, active.items, defers.items, visible.items, owner_function, module_index);
                 try defers.append(self.allocator, deferred_value);
                 continue;
             }
@@ -925,7 +931,7 @@ pub const Resolver = struct {
         return true;
     }
 
-    fn deferValue(self: *Resolver, marker: global_sg.GlobalNodeId) ?global_sg.GlobalNodeId {
+    fn deferValue(self: *const Resolver, marker: global_sg.GlobalNodeId) ?global_sg.GlobalNodeId {
         for (self.deferred.items) |entry| if (entry.marker == marker) return entry.value;
         return null;
     }

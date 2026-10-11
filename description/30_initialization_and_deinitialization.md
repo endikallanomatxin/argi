@@ -81,3 +81,12 @@ on a return or error propagation. Deferred statements run in reverse order,
 before automatic cleanup of the scope's locals. Use it for an exit action
 that automatic cleanup does not provide; a local value with a suitable
 `deinit` does not need a deferred `deinit` call.
+
+Deferred actions cannot return from the containing function or propagate errors
+with `!`, `!!`, or `!!!`: doing so would bypass remaining deferred actions and
+owner cleanup. Handle failures locally with `handle`. A handler may update an
+output binding, such as setting `status_code = 1`, and report the error while
+allowing cleanup to continue. Calls to ordinary functions remain valid; their
+returns belong to those functions rather than to the deferred action.
+Likewise, `break` and `continue` may target loops inside the deferred action,
+but cannot exit an enclosing loop outside it.

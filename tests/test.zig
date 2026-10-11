@@ -11516,3 +11516,69 @@ test "tests/feature_tests/polymorphism/327_abstract_input_guards_common_consumpt
     try expectSuccessfulBuild("tests/feature_tests/polymorphism/327_abstract_input_guards_common_consumption");
     try runExpect("tests/feature_tests/polymorphism/327_abstract_input_guards_common_consumption", 0);
 }
+
+test "feature_tests/errors/94X_defer_return" {
+    try buildExpectFail("tests/feature_tests/errors/94X_defer_return", "cannot return or propagate errors from a deferred action");
+}
+
+test "feature_tests/errors/95X_defer_propagation" {
+    try buildExpectFail("tests/feature_tests/errors/95X_defer_propagation", "cannot return or propagate errors from a deferred action");
+}
+
+test "feature_tests/errors/96X_defer_context" {
+    try buildExpectFail("tests/feature_tests/errors/96X_defer_context", "cannot return or propagate errors from a deferred action");
+}
+
+test "feature_tests/errors/97X_defer_report_return" {
+    try buildExpectFail("tests/feature_tests/errors/97X_defer_report_return", "cannot return or propagate errors from a deferred action");
+}
+
+test "feature_tests/errors/98X_defer_generic_return" {
+    try buildExpectFail("tests/feature_tests/errors/98X_defer_generic_return", "cannot return or propagate errors from a deferred action");
+}
+
+test "feature_tests/errors/99X_defer_generic_report_return" {
+    try buildExpectFail("tests/feature_tests/errors/99X_defer_generic_report_return", "cannot return or propagate errors from a deferred action");
+}
+
+test "feature_tests/errors/100_defer_local_error_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/errors/100_defer_local_error_cleanup");
+    try runExpect("tests/feature_tests/errors/100_defer_local_error_cleanup", 0);
+}
+
+test "feature_tests/errors/101X_defer_generic_propagation" {
+    try buildExpectFail("tests/feature_tests/errors/101X_defer_generic_propagation", "cannot return or propagate errors from a deferred action");
+}
+
+test "feature_tests/errors/102X_defer_generic_context" {
+    try buildExpectFail("tests/feature_tests/errors/102X_defer_generic_context", "cannot return or propagate errors from a deferred action");
+}
+
+test "feature_tests/errors/103X_defer_break" {
+    try buildExpectFail("tests/feature_tests/errors/103X_defer_break", "cannot exit an enclosing loop from a deferred action");
+}
+
+test "feature_tests/errors/104X_defer_generic_continue" {
+    try buildExpectFail("tests/feature_tests/errors/104X_defer_generic_continue", "cannot exit an enclosing loop from a deferred action");
+}
+
+test "feature_tests/errors/105X_defer_handler_return" {
+    try buildExpectFail("tests/feature_tests/errors/105X_defer_handler_return", "cannot return or propagate errors from a deferred action");
+}
+
+test "feature_tests/errors/106_report_return_block" {
+    try expectSuccessfulBuild("tests/feature_tests/errors/106_report_return_block");
+    try runExpect("tests/feature_tests/errors/106_report_return_block", 0);
+}
+
+test "feature_tests/errors/107X_defer_report_return_block" {
+    try buildExpectFail("tests/feature_tests/errors/107X_defer_report_return_block", "cannot return or propagate errors from a deferred action");
+}
+
+test "feature_tests/errors/108X_defer_generic_report_return_block" {
+    try buildExpectFail("tests/feature_tests/errors/108X_defer_generic_report_return_block", "cannot return or propagate errors from a deferred action");
+}
+
+test "feature_tests/errors/109X_report_return_block_non_errable" {
+    try buildExpectFail("tests/feature_tests/errors/109X_report_return_block_non_errable", "handle expects an Errable value");
+}

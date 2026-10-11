@@ -1,19 +1,25 @@
 -- Transfer binary input through one buffered output stream.
-run_main(.system: System) -> !Void = ..ok Void() := {
+main(.system: System) -> (.status_code: Int32 = 0) := {
+    assume writer ::= $&system.terminal&.stderr
     assume allocator := system.page_allocator
     stdin ::= $&system.terminal&.stdin
-    assume writer ::= $&BufferedWriter(
+    output ::= $&BufferedWriter(
         $&system.terminal&.stdout
         view($&zeroed#([8192]UInt8)())
     )
-    #defer flush(writer)!
+    #defer {
+        flush(output) handle error {
+            status_code = 1
+            report_trace(.trace = &error.trace, .writer = writer) handle ignored {}
+        }
+    }
 
     specs ::= (CliSpec("help", "h", "Show help"),)
     arguments ::= parse_cli(
         .source = system.args
         .specs  = view(&specs)
         .start  = 1
-    )!
+    )!!! { status_code = 1 }
 
     for option in arguments.options {
         if option.name == "help" {
@@ -21,27 +27,38 @@ run_main(.system: System) -> !Void = ..ok Void() := {
                 .program = "cat"
                 .about   = "Concatenate files to standard output. With no files or FILE '-', read standard input."
                 .specs   = view(&specs)
-            )!
+                .writer  = output
+            )!!! { status_code = 1 }
             return
         }
     }
 
     if length(&arguments.positionals).count == 0 {
-        transfer_stream(stdin, writer)!
+        transfer_stream(stdin, output)!!! { status_code = 1 }
     } else {
         for path in arguments.positionals {
             if path == "-" {
-                transfer_stream(stdin, writer)!
+                transfer_stream(stdin, output)!!! { status_code = 1 }
             } else {
-                file_reader ::= open_read(system.file_system, path)!! path
-                transfer_stream($&file_reader, writer)!! path
-                close($&file_reader)!! path
+                file_reader ::= open_read(system.file_system, path) handle error, value {
+                    add_context(.context = path, .error_tracer = error.trace.tracer)
+                    report_trace(.trace = &error.trace, .writer = writer) handle ignored {}
+                    status_code = 1
+                    return
+                }
+                transfer_stream($&file_reader, output) handle error, value {
+                    add_context(.context = path, .error_tracer = error.trace.tracer)
+                    report_trace(.trace = &error.trace, .writer = writer) handle ignored {}
+                    status_code = 1
+                    return
+                }
+                close($&file_reader) handle error, value {
+                    add_context(.context = path, .error_tracer = error.trace.tracer)
+                    report_trace(.trace = &error.trace, .writer = writer) handle ignored {}
+                    status_code = 1
+                    return
+                }
             }
         }
     }
-}
-
-main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
-    run_main(.system = system)!!!
-    status_code = 0
 }

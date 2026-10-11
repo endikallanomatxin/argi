@@ -2442,6 +2442,9 @@ pub const Resolver = struct {
 
         fn instantiateResolvedNode(self: *InstanceContext, node: ir.ResolvedNode) anyerror!global_sg.Node {
             if (node.content == .struct_value_literal) return self.instantiateStructValue(node);
+            // TODO: Support reporting value_sequence arguments to concrete
+            // callees during abstract-dispatch specialization. Even bare !!!
+            // can currently make that enclosing specialization fail.
             if (node.content == .code_block or node.content == .value_sequence) {
                 const is_sequence = node.content == .value_sequence;
                 const block = try self.instantiateBlock(if (is_sequence) node.content.value_sequence else node.content.code_block);

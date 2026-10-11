@@ -1,25 +1,26 @@
 -- Echo complete lines until an empty line or EOF, including a final line without LF.
-run_main(.system: System) -> !Void = ..ok Void() := {
+main(.system: System) -> (.status_code: Int32 = 0) := {
+    assume writer ::= $&system.terminal&.stderr
     assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
-    assume writer ::= $&system.terminal&.stdout
+    output ::= $&system.terminal&.stdout
     assume reader ::= $&system.terminal&.stdin
-    #defer flush(writer)!
+    #defer {
+        flush(output) handle error {
+            status_code = 1
+            report_trace(.trace = &error.trace, .writer = writer) handle ignored {}
+        }
+    }
 
     while true {
-        match read_line()! {
-            ..end { return }
+        match [read_line()!!! { status_code = 1 }] {
+            ..end { break }
             ..ok ~line {
                 text ::= as_view(&line)
-                if text == "" { return }
+                if text == "" { break }
 
-                print(text)!
-                flush(writer)!
+                print(text, .writer = output)!!! { status_code = 1 }
+                flush(output)!!! { status_code = 1 }
             }
         }
     }
-}
-
-main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
-    run_main(.system = system)!!!
-    status_code = 0
 }

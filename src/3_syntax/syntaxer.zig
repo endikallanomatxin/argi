@@ -43,6 +43,7 @@ pub const Syntaxer = struct {
     diags: *diagnostic.Diagnostics,
     parsing_pipe_rhs: bool,
     allow_operator_newlines: bool,
+    allow_report_block: bool = true,
     scratch: std.ArrayList(syn.NodeIndex),
 
     pub fn init(alloc: std.mem.Allocator, toks: tok.View, source: []const u8, diags: *diagnostic.Diagnostics) !Syntaxer {
@@ -1098,6 +1099,9 @@ pub const Syntaxer = struct {
     }
 
     fn parseCollectionLiteral(self: *Syntaxer, force_struct: bool) SyntaxerError!syn.NodeIndex {
+        const previous_report_block = self.allow_report_block;
+        self.allow_report_block = true;
+        defer self.allow_report_block = previous_report_block;
         const previous_operator_newlines = self.allow_operator_newlines;
         self.allow_operator_newlines = false;
         defer self.allow_operator_newlines = previous_operator_newlines;
@@ -1225,6 +1229,9 @@ pub const Syntaxer = struct {
             if (self.tokenIs(.open_bracket)) {
                 const bracket_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
                 self.advanceOne();
+                const previous_report_block = self.allow_report_block;
+                self.allow_report_block = true;
+                defer self.allow_report_block = previous_report_block;
                 const idx_expr = try self.parseExpression();
                 if (!self.tokenIs(.close_bracket))
                     return SyntaxerError.ExpectedRightBracket;
@@ -1243,7 +1250,12 @@ pub const Syntaxer = struct {
             if (self.tokenIs(.triple_bang)) {
                 const bang_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
                 self.advanceOne();
-                node = try self.addNode(.error_report_return, bang_token, .{ .node = node });
+                if (self.allow_report_block and self.tokenIs(.open_brace)) {
+                    const body = try self.parseCodeBlock();
+                    node = try self.addNode(.error_report_return_block, bang_token, .{ .node_and_node = .{ .first = node, .second = body } });
+                } else {
+                    node = try self.addNode(.error_report_return, bang_token, .{ .node = node });
+                }
                 continue;
             }
 
@@ -1471,6 +1483,9 @@ pub const Syntaxer = struct {
                     try self.diags.add(self.file.tokenLocation(open_token), .syntax, "expression grouping requires exactly one expression", .{});
                     return SyntaxerError.ExpectedDeclarationOrAssignment;
                 }
+                const previous_report_block = self.allow_report_block;
+                self.allow_report_block = true;
+                defer self.allow_report_block = previous_report_block;
                 const expression = try self.parseExpression();
                 self.skipNewLinesAndComments();
                 if (!self.tokenIs(.close_bracket)) {
@@ -1661,6 +1676,15 @@ pub const Syntaxer = struct {
         }
 
         return lhs;
+    }
+
+    // In a control header, an ungrouped brace belongs to the control body.
+    // Square-bracket grouping permits an explicit !!! handler there.
+    fn parseControlExpression(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
+        const previous = self.allow_report_block;
+        self.allow_report_block = false;
+        defer self.allow_report_block = previous;
+        return self.parseExpression();
     }
 
     fn parseExpression(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
@@ -2153,6 +2177,9 @@ pub const Syntaxer = struct {
     }
 
     fn parseCodeBlock(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
+        const previous_report_block = self.allow_report_block;
+        self.allow_report_block = true;
+        defer self.allow_report_block = previous_report_block;
         const previous_operator_newlines = self.allow_operator_newlines;
         self.allow_operator_newlines = false;
         defer self.allow_operator_newlines = previous_operator_newlines;
@@ -2171,7 +2198,7 @@ pub const Syntaxer = struct {
         const start: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
         if (!self.tokenIs(.keyword_if)) return SyntaxerError.ExpectedKeywordIf;
         self.advanceOne();
-        const cond = try self.parseExpression();
+        const cond = try self.parseControlExpression();
         const thenB = try self.parseCodeBlock();
         var elseB: ?syn.NodeIndex = null;
         if (self.tokenIs(.keyword_else)) {
@@ -2186,7 +2213,7 @@ pub const Syntaxer = struct {
         const start: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
         if (!self.tokenIs(.keyword_match)) return SyntaxerError.ExpectedDeclarationOrAssignment;
         self.advanceOne();
-        const value = try self.parseExpression();
+        const value = try self.parseControlExpression();
         self.skipNewLinesAndComments();
         if (!self.tokenIs(.open_brace)) return SyntaxerError.ExpectedLeftBrace;
         self.advanceOne();
@@ -2260,7 +2287,7 @@ pub const Syntaxer = struct {
         const item_name = try self.parseName();
         if (!self.tokenIs(.keyword_in)) return SyntaxerError.ExpectedKeywordIn;
         self.advanceOne();
-        const iterable = try self.parseExpression();
+        const iterable = try self.parseControlExpression();
         const body = try self.parseCodeBlock();
         return try self.addNode(tag, start, .{ .extra = try self.addExtra(syn.ForExtra{
             .name_token = item_name.token,
@@ -2273,7 +2300,7 @@ pub const Syntaxer = struct {
         const start: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
         if (!self.tokenIs(.keyword_while)) return SyntaxerError.ExpectedKeywordWhile;
         self.advanceOne();
-        const cond = try self.parseExpression();
+        const cond = try self.parseControlExpression();
         const body = try self.parseCodeBlock();
         return try self.addNode(.while_statement, start, .{ .node_and_node = .{ .first = cond, .second = body } });
     }

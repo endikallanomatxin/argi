@@ -257,9 +257,17 @@ feature first.
   payload through ordinary branch cleanup. Both forms retain the containing
   function and loop control-flow context. `!!!` uses the same recovery lowering
   with an ordinary report_trace call and a bare containing-function return.
+  Its optional block runs after reporting and before that return, only on error;
+  keep the action's lexical cleanup in concrete and parameterized lowering.
+  Control headers require grouping brackets around `!!! { ... }` so the block
+  cannot consume the enclosing if/while/for/match body.
   Reporting requires a reachable writer; it neither propagates an Errable
   output nor changes the process status. Program main returns no values or
   status_code: Int32; the checked entry supplies zero for no-result completion.
+  Deferred actions handle failures locally: return, `!`, `!!`, and `!!!` cannot
+  exit their containing function, and loop transfers cannot target an outer
+  loop. Deferred bodies participate in cleanup readiness and finalization so
+  their local owners and nested defers are cleaned as well.
   Ownership must traverse value sequences nested in initializers, arguments,
   assignments, conditions, and returns before finalizing cleanup. Codegen must
   not retain binding-map entry pointers across recursive expression emission.

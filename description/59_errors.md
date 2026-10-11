@@ -235,7 +235,32 @@ The enclosing function's output defaults and explicit assignments determine its
 return value. Normal owner and defer cleanup runs on that return. A reporting
 failure is discarded rather than recursively reported. Functions that use this
 operator require the same writer capability as ordinary error reporting.
+Reporting and returning with `!!!` is forbidden inside a deferred action; use
+local `handle` recovery there so all remaining cleanup still executes.
 `!` and `!! context` retain their propagation behavior.
+
+An optional block after `!!!` runs only on failure, after reporting and before
+the containing function returns:
+
+```rg
+main(.system: System) -> (.status_code: Int32 = 0) := {
+    assume writer ::= $&system.terminal&.stderr
+    write($&system.terminal&.stdout, "ready\n")!!! { status_code = 1 }
+}
+```
+
+Success still yields the unwrapped payload without executing the block. The
+block has its own lexical scope and normal cleanup; its assignments to output
+bindings determine the containing function's return value. A reporting failure
+does not prevent this block from running. Both forms of `!!!` remain forbidden
+inside deferred actions; use explicit local `handle` recovery there.
+
+In an `if`, `while`, `for`, or `match` header, square brackets disambiguate an
+attached error block from the control statement's body:
+
+```rg
+if [ready()!!! { status_code = 1 }] { do_work() }
+```
 
 A no-result `main` exits with `0`, including when `!!!` returns early. Use an
 explicit `.status_code: Int32` output to select another exit status. `main`
