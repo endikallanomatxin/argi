@@ -327,18 +327,26 @@ sufficient size and alignment and contain an initialized, valid `T`.
 ## Precision of safety effects
 
 Safety facts retain structural fields, choice payloads, input paths and named
-storage domains. A returned discriminant can guard effects on any input or
-output; nested choices along its payload path remain structural alternatives.
-The model does not require a symbolic formula for every branch in a function.
+storage domains. Effects may be guarded by conjunctions of variants from several
+inputs and outputs, including choice fields and nested payloads. A guard can
+control effects on any input, output or domain. Each selected variant is a
+structural condition; the model does not require a symbolic formula for every
+branch in a function or an enumeration of all combinations of result tags.
 
-Relations requiring conjunctions of independent discriminants, predicates over
-ordinary numeric values or disjointness of dynamically indexed elements are
-outside this precision boundary. Source code may still contain those branches.
-Their inferred summaries conservatively join possible effects rather than
-materializing combinations of all alternatives. An explicit signature requiring
-an unsupported relation receives a diagnostic; its promise is never silently
-weakened. This boundary is structural, not a limit on the number of branches,
-outputs or facts a program may contain.
+Input selectors describe variants at call entry. They refer to the value or
+referent before the function's effects, including for mutable-reference inputs.
+Inspecting a changed input after the call does not prove its entry variant.
+Output selectors describe the returned values. A mixed guard requires evidence
+for every input and output selector of the same call. Partial evidence cannot
+establish the conjunction, and unrelated calls cannot contribute missing terms.
+
+Predicates over ordinary numeric values and disjointness of dynamically indexed
+elements are outside this precision boundary. Source code may contain those
+branches; its summaries conservatively join effects whose conditions cannot be
+represented or proved. An explicit signature requiring an unsupported relation
+receives a diagnostic; its promise is never silently weakened. This boundary
+is structural, not a limit on the number of branches, selectors, outputs or
+facts a program may contain.
 
 Conservative joins union possible dependencies, invalidations and consumption.
 They intersect guarantees of identity, preservation and initialization. They
@@ -352,6 +360,11 @@ unresolved calls affecting the same generation lose their correlation
 conservatively rather than gaining a guarantee that needs both results.
 
 > [!IMPLEMENTATION]
+> General summary guards represent conjunctions of entry-input and output
+> selectors, with shared records for every effect dimension. Existing outcome
+> partitions are published in this representation alongside their conservative
+> fallback. General input/mixed contract syntax, joint output inference and
+> caller refinement still need integration; unsupported clauses remain rejected.
 > Generation effects support one choice output per refinement and direct
 > forwarding through one payload path, stable lexical bindings and direct
 > repackaging. Other

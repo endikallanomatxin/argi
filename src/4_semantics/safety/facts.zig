@@ -28,6 +28,9 @@ pub const StorageCapabilityUse = base.StorageCapabilityUse;
 pub const StorageCapabilityConflict = base.StorageCapabilityConflict;
 pub const FreshStorageCapabilityState = base.FreshStorageCapabilityState;
 pub const SafetySummary = base.SafetySummary;
+pub const ChoiceCondition = base.ChoiceCondition;
+pub const ChoiceConditions = base.ChoiceConditions;
+pub const GuardedSafetyEffects = base.GuardedSafetyEffects;
 pub const OutcomePostStates = base.OutcomePostStates;
 pub const OpaqueStorageEffect = base.OpaqueStorageEffect;
 

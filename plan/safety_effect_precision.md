@@ -2,33 +2,78 @@
 
 ## Structural boundary
 
-Use structural value facts and effects guarded by one discriminant, including
-its nested payload discriminants. Do not retain conjunctions between independent
-discriminants, predicates over ordinary values, or element-by-element dynamic
-index relations. This boundary guides further effect dimensions; generation
-effects already use individual choice selectors and conservative fallback
-summaries.
+Use structural value facts and effects guarded by explicit conjunctions of
+choice variants from inputs and outputs, including nested payloads and choice
+fields. Keep entry-input observations separate from returned output selectors.
+Do not retain predicates over ordinary values or element-by-element dynamic
+index relations. Store requested conditions and shared effect records without
+materializing every combination of independent tags.
 
 Boolean status outputs are also finite discriminants in principle. Supporting
 them would not inherently require arithmetic predicates, but syntax and demand
 should be evaluated separately. Existing choice outputs are the initial target;
 do not equate a future boolean selector with reasoning about arbitrary counts.
 
-The boundary concerns independence of discriminants, not the number of outputs.
-One output's variant may control facts about every output and input. Conversely,
-two choice fields inside one record can be independent discriminants. Nested
-choices along a payload path are structural alternatives of one returned value
-and should not be excluded merely because the syntax is nested.
+The boundary concerns structural variant predicates, not the number of inputs,
+outputs or conditions. One guard may control facts about every input and output;
+independent sibling choice fields can participate in the same conjunction.
+Nested payload selectors also require their ancestor variants.
 
 A body can contain arbitrary branches. Its inferred summary conservatively
 forgets conditions outside the boundary. An explicit contract asking for an
 unsupported relation must receive a diagnostic rather than silent weakening.
 Do not change language behavior at an arbitrary count of branches or facts.
 
-Callers can test several independent results, including in nested source blocks.
-Each test refines the independently established facts for that call. The excluded
-relation is an additional guarantee that requires their conjunction, not the
-ability to write nested control flow or use independent contracts together.
+Callers refine a joint guard only after proving every term from the same call.
+Input terms describe call entry, not the current tag of a mutable referent.
+Copies can retain evidence; replacement and generation changes cannot recreate
+missing historical conditions or revive old resources.
+
+## Recommended completion criterion
+
+The public contract language should express every externally relevant safety
+relation retained by the structural summary model. This includes requirements
+on input validity and opaque contents, output provenance, exact identity,
+ownership, initialization, consumption, generation changes, hidden retention,
+and cleanup consequences. Internal binding IDs, call guards and cleanup flags
+are implementation machinery, not additional signature clauses.
+
+Complete every effect dimension under a shared conjunction of structural
+selectors. Conditions can name entry inputs and returned outputs and affect
+other outputs, inputs or mapped domains. Alternatives remain separate records;
+conjoining explicitly required selectors must not enumerate unrelated tags.
+
+Keep local control-flow checking and exported relations distinct. Function
+bodies may use numeric tests and arbitrary branches. Summaries join effects
+whose conditions they cannot represent. Supported outcome relations should
+survive ordinary matches, early returns, error propagation and branch-assigned
+forwarding when the same relation is proven on every selected exit. An arbitrary
+intermediate statement should not itself define the precision boundary.
+
+The main remaining ergonomic work is therefore effect completeness and robust
+composition, rather than a general predicate solver. Entry-input and joint output guards
+belong to this model. Evaluate boolean selectors separately; they must not
+implicitly authorize arithmetic relations.
+
+Termination requires an additional structural argument. Shared templates and
+canonical type/domain identities must bound recursive paths and loop histories;
+reentering a recursive structural region must use a conservative shared fact,
+not append an unbounded projection or call history. Structural guards
+alone do not prove that the summary worklist converges or bound total inference
+cost. Validate that property independently before calling the boundary complete.
+
+A fresh probe using the current compiler and `99_hash_map_growth_failure`
+confirms that retaining an entry reference across failed insertion is still
+rejected. Reacquiring it inside the error branch compiles and executes. This is
+an acceptance case for outcome composition inside the recommended boundary,
+not evidence that numerical capacity predicates are required.
+
+Measure usability with paired core cases: failed reserve with an existing
+reference, fallible insertion/return of an owner, extraction plus emptying,
+retryable close and forwarded results. Check both expected acceptance and
+rejection of stale roots, aliased transitions and duplicate cleanup. Also compare
+simple lexical refactorings of the same protocol; missing forwarding precision
+must not be mistaken for a reason to broaden the contract vocabulary.
 
 ## Evidence from existing code
 
@@ -73,7 +118,7 @@ rather than preserving a symbolic formula for every condition in a body.
 | One output discriminant controlling a complete effect set | Fallible growth, conditional transfers, retryable operations and effects on other outputs | Substantial: retain call provenance, infer exit effects after cleanup and refine caller facts |
 | Nested discriminants along that payload path | Optional borrowed results inside Errable, tagged ownership alternatives | An extension of structural traversal; requires output projection selectors and parent guards |
 | Input-variant guarded effects | APIs whose behavior depends on an input choice and has no corresponding returned tag | Useful later; needs specialization of the contract against input facts and proofs for unknown inputs |
-| Conjunctions of independent discriminants | Joint outcomes of several outputs or independent choice fields | High cost; conjunctions, contradictions, alias interactions and potentially products of alternatives; no inspected core operation establishes a need yet |
+| Conjunctions of structural discriminants | Joint outcomes of inputs, several outputs or choice fields | Accepted boundary; share guards and effects, check every term and avoid eager products of alternatives |
 | Numeric predicates and index relations | Capacity-sensitive preservation, exact partial progress, disjoint dynamic elements | Very high cost; approaches refinement/dependent typing and requires arithmetic and loop reasoning |
 
 Representation of independent guarded facts can grow with the sum of the
@@ -159,8 +204,8 @@ Required behavior includes:
 - Wrapper summaries retain the relation between their returned variant and the
   underlying call effects. A contract that works only immediately after a call
   is insufficient for ordinary library composition.
-- Multiple independent guards affecting the same fact use conservative marginals.
-  Do not combine singleton guarantees into a conjunction that was never proved.
+- Several selectors of one call can establish a declared joint guard. Independent
+  pending calls and branch alternatives cannot contribute unproved terms.
 
 For loop-carried call results, merge differing call occurrences and storage
 versions conservatively. Recursive summaries use canonical input paths/domains
@@ -201,8 +246,8 @@ The next implementation should pass paired positive/negative cases for:
    scalar payloads; nested optional borrowed payloads retain their actual domain.
 6. One output variant governs a second output's provenance; callers cannot use
    the second output's stronger facts before testing the controlling tag.
-7. Independent output conditions lose joint correlations conservatively. A
-   contract that requires their conjunction reports an unsupported proof.
+7. Joint input/output conditions require all terms from one call. Partial tests,
+   modified inputs and results from independent calls cannot establish the guard.
 8. Dynamic indexing uses a shared element abstraction; static sibling fields
    preserve independent facts without claiming dynamic element disjointness.
 9. Different owning roots on recursive/loop paths do not create unbounded summary
@@ -239,5 +284,5 @@ https://rust-lang.github.io/polonius/rules/loans.html
 3. Measure representation growth and reevaluations using core-sized examples;
    retain selective structural partitions rather than products of independent
    output discriminants.
-4. Reconsider input guards and joint discriminants only when a concrete useful
-   API remains unnecessarily rejected by the structural boundary.
+4. Complete entry-input and mixed guards, conformance and caller cleanup under
+   shared conditions before considering numeric predicates.

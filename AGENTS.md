@@ -364,6 +364,14 @@ feature first.
   a second pending call must defeat an older proof. Emptying discharges current
   hidden dependencies without ending owners or restoring snapshots. Conditional
   retains still requires correlated ownership transitions.
+  General safety guards use canonical conjunctions of structural choice selectors.
+  Entry-input and output selectors have distinct identities; inspecting a mutable
+  input after a call cannot prove its entry tag. Each guard shares a complete
+  effect record while the unconditional summary remains conservative. Normalize
+  ancestor payload tags, duplicates and contradictions without enumerating a
+  product of independent choices. Conditions and effects belong to the immutable
+  summary arena. Existing outcome records remain the caller compatibility path
+  until mixed guard inference, contracts and cleanup refinement are integrated.
   Outcome contracts select a named output and variant, not the first result.
   Keep that output index through syntax-free IR, relocation, cached snapshots,
   conformance and summary equality. Common clauses apply to every outcome;

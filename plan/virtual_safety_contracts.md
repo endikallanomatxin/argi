@@ -30,9 +30,15 @@ statically dispatched until its hidden ownership transitions can be expressed;
 adding dependency permissions alone would not describe insertion or removal.
 
 Use [the precision study](safety_effect_precision.md) to guide the next effects
-implementation. Its structural boundary retains individual discriminants and
-nested payload paths, but conservatively forgets conjunctions of independent
-discriminants and predicates over ordinary values.
+implementation. Its structural boundary admits conjunctions of choice variants
+from entry inputs and returned outputs, including fields and nested payloads.
+Predicates over ordinary values and dynamic element relations remain conservative.
+
+- Connect the general guarded summary representation to contract lowering,
+  declaration/conformance proofs and caller refinement. Existing outcome
+  partitions already publish shared guarded records; complete joint inference
+  and retain call-entry input evidence independently of mutable post-values.
+  Keep every cleanup and storage transition correlated with the full guard.
 
 - Extend guarded generation summaries to branch-assigned outputs and
   intermediate results, choice tests on computed expressions and error

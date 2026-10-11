@@ -315,8 +315,9 @@ Mover: Abstract = (
 
 Nested selectors inherit enclosing relocation guarantees. The selected output
 may be one of several results; the same rules apply to indirect returns.
-Relocations sharing inputs across independent output discriminants require
-correlated result facts and are outside this model's precision boundary.
+Relocations sharing inputs across output discriminants require the corresponding
+joint guard and correlated resource and cleanup facts. Proving one selector does
+not establish a relocation whose other selectors remain unknown.
 Alternative relocations sharing an input must name the same source and
 destination; selecting between different ownership destinations requires richer
 post-value facts and remains unsupported.
@@ -631,9 +632,11 @@ then fixes every method signature before erasing `Self`. Handles for different
 associated arguments are different types; their possible implementation sets
 also remain separate during safety checking.
 
-Nested `on` clauses follow the selected output's payload. They describe one
-structural discriminant path rather than a conjunction between independent
-results. For an `Errable#(?&Int32, Reasons)` output, an inner `on result ..some`
+Nested `on` clauses conjoin structural variant conditions. Repeating the
+selected output follows its payload; selecting another named input or output
+adds a condition on that value. Input conditions refer to call-entry variants,
+so a later mutation or tag test cannot establish the original input condition.
+All selectors of a joint guarantee must be proven for the same call. For an `Errable#(?&Int32, Reasons)` output, an inner `on result ..some`
 can permit `depends_on(result, self)` while `..none` has no such dependency.
 Permissions on the outer payload also apply to its nested alternatives.
 
@@ -673,6 +676,9 @@ Intervening operations retain their effects, so forwarding an earlier preserving
 result never erases a later invalidation or an ordinary content write.
 
 > [!IMPLEMENTATION]
+> The current contract lowering accepts output selectors following one payload
+> path. Entry-input selectors and conjunctions across distinct values are part
+> of the intended model but are not yet accepted by that lowering.
 > Forwarding through intermediate bindings currently requires stable lexical
 > initializers and one output assignment on every returning path. Reassigned,
 > reference-exposed or loop-produced intermediate values lose provenance

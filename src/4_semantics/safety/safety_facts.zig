@@ -139,7 +139,20 @@ pub const FreshStorageCapabilityState = struct {
     maybe_consumed: bool = false,
 };
 
+pub const ChoiceCondition = @import("choice_conditions.zig").ChoiceCondition;
+pub const ChoiceConditions = @import("choice_conditions.zig").ChoiceConditions;
+
+/// A complete approximation under an explicitly represented conjunction.
+/// Effects are shared between guards and contain no graph binding identities.
+pub const GuardedSafetyEffects = struct {
+    conditions: ChoiceConditions,
+    effects: *const SafetySummary,
+};
+
 pub const SafetySummary = struct {
+    /// Unconditional fields retain the conservative approximation for unknown
+    /// conditions. Guarded records cannot silently remove those obligations.
+    guarded_effects: []const GuardedSafetyEffects = &.{},
     outputs: []const ValueEffect = &.{},
     storage_capability_uses: []const StorageCapabilityUse = &.{},
     storage_capability_conflicts: []const StorageCapabilityConflict = &.{},

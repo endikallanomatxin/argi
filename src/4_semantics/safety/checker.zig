@@ -1216,7 +1216,7 @@ pub const SafetyChecker = struct {
         state: *FunctionState,
     ) !?facts.ValueFacts {
         const engine = self.active_summaries orelse return null;
-        const summary = engine.summaryFor(callee) orelse return null;
+        const summary = try self.selectEntryGuardedSummary(engine.summaryFor(callee) orelse return null, values, state);
         var call_capabilities = std.AutoHashMap(facts.FreshEffectSource, facts.StorageCapabilityId).init(self.allocator);
         defer call_capabilities.deinit();
         const previous_capabilities = self.active_fresh_capabilities;
@@ -1226,6 +1226,68 @@ pub const SafetyChecker = struct {
         if (!try self.validateConsumedInputAliasing(source, summary, argument_nodes, values, state)) return facts.ValueFacts{};
         if (call_node) |node| try self.recordFunctionCallAutoDeinit(node, summary, argument_nodes, values, state);
         return try self.applyOutcomeSummary(source, summary, argument_nodes, values, state);
+    }
+
+    /// Input conditions are evaluated before applying any call effect. Reading
+    /// the same mutable input after the call cannot establish an entry tag.
+    fn selectEntryGuardedSummary(self: *SafetyChecker, summary: facts.SafetySummary, arguments: []const facts.ValueFacts, state: *FunctionState) !facts.SafetySummary {
+        var selected: ?facts.GuardedSafetyEffects = null;
+        for (summary.guarded_effects) |guarded| {
+            if (guarded.conditions.impossible) continue;
+            var satisfied = true;
+            for (guarded.conditions.terms) |condition| {
+                if (condition.subject != .entry_input or condition.index >= arguments.len) {
+                    satisfied = false;
+                    break;
+                }
+                const value = try self.entryConditionValue(arguments[condition.index], condition.projections, state) orelse {
+                    satisfied = false;
+                    break;
+                };
+                if (value.known_choice_variant == null or value.known_choice_variant.? != condition.variant_index) {
+                    satisfied = false;
+                    break;
+                }
+            }
+            if (!satisfied) continue;
+            // Each record is a complete sound approximation. Prefer a proven
+            // stronger guard without constructing combinations of effect sets.
+            if (selected == null or guarded.conditions.implies(selected.?.conditions)) selected = guarded;
+        }
+        return if (selected) |guarded| guarded.effects.* else summary;
+    }
+
+    fn entryConditionValue(self: *SafetyChecker, initial: facts.ValueFacts, projections: []const facts.Projection, state: *FunctionState) !?facts.ValueFacts {
+        var value = initial;
+        for (projections) |projection| switch (projection) {
+            .dereference => {
+                if (!state.tracker.dependenciesAreAlive(value)) return null;
+                const target = value.referenced_place orelse return null;
+                if (self.initializednessAtPlace(state, target) != .initialized) return null;
+                const stored = self.valueAtPlace(state, target) orelse return null;
+                value = try self.reconstructPlaceValue(state, target, stored);
+            },
+            .field, .static_index => {
+                const index: usize = if (projection == .field) projection.field else projection.static_index;
+                var next: ?facts.ValueFacts = null;
+                for (value.fields) |field| if (field.index == index) {
+                    next = field.value.*;
+                    break;
+                };
+                value = next orelse return null;
+            },
+            .variant => |index| {
+                if (value.known_choice_variant == null or value.known_choice_variant.? != index) return null;
+                var next: ?facts.ValueFacts = null;
+                for (value.variants) |variant| if (variant.index == index) {
+                    next = variant.value.*;
+                    break;
+                };
+                value = next orelse return null;
+            },
+            .dynamic_index => return null,
+        };
+        return value;
     }
 
     fn recordFunctionCallAutoDeinit(
@@ -7631,4 +7693,50 @@ test "conditional opaque empty proofs retain current call and storage identity" 
     try checker.refreshStorageGeneration(&state, storage);
     try checker.activate_conditional_resources(&state, before_generation.variants[1].value.*);
     try std.testing.expectEqual(@as(usize, 1), state.opaque_storages.items[0].hidden_dependencies.len);
+}
+
+test "input guarded summaries select entry tags without predicting output choices" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(allocator, undefined, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const conditions = @import("choice_conditions.zig");
+    const fallback: facts.SafetySummary = .{ .opaque_storage_empties = &.{.{ .input_index = 9 }} };
+    const selected: facts.SafetySummary = .{ .opaque_storage_empties = &.{.{ .input_index = 0 }} };
+    const guard = try conditions.normalize(allocator, &.{
+        .{ .subject = .entry_input, .index = 0, .variant_index = 1 },
+        .{ .subject = .entry_input, .index = 1, .variant_index = 2 },
+    });
+    var summary = fallback;
+    summary.guarded_effects = &.{.{ .conditions = guard, .effects = &selected }};
+    const known = [_]facts.ValueFacts{ .{ .known_choice_variant = 1 }, .{ .known_choice_variant = 2 } };
+    const refined = try checker.selectEntryGuardedSummary(summary, &known, &state);
+    try std.testing.expectEqual(@as(u32, 0), refined.opaque_storage_empties[0].input_index);
+    const unknown = [_]facts.ValueFacts{ .{ .known_choice_variant = 1 }, .{} };
+    try std.testing.expectEqual(@as(u32, 9), (try checker.selectEntryGuardedSummary(summary, &unknown, &state)).opaque_storage_empties[0].input_index);
+    const mixed = try conditions.conjoin(allocator, guard, try conditions.normalize(allocator, &.{.{ .subject = .output, .index = 0, .variant_index = 1 }}));
+    summary.guarded_effects = &.{.{ .conditions = mixed, .effects = &selected }};
+    try std.testing.expectEqual(@as(u32, 9), (try checker.selectEntryGuardedSummary(summary, &known, &state)).opaque_storage_empties[0].input_index);
+}
+
+test "mutable entry choice observations do not follow post call mutations or missing projections" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(allocator, undefined, undefined);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const place = facts.Place{ .root = @enumFromInt(0) };
+    try checker.setPlace(&state, place, .initialized, .{ .known_choice_variant = 1 });
+    const pointer: facts.ValueFacts = .{ .referenced_place = place };
+    const before = (try checker.entryConditionValue(pointer, &.{.dereference}, &state)).?;
+    try checker.setPlace(&state, place, .initialized, .{ .known_choice_variant = 2 });
+    const after = (try checker.entryConditionValue(pointer, &.{.dereference}, &state)).?;
+    try std.testing.expectEqual(@as(?u32, 1), before.known_choice_variant);
+    try std.testing.expectEqual(@as(?u32, 2), after.known_choice_variant);
+    try std.testing.expect((try checker.entryConditionValue(before, &.{.{ .field = 42 }}, &state)) == null);
 }

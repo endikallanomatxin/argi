@@ -276,7 +276,7 @@ pub const Infer = struct {
                 .storage = retention.storage,
                 .hidden_dependencies = .{ .input_dependencies = try self.allocator.dupe(facts.InputDependency, &.{.{ .path = retention.input, .transfers_ownership = true }}) },
             });
-            const result = facts.SafetySummary{ .outputs = outputs, .required_live_inputs = required, .input_post_states = try fallback_states.toOwnedSlice(), .invalidated_domains = try fallback_domains.toOwnedSlice(), .outcome_post_states = try conditional.toOwnedSlice(), .opaque_storage_effects = try retained.toOwnedSlice(), .opaque_storage_empties = contract.emptied_inputs };
+            const result = try summaries.withOutcomeGuards(self.allocator, facts.SafetySummary{ .outputs = outputs, .required_live_inputs = required, .input_post_states = try fallback_states.toOwnedSlice(), .invalidated_domains = try fallback_domains.toOwnedSlice(), .outcome_post_states = try conditional.toOwnedSlice(), .opaque_storage_effects = try retained.toOwnedSlice(), .opaque_storage_empties = contract.emptied_inputs });
             try self.virtual_summaries.put(registry_id, result);
             return result;
         }
@@ -804,7 +804,7 @@ pub const Infer = struct {
             post.value = try self.mark_unavailable_fresh_storage(post.value, counts);
         };
 
-        return .{
+        return summaries.withOutcomeGuards(self.allocator, .{
             .outputs = outputs,
             .storage_capability_uses = try capability_uses.toOwnedSlice(),
             .storage_capability_conflicts = try capability_conflicts.toOwnedSlice(),
@@ -815,7 +815,7 @@ pub const Infer = struct {
             .opaque_storage_effects = try opaque_storage_effects.toOwnedSlice(),
             .opaque_storage_empties = opaque_storage_empties,
             .invalidated_domains = try self.domain_invalidations.toOwnedSlice(),
-        };
+        });
     }
 
     fn inferBlock(
