@@ -702,8 +702,16 @@ pub const Infer = struct {
         profile.accumulate(self.profile_io, start, &self.opaque_ns);
         // Local hidden domains have no input path. Until exact returned-domain
         // identity is represented, retain their possible input provenance on
-        // owning outputs. This is a conservative union, never fresh ownership.
-        for (outputs) |*output| if (effectOwnsValue(output.*)) {
+        // owning or reference-containing outputs. Cleanup obligations alone
+        // cannot identify hidden borrows: plain records can carry them too.
+        // This is a conservative union, never fresh ownership.
+        // Effects are indexed by lexical output bindings, so their types are
+        // the corresponding source of output shape information.
+        const output_binding_ids = self.graph.binding_refs.items[function.output_bindings.start..][0..function.output_bindings.len];
+        const has_hidden_dependencies = !facts.isEmptyValue(self.unbound_opaque_dependencies);
+        for (outputs, output_binding_ids) |*output, binding| if (effectOwnsValue(output.*) or
+            (has_hidden_dependencies and self.typeContainsPointer(self.graph.binding(binding).ty)))
+        {
             output.* = try self.mergeValueEffects(output.*, self.unbound_opaque_dependencies);
         };
 

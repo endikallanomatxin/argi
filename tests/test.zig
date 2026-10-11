@@ -11214,3 +11214,12 @@ test "feature_tests/polymorphism/245X_core_argument_source_escape" {
 test "feature_tests/polymorphism/211X_conditional_consumption_replaces_dependency" {
     try buildExpectFail("tests/feature_tests/polymorphism/211X_conditional_consumption_replaces_dependency", "maybe_initialized");
 }
+
+test "feature_tests/ownership/360X_opaque_plain_output_escape" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/ownership/360X_opaque_plain_output_escape", "function output cannot depend on a local storage generation", "failed without a diagnostic");
+}
+
+test "feature_tests/ownership/361_opaque_plain_output_caller" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/361_opaque_plain_output_caller");
+    try runExpect("tests/feature_tests/ownership/361_opaque_plain_output_caller", 0);
+}
