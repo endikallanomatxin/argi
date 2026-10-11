@@ -34,12 +34,6 @@ implementation. Its structural boundary retains individual discriminants and
 nested payload paths, but conservatively forgets conjunctions of independent
 discriminants and predicates over ordinary values.
 
-- Extend hidden-content liveness requirements to concrete/static wrappers.
-  Mapped virtual receiver calls check opaque dependencies, but concrete summaries
-  still need to distinguish element access/destruction from allocation metadata
-  access. Trusted slot destruction currently publishes no hidden-content read
-  requirement; propagate that obligation without making backing-storage cleanup
-  depend on element referents.
 - Extend guarded generation summaries to branch-assigned outputs and
   intermediate results, choice tests on computed expressions and error
   propagation. Direct forwarding, bound

@@ -281,8 +281,12 @@ feature first.
   not the local slot holding a virtual handle. Whole-receiver virtual calls also
   validate external dependencies in mapped opaque storage; reconstructing fields
   alone does not include hidden contents. Confirmed empty outcomes discharge
-  those contents without ending the backing allocation. Summary place paths
-  distinguish a reference-valued field's slot from its pointee with explicit dereference
+  those contents without ending the backing allocation. Concrete summaries
+  propagate opaque-content requirements separately from pointer liveness through
+  calls and cleanup. Trusted slot reads use backing-owner identities; reading a
+  region anchor or releasing allocation metadata does not read stored elements.
+  Summary place paths distinguish a reference-valued field's slot from its
+  pointee with explicit dereference
   projections; writing through the reference must preserve the field's facts.
   Choice-indexed generation effects retain input post-states and domain
   invalidations separately from payload provenance. Infer exit effects after

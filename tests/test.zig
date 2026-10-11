@@ -11387,3 +11387,29 @@ test "feature_tests/polymorphism/297X_virtual_receiver_ended_opaque_contents" {
 test "feature_tests/polymorphism/298X_direct_virtual_receiver_ended_opaque_contents" {
     try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/298X_direct_virtual_receiver_ended_opaque_contents", "receiver contents depend on a root that has ended", "failed without a diagnostic");
 }
+
+test "feature_tests/polymorphism/299X_static_receiver_ended_opaque_contents" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/299X_static_receiver_ended_opaque_contents", "opaque contents depend on a root that has ended", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/300X_concrete_receiver_ended_opaque_contents" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/300X_concrete_receiver_ended_opaque_contents", "opaque contents depend on a root that has ended", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/302X_concrete_read_ended_opaque_contents" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/302X_concrete_read_ended_opaque_contents", "opaque contents depend on a root that has ended", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/301_opaque_metadata_cleanup_after_referent" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/301_opaque_metadata_cleanup_after_referent");
+    try runExpect("tests/feature_tests/polymorphism/301_opaque_metadata_cleanup_after_referent", 0);
+}
+
+test "feature_tests/polymorphism/303_concrete_opaque_contents_live" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/303_concrete_opaque_contents_live");
+    try runExpect("tests/feature_tests/polymorphism/303_concrete_opaque_contents_live", 0);
+}
+
+test "feature_tests/polymorphism/304X_opaque_cleanup_ended_referent" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/304X_opaque_cleanup_ended_referent", "opaque contents depend on a root that has ended", "failed without a diagnostic");
+}

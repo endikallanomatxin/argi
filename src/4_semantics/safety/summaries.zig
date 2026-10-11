@@ -117,6 +117,7 @@ pub fn summaryEql(a: facts.SafetySummary, b: facts.SafetySummary) bool {
         if (!inputPathEql(left.target, right.target) or left.minimum != right.minimum or left.maximum != right.maximum) return false;
     if (a.outputs.len != b.outputs.len or
         a.required_live_inputs.len != b.required_live_inputs.len or
+        a.required_opaque_inputs.len != b.required_opaque_inputs.len or
         a.input_post_states.len != b.input_post_states.len or
         a.outcome_post_states.len != b.outcome_post_states.len or
         a.opaque_storage_effects.len != b.opaque_storage_effects.len or
@@ -124,6 +125,7 @@ pub fn summaryEql(a: facts.SafetySummary, b: facts.SafetySummary) bool {
 
     for (a.outputs, b.outputs) |left, right| if (!valueEffectEql(left, right)) return false;
     for (a.required_live_inputs, b.required_live_inputs) |left, right| if (!inputPathEql(left, right)) return false;
+    for (a.required_opaque_inputs, b.required_opaque_inputs) |left, right| if (!inputPathEql(left, right)) return false;
     for (a.input_post_states, b.input_post_states) |left, right| if (!postStateEql(left, right)) return false;
     for (a.outcome_post_states, b.outcome_post_states) |left, right| {
         if (left.reachable != right.reachable or !std.mem.eql(u32, left.parent_variants, right.parent_variants) or left.output_index != right.output_index or left.variant_index != right.variant_index or left.input_post_states.len != right.input_post_states.len or left.invalidated_domains.len != right.invalidated_domains.len or left.opaque_storage_empties.len != right.opaque_storage_empties.len) return false;
@@ -309,4 +311,13 @@ test "summary equality includes selected opaque empty guarantees" {
     const empty = facts.OutcomePostStates{ .variant_index = 0, .input_post_states = &.{}, .opaque_storage_empties = &.{.{ .input_index = 1 }} };
     try std.testing.expect(!summaryEql(.{ .outcome_post_states = &.{absent} }, .{ .outcome_post_states = &.{empty} }));
     try std.testing.expect(summaryEql(.{ .outcome_post_states = &.{empty} }, .{ .outcome_post_states = &.{empty} }));
+}
+
+test "summary equality includes opaque content liveness requirements" {
+    const empty: facts.SafetySummary = .{};
+    const first: facts.SafetySummary = .{ .required_opaque_inputs = &.{.{ .input_index = 0 }} };
+    const second: facts.SafetySummary = .{ .required_opaque_inputs = &.{.{ .input_index = 1 }} };
+    try std.testing.expect(!summaryEql(empty, first));
+    try std.testing.expect(!summaryEql(first, second));
+    try std.testing.expect(summaryEql(first, first));
 }

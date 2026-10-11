@@ -117,6 +117,12 @@ of the stored references, including roots that have already ended. The same
 check applies through function summaries. Live storage for the slot does not
 prove that the referenced values remain live.
 
+Using or destroying stored elements requires their hidden external dependencies
+to remain live. This obligation follows concrete and static calls, wrappers,
+and automatic cleanup, as well as virtual receiver calls. Accessing allocation
+metadata or releasing backing storage alone does not use the stored elements;
+its own storage and capability dependencies must still remain valid.
+
 Visible and hidden dependencies have intentionally different rules:
 
 ```text

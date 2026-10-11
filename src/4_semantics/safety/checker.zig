@@ -1187,6 +1187,9 @@ pub const SafetyChecker = struct {
         }
 
         if (callee.safety_primitive != .none) {
+            if (self.active_summaries) |engine| if (engine.summaryFor(call.callee)) |summary| {
+                if (!try self.validateSummaryRequiredOpaque(input_node.source, summary, values, state)) return .{};
+            };
             if (self.collect_stats) self.stats.primitive_calls += 1;
             return self.evaluatePrimitive(caller, callee.safety_primitive, argument_nodes, values, state, input_node.source);
         }
@@ -1873,6 +1876,7 @@ pub const SafetyChecker = struct {
         state: *FunctionState,
     ) !bool {
         const before = self.diagnostics.list.items.len;
+        _ = try self.validateSummaryRequiredOpaque(source, summary, arguments, state);
         for (summary.required_live_inputs) |path| {
             if (path.input_index >= arguments.len) continue;
             var owners = arguments[path.input_index];
@@ -1931,6 +1935,34 @@ pub const SafetyChecker = struct {
             if (valueDependsOnDeadRootWithOwners(value, owners, state)) {
                 try self.report(source, "reference depends on a root that has ended", .{});
             }
+        }
+        return self.diagnostics.list.items.len == before;
+    }
+
+    fn validateSummaryRequiredOpaque(self: *SafetyChecker, source: primitives.SourceRef, summary: facts.SafetySummary, arguments: []const facts.ValueFacts, state: *FunctionState) !bool {
+        const before = self.diagnostics.list.items.len;
+        for (summary.required_opaque_inputs) |path| {
+            if (path.input_index >= arguments.len) continue;
+            var value = try self.projectValueFacts(arguments[path.input_index], path.projections);
+            if (arguments[path.input_index].referenced_place) |base| {
+                var target = base;
+                for (path.projections) |projection| target = try self.project(target, projection);
+                if (self.valueAtPlace(state, target)) |stored|
+                    value = try self.reconstructPlaceValue(state, target, stored);
+            }
+            var provenances = std.array_list.Managed(facts.OpaqueProvenance).init(self.allocator);
+            defer provenances.deinit();
+            try self.collectOpaqueProvenancesRecursively(state, value, &provenances);
+            for (provenances.items) |provenance| for (state.opaque_storages.items) |domain| {
+                if (!domain.storage.eql(provenance.storage)) continue;
+                for (domain.hidden_dependencies) |dependency| {
+                    if (self.opaqueDependencyIsInternalToStorage(state, domain.storage, dependency)) continue;
+                    if (state.tracker.roots.items[@intFromEnum(dependency)].state != .alive) {
+                        try self.report(source, "opaque contents depend on a root that has ended", .{});
+                        break;
+                    }
+                }
+            };
         }
         return self.diagnostics.list.items.len == before;
     }

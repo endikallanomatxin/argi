@@ -23,6 +23,9 @@ pub const Infer = struct {
     profile_io: ?std.Io = null,
     output_ns: u64 = 0,
     required_live_ns: u64 = 0,
+    // Both requirement scans share control-flow and cleanup traversal. Their
+    // obligations remain separate so metadata access does not read elements.
+    collecting_opaque_requirements: bool = false,
     post_state_ns: u64 = 0,
     outcome_ns: u64 = 0,
     opaque_ns: u64 = 0,
@@ -91,7 +94,8 @@ pub const Infer = struct {
     }
 
     /// Infer every SafetySummary dimension until reverse dependencies are stable:
-    /// outputs, required-live inputs, input/outcome post-states, and opaque effects.
+    /// outputs, pointer/opaque-content requirements, input/outcome post-states,
+    /// and opaque effects.
     /// Reading a previous approximation records a dependency, including the
     /// function's own approximation. Virtual effects come from fixed contracts,
     /// independently of implementation reachability and conformance checks.
@@ -115,6 +119,9 @@ pub const Infer = struct {
                 // storage effects are unknown. Callers compose this requirement
                 // through the same summary dependency paths as dereferences.
                 self.engine.summaries.getPtr(id).?.required_live_inputs = try self.allocator.dupe(facts.InputPath, &.{.{ .input_index = function.input.len - 1, .projections = &.{} }});
+            }
+            if (function.safety_primitive == .trusted_opaque_drop) {
+                self.engine.summaries.getPtr(id).?.required_opaque_inputs = try self.oneInputPath(0, &.{});
             }
             // These declarations retain their initial summary. Primitive
             // transfers are instantiated at calls with call-site identities;
@@ -599,6 +606,7 @@ pub const Infer = struct {
         if (function.safety_primitive != .none or function.body == null) return .{
             .outputs = outputs,
             .required_live_inputs = previous.required_live_inputs,
+            .required_opaque_inputs = previous.required_opaque_inputs,
             .storage_capability_uses = previous.storage_capability_uses,
             .storage_capability_conflicts = previous.storage_capability_conflicts,
             .input_post_states = previous.input_post_states,
@@ -630,6 +638,12 @@ pub const Infer = struct {
         var required_live_inputs = std.array_list.Managed(facts.InputPath).init(self.allocator);
         start = profile.timestamp(self.profile_io);
         try self.inferRequiredLiveInputsBlock(function_id, function.body.?, &required_live_inputs);
+        var required_opaque_inputs = std.array_list.Managed(facts.InputPath).init(self.allocator);
+        {
+            self.collecting_opaque_requirements = true;
+            defer self.collecting_opaque_requirements = false;
+            try self.inferRequiredLiveInputsBlock(function_id, function.body.?, &required_opaque_inputs);
+        }
         profile.accumulate(self.profile_io, start, &self.required_live_ns);
 
         var post_flow = InputPostStateFlow.init(self.allocator);
@@ -795,6 +809,7 @@ pub const Infer = struct {
             .storage_capability_uses = try capability_uses.toOwnedSlice(),
             .storage_capability_conflicts = try capability_conflicts.toOwnedSlice(),
             .required_live_inputs = try required_live_inputs.toOwnedSlice(),
+            .required_opaque_inputs = try required_opaque_inputs.toOwnedSlice(),
             .input_post_states = try post_states.toOwnedSlice(),
             .outcome_post_states = outcome_post_states,
             .opaque_storage_effects = try opaque_storage_effects.toOwnedSlice(),
@@ -3238,7 +3253,7 @@ pub const Infer = struct {
                 if (call.callee_value) |value| try self.inferRequiredLiveInputsNode(function_id, value, required);
                 try self.inferRequiredLiveInputsNode(function_id, call.input, required);
                 if (self.engine.summaryFor(call.callee)) |summary|
-                    try self.substituteRequiredLiveInputs(function_id, summary.required_live_inputs, call.input, required);
+                    try self.substituteRequiredLiveInputs(function_id, self.requiredInputPaths(summary), call.input, required);
             },
             .virtual_call => |virtual_call_id| {
                 const call = self.graph.virtual_calls.items[@intFromEnum(virtual_call_id)];
@@ -3247,7 +3262,7 @@ pub const Infer = struct {
                 if (try self.virtualSummary(call.safety_methods)) |summary|
                     try self.substituteRequiredLiveInputsWithOverride(
                         function_id,
-                        summary.required_live_inputs,
+                        self.requiredInputPaths(summary),
                         call.input,
                         required,
                         null,
@@ -3344,6 +3359,12 @@ pub const Infer = struct {
         required: *std.array_list.Managed(facts.InputPath),
     ) !void {
         const effect = try self.inferExpression(function_id, pointer);
+        if (self.collecting_opaque_requirements) {
+            // Backing-owner identities originate in trusted slot establishment.
+            // Reading a region anchor validates storage, not stored elements.
+            for (effect.input_owned_roots) |path| try appendInputPath(required, path);
+            return;
+        }
         const paths = try self.symbolicSourcePaths(function_id, pointer, effect);
         for (paths) |path| try appendInputPath(required, path);
         // Using a pointer loaded through another pointer requires the loaded
@@ -3363,6 +3384,10 @@ pub const Infer = struct {
         const direct = try self.inferInputPaths(function_id, node_id);
         if (direct.len != 0) return direct;
         return self.opaqueGenerationSourcePaths(effect);
+    }
+
+    fn requiredInputPaths(self: *Infer, summary: facts.SafetySummary) []const facts.InputPath {
+        return if (self.collecting_opaque_requirements) summary.required_opaque_inputs else summary.required_live_inputs;
     }
 
     fn substituteRequiredLiveInputs(
@@ -3388,6 +3413,10 @@ pub const Infer = struct {
             if (path.input_index >= arguments.len) continue;
             const substituted = try self.substituteRequiredInputPath(function_id, path, arguments, override);
             for (substituted) |candidate| try appendInputPath(required, candidate);
+            if (self.collecting_opaque_requirements and path.projections.len == 0) {
+                const effect = try self.inferExpression(function_id, arguments[path.input_index].value);
+                for (effect.input_owned_roots) |owner| try appendInputPath(required, owner);
+            }
         }
     }
 
@@ -3522,7 +3551,7 @@ pub const Infer = struct {
                 if (self.engine.summaryFor(deinit_fn)) |summary|
                     try self.substituteRequiredLiveInputsWithOverride(
                         function_id,
-                        summary.required_live_inputs,
+                        self.requiredInputPaths(summary),
                         input,
                         required,
                         if (binding_effect) |effect| .{ .input_index = cleanup.self_field_index, .effect = effect } else null,
@@ -3555,7 +3584,7 @@ pub const Infer = struct {
                     if (self.engine.summaryFor(deinit_fn)) |summary|
                         try self.substituteRequiredLiveInputsWithOverride(
                             function_id,
-                            summary.required_live_inputs,
+                            self.requiredInputPaths(summary),
                             input,
                             required,
                             .{ .input_index = field.self_field_index, .effect = field_effect },

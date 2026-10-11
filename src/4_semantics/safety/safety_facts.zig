@@ -144,6 +144,9 @@ pub const SafetySummary = struct {
     storage_capability_uses: []const StorageCapabilityUse = &.{},
     storage_capability_conflicts: []const StorageCapabilityConflict = &.{},
     required_live_inputs: []const InputPath = &.{},
+    /// Using stored elements requires their hidden external dependencies;
+    /// merely accessing or freeing allocation metadata does not.
+    required_opaque_inputs: []const InputPath = &.{},
     input_post_states: []const PlacePostState = &.{},
     /// Post-states retained separately for a choice-valued function result.
     /// Selectors identify the output field and its choice variant.
