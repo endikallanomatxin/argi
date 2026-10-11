@@ -441,18 +441,36 @@ pub const Context = struct {
             const arguments = self.tree.structValueLiteral(call.input).?;
             const empty = std.mem.eql(u8, name, "empties");
             const from_storage = std.mem.eql(u8, name, "from_storage");
-            if (arguments.fields.len != (if (empty) @as(usize, 1) else 2)) return self.contractError(node, "empties requires one storage input; retains and from_storage require two names");
+            if (from_storage) {
+                if (arguments.fields.len < 2) return self.contractError(node, "from_storage requires an output followed by one or more storage inputs");
+                var output_index: u32 = undefined;
+                for (arguments.fields, 0..) |argument, index| {
+                    const field = self.tree.valueField(argument).?;
+                    if (field.name_token != null) return self.contractError(argument, "safety contract arguments must be positional names");
+                    const signature = if (index == 0) requirement.output else requirement.input;
+                    const coordinate = (try self.contractFieldIndex(signature, field.value)) orelse return self.contractError(field.value, "opaque storage clauses must name method inputs and outputs");
+                    if (index == 0) {
+                        output_index = coordinate;
+                        continue;
+                    }
+                    var duplicate = false;
+                    for (storage_sources.items) |source| if (source.output_index == output_index and source.input_index == coordinate) {
+                        duplicate = true;
+                        break;
+                    };
+                    if (!duplicate) try storage_sources.append(self.allocator, .{ .output_index = output_index, .input_index = coordinate });
+                }
+                return;
+            }
+            if (arguments.fields.len != (if (empty) @as(usize, 1) else 2)) return self.contractError(node, "empties requires one storage input; retains requires a storage input and a value input");
             var indices: [2]u32 = undefined;
             for (arguments.fields, 0..) |argument, index| {
                 const field = self.tree.valueField(argument).?;
                 if (field.name_token != null) return self.contractError(argument, "safety contract arguments must be positional names");
-                const signature = if (from_storage and index == 0) requirement.output else requirement.input;
-                indices[index] = (try self.contractFieldIndex(signature, field.value)) orelse return self.contractError(field.value, "opaque storage clauses must name method inputs and outputs");
+                indices[index] = (try self.contractFieldIndex(requirement.input, field.value)) orelse return self.contractError(field.value, "opaque storage clauses must name method inputs");
             }
             if (empty) {
                 if (std.mem.indexOfScalar(u32, emptied_inputs.items, indices[0]) == null) try emptied_inputs.append(self.allocator, indices[0]);
-            } else if (from_storage) {
-                try storage_sources.append(self.allocator, .{ .output_index = indices[0], .input_index = indices[1] });
             } else {
                 if (indices[0] == indices[1]) return self.contractError(node, "retains requires distinct storage and value inputs");
                 for (retained_inputs.items) |retained| if (retained.storage == indices[0] and retained.input == indices[1]) return;

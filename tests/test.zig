@@ -11185,6 +11185,15 @@ test "feature_tests/polymorphism/257_opaque_storage_returned_owner" {
     try runExpect("tests/feature_tests/polymorphism/257_opaque_storage_returned_owner", 0);
 }
 
+test "feature_tests/polymorphism/260_virtual_multiple_storage_sources" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/260_virtual_multiple_storage_sources");
+    try runExpect("tests/feature_tests/polymorphism/260_virtual_multiple_storage_sources", 0);
+}
+
+test "feature_tests/polymorphism/261X_multiple_storage_second_local_escape" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/261X_multiple_storage_second_local_escape", "function output cannot depend on a local storage generation", "failed without a diagnostic");
+}
+
 test "feature_tests/polymorphism/258X_opaque_storage_forwarded_local_escape" {
     try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/258X_opaque_storage_forwarded_local_escape", "function output cannot depend on a local storage generation", "failed without a diagnostic");
 }

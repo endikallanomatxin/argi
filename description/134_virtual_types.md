@@ -411,8 +411,9 @@ fresh acquisitions nor replacement of the storage's generation.
 Callers cannot keep live aliases to the precise owned roots of a value that may
 enter opaque storage. Declaring retention does not preserve that precise identity.
 
-`from_storage(output, storage)` permits an output to depend on the external
-dependencies carried by that storage's hidden contents. It does not identify a
+`from_storage(output, storage, ...)` permits an output to depend on the external
+dependencies carried by the named storage inputs' hidden contents. Repeating a
+source does not add another dependency. It does not identify a
 slot address or borrow the backing allocation itself. Declare `owns(output)`
 separately when extraction returns an owner. This is a provenance permission,
 not a guarantee that a particular stored value was returned.
