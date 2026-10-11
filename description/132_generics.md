@@ -12,7 +12,7 @@
 
 Use `#( … )` to **declare** generic parameters. The binder can appear in:
 
-* declarations of **types** and **abstracts**,
+* declarations of **types** and **contracts** (including legacy abstracts),
 * **functions** and **operators**.
 
 ```argi

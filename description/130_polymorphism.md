@@ -11,13 +11,14 @@ Argi combines several mechanisms for code that works with different types:
     data types share a name. The compiler considers all input types, rather
     than selecting a method through one receiver.
 
-  - [Abstract types](133_abstract_types.md) state which operations a type
-    implements. Calls through an abstract are specialized by default.
+  - [Contracts](135_contracts.md) state capabilities and relations among
+    participant types. Explicit `satisfies` declarations select conformances
+    and determine associated elements. Static calls are specialized.
 
 - Run-time polymorphism:
 
   - [Virtual types](134_virtual_types.md) request runtime dispatch through an
-    abstract interface.
+    contract while preserving selected operations and conformance evidence.
 
   - [Choice types](12_choice.md) hold one of a known set of alternatives.
     `match` selects behavior according to the active variant.
@@ -26,3 +27,8 @@ Compile-time specialization suits algorithms and collections whose concrete
 types are known. It permits direct calls and optimization for each type, but
 many specializations can increase code size. `Virtual` can represent
 heterogeneous values behind one interface, at the cost of indirect calls.
+
+> [!IMPLEMENTATION]
+> Contracts currently preserve the existing unary model. Legacy
+> [abstract types](133_abstract_types.md) remain supported during migration.
+> Multi-participant conformance selection and joint virtual evidence are pending.

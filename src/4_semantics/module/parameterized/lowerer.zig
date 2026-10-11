@@ -950,7 +950,7 @@ pub const Context = struct {
             const literal = self.tree.structTypeLiteral(generic.arguments) orelse return error.InvalidVirtualArguments;
             if (literal.fields.len != 1) return error.InvalidVirtualArguments;
             const field = self.tree.structTypeField(literal.fields[0]) orelse return error.InvalidVirtualArguments;
-            if (!std.mem.eql(u8, type_arguments.name(self.tree, self.source, field, "Virtual"), "abstract")) return error.InvalidVirtualArguments;
+            if (!type_arguments.isVirtualContractParameter(type_arguments.name(self.tree, self.source, field, "Virtual"))) return error.InvalidVirtualArguments;
             return self.addType(.{ .resolved = .{ .virtual = try self.lowerType(field.type_node orelse return error.InvalidVirtualArguments, allow_self) } });
         }
         const base = self.tree.syntaxType(generic.base) orelse return error.InvalidGenericParameterizedBase;

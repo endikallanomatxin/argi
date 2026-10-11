@@ -11,10 +11,15 @@ pub fn name(tree: *const syn.FileSyntaxTree, source: []const u8, field: syn.Stru
     else if (std.mem.eql(u8, base_name, "Array"))
         &.{ "n", "t" }
     else if (std.mem.eql(u8, base_name, "Virtual"))
-        &.{"abstract"}
+        &.{"contract"}
     else if (std.mem.eql(u8, base_name, "choice_union"))
         &.{ "a", "b" }
     else
         &.{};
     return if (position < names.len) names[position] else "";
+}
+
+// Both spellings describe the same unary evidence type.
+pub fn isVirtualContractParameter(parameter_name: []const u8) bool {
+    return std.mem.eql(u8, parameter_name, "contract") or std.mem.eql(u8, parameter_name, "abstract");
 }

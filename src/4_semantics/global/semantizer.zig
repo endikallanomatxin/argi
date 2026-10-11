@@ -436,9 +436,10 @@ pub fn semantizeWithOptions(
             try appendFormatted(
                 &message,
                 allocator,
-                "type does not implement abstract '{s}':\n  missing function: {s} ",
+                "type does not implement abstract '{s}':\n  {s}: {s} ",
                 .{
                     relocation.graph.text(relocation.graph.declaration(failure.abstract_decl).name),
+                    if (failure.ambiguous) "ambiguous function" else "missing function",
                     failure.method_name,
                 },
             );
@@ -2942,7 +2943,7 @@ fn diagnoseUnresolvedCall(
                         missing.abstract_type,
                         missing.source,
                     )) |requirement_failure| {
-                        try message.appendSlice(":\nmissing function: ");
+                        try message.appendSlice(if (requirement_failure.ambiguous) ":\nambiguous function: " else ":\nmissing function: ");
                         try message.appendSlice(requirement_failure.method_name);
                         try message.append(' ');
                         const required_input = global_types.fields(graph, requirement_failure.input) orelse return false;

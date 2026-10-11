@@ -1,0 +1,18 @@
+Source: contract = (
+    get(.self: &Self, .other: &Int32) -> (.value: &Int32)
+    where depends_on(value, self)
+)
+
+Cell: Type = (.value: Int32)
+
+Cell satisfies Source
+
+get(.self: &Cell, .other: &Int32) -> (.value: &Int32) := {
+    value = other
+}
+
+main() -> () := {
+    cell ::= Cell(42)
+    other :: Int32 = 7
+    value ::= get(&cell, &other)
+}

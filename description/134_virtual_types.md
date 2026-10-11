@@ -1,5 +1,9 @@
 # Virtual types
 
+[Contracts and conformance](135_contracts.md) defines the general evidence model,
+including jointly virtualized participants. The unary representation and safety
+rules below also apply to declarations written with `contract` and `satisfies`.
+
 Abstracts express static contracts and are monomorphized by default.
 `Virtual#(.abstract: A)` explicitly requests runtime dispatch through the
 contract `A`. It is useful for heterogeneous values and capability boundaries

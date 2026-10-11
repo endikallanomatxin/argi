@@ -11582,3 +11582,69 @@ test "feature_tests/errors/108X_defer_generic_report_return_block" {
 test "feature_tests/errors/109X_report_return_block_non_errable" {
     try buildExpectFail("tests/feature_tests/errors/109X_report_return_block_non_errable", "handle expects an Errable value");
 }
+
+test "feature_tests/contracts/01_unary_static" {
+    const test_path = "tests/feature_tests/contracts/01_unary_static";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/contracts/02_generic_associated" {
+    const test_path = "tests/feature_tests/contracts/02_generic_associated";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/contracts/03_virtual_associated" {
+    const test_path = "tests/feature_tests/contracts/03_virtual_associated";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/contracts/04X_missing_operation" {
+    try buildExpectFail("tests/feature_tests/contracts/04X_missing_operation", "missing function: read");
+}
+
+test "feature_tests/contracts/05X_virtual_borrow_escape" {
+    try buildExpectFail("tests/feature_tests/contracts/05X_virtual_borrow_escape", "function output cannot depend on a local storage generation that ends before return");
+}
+
+test "feature_tests/contracts/06_legacy_composition" {
+    const test_path = "tests/feature_tests/contracts/06_legacy_composition";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/contracts/07_imported_identity" {
+    const test_path = "tests/feature_tests/contracts/07_imported_identity";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/contracts/08X_ambiguous_operation" {
+    try buildExpectFail("tests/feature_tests/contracts/08X_ambiguous_operation", "ambiguous function: read");
+}
+
+test "feature_tests/contracts/09X_incompatible_output" {
+    try buildExpectFail("tests/feature_tests/contracts/09X_incompatible_output", "missing function: read");
+}
+
+test "feature_tests/contracts/10X_static_safety_dependency" {
+    try buildExpectFail("tests/feature_tests/contracts/10X_static_safety_dependency", "undeclared output dependency");
+}
+
+test "feature_tests/contracts/11X_missing_conformance_type" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/11X_missing_conformance_type", "expected a contract type after the conformance relation", "panic");
+}
+
+test "feature_tests/contracts/12_contextual_words" {
+    const test_path = "tests/feature_tests/contracts/12_contextual_words";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/contracts/13_virtual_positional" {
+    const test_path = "tests/feature_tests/contracts/13_virtual_positional";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}

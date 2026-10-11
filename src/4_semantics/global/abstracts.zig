@@ -1,3 +1,4 @@
+const type_arguments = @import("../module/type_arguments.zig");
 const std = @import("std");
 const module_sg = @import("../module/graph.zig");
 const module_entities = @import("../module/entities.zig");
@@ -125,6 +126,7 @@ pub const ImplementationConflict = struct {
 };
 
 pub const RequirementFailure = struct {
+    ambiguous: bool = false,
     abstract_decl: global_sg.GlobalDeclId,
     concrete: global_sg.GlobalTypeId,
     source: primitives.SourceRef,
@@ -366,7 +368,7 @@ pub const Resolver = struct {
     ) !?global_sg.Node {
         var abstract_type: ?global_sg.GlobalTypeId = null;
         for (self.graph.generic_arguments.items[arguments.start..][0..arguments.len]) |argument| {
-            if (!std.mem.eql(u8, self.graph.text(argument.name), "abstract") and
+            if (!type_arguments.isVirtualContractParameter(self.graph.text(argument.name)) and
                 !(arguments.len == 1 and self.graph.text(argument.name).len == 0)) continue;
             abstract_type = switch (argument.value) {
                 .type => |ty| ty,
@@ -459,26 +461,49 @@ pub const Resolver = struct {
         };
     }
 
-    fn findConcreteMethod(
+    const MethodSelection = union(enum) {
+        missing,
+        ambiguous,
+        incompatible_output,
+        function: global_sg.GlobalFunctionId,
+    };
+
+    fn selectConcreteMethod(
         self: *Resolver,
         name: []const u8,
         expected_input: global_sg.GlobalTypeId,
         expected_output: global_sg.GlobalTypeId,
-    ) ?global_sg.GlobalFunctionId {
-        const expected_inputs = global_types.fields(self.graph, expected_input) orelse return null;
-        const expected_outputs = global_types.fields(self.graph, expected_output) orelse return null;
+    ) MethodSelection {
+        const expected_inputs = global_types.fields(self.graph, expected_input) orelse return .missing;
+        const expected_outputs = global_types.fields(self.graph, expected_output) orelse return .missing;
         var found: ?global_sg.GlobalFunctionId = null;
         for (self.graph.functions.items, 0..) |function, raw| {
             const function_id: global_sg.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
             if (self.isAbstractContractInstance(function_id)) continue;
             const declaration = self.graph.declarations.items[@intFromEnum(function.declaration)];
             if (!std.mem.eql(u8, self.graph.text(declaration.name), name)) continue;
-            if (!self.inputFieldsSatisfyRequirement(expected_inputs, function.input) or
-                !self.outputFieldsSatisfyRequirement(expected_outputs, function.output)) continue;
-            if (found != null) return null;
-            found = @enumFromInt(@as(u32, @intCast(raw)));
+            if (!self.inputFieldsSatisfyRequirement(expected_inputs, function.input)) continue;
+            // Return types cannot disambiguate an operation. Select its inputs
+            // before checking the associated output promised by the contract.
+            if (found != null) return .ambiguous;
+            found = function_id;
         }
-        return found;
+        const selected = found orelse return .missing;
+        if (!self.outputFieldsSatisfyRequirement(expected_outputs, self.graph.functions.items[@intFromEnum(selected)].output))
+            return .incompatible_output;
+        return .{ .function = selected };
+    }
+
+    fn findConcreteMethod(
+        self: *Resolver,
+        name: []const u8,
+        expected_input: global_sg.GlobalTypeId,
+        expected_output: global_sg.GlobalTypeId,
+    ) ?global_sg.GlobalFunctionId {
+        return switch (self.selectConcreteMethod(name, expected_input, expected_output)) {
+            .function => |function| function,
+            else => null,
+        };
     }
 
     fn resolveStorageDomains(self: *Resolver, use: AbstractUse, concrete: global_sg.GlobalTypeId, located: LocatedAbstractDefinition, source: primitives.SourceRef) !?[]const primitives.StorageDomainMapping {
@@ -777,6 +802,7 @@ pub const Resolver = struct {
                 .method_name = method_name,
                 .input = input,
                 .output = output orelse input,
+                .ambiguous = if (output) |resolved_output| self.selectConcreteMethod(method_name, input, resolved_output) == .ambiguous else false,
             };
         }
         return null;
@@ -1797,6 +1823,7 @@ pub const Resolver = struct {
                         .method_name = method_name,
                         .input = input,
                         .output = output orelse input,
+                        .ambiguous = if (output) |resolved_output| self.selectConcreteMethod(method_name, input, resolved_output) == .ambiguous else false,
                     };
                 }
             }

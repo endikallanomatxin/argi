@@ -5,6 +5,7 @@ const diagnostic = @import("../1_base/diagnostic.zig");
 
 pub const SyntaxerError = error{
     ExpectedIdentifier,
+    ExpectedConformanceType,
     ExpectedColon,
     ExpectedEqual,
     ExpectedIntLiteral,
@@ -80,6 +81,8 @@ pub const Syntaxer = struct {
                 try self.diags.add(self.tokenLocation(), .syntax, "CIncomplete declares only a type identity; omit the definition", .{});
             } else if (err == SyntaxerError.IncompleteTypeCannotBeParameterized) {
                 try self.diags.add(self.tokenLocation(), .syntax, "CIncomplete declarations cannot have compile-time parameters", .{});
+            } else if (err == SyntaxerError.ExpectedConformanceType) {
+                try self.diags.add(self.tokenLocation(), .syntax, "expected a contract type after the conformance relation", .{});
             } else {
                 try self.diags.add(self.tokenLocation(), .syntax, "syntax error: {s}", .{@errorName(err)});
             }
@@ -2037,7 +2040,7 @@ pub const Syntaxer = struct {
             }
         }
 
-        // Abstract relations (implements/defaultsto)
+        // Unary conformance spellings share the same declaration and lowering path.
         switch (self.currentContent()) {
             .identifier => |kw_range| {
                 const kw = self.tokenText(kw_range);
@@ -2045,9 +2048,11 @@ pub const Syntaxer = struct {
                     try self.diags.add(id_loc, .syntax, "once can only be used on function declarations", .{});
                     return SyntaxerError.ExpectedDeclarationOrAssignment;
                 }
-                if (std.mem.eql(u8, kw, "implements")) {
+                if (std.mem.eql(u8, kw, "implements") or std.mem.eql(u8, kw, "satisfies")) {
                     self.advanceOne();
-                    const abstract_ty = (try self.parseType()).?; // required
+                    if (self.tokenIs(.new_line) or self.tokenIs(.eof) or self.tokenIs(.close_brace))
+                        return SyntaxerError.ExpectedConformanceType;
+                    const abstract_ty = (try self.parseType()) orelse return SyntaxerError.ExpectedConformanceType;
                     const domain_mapping: ?syn.NodeIndex = if (self.currentIdentifierEquals("where")) blk: {
                         self.advanceOne();
                         self.skipNewLinesAndComments();
@@ -2115,7 +2120,7 @@ pub const Syntaxer = struct {
                         .value = lit_node,
                     });
                     return try self.addNode(tag, name.token, .{ .extra = extra });
-                } else if (std.mem.eql(u8, type_name, "Abstract")) {
+                } else if (std.mem.eql(u8, type_name, "Abstract") or std.mem.eql(u8, type_name, "contract")) {
                     var req_names = try self.addNodeRange(&.{});
                     var req_funcs = try self.addNodeRange(&.{});
                     var domains = try self.addNodeRange(&.{});
