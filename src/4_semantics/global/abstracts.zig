@@ -21,6 +21,16 @@ fn opaqueStorageTransitionConflict(contract: anytype, storage: primitives.Method
     return false;
 }
 
+// Exact identity clauses apply to the complete output, including its payloads.
+// Conditional provenance cannot weaken an enclosing identity guarantee.
+fn outcomeHasStorageSource(outcomes: []const primitives.MethodSafetyContract.Outcome, output_index: u32) bool {
+    for (outcomes) |outcome| {
+        for (outcome.storage_sources) |source| if (source.output_index == output_index) return true;
+        if (outcomeHasStorageSource(outcome.outcomes, output_index)) return true;
+    }
+    return false;
+}
+
 // Outcome clauses inherit enclosing guarantees and add their own. Compare every descendant
 // before flattening: independent outputs cannot select a shared resource state.
 fn relocationInheritanceFailure(contract: primitives.MethodSafetyContract) ?[]const u8 {
@@ -1271,6 +1281,7 @@ pub const Resolver = struct {
         if (try self.methodSafetyContractFailure(inputs, .{ .start = 0, .len = 0 }, output_type, abstract_ty, located, .{
             .output_count = 0,
             .dependencies = outcome.dependencies,
+            .storage_sources = outcome.storage_sources,
             .consumed_inputs = outcome.consumed_inputs,
             .relocations = outcome.relocations,
             .domain_dependencies = outcome.domain_dependencies,
@@ -1302,6 +1313,8 @@ pub const Resolver = struct {
 
     fn methodSafetyContractFailure(self: *Resolver, inputs: global_sg.FieldRange, outputs: global_sg.FieldRange, output_type: global_sg.GlobalTypeId, abstract_ty: global_sg.GlobalTypeId, located: LocatedAbstractDefinition, contract: primitives.MethodSafetyContract, erased_self: bool) !?[]const u8 {
         if (relocationInheritanceFailure(contract)) |message| return message;
+        for (contract.transfers) |transfer| if (outcomeHasStorageSource(contract.outcomes, transfer.output_index)) return "from_storage cannot be combined with exact transfers for the same output";
+        for (contract.referents) |referent| if (outcomeHasStorageSource(contract.outcomes, referent.output_index)) return "from_storage cannot be combined with exact refers_to for the same output";
         for (contract.retained_inputs, 0..) |retained, retained_index| {
             if (self.opaqueStorageInputFailure(inputs, abstract_ty, retained.storage, true, erased_self, located.definition.domains.len)) |message| return message;
             if (self.graph.semanticType(self.graph.fields.items[inputs.start + retained.input].ty) == .pointer) return "retains currently requires a value input; wrap borrowed references in a value instead of moving through a reference input";

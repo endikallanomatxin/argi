@@ -224,6 +224,7 @@ pub const MethodSafetyContract = struct {
         dependencies: []const Dependency = &.{},
         domain_dependencies: []const DomainDependency = &.{},
         owned_outputs: []const u32 = &.{},
+        storage_sources: []const StorageDependency = &.{},
         consumed_inputs: []const u32 = &.{},
         relocations: []const Relocation = &.{},
         invalidates: []const u32 = &.{},

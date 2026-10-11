@@ -85,7 +85,10 @@ outputs retain those obligations even after a later empty-state guarantee.
 
 Fresh initialization needs declared ownership and dependency roles for input
 post-values, rather than treating an empty destination as permission to create
-an arbitrary owner. Hidden storage still needs exact transfer and conditional
-empty-state guarantees. Extend named domains before supporting erased receiver
+an arbitrary owner. Hidden storage still needs exact transfer, conditional
+retention and
+empty-state guarantees. Outcome-selected extraction provenance already follows
+nested payload choices without implying those input transitions. Extend named
+domains before supporting erased receiver
 initialization or replacement; known layout at static dispatch must not be
 required to interpret a virtual contract.

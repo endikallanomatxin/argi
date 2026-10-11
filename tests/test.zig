@@ -11295,3 +11295,29 @@ test "feature_tests/ownership/361_opaque_plain_output_caller" {
     try expectSuccessfulBuild("tests/feature_tests/ownership/361_opaque_plain_output_caller");
     try runExpect("tests/feature_tests/ownership/361_opaque_plain_output_caller", 0);
 }
+
+test "feature_tests/polymorphism/278_conditional_storage_extraction" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/278_conditional_storage_extraction");
+    try runExpect("tests/feature_tests/polymorphism/278_conditional_storage_extraction", 0);
+}
+
+test "feature_tests/polymorphism/279X_conditional_storage_extraction_escape" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/279X_conditional_storage_extraction_escape", "function output cannot depend on a local storage generation", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/280X_conditional_storage_wrong_variant" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/280X_conditional_storage_wrong_variant", "undeclared output dependency", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/281_nested_conditional_storage_extraction" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/281_nested_conditional_storage_extraction");
+    try runExpect("tests/feature_tests/polymorphism/281_nested_conditional_storage_extraction", 0);
+}
+
+test "feature_tests/polymorphism/282X_conditional_storage_inherited_identity" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/282X_conditional_storage_inherited_identity", "from_storage cannot be combined with exact transfers for the same output", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/283X_conditional_storage_other_output" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/283X_conditional_storage_other_output", "conditional effects on other outputs require correlated result facts", "failed without a diagnostic");
+}

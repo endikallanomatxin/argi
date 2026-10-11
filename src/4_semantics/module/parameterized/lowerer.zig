@@ -365,7 +365,7 @@ pub const Context = struct {
                     var child = requirement;
                     child.safety_contract = data.body;
                     const effect = (try self.lowerMethodSafetyContract(child, domains)).?;
-                    if (effect.retained_inputs.len != 0 or effect.emptied_inputs.len != 0 or effect.storage_sources.len != 0) {
+                    if (effect.retained_inputs.len != 0 or effect.emptied_inputs.len != 0) {
                         try self.contractError(statement, "conditional opaque storage clauses require correlated hidden storage post-states; declare unconditional effects instead");
                         unreachable;
                     }
@@ -387,6 +387,10 @@ pub const Context = struct {
                         try self.contractError(statement, "conditional effects on other outputs require correlated result facts");
                         unreachable;
                     };
+                    for (effect.storage_sources) |source| if (source.output_index != output_index.?) {
+                        try self.contractError(statement, "conditional effects on other outputs require correlated result facts");
+                        unreachable;
+                    };
                     for (effect.owned_outputs) |owned| if (owned != output_index.?) {
                         try self.contractError(statement, "conditional effects on other outputs require correlated result facts");
                         unreachable;
@@ -397,6 +401,7 @@ pub const Context = struct {
                         .dependencies = effect.dependencies,
                         .domain_dependencies = effect.domain_dependencies,
                         .owned_outputs = effect.owned_outputs,
+                        .storage_sources = effect.storage_sources,
                         .consumed_inputs = effect.consumed_inputs,
                         .relocations = effect.relocations,
                         .invalidates = effect.invalidates,

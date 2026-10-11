@@ -103,9 +103,11 @@ of an available destination from a mutable-reference source.
 Unconditional `retains(storage, value)` permits hidden input
 retention, `from_storage(output, storage)` permits hidden output provenance,
 and `empties(storage)` guarantees discharge of hidden dependencies. None proves
-runtime slot occupancy or exact hidden value identity. Initialization effects
-and conditional hidden transitions need further modeling. Known storage inputs
-and single-storage receiver domains share these effects; grouped domains and
+runtime slot occupancy or exact hidden value identity. Outcome-selected
+`from_storage` permissions follow nested payload choices.
+Initialization effects and conditional retention or empty-state transitions need
+further modeling. Known storage inputs and single-storage receiver domains
+share these effects; grouped domains and
 reference mappings require more precise storage identities.
 
 Common clauses apply to all outcomes. Conditional clauses add permissions and

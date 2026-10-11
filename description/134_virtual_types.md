@@ -418,6 +418,29 @@ slot address or borrow the backing allocation itself. Declare `owns(output)`
 separately when extraction returns an owner. This is a provenance permission,
 not a guarantee that a particular stored value was returned.
 
+Inside `on output ..variant`, `from_storage` applies to the selected payload.
+Nested selectors follow that payload's choices. Common sources remain permitted
+in every branch; sources declared in one branch do not apply to sibling branches.
+For example, a fallible extraction can declare its successful value's provenance
+without adding the hidden contents' dependencies to the absent-value outcome:
+
+```rg
+Extractor#(.item: Type): Abstract = (
+    domain contents
+
+    take(.self: $&Self) -> (.result: ?item) where {
+        on result ..some {
+            owns(result)
+            from_storage(result, self.contents)
+        }
+        on result ..none {}
+    }
+)
+```
+
+Output provenance does not establish a storage post-state: declare empty-state
+or retention obligations separately.
+
 `empties(storage)` guarantees that the storage has no retained hidden
 dependencies on every returning path. It does not free the backing storage or
 destroy a returned owner. Implementations must destroy or transfer their stored
@@ -478,9 +501,10 @@ extraction. Returning the collection cannot hide a local referent either.
 > [!IMPLEMENTATION]
 > These clauses support unconditional effects on known storage inputs and
 > mapped receiver domains naming a single storage field, including nested fields.
+> `from_storage` also supports outcome-selected payloads and nested choices.
 > `retains` requires a value input; wrap borrowed references in a value rather
-> than using it to move an owner through a reference. Conditional hidden effects
-> require correlated storage post-states and are rejected. Grouped domain
+> than using it to move an owner through a reference. Conditional `retains` and
+> `empties` require correlated storage post-states and are rejected. Grouped domain
 > mappings require exact hidden transfer identities. Domain mappings crossing
 > or selecting reference fields require referent identities and are rejected.
 > Naming erased `Self` directly does not name its storage; select a domain.

@@ -29,6 +29,7 @@ fn verifyOutcome(graph: *const graph_mod.ModuleSemanticGraph, outcome: @import("
         try require(dependency.output_index == outcome.output_index);
         try require(dependency.input.input_index < input_count);
     }
+    for (outcome.storage_sources) |source| try require(source.output_index == outcome.output_index and source.storage.input_index < input_count);
     for (outcome.owned_outputs) |index| try require(index == outcome.output_index);
     for (outcome.consumed_inputs) |index| try require(index < input_count);
     for (outcome.relocations) |relocation| try require(relocation.destination < input_count and relocation.source < input_count);
@@ -41,6 +42,7 @@ fn verifyOutcome(graph: *const graph_mod.ModuleSemanticGraph, outcome: @import("
 }
 
 fn verifyOutcomeDomains(outcome: @import("../../primitives/schema.zig").MethodSafetyContract.Outcome, domain_count: usize) anyerror!void {
+    for (outcome.storage_sources) |source| if (source.storage.domain_index) |domain| try require(domain < domain_count);
     for (outcome.domain_dependencies) |dependency| try require(dependency.input.domain_index < domain_count);
     for (outcome.invalidated_domains) |domain| try require(domain.domain_index < domain_count);
     for (outcome.outcomes) |child| try verifyOutcomeDomains(child, domain_count);

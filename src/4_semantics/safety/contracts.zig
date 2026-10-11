@@ -77,6 +77,7 @@ pub fn fromDeclaration(allocator: std.mem.Allocator, declaration: @import("../pr
                 .dependencies = outcome.dependencies,
                 .domain_dependencies = outcome.domain_dependencies,
                 .owned_outputs = outcome.owned_outputs,
+                .storage_sources = outcome.storage_sources,
                 .invalidates = outcome.invalidates,
                 .invalidated_domains = outcome.invalidated_domains,
                 .outcomes = outcome.outcomes,
@@ -184,7 +185,9 @@ fn inheritOutputPermissions(allocator: std.mem.Allocator, output: *Output, commo
     output.fresh_owner = output.fresh_owner or common.fresh_owner;
     output.referent = common.referent;
     output.ownership_transfers = common.ownership_transfers;
-    output.storage_sources = common.storage_sources;
+    // Hidden provenance is an output permission, not an input post-state.
+    // Preserve enclosing permissions while adding this payload's own sources.
+    output.storage_sources = try std.mem.concat(allocator, facts.InputPath, &.{ common.storage_sources, output.storage_sources });
     for (output.outcomes) |outcome| try inheritOutputPermissions(allocator, @constCast(outcome.value), common);
 }
 
@@ -873,4 +876,46 @@ test "safety contracts conditional relocation requires both transitions on the s
     try std.testing.expect(check(nested, nested_summary) == null);
     nested_summary.outcome_post_states = &.{.{ .output_index = 1, .parent_variants = &.{1}, .variant_index = 0, .input_post_states = &.{ moved, initialized } }};
     try std.testing.expect(check(nested, nested_summary) != null);
+}
+
+test "conditional opaque sources retain common and nested permissions" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const source = @import("../primitives/schema.zig").SourceRef{ .file_index = 0, .offset = 0 };
+    const contract = try fromDeclaration(arena.allocator(), .{
+        .output_count = 1,
+        .source = source,
+        .storage_sources = &.{.{ .output_index = 0, .storage = .{ .input_index = 1 } }},
+        .outcomes = &.{
+            .{
+                .variant = .{ .start = 0, .len = 0 },
+                .variant_index = 0,
+                .source = source,
+                .storage_sources = &.{.{ .output_index = 0, .storage = .{ .input_index = 2, .domain_index = 3 } }},
+                .outcomes = &.{.{
+                    .variant = .{ .start = 0, .len = 0 },
+                    .variant_index = 0,
+                    .source = source,
+                    .storage_sources = &.{.{ .output_index = 0, .storage = .{ .input_index = 4 } }},
+                }},
+            },
+            .{ .variant = .{ .start = 0, .len = 0 }, .variant_index = 1, .source = source },
+        },
+    });
+    const output = contract.outputs[0];
+    try std.testing.expectEqual(@as(usize, 1), output.storage_sources.len);
+    const selected = output.outcomes[0].value.*;
+    try std.testing.expectEqual(@as(usize, 2), selected.storage_sources.len);
+    const nested = selected.outcomes[0].value.*;
+    try std.testing.expectEqual(@as(usize, 3), nested.storage_sources.len);
+    try std.testing.expect(covers(nested.storage_sources, .{ .input_index = 1 }));
+    try std.testing.expect(covers(nested.storage_sources, .{ .input_index = 2, .storage_domain = 3 }));
+    try std.testing.expect(covers(nested.storage_sources, .{ .input_index = 4 }));
+    try std.testing.expectEqual(@as(usize, 1), output.outcomes[1].value.storage_sources.len);
+
+    const hidden = facts.ValueEffect{ .opaque_storage_dependencies = &.{.{ .input_index = 2, .storage_domain = 3 }} };
+    try std.testing.expect(check(contract, .{ .outputs = &.{.{ .variants = &.{.{ .index = 0, .value = &hidden }} }} }) == null);
+    try std.testing.expectEqual(.undeclared_dependency, check(contract, .{
+        .outputs = &.{.{ .variants = &.{.{ .index = 1, .value = &hidden }} }},
+    }).?.kind);
 }

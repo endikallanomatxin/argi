@@ -348,6 +348,11 @@ feature first.
   of may-dependency summaries; reject calls, writes and unknown control flow.
   Direct forwarding proofs require an output assigned once outside loops and
   whose address has not escaped; rewrites retain unconditional may-effects.
+  Conditional from_storage clauses are payload provenance permissions, not
+  storage post-states. Persist their sources on outcome declarations, inherit
+  common sources into nested payloads and reject inherited exact-identity
+  conflicts. Conditional retains and empties still require correlated hidden
+  storage transitions; accepting provenance must not imply those transitions.
   Outcome contracts select a named output and variant, not the first result.
   Keep that output index through syntax-free IR, relocation, cached snapshots,
   conformance and summary equality. Common clauses apply to every outcome;
