@@ -93,7 +93,7 @@ pub const AbstractSafetyConformance = struct {
     domains: []const primitives.StorageDomainMapping = &.{},
     source: primitives.SourceRef,
 };
-// Static tuple evidence owns canonical declaration-order arguments. It has no
+// Static conformance evidence owns canonical declaration-order arguments. It has no
 // erased receiver and participates in the ordinary append-only checkpoints.
 pub const ContractConformance = struct {
     context: GlobalModuleId = @enumFromInt(0),

@@ -62,10 +62,11 @@ semantics change; codegen receives concrete integer dimensions and ordinary type
 
 ## Remaining work
 
-- Unify unary and tuple evidence storage and operation proof records. Shared
-  conformance selection and ordinary participant binding now precede those
-  representations; legacy source spellings and unary virtual ABI remain
-  compatibility surfaces.
+- Extend common evidence publication to instantiated generic unary conformances
+  and virtual construction. Fully resolved direct unary declarations now publish
+  the same canonical participant, association and operation records as tuples;
+  specialized safety proofs and the unary virtual ABI remain compatibility
+  surfaces.
 - Enforce unary body-declared composition. Included contract identities are now
   retained, but their requirements are not inherited yet. Preserve legacy
   explicit contract-to-contract relations while implementing those proofs.
@@ -213,3 +214,29 @@ Clean and warm-cache LLVM are identical, with all 27 modules reused. Both virtua
 handles retain two pointers and fixed operation tables; static calls remain
 specialized. Selection still preserves legacy candidate matching rules; structural
 specialization ranking and shared evidence/proof storage are not implemented.
+
+
+## Common static evidence
+
+Implementation scope: global semantizing publishes fully resolved direct unary
+conformances in `ContractConformance`, using the existing canonical argument
+publisher and function-reference pool. Tokenizing, syntaxing, module snapshots,
+and codegen require no representation changes. Tuple validation ignores these
+already validated unary records; equivalent direct declarations deduplicate by
+participant identity. Incomplete compatibility declarations do not publish a
+partial proof. Existing safety records remain authoritative for safety checking.
+
+Validation includes a syntax-to-global-graph test with unary and binary contracts,
+reordered associated type/integer arguments, duplicate equivalent declarations,
+and operation identities. Generic unary and virtual evidence publication, joint
+virtual packages, and structural specialization ranking remain follow-up work.
+
+Validation result: the complete regression exercised 1,731 program cases and 367
+internal cases. Internal tests passed (366 passed, one skipped). Program tests
+passed except for the changed `zeroed` rejection diagnostic (1,719 passed, 11
+skipped, one failed). After preserving that specific diagnostic in the presence
+of materialized overloads, the final focused run passed all 114 tests, including
+all contract cases, both affected rejection diagnostics, and static evidence
+verification. The mixed static/virtual executable passed; emitted LLVM retains
+two-pointer handles and fixed operation tables. Direct conformance checking now
+also runs without a diagnostic collector and covers non-declaration type shapes.

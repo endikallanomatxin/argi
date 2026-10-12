@@ -429,6 +429,9 @@ pub fn semantizeWithOptions(
 
     try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, try abstracts.findParticipantUnaryUseFailure());
 
+    // Evidence and conformance validation must not depend on diagnostic output.
+    const concrete_requirement_failure = try abstracts.findConcreteRequirementFailure();
+    if (concrete_requirement_failure != null and options.diagnostics == null) return error.InvalidAbstractImplementation;
     if (options.diagnostics) |diagnostics| {
         if (try abstracts.findConcreteImplementationConflict()) |conflict| {
             var concrete_name = std.array_list.Managed(u8).init(allocator);
@@ -446,7 +449,7 @@ pub fn semantizeWithOptions(
             return error.Reported;
         }
 
-        if (try abstracts.findConcreteRequirementFailure()) |failure| {
+        if (concrete_requirement_failure) |failure| {
             var message = std.array_list.Managed(u8).init(allocator);
             defer message.deinit();
             try appendFormatted(
@@ -2749,6 +2752,15 @@ fn diagnoseUnresolvedCall(
                 return true;
             }
 
+            // Materialized specializations must not hide the intrinsic's useful
+            // rejection diagnostic for an incompatible explicit type argument.
+            if (reference.module_path == null and std.mem.eql(u8, name, "zeroed") and
+                generic_functions.hasVisibleParameterizedFunctionName(module_index, name, qualified_module))
+            {
+                try diagnostics.add(diagnosticLocation(graph, diagnostics, source), .semantic, "zeroed requires a numeric type or a fixed array of numeric types; references and resource-bearing types cannot be zero-initialized", .{});
+                return true;
+            }
+
             if (candidates.items.len == 0) {
                 if (generic_functions.hasVisibleParameterizedFunctionName(module_index, name, qualified_module)) {
                     var generic_ties: std.ArrayList(global_sg.GlobalDeclId) = .empty;
@@ -2774,10 +2786,6 @@ fn diagnoseUnresolvedCall(
                         return true;
                     }
 
-                    if (reference.module_path == null and std.mem.eql(u8, name, "zeroed")) {
-                        try diagnostics.add(diagnosticLocation(graph, diagnostics, source), .semantic, "zeroed requires a numeric type or a fixed array of numeric types; references and resource-bearing types cannot be zero-initialized", .{});
-                        return true;
-                    }
                     var mismatch = std.array_list.Managed(u8).init(allocator);
                     defer mismatch.deinit();
                     try mismatch.appendSlice("no matching generic overload of '");

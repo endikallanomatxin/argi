@@ -910,3 +910,38 @@ test "contract participants require ordinary bindings in generic evaluation" {
         try std.testing.expectEqual(int_type, try resolver.instantiateParameterizedType(0, parameter_type, &bindings));
     }
 }
+
+test "unary and tuple conformances publish canonical static evidence" {
+    const allocator = std.testing.allocator;
+    const source =
+        "Readable: Contract = (\n.Result: Type\n.Count: Int\nread(.source: &Self) -> (.value: Result)\n)\n" ++
+        "Product#(.Left: Type, .Right: Type): Contract = (\n.Result: Type\nmultiply(.left: &Left, .right: &Right) -> (.value: Result)\n)\n" ++
+        "Cell: Type = (.value: Int32)\n" ++
+        "Cell satisfies Readable#(.Count = 2, .Result: Int32)\n" ++
+        "Cell satisfies Readable#(.Result: Int32, .Count = 2)\n" ++
+        "satisfies Product#(Cell, Cell) = (.Result: Int32)\n" ++
+        "read(.source: &Cell) -> (.value: Int32) := { value = source&.value }\n" ++
+        "multiply(.left: &Cell, .right: &Cell) -> (.value: Int32) := { value = left&.value * right&.value }\n";
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    var module = try @import("semantizer.zig").build(allocator, "evidence", &.{.{ .path = "evidence/main.rg", .tree = &tree, .source = source }});
+    defer module.graph.deinit(allocator);
+    var result = try @import("../global/semantizer.zig").semantize(allocator, &.{module.graph});
+    defer result.graph.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 2), result.graph.contract_conformances.items.len);
+    for (result.graph.contract_conformances.items) |conformance| {
+        const name = result.graph.text(result.graph.declaration(conformance.declaration).name);
+        const unary = std.mem.eql(u8, name, "Readable");
+        try std.testing.expectEqual(@as(u32, if (unary) 1 else 2), conformance.participants.len);
+        try std.testing.expectEqual(@as(u32, if (unary) 2 else 1), conformance.associated_arguments.len);
+        try std.testing.expectEqual(@as(u32, 1), conformance.operations.len);
+        const associated = result.graph.generic_arguments.items[conformance.associated_arguments.start..][0..conformance.associated_arguments.len];
+        try std.testing.expectEqualStrings("Result", result.graph.text(associated[0].name));
+        if (unary) {
+            try std.testing.expectEqualStrings("Count", result.graph.text(associated[1].name));
+            try std.testing.expectEqual(@as(i64, 2), associated[1].value.comptime_int);
+        }
+        const method = result.graph.function_refs.items[conformance.operations.start];
+        try std.testing.expectEqualStrings(if (unary) "read" else "multiply", result.graph.text(result.graph.declaration(result.graph.function(method).declaration).name));
+    }
+}

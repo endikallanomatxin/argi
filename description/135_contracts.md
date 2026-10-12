@@ -231,6 +231,10 @@ another participant. Functions remain ordinary declarations outside the contract
 > lookup, associated argument checks and constraint inference now share the
 > selection entry point used by explicit participant tuples. Source adapters
 > match direct declarations, generic patterns and inherited marker contracts.
+> Fully resolved direct unary declarations publish canonical participants,
+> associated arguments and selected operations in the same static evidence
+> registry as explicit tuples; equivalent duplicate declarations share one record.
+> Instantiated generic unary evidence has not yet migrated to that registry.
 > Virtual table and safety evidence registries still use the unary compatibility
 > representation; joint evidence and specialization ranking remain pending.
 > Bundled libraries and generated entry code use the canonical `.contract` label.

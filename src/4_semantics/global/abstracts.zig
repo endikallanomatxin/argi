@@ -1862,6 +1862,7 @@ pub const Resolver = struct {
             const conformance = self.graph.contract_conformances.items[index];
             const module_index: usize = @intFromEnum(conformance.context);
             const located = self.findAbstractDefinition(conformance.declaration) orelse return error.InvalidContractDeclaration;
+            if (!located.definition.hasExplicitParticipants()) continue;
             const storage = &self.modules[located.module_index].semantic.parameterized_storage;
             var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
             defer bindings.deinit(self.allocator);
@@ -2082,10 +2083,10 @@ pub const Resolver = struct {
             for (storage.abstract_implementations.items) |implementation| {
                 const abstract_decl = try self.resolveDeclarationRef(module_index, implementation.abstract_ref, .abstract_type);
                 const concrete = globalizer.globalType(self.offsets[module_index], implementation.ty);
-                if (self.findAbstractDefinition(switch (self.graph.types.items[@intFromEnum(concrete)]) {
-                    .declared => |declaration| declaration,
-                    else => continue,
-                }) != null) continue;
+                switch (self.graph.types.items[@intFromEnum(concrete)]) {
+                    .declared => |declaration| if (self.findAbstractDefinition(declaration) != null) continue,
+                    else => {},
+                }
 
                 const located = self.findAbstractDefinition(abstract_decl) orelse continue;
                 const requirement_storage = &self.modules[located.module_index].semantic.parameterized_storage;
@@ -2101,10 +2102,16 @@ pub const Resolver = struct {
                     &bindings,
                 );
                 bindImplicitParticipant(located, concrete, &bindings);
+                var operations: std.ArrayList(global_sg.GlobalFunctionId) = .empty;
+                defer operations.deinit(self.allocator);
+                var complete = true;
 
                 for (requirement_storage.abstract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len]) |requirement| {
                     const input = self.generics.instantiateParameterizedType(located.module_index, requirement.input, &bindings) catch |err| switch (err) {
-                        error.UnboundGenericTypeParameter, error.UnboundComptimeParameter => continue,
+                        error.UnboundGenericTypeParameter, error.UnboundComptimeParameter => {
+                            complete = false;
+                            continue;
+                        },
                         else => return err,
                     };
                     const output = self.generics.instantiateParameterizedType(located.module_index, requirement.output, &bindings) catch |err| switch (err) {
@@ -2115,6 +2122,7 @@ pub const Resolver = struct {
                     if (output) |resolved_output| {
                         if (self.findConcreteMethod(method_name, input, resolved_output)) |method| {
                             try self.recordStaticSafetyContract(located, requirement, &bindings, concrete, method, resolved_output, self.sourceFor(module_index, implementation.source));
+                            try operations.append(self.allocator, method);
                             continue;
                         }
                     }
@@ -2128,9 +2136,40 @@ pub const Resolver = struct {
                         .ambiguous = if (output) |resolved_output| self.selectConcreteMethod(method_name, input, resolved_output) == .ambiguous else false,
                     };
                 }
+                if (complete) try self.publishUnaryConformance(located, &bindings, operations.items, module_index, self.sourceFor(module_index, implementation.source));
             }
         }
         return null;
+    }
+
+    // Unary compatibility declarations use the same canonical, checkpointed
+    // evidence as explicit tuples once all their requirements are resolved.
+    fn publishUnaryConformance(self: *Resolver, located: LocatedAbstractDefinition, bindings: *generic_mod.Resolver.Bindings, operations: []const global_sg.GlobalFunctionId, module_index: usize, source: primitives.SourceRef) !void {
+        const storage = &self.modules[located.module_index].semantic.parameterized_storage;
+        for (located.definition.parameters.start..located.definition.parameters.start + located.definition.parameters.len) |raw| {
+            switch (storage.comptime_parameters.items[raw].kind) {
+                .type => if (bindings.types[raw] == null) return,
+                .comptime_int => if (bindings.ints[raw] == null) return,
+            }
+        }
+        const concrete = bindings.types[@intFromEnum(located.definition.implicit_participant.?)].?;
+        for (self.graph.contract_conformances.items) |previous| {
+            if (previous.declaration != globalizer.globalDecl(self.offsets[located.module_index], located.definition.declaration)) continue;
+            const participant = self.graph.generic_arguments.items[previous.participants.start].value.type;
+            if (global_types.equal(self.graph, participant, concrete)) return;
+        }
+        const participants = try self.publishConformanceArguments(located, located.definition.participants, bindings);
+        const associated = try self.publishConformanceArguments(located, located.definition.parameters, bindings);
+        const operation_start: u32 = @intCast(self.graph.function_refs.items.len);
+        try self.graph.function_refs.appendSlice(self.allocator, operations);
+        try self.graph.contract_conformances.append(self.allocator, .{
+            .context = @enumFromInt(@as(u32, @intCast(module_index))),
+            .declaration = globalizer.globalDecl(self.offsets[located.module_index], located.definition.declaration),
+            .participants = participants,
+            .associated_arguments = associated,
+            .operations = .{ .start = operation_start, .len = @intCast(operations.len) },
+            .source = source,
+        });
     }
 
     fn bindDirectAbstractArguments(
