@@ -6,11 +6,11 @@ Resource init() -> (.result: Resource) := {
 
 Resource deinit(.res: $&Resource) -> () := {}
 
-copy(.self: &Resource) -> (.value: Resource) := {
-    value = Resource()
-}
-
-Resource implements InfalliblyCopyable
+implement InfalliblyCopyable#(Resource) (
+    .copy = (.self: &Resource) -> (.value: Resource) {
+        value = Resource()
+    }
+)
 
 consume(.res: Resource) -> (.status_code: Int32) := {
     status_code = 0

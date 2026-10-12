@@ -1,5 +1,5 @@
 Pair : CStruct = (.left: CDouble, .right: CDouble)
-Pair implements ImplicitlyCopyable
+implement ImplicitlyCopyable#(Pair) ()
 Transformer(.value: Pair) -> (.result: Pair) : CFunctionPointer
 _make() -> (.result: Pair) : CFunction(.symbol = "argi_cross_make")
 _apply(.value: Pair, .callback: Transformer) -> (.result: Pair) : CFunction(.symbol = "argi_cross_apply")

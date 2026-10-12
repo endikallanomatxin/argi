@@ -254,3 +254,16 @@ static generic consumers and selected virtual tables. Single-output operation
 labels remain accessible on both direct and virtual calls, including in
 parameterized bodies. The source protocol and CLI view adapter live separately
 from option-tokenization and schema code.
+
+Generic operation aliases infer their ordinary function parameters from the
+selected requirement's input signature. The aliased declaration is fixed; no
+second overload search or result-directed inference occurs. Selected bounds and
+result compatibility remain checked. Equivalent generic implementation patterns
+and extension ownership are checked even for dormant templates.
+
+ImplicitlyCopyable and InfalliblyCopyable now have explicit Value participants.
+The former grants duplication permission; the latter owns the explicit copy
+operation. Implicitly copyable types receive a generic infallible implementation.
+Ownership recognizes declared copy capabilities independently of global function
+names, so an explicit owning copy operation never grants implicit duplication.
+FalliblyCopyable and its remaining callers are still pending migration.

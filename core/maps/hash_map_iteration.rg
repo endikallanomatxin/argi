@@ -5,21 +5,21 @@ HashMapEntry#(.key: Type: ImplicitlyCopyable, .value: Type: ImplicitlyCopyable):
     .value : value
 )
 
-HashMapEntry#(.key: Type: ImplicitlyCopyable, .value: Type: ImplicitlyCopyable) satisfies ImplicitlyCopyable
+implement#(.key: Type: ImplicitlyCopyable, .value: Type: ImplicitlyCopyable) ImplicitlyCopyable#(HashMapEntry#(.key: key, .value: value)) ()
 
 HashMapROEntry#(.key: Type: ImplicitlyCopyable, .value: Type: ImplicitlyCopyable): Type = (
     .key   : &key,
     .value : &value
 )
 
-HashMapROEntry#(.key: Type: ImplicitlyCopyable, .value: Type: ImplicitlyCopyable) satisfies ImplicitlyCopyable
+implement#(.key: Type: ImplicitlyCopyable, .value: Type: ImplicitlyCopyable) ImplicitlyCopyable#(HashMapROEntry#(.key: key, .value: value)) ()
 
 HashMapRWEntry#(.key: Type: ImplicitlyCopyable, .value: Type: ImplicitlyCopyable): Type = (
     .key   : &key,
     .value : $&value
 )
 
-HashMapRWEntry#(.key: Type: ImplicitlyCopyable, .value: Type: ImplicitlyCopyable) satisfies ImplicitlyCopyable
+implement#(.key: Type: ImplicitlyCopyable, .value: Type: ImplicitlyCopyable) ImplicitlyCopyable#(HashMapRWEntry#(.key: key, .value: value)) ()
 
 _hash_map_next_index#(
         .key    : Type: ImplicitlyCopyable,

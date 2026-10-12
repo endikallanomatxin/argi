@@ -1,6 +1,6 @@
 Deadline: Type = (._instant: MonotonicInstant)
 
-Deadline satisfies ImplicitlyCopyable
+implement ImplicitlyCopyable#(Deadline) ()
 
 Deadline init(.at: MonotonicInstant) -> (.result: Deadline) := { result = (._instant = at) }
 

@@ -1,8 +1,8 @@
 Alpha : Type = ()
 Beta : Type = ()
 
-Alpha implements ImplicitlyCopyable
-Beta implements ImplicitlyCopyable
+implement ImplicitlyCopyable#(Alpha) ()
+implement ImplicitlyCopyable#(Beta) ()
 
 Alpha init() -> (.result: Alpha) := {
     result = ()

@@ -2,7 +2,7 @@ RawPointer#(.t: Type): Type = (
     .address : UIntNative
 )
 
-RawPointer#(.t: Type) satisfies ImplicitlyCopyable
+implement#(.t: Type) ImplicitlyCopyable#(RawPointer#(.t: t)) ()
 
 raw_pointer#(.t: Type)(.address: UIntNative) -> (.raw: RawPointer#(.t: t)) := {
     raw = (.address = address)

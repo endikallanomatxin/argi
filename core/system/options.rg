@@ -1,15 +1,13 @@
 ..invalid_option
 ..missing_option_value
 
-
-
 CliOption: Type = (.name: StringView, .value: ?StringView, .short: Bool)
 
-CliOption satisfies ImplicitlyCopyable
+implement ImplicitlyCopyable#(CliOption) ()
 
 CliArgument: Type = (..option CliOption, ..positional StringView)
 
-CliArgument satisfies ImplicitlyCopyable
+implement ImplicitlyCopyable#(CliArgument) ()
 
 -- Tokenize options without a schema: --name=value, --name, short groups,
 -- positionals, and --. Names and attached values borrow the source. Schema

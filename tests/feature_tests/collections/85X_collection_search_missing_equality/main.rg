@@ -1,5 +1,5 @@
 Record : Type = (.value: Int32)
-Record implements ImplicitlyCopyable
+implement ImplicitlyCopyable#(Record) ()
 main() -> () := {
     values : [1]Record = ((.value = 1))
     view ::= array_view_ro(.array = &values).view

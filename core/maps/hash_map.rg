@@ -4,7 +4,7 @@ _HashMapSlot#(.key: Type: ImplicitlyCopyable, .value: Type: ImplicitlyCopyable):
     ..occupied(.hash: UIntNative, .key: key, .value: value),
 )
 
-_HashMapSlot#(.key: Type: ImplicitlyCopyable, .value: Type: ImplicitlyCopyable) satisfies ImplicitlyCopyable
+implement#(.key: Type: ImplicitlyCopyable, .value: Type: ImplicitlyCopyable) ImplicitlyCopyable#(_HashMapSlot#(.key: key, .value: value)) ()
 
 -- Slots are private and always initialized. Tombstones preserve probe paths;
 -- capacity is a slot count independent of powers of two and live load is at most one half.

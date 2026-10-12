@@ -16,8 +16,8 @@ ArrayViewRO#(.t: Type): Type = (
     ._length : UIntNative
 )
 
-ArrayView#(.t: Type) satisfies ImplicitlyCopyable
-ArrayViewRO#(.t: Type) satisfies ImplicitlyCopyable
+implement#(.t: Type) ImplicitlyCopyable#(ArrayView#(.t: t)) ()
+implement#(.t: Type) ImplicitlyCopyable#(ArrayViewRO#(.t: t)) ()
 
 data#(.t: Type)(.self: &ArrayView#(.t: t)) -> (.pointer: $&t) := {
     match self&._data {

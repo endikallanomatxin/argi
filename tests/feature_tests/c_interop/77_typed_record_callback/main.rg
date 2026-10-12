@@ -1,5 +1,5 @@
 Packet : CStruct = (.value: CDouble, .count: CInt, .context: RawPointer#(.t: Void))
-Packet implements ImplicitlyCopyable
+implement ImplicitlyCopyable#(Packet) ()
 Transformer(.packet: Packet) -> (.result: Packet) : CFunctionPointer
 
 transform(.packet: Packet) -> (.result: Packet) : CFunction := {

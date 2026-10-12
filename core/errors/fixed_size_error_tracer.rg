@@ -1,6 +1,6 @@
 ErrorTraceEntry: Type = (.location: SourceLocationId, .context_length: UIntNative)
 
-ErrorTraceEntry satisfies ImplicitlyCopyable
+implement ImplicitlyCopyable#(ErrorTraceEntry) ()
 
 -- Fixed slots bound both context copy work and memory use. The first half
 -- retains early frames; the second half replaces recent frames in a ring.

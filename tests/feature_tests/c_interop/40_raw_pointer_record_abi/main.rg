@@ -3,11 +3,11 @@ Weighted : CStruct = (.data: RawPointer#(.t: UInt8), .weight: CFloat)
 Large : CStruct = (.data: RawPointer#(.t: UInt8), .count: CSize, .other: RawPointer#(.t: UInt8))
 Nested : CStruct = (.buffer: Buffer, .tag: CInt)
 Wrapper#(.t: Type) : CStruct = (.value: t)
-Buffer implements ImplicitlyCopyable
-Weighted implements ImplicitlyCopyable
-Large implements ImplicitlyCopyable
-Nested implements ImplicitlyCopyable
-Wrapper#(.t: Type) implements ImplicitlyCopyable
+implement ImplicitlyCopyable#(Buffer) ()
+implement ImplicitlyCopyable#(Weighted) ()
+implement ImplicitlyCopyable#(Large) ()
+implement ImplicitlyCopyable#(Nested) ()
+implement#(.t: Type) ImplicitlyCopyable#(Wrapper#(.t: t)) ()
 _get() -> (.result: Buffer) : CFunction(.symbol = "argi_c_buffer_get")
 _read(.value: Buffer) -> (.result: CInt) : CFunction(.symbol = "argi_c_buffer_read")
 _echo(.value: Buffer) -> (.result: Buffer) : CFunction(.symbol = "argi_c_buffer_echo")

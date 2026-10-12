@@ -1,7 +1,7 @@
 Two : CStruct = (.a: CFloat, .b: CFloat)
 Blend : CStruct = (.small: CFloat, .large: CDouble)
-Two implements ImplicitlyCopyable
-Blend implements ImplicitlyCopyable
+implement ImplicitlyCopyable#(Two) ()
+implement ImplicitlyCopyable#(Blend) ()
 _two(.value: Two) -> (.result: Two) : CFunction(.symbol = "argi_c_two")
 _blend(.value: Blend) -> (.result: Blend) : CFunction(.symbol = "argi_c_blend")
 argi_c_two_export(.value: Two) -> (.result: Two) : CFunction(.export = true) := { result = value }
@@ -14,14 +14,14 @@ Reverse : CStruct = (.value: CDouble, .number: CInt)
 SameWord : CStruct = (.value: CFloat, .number: CInt)
 Nested : CStruct = (.one: One, .tail: [2]CFloat)
 Wrapper#(.t: Type) : CStruct = (.value: t)
-One implements ImplicitlyCopyable
-Floats implements ImplicitlyCopyable
-Doubles implements ImplicitlyCopyable
-Mixed implements ImplicitlyCopyable
-Reverse implements ImplicitlyCopyable
-SameWord implements ImplicitlyCopyable
-Nested implements ImplicitlyCopyable
-Wrapper#(.t: Type) implements ImplicitlyCopyable
+implement ImplicitlyCopyable#(One) ()
+implement ImplicitlyCopyable#(Floats) ()
+implement ImplicitlyCopyable#(Doubles) ()
+implement ImplicitlyCopyable#(Mixed) ()
+implement ImplicitlyCopyable#(Reverse) ()
+implement ImplicitlyCopyable#(SameWord) ()
+implement ImplicitlyCopyable#(Nested) ()
+implement#(.t: Type) ImplicitlyCopyable#(Wrapper#(.t: t)) ()
 _one(.value: One) -> (.result: One) : CFunction(.symbol = "argi_c_one")
 _floats(.value: Floats) -> (.result: Floats) : CFunction(.symbol = "argi_c_floats")
 _doubles(.value: Doubles) -> (.result: Doubles) : CFunction(.symbol = "argi_c_doubles")

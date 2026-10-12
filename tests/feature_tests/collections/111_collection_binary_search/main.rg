@@ -1,6 +1,6 @@
 Record: Type = (.key: Int32, .tag: Int32)
 
-Record implements ImplicitlyCopyable
+implement ImplicitlyCopyable#(Record) ()
 
 ByKey: Type = ()
 

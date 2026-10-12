@@ -6,7 +6,7 @@ OrderPolicy#(.Policy: Type, .t: Type: ImplicitlyCopyable): Contract = (
 
 Int32OrderPolicy: Type = ()
 
-Int32OrderPolicy satisfies ImplicitlyCopyable
+implement ImplicitlyCopyable#(Int32OrderPolicy) ()
 
 implement OrderPolicy#(Int32OrderPolicy, Int32)(
     .less = (.self: &Int32OrderPolicy, .left: Int32, .right: Int32) -> (.ok: Bool) {
@@ -19,7 +19,7 @@ implement OrderPolicy#(Int32OrderPolicy, Int32)(
 
 UIntNativeOrderPolicy: Type = ()
 
-UIntNativeOrderPolicy satisfies ImplicitlyCopyable
+implement ImplicitlyCopyable#(UIntNativeOrderPolicy) ()
 
 implement OrderPolicy#(UIntNativeOrderPolicy, UIntNative)(
     .less = (.self: &UIntNativeOrderPolicy, .left: UIntNative, .right: UIntNative) -> (.ok: Bool) {
@@ -32,7 +32,7 @@ implement OrderPolicy#(UIntNativeOrderPolicy, UIntNative)(
 
 StringViewOrderPolicy: Type = ()
 
-StringViewOrderPolicy satisfies ImplicitlyCopyable
+implement ImplicitlyCopyable#(StringViewOrderPolicy) ()
 
 implement OrderPolicy#(StringViewOrderPolicy, StringView)(
     .less = (.self: &StringViewOrderPolicy, .left: StringView, .right: StringView) -> (.ok: Bool) {

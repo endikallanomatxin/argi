@@ -53,11 +53,11 @@ once ProcessManager init(.ffi: $&ForeignFunctionInterface = reach ffi) -> (.resu
 
 ProcessStreamMode: Type = (..inherit, ..pipe, ..discard)
 
-ProcessStreamMode satisfies ImplicitlyCopyable
+implement ImplicitlyCopyable#(ProcessStreamMode) ()
 
 ProcessExitStatus: Type = (..exited(.code: UInt32), ..signaled(.signal: UInt32))
 
-ProcessExitStatus satisfies ImplicitlyCopyable
+implement ImplicitlyCopyable#(ProcessExitStatus) ()
 
 ..invalid_process_argument
 ..process_spawn_failed

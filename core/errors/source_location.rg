@@ -2,7 +2,7 @@
 -- retain reader strings or references to a context expression.
 SourceLocationId: Type = (.value: UInt32)
 
-SourceLocationId satisfies ImplicitlyCopyable
+implement ImplicitlyCopyable#(SourceLocationId) ()
 
 SourceLocation: Type = (
     .source_file : &Char
@@ -11,7 +11,7 @@ SourceLocation: Type = (
     .column      : UIntNative
 )
 
-SourceLocation satisfies ImplicitlyCopyable
+implement ImplicitlyCopyable#(SourceLocation) ()
 
 -- These two core operations are lowered to executable metadata by codegen.
 error_location_id() -> (.location: SourceLocationId) := {

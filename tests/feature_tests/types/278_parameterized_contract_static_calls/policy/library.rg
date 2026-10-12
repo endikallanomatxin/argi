@@ -1,6 +1,6 @@
 ConstantPolicy: Type = ()
 
-ConstantPolicy implements ImplicitlyCopyable
+implement ImplicitlyCopyable#(ConstantPolicy) ()
 implement HashPolicy#(ConstantPolicy, Int32)(
 
     .hash = (.self: &ConstantPolicy, .key: Int32) -> (.hash: UIntNative) { hash = 42 }

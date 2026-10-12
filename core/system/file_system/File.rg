@@ -4,7 +4,7 @@ FileOpenMode: Type = (
     ..append
 )
 
-FileOpenMode satisfies ImplicitlyCopyable
+implement ImplicitlyCopyable#(FileOpenMode) ()
 ..file_open_failed
 
 File: Type = (

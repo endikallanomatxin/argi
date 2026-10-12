@@ -3,11 +3,11 @@ Element : CStruct = (.data: RawPointer#(.t: UInt8), .count: CSize)
 Elements : CStruct = (.values: [2]Element)
 Address : CUnion = (.pointer: RawPointer#(.t: UInt8), .integer: CSize)
 Alternatives : CUnion = (.pointers: [2]RawPointer#(.t: UInt8), .numbers: [2]CDouble)
-Pointers implements ImplicitlyCopyable
-Element implements ImplicitlyCopyable
-Elements implements ImplicitlyCopyable
-Address implements ImplicitlyCopyable
-Alternatives implements ImplicitlyCopyable
+implement ImplicitlyCopyable#(Pointers) ()
+implement ImplicitlyCopyable#(Element) ()
+implement ImplicitlyCopyable#(Elements) ()
+implement ImplicitlyCopyable#(Address) ()
+implement ImplicitlyCopyable#(Alternatives) ()
 _get() -> (.result: Pointers) : CFunction(.symbol = "argi_c_pointers_get")
 _elements() -> (.result: Elements) : CFunction(.symbol = "argi_c_elements_get")
 _address() -> (.result: Address) : CFunction(.symbol = "argi_c_address_get")

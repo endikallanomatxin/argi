@@ -2126,6 +2126,24 @@ pub const Resolver = struct {
         return try self.instantiate(declaration, arguments);
     }
 
+    /// Alias identity is fixed by its declaration. Infer its ordinary generic
+    /// arguments from the selected requirement's inputs, never its result type
+    /// and never a search through same-named functions.
+    pub fn instantiateOperationAlias(context: *anyopaque, declaration: global_sg.GlobalDeclId, input: global_sg.GlobalTypeId) anyerror!global_sg.GlobalFunctionId {
+        const self: *Resolver = @ptrCast(@alignCast(context));
+        const located = self.findParameterized(declaration) orelse return error.GenericFunctionParameterizedNotFound;
+        const storage = &self.modules[located.module_index].semantic.parameterized_storage;
+        var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
+        defer bindings.deinit(self.allocator);
+        if (!try self.inferInputType(located.module_index, located.parameterized.input, input, &bindings)) return error.OperationAliasInputMismatch;
+        if (!try self.inferAndValidateConstraints(located.module_index, located.parameterized.parameters, &bindings)) return error.OperationAliasConstraintMismatch;
+        const arguments = self.appendBoundArguments(located.module_index, located.parameterized.parameters, &bindings) catch |err| {
+            if (err == error.MissingGenericArgument) return error.OperationAliasMissingParameter;
+            return err;
+        };
+        return self.instantiate(declaration, arguments);
+    }
+
     pub fn instantiateReferencedFunction(context: *anyopaque, declaration: global_sg.GlobalDeclId, arguments: primitives.Range(global_sg.GlobalGenericArgId)) anyerror!global_sg.GlobalFunctionId {
         const self: *Resolver = @ptrCast(@alignCast(context));
         return self.instantiate(declaration, arguments);

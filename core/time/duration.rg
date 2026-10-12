@@ -1,7 +1,7 @@
 -- Unsigned nanoseconds distinguish intervals from civil dates and never wrap.
 Duration: Type = (._nanoseconds: UInt64)
 
-Duration satisfies ImplicitlyCopyable
+implement ImplicitlyCopyable#(Duration) ()
 
 Duration init(.nanoseconds: UInt64) -> (.result: Duration) := {
     result = (._nanoseconds = nanoseconds)

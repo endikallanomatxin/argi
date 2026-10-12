@@ -1,6 +1,6 @@
 LogLevel: Type = (..debug, ..info, ..warning, ..error)
 
-LogLevel satisfies ImplicitlyCopyable
+implement ImplicitlyCopyable#(LogLevel) ()
 
 LogReasons: Type = (..stream_write_failed, ..stream_flush_failed)
 

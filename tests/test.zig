@@ -12206,7 +12206,7 @@ test "feature_tests/contracts/135X_generic_implementation_result" {
 }
 
 test "feature_tests/contracts/136X_generic_implementation_overlap" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/136X_generic_implementation_overlap", "overlapping generic implementations", "panic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/136X_generic_implementation_overlap", "equivalent implementation participant patterns", "panic");
 }
 
 test "feature_tests/contracts/137_repeated_participant_specialization" {
@@ -12250,7 +12250,7 @@ test "feature_tests/contracts/146_nominal_pattern_specificity" {
 }
 
 test "feature_tests/contracts/147X_equivalent_nominal_patterns" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/147X_equivalent_nominal_patterns", "overlapping generic implementations have ambiguous maximal patterns", "panic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/147X_equivalent_nominal_patterns", "equivalent implementation participant patterns", "panic");
 }
 
 test "feature_tests/contracts/148X_incomparable_nominal_patterns" {
@@ -12376,4 +12376,39 @@ test "feature_tests/contracts/176X_missing_contract_dependency" {
 test "feature_tests/contracts/177_argument_source_scoped_identity" {
     try expectSuccessfulBuild("tests/feature_tests/contracts/177_argument_source_scoped_identity");
     try run("tests/feature_tests/contracts/177_argument_source_scoped_identity");
+}
+
+test "feature_tests/contracts/178_generic_operation_alias" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/178_generic_operation_alias");
+    try run("tests/feature_tests/contracts/178_generic_operation_alias");
+}
+
+test "feature_tests/contracts/179X_generic_alias_output_inference" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/179X_generic_alias_output_inference", "parameters must be inferred from the selected input signature");
+}
+
+test "feature_tests/contracts/180X_generic_alias_result_mismatch" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/180X_generic_alias_result_mismatch", "operation returns an incompatible associated result");
+}
+
+test "feature_tests/contracts/181X_dormant_equivalent_implementations" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/181X_dormant_equivalent_implementations", "equivalent implementation participant patterns are not allowed");
+}
+
+test "feature_tests/contracts/182X_dormant_external_implementation" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/182X_dormant_external_implementation", "must belong to the contract module or a nominal participant module");
+}
+
+test "feature_tests/contracts/183_copy_permission_selected_evidence" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/183_copy_permission_selected_evidence");
+    try run("tests/feature_tests/contracts/183_copy_permission_selected_evidence");
+}
+
+test "feature_tests/contracts/184X_generic_alias_unsatisfied_bound" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/184X_generic_alias_unsatisfied_bound", "does not satisfy the generic operation alias bounds");
+}
+
+test "feature_tests/contracts/185_generic_alias_virtual_evidence" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/185_generic_alias_virtual_evidence");
+    try run("tests/feature_tests/contracts/185_generic_alias_virtual_evidence");
 }

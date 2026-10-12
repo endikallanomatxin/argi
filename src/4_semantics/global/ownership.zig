@@ -207,7 +207,7 @@ pub const Resolver = struct {
         }
         // An explicit copy contract does not grant permission to insert that
         // operation implicitly. This also keeps fallible copy results visible.
-        if (self.findCopyFunction(ty) != null or !self.triviallyCopyable(ty)) {
+        if (self.hasExplicitCopyCapability(ty) or !self.triviallyCopyable(ty)) {
             // A binding use can still carry a temporal move error that Safety
             // must diagnose before the copy permission. Other expressions may
             // be part of overload/initializer matching, where failure here
@@ -246,8 +246,16 @@ pub const Resolver = struct {
     /// not pass through a lowered `resolve_copy` node.
     pub fn canImplicitlyCopy(self: *Resolver, ty: global_sg.GlobalTypeId) bool {
         if (self.implementsNamedAbstract(ty, "ImplicitlyCopyable")) return true;
-        if (self.findCopyFunction(ty) != null) return false;
+        if (self.hasExplicitCopyCapability(ty)) return false;
         return self.triviallyCopyable(ty);
+    }
+
+    fn hasExplicitCopyCapability(self: *Resolver, ty: global_sg.GlobalTypeId) bool {
+        if (self.implementsNamedAbstract(ty, "InfalliblyCopyable") or
+            self.implementsNamedAbstract(ty, "FalliblyCopyable")) return true;
+        // TODO: remove this legacy check after all ordinary copy families and
+        // fallible copy conformances have migrated to scoped operations.
+        return self.findCopyFunction(ty) != null;
     }
 
     fn implementsNamedAbstract(self: *Resolver, concrete: global_sg.GlobalTypeId, name: []const u8) bool {

@@ -4,12 +4,12 @@ Large : CStruct = (.first: CLongLong, .second: CLongLong, .third: CLongLong)
 Tiny : CStruct = (.first: CUnsignedChar, .second: CUnsignedChar, .third: CUnsignedChar)
 Nested : CStruct = (.pair: Pair, .bytes: [3]UInt8)
 Wrapper#(.t: Type) : CStruct = (.value: t)
-Nested implements ImplicitlyCopyable
-Wrapper#(.t: Type) implements ImplicitlyCopyable
-Pair implements ImplicitlyCopyable
-Words implements ImplicitlyCopyable
-Large implements ImplicitlyCopyable
-Tiny implements ImplicitlyCopyable
+implement ImplicitlyCopyable#(Nested) ()
+implement#(.t: Type) ImplicitlyCopyable#(Wrapper#(.t: t)) ()
+implement ImplicitlyCopyable#(Pair) ()
+implement ImplicitlyCopyable#(Words) ()
+implement ImplicitlyCopyable#(Large) ()
+implement ImplicitlyCopyable#(Tiny) ()
 _pair(.value: Pair) -> (.result: Pair) : CFunction(.symbol = "argi_c_pair")
 _words(.value: Words) -> (.result: Words) : CFunction(.symbol = "argi_c_words")
 _large(.value: Large) -> (.result: Large) : CFunction(.symbol = "argi_c_large")

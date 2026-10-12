@@ -1,19 +1,19 @@
 -- Native addresses are copied values socket handles are private owners.
 _NetworkAddress: CStruct = (._bytes: [128]UInt8, ._length: UInt32)
 
-_NetworkAddress satisfies ImplicitlyCopyable
+implement ImplicitlyCopyable#(_NetworkAddress) ()
 
 NetworkAddress: Type = (._native: _NetworkAddress, ._datagram: Bool)
 
-NetworkAddress satisfies ImplicitlyCopyable
+implement ImplicitlyCopyable#(NetworkAddress) ()
 
 NetworkFamily: Type = (..any, ..ipv4, ..ipv6)
 
-NetworkFamily satisfies ImplicitlyCopyable
+implement ImplicitlyCopyable#(NetworkFamily) ()
 
 NetworkTransport: Type = (..tcp, ..udp)
 
-NetworkTransport satisfies ImplicitlyCopyable
+implement ImplicitlyCopyable#(NetworkTransport) ()
 
 _network_init() -> (.status: Int32): CFunction(.symbol = "_argi_network_init")
 
@@ -565,7 +565,7 @@ shutdown_write(
 
 DatagramReceived: Type = (.count: UIntNative, .peer: NetworkAddress)
 
-DatagramReceived satisfies ImplicitlyCopyable
+implement ImplicitlyCopyable#(DatagramReceived) ()
 
 send_to(
         .self   : $&UdpSocket,

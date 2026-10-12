@@ -3,7 +3,7 @@
 -- borrow of the source collection.
 Keyword: Type = (.name: StringView, .value: &Object)
 
-Keyword satisfies ImplicitlyCopyable
+implement ImplicitlyCopyable#(Keyword) ()
 
 to_object(
         .self  : &Python,
@@ -233,11 +233,11 @@ Argument: Type = (
     ..object&Object
 )
 
-Argument satisfies ImplicitlyCopyable
+implement ImplicitlyCopyable#(Argument) ()
 
 NamedArgument: Type = (.name: StringView, .value: Argument)
 
-NamedArgument satisfies ImplicitlyCopyable
+implement ImplicitlyCopyable#(NamedArgument) ()
 
 to_object(
         .self  : &Python,

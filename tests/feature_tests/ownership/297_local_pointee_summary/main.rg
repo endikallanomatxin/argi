@@ -1,7 +1,7 @@
 Owner : Type = (.value: Int32)
 Owner deinit(.self: $&Owner) -> () := {}
 Holder : Type = (.reference: ?&Int32)
-Holder implements ImplicitlyCopyable
+implement ImplicitlyCopyable#(Holder) ()
 extract(.holder: &Holder) -> (.reference: &Int32) := {
     match holder&.reference {
         ..none { abort }

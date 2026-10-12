@@ -113,11 +113,11 @@ copy_stream(
 
 ReadUntilEnd: Type = (..delimiter, ..end, ..limit)
 
-ReadUntilEnd satisfies ImplicitlyCopyable
+implement ImplicitlyCopyable#(ReadUntilEnd) ()
 
 ReadUntil: Type = (.count: UIntNative, .termination: ReadUntilEnd)
 
-ReadUntil satisfies ImplicitlyCopyable
+implement ImplicitlyCopyable#(ReadUntil) ()
 
 read_until(
         .self      : $&Reader,

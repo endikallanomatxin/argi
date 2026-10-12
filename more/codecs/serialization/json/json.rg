@@ -373,7 +373,7 @@ validate(
 
 JsonToken: Type = (.kind: UInt8, .lexeme: StringView)
 
-JsonToken satisfies ImplicitlyCopyable
+implement ImplicitlyCopyable#(JsonToken) ()
 
 -- Kind is the first byte: punctuation, quote, literal initial, or number
 -- initial. Lexemes borrow the complete validated input, including quotes.

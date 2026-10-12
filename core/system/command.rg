@@ -14,11 +14,11 @@ CliSpec: Type = (
     .default_value : ?StringView = ..none
 )
 
-CliSpec satisfies ImplicitlyCopyable
+implement ImplicitlyCopyable#(CliSpec) ()
 
 CliValue: Type = (.name: StringView, .value: ?StringView)
 
-CliValue satisfies ImplicitlyCopyable
+implement ImplicitlyCopyable#(CliValue) ()
 
 CliMatches: Type = (
     .options     : DynamicArray#(.t: CliValue),

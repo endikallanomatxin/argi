@@ -371,6 +371,7 @@ pub fn semantizeWithOptions(
     defer abstracts.deinit();
     abstracts.function_context = &generic_functions;
     abstracts.instantiate_function = generic_functions_mod.Resolver.instantiateReferencedFunction;
+    abstracts.instantiate_alias = generic_functions_mod.Resolver.instantiateOperationAlias;
     generic_functions.nested_call_context = &abstracts;
     generic_functions.nested_call_resolver = abstract_mod.Resolver.resolveNestedCall;
     generic_functions.nested_constructor_context = &constructors;

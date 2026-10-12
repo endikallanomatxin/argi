@@ -7,7 +7,7 @@ UriView: Type = (
     .fragment  : ?StringView
 )
 
-UriView satisfies ImplicitlyCopyable
+implement ImplicitlyCopyable#(UriView) ()
 
 _alpha(.byte: UInt8) -> (.ok: Bool) := {
     ok = [byte >= 65 and byte <= 90] or [byte >= 97 and byte <= 122]
@@ -559,7 +559,7 @@ decode_component(
 
 AuthorityView: Type = (.userinfo: ?StringView, .host: StringView, .port: ?StringView)
 
-AuthorityView satisfies ImplicitlyCopyable
+implement ImplicitlyCopyable#(AuthorityView) ()
 
 authority_parts(
         .text : StringView

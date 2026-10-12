@@ -199,6 +199,8 @@ pub const Resolver = struct {
     function_context: ?*anyopaque = null,
     instantiate_function: ?*const fn (*anyopaque, global_sg.GlobalDeclId, primitives.Range(global_sg.GlobalGenericArgId)) anyerror!global_sg.GlobalFunctionId = null,
 
+    instantiate_alias: ?*const fn (*anyopaque, global_sg.GlobalDeclId, global_sg.GlobalTypeId) anyerror!global_sg.GlobalFunctionId = null,
+
     graph: *global_sg.GlobalSemanticGraph,
     modules: []const module_sg.ModuleSemanticGraph,
     offsets: []const globalizer.Offsets,
@@ -2383,7 +2385,69 @@ pub const Resolver = struct {
         return null;
     }
 
+    fn templateOwnsParticipant(self: *Resolver, module_index: usize, conformance: parameterized_storage.ContractConformance) !bool {
+        const storage = &self.modules[module_index].semantic.parameterized_storage.ir;
+        for (storage.generic_arguments.items[conformance.participants.start..][0..conformance.participants.len]) |argument| {
+            if (argument.value != .type) continue;
+            const ty = storage.types.items[@intFromEnum(argument.value.type)];
+            if (ty != .resolved) continue;
+            const declaration = switch (ty.resolved) {
+                .generic => |nominal| try self.generics.resolveParameterizedDeclaration(module_index, nominal.base),
+                .declared => |reference| try self.generics.resolveParameterizedDeclaration(module_index, reference),
+                else => continue,
+            };
+            if (self.graph.moduleForDeclaration(declaration)) |owner|
+                if (@intFromEnum(owner) == module_index) return true;
+        }
+        return false;
+    }
+
+    // Dormant templates still extend an operation identity. Reject foreign
+    // ownership and equivalent patterns before any concrete call selects them.
+    fn validateConformanceTemplates(self: *Resolver) !void {
+        const Template = struct { module: usize, conformance: parameterized_storage.ContractConformance, declaration: global_sg.GlobalDeclId };
+        var previous: std.ArrayList(Template) = .empty;
+        defer previous.deinit(self.allocator);
+        for (self.modules, 0..) |module, module_index| {
+            for (module.semantic.parameterized_storage.contract_conformances.items) |conformance| {
+                const declaration = self.resolveDeclarationRef(module_index, conformance.contract_ref, .abstract_type) catch |err| switch (err) {
+                    error.UnknownGlobalDeclaration, error.AmbiguousGlobalDeclaration, error.UnknownModuleReference, error.AmbiguousModuleReference => continue,
+                    else => return err,
+                };
+                const located = self.findAbstractDefinition(declaration) orelse continue;
+                if (!located.definition.hasExplicitParticipants()) continue;
+                var failure: ParticipantConformanceFailure = .{
+                    .source = self.sourceFor(module_index, conformance.source),
+                    .contract_name = self.graph.text(self.graph.declaration(declaration).name),
+                    .reason = "",
+                };
+                if (conformance.parameters.len != 0 and conformance.explicit_operations and located.module_index != module_index and
+                    !(module.is_bundled_core and self.modules[located.module_index].is_bundled_core) and
+                    !try self.templateOwnsParticipant(module_index, conformance))
+                {
+                    failure.reason = "an implementation must belong to the contract module or a nominal participant module";
+                    self.participant_conformance_failure = failure;
+                    return;
+                }
+                for (previous.items) |other| {
+                    if (conformance.parameters.len == 0 and other.conformance.parameters.len == 0) continue;
+                    if (other.declaration != declaration or other.conformance.participants.len != conformance.participants.len) continue;
+                    if (try self.patternTupleCovers(module_index, conformance, other.module, other.conformance) and
+                        try self.patternTupleCovers(other.module, other.conformance, module_index, conformance))
+                    {
+                        failure.reason = "equivalent implementation participant patterns are not allowed";
+                        self.participant_conformance_failure = failure;
+                        return;
+                    }
+                }
+                try previous.append(self.allocator, .{ .module = module_index, .conformance = conformance, .declaration = declaration });
+            }
+        }
+    }
+
     pub fn prepareParticipantConformances(self: *Resolver) !void {
+        try self.validateConformanceTemplates();
+        if (self.participant_conformance_failure != null) return;
         for (self.modules, 0..) |*module, module_index| {
             for (module.semantic.parameterized_storage.contract_conformances.items) |conformance| {
                 const contract_name = module.text(switch (conformance.contract_ref) {
@@ -2530,12 +2594,30 @@ pub const Resolver = struct {
             if (!self.graph.function(function).flags.is_abstract_dispatch) return function;
         }
         if (!binding.instantiate_associated) {
-            self.participant_conformance_failure = .{
-                .source = conformance.source,
-                .contract_name = self.graph.text(self.graph.declaration(conformance.declaration).name),
-                .reason = "generic implementation function aliases are not supported yet",
+            const located = self.findAbstractDefinition(conformance.declaration) orelse return error.InvalidContractDeclaration;
+            const storage = &self.modules[located.module_index].semantic.parameterized_storage;
+            var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
+            defer bindings.deinit(self.allocator);
+            try self.generics.bindGlobalArguments(located.module_index, located.definition.participants, conformance.participants, &bindings);
+            try self.generics.bindGlobalArguments(located.module_index, located.definition.parameters, conformance.associated_arguments, &bindings);
+            const requirement = storage.abstract_requirements.items[located.definition.requirements.start + index];
+            const input = try self.generics.instantiateParameterizedType(located.module_index, requirement.input, &bindings);
+            const instantiate_alias = self.instantiate_alias orelse return error.MissingOperationInstantiator;
+            return instantiate_alias(self.function_context.?, binding.declaration, input) catch |err| {
+                if (err == error.OutOfMemory) return err;
+                self.participant_conformance_failure = .{
+                    .source = conformance.source,
+                    .contract_name = self.graph.text(self.graph.declaration(conformance.declaration).name),
+                    .operation = self.graph.text(binding.name),
+                    .reason = switch (err) {
+                        error.OperationAliasMissingParameter => "generic operation alias parameters must be inferred from the selected input signature",
+                        error.OperationAliasInputMismatch => "the selected input signature does not match the generic operation alias",
+                        error.OperationAliasConstraintMismatch => "the selected input signature does not satisfy the generic operation alias bounds",
+                        else => "the generic operation alias body could not be specialized for the selected input signature",
+                    },
+                };
+                return error.InvalidContractOperation;
             };
-            return error.InvalidContractOperation;
         }
         const instantiate = self.instantiate_function orelse return error.MissingOperationInstantiator;
         if (conformance.implementation_arguments.len == 0)

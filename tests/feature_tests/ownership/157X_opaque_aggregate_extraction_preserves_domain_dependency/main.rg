@@ -8,11 +8,11 @@ external :: UInt8 = 7
 Borrowing deinit(.self: $&Borrowing) -> () := {
 }
 
-copy(.self: &Borrowing) -> (.value: Borrowing) := {
-    value = (.reference = self&.reference)
-}
-
-Borrowing implements InfalliblyCopyable
+implement InfalliblyCopyable#(Borrowing) (
+    .copy = (.self: &Borrowing) -> (.value: Borrowing) {
+        value = (.reference = self&.reference)
+    }
+)
 
 main(.system: System) -> (.status_code: Int32) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)

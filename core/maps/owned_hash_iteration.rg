@@ -1,6 +1,6 @@
 OwnedHashMapBorrow#(.key: Type, .value: Type): Type = (.key: &key, .value: &value)
 
-OwnedHashMapBorrow#(.key: Type, .value: Type) satisfies ImplicitlyCopyable
+implement#(.key: Type, .value: Type) ImplicitlyCopyable#(OwnedHashMapBorrow#(.key: key, .value: value)) ()
 
 OwnedHashMapIterator#(.key: Type, .value: Type, .policy: Type: BorrowedHashPolicy#(policy, key)): Type = (
     ._owner      : &OwnedHashMap#(.key: key, .value: value, .policy: policy),

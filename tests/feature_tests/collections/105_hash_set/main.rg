@@ -1,6 +1,6 @@
 CollisionPolicy: Type = (.marker: Int32 = 0)
 
-CollisionPolicy implements ImplicitlyCopyable
+implement ImplicitlyCopyable#(CollisionPolicy) ()
 implement HashPolicy#(CollisionPolicy, Int32)(
 
     .hash = (.self: &CollisionPolicy, .key: Int32) -> (.hash: UIntNative) { hash = 7 }

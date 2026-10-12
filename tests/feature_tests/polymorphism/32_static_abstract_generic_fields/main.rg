@@ -5,8 +5,8 @@ Backend : Abstract = (
 BackendA : Type = (.value: Int32)
 BackendB : Type = (.value: Int32, .extra: Int32)
 
-BackendA implements ImplicitlyCopyable
-BackendB implements ImplicitlyCopyable
+implement ImplicitlyCopyable#(BackendA) ()
+implement ImplicitlyCopyable#(BackendB) ()
 
 perform(.self: &BackendA) -> (.value: Int32) := {
     value = self&.value + 10

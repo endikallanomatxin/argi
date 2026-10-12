@@ -3,4 +3,4 @@ Point : Type = (
     .y: Int32
 )
 
-Point implements ImplicitlyCopyable
+implement ImplicitlyCopyable#(Point) ()

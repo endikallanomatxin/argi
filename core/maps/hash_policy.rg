@@ -7,7 +7,7 @@ HashPolicy#(.Policy: Type, .key: Type: ImplicitlyCopyable): Contract = (
 
 UIntNativeHashPolicy: Type = ()
 
-UIntNativeHashPolicy satisfies ImplicitlyCopyable
+implement ImplicitlyCopyable#(UIntNativeHashPolicy) ()
 implement HashPolicy#(UIntNativeHashPolicy, UIntNative)(
     .hash = (.self: &UIntNativeHashPolicy, .key: UIntNative) -> (.hash: UIntNative) { hash = key }
 
@@ -21,7 +21,7 @@ implement HashPolicy#(UIntNativeHashPolicy, UIntNative)(
 
 Int32HashPolicy: Type = ()
 
-Int32HashPolicy satisfies ImplicitlyCopyable
+implement ImplicitlyCopyable#(Int32HashPolicy) ()
 implement HashPolicy#(Int32HashPolicy, Int32)(
     .hash = (.self: &Int32HashPolicy, .key: Int32) -> (.hash: UIntNative) {
         -- Encode all signed bits numerically, including the minimum value,
@@ -54,7 +54,7 @@ implement HashPolicy#(Int32HashPolicy, Int32)(
 
 StringViewHashPolicy: Type = ()
 
-StringViewHashPolicy satisfies ImplicitlyCopyable
+implement ImplicitlyCopyable#(StringViewHashPolicy) ()
 implement HashPolicy#(StringViewHashPolicy, StringView)(
     .hash = (.self: &StringViewHashPolicy, .key: StringView) -> (.hash: UIntNative) {
         hash = string_hash_map_hash(.key = &key).hash

@@ -4,11 +4,11 @@ Container : Type = (.marker: UInt8)
 
 Borrowing deinit(.self: $&Borrowing) -> () := {}
 
-copy(.self: &Borrowing) -> (.value: Borrowing) := {
-    value = (.reference = self&.reference)
-}
-
-Borrowing implements InfalliblyCopyable
+implement InfalliblyCopyable#(Borrowing) (
+    .copy = (.self: &Borrowing) -> (.value: Borrowing) {
+        value = (.reference = self&.reference)
+    }
+)
 
 store_copy(
     .storage: $&Container,

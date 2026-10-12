@@ -1,7 +1,7 @@
 -- Scalars exclude surrogate code points and fit the Unicode codespace.
 UnicodeScalar: Type = (._value: UInt32)
 
-UnicodeScalar satisfies ImplicitlyCopyable
+implement ImplicitlyCopyable#(UnicodeScalar) ()
 
 UnicodeScalar init(
         .value : UInt32
@@ -20,11 +20,11 @@ scalar_value(.self: UnicodeScalar) -> (.value: UInt32) := { value = self._value 
 
 Utf8Decoded: Type = (.scalar: UnicodeScalar, .width: UIntNative)
 
-Utf8Decoded satisfies ImplicitlyCopyable
+implement ImplicitlyCopyable#(Utf8Decoded) ()
 
 _Utf8Decode: Type = (..valid(.decoded: Utf8Decoded), ..invalid, ..outside)
 
-_Utf8Decode satisfies ImplicitlyCopyable
+implement ImplicitlyCopyable#(_Utf8Decode) ()
 
 -- Keep the proven decoder infallible so validated iteration has no error-tracer
 -- dependency. Public operations translate these outcomes into their Errable contract.
@@ -223,7 +223,7 @@ next_codepoint(
 -- keep their contents unchanged while using the validated view and its iterator.
 Utf8View: Type = (._text: StringView, ._count: UIntNative)
 
-Utf8View satisfies ImplicitlyCopyable
+implement ImplicitlyCopyable#(Utf8View) ()
 
 Utf8View init(.text: StringView) -> (.result: Errable#(Utf8View, (..invalid_utf8))) := {
     count ::= validate_utf8(.text = text)!

@@ -119,11 +119,11 @@ remove_directory(
 
 FileKind: Type = (..file, ..directory, ..other)
 
-FileKind satisfies ImplicitlyCopyable
+implement ImplicitlyCopyable#(FileKind) ()
 
 FileMetadata: Type = (.kind: FileKind, .size: UInt64, .modified: UnixTimestamp)
 
-FileMetadata satisfies ImplicitlyCopyable
+implement ImplicitlyCopyable#(FileMetadata) ()
 
 metadata(
         .self         : &FileSystem = reach file_system,
@@ -250,7 +250,7 @@ Directory deinit(.self: $&Directory) -> () := {
 
 SeekOrigin: Type = (..start, ..current, ..end)
 
-SeekOrigin satisfies ImplicitlyCopyable
+implement ImplicitlyCopyable#(SeekOrigin) ()
 ..stream_seek_failed
 ..stream_truncate_failed
 

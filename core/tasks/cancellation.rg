@@ -18,7 +18,7 @@ CancellationSource deinit(.self: $&CancellationSource) -> () := { deinit(.self =
 
 CancellationToken: Type = (._source: &CancellationSource)
 
-CancellationToken satisfies ImplicitlyCopyable
+implement ImplicitlyCopyable#(CancellationToken) ()
 
 cancellation_token(.self: &CancellationSource) -> (.token: CancellationToken) := {
     token = (._source = self)
@@ -35,7 +35,7 @@ is_cancelled(.self: CancellationToken) -> (.value: Bool) := {
 
 CancellationContext: Type = (.token: ?CancellationToken = ..none, .deadline: ?Deadline = ..none)
 
-CancellationContext satisfies ImplicitlyCopyable
+implement ImplicitlyCopyable#(CancellationContext) ()
 
 -- The caller supplies a monotonic reading to make checkpoints deterministic
 -- and avoid unnecessary system calls. Cancellation wins when both apply.

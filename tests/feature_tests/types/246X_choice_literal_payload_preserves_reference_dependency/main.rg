@@ -11,11 +11,11 @@ Result : Type = (
     ..error Int32
 )
 
-copy(.self: &Borrowing) -> (.value: Borrowing) := {
-    value = (.reference = self&.reference)
-}
-
-Borrowing implements InfalliblyCopyable
+implement InfalliblyCopyable#(Borrowing) (
+    .copy = (.self: &Borrowing) -> (.value: Borrowing) {
+        value = (.reference = self&.reference)
+    }
+)
 
 Target deinit(.self: $&Target) -> () := {}
 

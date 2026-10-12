@@ -13,7 +13,7 @@ BorrowedHashPolicy#(.Policy: Type, .key: Type): Contract = (
 
 StringHashPolicy: Type = ()
 
-StringHashPolicy satisfies ImplicitlyCopyable
+implement ImplicitlyCopyable#(StringHashPolicy) ()
 implement BorrowedHashPolicy#(StringHashPolicy, String)(
     .hash = (.self: &StringHashPolicy, .key: &String) -> (.hash: UIntNative) {
         text ::= as_view(key)
@@ -50,7 +50,7 @@ OwnedHashMapEntry#(.key: Type, .value: Type): Type = (.key: key, .value: value)
 
 _OwnedHashSlot: Type = (.state: UInt8, .hash: UIntNative)
 
-_OwnedHashSlot satisfies ImplicitlyCopyable
+implement ImplicitlyCopyable#(_OwnedHashSlot) ()
 
 _OwnedHashTable: Type = (._entries: Allocation, ._slots: DynamicArray#(.t: _OwnedHashSlot))
 

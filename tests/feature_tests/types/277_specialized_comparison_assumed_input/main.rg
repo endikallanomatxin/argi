@@ -1,5 +1,5 @@
 Box#(.t: Type) : Type = (.value: t)
-Box#(.t: Type: ImplicitlyCopyable) implements ImplicitlyCopyable
+implement#(.t: Type: ImplicitlyCopyable) ImplicitlyCopyable#(Box#(.t: t)) ()
 operator == #(.t: Type)(.left: Box#(.t: t), .right: Box#(.t: t), .bias: Int32 = reach bias) -> (.ok: Bool) := {
     ok = left.value == right.value and bias == 7
 }

@@ -10,7 +10,7 @@ UtcDateTime: Type = (
     .nanoseconds : UInt32  = 0
 )
 
-UtcDateTime satisfies ImplicitlyCopyable
+implement ImplicitlyCopyable#(UtcDateTime) ()
 
 is_leap_year(.year: Int32) -> (.ok: Bool) := {
     ok = [

@@ -1,5 +1,5 @@
 Record : Type = (.value: Int32)
-Record implements ImplicitlyCopyable
+implement ImplicitlyCopyable#(Record) ()
 same#(.t: Type)(.left: t, .right: t) -> (.ok: Bool) := { ok = left == right }
 main() -> () := {
     a :: Record = (.value = 1)

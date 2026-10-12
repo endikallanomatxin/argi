@@ -31,7 +31,9 @@ incomparable maximal candidates are errors; source/import ordering has no priori
    safety normalization recognizes the original participant parameter; preserve
    pointer-field dependencies
    and generation facts when migrating each adapter. Continue with the remaining
-   bundled core/more operations, including copying. ArgumentSource now uses selected scoped operations
+   bundled core/more operations, including fallible copying. ImplicitlyCopyable and InfalliblyCopyable
+   now use explicit Value participants; owning explicit copies remain excluded
+   from implicit duplication. ArgumentSource now uses selected scoped operations
    for native arguments and borrowed CLI views; parser/schema consumers retain
    their concrete source type.
    Indexable, IndexableMutable and IndexableValue now use selected Item evidence,
@@ -59,11 +61,11 @@ incomparable maximal candidates are errors; source/import ordering has no priori
    integer parameter leaves, closed types, references, arrays, nominal applications
    with positional/named arguments and repeated-variable equalities. Keep
    arithmetic expressions conservative without inverse inference. Preserve rejection of equivalent and
-   incomparable maximal patterns. Check duplicate patterns and extension ownership
+   incomparable maximal patterns. Equivalent generic patterns and extension ownership are now checked
    even for dormant templates.
 3. Validate newly instantiated evidence during resolution so nested operations
-   and requirements reach the same fixed point as ordinary calls. Infer generic
-   alias arguments from selected inputs without selecting by return type.
+   and requirements reach the same fixed point as ordinary calls. Generic aliases now infer their ordinary arguments from selected inputs,
+   without selecting by return type.
    Preserve extension ownership and composition operation identities. Give editor
    references and rename actions operation targets distinct from implementation
    bodies; current navigation follows bodies and rename is disabled for them.

@@ -2,7 +2,7 @@ HasMarker: Abstract = (marker(.self: &Self) -> (.value: Int32))
 
 Token: Type = (.id: Int32)
 
-Token implements ImplicitlyCopyable
+implement ImplicitlyCopyable#(Token) ()
 
 Plain#(.policy: Type: ImplicitlyCopyable): Type = (.policy: policy, .value: Int32)
 
