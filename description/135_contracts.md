@@ -247,3 +247,10 @@ allocation-free removal under its own unary identity. Generic collection
 algorithms preserve their collection type and derive element constraints from
 selected Item evidence. Validation of newly selected evidence joins ordinary
 resolution and cleanup before the final graph is published.
+
+ArgumentSource now uses an explicit Source participant and scoped length/get
+operations. Native Arguments and CliArgumentViews share those identities through
+static generic consumers and selected virtual tables. Single-output operation
+labels remain accessible on both direct and virtual calls, including in
+parameterized bodies. The source protocol and CLI view adapter live separately
+from option-tokenization and schema code.

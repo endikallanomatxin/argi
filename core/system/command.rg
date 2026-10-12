@@ -40,7 +40,7 @@ CliReasons: Type = (
 -- and schema until matches are destroyed. Every option uses a canonical long
 -- name; aliases and defaults are resolved without copying argument bytes.
 parse_cli#(
-        .t : Type: ArgumentSource
+        .t : Type: ArgumentSource#(t)
     )(
         .source    : &t,
         .specs     : ArrayViewRO#(.t: CliSpec),

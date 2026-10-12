@@ -1,38 +1,7 @@
 ..invalid_option
 ..missing_option_value
 
-ArgumentSource: Contract = (
-    length(.self: &Self) -> (.count: UIntNative) where {}
-    get(.self: &Self, .index: UIntNative) -> (
-        .result : Errable#(StringView, (..out_of_bounds))
-    ) where {
-        on result ..ok { depends_on(result, self) }
-        on result ..error { depends_on(result, error_tracer) }
-    }
-)
 
-Arguments satisfies ArgumentSource
-
-CliArgumentViews: Type = (._values: ArrayViewRO#(.t: StringView))
-
-CliArgumentViews satisfies ArgumentSource
-
-CliArgumentViews init(.values: ArrayViewRO#(.t: StringView)) -> (.result: CliArgumentViews) := {
-    result = (._values = values)
-}
-
-length(.self: &CliArgumentViews) -> (.count: UIntNative) := {
-    count = length(&self&._values).count
-}
-
-get(
-        .self  : &CliArgumentViews,
-        .index : UIntNative
-    ) -> (
-        .result : Errable#(StringView, (..out_of_bounds))
-    ) := {
-    result = get(&self&._values, .index = index)
-}
 
 CliOption: Type = (.name: StringView, .value: ?StringView, .short: Bool)
 
@@ -46,7 +15,7 @@ CliArgument satisfies ImplicitlyCopyable
 -- positionals, and --. Names and attached values borrow the source. Schema
 -- validation belongs to callers; take_value consumes the next token verbatim,
 -- so negative numeric values do not accidentally become options.
-CliParser#(.t: Type: ArgumentSource): Type = (
+CliParser#(.t: Type: ArgumentSource#(t)): Type = (
     ._source       : &t,
     ._index        : UIntNative,
     ._short_offset : UIntNative,
@@ -54,7 +23,7 @@ CliParser#(.t: Type: ArgumentSource): Type = (
 )
 
 CliParser init#(
-        .t : Type: ArgumentSource
+        .t : Type: ArgumentSource#(t)
     )(
         .source : &t,
         .start  : UIntNative = 0
@@ -65,7 +34,7 @@ CliParser init#(
 }
 
 next#(
-        .t : Type: ArgumentSource
+        .t : Type: ArgumentSource#(t)
     )(
         .self : $&CliParser#(.t: t)
     ) -> (
@@ -144,7 +113,7 @@ next#(
 }
 
 take_value#(
-        .t : Type: ArgumentSource
+        .t : Type: ArgumentSource#(t)
     )(
         .self   : $&CliParser#(.t: t),
         .option : CliOption

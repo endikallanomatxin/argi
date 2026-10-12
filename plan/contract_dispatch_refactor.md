@@ -31,7 +31,9 @@ incomparable maximal candidates are errors; source/import ordering has no priori
    safety normalization recognizes the original participant parameter; preserve
    pointer-field dependencies
    and generation facts when migrating each adapter. Continue with the remaining
-   bundled core/more operations, including copying and argument sources.
+   bundled core/more operations, including copying. ArgumentSource now uses selected scoped operations
+   for native arguments and borrowed CLI views; parser/schema consumers retain
+   their concrete source type.
    Indexable, IndexableMutable and IndexableValue now use selected Item evidence,
    with dependency identities rather than copied requirements. Resizable selects
    collection/allocation-provider tuples for growth; Removable selects only the

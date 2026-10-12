@@ -21,10 +21,6 @@ once Arguments init(.ffi: $&ForeignFunctionInterface = reach ffi) -> (.result: A
     )
 }
 
-length(.self: &Arguments) -> (.count: UIntNative) := {
-    count = self&.count
-}
-
 has_argument(
         .self  : &Arguments,
         .index : UIntNative,
@@ -79,20 +75,6 @@ argument_view_at(
     )
 }
 
-get(
-        .self  : &Arguments,
-        .index : UIntNative,
-    ) -> (
-        .result : Errable#(StringView, (..out_of_bounds))
-    ) := {
-    if index >= self&.count {
-        result = ..error(.reason = ..out_of_bounds)
-        return
-    }
-
-    result = ..ok argument_view_at(self, .index = index)
-}
-
 implement Iterable#(Arguments) (
     .Item: Type = StringView
     .IteratorType: Type = ArgumentsIterator
@@ -131,5 +113,25 @@ implement Iterator#(ArgumentsIterator) (
             .args  = self&.args
             .index = current_index + 1
         )
+    }
+)
+
+implement ArgumentSource#(Arguments) (
+    .length = (.self: &Arguments) -> (.count: UIntNative) {
+        count = self&.count
+    }
+
+    .get = (
+            .self  : &Arguments,
+            .index : UIntNative,
+        ) -> (
+            .result : Errable#(StringView, (..out_of_bounds))
+        ) {
+        if index >= self&.count {
+            result = ..error(.reason = ..out_of_bounds)
+            return
+        }
+
+        result = ..ok argument_view_at(self, .index = index)
     }
 )

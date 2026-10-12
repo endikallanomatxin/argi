@@ -624,6 +624,11 @@ pub const Resolver = struct {
     pub fn isUnpackedOutputField(self: *const Resolver, node: global_sg.GlobalNodeId, name: []const u8) bool {
         const function_id = switch (self.graph.nodes.items[@intFromEnum(node)].content) {
             .function_call => |call| call.callee,
+            .virtual_call => |id| {
+                const call = self.graph.virtual_calls.items[@intFromEnum(id)];
+                const output = types.fields(self.graph, call.output_type) orelse return false;
+                return output.len == 1 and std.mem.eql(u8, self.graph.text(self.graph.fields.items[output.start].name), name);
+            },
             .value_sequence => |block| return self.isUnpackedOutputField(self.graph.blocks.items[@intFromEnum(block)].ret_val orelse return false, name),
             .binding_use => |id| blk: {
                 const binding = self.graph.binding(id);

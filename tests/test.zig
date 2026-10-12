@@ -12372,3 +12372,8 @@ test "feature_tests/contracts/175_contract_dependency_identity" {
 test "feature_tests/contracts/176X_missing_contract_dependency" {
     try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/176X_missing_contract_dependency", "a required contract dependency is not satisfied");
 }
+
+test "feature_tests/contracts/177_argument_source_scoped_identity" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/177_argument_source_scoped_identity");
+    try run("tests/feature_tests/contracts/177_argument_source_scoped_identity");
+}
