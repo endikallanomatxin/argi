@@ -19,12 +19,13 @@ incomparable maximal candidates are errors; source/import ordering has no priori
 ## Implementation order and removal obligations
 
 1. Migrate remaining bundled core/more operations and tests, starting with
-   HashPolicy and BorrowedOrderPolicy. Replace each implicit receiver contract
-   with explicit participants and each global operation family with scoped
+   BorrowedOrderPolicy; OrderPolicy, HashPolicy and BorrowedHashPolicy already
+   use explicit participants and scoped implementations. Replace each implicit
+   receiver contract with explicit participants and each global operation family with scoped
    implementations. Remove the superseded route as its final consumers move.
    Resolve unqualified calls by operation identity and participant inference.
-   Replace the temporary rejection of unqualified OrderPolicy.less with a
-   scoped-identity assertion when that resolution is implemented.
+   Replace temporary rejections of unqualified OrderPolicy.less and
+   HashPolicy.hash with scoped-identity assertions when that resolution is implemented.
    Remove global overload lookup, legacy function declaration adapters,
    `satisfies` and `Abstract` compatibility once their consumers are migrated.
    No long-term parallel overload mechanism is intended.

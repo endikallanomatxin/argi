@@ -11,7 +11,7 @@ _HashMapSlot#(.key: Type: ImplicitlyCopyable, .value: Type: ImplicitlyCopyable) 
 HashMap#(
     .key    : Type: ImplicitlyCopyable,
     .value  : Type: ImplicitlyCopyable,
-    .policy : Type: HashPolicy#(.key: key)
+    .policy : Type: HashPolicy#(policy, key)
 ): Type = (
     ._slots  : DynamicArray#(.t: _HashMapSlot#(.key: key, .value: value))
     ._length : UIntNative
@@ -48,7 +48,7 @@ _hash_map_slots#(
 HashMap init#(
         .key    : Type: ImplicitlyCopyable,
         .value  : Type: ImplicitlyCopyable,
-        .policy : Type: HashPolicy#(.key: key)
+        .policy : Type: HashPolicy#(policy, key)
     )(
         .policy    : policy,
         .allocator : $&Allocator,
@@ -70,7 +70,7 @@ HashMap init#(
 length#(
         .key    : Type: ImplicitlyCopyable,
         .value  : Type: ImplicitlyCopyable,
-        .policy : Type: HashPolicy#(.key: key)
+        .policy : Type: HashPolicy#(policy, key)
     )(
         .self : &HashMap#(.key: key, .value: value, .policy: policy)
     ) -> (
@@ -80,7 +80,7 @@ length#(
 capacity#(
         .key    : Type: ImplicitlyCopyable,
         .value  : Type: ImplicitlyCopyable,
-        .policy : Type: HashPolicy#(.key: key)
+        .policy : Type: HashPolicy#(policy, key)
     )(
         .self : &HashMap#(.key: key, .value: value, .policy: policy)
     ) -> (
@@ -90,7 +90,7 @@ capacity#(
 _hash_map_find#(
         .key    : Type: ImplicitlyCopyable,
         .value  : Type: ImplicitlyCopyable,
-        .policy : Type: HashPolicy#(.key: key)
+        .policy : Type: HashPolicy#(policy, key)
     )(
         .self : &HashMap#(.key: key, .value: value, .policy: policy),
         .key  : key,
@@ -113,7 +113,11 @@ _hash_map_find#(
             ..occupied entry {
                 if [
                     entry.hash == hash
-                    and eql(&self&._policy, .left = entry.key, .right = key).ok
+                    and HashPolicy#(policy, key).eql(
+                        &self&._policy
+                        .left  = entry.key
+                        .right = key
+                    ).ok
                 ] {
                     index = ..some(.value = position)
                     return
@@ -163,7 +167,7 @@ _hash_map_insert_slot#(
 _hash_map_grow#(
         .key    : Type: ImplicitlyCopyable,
         .value  : Type: ImplicitlyCopyable,
-        .policy : Type: HashPolicy#(.key: key)
+        .policy : Type: HashPolicy#(policy, key)
     )(
         .self      : $&HashMap#(.key: key, .value: value, .policy: policy),
         .allocator : $&Allocator
@@ -211,7 +215,7 @@ _hash_map_grow#(
 put#(
         .key    : Type: ImplicitlyCopyable,
         .value  : Type: ImplicitlyCopyable,
-        .policy : Type: HashPolicy#(.key: key)
+        .policy : Type: HashPolicy#(policy, key)
     )(
         .self      : $&HashMap#(.key: key, .value: value, .policy: policy),
         .key       : key,
@@ -221,7 +225,7 @@ put#(
         .result : Errable#(Void, (..out_of_memory))
     ) := {
     assume allocator
-    digest ::= hash(&self&._policy, .key = key).hash
+    digest ::= HashPolicy#(policy, key).hash(&self&._policy, .key = key).hash
 
     match _hash_map_find(self, .key = key, .hash = digest).index {
         ..none {}
@@ -261,14 +265,14 @@ put#(
 get#(
         .key    : Type: ImplicitlyCopyable,
         .value  : Type: ImplicitlyCopyable,
-        .policy : Type: HashPolicy#(.key: key)
+        .policy : Type: HashPolicy#(policy, key)
     )(
         .self : &HashMap#(.key: key, .value: value, .policy: policy),
         .key  : key
     ) -> (
         .result : ?value
     ) := {
-    digest ::= hash(&self&._policy, .key = key).hash
+    digest ::= HashPolicy#(policy, key).hash(&self&._policy, .key = key).hash
 
     match _hash_map_find(self, .key = key, .hash = digest).index {
         ..none { result = ..none }
@@ -286,14 +290,14 @@ get#(
 contains#(
         .key    : Type: ImplicitlyCopyable,
         .value  : Type: ImplicitlyCopyable,
-        .policy : Type: HashPolicy#(.key: key)
+        .policy : Type: HashPolicy#(policy, key)
     )(
         .self : &HashMap#(.key: key, .value: value, .policy: policy),
         .key  : key
     ) -> (
         .ok : Bool
     ) := {
-    digest ::= hash(&self&._policy, .key = key).hash
+    digest ::= HashPolicy#(policy, key).hash(&self&._policy, .key = key).hash
     ok = is(
         .value   = _hash_map_find(self, .key = key, .hash = digest).index
         .variant = ..some
@@ -303,14 +307,14 @@ contains#(
 get_ro_ref#(
         .key    : Type: ImplicitlyCopyable,
         .value  : Type: ImplicitlyCopyable,
-        .policy : Type: HashPolicy#(.key: key)
+        .policy : Type: HashPolicy#(policy, key)
     )(
         .self : &HashMap#(.key: key, .value: value, .policy: policy),
         .key  : key
     ) -> (
         .result : ?&value
     ) := {
-    digest ::= hash(&self&._policy, .key = key).hash
+    digest ::= HashPolicy#(policy, key).hash(&self&._policy, .key = key).hash
 
     match _hash_map_find(self, .key = key, .hash = digest).index {
         ..none { result = ..none }
@@ -338,7 +342,7 @@ get_ro_ref#(
 remove#(
         .key    : Type: ImplicitlyCopyable,
         .value  : Type: ImplicitlyCopyable,
-        .policy : Type: HashPolicy#(.key: key)
+        .policy : Type: HashPolicy#(policy, key)
     )(
         .self      : $&HashMap#(.key: key, .value: value, .policy: policy),
         .key       : key,
@@ -347,7 +351,7 @@ remove#(
         .removed : Bool
     ) := {
     assume allocator
-    digest ::= hash(&self&._policy, .key = key).hash
+    digest ::= HashPolicy#(policy, key).hash(&self&._policy, .key = key).hash
     removed = false
 
     match _hash_map_find(self, .key = key, .hash = digest).index {
@@ -368,7 +372,7 @@ remove#(
 HashMap deinit#(
         .key    : Type: ImplicitlyCopyable,
         .value  : Type: ImplicitlyCopyable,
-        .policy : Type: HashPolicy#(.key: key)
+        .policy : Type: HashPolicy#(policy, key)
     )(
         .self      : $&HashMap#(.key: key, .value: value, .policy: policy),
         .allocator : $&Allocator

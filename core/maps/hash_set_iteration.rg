@@ -1,17 +1,17 @@
-HashSetIterator#(.key: Type: ImplicitlyCopyable, .policy: Type: HashPolicy#(.key: key)): Type = (
+HashSetIterator#(.key: Type: ImplicitlyCopyable, .policy: Type: HashPolicy#(policy, key)): Type = (
     ._keys : HashMapKeyIterator#(.key: key, .value: _HashSetValue, .policy: policy)
 )
 
-HashSetIterator#(.key: Type: ImplicitlyCopyable, .policy: Type: HashPolicy#(.key: key)) satisfies Iterator#(
+HashSetIterator#(.key: Type: ImplicitlyCopyable, .policy: Type: HashPolicy#(policy, key)) satisfies Iterator#(
     .t : key
 )
-HashSet#(.key: Type: ImplicitlyCopyable, .policy: Type: HashPolicy#(.key: key)) satisfies Iterable#(
+HashSet#(.key: Type: ImplicitlyCopyable, .policy: Type: HashPolicy#(policy, key)) satisfies Iterable#(
     .t : key
 )
 
 to_iterator#(
         .key    : Type: ImplicitlyCopyable,
-        .policy : Type: HashPolicy#(.key: key)
+        .policy : Type: HashPolicy#(policy, key)
     )(
         .value : &HashSet#(.key: key, .policy: policy)
     ) -> (
@@ -22,7 +22,7 @@ to_iterator#(
 
 has_next#(
         .key    : Type: ImplicitlyCopyable,
-        .policy : Type: HashPolicy#(.key: key)
+        .policy : Type: HashPolicy#(policy, key)
     )(
         .self : &HashSetIterator#(.key: key, .policy: policy)
     ) -> (
@@ -33,7 +33,7 @@ has_next#(
 
 next#(
         .key    : Type: ImplicitlyCopyable,
-        .policy : Type: HashPolicy#(.key: key)
+        .policy : Type: HashPolicy#(policy, key)
     )(
         .self : $&HashSetIterator#(.key: key, .policy: policy)
     ) -> (

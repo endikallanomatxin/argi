@@ -1,10 +1,10 @@
-OwnedHashSet#(.key: Type, .policy: Type: BorrowedHashPolicy#(.key: key)): Type = (
+OwnedHashSet#(.key: Type, .policy: Type: BorrowedHashPolicy#(policy, key)): Type = (
     ._map : OwnedHashMap#(.key: key, .value: _HashSetValue, .policy: policy)
 )
 
 OwnedHashSet init#(
         .key    : Type,
-        .policy : Type: BorrowedHashPolicy#(.key: key)
+        .policy : Type: BorrowedHashPolicy#(policy, key)
     )(
         .policy    : policy,
         .allocator : $&Allocator,
@@ -26,7 +26,7 @@ OwnedHashSet init#(
 
 insert#(
         .key    : Type,
-        .policy : Type: BorrowedHashPolicy#(.key: key)
+        .policy : Type: BorrowedHashPolicy#(policy, key)
     )(
         .self      : $&OwnedHashSet#(.key: key, .policy: policy),
         .key       : key,
@@ -47,7 +47,7 @@ insert#(
 
 contains#(
         .key    : Type,
-        .policy : Type: BorrowedHashPolicy#(.key: key)
+        .policy : Type: BorrowedHashPolicy#(policy, key)
     )(
         .self : &OwnedHashSet#(.key: key, .policy: policy),
         .key  : &key
@@ -57,7 +57,7 @@ contains#(
 
 remove#(
         .key    : Type,
-        .policy : Type: BorrowedHashPolicy#(.key: key)
+        .policy : Type: BorrowedHashPolicy#(policy, key)
     )(
         .self      : $&OwnedHashSet#(.key: key, .policy: policy),
         .key       : &key,
@@ -68,7 +68,7 @@ remove#(
 
 extract#(
         .key    : Type,
-        .policy : Type: BorrowedHashPolicy#(.key: key)
+        .policy : Type: BorrowedHashPolicy#(policy, key)
     )(
         .self : $&OwnedHashSet#(.key: key, .policy: policy),
         .key  : &key
@@ -86,7 +86,7 @@ extract#(
 
 length#(
         .key    : Type,
-        .policy : Type: BorrowedHashPolicy#(.key: key)
+        .policy : Type: BorrowedHashPolicy#(policy, key)
     )(
         .self : &OwnedHashSet#(.key: key, .policy: policy)
     ) -> (
@@ -95,7 +95,7 @@ length#(
 
 capacity#(
         .key    : Type,
-        .policy : Type: BorrowedHashPolicy#(.key: key)
+        .policy : Type: BorrowedHashPolicy#(policy, key)
     )(
         .self : &OwnedHashSet#(.key: key, .policy: policy)
     ) -> (
@@ -104,7 +104,7 @@ capacity#(
 
 reserve#(
         .key    : Type,
-        .policy : Type: BorrowedHashPolicy#(.key: key)
+        .policy : Type: BorrowedHashPolicy#(policy, key)
     )(
         .self      : $&OwnedHashSet#(.key: key, .policy: policy),
         .capacity  : UIntNative,
@@ -117,7 +117,7 @@ reserve#(
 
 OwnedHashSet deinit#(
         .key    : Type,
-        .policy : Type: BorrowedHashPolicy#(.key: key)
+        .policy : Type: BorrowedHashPolicy#(policy, key)
     )(
         .self      : $&OwnedHashSet#(.key: key, .policy: policy),
         .allocator : $&Allocator

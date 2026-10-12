@@ -6,62 +6,45 @@ _owned_hash_discard#(.t: Type)(.value: t, .allocator: $&Allocator) -> () := {
 }
 
 -- Ownership-bearing keys are hashed by reference, never copied for lookup.
-BorrowedHashPolicy: Contract = (
-    .key: Type
-
-    hash(.self: &Self, .key: &key) -> (.hash: UIntNative)
-    eql(.self: &Self, .left: &key, .right: &key) -> (.ok: Bool)
+BorrowedHashPolicy#(.Policy: Type, .key: Type): Contract = (
+    .hash : (.self: &Policy, .key: &key) -> (.hash: UIntNative)
+    .eql  : (.self: &Policy, .left: &key, .right: &key) -> (.ok: Bool)
 )
 
 StringHashPolicy: Type = ()
 
 StringHashPolicy satisfies ImplicitlyCopyable
-StringHashPolicy satisfies BorrowedHashPolicy#(.key: String)
-
-hash(.self: &StringHashPolicy, .key: &String) -> (.hash: UIntNative) := {
-    text ::= as_view(key)
-    hash = string_hash_map_hash(.key = &text).hash
-}
-
-eql(.self: &StringHashPolicy, .left: &String, .right: &String) -> (.ok: Bool) := {
-    ok = equals(.left = as_view(left), .right = as_view(right)).ok
-}
-
-Int32HashPolicy satisfies BorrowedHashPolicy#(.key: Int32)
-
-hash(.self: &Int32HashPolicy, .key: &Int32) -> (.hash: UIntNative) := {
-    remaining :: Int32 = key&
-    hash = 0
-
-    if remaining < 0 {
-        hash = 2147483648
-        remaining = remaining + 2147483647
-        remaining = remaining + 1
+implement BorrowedHashPolicy#(StringHashPolicy, String)(
+    .hash = (.self: &StringHashPolicy, .key: &String) -> (.hash: UIntNative) {
+        text ::= as_view(key)
+        hash = string_hash_map_hash(.key = &text).hash
     }
 
-    bit :: UIntNative = 1
-
-    while remaining > 0 {
-        if remaining % 2 != 0 { hash = hash + bit }
-        remaining = remaining / 2
-        if remaining > 0 { bit = bit * 2 }
+    .eql = (.self: &StringHashPolicy, .left: &String, .right: &String) -> (.ok: Bool) {
+        ok = equals(.left = as_view(left), .right = as_view(right)).ok
     }
-}
+)
 
-eql(.self: &Int32HashPolicy, .left: &Int32, .right: &Int32) -> (.ok: Bool) := {
-    ok = left&== right&
-}
+implement BorrowedHashPolicy#(Int32HashPolicy, Int32)(
+    .hash = (.self: &Int32HashPolicy, .key: &Int32) -> (.hash: UIntNative) {
+        hash = HashPolicy#(Int32HashPolicy, Int32).hash(.self = self, .key = key&).hash
+    }
 
-UIntNativeHashPolicy satisfies BorrowedHashPolicy#(.key: UIntNative)
+    .eql = (.self: &Int32HashPolicy, .left: &Int32, .right: &Int32) -> (.ok: Bool) {
+        ok = left&== right&
+    }
+)
 
-hash(.self: &UIntNativeHashPolicy, .key: &UIntNative) -> (.hash: UIntNative) := { hash = key&}
+implement BorrowedHashPolicy#(UIntNativeHashPolicy, UIntNative)(
+    .hash = (.self: &UIntNativeHashPolicy, .key: &UIntNative) -> (.hash: UIntNative) { hash = key&}
 
-eql(.self: &UIntNativeHashPolicy, .left: &UIntNative, .right: &UIntNative) -> (.ok: Bool) := {
-    ok = [
-        left&
-        == right&
-    ]
-}
+    .eql = (.self: &UIntNativeHashPolicy, .left: &UIntNative, .right: &UIntNative) -> (.ok: Bool) {
+        ok = [
+            left&
+            == right&
+        ]
+    }
+)
 
 OwnedHashMapEntry#(.key: Type, .value: Type): Type = (.key: key, .value: value)
 
@@ -78,7 +61,7 @@ _OwnedHashShape deinit(.self: $&_OwnedHashShape) -> () := {}
 -- Metadata is always initialized: 0 empty, 1 occupied, 2 deleted. Only occupied
 -- indices contain owning entries in the separate allocation. Vacant entry slots
 -- are never borrowed, read, or destroyed. Probes are bounded by slot capacity.
-OwnedHashMap#(.key: Type, .value: Type, .policy: Type: BorrowedHashPolicy#(.key: key)): Type = (
+OwnedHashMap#(.key: Type, .value: Type, .policy: Type: BorrowedHashPolicy#(policy, key)): Type = (
     ._table  : _OwnedHashTable,
     ._length : UIntNative,
     ._policy : policy,
@@ -105,7 +88,7 @@ _owned_hash_slots(
 OwnedHashMap init#(
         .key    : Type,
         .value  : Type,
-        .policy : Type: BorrowedHashPolicy#(.key: key)
+        .policy : Type: BorrowedHashPolicy#(policy, key)
     )(
         .policy    : policy,
         .allocator : $&Allocator,
@@ -140,7 +123,7 @@ OwnedHashMap init#(
 length#(
         .key    : Type,
         .value  : Type,
-        .policy : Type: BorrowedHashPolicy#(.key: key)
+        .policy : Type: BorrowedHashPolicy#(policy, key)
     )(
         .self : &OwnedHashMap#(.key: key, .value: value, .policy: policy)
     ) -> (
@@ -150,7 +133,7 @@ length#(
 capacity#(
         .key    : Type,
         .value  : Type,
-        .policy : Type: BorrowedHashPolicy#(.key: key)
+        .policy : Type: BorrowedHashPolicy#(policy, key)
     )(
         .self : &OwnedHashMap#(.key: key, .value: value, .policy: policy)
     ) -> (
@@ -160,7 +143,7 @@ capacity#(
 _owned_hash_invalidate#(
         .key    : Type,
         .value  : Type,
-        .policy : Type: BorrowedHashPolicy#(.key: key)
+        .policy : Type: BorrowedHashPolicy#(policy, key)
     )(
         .self : $&OwnedHashMap#(.key: key, .value: value, .policy: policy)
     ) -> () := {
@@ -172,7 +155,7 @@ _owned_hash_invalidate#(
 _owned_hash_entry#(
         .key    : Type,
         .value  : Type,
-        .policy : Type: BorrowedHashPolicy#(.key: key)
+        .policy : Type: BorrowedHashPolicy#(policy, key)
     )(
         .self  : &OwnedHashMap#(.key: key, .value: value, .policy: policy),
         .index : UIntNative
@@ -197,7 +180,7 @@ _owned_hash_entry#(
 _owned_hash_find#(
         .key    : Type,
         .value  : Type,
-        .policy : Type: BorrowedHashPolicy#(.key: key)
+        .policy : Type: BorrowedHashPolicy#(policy, key)
     )(
         .self : &OwnedHashMap#(.key: key, .value: value, .policy: policy),
         .key  : &key,
@@ -217,7 +200,11 @@ _owned_hash_find#(
         }
         if slot.state == 1 and slot.hash == hash {
             entry ::= _owned_hash_entry(self, .index = position).entry
-            if eql(&self&._policy, .left = &entry&.key, .right = key).ok {
+            if BorrowedHashPolicy#(policy, key).eql(
+                &self&._policy
+                .left  = &entry&.key
+                .right = key
+            ).ok {
                 index = ..some(.value = position)
                 return
             }
@@ -253,7 +240,7 @@ _owned_hash_vacancy(
 reserve#(
         .key    : Type,
         .value  : Type,
-        .policy : Type: BorrowedHashPolicy#(.key: key)
+        .policy : Type: BorrowedHashPolicy#(policy, key)
     )(
         .self      : $&OwnedHashMap#(.key: key, .value: value, .policy: policy),
         .capacity  : UIntNative,
@@ -317,7 +304,7 @@ reserve#(
 put#(
         .key    : Type,
         .value  : Type,
-        .policy : Type: BorrowedHashPolicy#(.key: key)
+        .policy : Type: BorrowedHashPolicy#(policy, key)
     )(
         .self      : $&OwnedHashMap#(.key: key, .value: value, .policy: policy),
         .key       : key,
@@ -327,7 +314,7 @@ put#(
         .result : Errable#(Void, (..out_of_memory))
     ) := {
     assume allocator
-    digest ::= hash(&self&._policy, .key = &key).hash
+    digest ::= BorrowedHashPolicy#(policy, key).hash(&self&._policy, .key = &key).hash
 
     match _owned_hash_find(self, .key = &key, .hash = digest).index {
         ..some found {
@@ -392,14 +379,14 @@ put#(
 contains#(
         .key    : Type,
         .value  : Type,
-        .policy : Type: BorrowedHashPolicy#(.key: key)
+        .policy : Type: BorrowedHashPolicy#(policy, key)
     )(
         .self : &OwnedHashMap#(.key: key, .value: value, .policy: policy),
         .key  : &key
     ) -> (
         .ok : Bool
     ) := {
-    digest ::= hash(&self&._policy, .key = key).hash
+    digest ::= BorrowedHashPolicy#(policy, key).hash(&self&._policy, .key = key).hash
     ok = is(
         .value   = _owned_hash_find(self, .key = key, .hash = digest).index
         .variant = ..some
@@ -409,14 +396,14 @@ contains#(
 get_ro_ref#(
         .key    : Type,
         .value  : Type,
-        .policy : Type: BorrowedHashPolicy#(.key: key)
+        .policy : Type: BorrowedHashPolicy#(policy, key)
     )(
         .self : &OwnedHashMap#(.key: key, .value: value, .policy: policy),
         .key  : &key
     ) -> (
         .result : ?&value
     ) := {
-    digest ::= hash(&self&._policy, .key = key).hash
+    digest ::= BorrowedHashPolicy#(policy, key).hash(&self&._policy, .key = key).hash
 
     match _owned_hash_find(self, .key = key, .hash = digest).index {
         ..none { result = ..none }
@@ -434,14 +421,14 @@ get_ro_ref#(
 extract#(
         .key    : Type,
         .value  : Type,
-        .policy : Type: BorrowedHashPolicy#(.key: key)
+        .policy : Type: BorrowedHashPolicy#(policy, key)
     )(
         .self : $&OwnedHashMap#(.key: key, .value: value, .policy: policy),
         .key  : &key
     ) -> (
         .result : ?OwnedHashMapEntry#(.key: key, .value: value)
     ) := {
-    digest ::= hash(&self&._policy, .key = key).hash
+    digest ::= BorrowedHashPolicy#(policy, key).hash(&self&._policy, .key = key).hash
 
     match _owned_hash_find(self, .key = key, .hash = digest).index {
         ..none { result = ..none }
@@ -466,7 +453,7 @@ extract#(
 remove#(
         .key    : Type,
         .value  : Type,
-        .policy : Type: BorrowedHashPolicy#(.key: key)
+        .policy : Type: BorrowedHashPolicy#(policy, key)
     )(
         .self      : $&OwnedHashMap#(.key: key, .value: value, .policy: policy),
         .key       : &key,
@@ -488,7 +475,7 @@ remove#(
 OwnedHashMap deinit#(
         .key    : Type,
         .value  : Type,
-        .policy : Type: BorrowedHashPolicy#(.key: key)
+        .policy : Type: BorrowedHashPolicy#(policy, key)
     )(
         .self      : $&OwnedHashMap#(.key: key, .value: value, .policy: policy),
         .allocator : $&Allocator

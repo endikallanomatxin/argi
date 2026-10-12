@@ -12,13 +12,15 @@ Key deinit(.self: $&Key) -> () := { key_drops = key_drops + 1 }
 
 Policy: Type = ()
 
-Policy implements BorrowedHashPolicy#(.key: Key)
+implement BorrowedHashPolicy#(Policy, Key)(
+    .hash = (.self: &Policy, .key: &Key) -> (.hash: UIntNative) { hash = 7 }
+
+    .eql = (.self: &Policy, .left: &Key, .right: &Key) -> (.ok: Bool) {
+        ok = left&.id == right&.id
+    }
+)
 
 Policy deinit(.self: $&Policy) -> () := { policy_drops = policy_drops + 1 }
-
-hash(.self: &Policy, .key: &Key) -> (.hash: UIntNative) := { hash = 7 }
-
-eql(.self: &Policy, .left: &Key, .right: &Key) -> (.ok: Bool) := { ok = left&.id == right&.id }
 
 run_main(.system: System) -> !Void = ..ok Void() := {
     assume allocator := system.page_allocator

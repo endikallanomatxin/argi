@@ -61,11 +61,11 @@ policy_drops :: UIntNative = 0
 
 Policy deinit(.self: $&Policy) -> () := { policy_drops = policy_drops + 1 }
 
-Policy implements BorrowedHashPolicy#(.key: Int32)
+implement BorrowedHashPolicy#(Policy, Int32)(
+    .hash = (.self: &Policy, .key: &Int32) -> (.hash: UIntNative) { hash = 0 }
 
-hash(.self: &Policy, .key: &Int32) -> (.hash: UIntNative) := { hash = 0 }
-
-eql(.self: &Policy, .left: &Int32, .right: &Int32) -> (.ok: Bool) := { ok = left&== right&}
+    .eql = (.self: &Policy, .left: &Int32, .right: &Int32) -> (.ok: Bool) { ok = left&== right&}
+)
 
 run_main(.system: System) -> !Void = ..ok Void() := {
     allocator :: RecordingAllocator = (.ffi = system.ffi)

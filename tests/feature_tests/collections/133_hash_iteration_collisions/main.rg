@@ -1,11 +1,17 @@
 CollisionPolicy: Type = ()
 
 CollisionPolicy implements ImplicitlyCopyable
-CollisionPolicy implements HashPolicy#(.key: Int32)
+implement HashPolicy#(CollisionPolicy, Int32)(
 
-hash(.self: &CollisionPolicy, .key: Int32) -> (.hash: UIntNative) := { hash = 7 }
+    .hash = (.self: &CollisionPolicy, .key: Int32) -> (.hash: UIntNative) { hash = 7 }
 
-eql(.self: &CollisionPolicy, .left: Int32, .right: Int32) -> (.ok: Bool) := { ok = left == right }
+    .eql = (.self: &CollisionPolicy, .left: Int32, .right: Int32) -> (.ok: Bool) {
+        ok = [
+            left
+            == right
+        ]
+    }
+)
 
 run_main(.system: System) -> !Void = ..ok Void() := {
     assume allocator := system.page_allocator

@@ -3,13 +3,13 @@ _HashSetValue: Type = ()
 _HashSetValue satisfies ImplicitlyCopyable
 
 -- Membership uses the map's collision handling, storage, and key lifetimes.
-HashSet#(.key: Type: ImplicitlyCopyable, .policy: Type: HashPolicy#(.key: key)): Type = (
+HashSet#(.key: Type: ImplicitlyCopyable, .policy: Type: HashPolicy#(policy, key)): Type = (
     ._map : HashMap#(.key: key, .value: _HashSetValue, .policy: policy)
 )
 
 HashSet init#(
         .key    : Type: ImplicitlyCopyable,
-        .policy : Type: HashPolicy#(.key: key)
+        .policy : Type: HashPolicy#(policy, key)
     )(
         .policy    : policy,
         .allocator : $&Allocator,
@@ -31,7 +31,7 @@ HashSet init#(
 
 insert#(
         .key    : Type: ImplicitlyCopyable,
-        .policy : Type: HashPolicy#(.key: key)
+        .policy : Type: HashPolicy#(policy, key)
     )(
         .self      : $&HashSet#(.key: key, .policy: policy),
         .key       : key,
@@ -51,7 +51,7 @@ insert#(
 
 contains#(
         .key    : Type: ImplicitlyCopyable,
-        .policy : Type: HashPolicy#(.key: key)
+        .policy : Type: HashPolicy#(policy, key)
     )(
         .self : &HashSet#(.key: key, .policy: policy),
         .key  : key
@@ -63,7 +63,7 @@ contains#(
 
 remove#(
         .key    : Type: ImplicitlyCopyable,
-        .policy : Type: HashPolicy#(.key: key)
+        .policy : Type: HashPolicy#(policy, key)
     )(
         .self      : $&HashSet#(.key: key, .policy: policy),
         .key       : key,
@@ -76,7 +76,7 @@ remove#(
 
 length#(
         .key    : Type: ImplicitlyCopyable,
-        .policy : Type: HashPolicy#(.key: key)
+        .policy : Type: HashPolicy#(policy, key)
     )(
         .self : &HashSet#(.key: key, .policy: policy)
     ) -> (
@@ -85,7 +85,7 @@ length#(
 
 capacity#(
         .key    : Type: ImplicitlyCopyable,
-        .policy : Type: HashPolicy#(.key: key)
+        .policy : Type: HashPolicy#(policy, key)
     )(
         .self : &HashSet#(.key: key, .policy: policy)
     ) -> (
@@ -94,7 +94,7 @@ capacity#(
 
 HashSet deinit#(
         .key    : Type: ImplicitlyCopyable,
-        .policy : Type: HashPolicy#(.key: key)
+        .policy : Type: HashPolicy#(policy, key)
     )(
         .self      : $&HashSet#(.key: key, .policy: policy),
         .allocator : $&Allocator

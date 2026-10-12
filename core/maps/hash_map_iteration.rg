@@ -24,7 +24,7 @@ HashMapRWEntry#(.key: Type: ImplicitlyCopyable, .value: Type: ImplicitlyCopyable
 _hash_map_next_index#(
         .key    : Type: ImplicitlyCopyable,
         .value  : Type: ImplicitlyCopyable,
-        .policy : Type: HashPolicy#(.key: key)
+        .policy : Type: HashPolicy#(policy, key)
     )(
         .self  : &HashMap#(.key: key, .value: value, .policy: policy),
         .start : UIntNative
@@ -44,13 +44,13 @@ _hash_map_next_index#(
 HashMap#(
     .key    : Type: ImplicitlyCopyable,
     .value  : Type: ImplicitlyCopyable,
-    .policy : Type: HashPolicy#(.key: key)
+    .policy : Type: HashPolicy#(policy, key)
 ) satisfies Iterable#(.t: HashMapEntry#(.key: key, .value: value))
 
 HashMapIterator#(
     .key    : Type: ImplicitlyCopyable,
     .value  : Type: ImplicitlyCopyable,
-    .policy : Type: HashPolicy#(.key: key)
+    .policy : Type: HashPolicy#(policy, key)
 ): Type = (
     ._owner : &HashMap#(.key: key, .value: value, .policy: policy),
     ._index : UIntNative
@@ -59,13 +59,13 @@ HashMapIterator#(
 HashMapIterator#(
     .key    : Type: ImplicitlyCopyable,
     .value  : Type: ImplicitlyCopyable,
-    .policy : Type: HashPolicy#(.key: key)
+    .policy : Type: HashPolicy#(policy, key)
 ) satisfies Iterator#(.t: HashMapEntry#(.key: key, .value: value))
 
 to_iterator#(
         .key    : Type: ImplicitlyCopyable,
         .value  : Type: ImplicitlyCopyable,
-        .policy : Type: HashPolicy#(.key: key)
+        .policy : Type: HashPolicy#(policy, key)
     )(
         .value : &HashMap#(.key: key, .value: value, .policy: policy)
     ) -> (
@@ -84,7 +84,7 @@ to_iterator#(
 has_next#(
         .key    : Type: ImplicitlyCopyable,
         .value  : Type: ImplicitlyCopyable,
-        .policy : Type: HashPolicy#(.key: key)
+        .policy : Type: HashPolicy#(policy, key)
     )(
         .self : &HashMapIterator#(.key: key, .value: value, .policy: policy)
     ) -> (
@@ -99,7 +99,7 @@ has_next#(
 next#(
         .key    : Type: ImplicitlyCopyable,
         .value  : Type: ImplicitlyCopyable,
-        .policy : Type: HashPolicy#(.key: key)
+        .policy : Type: HashPolicy#(policy, key)
     )(
         .self : $&HashMapIterator#(.key: key, .value: value, .policy: policy)
     ) -> (
@@ -121,7 +121,7 @@ next#(
 HashMapKeyIterator#(
     .key    : Type: ImplicitlyCopyable,
     .value  : Type: ImplicitlyCopyable,
-    .policy : Type: HashPolicy#(.key: key)
+    .policy : Type: HashPolicy#(policy, key)
 ): Type = (
     ._owner : &HashMap#(.key: key, .value: value, .policy: policy),
     ._index : UIntNative
@@ -130,13 +130,13 @@ HashMapKeyIterator#(
 HashMapKeyIterator#(
     .key    : Type: ImplicitlyCopyable,
     .value  : Type: ImplicitlyCopyable,
-    .policy : Type: HashPolicy#(.key: key)
+    .policy : Type: HashPolicy#(policy, key)
 ) satisfies Iterator#(.t: key)
 
 to_key_iterator#(
         .key    : Type: ImplicitlyCopyable,
         .value  : Type: ImplicitlyCopyable,
-        .policy : Type: HashPolicy#(.key: key)
+        .policy : Type: HashPolicy#(policy, key)
     )(
         .value : &HashMap#(.key: key, .value: value, .policy: policy)
     ) -> (
@@ -155,7 +155,7 @@ to_key_iterator#(
 has_next#(
         .key    : Type: ImplicitlyCopyable,
         .value  : Type: ImplicitlyCopyable,
-        .policy : Type: HashPolicy#(.key: key)
+        .policy : Type: HashPolicy#(policy, key)
     )(
         .self : &HashMapKeyIterator#(.key: key, .value: value, .policy: policy)
     ) -> (
@@ -170,7 +170,7 @@ has_next#(
 next#(
         .key    : Type: ImplicitlyCopyable,
         .value  : Type: ImplicitlyCopyable,
-        .policy : Type: HashPolicy#(.key: key)
+        .policy : Type: HashPolicy#(policy, key)
     )(
         .self : $&HashMapKeyIterator#(.key: key, .value: value, .policy: policy)
     ) -> (
@@ -192,7 +192,7 @@ next#(
 HashMapValueIterator#(
     .key    : Type: ImplicitlyCopyable,
     .value  : Type: ImplicitlyCopyable,
-    .policy : Type: HashPolicy#(.key: key)
+    .policy : Type: HashPolicy#(policy, key)
 ): Type = (
     ._owner : &HashMap#(.key: key, .value: value, .policy: policy),
     ._index : UIntNative
@@ -201,13 +201,13 @@ HashMapValueIterator#(
 HashMapValueIterator#(
     .key    : Type: ImplicitlyCopyable,
     .value  : Type: ImplicitlyCopyable,
-    .policy : Type: HashPolicy#(.key: key)
+    .policy : Type: HashPolicy#(policy, key)
 ) satisfies Iterator#(.t: value)
 
 to_value_iterator#(
         .key    : Type: ImplicitlyCopyable,
         .value  : Type: ImplicitlyCopyable,
-        .policy : Type: HashPolicy#(.key: key)
+        .policy : Type: HashPolicy#(policy, key)
     )(
         .value : &HashMap#(.key: key, .value: value, .policy: policy)
     ) -> (
@@ -226,7 +226,7 @@ to_value_iterator#(
 has_next#(
         .key    : Type: ImplicitlyCopyable,
         .value  : Type: ImplicitlyCopyable,
-        .policy : Type: HashPolicy#(.key: key)
+        .policy : Type: HashPolicy#(policy, key)
     )(
         .self : &HashMapValueIterator#(.key: key, .value: value, .policy: policy)
     ) -> (
@@ -241,7 +241,7 @@ has_next#(
 next#(
         .key    : Type: ImplicitlyCopyable,
         .value  : Type: ImplicitlyCopyable,
-        .policy : Type: HashPolicy#(.key: key)
+        .policy : Type: HashPolicy#(policy, key)
     )(
         .self : $&HashMapValueIterator#(.key: key, .value: value, .policy: policy)
     ) -> (
@@ -264,7 +264,7 @@ next#(
 HashMapROEntryIterator#(
     .key    : Type: ImplicitlyCopyable,
     .value  : Type: ImplicitlyCopyable,
-    .policy : Type: HashPolicy#(.key: key)
+    .policy : Type: HashPolicy#(policy, key)
 ): Type = (
     ._owner      : &HashMap#(.key: key, .value: value, .policy: policy),
     ._generation : &Any,
@@ -274,13 +274,13 @@ HashMapROEntryIterator#(
 HashMapROEntryIterator#(
     .key    : Type: ImplicitlyCopyable,
     .value  : Type: ImplicitlyCopyable,
-    .policy : Type: HashPolicy#(.key: key)
+    .policy : Type: HashPolicy#(policy, key)
 ) satisfies Iterator#(.t: HashMapROEntry#(.key: key, .value: value))
 
 to_ro_entry_iterator#(
         .key    : Type: ImplicitlyCopyable,
         .value  : Type: ImplicitlyCopyable,
-        .policy : Type: HashPolicy#(.key: key)
+        .policy : Type: HashPolicy#(policy, key)
     )(
         .value : &HashMap#(.key: key, .value: value, .policy: policy)
     ) -> (
@@ -300,7 +300,7 @@ to_ro_entry_iterator#(
 has_next#(
         .key    : Type: ImplicitlyCopyable,
         .value  : Type: ImplicitlyCopyable,
-        .policy : Type: HashPolicy#(.key: key)
+        .policy : Type: HashPolicy#(policy, key)
     )(
         .self : &HashMapROEntryIterator#(.key: key, .value: value, .policy: policy)
     ) -> (
@@ -315,7 +315,7 @@ has_next#(
 next#(
         .key    : Type: ImplicitlyCopyable,
         .value  : Type: ImplicitlyCopyable,
-        .policy : Type: HashPolicy#(.key: key)
+        .policy : Type: HashPolicy#(policy, key)
     )(
         .self : $&HashMapROEntryIterator#(.key: key, .value: value, .policy: policy)
     ) -> (
@@ -350,7 +350,7 @@ next#(
 HashMapRWEntryIterator#(
     .key    : Type: ImplicitlyCopyable,
     .value  : Type: ImplicitlyCopyable,
-    .policy : Type: HashPolicy#(.key: key)
+    .policy : Type: HashPolicy#(policy, key)
 ): Type = (
     ._owner      : $&HashMap#(.key: key, .value: value, .policy: policy),
     ._generation : &Any,
@@ -360,13 +360,13 @@ HashMapRWEntryIterator#(
 HashMapRWEntryIterator#(
     .key    : Type: ImplicitlyCopyable,
     .value  : Type: ImplicitlyCopyable,
-    .policy : Type: HashPolicy#(.key: key)
+    .policy : Type: HashPolicy#(policy, key)
 ) satisfies Iterator#(.t: HashMapRWEntry#(.key: key, .value: value))
 
 to_rw_entry_iterator#(
         .key    : Type: ImplicitlyCopyable,
         .value  : Type: ImplicitlyCopyable,
-        .policy : Type: HashPolicy#(.key: key)
+        .policy : Type: HashPolicy#(policy, key)
     )(
         .value : $&HashMap#(.key: key, .value: value, .policy: policy)
     ) -> (
@@ -386,7 +386,7 @@ to_rw_entry_iterator#(
 has_next#(
         .key    : Type: ImplicitlyCopyable,
         .value  : Type: ImplicitlyCopyable,
-        .policy : Type: HashPolicy#(.key: key)
+        .policy : Type: HashPolicy#(policy, key)
     )(
         .self : &HashMapRWEntryIterator#(.key: key, .value: value, .policy: policy)
     ) -> (
@@ -401,7 +401,7 @@ has_next#(
 next#(
         .key    : Type: ImplicitlyCopyable,
         .value  : Type: ImplicitlyCopyable,
-        .policy : Type: HashPolicy#(.key: key)
+        .policy : Type: HashPolicy#(policy, key)
     )(
         .self : $&HashMapRWEntryIterator#(.key: key, .value: value, .policy: policy)
     ) -> (

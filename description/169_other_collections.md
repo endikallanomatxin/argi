@@ -6,8 +6,9 @@ below; exploratory collections are marked as ideas.
 
 ## Hash and equality policies
 
-`HashPolicy<K>` supplies `hash(.self, .key) -> UIntNative` and
-`eql(.self, .left, .right) -> Bool`. Equality must be an equivalence relation;
+`HashPolicy#(P, K)` supplies scoped operations
+`HashPolicy#(P, K).hash(.self, .key) -> UIntNative` and
+`HashPolicy#(P, K).eql(.self, .left, .right) -> Bool`. Equality must be an equivalence relation;
 equal keys must hash equally. Policy results must remain stable while keys are
 stored. Hash collisions are supported, but unstable equality or key mutation
 cannot be repaired by the container.
@@ -21,10 +22,14 @@ Applications can implement the same small contract for their own key types.
 Borrowed string keys retain their backing lifetimes and must not be modified
 while stored. Hashing does not transfer or acquire ownership of that storage.
 
+Ownership-bearing maps and sets use `BorrowedHashPolicy#(P, K)`, whose scoped
+`hash` and `eql` operations borrow keys through readonly references. Their
+implementations preserve key ownership and never expose mutable keys.
+
 ## Maps
 
 `HashMap<K, V, P>` stores implicitly copyable keys and values with an explicit
-`P: HashPolicy<K>` instance. Construction takes `.policy`, `.allocator`, and an
+`P: HashPolicy#(P, K)` instance. Construction takes `.policy`, `.allocator`, and an
 optional `.capacity`. Capacity is the number of table slots, at least eight;
 occupied load stays at most one half. The map owns its table and policy, but
 copying a borrowed key or value does not acquire its backing storage.

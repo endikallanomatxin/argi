@@ -2,23 +2,23 @@ OwnedHashMapBorrow#(.key: Type, .value: Type): Type = (.key: &key, .value: &valu
 
 OwnedHashMapBorrow#(.key: Type, .value: Type) satisfies ImplicitlyCopyable
 
-OwnedHashMapIterator#(.key: Type, .value: Type, .policy: Type: BorrowedHashPolicy#(.key: key)): Type = (
+OwnedHashMapIterator#(.key: Type, .value: Type, .policy: Type: BorrowedHashPolicy#(policy, key)): Type = (
     ._owner      : &OwnedHashMap#(.key: key, .value: value, .policy: policy),
     ._generation : &Any,
     ._index      : UIntNative
 )
 
-OwnedHashMapIterator#(.key: Type, .value: Type, .policy: Type: BorrowedHashPolicy#(.key: key)) satisfies Iterator#(
+OwnedHashMapIterator#(.key: Type, .value: Type, .policy: Type: BorrowedHashPolicy#(policy, key)) satisfies Iterator#(
     .t : OwnedHashMapBorrow#(.key: key, .value: value)
 )
-OwnedHashMap#(.key: Type, .value: Type, .policy: Type: BorrowedHashPolicy#(.key: key)) satisfies Iterable#(
+OwnedHashMap#(.key: Type, .value: Type, .policy: Type: BorrowedHashPolicy#(policy, key)) satisfies Iterable#(
     .t : OwnedHashMapBorrow#(.key: key, .value: value)
 )
 
 to_iterator#(
         .key    : Type,
         .value  : Type,
-        .policy : Type: BorrowedHashPolicy#(.key: key)
+        .policy : Type: BorrowedHashPolicy#(policy, key)
     )(
         .value : &OwnedHashMap#(.key: key, .value: value, .policy: policy)
     ) -> (
@@ -35,7 +35,7 @@ to_iterator#(
 _owned_hash_next#(
         .key    : Type,
         .value  : Type,
-        .policy : Type: BorrowedHashPolicy#(.key: key)
+        .policy : Type: BorrowedHashPolicy#(policy, key)
     )(
         .self  : &OwnedHashMap#(.key: key, .value: value, .policy: policy),
         .start : UIntNative
@@ -55,7 +55,7 @@ _owned_hash_next#(
 has_next#(
         .key    : Type,
         .value  : Type,
-        .policy : Type: BorrowedHashPolicy#(.key: key)
+        .policy : Type: BorrowedHashPolicy#(policy, key)
     )(
         .self : &OwnedHashMapIterator#(.key: key, .value: value, .policy: policy)
     ) -> (
@@ -70,7 +70,7 @@ has_next#(
 next#(
         .key    : Type,
         .value  : Type,
-        .policy : Type: BorrowedHashPolicy#(.key: key)
+        .policy : Type: BorrowedHashPolicy#(policy, key)
     )(
         .self : $&OwnedHashMapIterator#(.key: key, .value: value, .policy: policy)
     ) -> (
@@ -86,20 +86,20 @@ next#(
     self&._index = index + 1
 }
 
-OwnedHashSetIterator#(.key: Type, .policy: Type: BorrowedHashPolicy#(.key: key)): Type = (
+OwnedHashSetIterator#(.key: Type, .policy: Type: BorrowedHashPolicy#(policy, key)): Type = (
     ._entries : OwnedHashMapIterator#(.key: key, .value: _HashSetValue, .policy: policy)
 )
 
-OwnedHashSetIterator#(.key: Type, .policy: Type: BorrowedHashPolicy#(.key: key)) satisfies Iterator#(
+OwnedHashSetIterator#(.key: Type, .policy: Type: BorrowedHashPolicy#(policy, key)) satisfies Iterator#(
     .t : &key
 )
-OwnedHashSet#(.key: Type, .policy: Type: BorrowedHashPolicy#(.key: key)) satisfies ROPointerIterable#(
+OwnedHashSet#(.key: Type, .policy: Type: BorrowedHashPolicy#(policy, key)) satisfies ROPointerIterable#(
     .t : key
 )
 
 to_ro_pointer_iterator#(
         .key    : Type,
-        .policy : Type: BorrowedHashPolicy#(.key: key)
+        .policy : Type: BorrowedHashPolicy#(policy, key)
     )(
         .value : &OwnedHashSet#(.key: key, .policy: policy)
     ) -> (
@@ -108,7 +108,7 @@ to_ro_pointer_iterator#(
 
 has_next#(
         .key    : Type,
-        .policy : Type: BorrowedHashPolicy#(.key: key)
+        .policy : Type: BorrowedHashPolicy#(policy, key)
     )(
         .self : &OwnedHashSetIterator#(.key: key, .policy: policy)
     ) -> (
@@ -117,7 +117,7 @@ has_next#(
 
 next#(
         .key    : Type,
-        .policy : Type: BorrowedHashPolicy#(.key: key)
+        .policy : Type: BorrowedHashPolicy#(policy, key)
     )(
         .self : $&OwnedHashSetIterator#(.key: key, .policy: policy)
     ) -> (

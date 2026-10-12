@@ -12260,3 +12260,7 @@ test "feature_tests/contracts/142_repeated_array_length_specialization" {
 test "feature_tests/contracts/143X_order_policy_global_operation" {
     try buildExpectFailWithoutNoise("tests/feature_tests/contracts/143X_order_policy_global_operation", "no function named 'less' exists", "panic");
 }
+
+test "feature_tests/contracts/144X_hash_policy_global_operation" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/144X_hash_policy_global_operation", "no function named 'hash' exists", "panic");
+}
