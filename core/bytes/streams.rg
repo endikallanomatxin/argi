@@ -1,25 +1,26 @@
 -- Memory cursors implement the stream protocols without acquiring capabilities
 -- or storage. They retain the same backing-view lifetime as binary operations.
-ByteReader satisfies Reader
 ByteReader satisfies BlockReader
 ByteWriter satisfies Writer
 ByteWriter satisfies BlockWriter
 
-read_byte(
-        .self : $&ByteReader
-    ) -> (
-        .result : Errable#(ReadByte, (..stream_read_failed))
-    ) := {
-    if remaining(self).count == 0 {
-        result = ..ok ..end
-        return
+implement Reader#(ByteReader)(
+    .read_byte = (
+            .self : $&ByteReader
+        ) -> (
+            .result : Errable#(ReadByte, (..stream_read_failed))
+        ) {
+        if remaining(self).count == 0 {
+            result = ..ok ..end
+            return
+        }
+
+        byte ::= unwrap_or_abort(.value = get_ro_ref(&self&._bytes, .index = self&._position))
+        self&._position = self&._position + 1
+
+        result = ..ok ..ok byte&
     }
-
-    byte ::= unwrap_or_abort(.value = get_ro_ref(&self&._bytes, .index = self&._position))
-    self&._position = self&._position + 1
-
-    result = ..ok ..ok byte&
-}
+)
 
 write_byte(
         .self : $&ByteWriter,

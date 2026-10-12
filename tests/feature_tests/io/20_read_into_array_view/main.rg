@@ -2,27 +2,27 @@ DummyInput: Type = (
     .index : Int32 = 0
 )
 
-read_byte(
-        .self : $&DummyInput,
-    ) -> (
-        .result : Errable#(.t: ReadByte, .reasons: (..stream_read_failed))
-    ) := {
-    if self&.index == 0 {
-        self&.index = 1
-        result = ..ok ..ok 65
-        return
+implement Reader#(DummyInput)(
+    .read_byte = (
+            .self : $&DummyInput,
+        ) -> (
+            .result : Errable#(.t: ReadByte, .reasons: (..stream_read_failed))
+        ) {
+        if self&.index == 0 {
+            self&.index = 1
+            result = ..ok ..ok 65
+            return
+        }
+
+        if self&.index == 1 {
+            self&.index = 2
+            result = ..ok ..ok 66
+            return
+        }
+
+        result = ..ok ..end
     }
-
-    if self&.index == 1 {
-        self&.index = 2
-        result = ..ok ..ok 66
-        return
-    }
-
-    result = ..ok ..end
-}
-
-DummyInput implements Reader
+)
 
 main() -> (.status_code: Int32) := {
     bytes: Array#(.n = 4, .t: UInt8) = (0, 0, 0, 0)

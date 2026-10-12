@@ -31,10 +31,10 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     set_timeout(.self = $&connection, .milliseconds = 5000)!
     write_byte(.self = $&client, .byte = 77)!
     flush(.self = $&client)!
-    received ::= read_byte(.self = $&connection)!
+    received ::= Reader#().read_byte(.self = $&connection)!
     match received { ..end { abort } ..ok value { if value != 77 { abort } } }
     close(.self = $&client)!
-    match read_byte(.self = $&connection)! { ..end {} ..ok _ { abort } }
+    match Reader#().read_byte(.self = $&connection)! { ..end {} ..ok _ { abort } }
     match flush(.self = $&client) { ..ok _ { abort } ..error _ {} }
     match write_byte(.self = $&client, .byte = 77) { ..ok _ { abort } ..error _ {} }
     match local_address(.self = &client) { ..ok _ { abort } ..error _ {} }

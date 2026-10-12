@@ -18,7 +18,7 @@ BlockWriter: Contract = (
 )
 
 _reader_block#(
-        .t : Type: Reader
+        .t : Type: Reader#(t)
     )(
         .self   : $&t,
         .buffer : ArrayView#(.t: UInt8)
@@ -51,7 +51,7 @@ File satisfies BlockReader
 File satisfies BlockWriter
 ProcessStream satisfies BlockReader
 ProcessStream satisfies BlockWriter
-BufferedReader#(.base_type: Type: Reader) satisfies BlockReader
+BufferedReader#(.base_type: Type: Reader#(base_type)) satisfies BlockReader
 BufferedWriter#(.base_type: Type: Writer) satisfies BlockWriter
 TcpConnection satisfies BlockReader
 TcpConnection satisfies BlockWriter
@@ -185,7 +185,7 @@ read_until(
     count :: UIntNative = 0
 
     while count < length(&buffer).count {
-        byte ::= read_byte(self)!
+        byte ::= Reader#().read_byte(self)!
         match byte {
             ..end {
                 result = ..ok(.count = count, .termination = ..end)
@@ -234,7 +234,7 @@ write_block(
 }
 
 read_block#(
-        .base_type : Type: Reader
+        .base_type : Type: Reader#(base_type)
     )(
         .self   : $&BufferedReader#(.base_type: base_type),
         .buffer : ArrayView#(.t: UInt8)

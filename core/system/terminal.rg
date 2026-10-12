@@ -37,7 +37,7 @@ read_line_into_buffer(
             break
         }
 
-        next ::= read_byte(reader)
+        next ::= Reader#().read_byte(reader)
         match next {
             ..error _ {
                 result = ..error(.reason = ..stream_read_failed)
@@ -89,7 +89,7 @@ read_line(
     line ::= String(.capacity = 16)!
 
     while true {
-        match read_byte(reader)! {
+        match Reader#().read_byte(reader)! {
             ..end {
                 if line.length == 0 {
                     result = ..ok ..end

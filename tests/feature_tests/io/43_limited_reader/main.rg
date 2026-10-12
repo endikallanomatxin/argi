@@ -18,7 +18,7 @@ main() -> (.status_code: Int32 = 0) := {
         ] { abort }
     }
     if position(.self = &reader).count != 2 { abort }
-    match unwrap_or_abort(.value = read_byte(.self = $&reader)) {
+    match unwrap_or_abort(.value = Reader#().read_byte(.self = $&reader)) {
         ..end { abort }
         ..ok byte { if byte != 30 { abort } }
     }

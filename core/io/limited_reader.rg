@@ -43,28 +43,26 @@ read_block#(
 }
 
 -- The block adapter also supports byte consumers without reading ahead.
-LimitedReader#(.t: Type: BlockReader) satisfies Reader
+implement#(
+    .t : Type: BlockReader
+) Reader#(LimitedReader#(.t: t))(
+        .read_byte = (
+                .self : $&LimitedReader#(.t: t)
+            ) -> (
+                .result : Errable#(ReadByte, (..stream_read_failed))
+            ) {
+            byte :: [1]UInt8 = (0)
+            received ::= read_block(self, .buffer = view($&byte))!
 
-read_byte#(
-        .t : Type: BlockReader
-    )(
-        .self : $&LimitedReader#(.t: t)
-    ) -> (
-        .result : Errable#(ReadByte, (..stream_read_failed))
-    ) := {
-    byte :: [1]UInt8 = (0)
-    received ::= read_block(self, .buffer = view($&byte))!
-
-    if received == 0 { result = ..ok ..end } else { result = ..ok ..ok byte[0] }
-}
+            if received == 0 { result = ..ok ..end } else { result = ..ok ..ok byte[0] }
+        }
+    )
 
 -- Byte-only sources need no block protocol. The budget counts delivered bytes.
-LimitedByteReader#(.t: Type: Reader): Type = (._source: $&t, ._remaining: UIntNative)
-
-LimitedByteReader#(.t: Type: Reader) satisfies Reader
+LimitedByteReader#(.t: Type: Reader#(t)): Type = (._source: $&t, ._remaining: UIntNative)
 
 LimitedByteReader init#(
-        .t : Type: Reader
+        .t : Type: Reader#(t)
     )(
         .source : $&t,
         .limit  : UIntNative
@@ -72,25 +70,27 @@ LimitedByteReader init#(
         .result : LimitedByteReader#(.t: t)
     ) := { result = (._source = source, ._remaining = limit) }
 
-remaining#(.t: Type: Reader)(.self: &LimitedByteReader#(.t: t)) -> (.count: UIntNative) := {
+remaining#(.t: Type: Reader#(t))(.self: &LimitedByteReader#(.t: t)) -> (.count: UIntNative) := {
     count = self&._remaining
 }
 
-read_byte#(
-        .t : Type: Reader
-    )(
-        .self : $&LimitedByteReader#(.t: t)
-    ) -> (
-        .result : Errable#(ReadByte, (..stream_read_failed))
-    ) := {
-    if self&._remaining == 0 {
-        result = ..ok ..end
-        return
-    }
+implement#(
+    .t : Type: Reader#(t)
+) Reader#(LimitedByteReader#(.t: t))(
+        .read_byte = (
+                .self : $&LimitedByteReader#(.t: t)
+            ) -> (
+                .result : Errable#(ReadByte, (..stream_read_failed))
+            ) {
+            if self&._remaining == 0 {
+                result = ..ok ..end
+                return
+            }
 
-    byte ::= read_byte(self&._source)!
+            byte ::= Reader#().read_byte(self&._source)!
 
-    match byte { ..end {} ..ok _ { self&._remaining = self&._remaining - 1 } }
+            match byte { ..end {} ..ok _ { self&._remaining = self&._remaining - 1 } }
 
-    result = ..ok byte
-}
+            result = ..ok byte
+        }
+    )

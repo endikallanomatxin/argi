@@ -72,7 +72,6 @@ ProcessStream: Type = (
     ._writable : Bool
 )
 
-ProcessStream satisfies Reader
 ProcessStream satisfies Writer
 
 Process: Type = (
@@ -248,33 +247,35 @@ close(.self: $&ProcessStream) -> (.result: Errable#(Void, (..stream_close_failed
     result = ..ok Void()
 }
 
-read_byte(
-        .self : $&ProcessStream
-    ) -> (
-        .result : Errable#(ReadByte, (..stream_read_failed))
-    ) := {
-    assume ffi := self&._ffi
+implement Reader#(ProcessStream)(
+    .read_byte = (
+            .self : $&ProcessStream
+        ) -> (
+            .result : Errable#(ReadByte, (..stream_read_failed))
+        ) {
+        assume ffi := self&._ffi
 
-    if self&._handle == 0 or self&._writable {
-        result = ..error(.reason = ..stream_read_failed)
-        return
+        if self&._handle == 0 or self&._writable {
+            result = ..error(.reason = ..stream_read_failed)
+            return
+        }
+
+        byte :: UInt8 = 0
+        status ::= _process_stream_read(.handle = self&._handle, .byte = $&byte).status
+
+        if status < 0 {
+            result = ..error(.reason = ..stream_read_failed)
+            return
+        }
+
+        if status == 0 {
+            result = ..ok ..end
+            return
+        }
+
+        result = ..ok ..ok byte
     }
-
-    byte :: UInt8 = 0
-    status ::= _process_stream_read(.handle = self&._handle, .byte = $&byte).status
-
-    if status < 0 {
-        result = ..error(.reason = ..stream_read_failed)
-        return
-    }
-
-    if status == 0 {
-        result = ..ok ..end
-        return
-    }
-
-    result = ..ok ..ok byte
-}
+)
 
 write_byte(
         .self : $&ProcessStream,

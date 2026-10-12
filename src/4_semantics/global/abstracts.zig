@@ -1907,7 +1907,10 @@ pub const Resolver = struct {
     ) !bool {
         if (depth >= 64) return false;
         if (self.findAbstractDefinition(abstract_decl)) |located| {
-            if (located.definition.hasExplicitParticipants()) return false;
+            if (located.definition.hasExplicitParticipants()) {
+                if (located.definition.participants.len != 1) return false;
+                return try self.selectConformance(abstract_decl, &.{concrete}, null, depth, null) != null;
+            }
         }
         const key = ImplementationKey{ .concrete = concrete, .abstract_decl = abstract_decl };
         if (self.known_implementations.contains(key)) {
@@ -2085,8 +2088,14 @@ pub const Resolver = struct {
             self.participant_conformance_failure = failure;
             return null;
         }
-        if (located.definition.participants.len == 1 and use.arguments.len == 0)
-            return self.makeVirtualOperationCall(name, use.declaration, input, source, context);
+        if (located.definition.participants.len == 1 and use.arguments.len == 0) {
+            if (try self.makeVirtualOperationCall(name, use.declaration, input, source, context)) |node| return node;
+            const participant = try self.inferUnaryOperationParticipant(located, name, input) orelse return null;
+            const start: u32 = @intCast(self.graph.generic_arguments.items.len);
+            try self.graph.generic_arguments.append(self.allocator, .{ .name = .{ .start = 0, .len = 0 }, .value = .{ .type = participant } });
+            const bound = try self.generics.internType(.{ .generic = .{ .base = use.declaration, .arguments = .{ .start = start, .len = 1 } } });
+            return self.makeScopedOperationCall(module_index, bound, name, input, context, source);
+        }
         const storage = &self.modules[located.module_index].semantic.parameterized_storage;
         var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
         defer bindings.deinit(self.allocator);
@@ -2141,6 +2150,40 @@ pub const Resolver = struct {
                 .input = input,
             } },
         };
+    }
+
+    // An unbound unary operation still has a fixed identity. Infer its sole
+    // participant from a direct value/reference input, then use the ordinary
+    // selected-evidence path. Outputs and implementation enumeration never infer it.
+    fn inferUnaryOperationParticipant(self: *Resolver, located: LocatedAbstractDefinition, name: []const u8, input: global_sg.GlobalNodeId) !?global_sg.GlobalTypeId {
+        const literal = switch (self.graph.node(input).content) {
+            .struct_value_literal => |value| value,
+            else => return null,
+        };
+        const storage = &self.modules[located.module_index].semantic.parameterized_storage;
+        const requirement = for (storage.abstract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len]) |requirement| {
+            if (std.mem.eql(u8, self.modules[located.module_index].text(requirement.name), name)) break requirement;
+        } else return null;
+        const fields = storage.ir.types.items[@intFromEnum(requirement.input)].resolved.structural.fields;
+        for (storage.ir.fields.items[fields.start..][0..fields.len], 0..) |field, position| {
+            const pattern = storage.ir.types.items[@intFromEnum(field.ty)];
+            const pointer = pattern == .resolved and pattern.resolved == .pointer and
+                self.isUnaryReceiverParticipantType(located, pattern.resolved.pointer.child);
+            if (!pointer and !self.isUnaryReceiverParticipantType(located, field.ty)) continue;
+            for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len], 0..) |actual, index| {
+                const label = self.graph.text(actual.name);
+                if (!((label.len == 0 and index == position) or std.mem.eql(u8, label, self.modules[located.module_index].text(field.name)))) continue;
+                var ty = self.graph.node(actual.value).ty orelse return null;
+                if (!self.typeSelectionReady(ty, 0)) return null;
+                if (pointer) {
+                    const actual_type = self.graph.semanticType(ty);
+                    if (actual_type != .pointer) return null;
+                    ty = actual_type.pointer.child;
+                }
+                return ty;
+            }
+        }
+        return null;
     }
 
     pub fn prepareParticipantConformances(self: *Resolver) !void {
@@ -2796,6 +2839,8 @@ pub const Resolver = struct {
         const abstract_decl = try self.constraintDeclaration(module_index, constraint_id);
         const definition = self.findAbstractDefinition(abstract_decl) orelse return false;
         if (definition.definition.hasExplicitParticipants()) {
+            if (constraint.arguments.len == 0 and definition.definition.participants.len == 1)
+                return try self.selectConformance(abstract_decl, &.{concrete}, null, 0, null) != null;
             const arguments = self.generics.instantiateParameterizedArguments(module_index, constraint.arguments, bindings) catch |err| {
                 if (err == error.OutOfMemory) return err;
                 return false;

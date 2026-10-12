@@ -20,7 +20,7 @@ read_line_owned(
         if count < maximum {
             ensure_capacity(.self = $&bytes, .capacity = count + 1)!
         }
-        match read_byte(self)! {
+        match Reader#().read_byte(self)! {
             ..end {
                 if count == 0 {
                     result = ..ok ..none
@@ -55,10 +55,14 @@ read_line_owned(
 
 -- Fallible iteration exposes EOF explicitly rather than hiding errors in a
 -- has_next probe. Stop after an error; the failed reader cannot be resumed.
-OwnedLineReader#(.t: Type: Reader): Type = (._source: $&t, ._maximum: UIntNative, ._ended: Bool)
+OwnedLineReader#(.t: Type: Reader#(t)): Type = (
+    ._source  : $&t,
+    ._maximum : UIntNative,
+    ._ended   : Bool
+)
 
 OwnedLineReader init#(
-        .t : Type: Reader
+        .t : Type: Reader#(t)
     )(
         .source  : $&t,
         .maximum : UIntNative
@@ -67,7 +71,7 @@ OwnedLineReader init#(
     ) := { result = (._source = source, ._maximum = maximum, ._ended = false) }
 
 next#(
-        .t : Type: Reader
+        .t : Type: Reader#(t)
     )(
         .self      : $&OwnedLineReader#(.t: t),
         .allocator : $&Allocator                = reach allocator

@@ -12292,3 +12292,11 @@ test "feature_tests/contracts/150_scoped_virtual_writer" {
 test "feature_tests/contracts/151X_scoped_virtual_receiver_dependencies" {
     try buildExpectFailWithoutNoise("tests/feature_tests/contracts/151X_scoped_virtual_receiver_dependencies", "a storage transition is not permitted by this preservation contract", "_implement$");
 }
+
+test "feature_tests/contracts/152_reader_selected_virtual_evidence" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/152_reader_selected_virtual_evidence");
+}
+
+test "feature_tests/contracts/153X_reader_global_operation" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/153X_reader_global_operation", "no function named 'read_byte' exists", "panic");
+}

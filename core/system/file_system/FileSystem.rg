@@ -433,7 +433,7 @@ read_file(
     }
 
     while 1 == 1 {
-        next ::= read_byte($&file)
+        next ::= Reader#().read_byte($&file)
         if is(.value = next, .variant = ..error) {
             deinit(.self = $&text)
             _ ::= close($&file)

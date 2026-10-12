@@ -18,8 +18,9 @@ incomparable maximal candidates are errors; source/import ordering has no priori
 
 ## Implementation order and removal obligations
 
-1. Migrate Reader and Writer first, including generic adapters and unary virtual
-   evidence, then ErrorTracer and Allocator. Preserve fallible virtual capability
+1. Migrate Writer next, including generic adapters and unary virtual evidence,
+   then ErrorTracer and Allocator. Reader now uses selected scoped evidence
+   throughout its bundled adapters and callers. Preserve fallible virtual capability
    inputs, storage acquisition proofs and cleanup. Unary receiver safety normalization
    recognizes the original participant parameter; preserve pointer-field dependencies
    and generation facts when migrating each adapter. Continue with the remaining
@@ -29,7 +30,7 @@ incomparable maximal candidates are errors; source/import ordering has no priori
    participants and each global operation family with scoped implementations. Remove the superseded route as its final consumers move.
    Resolve unqualified calls by operation identity and participant inference.
    Replace temporary rejections of unqualified OrderPolicy.less and
-   HashPolicy.hash with scoped-identity assertions when that resolution is
+   HashPolicy.hash and Reader.read_byte with scoped-identity assertions when that resolution is
    implemented.
    Remove global overload lookup, legacy function declaration adapters,
    `satisfies` and `Abstract` compatibility once their consumers are migrated.

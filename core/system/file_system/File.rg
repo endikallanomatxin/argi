@@ -196,39 +196,41 @@ flush(
     result = ..ok Void()
 }
 
-read_byte(.self: $&File) -> (.result: Errable#(ReadByte, (..stream_read_failed))) := {
-    assume ffi := self&._ffi
+implement Reader#(File)(
+    .read_byte = (.self: $&File) -> (.result: Errable#(ReadByte, (..stream_read_failed))) {
+        assume ffi := self&._ffi
 
-    if self&.stream_address == 0 {
-        result = ..error(.reason = ..stream_read_failed)
-        return
-    }
-
-    byte :: UInt8 = 0
-    byte_view ::= array_view#(.t: UInt8)(.data = $&byte)
-    read_count ::= fread_into(
-        .buffer = byte_view
-        .stream = file_stream_pointer(self).stream
-    ).count
-
-    if read_count == 0 {
-        stream ::= file_stream_pointer(self).stream
-        if ferror(.stream = stream).status != 0 {
+        if self&.stream_address == 0 {
             result = ..error(.reason = ..stream_read_failed)
             return
         }
 
-        if feof(.stream = stream).status != 0 {
-            result = ..ok ..end
+        byte :: UInt8 = 0
+        byte_view ::= array_view#(.t: UInt8)(.data = $&byte)
+        read_count ::= fread_into(
+            .buffer = byte_view
+            .stream = file_stream_pointer(self).stream
+        ).count
+
+        if read_count == 0 {
+            stream ::= file_stream_pointer(self).stream
+            if ferror(.stream = stream).status != 0 {
+                result = ..error(.reason = ..stream_read_failed)
+                return
+            }
+
+            if feof(.stream = stream).status != 0 {
+                result = ..ok ..end
+                return
+            }
+
+            result = ..error(.reason = ..stream_read_failed)
             return
         }
 
-        result = ..error(.reason = ..stream_read_failed)
-        return
+        result = ..ok ..ok byte
     }
-
-    result = ..ok ..ok byte
-}
+)
 
 write_byte(
         .self : $&File,
@@ -310,7 +312,6 @@ write(
     result = ..ok wrote
 }
 
-File satisfies Reader
 File satisfies Writer
 
 write_block(

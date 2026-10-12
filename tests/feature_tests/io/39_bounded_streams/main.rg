@@ -1,17 +1,24 @@
 Source: Type = (.bytes: ArrayViewRO#(.t: UInt8), .position: UIntNative, .calls: UIntNative)
 
-Source implements Reader
 Source implements BlockReader
 
-read_byte(.self: $&Source) -> (.result: Errable#(.t: ReadByte, .reasons: (..stream_read_failed))) := {
-    if self&.position == length(.self = &self&.bytes).count {
-        result = ..ok ..end
-        return
+implement Reader#(Source)(
+    .read_byte = (
+            .self : $&Source
+        ) -> (
+            .result : Errable#(.t: ReadByte, .reasons: (..stream_read_failed))
+        ) {
+        if self&.position == length(.self = &self&.bytes).count {
+            result = ..ok ..end
+            return
+        }
+        byte ::= unwrap_or_abort(
+            .value = get_ro_ref(.self = &self&.bytes, .index = self&.position)
+        )
+        self&.position = self&.position + 1
+        result = ..ok ..ok byte&
     }
-    byte ::= unwrap_or_abort(.value = get_ro_ref(.self = &self&.bytes, .index = self&.position))
-    self&.position = self&.position + 1
-    result = ..ok ..ok byte&
-}
+)
 
 read_block(
         .self   : $&Source,
@@ -24,7 +31,7 @@ read_block(
         result = ..ok 0
         return
     }
-    match read_byte(.self = self)! {
+    match Reader#().read_byte(.self = self)! {
         ..end { result = ..ok 0 }
         ..ok byte {
             pointer ::= unwrap_or_abort(.value = get_rw_ref(.self = $&buffer, .index = 0))

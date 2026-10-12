@@ -47,10 +47,10 @@ run_main(
     other ::= ByteReader(.bytes = view(.array = &data))
     {
         limited ::= LimitedByteReader#(.t: ByteReader)(.source = $&other, .limit = 1)
-        match read_byte(.self = $&limited)! {
+        match Reader#().read_byte(.self = $&limited)! {
             ..end { abort } ..ok byte { if byte != 97 { abort } }
         }
-        match read_byte(.self = $&limited)! { ..end {} ..ok _ { abort } }
+        match Reader#().read_byte(.self = $&limited)! { ..end {} ..ok _ { abort } }
     }
     if position(.self = &other).count != 1 { abort }
     too_long ::= ByteReader(.bytes = view(.array = &data))

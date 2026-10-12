@@ -677,23 +677,24 @@ write_all(
     result = ..ok Void()
 }
 
-TcpConnection satisfies Reader
 TcpConnection satisfies Writer
 
-read_byte(
-        .self : $&TcpConnection
-    ) -> (
-        .result : Errable#(ReadByte, (..stream_read_failed))
-    ) := {
-    buffer :: [1]UInt8 = (0)
+implement Reader#(TcpConnection)(
+    .read_byte = (
+            .self : $&TcpConnection
+        ) -> (
+            .result : Errable#(ReadByte, (..stream_read_failed))
+        ) {
+        buffer :: [1]UInt8 = (0)
 
-    match read(self, .buffer = view($&buffer)) {
-        ..error _ { result = ..error(.reason = ..stream_read_failed) }
-        ..ok count {
-            if count == 0 { result = ..ok ..end } else { result = ..ok ..ok buffer[0] }
+        match read(self, .buffer = view($&buffer)) {
+            ..error _ { result = ..error(.reason = ..stream_read_failed) }
+            ..ok count {
+                if count == 0 { result = ..ok ..end } else { result = ..ok ..ok buffer[0] }
+            }
         }
     }
-}
+)
 
 write_byte(
         .self : $&TcpConnection,

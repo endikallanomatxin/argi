@@ -163,8 +163,8 @@ unqualified operation inference, remain pending. Standard construction, conversi
 and operator migration, composition and joint virtual evidence remain pending.
 Unbound unary contracts with explicit participants and no associated parameters
 can construct virtual handles using selected implementation evidence. Qualified
-virtual calls use `Contract#().operation(...)`; the handle supplies the hidden
-participant. Their tables reuse the existing representation and declared safety
+unary calls use `Contract#().operation(...)`; a concrete input infers the
+participant and a virtual handle supplies its hidden participant. Their tables reuse the existing representation and declared safety
 checks, including mutable receiver permissions and fallible capability inputs.
 Bundled OrderPolicy uses explicit policy and element participants, scoped inline
 implementations and qualified calls throughout sort, binary search and priority
@@ -181,3 +181,8 @@ The compiler still contains transitional global overload resolution and earlier
 conformance syntax for other contracts. Removal obligations are tracked in
 `plan/contract_dispatch_refactor.md`; existing `Abstract`/`satisfies` adapters are
 not part of the intended final language.
+
+> [!IMPLEMENTATION]
+> Bundled Reader uses scoped implementations for files, process streams, TCP,
+> memory cursors and buffered/limited adapters. Its former global read_byte
+> family is removed. Writer migration remains pending.

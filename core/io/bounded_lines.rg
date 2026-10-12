@@ -21,7 +21,7 @@ read_line(
                 return
             } }
         ..limit {
-            match read_byte(self)! {
+            match Reader#().read_byte(self)! {
                 ..end { if count == 0 {
                         result = ..ok ..none
                         return

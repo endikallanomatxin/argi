@@ -49,22 +49,22 @@ deallocate(
 
 Source: Type = (.text: StringView, .position: UIntNative = 0, .fail_after: UIntNative = 999)
 
-Source implements Reader
+implement Reader#(Source)(
+    .read_byte = (.self: $&Source) -> (.result: Errable#(ReadByte, (..stream_read_failed))) {
+        if self&.position == self&.fail_after {
+            result = ..error(.reason = ..stream_read_failed)
+            return
+        }
+        if self&.position == self&.text.length {
+            result = ..ok ..end
+            return
+        }
 
-read_byte(.self: $&Source) -> (.result: Errable#(ReadByte, (..stream_read_failed))) := {
-    if self&.position == self&.fail_after {
-        result = ..error(.reason = ..stream_read_failed)
-        return
+        byte ::= bytes_get(&self&.text, self&.position).byte
+        self&.position = self&.position + 1
+        result = ..ok ..ok byte
     }
-    if self&.position == self&.text.length {
-        result = ..ok ..end
-        return
-    }
-
-    byte ::= bytes_get(&self&.text, self&.position).byte
-    self&.position = self&.position + 1
-    result = ..ok ..ok byte
-}
+)
 
 run_main(.system: System) -> !Void = ..ok Void() := {
     allocator ::= RecordingAllocator(.ffi = system.ffi)

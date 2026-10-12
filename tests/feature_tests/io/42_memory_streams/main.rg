@@ -17,11 +17,13 @@ main() -> (.status_code: Int32 = 0) := {
     if position(.self = &writer).count != 3 { abort }
     match write_byte(.self = $&writer, .byte = 99) { ..ok _ { abort } ..error _ {} }
     if position(.self = &writer).count != 3 { abort }
-    match unwrap_or_abort(.value = read_byte(.self = $&reader)) {
+    match unwrap_or_abort(.value = Reader#().read_byte(.self = $&reader)) {
         ..end { abort }
         ..ok byte { if byte != 7 { abort } }
     }
-    match unwrap_or_abort(.value = read_byte(.self = $&reader)) { ..end {} ..ok _ { abort } }
+    match unwrap_or_abort(.value = Reader#().read_byte(.self = $&reader)) {
+        ..end {} ..ok _ { abort }
+    }
     unwrap_or_abort(.value = flush(.self = $&writer))
     another :: [2]UInt8 = (0, 0)
     partial ::= ByteWriter(.bytes = view(.array = $&another))

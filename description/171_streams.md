@@ -1,6 +1,10 @@
 # Byte streams
 
-`Reader` and `Writer` provide byte operations. `BlockReader` and `BlockWriter`
+`Reader#(Stream)` and `Writer#(Stream)` provide byte operations through scoped
+`read_byte`, `write_byte` and `flush` identities. Implementations bind each stream
+type explicitly. Qualified unary calls may omit the participant as
+`Reader#().read_byte(stream)`, inferring it from the borrowed input; a virtual
+handle supplies its hidden participant. `BlockReader` and `BlockWriter`
 provide `read_block` and `write_block` with byte views and a returned count.
 For a nonempty read, zero means EOF. Writes may make partial progress; zero
 for nonempty input means no progress. Neither operation silently flushes.

@@ -29,33 +29,33 @@ DummyInput: Type = (
     .index : UIntNative = 0
 )
 
-read_byte(
-        .self : $&DummyInput
-    ) -> (
-        .result : Errable#(.t: ReadByte, .reasons: (..stream_read_failed))
-    ) := {
-    if self&.index == 0 {
-        self&.index = 1
-        result = ..ok ..ok 79
-        return
+implement Reader#(DummyInput)(
+    .read_byte = (
+            .self : $&DummyInput
+        ) -> (
+            .result : Errable#(.t: ReadByte, .reasons: (..stream_read_failed))
+        ) {
+        if self&.index == 0 {
+            self&.index = 1
+            result = ..ok ..ok 79
+            return
+        }
+
+        if self&.index == 1 {
+            self&.index = 2
+            result = ..ok ..ok 75
+            return
+        }
+
+        if self&.index == 2 {
+            self&.index = 3
+            result = ..ok ..ok 10
+            return
+        }
+
+        result = ..ok ..end
     }
-
-    if self&.index == 1 {
-        self&.index = 2
-        result = ..ok ..ok 75
-        return
-    }
-
-    if self&.index == 2 {
-        self&.index = 3
-        result = ..ok ..ok 10
-        return
-    }
-
-    result = ..ok ..end
-}
-
-DummyInput implements Reader
+)
 
 main(.system: System) -> (.status_code: Int32 = 0) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
