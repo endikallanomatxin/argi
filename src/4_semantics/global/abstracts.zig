@@ -2111,6 +2111,17 @@ pub const Resolver = struct {
         return result;
     }
 
+    // Call inputs permit a mutable loan to satisfy a readonly parameter.
+    // Conformance participant patterns remain exact: this adaptation belongs
+    // to ordinary argument matching, not implementation specialization.
+    fn inferOperationInputPattern(self: *Resolver, module_index: usize, pattern: ir.ParameterizedTypeId, actual: global_sg.GlobalTypeId, bindings: *generic_mod.Resolver.Bindings) !bool {
+        const expected = self.modules[module_index].semantic.parameterized_storage.ir.types.items[@intFromEnum(pattern)];
+        const supplied = self.graph.semanticType(actual);
+        if (expected == .resolved and expected.resolved == .pointer and supplied == .pointer and expected.resolved.pointer.mutability == .read_only)
+            return self.inferConstraintTypePattern(module_index, expected.resolved.pointer.child, supplied.pointer.child, bindings);
+        return self.inferConstraintTypePattern(module_index, pattern, actual, bindings);
+    }
+
     fn probeOperationCandidate(self: *Resolver, located: LocatedAbstractDefinition, declaration: global_sg.GlobalDeclId, requirement: parameterized_storage.AbstractRequirement, input: global_sg.GlobalNodeId, context: reach_context.Context, deferred: *bool, failure: *?ParticipantConformanceFailure) !?OperationCandidate {
         const literal = switch (self.graph.node(input).content) {
             .struct_value_literal => |value| value,
@@ -2162,7 +2173,7 @@ pub const Resolver = struct {
                 }
                 // Input patterns can mention associated elements. Infer what is
                 // available now, then check the entire selected signature below.
-                _ = try self.inferConstraintTypePattern(located.module_index, field.ty, actual_ty, &bindings);
+                _ = try self.inferOperationInputPattern(located.module_index, field.ty, actual_ty, &bindings);
             }
             if (!explicit) if (field.default_value) |value| {
                 const reach = try self.generics.instantiateReachDefault(located.module_index, value) orelse continue;
@@ -2181,7 +2192,7 @@ pub const Resolver = struct {
                         continue;
                     }
                 }
-                _ = try self.inferConstraintTypePattern(located.module_index, field.ty, ty, &bindings);
+                _ = try self.inferOperationInputPattern(located.module_index, field.ty, ty, &bindings);
             };
         }
         const participants = try self.allocator.alloc(global_sg.GlobalTypeId, located.definition.participants.len);
@@ -2555,7 +2566,9 @@ pub const Resolver = struct {
                 .contract_name = self.modules[located.module_index].text(self.modules[located.module_index].declarations.items[@intFromEnum(located.definition.declaration)].name),
                 .reason = "",
             };
-            if (conformance.explicit_operations and located.module_index != module_index) {
+            if (conformance.explicit_operations and located.module_index != module_index and
+                !(self.modules[module_index].is_bundled_core and self.modules[located.module_index].is_bundled_core))
+            {
                 var owns_participant = false;
                 for (self.graph.generic_arguments.items[conformance.participants.start..][0..conformance.participants.len]) |argument| {
                     if (global_types.nominalTypeOwner(self.graph, argument.value.type)) |owner|

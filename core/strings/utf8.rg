@@ -241,22 +241,28 @@ utf8_bytes(.self: &Utf8View) -> (.text: StringView) := { text = self&._text }
 
 Utf8Iterator: Type = (._text: StringView, ._offset: UIntNative)
 
-Utf8Iterator satisfies Iterator#(.t: UnicodeScalar)
-Utf8View satisfies Iterable#(.t: UnicodeScalar)
+implement Iterable#(Utf8View) (
+    .Item: Type = UnicodeScalar
+    .IteratorType: Type = Utf8Iterator
 
-to_iterator(.value: &Utf8View) -> (.iterator: Utf8Iterator) := {
-    iterator = (._text = value&._text, ._offset = 0)
-}
-
-has_next(.self: &Utf8Iterator) -> (.ok: Bool) := { ok = self&._offset < self&._text.length }
-
-next(.self: $&Utf8Iterator) -> (.value: UnicodeScalar) := {
-    match _utf8_decode(.text = self&._text, .offset = self&._offset).result {
-        ..valid payload {
-            value = payload.decoded.scalar
-            self&._offset = self&._offset + payload.decoded.width
-        }
-        ..invalid { abort }
-        ..outside { abort }
+    .to_iterator = (.value: &Utf8View) -> (.iterator: Utf8Iterator) {
+        iterator = (._text = value&._text, ._offset = 0)
     }
-}
+)
+
+implement Iterator#(Utf8Iterator) (
+    .Item: Type = UnicodeScalar
+
+    .has_next = (.self: &Utf8Iterator) -> (.ok: Bool) { ok = self&._offset < self&._text.length }
+
+    .next = (.self: $&Utf8Iterator) -> (.value: UnicodeScalar) {
+        match _utf8_decode(.text = self&._text, .offset = self&._offset).result {
+            ..valid payload {
+                value = payload.decoded.scalar
+                self&._offset = self&._offset + payload.decoded.width
+            }
+            ..invalid { abort }
+            ..outside { abort }
+        }
+    }
+)

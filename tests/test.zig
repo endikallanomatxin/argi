@@ -2228,26 +2228,11 @@ test "feature_tests/collections/12_iterator_abstract" {
 }
 
 test "feature_tests/collections/13X_iterator_abstract_missing_implements" {
-    try buildExpectFailExact("tests/feature_tests/collections/13X_iterator_abstract_missing_implements",
-        \\tests/feature_tests/collections/13X_iterator_abstract_missing_implements/main.rg:9:12: error: type 'FakeIterator' does not implement abstract 'Iterator' required by parameter '.it' of 'consume':
-        \\missing function: has_next (.self: &FakeIterator)
-        \\      consume(.it = $&fake)
-        \\             ^
-        \\
-    );
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/collections/13X_iterator_abstract_missing_implements", "does not satisfy abstract constraint 'Iterator'");
 }
 
 test "feature_tests/control_flow/05X_for_requires_iterator_contract" {
-    try buildExpectFailExact("tests/feature_tests/control_flow/05X_for_requires_iterator_contract",
-        \\tests/feature_tests/control_flow/05X_for_requires_iterator_contract/main.rg:7:1: error: type does not implement abstract 'Iterable':
-        \\  missing function: to_iterator (.value: &FakeIterable)
-        \\  possible overloads:
-        \\  - to_iterator (.value: &FakeIterable) -> (.iterator: FakeIterator)
-        \\      file: tests/feature_tests/control_flow/05X_for_requires_iterator_contract/main.rg:9:1
-        \\  FakeIterable implements Iterable
-        \\  ^
-        \\
-    );
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/control_flow/05X_for_requires_iterator_contract", "for expects a type implementing contract 'Iterator', got 'FakeIterator'");
 }
 
 test "feature_tests/collections/14_iterable_abstract" {
@@ -2257,16 +2242,7 @@ test "feature_tests/collections/14_iterable_abstract" {
 }
 
 test "feature_tests/collections/15X_iterable_abstract_missing_implements" {
-    try buildExpectFailExact("tests/feature_tests/collections/15X_iterable_abstract_missing_implements",
-        \\tests/feature_tests/collections/15X_iterable_abstract_missing_implements/main.rg:18:31: error: type 'FakeIterable' does not implement abstract 'Iterable' required by parameter '.items' of 'sum_iterable':
-        \\missing function: to_iterator (.value: &FakeIterable)
-        \\possible overloads:
-        \\  - to_iterator (.value: &FakeIterable) -> (.iterator: FakeIterator)
-        \\      file: tests/feature_tests/collections/15X_iterable_abstract_missing_implements/main.rg:7:1
-        \\      status_code = sum_iterable(.items = &fake).sum
-        \\                                ^
-        \\
-    );
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/collections/15X_iterable_abstract_missing_implements", "does not satisfy abstract constraint 'Iterable'");
 }
 
 test "feature_tests/control_flow/06_range_for" {
@@ -2604,7 +2580,7 @@ test "feature_tests/control_flow/11_range_default_start_with_step" {
 
 test "feature_tests/control_flow/12X_for_nullable_not_iterable" {
     try buildExpectFailExact("tests/feature_tests/control_flow/12X_for_nullable_not_iterable",
-        \\tests/feature_tests/control_flow/12X_for_nullable_not_iterable/main.rg:4:5: error: for expects a type implementing abstract 'Iterable', got '?Int32'
+        \\tests/feature_tests/control_flow/12X_for_nullable_not_iterable/main.rg:4:5: error: for expects a type implementing contract 'Iterable', got '?Int32'
         \\      for item in value {
         \\      ^
         \\
@@ -12367,4 +12343,9 @@ test "feature_tests/contracts/169_reached_virtual_operation" {
 
 test "feature_tests/contracts/170X_unqualified_conformance_ambiguity" {
     try buildExpectFailWithoutNoise("tests/feature_tests/contracts/170X_unqualified_conformance_ambiguity", "ambiguous maximal patterns", "no function named");
+}
+
+test "feature_tests/contracts/171_iteration_operation_identity" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/171_iteration_operation_identity");
+    try run("tests/feature_tests/contracts/171_iteration_operation_identity");
 }

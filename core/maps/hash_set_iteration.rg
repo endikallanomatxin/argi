@@ -2,42 +2,41 @@ HashSetIterator#(.key: Type: ImplicitlyCopyable, .policy: Type: HashPolicy#(poli
     ._keys : HashMapKeyIterator#(.key: key, .value: _HashSetValue, .policy: policy)
 )
 
-HashSetIterator#(.key: Type: ImplicitlyCopyable, .policy: Type: HashPolicy#(policy, key)) satisfies Iterator#(
-    .t : key
+implement#(
+        .key    : Type: ImplicitlyCopyable,
+        .policy : Type: HashPolicy#(policy, key)
+    ) Iterable#(HashSet#(.key: key, .policy: policy)) (
+    .Item: Type = key
+    .IteratorType: Type = HashSetIterator#(.key: key, .policy: policy)
+
+    .to_iterator = (
+            .value : &HashSet#(.key: key, .policy: policy)
+        ) -> (
+            .iterator : HashSetIterator#(.key: key, .policy: policy)
+        ) {
+        iterator = (._keys = to_key_iterator(.value = &value&._map).iterator)
+    }
 )
-HashSet#(.key: Type: ImplicitlyCopyable, .policy: Type: HashPolicy#(policy, key)) satisfies Iterable#(
-    .t : key
+
+implement#(
+        .key    : Type: ImplicitlyCopyable,
+        .policy : Type: HashPolicy#(policy, key)
+    ) Iterator#(HashSetIterator#(.key: key, .policy: policy)) (
+    .Item: Type = key
+
+    .has_next = (
+            .self : &HashSetIterator#(.key: key, .policy: policy)
+        ) -> (
+            .ok : Bool
+        ) {
+        ok = has_next(&self&._keys).ok
+    }
+
+    .next = (
+            .self : $&HashSetIterator#(.key: key, .policy: policy)
+        ) -> (
+            .value : key
+        ) {
+        value = next($&self&._keys).value
+    }
 )
-
-to_iterator#(
-        .key    : Type: ImplicitlyCopyable,
-        .policy : Type: HashPolicy#(policy, key)
-    )(
-        .value : &HashSet#(.key: key, .policy: policy)
-    ) -> (
-        .iterator : HashSetIterator#(.key: key, .policy: policy)
-    ) := {
-    iterator = (._keys = to_key_iterator(.value = &value&._map).iterator)
-}
-
-has_next#(
-        .key    : Type: ImplicitlyCopyable,
-        .policy : Type: HashPolicy#(policy, key)
-    )(
-        .self : &HashSetIterator#(.key: key, .policy: policy)
-    ) -> (
-        .ok : Bool
-    ) := {
-    ok = has_next(&self&._keys).ok
-}
-
-next#(
-        .key    : Type: ImplicitlyCopyable,
-        .policy : Type: HashPolicy#(policy, key)
-    )(
-        .self : $&HashSetIterator#(.key: key, .policy: policy)
-    ) -> (
-        .value : key
-    ) := {
-    value = next($&self&._keys).value
-}

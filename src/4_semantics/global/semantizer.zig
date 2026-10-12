@@ -696,7 +696,7 @@ pub fn semantizeWithOptions(
             try diagnostics.add(
                 diagnosticLocation(&relocation.graph, diagnostics, failure.source),
                 .semantic,
-                "for expects a type implementing abstract '{s}', got '{s}'",
+                "for expects a type implementing contract '{s}', got '{s}'",
                 .{ failure.contract_name, actual_name.items },
             );
             return error.Reported;

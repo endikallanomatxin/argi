@@ -1,6 +1,5 @@
-Iterator: Contract = (
-    .t: Type
-
-    has_next(.self: &Self) -> (.ok: Bool)
-    next(.self: $&Self) -> (.value: t)
+Iterator#(.State: Type): Contract = (
+    .Item: Type
+    .has_next: (.self: &State) -> (.ok: Bool)
+    .next: (.self: $&State) -> (.value: Item)
 )

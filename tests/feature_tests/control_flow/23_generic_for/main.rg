@@ -1,12 +1,12 @@
-sum#(.t: Type: Iterable#(.t: Int32))(.input: &t) -> (.total: Int32 = 0) := {
+sum#(.t: Type: Iterable#(t))(.input: &t) -> (.total: Int32 = 0) := {
     for item in input { total = total + item }
 }
 
-borrow_sum#(.t: Type: ROPointerIterable#(.t: Int32))(.input: &t) -> (.total: Int32 = 0) := {
+borrow_sum#(.t: Type: ROPointerIterable#(t))(.input: &t) -> (.total: Int32 = 0) := {
     for &item in input&{ total = total + item&}
 }
 
-mutate#(.t: Type: RWPointerIterable#(.t: Int32))(.input: $&t) -> () := {
+mutate#(.t: Type: RWPointerIterable#(t))(.input: $&t) -> () := {
     for $&item in input&{ item&= item&+ 1 }
 }
 

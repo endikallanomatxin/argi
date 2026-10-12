@@ -13,123 +13,134 @@ ArrayRWPointerIterator#(.n: UIntNative, .t: Type): Type = (
     .index : UIntNative
 )
 
-ArrayIterator#(.n: UIntNative, .t: Type) satisfies Iterator#(.t: t)
-ArrayROPointerIterator#(.n: UIntNative, .t: Type) satisfies Iterator#(.t: &t)
-ArrayRWPointerIterator#(.n: UIntNative, .t: Type) satisfies Iterator#(.t: $&t)
-Array#(.n: UIntNative, .t: Type) satisfies Iterable#(.t: t)
-Array#(.n: UIntNative, .t: Type) satisfies ROPointerIterable#(.t: t)
-Array#(.n: UIntNative, .t: Type) satisfies RWPointerIterable#(.t: t)
-
-to_iterator#(
+implement#(
         .n : UIntNative,
         .t : Type
-    )(
-        .value : &Array#(.n = n, .t: t)
-    ) -> (
-        .iterator : ArrayIterator#(.n = n, .t: t)
-    ) := {
-    iterator = (
-        .array = value
-        .index = 0
-    )
-}
+    ) Iterable#(Array#(.n = n, .t: t)) (
+    .Item: Type = t
+    .IteratorType: Type = ArrayIterator#(.n = n, .t: t)
 
-to_ro_pointer_iterator#(
+    .to_iterator = (
+            .value : &Array#(.n = n, .t: t)
+        ) -> (
+            .iterator : ArrayIterator#(.n = n, .t: t)
+        ) {
+        iterator = (
+            .array = value
+            .index = 0
+        )
+    }
+)
+
+implement#(
         .n : UIntNative,
         .t : Type
-    )(
-        .value : &Array#(.n = n, .t: t)
-    ) -> (
-        .iterator : ArrayROPointerIterator#(.n = n, .t: t)
-    ) := {
-    iterator = (
-        .array = value
-        .index = 0
-    )
-}
+    ) ROPointerIterable#(Array#(.n = n, .t: t)) (
+    .Item: Type = t
+    .IteratorType: Type = ArrayROPointerIterator#(.n = n, .t: t)
 
-to_rw_pointer_iterator#(
+    .to_ro_pointer_iterator = (
+            .value : &Array#(.n = n, .t: t)
+        ) -> (
+            .iterator : ArrayROPointerIterator#(.n = n, .t: t)
+        ) {
+        iterator = (
+            .array = value
+            .index = 0
+        )
+    }
+)
+
+implement#(
         .n : UIntNative,
         .t : Type
-    )(
-        .value : $&Array#(.n = n, .t: t)
-    ) -> (
-        .iterator : ArrayRWPointerIterator#(.n = n, .t: t)
-    ) := {
-    iterator = (
-        .array = value
-        .index = 0
-    )
-}
+    ) RWPointerIterable#(Array#(.n = n, .t: t)) (
+    .Item: Type = t
+    .IteratorType: Type = ArrayRWPointerIterator#(.n = n, .t: t)
 
-has_next#(
+    .to_rw_pointer_iterator = (
+            .value : $&Array#(.n = n, .t: t)
+        ) -> (
+            .iterator : ArrayRWPointerIterator#(.n = n, .t: t)
+        ) {
+        iterator = (
+            .array = value
+            .index = 0
+        )
+    }
+)
+
+implement#(
         .n : UIntNative,
         .t : Type
-    )(
-        .self : &ArrayIterator#(.n = n, .t: t)
-    ) -> (
-        .ok : Bool
-    ) := {
-    ok = self&.index < n
-}
+    ) Iterator#(ArrayIterator#(.n = n, .t: t)) (
+    .Item: Type = t
 
-next#(
-        .n : UIntNative,
-        .t : Type: ImplicitlyCopyable
-    )(
-        .self : $&ArrayIterator#(.n = n, .t: t)
-    ) -> (
-        .value : t
-    ) := {
-    current_index :: UIntNative = self&.index
-    value = self&.array&[current_index]
-    self&.index = current_index + 1
-}
+    .has_next = (
+            .self : &ArrayIterator#(.n = n, .t: t)
+        ) -> (
+            .ok : Bool
+        ) {
+        ok = self&.index < n
+    }
 
-has_next#(
-        .n : UIntNative,
-        .t : Type
-    )(
-        .self : &ArrayROPointerIterator#(.n = n, .t: t)
-    ) -> (
-        .ok : Bool
-    ) := {
-    ok = self&.index < n
-}
+    .next = (
+            .self : $&ArrayIterator#(.n = n, .t: t)
+        ) -> (
+            .value : t
+        ) {
+        current_index :: UIntNative = self&.index
+        value = self&.array&[current_index]
+        self&.index = current_index + 1
+    }
+)
 
-next#(
+implement#(
         .n : UIntNative,
         .t : Type
-    )(
-        .self : $&ArrayROPointerIterator#(.n = n, .t: t)
-    ) -> (
-        .value : &t
-    ) := {
-    current_index :: UIntNative = self&.index
-    value = &self&.array&[current_index]
-    self&.index = current_index + 1
-}
+    ) Iterator#(ArrayROPointerIterator#(.n = n, .t: t)) (
+    .Item: Type = &t
 
-has_next#(
+    .has_next = (
+            .self : &ArrayROPointerIterator#(.n = n, .t: t)
+        ) -> (
+            .ok : Bool
+        ) {
+        ok = self&.index < n
+    }
+
+    .next = (
+            .self : $&ArrayROPointerIterator#(.n = n, .t: t)
+        ) -> (
+            .value : &t
+        ) {
+        current_index :: UIntNative = self&.index
+        value = &self&.array&[current_index]
+        self&.index = current_index + 1
+    }
+)
+
+implement#(
         .n : UIntNative,
         .t : Type
-    )(
-        .self : &ArrayRWPointerIterator#(.n = n, .t: t)
-    ) -> (
-        .ok : Bool
-    ) := {
-    ok = self&.index < n
-}
+    ) Iterator#(ArrayRWPointerIterator#(.n = n, .t: t)) (
+    .Item: Type = $&t
 
-next#(
-        .n : UIntNative,
-        .t : Type
-    )(
-        .self : $&ArrayRWPointerIterator#(.n = n, .t: t)
-    ) -> (
-        .value : $&t
-    ) := {
-    current_index :: UIntNative = self&.index
-    value = $&self&.array&[current_index]
-    self&.index = current_index + 1
-}
+    .has_next = (
+            .self : &ArrayRWPointerIterator#(.n = n, .t: t)
+        ) -> (
+            .ok : Bool
+        ) {
+        ok = self&.index < n
+    }
+
+    .next = (
+            .self : $&ArrayRWPointerIterator#(.n = n, .t: t)
+        ) -> (
+            .value : $&t
+        ) {
+        current_index :: UIntNative = self&.index
+        value = $&self&.array&[current_index]
+        self&.index = current_index + 1
+    }
+)

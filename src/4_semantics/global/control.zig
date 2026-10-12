@@ -9,6 +9,7 @@ const generic_functions_mod = @import("generic_functions.zig");
 const abstract_mod = @import("abstracts.zig");
 const types = @import("types.zig");
 const primitives = @import("../primitives/schema.zig");
+const reach_context = @import("reach_context.zig");
 
 pub const Stats = struct {
     choices: u32 = 0,
@@ -505,7 +506,6 @@ pub const Resolver = struct {
 
     pub fn resolveForEach(self: *Resolver, module_index: usize, o: globalizer.Offsets, value: anytype) !resolution.Result {
         @setEvalBranchQuota(5000);
-        const core = self.core orelse return .deferred;
         const generic_functions = self.generic_functions orelse return .deferred;
         const abstracts = self.abstracts orelse return .deferred;
         const iterable = globalizer.globalNode(o, value.iterable);
@@ -574,7 +574,7 @@ pub const Resolver = struct {
             iterable_place
         else
             try self.appendAddress(iterable_place, iterable_ty, iterable_mutable, source);
-        const conversion = try self.syntheticCall(module_index, conversion_name, iterable_reference, source, core, generic_functions);
+        const conversion = try self.syntheticCall(module_index, conversion_name, iterable_reference, source);
         const iterator_value = switch (conversion) {
             .call => |node| node,
             .deferred => return .deferred,
@@ -583,7 +583,14 @@ pub const Resolver = struct {
         const iterator_ty = self.graph.nodes.items[@intFromEnum(iterator_value)].ty orelse return .deferred;
         if (self.graph.isTypeUnresolved(iterator_ty)) return .deferred;
         const iterator_contract = self.visibleAbstract(module_index, "Iterator") orelse return .deferred;
-        if (!try abstracts.implements(iterator_ty, iterator_contract)) return .invalid;
+        if (!try abstracts.implements(iterator_ty, iterator_contract)) {
+            if (self.for_each_failure == null) self.for_each_failure = .{
+                .source = source,
+                .actual = iterator_ty,
+                .contract_name = "Iterator",
+            };
+            return .invalid;
+        }
 
         const iterator_binding: global_sg.GlobalBindingId = @enumFromInt(@as(u32, @intCast(self.graph.bindings.items.len)));
         try self.graph.bindings.append(self.allocator, .{
@@ -598,7 +605,7 @@ pub const Resolver = struct {
 
         const condition_iterator = try self.appendNode(source, iterator_ty, .{ .binding_use = iterator_binding });
         const condition_self = try self.appendAddress(condition_iterator, iterator_ty, false, source);
-        const condition_result = try self.syntheticCall(module_index, "has_next", condition_self, source, core, generic_functions);
+        const condition_result = try self.syntheticCall(module_index, "has_next", condition_self, source);
         const condition = switch (condition_result) {
             .call => |node| node,
             .deferred => return .deferred,
@@ -610,7 +617,7 @@ pub const Resolver = struct {
 
         const next_iterator = try self.appendNode(source, iterator_ty, .{ .binding_use = iterator_binding });
         const next_self = try self.appendAddress(next_iterator, iterator_ty, true, source);
-        const next_result = try self.syntheticCall(module_index, "next", next_self, source, core, generic_functions);
+        const next_result = try self.syntheticCall(module_index, "next", next_self, source);
         const next_value = switch (next_result) {
             .call => |node| node,
             .deferred => return .deferred,
@@ -682,30 +689,17 @@ pub const Resolver = struct {
         name: []const u8,
         argument: global_sg.GlobalNodeId,
         source: primitives.SourceRef,
-        core: *core_mod.Resolver,
-        generic_functions: *generic_functions_mod.Resolver,
     ) !SyntheticCallResult {
         const input = try self.positionalInput(argument, source);
-        const function = switch (try core.matchUnqualifiedFunctionByName(module_index, name, input)) {
-            .function => |function| function,
-            .deferred => return .deferred,
-            .ambiguous => return .invalid,
-            .no_match => generic_functions.resolveImplicitGenericFunctionByName(module_index, name, input, null) catch |err| switch (err) {
-                error.NoMatchingGenericFunction => return .no_match,
-                error.DeferredGenericFunction => return .deferred,
-                error.AmbiguousGenericFunction => return .invalid,
-                error.ConflictingGenericArgument => return .no_match,
-                else => return err,
-            },
-        };
-        const fields = self.graph.functions.items[@intFromEnum(function)].input;
-        if (!try core.completeCallInputFields(fields, input)) return .deferred;
-        const output = try core.functionOutputType(function);
-        const call = try self.appendNode(source, output, .{ .function_call = .{
-            .callee = function,
-            .input = input,
-        } });
-        return .{ .call = call };
+        const contract_name = if (std.mem.eql(u8, name, "has_next") or std.mem.eql(u8, name, "next")) "Iterator" else if (std.mem.eql(u8, name, "to_iterator")) "Iterable" else if (std.mem.eql(u8, name, "to_ro_pointer_iterator")) "ROPointerIterable" else if (std.mem.eql(u8, name, "to_rw_pointer_iterator")) "RWPointerIterable" else "OwningIterable";
+        const declaration = self.visibleAbstract(module_index, contract_name) orelse return .deferred;
+        const ty = self.graph.node(argument).ty orelse return .deferred;
+        const participant = if (self.graph.semanticType(ty) == .pointer) self.graph.semanticType(ty).pointer.child else ty;
+        const abstracts = self.abstracts orelse return .deferred;
+        var participants = [_]global_sg.GlobalTypeId{participant};
+        const node = try abstracts.callOperationCandidate(module_index, .{ .declaration = declaration, .participants = &participants }, name, input, reach_context.Context.fromGlobal(&.{}, null), source) orelse return .deferred;
+        const value = try self.appendNode(source, node.ty orelse return .deferred, node.content);
+        return .{ .call = value };
     }
 
     fn positionalInput(self: *Resolver, argument: global_sg.GlobalNodeId, source: primitives.SourceRef) !global_sg.GlobalNodeId {

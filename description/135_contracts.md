@@ -216,3 +216,11 @@ not part of the intended final language.
 > supply an inferred type. Selected calls materialize the requirement defaults
 > through the ordinary reached-argument path. Conformance ambiguities remain
 > diagnostics after speculative selection rolls back.
+
+Bundled iteration protocols now use explicit collection/state participants and
+associated `Item`/`IteratorType` elements. `for` calls the selected conversion,
+`has_next` and `next` identities directly; unrelated ordinary functions with
+those names cannot alter loop lowering. Synthetic iterable and iterator owners
+remain in the surrounding lexical scope, including borrowed and consuming
+loops. Generic code can use the same scoped operations without erasing the
+iterator's type or allocating an implicit virtual result.

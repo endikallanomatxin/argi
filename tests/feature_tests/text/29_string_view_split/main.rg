@@ -1,4 +1,4 @@
-expect_segment(.iterator: $&Iterator#(.t: StringView), .expected: StringView) -> () := {
+expect_segment#(.T: Type: Iterator#(T))(.iterator: $&T, .expected: StringView) -> () := {
     if has_next(.self = iterator).ok == false { abort }
     segment ::= next(.self = iterator).value
     if segment != expected { abort }

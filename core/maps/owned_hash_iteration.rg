@@ -8,30 +8,6 @@ OwnedHashMapIterator#(.key: Type, .value: Type, .policy: Type: BorrowedHashPolic
     ._index      : UIntNative
 )
 
-OwnedHashMapIterator#(.key: Type, .value: Type, .policy: Type: BorrowedHashPolicy#(policy, key)) satisfies Iterator#(
-    .t : OwnedHashMapBorrow#(.key: key, .value: value)
-)
-OwnedHashMap#(.key: Type, .value: Type, .policy: Type: BorrowedHashPolicy#(policy, key)) satisfies Iterable#(
-    .t : OwnedHashMapBorrow#(.key: key, .value: value)
-)
-
-to_iterator#(
-        .key    : Type,
-        .value  : Type,
-        .policy : Type: BorrowedHashPolicy#(policy, key)
-    )(
-        .value : &OwnedHashMap#(.key: key, .value: value, .policy: policy)
-    ) -> (
-        .iterator : OwnedHashMapIterator#(.key: key, .value: value, .policy: policy)
-    ) := {
-    generation ::= erase_reference#(.t: _OwnedHashShape)(.base = &value&._shape).reference
-    owner ::= depend_on#(.t: &OwnedHashMap#(.key: key, .value: value, .policy: policy))(
-        .value = value
-        .on    = generation
-    ).result
-    iterator = (._owner = owner, ._generation = generation, ._index = 0)
-}
-
 _owned_hash_next#(
         .key    : Type,
         .value  : Type,
@@ -52,74 +28,95 @@ _owned_hash_next#(
     }
 }
 
-has_next#(
-        .key    : Type,
-        .value  : Type,
-        .policy : Type: BorrowedHashPolicy#(policy, key)
-    )(
-        .self : &OwnedHashMapIterator#(.key: key, .value: value, .policy: policy)
-    ) -> (
-        .ok : Bool
-    ) := {
-    ok = [
-        _owned_hash_next(self&._owner, .start = self&._index).index
-        < capacity(self&._owner).count
-    ]
-}
-
-next#(
-        .key    : Type,
-        .value  : Type,
-        .policy : Type: BorrowedHashPolicy#(policy, key)
-    )(
-        .self : $&OwnedHashMapIterator#(.key: key, .value: value, .policy: policy)
-    ) -> (
-        .value : OwnedHashMapBorrow#(.key: key, .value: value)
-    ) := {
-    index ::= _owned_hash_next(self&._owner, .start = self&._index).index
-
-    if index >= capacity(self&._owner).count { abort }
-    entry ::= _owned_hash_entry(self&._owner, .index = index).entry
-    borrowed_key ::= depend_on#(.t: &key)(.value = &entry&.key, .on = self&._generation).result
-    borrowed_value ::= depend_on#(.t: &value)(.value = &entry&.value, .on = self&._generation).result
-    value = (.key = borrowed_key, .value = borrowed_value)
-    self&._index = index + 1
-}
-
 OwnedHashSetIterator#(.key: Type, .policy: Type: BorrowedHashPolicy#(policy, key)): Type = (
     ._entries : OwnedHashMapIterator#(.key: key, .value: _HashSetValue, .policy: policy)
 )
 
-OwnedHashSetIterator#(.key: Type, .policy: Type: BorrowedHashPolicy#(policy, key)) satisfies Iterator#(
-    .t : &key
+implement#(
+        .key    : Type,
+        .value  : Type,
+        .policy : Type: BorrowedHashPolicy#(policy, key)
+    ) Iterable#(OwnedHashMap#(.key: key, .value: value, .policy: policy)) (
+    .Item: Type = OwnedHashMapBorrow#(.key: key, .value: value)
+    .IteratorType: Type = OwnedHashMapIterator#(.key: key, .value: value, .policy: policy)
+
+    .to_iterator = (
+            .value : &OwnedHashMap#(.key: key, .value: value, .policy: policy)
+        ) -> (
+            .iterator : OwnedHashMapIterator#(.key: key, .value: value, .policy: policy)
+        ) {
+        generation ::= erase_reference#(.t: _OwnedHashShape)(.base = &value&._shape).reference
+        owner ::= depend_on#(.t: &OwnedHashMap#(.key: key, .value: value, .policy: policy))(
+            .value = value
+            .on    = generation
+        ).result
+        iterator = (._owner = owner, ._generation = generation, ._index = 0)
+    }
 )
-OwnedHashSet#(.key: Type, .policy: Type: BorrowedHashPolicy#(policy, key)) satisfies ROPointerIterable#(
-    .t : key
+
+implement#(
+        .key    : Type,
+        .value  : Type,
+        .policy : Type: BorrowedHashPolicy#(policy, key)
+    ) Iterator#(OwnedHashMapIterator#(.key: key, .value: value, .policy: policy)) (
+    .Item: Type = OwnedHashMapBorrow#(.key: key, .value: value)
+
+    .has_next = (
+            .self : &OwnedHashMapIterator#(.key: key, .value: value, .policy: policy)
+        ) -> (
+            .ok : Bool
+        ) {
+        ok = [
+            _owned_hash_next(self&._owner, .start = self&._index).index
+            < capacity(self&._owner).count
+        ]
+    }
+
+    .next = (
+            .self : $&OwnedHashMapIterator#(.key: key, .value: value, .policy: policy)
+        ) -> (
+            .value : OwnedHashMapBorrow#(.key: key, .value: value)
+        ) {
+        index ::= _owned_hash_next(self&._owner, .start = self&._index).index
+
+        if index >= capacity(self&._owner).count { abort }
+        entry ::= _owned_hash_entry(self&._owner, .index = index).entry
+        borrowed_key ::= depend_on#(.t: &key)(.value = &entry&.key, .on = self&._generation).result
+        borrowed_value ::= depend_on#(.t: &value)(.value = &entry&.value, .on = self&._generation).result
+        value = (.key = borrowed_key, .value = borrowed_value)
+        self&._index = index + 1
+    }
 )
 
-to_ro_pointer_iterator#(
+implement#(
         .key    : Type,
         .policy : Type: BorrowedHashPolicy#(policy, key)
-    )(
-        .value : &OwnedHashSet#(.key: key, .policy: policy)
-    ) -> (
-        .iterator : OwnedHashSetIterator#(.key: key, .policy: policy)
-    ) := { iterator = (._entries = to_iterator(.value = &value&._map).iterator) }
+    ) ROPointerIterable#(OwnedHashSet#(.key: key, .policy: policy)) (
+    .Item: Type = key
+    .IteratorType: Type = OwnedHashSetIterator#(.key: key, .policy: policy)
 
-has_next#(
-        .key    : Type,
-        .policy : Type: BorrowedHashPolicy#(policy, key)
-    )(
-        .self : &OwnedHashSetIterator#(.key: key, .policy: policy)
-    ) -> (
-        .ok : Bool
-    ) := { ok = has_next(&self&._entries).ok }
+    .to_ro_pointer_iterator = (
+            .value : &OwnedHashSet#(.key: key, .policy: policy)
+        ) -> (
+            .iterator : OwnedHashSetIterator#(.key: key, .policy: policy)
+        ) { iterator = (._entries = to_iterator(.value = &value&._map).iterator) }
+)
 
-next#(
+implement#(
         .key    : Type,
         .policy : Type: BorrowedHashPolicy#(policy, key)
-    )(
-        .self : $&OwnedHashSetIterator#(.key: key, .policy: policy)
-    ) -> (
-        .value : &key
-    ) := { value = next($&self&._entries).value.key }
+    ) Iterator#(OwnedHashSetIterator#(.key: key, .policy: policy)) (
+    .Item: Type = &key
+
+    .has_next = (
+            .self : &OwnedHashSetIterator#(.key: key, .policy: policy)
+        ) -> (
+            .ok : Bool
+        ) { ok = has_next(&self&._entries).ok }
+
+    .next = (
+            .self : $&OwnedHashSetIterator#(.key: key, .policy: policy)
+        ) -> (
+            .value : &key
+        ) { value = next($&self&._entries).value.key }
+)

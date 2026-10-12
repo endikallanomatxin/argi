@@ -1,4 +1,4 @@
-sum_iterable(.items: &Iterable#(.t: Int32)) -> (.sum: Int32) := {
+sum_iterable#(.T: Type: Iterable#(T))(.items: &T) -> (.sum: Int32) := {
     iterator ::= to_iterator(.value = items)
     sum = 0
 

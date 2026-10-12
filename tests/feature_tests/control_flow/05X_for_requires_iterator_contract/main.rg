@@ -4,12 +4,6 @@ FakeIterator : Type = (
 
 FakeIterable : Type = ()
 
-FakeIterable implements Iterable
-
-to_iterator(.value: &FakeIterable) -> (.iterator: FakeIterator) := {
-    iterator = (.index = 0)
-}
-
 has_next(.self: &FakeIterator) -> (.ok: Bool) := {
     ok = 0 == 1
 }
@@ -25,3 +19,12 @@ main () -> (.status_code: Int32) := {
     }
     status_code = 0
 }
+
+implement Iterable#(FakeIterable)(
+.Item: Type = Int32
+.IteratorType: Type = FakeIterator
+
+.to_iterator = (.value: &FakeIterable) -> (.iterator: FakeIterator) {
+    iterator = (.index = 0)
+}
+)

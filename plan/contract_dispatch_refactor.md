@@ -18,7 +18,11 @@ incomparable maximal candidates are errors; source/import ordering has no priori
 
 ## Implementation order and removal obligations
 
-1. Continue migration with iteration and remaining bundled operations. Allocator,
+1. Continue migration with the remaining bundled operations. Iterator, Iterable,
+   ROPointerIterable, RWPointerIterable and OwningIterable now select scoped
+   implementations, including concrete/parameterized for lowering and owning
+   iterator cleanup. Manual generic iteration and mutable-to-readonly operation
+   input adaptation share the same operation resolver. Allocator,
    Deallocator, ErrorTracer, Reader and Writer use selected scoped evidence
    throughout their bundled adapters and callers. Preserve fallible
    virtual capability inputs, storage acquisition proofs and cleanup. Unary receiver
