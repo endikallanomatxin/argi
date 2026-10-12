@@ -1014,3 +1014,33 @@ test "scoped implementation evidence retains call and source identities" {
     result.graph.rollback(saved);
     try std.testing.expectEqual(@as(usize, 2), result.graph.contract_operation_bindings.items.len);
 }
+
+test "generic contract implementations preserve participant and associated binders" {
+    const allocator = std.testing.allocator;
+    const source =
+        \\Copyable#(.Value: Type): Contract = (
+        \\    .Result: Type
+        \\    .copy: (.value: Value) -> (.result: Result)
+        \\)
+        \\implement#(.T: Type) Copyable#(T) (
+        \\    .Result: Type = T
+        \\    .copy = (.value: T) -> (.result: Result) { result = value }
+        \\)
+    ;
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    var module = try @import("semantizer.zig").build(allocator, "generic", &.{.{ .path = "generic/main.rg", .tree = &tree, .source = source }});
+    defer module.graph.deinit(allocator);
+    const storage = &module.graph.semantic.parameterized_storage;
+    try std.testing.expectEqual(@as(usize, 1), storage.contract_conformances.items.len);
+    const conformance = storage.contract_conformances.items[0];
+    try std.testing.expectEqual(@as(u32, 1), conformance.parameters.len);
+    const participant = storage.ir.generic_arguments.items[conformance.participants.start].value.type;
+    const associated = storage.ir.generic_arguments.items[conformance.associated_arguments.start].value.type;
+    try std.testing.expectEqual(conformance.parameters.start, @intFromEnum(storage.ir.types.items[@intFromEnum(participant)].parameter));
+    try std.testing.expectEqual(conformance.parameters.start, @intFromEnum(storage.ir.types.items[@intFromEnum(associated)].parameter));
+    const relation = tree.contractConformance(tree.roots[1]).?;
+    const members = tree.structTypeLiteral(relation.implementation_members.?).?;
+    const body = tree.functionDeclaration(tree.structTypeField(members.fields[1]).?.default_value.?).?;
+    try std.testing.expectEqual(@as(usize, 2), body.generic_params.len);
+}

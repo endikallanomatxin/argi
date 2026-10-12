@@ -648,7 +648,7 @@ pub const Syntaxer = struct {
         return self.addNode(.abstract_function_requirement, name.token, .{ .extra = extra });
     }
 
-    fn parseImplementationMembers(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
+    fn parseImplementationMembers(self: *Syntaxer, implementation_parameters: syn.NodeRange) SyntaxerError!syn.NodeIndex {
         if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
         const open: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
         self.advanceOne();
@@ -700,6 +700,7 @@ pub const Syntaxer = struct {
         }
         self.advanceOne();
         const members_end = self.scratch.items.len;
+        try self.scratch.appendSlice(self.allocator, self.file.nodeRange(implementation_parameters));
         for (top..members_end) |index| {
             const member = self.file.structTypeField(self.scratch.items[index]).?;
             if (member.type_node != null) try self.scratch.append(self.allocator, self.scratch.items[index]);
@@ -2187,7 +2188,7 @@ pub const Syntaxer = struct {
         if (std.mem.eql(u8, name.text, "implement")) {
             if (is_once) return SyntaxerError.ExpectedDeclarationOrAssignment;
             const contract_type = try self.parseType() orelse return SyntaxerError.ExpectedConformanceType;
-            const members = try self.parseImplementationMembers();
+            const members = try self.parseImplementationMembers(generic_params);
             const extra = try self.addExtra(syn.GenericValueExtra{
                 .generic_params_start = generic_params.start,
                 .generic_params_end = generic_params.end,

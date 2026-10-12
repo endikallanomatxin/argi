@@ -1899,6 +1899,11 @@ pub const Resolver = struct {
                     self.participant_conformance_failure = failure;
                     return;
                 }
+                if (conformance.parameters.len != 0) {
+                    failure.reason = "generic implementation selection is not supported yet";
+                    self.participant_conformance_failure = failure;
+                    return;
+                }
                 const storage = &self.modules[located.module_index].semantic.parameterized_storage;
                 var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
                 defer bindings.deinit(self.allocator);

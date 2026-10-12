@@ -18,10 +18,9 @@ incomparable maximal candidates are errors; source/import ordering has no priori
 
 ## Implementation order and removal obligations
 
-1. Use the shared parameterized conformance argument representation to lower
-   implementation binders and
-   preserve their relationships in participant patterns, associated definitions
-   and inline function templates. Match candidates from participants, then rank
+1. Match the frontend's implementation parameter ranges and participant patterns
+   against concrete participants. Preserve parameter bindings while resolving
+   associated definitions and inline function templates, then rank
    patterns by strict structural subsumption, including repeated-variable
    equalities. Reject equivalent and incomparable maximal patterns.
 2. Instantiate selected generic evidence lazily and retain it in the existing

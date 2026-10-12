@@ -103,8 +103,9 @@ const Context = struct {
 
     fn lowerConformance(self: *Context, node: syn.NodeIndex, relation: syn.ContractConformance) !void {
         self.params.clearRetainingCapacity();
-        if (hasParams(relation.generic_params, relation.generic_params_struct))
+        if (relation.implementation_members == null and hasParams(relation.generic_params, relation.generic_params_struct))
             try self.conformanceError(node, "generic participant conformances are not supported yet");
+        const parameters = try self.lowerParams(relation.generic_params, relation.generic_params_struct, null);
         const syntax_type = self.tree.syntaxType(relation.contract_type) orelse return error.ExpectedContractType;
         const base_node = if (syntax_type == .generic) syntax_type.generic.base else relation.contract_type;
         const base = self.tree.syntaxType(base_node) orelse return error.ExpectedContractType;
@@ -187,6 +188,7 @@ const Context = struct {
             break :blk try self.publishConformanceArguments(arguments.items);
         } else try self.lowerConformanceArguments(relation.associated_arguments);
         try self.graph.semantic.parameterized_storage.contract_conformances.append(self.allocator, .{
+            .parameters = parameters,
             .explicit_operations = relation.implementation_members != null,
             .operations = operations,
             .contract_ref = reference,
@@ -228,6 +230,7 @@ const Context = struct {
         // Closed definitions retain unresolved module projections until all
         // conformance evidence is published. Generic patterns use the same IR
         // pool, with parameter leaves instead of concrete module type leaves.
+        if (self.params.items.len != 0) return self.lowerParameterizedType(node);
         const pool = &self.graph.semantic.parameterized_storage.ir.types;
         const ty = try self.lowerModuleType(node);
         const index: u32 = @intCast(pool.items.len);

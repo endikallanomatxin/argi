@@ -118,6 +118,7 @@ pub const ContractOperation = struct {
     source: primitives.SourceRef,
 };
 pub const ContractConformance = struct {
+    parameters: primitives.Range(ComptimeParameterId) = .{ .start = 0, .len = 0 },
     explicit_operations: bool = false,
     operations: primitives.Range(ContractOperationId) = .{ .start = 0, .len = 0 },
     contract_ref: DeclarationRef,

@@ -146,8 +146,11 @@ Type and Int elements are bound to inline bodies; signature, visibility, extensi
 ownership and declared safety guarantees are checked, including unused operations.
 Frontend snapshots preserve these declarations and operation identities.
 
-Generic implementation patterns, structural specialization and unqualified
-operation inference remain pending. Standard construction, conversion, destruction
+The frontend preserves `implement#(...)` binders in participant patterns,
+associated definitions and inline body templates. Global generic implementation
+selection, structural specialization and unqualified operation inference remain
+pending; generic implementations currently receive an explicit unsupported
+selection diagnostic. Standard construction, conversion, destruction
 and operator migration, composition and virtual evidence also remain pending.
 The compiler still contains transitional global overload resolution and earlier
 conformance syntax. Removal obligations are tracked in
