@@ -431,6 +431,7 @@ const Context = struct {
             .pointer => |pointer| try self.collectHiddenTypeParameters(pointer.child),
             .nullable, .inferred_errable => |child| try self.collectHiddenTypeParameters(child),
             .array => |array| try self.collectHiddenTypeParameters(array.element),
+            .projection => |value| try self.collectHiddenTypeParameters(value.base),
             .struct_literal => |literal| for (literal.fields) |field_node| {
                 const field = self.tree.structTypeField(field_node) orelse continue;
                 if (field.type_node) |child| try self.collectHiddenTypeParameters(child);

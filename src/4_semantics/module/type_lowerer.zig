@@ -57,6 +57,17 @@ pub const Context = struct {
             .struct_literal => |literal| self.lowerStructural(node, literal),
             .choice_literal => |literal| self.lowerChoice(node, literal),
             .generic => |generic| self.lowerGeneric(node, generic),
+            .projection => |projection| blk: {
+                const base = try self.lower(projection.base);
+                const external = try self.writer.addExternalRef(.{
+                    .kind = .type,
+                    .module_path = null,
+                    .name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, projection.member_token)),
+                    .projection_base = base,
+                    .source = self.sourceRef(node),
+                });
+                break :blk try self.writer.addExternalType(external);
+            },
         };
     }
 

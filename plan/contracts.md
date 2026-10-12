@@ -2,8 +2,8 @@
 
 Contracts select evidence for a participant tuple. Associated elements belong to
 that selected evidence, while operations remain ordinary dispatch families.
-The current abstract resolver instead keys evidence by one concrete type and an
-abstract declaration. Its generic arguments are associated outputs, not independent
+The unary compatibility resolver still keys evidence by one concrete type and
+a contract declaration. Its generic arguments are associated outputs, not independent
 participants. Do not reinterpret those arguments as participants.
 
 ## Migration boundary
@@ -38,12 +38,25 @@ Initially accept concrete conformance declarations. Reject generic conformance
 binders, unary use of explicit participant contracts, Self requirements,
 composition and erased participant evidence until their semantics are modeled.
 
+## Associated type projection implementation
+
+`Product#(A, B).Result` parses as a type projection. Parameterized IR preserves
+generic projections until instantiation. Global semantizing prepares canonical
+tuple evidence before materializing generic records or proving operation
+signatures. It preserves nominal identity, rejects missing tuples and value
+members in type positions, detects unresolved cycles, and rechecks tuple
+uniqueness after resolving participant projections. The frontend cache stores
+both forms with an updated wire version.
+This affects syntax and semantics; codegen receives an ordinary resolved type.
+
 ## Remaining work
 
 - Enforce unary body-declared composition. Included contract identities are now
   retained, but their requirements are not inherited yet. Preserve legacy
   explicit contract-to-contract relations while implementing those proofs.
-- Preserve symbolic associated projections until the tuple is concrete.
+- Extend implemented symbolic associated type projections to compile-time values.
+- Add tuple constraints to generic compile-time parameter checking, so declarations
+  can use contract guarantees before concrete instantiation.
 - Select applicable conformances using structural pattern specificity; diagnose
   incomparable maximal candidates. Do not infer participants from associated
   results or attempt arbitrary constraint implication.

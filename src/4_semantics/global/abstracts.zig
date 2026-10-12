@@ -1,5 +1,6 @@
 const type_arguments = @import("../module/type_arguments.zig");
 const std = @import("std");
+const module_views = @import("../module/views.zig");
 const module_sg = @import("../module/graph.zig");
 const module_entities = @import("../module/entities.zig");
 const parameterized_storage = @import("../module/parameterized/storage.zig");
@@ -126,6 +127,7 @@ pub const ImplementationConflict = struct {
 };
 
 pub const ParticipantConformanceFailure = struct {
+    is_projection: bool = false,
     source: primitives.SourceRef,
     contract_name: []const u8,
     reason: []const u8,
@@ -180,6 +182,7 @@ pub const Resolver = struct {
     pub const CacheCheckpoint = struct {
         positive_len: usize,
         negative_len: usize,
+        participant_failure: ?ParticipantConformanceFailure,
     };
     const ConstraintKey = struct {
         module_index: u32,
@@ -233,10 +236,12 @@ pub const Resolver = struct {
         return .{
             .positive_len = self.known_implementation_order.items.len,
             .negative_len = self.known_nonimplementation_order.items.len,
+            .participant_failure = self.participant_conformance_failure,
         };
     }
 
     pub fn rollbackImplementationCaches(self: *Resolver, saved: CacheCheckpoint) void {
+        self.participant_conformance_failure = saved.participant_failure;
         while (self.known_implementation_order.items.len > saved.positive_len) {
             const index = self.known_implementation_order.items.len - 1;
             const key = self.known_implementation_order.items[index];
@@ -1870,7 +1875,7 @@ pub const Resolver = struct {
         return null;
     }
 
-    pub fn validateParticipantConformances(self: *Resolver) !void {
+    pub fn prepareParticipantConformances(self: *Resolver) !void {
         for (self.modules, 0..) |*module, module_index| {
             for (module.semantic.parameterized_storage.contract_conformances.items) |conformance| {
                 const contract_name = module.text(switch (conformance.contract_ref) {
@@ -1908,18 +1913,6 @@ pub const Resolver = struct {
                     self.participant_conformance_failure = failure;
                     return;
                 };
-                inline for (.{ located.definition.participants, located.definition.parameters }) |parameters| {
-                    for (parameters.start..parameters.start + parameters.len) |raw| {
-                        const parameter = storage.comptime_parameters.items[raw];
-                        if (parameter.constraint) |constraint| {
-                            if (!try self.inferConstraintBindings(located.module_index, constraint, bindings.types[raw].?, &bindings)) {
-                                failure.reason = "a participant or associated type does not satisfy its declared bound";
-                                self.participant_conformance_failure = failure;
-                                return;
-                            }
-                        }
-                    }
-                }
                 for (self.graph.contract_conformances.items) |previous| {
                     if (previous.declaration != declaration) continue;
                     var equal = true;
@@ -1937,42 +1930,229 @@ pub const Resolver = struct {
                         return;
                     }
                 }
-                var operations: std.ArrayList(global_sg.GlobalFunctionId) = .empty;
-                defer operations.deinit(self.allocator);
-                const first = bindings.types[located.definition.participants.start].?;
-                for (storage.abstract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len]) |requirement| {
-                    const name = self.modules[located.module_index].text(requirement.name);
-                    const input = try self.generics.instantiateParameterizedType(located.module_index, requirement.input, &bindings, null);
-                    const output = try self.generics.instantiateParameterizedType(located.module_index, requirement.output, &bindings, null);
-                    const selected = self.selectConcreteMethodVisible(name, input, output, module_index);
-                    if (selected != .function) {
-                        failure.operation = name;
-                        failure.input = input;
-                        failure.output = output;
-                        failure.reason = switch (selected) {
-                            .missing => "missing operation",
-                            .ambiguous => "ambiguous operation",
-                            .incompatible_output => "operation returns an incompatible associated result",
-                            .function => unreachable,
-                        };
-                        self.participant_conformance_failure = failure;
-                        return;
-                    }
-                    try self.recordStaticSafetyContract(located, requirement, &bindings, first, selected.function, output, failure.source);
-                    try operations.append(self.allocator, selected.function);
-                }
-                // Publish evidence only after every required signature has been selected.
+                // Make canonical associations available before checking operation signatures.
+                // This provisional evidence cannot escape a failed compilation.
                 const canonical_participants = try self.publishConformanceArguments(located, located.definition.participants, &bindings);
                 const canonical_associated = try self.publishConformanceArguments(located, located.definition.parameters, &bindings);
-                const operation_start: u32 = @intCast(self.graph.function_refs.items.len);
-                try self.graph.function_refs.appendSlice(self.allocator, operations.items);
                 try self.graph.contract_conformances.append(self.allocator, .{
+                    .context = @enumFromInt(@as(u32, @intCast(module_index))),
                     .declaration = declaration,
                     .participants = canonical_participants,
                     .associated_arguments = canonical_associated,
-                    .operations = .{ .start = operation_start, .len = @intCast(operations.items.len) },
                     .source = failure.source,
                 });
+            }
+        }
+    }
+
+    pub fn validateParticipantConformances(self: *Resolver) !void {
+        for (0..self.graph.contract_conformances.items.len) |index| {
+            const conformance = self.graph.contract_conformances.items[index];
+            const module_index: usize = @intFromEnum(conformance.context);
+            const located = self.findAbstractDefinition(conformance.declaration) orelse return error.InvalidContractDeclaration;
+            const storage = &self.modules[located.module_index].semantic.parameterized_storage;
+            var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
+            defer bindings.deinit(self.allocator);
+            try self.generics.bindGlobalArguments(located.module_index, located.definition.participants, conformance.participants, &bindings);
+            try self.generics.bindGlobalArguments(located.module_index, located.definition.parameters, conformance.associated_arguments, &bindings);
+            var failure: ParticipantConformanceFailure = .{
+                .source = conformance.source,
+                .contract_name = self.modules[located.module_index].text(self.modules[located.module_index].declarations.items[@intFromEnum(located.definition.declaration)].name),
+                .reason = "",
+            };
+            inline for (.{ located.definition.participants, located.definition.parameters }) |parameters| {
+                for (parameters.start..parameters.start + parameters.len) |raw| {
+                    const parameter = storage.comptime_parameters.items[raw];
+                    if (parameter.constraint) |constraint| {
+                        if (!try self.inferConstraintBindings(located.module_index, constraint, bindings.types[raw].?, &bindings)) {
+                            failure.reason = "a participant or associated type does not satisfy its declared bound";
+                            self.participant_conformance_failure = failure;
+                            return;
+                        }
+                    }
+                }
+            }
+            // Projection resolution can make initially distinct holes identical.
+            // Recheck uniqueness before evidence becomes an accepted proof.
+            for (self.graph.contract_conformances.items[0..index]) |previous| {
+                if (previous.declaration != conformance.declaration) continue;
+                var equal = true;
+                for (0..conformance.participants.len) |position| {
+                    const actual = self.graph.generic_arguments.items[conformance.participants.start + position].value.type;
+                    const old = self.graph.generic_arguments.items[previous.participants.start + position].value.type;
+                    if (!global_types.equal(self.graph, actual, old)) {
+                        equal = false;
+                        break;
+                    }
+                }
+                if (equal) {
+                    failure.reason = "ambiguous conformances for the same participant tuple";
+                    self.participant_conformance_failure = failure;
+                    return;
+                }
+            }
+            var operations: std.ArrayList(global_sg.GlobalFunctionId) = .empty;
+            defer operations.deinit(self.allocator);
+            const first = bindings.types[located.definition.participants.start].?;
+            for (storage.abstract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len]) |requirement| {
+                const name = self.modules[located.module_index].text(requirement.name);
+                const input = try self.generics.instantiateParameterizedType(located.module_index, requirement.input, &bindings, null);
+                const output = try self.generics.instantiateParameterizedType(located.module_index, requirement.output, &bindings, null);
+                const selected = self.selectConcreteMethodVisible(name, input, output, module_index);
+                if (selected != .function) {
+                    failure.operation = name;
+                    failure.input = input;
+                    failure.output = output;
+                    failure.reason = switch (selected) {
+                        .missing => "missing operation",
+                        .ambiguous => "ambiguous operation",
+                        .incompatible_output => "operation returns an incompatible associated result",
+                        .function => unreachable,
+                    };
+                    self.participant_conformance_failure = failure;
+                    return;
+                }
+                try self.recordStaticSafetyContract(located, requirement, &bindings, first, selected.function, output, failure.source);
+                try operations.append(self.allocator, selected.function);
+            }
+            const operation_start: u32 = @intCast(self.graph.function_refs.items.len);
+            try self.graph.function_refs.appendSlice(self.allocator, operations.items);
+            self.graph.contract_conformances.items[index].operations = .{ .start = operation_start, .len = @intCast(operations.items.len) };
+        }
+    }
+
+    pub fn resolveAssociatedType(context: *anyopaque, base: global_sg.GlobalTypeId, member: []const u8, source: primitives.SourceRef) anyerror!global_sg.GlobalTypeId {
+        const self: *Resolver = @ptrCast(@alignCast(context));
+        if (self.graph.isTypeUnresolved(base)) return error.UnresolvedAssociatedType;
+        const generic = switch (self.graph.types.items[@intFromEnum(base)]) {
+            .generic => |value| value,
+            else => return self.projectionError(source, "associated type projection requires a participant contract", member),
+        };
+        const located = self.findAbstractDefinition(generic.base) orelse
+            return self.projectionError(source, "associated type projection requires a participant contract", member);
+        if (located.definition.participants.len == 0)
+            return self.projectionError(source, "associated type projection requires explicit contract participants", member);
+        const storage = &self.modules[located.module_index].semantic.parameterized_storage;
+        var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
+        defer bindings.deinit(self.allocator);
+        self.generics.bindGlobalArguments(located.module_index, located.definition.participants, generic.arguments, &bindings) catch |err| {
+            return self.projectionError(source, conformanceArgumentFailure(err) orelse return err, member);
+        };
+        for (located.definition.participants.start..located.definition.participants.start + located.definition.participants.len) |raw| {
+            if (!self.typeSelectionReady(bindings.types[raw].?, 0)) return error.UnresolvedAssociatedType;
+        }
+        var position: ?usize = null;
+        for (0..located.definition.parameters.len) |i| {
+            const parameter = storage.comptime_parameters.items[located.definition.parameters.start + i];
+            if (std.mem.eql(u8, self.modules[located.module_index].text(parameter.name), member)) {
+                if (parameter.kind != .type) return self.projectionError(source, "associated element is not a type", member);
+                position = i;
+                break;
+            }
+        }
+        const associated_index = position orelse return self.projectionError(source, "unknown associated type", member);
+        var deferred = false;
+        for (self.graph.contract_conformances.items) |conformance| {
+            if (conformance.declaration != generic.base) continue;
+            var equal = true;
+            for (0..located.definition.participants.len) |i| {
+                const actual = bindings.types[located.definition.participants.start + i].?;
+                const expected = self.graph.generic_arguments.items[conformance.participants.start + i].value.type;
+                if (!self.typeSelectionReady(expected, 0)) {
+                    deferred = true;
+                    equal = false;
+                    break;
+                }
+                if (!global_types.equal(self.graph, actual, expected)) {
+                    equal = false;
+                    break;
+                }
+            }
+            if (!equal) continue;
+            const result = self.graph.generic_arguments.items[conformance.associated_arguments.start + associated_index].value.type;
+            if (!self.typeSelectionReady(result, 0)) return error.UnresolvedAssociatedType;
+            return result;
+        }
+        if (deferred) return error.UnresolvedAssociatedType;
+        return self.projectionError(source, "no conformance for the projected participant tuple", member);
+    }
+
+    fn typeSelectionReady(self: *const Resolver, ty: global_sg.GlobalTypeId, depth: usize) bool {
+        if (depth > 128 or self.graph.isTypeUnresolved(ty)) return false;
+        return switch (self.graph.types.items[@intFromEnum(ty)]) {
+            .pointer => |value| self.typeSelectionReady(value.child, depth + 1),
+            .array => |value| self.typeSelectionReady(value.element, depth + 1),
+            .nullable, .inferred_errable, .virtual => |child| self.typeSelectionReady(child, depth + 1),
+            .generic => |value| blk: {
+                for (self.graph.generic_arguments.items[value.arguments.start..][0..value.arguments.len]) |argument| {
+                    if (argument.value == .type and !self.typeSelectionReady(argument.value.type, depth + 1)) break :blk false;
+                }
+                break :blk true;
+            },
+            .structural => |value| blk: {
+                for (self.graph.fields.items[value.fields.start..][0..value.fields.len]) |field|
+                    if (!self.typeSelectionReady(field.ty, depth + 1)) break :blk false;
+                break :blk true;
+            },
+            .structural_choice => |value| blk: {
+                for (self.graph.variants.items[value.variants.start..][0..value.variants.len]) |variant|
+                    if (variant.payload_type) |child| if (!self.typeSelectionReady(child, depth + 1)) break :blk false;
+                break :blk true;
+            },
+            else => true,
+        };
+    }
+
+    fn projectionError(self: *Resolver, source: primitives.SourceRef, reason: []const u8, member: []const u8) error{InvalidAssociatedTypeProjection} {
+        self.participant_conformance_failure = .{ .is_projection = true, .source = source, .contract_name = member, .reason = reason };
+        return error.InvalidAssociatedTypeProjection;
+    }
+
+    pub fn resolveAssociatedTypes(self: *Resolver) !void {
+        var remaining: usize = 0;
+        while (true) {
+            var changed = false;
+            remaining = 0;
+            for (self.modules, 0..) |*module, module_index| {
+                const o = self.offsets[module_index];
+                for (0..module_views.typeCount(module)) |raw| {
+                    const local: module_entities.ModuleTypeId = @enumFromInt(@as(u32, @intCast(raw)));
+                    const value = try module_views.typeView(module, local);
+                    const external = switch (value) {
+                        .external => |id| id,
+                        else => continue,
+                    };
+                    const reference = module.semantic.external_refs.items[@intFromEnum(external)];
+                    const base = reference.projection_base orelse continue;
+                    const destination = globalizer.globalType(o, local);
+                    if (!self.graph.isTypeUnresolved(destination)) continue;
+                    const result = resolveAssociatedType(self, globalizer.globalType(o, base), module.text(reference.name), self.sourceFor(module_index, reference.source)) catch |err| switch (err) {
+                        error.UnresolvedAssociatedType => {
+                            remaining += 1;
+                            continue;
+                        },
+                        else => return err,
+                    };
+                    try self.graph.resolveType(destination, self.graph.types.items[@intFromEnum(result)]);
+                    changed = true;
+                }
+            }
+            if (remaining == 0) return;
+            if (!changed) {
+                for (self.modules, 0..) |*module, module_index| {
+                    for (0..module_views.typeCount(module)) |raw| {
+                        const local: module_entities.ModuleTypeId = @enumFromInt(@as(u32, @intCast(raw)));
+                        const value = try module_views.typeView(module, local);
+                        const external = switch (value) {
+                            .external => |id| id,
+                            else => continue,
+                        };
+                        const reference = module.semantic.external_refs.items[@intFromEnum(external)];
+                        if (reference.projection_base == null or !self.graph.isTypeUnresolved(globalizer.globalType(self.offsets[module_index], local))) continue;
+                        return self.projectionError(self.sourceFor(module_index, reference.source), "cyclic or unresolved associated type projection", module.text(reference.name));
+                    }
+                }
+                unreachable;
             }
         }
     }

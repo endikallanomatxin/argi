@@ -410,7 +410,7 @@ test "frontend module cache separates platform branches by compilation target" {
     try std.testing.expectEqualStrings(windows.ir, reused.ir);
 }
 
-test "frontend module cache preserves participant tuples and associated arguments" {
+test "frontend module cache preserves associated projections and participant tuples" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     const root = try @import("../test_support.zig").tmpRootPath(&tmp);
@@ -421,7 +421,14 @@ test "frontend module cache preserves participant tuples and associated argument
         \\)
         \\satisfies Product#(Int32, Int64) = (.Result: Int32)
         \\multiply(.left: Int32, .right: Int64) -> (.value: Int32) := { value = 0 }
-        \\main() -> (.status_code: Int32) := { status_code = multiply(0, 7).value }
+        \\projected() -> (.value: Product#(Int32, Int64).Result) := { value = 0 }
+        \\Box#(.T: Type): Type = (.value: Product#(T, Int64).Result)
+        \\read_box(.box: &Box#(Int32)) -> (.value: Int32) := { value = box&.value }
+        \\forward#(.A: Type, .B: Type)(.left: A, .right: B) -> (.value: Product#(A, B).Result) := { value = multiply(left, right).value }
+        \\main() -> (.status_code: Int32) := {
+        \\    box ::= Box#(Int32)(0)
+        \\    status_code = forward#(Int32, Int64)(read_box(&box).value, 7).value
+        \\}
         \\
     }};
     {

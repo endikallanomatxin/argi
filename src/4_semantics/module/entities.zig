@@ -163,6 +163,7 @@ pub const ExternalRef = struct {
     module_path: ?primitives.StringRange,
     name: primitives.StringRange,
     generic_arguments: ?GenericArgRange = null,
+    projection_base: ?ModuleTypeId = null,
     source: primitives.SourceRef,
 };
 

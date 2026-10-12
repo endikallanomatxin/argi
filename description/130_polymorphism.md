@@ -32,5 +32,6 @@ heterogeneous values behind one interface, at the cost of indirect calls.
 > Contracts support concrete participant tuples with associated types and
 > constants, checked operations and static safety proofs. Legacy
 > [abstract types](133_abstract_types.md) retain unary generic and virtual behavior
-> during migration. Generic tuple specialization, associated projections and
-> joint virtual evidence are pending.
+> during migration. Associated type projections use `Contract#(A, B).Result`.
+> Generic tuple specialization, associated constant projections and joint virtual
+> evidence are pending.

@@ -106,5 +106,6 @@ fn evalInt(tree: *const syn.FileSyntaxTree, source: []const u8, node: syn.NodeIn
 
 test "generic call arguments live on semantic external refs" {
     // Both the qualifier and generic argument range carry optional presence.
-    try std.testing.expect(@sizeOf(entities.ExternalRef) <= 44);
+    // Associated projections additionally retain their module-level base type.
+    try std.testing.expect(@sizeOf(entities.ExternalRef) <= 52);
 }

@@ -517,6 +517,7 @@ fn lowerType(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, tree: *c
             const child = try lowerType(allocator, graph, tree, source, module_file_index, child_node) orelse break :blk null;
             break :blk try appendType(allocator, graph, .{ .inferred_errable = child });
         },
+        .projection => null,
         .struct_literal => |literal| try lowerStructuralType(allocator, graph, tree, source, module_file_index, literal),
         .choice_literal => |literal| try lowerStructuralChoiceType(allocator, graph, tree, source, module_file_index, literal),
         .generic => |generic| try lowerGenericType(allocator, graph, tree, source, module_file_index, generic),

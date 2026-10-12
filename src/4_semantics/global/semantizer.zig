@@ -362,6 +362,8 @@ pub fn semantizeWithOptions(
         .profile_implementation_scans = options.profile_io != null,
         .profile_io = options.profile_io,
     };
+    generics.projection_context = &abstracts;
+    generics.projection_resolver = abstract_mod.Resolver.resolveAssociatedType;
     constructors.abstracts = &abstracts;
     control.generic_functions = &generic_functions;
     control.abstracts = &abstracts;
@@ -407,8 +409,17 @@ pub fn semantizeWithOptions(
 
     try core.resolveExternalTypes();
     try generics.resolveExternalTypes();
+    // Generic record fields can contain associated projections. Publish tuple
+    // associations before materializing either their records or operation types.
+    try abstracts.prepareParticipantConformances();
+    try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, abstracts.participant_conformance_failure);
+    abstracts.resolveAssociatedTypes() catch |err| {
+        try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, abstracts.participant_conformance_failure);
+        return err;
+    };
     _ = generics.materializeKnownTypes() catch |err| {
         try reportGenericArgumentFailure(&relocation.graph, options.diagnostics, &generics);
+        try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, abstracts.participant_conformance_failure);
         return err;
     };
     _ = try control.materializeSugarTypes();
@@ -560,7 +571,7 @@ pub fn semantizeWithOptions(
             changed = false;
             const pending_start = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
             for (pending_phases) |phase| {
-                if (try resolvePendingPhase(
+                if (resolvePendingPhase(
                     &core,
                     &expressions,
                     &dispatch,
@@ -579,7 +590,10 @@ pub fn semantizeWithOptions(
                     if (options.profile_io != null) &pending_resolution_stats else null,
                     options.profile_io,
                     options.diagnostics,
-                )) changed = true;
+                ) catch |err| {
+                    try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, abstracts.participant_conformance_failure);
+                    return err;
+                }) changed = true;
             }
             if (options.profile_io) |io| profile_pending_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - pending_start;
 
@@ -604,6 +618,7 @@ pub fn semantizeWithOptions(
             sweep_start = profileTimestamp(options.profile_io);
             if (generics.materializeKnownTypes() catch |err| {
                 try reportGenericArgumentFailure(&relocation.graph, options.diagnostics, &generics);
+                try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, abstracts.participant_conformance_failure);
                 return err;
             }) changed = true;
             profileAccumulate(options.profile_io, sweep_start, &profile_known_generic_types_ns);
@@ -1727,7 +1742,7 @@ fn resolveTypeOperation(
         else => unreachable,
     };
     const reference = module.semantic.external_refs.items[@intFromEnum(value.external)];
-    const result = if (reference.generic_arguments != null)
+    const result = if (reference.generic_arguments != null or reference.projection_base != null)
         try generics.tryResolve(module_index, module, o, operation)
     else
         try core.tryResolve(module_index, module, o, operation);
@@ -3429,7 +3444,11 @@ fn reportParticipantConformanceFailure(allocator: std.mem.Allocator, graph: *con
     if (diagnostics) |bag| {
         var message = std.array_list.Managed(u8).init(allocator);
         defer message.deinit();
-        try appendFormatted(&message, allocator, "invalid conformance for contract '{s}': {s}", .{ failure.contract_name, failure.reason });
+        if (failure.is_projection) {
+            try appendFormatted(&message, allocator, "invalid associated type projection '{s}': {s}", .{ failure.contract_name, failure.reason });
+        } else {
+            try appendFormatted(&message, allocator, "invalid conformance for contract '{s}': {s}", .{ failure.contract_name, failure.reason });
+        }
         if (failure.operation) |operation| {
             try appendFormatted(&message, allocator, "\n  required operation: {s} ", .{operation});
             try appendFieldShape(&message, graph, global_types.fields(graph, failure.input.?).?);

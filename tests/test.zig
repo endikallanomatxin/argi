@@ -11798,3 +11798,93 @@ test "feature_tests/contracts/46X_tuple_default" {
 test "feature_tests/contracts/47X_tuple_result_identity" {
     try buildExpectFailWithoutNoise("tests/feature_tests/contracts/47X_tuple_result_identity", "operation returns an incompatible associated result", "panic");
 }
+
+test "feature_tests/contracts/48_associated_type_projection" {
+    const test_path = "tests/feature_tests/contracts/48_associated_type_projection";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/contracts/49_generic_associated_projection" {
+    const test_path = "tests/feature_tests/contracts/49_generic_associated_projection";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/contracts/52_projection_named_participants" {
+    const test_path = "tests/feature_tests/contracts/52_projection_named_participants";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/contracts/54_projection_nominal_identity" {
+    const test_path = "tests/feature_tests/contracts/54_projection_nominal_identity";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/contracts/50X_projection_missing_tuple" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/50X_projection_missing_tuple", "no conformance for the projected participant tuple", "panic");
+}
+
+test "feature_tests/contracts/51X_projection_unknown_member" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/51X_projection_unknown_member", "unknown associated type", "panic");
+}
+
+test "feature_tests/contracts/53X_projection_wrong_argument" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/53X_projection_wrong_argument", "unknown argument name", "panic");
+}
+
+test "feature_tests/contracts/55X_projection_value_member" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/55X_projection_value_member", "associated element is not a type", "panic");
+}
+
+test "feature_tests/contracts/57_projection_dependency" {
+    const test_path = "tests/feature_tests/contracts/57_projection_dependency";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/contracts/58_projection_imported_identity" {
+    const test_path = "tests/feature_tests/contracts/58_projection_imported_identity";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/contracts/56X_projection_cycle" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/56X_projection_cycle", "cyclic or unresolved associated type projection", "panic");
+}
+
+test "feature_tests/contracts/59X_generic_projection_missing_tuple" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/59X_generic_projection_missing_tuple", "no conformance for the projected participant tuple", "panic");
+}
+
+test "feature_tests/contracts/60X_projection_nested_cycle" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/60X_projection_nested_cycle", "cyclic or unresolved associated type projection", "panic");
+}
+
+test "feature_tests/contracts/61X_projection_duplicate_after_resolution" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/61X_projection_duplicate_after_resolution", "ambiguous conformances for the same participant tuple", "panic");
+}
+
+test "feature_tests/contracts/62_projection_participant_dependency" {
+    const test_path = "tests/feature_tests/contracts/62_projection_participant_dependency";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/contracts/63_projection_generic_record" {
+    const test_path = "tests/feature_tests/contracts/63_projection_generic_record";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/contracts/64_projection_borrow" {
+    const test_path = "tests/feature_tests/contracts/64_projection_borrow";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/contracts/65X_projection_borrow_escape" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/65X_projection_borrow_escape", "function output cannot depend on a local storage generation that ends before return", "panic");
+}

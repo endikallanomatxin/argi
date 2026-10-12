@@ -164,6 +164,7 @@ pub const Node = struct {
         inferred_errable_type,
         array_type,
         generic_type_instantiation,
+        associated_type_projection,
     };
 
     pub const Data = extern union {
@@ -320,6 +321,7 @@ pub const Type = union(enum) {
     inferred_errable: NodeIndex,
     array: struct { length_token: TokenIndex, element: NodeIndex },
     generic: GenericType,
+    projection: struct { base: NodeIndex, member_token: TokenIndex },
     struct_literal: StructTypeLiteral,
     choice_literal: ChoiceTypeLiteral,
 };
@@ -751,6 +753,7 @@ pub const FileSyntaxTree = struct {
             .nullable_type => .{ .nullable = tree.data(node).node },
             .inferred_errable_type => .{ .inferred_errable = tree.data(node).node },
             .array_type => .{ .array = .{ .length_token = tree.data(node).token_and_node.token, .element = tree.data(node).token_and_node.node } },
+            .associated_type_projection => .{ .projection = .{ .base = tree.data(node).node, .member_token = tree.mainToken(node) } },
             .generic_type_instantiation => .{ .generic = .{ .base = tree.data(node).node_and_node.first, .arguments = tree.data(node).node_and_node.second } },
             .struct_type_literal => .{ .struct_literal = tree.structTypeLiteral(node).? },
             .choice_type_literal => .{ .choice_literal = tree.choiceTypeLiteral(node).? },

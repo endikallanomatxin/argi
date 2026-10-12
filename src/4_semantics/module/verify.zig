@@ -90,6 +90,7 @@ pub fn verifyModule(graph: *const graph_mod.ModuleSemanticGraph) !void {
     for (semantic.external_refs.items) |reference| {
         try require(verify.stringFits(reference.name, graph.strings.items));
         if (reference.module_path) |path| try require(verify.stringFits(path, graph.strings.items));
+        try require(verify.optionalIdFits(reference.projection_base, views.typeCount(graph)));
         if (reference.generic_arguments) |arguments|
             try require(verify.rangeFits(arguments, views.genericArgumentCount(graph)));
         try require(verify.sourceFits(reference.source, graph.file_offsets.items.len));

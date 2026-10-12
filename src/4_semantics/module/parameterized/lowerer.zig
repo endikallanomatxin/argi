@@ -117,6 +117,7 @@ fn typeUsesLinkedAbstract(
             }
             break :blk false;
         },
+        .projection => false,
         .generic => |generic| blk: {
             if (type_lowerer.isRuntimeVirtualType(tree, source, generic)) break :blk false;
             if (tree.structTypeLiteral(generic.arguments)) |arguments| {
@@ -860,6 +861,7 @@ pub const Context = struct {
             .pointer => |pointer| try self.collectLocalAbstractParameters(pointer.child),
             .nullable, .inferred_errable => |child| try self.collectLocalAbstractParameters(child),
             .array => |array| try self.collectLocalAbstractParameters(array.element),
+            .projection => {},
             .struct_literal => |literal| for (literal.fields) |field_node| {
                 const field = self.tree.structTypeField(field_node) orelse continue;
                 if (field.type_node) |ty| try self.collectLocalAbstractParameters(ty);
@@ -961,6 +963,11 @@ pub const Context = struct {
                 break :blk try self.addType(.{ .array = .{ .length = length, .element = element } });
             },
             .generic => |value| self.lowerGenericType(value, allow_self),
+            .projection => |value| self.addType(.{ .projection = .{
+                .base = try self.lowerType(value.base, allow_self),
+                .member = try self.writer.addString(self.tree.tokenTextFromSource(self.source, value.member_token)),
+                .source = self.sourceRef(node),
+            } }),
             .struct_literal => |literal| self.lowerStructType(literal, allow_self),
             .choice_literal => |literal| self.lowerChoiceType(literal, allow_self),
         };

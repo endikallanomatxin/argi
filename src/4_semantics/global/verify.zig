@@ -61,6 +61,7 @@ pub fn verifyGlobal(graph: *const graph_mod.GlobalSemanticGraph) !void {
         }
     }
     for (graph.contract_conformances.items) |value| {
+        try require(verify.idFits(value.context, graph.modules.items.len));
         try require(verify.idFits(value.declaration, graph.declarations.items.len));
         try require(graph.declarations.items[@intFromEnum(value.declaration)].kind == .abstract_type);
         try require(verify.rangeFits(value.participants, graph.generic_arguments.items.len));

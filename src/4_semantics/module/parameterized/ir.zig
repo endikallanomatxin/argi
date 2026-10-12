@@ -89,6 +89,7 @@ pub const Type = union(enum) {
     concrete: entities.ModuleTypeId,
     parameter: ComptimeParameterId,
     abstract_self,
+    projection: struct { base: ParameterizedTypeId, member: primitives.StringRange, source: primitives.SourceRef },
     external: entities.ExternalRefId,
     array: struct {
         length: ParameterizedIntExprId,

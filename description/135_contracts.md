@@ -27,9 +27,9 @@ participants. Generic associated projections remain symbolic until sufficient
 participant information is known.
 
 > [!QUESTION]
-> Associated projection syntax and exact specialization rules remain to be
-> settled. The concrete participant syntax below is the current implementation
-> surface; it must remain compatible with existing compile-time parameters.
+> Type projections use `Product#(A, B).Result`. Exact specialization rules remain
+> to be settled. The concrete participant syntax below is the current
+> implementation surface and uses existing compile-time parameters.
 > Restrictions do not require a general constraint solver or arbitrary inference.
 
 ## Operations and dispatch
@@ -132,12 +132,28 @@ conformance declarations cannot bypass safety checking. Imported contracts keep
 their defining declaration identity. Tuple evidence is compile-time metadata;
 ordinary calls keep their existing lowering and allocate no evidence at runtime.
 
+Associated types can be queried as `Product#(Row, Column).Result`, including
+named participant arguments and imported contract identities. The query selects
+the concrete tuple evidence and preserves the associated type's nominal identity.
+Missing conformances, unknown members and integer members in type positions are
+errors. Dependencies between associated type projections are resolved before
+generic records are materialized and operation signatures are checked; unresolved
+cycles are errors. Tuple uniqueness is checked again after resolving participant
+projections.
+
+A generic function can return `Product#(A, B).Result` when ordinary input
+inference or explicit compile-time arguments determine `A` and `B`. The
+projection remains symbolic in parameterized IR and resolves when the function
+is instantiated. It does not infer participants from an associated result.
+Until tuple constraints are supported, the function is checked for each
+instantiation rather than proven against a generic tuple contract at declaration.
+
 > [!IMPLEMENTATION]
 > Explicit participant conformances currently require concrete tuples and
 > concrete operation implementations. Generic conformances, specialized tuple
-> selection, associated projections and tuple bounds in generic functions remain
-> pending. Storage domains, composition and virtual conversion of explicit
-> participant contracts are rejected until joint mappings and evidence are
+> selection, associated constant projections and tuple bounds in generic
+> functions remain pending. Storage domains, composition and virtual conversion
+> of explicit participant contracts are rejected until joint mappings and evidence are
 > represented. Unary compatibility syntax below continues to support the
 > existing generic and virtual machinery independently.
 
@@ -177,8 +193,8 @@ participant. Functions remain ordinary declarations outside the contract.
 > and `to_virtual#(.contract: Name)`, as well as positional arguments and the
 > legacy `.abstract` label; these spellings produce the same handle type.
 > This compatibility surface is distinct from explicit participant tuples.
-> Associated projections, specialized tuple conformance selection and joint
-> virtual packages are not implemented.
+> Associated constant projections, specialized tuple conformance selection and
+> joint virtual packages are not implemented.
 > Existing unary associated arguments remain unique per concrete type and
 > contract; conflicting arguments are errors, not specialized conformances.
 > Diagnostics still describe these internal declarations as abstracts.

@@ -39,6 +39,8 @@ pub const Resolver = struct {
     profile_io: ?std.Io = null,
     stats: Stats = .{},
     argument_failure: ?struct { declaration: global_sg.GlobalDeclId, ty: global_sg.GlobalTypeId, reason: []const u8 } = null,
+    projection_context: ?*anyopaque = null,
+    projection_resolver: ?*const fn (*anyopaque, global_sg.GlobalTypeId, []const u8, primitives.SourceRef) anyerror!global_sg.GlobalTypeId = null,
     pointer_types: std.AutoHashMapUnmanaged(PointerKey, global_sg.GlobalTypeId) = .empty,
 
     pub fn deinit(self: *Resolver) void {
@@ -104,6 +106,17 @@ pub const Resolver = struct {
         value: anytype,
     ) !resolution.Result {
         const reference = module.semantic.external_refs.items[@intFromEnum(value.external)];
+        if (reference.projection_base) |base| {
+            const destination = globalizer.globalType(o, value.destination);
+            if (!self.graph.isTypeUnresolved(destination)) return .resolved;
+            const resolved = try self.projection_resolver.?(self.projection_context.?, globalizer.globalType(o, base), module.text(reference.name), .{
+                .file_index = o.file_base + reference.source.file_index,
+                .offset = reference.source.offset,
+            });
+            try self.graph.resolveType(destination, self.graph.types.items[@intFromEnum(resolved)]);
+            self.stats.type_holes += 1;
+            return .resolved;
+        }
         const args = reference.generic_arguments orelse return .not_applicable;
         const base = self.core.resolveDeclaration(module_index, reference, &.{ .type, .abstract_type }) catch return .deferred;
         const global_args = try self.relocateModuleArguments(module_index, args);
@@ -313,6 +326,13 @@ pub const Resolver = struct {
             .concrete => |value| globalizer.globalType(self.offsets[module_index], value),
             .parameter => |parameter| bindings.types[@intFromEnum(parameter)] orelse error.UnboundGenericTypeParameter,
             .abstract_self => self_type orelse error.AbstractSelfOutsideImplementation,
+            .projection => |value| blk: {
+                const base = try self.instantiateParameterizedType(module_index, value.base, bindings, self_type);
+                break :blk try self.projection_resolver.?(self.projection_context.?, base, module.text(value.member), .{
+                    .file_index = self.offsets[module_index].file_base + value.source.file_index,
+                    .offset = value.source.offset,
+                });
+            },
             .external => |external| self.instantiateExternalType(module_index, external, bindings, self_type),
             .array => |value| self.internType(.{ .array = .{
                 .length = @intCast(try self.evalInt(module_index, value.length, bindings)),

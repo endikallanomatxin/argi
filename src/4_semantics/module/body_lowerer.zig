@@ -359,6 +359,7 @@ const Context = struct {
             .inferred_errable_type,
             .array_type,
             .generic_type_instantiation,
+            .associated_type_projection,
             .struct_type_literal,
             .choice_type_literal,
             => {},
@@ -409,7 +410,7 @@ const Context = struct {
             .address_of, .address_of_mut => self.lowerAddress(node, expected),
             .dereference => self.lowerDereference(node, expected),
             .pointer_assignment => self.lowerPointerAssignment(node, expected),
-            .type_name, .pointer_type, .pointer_type_mut, .nullable_type, .inferred_errable_type, .array_type, .generic_type_instantiation, .struct_type_literal, .choice_type_literal => self.lowerTypeLiteral(node),
+            .type_name, .pointer_type, .pointer_type_mut, .nullable_type, .inferred_errable_type, .array_type, .generic_type_instantiation, .associated_type_projection, .struct_type_literal, .choice_type_literal => self.lowerTypeLiteral(node),
             .import_statement => self.lowerImport(node, expected),
             else => return error.UnexpectedBodySyntaxNode,
         };

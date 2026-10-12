@@ -21,6 +21,11 @@ pub fn verifyIR(graph: *const graph_mod.ModuleSemanticGraph) !void {
         .concrete => |id| try require(verify.idFits(id, views.typeCount(graph))),
         .parameter => |id| try require(verify.idFits(id, graph.semantic.parameterized_storage.comptime_parameters.items.len)),
         .abstract_self => {},
+        .projection => |value| {
+            try require(verify.idFits(value.base, storage.types.items.len));
+            try require(verify.stringFits(value.member, graph.strings.items));
+            try require(verify.sourceFits(value.source, graph.file_offsets.items.len));
+        },
         .external => |id| try require(verify.idFits(id, graph.semantic.external_refs.items.len)),
         .array => |value| {
             try require(verify.idFits(value.length, storage.int_expressions.items.len));

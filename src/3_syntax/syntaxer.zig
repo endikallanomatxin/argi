@@ -450,7 +450,13 @@ pub const Syntaxer = struct {
             const hash_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
             self.advanceOne();
             const gen_args = try self.parseStructTypeFields(true);
-            return try self.addNode(.generic_type_instantiation, hash_token, .{ .node_and_node = .{ .first = base, .second = gen_args } });
+            const instance = try self.addNode(.generic_type_instantiation, hash_token, .{ .node_and_node = .{ .first = base, .second = gen_args } });
+            if (self.tokenIs(.dot)) {
+                self.advanceOne();
+                const member = try self.parseName();
+                return try self.addNode(.associated_type_projection, member.token, .{ .node = instance });
+            }
+            return instance;
         }
         return base;
     }

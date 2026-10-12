@@ -96,6 +96,7 @@ pub const AbstractSafetyConformance = struct {
 // Static tuple evidence owns canonical declaration-order arguments. It has no
 // erased receiver and participates in the ordinary append-only checkpoints.
 pub const ContractConformance = struct {
+    context: GlobalModuleId = @enumFromInt(0),
     declaration: GlobalDeclId,
     participants: primitives.Range(GlobalGenericArgId),
     associated_arguments: primitives.Range(GlobalGenericArgId),

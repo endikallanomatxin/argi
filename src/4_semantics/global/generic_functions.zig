@@ -526,6 +526,7 @@ pub const Resolver = struct {
                     error.NoMatchingGenericFunction => return .not_applicable,
                     error.DeferredGenericFunction => return .deferred,
                     error.AmbiguousGenericFunction => return .invalid,
+                    error.InvalidAssociatedTypeProjection => return err,
                     else => return .deferred,
                 }
             else
@@ -533,6 +534,7 @@ pub const Resolver = struct {
                     error.NoMatchingGenericFunction => return .not_applicable,
                     error.DeferredGenericFunction => return .deferred,
                     error.AmbiguousGenericFunction => return .invalid,
+                    error.InvalidAssociatedTypeProjection => return err,
                     error.ConflictingGenericArgument => return err,
                     else => return .deferred,
                 };
@@ -1519,6 +1521,8 @@ pub const Resolver = struct {
             else
                 .{},
             .abstract_self => .{ .bounded = 1 },
+            // TODO: Rank projection input constraints once tuple specificity is defined.
+            .projection => .{},
             .concrete, .external => exactSpecificity(),
             .array => |array| blk: {
                 var result: ParameterizedSpecificity = .{ .structure = 1 };
@@ -2082,8 +2086,14 @@ pub const Resolver = struct {
         const saved_stats = self.stats;
         const saved_generic_stats = self.generics.stats;
         errdefer {
+            const projection_failure = if (self.nested_call_context) |abstracts| abstracts.participant_conformance_failure else null;
             self.graph.rollback(checkpoint);
             self.rollbackSideEffects(side_effect_checkpoint);
+            // A selected instantiation must keep its projection diagnostic;
+            // speculative signature probes restore theirs through checkpoints.
+            if (self.nested_call_context) |abstracts| if (projection_failure) |failure| {
+                if (failure.is_projection) abstracts.participant_conformance_failure = failure;
+            };
             self.stats = saved_stats;
             self.generics.stats = saved_generic_stats;
         }
