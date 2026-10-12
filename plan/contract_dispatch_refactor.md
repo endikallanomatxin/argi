@@ -18,15 +18,14 @@ incomparable maximal candidates are errors; source/import ordering has no priori
 
 ## Implementation order and removal obligations
 
-1. Match the frontend's implementation parameter ranges and participant patterns
-   against concrete participants. Preserve parameter bindings while resolving
-   associated definitions and inline function templates, then rank
-   patterns by strict structural subsumption, including repeated-variable
-   equalities. Reject equivalent and incomparable maximal patterns.
-2. Instantiate selected generic evidence lazily and retain it in the existing
-   conformance registry. Bind implementation parameters before associated elements
-   in operation templates. Reuse ordinary generic specialization, checkpoints and
-   safety proofs. Infer generic alias arguments from selected input signatures,
+1. Extend participant pattern matching to nested nominal applications, references
+   and named participant arguments. Rank generic patterns by strict structural
+   subsumption, including repeated-variable equalities. Reject equivalent and
+   incomparable maximal patterns; the current generic path rejects all overlaps.
+   Check duplicate patterns and extension ownership even for dormant templates.
+2. Validate newly instantiated evidence during resolution so nested operations
+   and requirements reach the same fixed point as ordinary calls. Infer generic
+   alias arguments from selected input signatures,
    without selecting by return type. Enforce extension ownership from nominal
    participant families; migrate generic constraints/composition without changing
    operation identities.

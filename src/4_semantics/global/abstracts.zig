@@ -1571,7 +1571,7 @@ pub const Resolver = struct {
                 }
                 return .{ .tuple = index };
             }
-            return null;
+            return self.selectGenericParticipantConformance(declaration, participants, bindings);
         }
         if (participants.len != 1) return null;
         const concrete = participants[0];
@@ -1614,6 +1614,85 @@ pub const Resolver = struct {
             }
         }
         return null;
+    }
+
+    fn selectGenericParticipantConformance(self: *Resolver, declaration: global_sg.GlobalDeclId, participants: []const global_sg.GlobalTypeId, target: ?*generic_mod.Resolver.Bindings) anyerror!?ConformanceSelection {
+        const located = self.findAbstractDefinition(declaration) orelse return null;
+        var selected_module: ?usize = null;
+        var selected_template: parameterized_storage.ContractConformance = undefined;
+        var selected_bindings: ?generic_mod.Resolver.Bindings = null;
+        defer if (selected_bindings) |*bindings| bindings.deinit(self.allocator);
+        for (self.modules, 0..) |*module, module_index| {
+            for (module.semantic.parameterized_storage.contract_conformances.items) |template| {
+                if (template.parameters.len == 0 or template.participants.len != participants.len) continue;
+                if (try self.resolveDeclarationRef(module_index, template.contract_ref, .abstract_type) != declaration) continue;
+                var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, module.semantic.parameterized_storage.comptime_parameters.items.len);
+                var keep = false;
+                defer if (!keep) bindings.deinit(self.allocator);
+                var matches = true;
+                for (module.semantic.parameterized_storage.ir.generic_arguments.items[template.participants.start..][0..template.participants.len], participants) |pattern, actual| {
+                    if (pattern.value != .type or !try self.inferConstraintTypePattern(module_index, pattern.value.type, actual, &bindings)) {
+                        matches = false;
+                        break;
+                    }
+                }
+                if (!matches or !try self.validateParameterizedImplementationConstraints(module_index, template.parameters, &bindings)) continue;
+                if (selected_module != null) {
+                    self.participant_conformance_failure = .{
+                        .source = self.sourceFor(module_index, template.source),
+                        .contract_name = module.text(switch (template.contract_ref) {
+                            .module => |id| module.declarations.items[@intFromEnum(id)].name,
+                            .external => |id| module.semantic.external_refs.items[@intFromEnum(id)].name,
+                        }),
+                        .reason = "overlapping generic implementations require structural specificity selection",
+                    };
+                    return error.InvalidContractConformance;
+                }
+                selected_module = module_index;
+                selected_template = template;
+                selected_bindings = bindings;
+                keep = true;
+            }
+        }
+        const module_index = selected_module orelse return null;
+        const bindings = &selected_bindings.?;
+        const actual = try self.generics.instantiateParameterizedArguments(module_index, selected_template.participants, bindings);
+        const associated = try self.generics.instantiateParameterizedArguments(module_index, selected_template.associated_arguments, bindings);
+        var contract_bindings = try generic_mod.Resolver.Bindings.init(self.allocator, self.modules[located.module_index].semantic.parameterized_storage.comptime_parameters.items.len);
+        defer contract_bindings.deinit(self.allocator);
+        try self.generics.bindGlobalArguments(located.module_index, located.definition.participants, actual, &contract_bindings);
+        try self.generics.bindGlobalArguments(located.module_index, located.definition.parameters, associated, &contract_bindings);
+        var failure: ParticipantConformanceFailure = .{ .source = self.sourceFor(module_index, selected_template.source), .contract_name = self.graph.text(self.graph.declaration(declaration).name), .reason = "" };
+        const operations = try self.prepareOperationBindings(module_index, located, selected_template, &failure);
+        const implementation = try self.publishImplementationArguments(module_index, selected_template.parameters, bindings);
+        const index = self.graph.contract_conformances.items.len;
+        try self.graph.contract_conformances.append(self.allocator, .{
+            .context = @enumFromInt(@as(u32, @intCast(module_index))),
+            .declaration = declaration,
+            .participants = try self.publishConformanceArguments(located, located.definition.participants, &contract_bindings),
+            .associated_arguments = try self.publishConformanceArguments(located, located.definition.parameters, &contract_bindings),
+            .implementation_arguments = implementation,
+            .operation_bindings = operations,
+            .explicit_operations = true,
+            .source = failure.source,
+        });
+        if (target) |destination| {
+            try self.generics.bindGlobalArguments(located.module_index, located.definition.participants, actual, destination);
+            try self.generics.bindGlobalArguments(located.module_index, located.definition.parameters, associated, destination);
+        }
+        return .{ .tuple = index };
+    }
+
+    fn publishImplementationArguments(self: *Resolver, module_index: usize, parameters: primitives.Range(ir.ComptimeParameterId), bindings: *generic_mod.Resolver.Bindings) !primitives.Range(global_sg.GlobalGenericArgId) {
+        const start: u32 = @intCast(self.graph.generic_arguments.items.len);
+        for (parameters.start..parameters.start + parameters.len) |raw| {
+            const parameter = self.modules[module_index].semantic.parameterized_storage.comptime_parameters.items[raw];
+            try self.graph.generic_arguments.append(self.allocator, .{ .name = try self.graph.addString(self.allocator, self.modules[module_index].text(parameter.name)), .value = switch (parameter.kind) {
+                .type => .{ .type = bindings.types[raw].? },
+                .comptime_int => .{ .comptime_int = bindings.ints[raw].? },
+            } });
+        }
+        return .{ .start = start, .len = parameters.len };
     }
 
     fn bindSelectedAssociatedArguments(self: *Resolver, located: LocatedAbstractDefinition, module_index: usize, implementation: parameterized_storage.ParameterizedAbstractImplementation, candidate: *generic_mod.Resolver.Bindings, target: *generic_mod.Resolver.Bindings) !void {
@@ -1900,9 +1979,9 @@ pub const Resolver = struct {
                     return;
                 }
                 if (conformance.parameters.len != 0) {
-                    failure.reason = "generic implementation selection is not supported yet";
-                    self.participant_conformance_failure = failure;
-                    return;
+                    // Templates are instantiated from participants by selection.
+                    _ = try self.prepareOperationBindings(module_index, located, conformance, &failure);
+                    continue;
                 }
                 const storage = &self.modules[located.module_index].semantic.parameterized_storage;
                 var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
@@ -2031,12 +2110,21 @@ pub const Resolver = struct {
             return error.InvalidContractOperation;
         }
         const instantiate = self.instantiate_function orelse return error.MissingOperationInstantiator;
-        return instantiate(self.function_context.?, binding.declaration, conformance.associated_arguments);
+        if (conformance.implementation_arguments.len == 0)
+            return instantiate(self.function_context.?, binding.declaration, conformance.associated_arguments);
+        var arguments: std.ArrayList(global_sg.GenericArgument) = .empty;
+        defer arguments.deinit(self.allocator);
+        try arguments.appendSlice(self.allocator, self.graph.generic_arguments.items[conformance.implementation_arguments.start..][0..conformance.implementation_arguments.len]);
+        try arguments.appendSlice(self.allocator, self.graph.generic_arguments.items[conformance.associated_arguments.start..][0..conformance.associated_arguments.len]);
+        const start: u32 = @intCast(self.graph.generic_arguments.items.len);
+        try self.graph.generic_arguments.appendSlice(self.allocator, arguments.items);
+        return instantiate(self.function_context.?, binding.declaration, .{ .start = start, .len = @intCast(arguments.items.len) });
     }
 
     pub fn validateParticipantConformances(self: *Resolver) !void {
         for (0..self.graph.contract_conformances.items.len) |index| {
             const conformance = self.graph.contract_conformances.items[index];
+            if (conformance.operations.len != 0) continue;
             const module_index: usize = @intFromEnum(conformance.context);
             const located = self.findAbstractDefinition(conformance.declaration) orelse return error.InvalidContractDeclaration;
             if (!located.definition.hasExplicitParticipants()) continue;

@@ -1044,3 +1044,32 @@ test "generic contract implementations preserve participant and associated binde
     const body = tree.functionDeclaration(tree.structTypeField(members.fields[1]).?.default_value.?).?;
     try std.testing.expectEqual(@as(usize, 2), body.generic_params.len);
 }
+
+test "generic implementation selection binds associated results and operation bodies" {
+    const allocator = std.testing.allocator;
+    const source =
+        \\Copyable#(.Value: Type): Contract = (.Result: Type, .copy: (.value: Value) -> (.result: Result))
+        \\implement#(.T: Type) Copyable#(T) (
+        \\    .Result: Type = T
+        \\    .copy = (.value: T) -> (.result: Result) { result = value }
+        \\)
+        \\main := () -> (.status_code: Int32 = 0) {
+        \\    first ::= Copyable#(Int32).copy(42).result
+        \\    second ::= Copyable#(UInt8).copy(7).result
+        \\    if first != 42 { abort }
+        \\    if second != 7 { abort }
+        \\}
+    ;
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    var module = try @import("semantizer.zig").build(allocator, "generic", &.{.{ .path = "generic/main.rg", .tree = &tree, .source = source }});
+    defer module.graph.deinit(allocator);
+    var result = try @import("../global/semantizer.zig").semantize(allocator, &.{module.graph});
+    defer result.graph.deinit(allocator);
+    try @import("../global/verify.zig").verifyGlobal(&result.graph);
+    try std.testing.expectEqual(@as(usize, 2), result.graph.contract_conformances.items.len);
+    for (result.graph.contract_conformances.items) |conformance| {
+        try std.testing.expectEqual(@as(u32, 1), conformance.implementation_arguments.len);
+        try std.testing.expectEqual(@as(u32, 1), conformance.operations.len);
+    }
+}

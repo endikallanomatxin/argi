@@ -857,6 +857,12 @@ pub fn semantizeWithOptions(
     // Construction-only resolution metadata must disappear before the graph is
     // exposed to Safety, Codegen or editor consumers.
     try relocation.graph.finishTypeResolution(allocator);
+    abstracts.validateParticipantConformances() catch |err| {
+        try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, &generics);
+        try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, abstracts.participant_conformance_failure);
+        return err;
+    };
+    try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, abstracts.participant_conformance_failure);
     try relocation.graph.finishBindingTypeResolution(allocator);
 
     var generic_bodies_built: u64 = 0;

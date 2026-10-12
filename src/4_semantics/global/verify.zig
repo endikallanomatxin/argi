@@ -68,6 +68,7 @@ pub fn verifyGlobal(graph: *const graph_mod.GlobalSemanticGraph) !void {
         try require(value.participants.len != 0);
         try require(verify.rangeFits(value.operations, graph.function_refs.items.len));
         try require(verify.rangeFits(value.operation_bindings, graph.contract_operation_bindings.items.len));
+        try require(verify.rangeFits(value.implementation_arguments, graph.generic_arguments.items.len));
         for (graph.function_refs.items[value.operations.start..][0..value.operations.len]) |method| try require(verify.idFits(method, graph.functions.items.len));
         for (graph.generic_arguments.items[value.participants.start..][0..value.participants.len]) |argument| try require(argument.value == .type);
         try require(verify.rangeFits(value.associated_arguments, graph.generic_arguments.items.len));

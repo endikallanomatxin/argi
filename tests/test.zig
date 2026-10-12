@@ -12220,3 +12220,15 @@ test "feature_tests/contracts/132_inline_safety_contract" {
 test "feature_tests/contracts/133X_ordinary_identity_across_files" {
     try buildExpectFailWithoutNoise("tests/feature_tests/contracts/133X_ordinary_identity_across_files", "ordinary function 'same_name' has more than one declaration", "panic");
 }
+
+test "feature_tests/contracts/134_generic_implementation_selection" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/134_generic_implementation_selection");
+}
+
+test "feature_tests/contracts/135X_generic_implementation_result" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/135X_generic_implementation_result", "incompatible associated result", "panic");
+}
+
+test "feature_tests/contracts/136X_generic_implementation_overlap" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/136X_generic_implementation_overlap", "overlapping generic implementations", "panic");
+}

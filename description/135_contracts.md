@@ -147,10 +147,11 @@ ownership and declared safety guarantees are checked, including unused operation
 Frontend snapshots preserve these declarations and operation identities.
 
 The frontend preserves `implement#(...)` binders in participant patterns,
-associated definitions and inline body templates. Global generic implementation
-selection, structural specialization and unqualified operation inference remain
-pending; generic implementations currently receive an explicit unsupported
-selection diagnostic. Standard construction, conversion, destruction
+associated definitions and inline body templates. Unique applicable generic patterns can be selected from concrete participants,
+with associated elements and inline bodies instantiated from those bindings.
+Repeated parameter occurrences enforce equality. Overlapping generic patterns
+currently receive an explicit diagnostic; structural specificity selection and
+unqualified operation inference remain pending. Standard construction, conversion, destruction
 and operator migration, composition and virtual evidence also remain pending.
 The compiler still contains transitional global overload resolution and earlier
 conformance syntax. Removal obligations are tracked in

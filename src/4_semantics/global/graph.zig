@@ -102,6 +102,7 @@ pub const ContractOperationBinding = struct {
     instantiate_associated: bool = false,
 };
 pub const ContractConformance = struct {
+    implementation_arguments: primitives.Range(GlobalGenericArgId) = .{ .start = 0, .len = 0 },
     operation_bindings: primitives.Range(ContractOperationBindingId) = .{ .start = 0, .len = 0 },
     explicit_operations: bool = false,
     context: GlobalModuleId = @enumFromInt(0),
