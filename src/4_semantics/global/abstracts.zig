@@ -404,7 +404,7 @@ pub const Resolver = struct {
         const abstract_use = self.abstractUse(abstract_ty) orelse return null;
         const abstract_decl = abstract_use.declaration;
         const located = self.findAbstractDefinition(abstract_decl) orelse return null;
-        if (located.definition.participants.len != 0) {
+        if (located.definition.hasExplicitParticipants()) {
             self.virtual_signature_failure = .{ .source = self.sourceFor(module_index, reference.source), .method_name = "to_virtual", .reason = "explicit participants require joint virtual evidence, which is not supported yet" };
             return null;
         }
@@ -1524,7 +1524,7 @@ pub const Resolver = struct {
                 reason = "invalidates requires a mutable reference input";
                 break;
             }
-            if (located.definition.participants.len == 0 and global_types.equal(self.graph, input_ty.pointer.child, abstract_ty)) {
+            if (!located.definition.hasExplicitParticipants() and global_types.equal(self.graph, input_ty.pointer.child, abstract_ty)) {
                 reason = "invalidating erased Self requires a mapped storage domain; name a known reference input instead";
                 break;
             }
@@ -1699,7 +1699,7 @@ pub const Resolver = struct {
     ) !bool {
         if (depth >= 64) return false;
         if (self.findAbstractDefinition(abstract_decl)) |located| {
-            if (located.definition.participants.len != 0) return false;
+            if (located.definition.hasExplicitParticipants()) return false;
         }
         const key = ImplementationKey{ .concrete = concrete, .abstract_decl = abstract_decl };
         if (self.known_implementations.contains(key)) {
@@ -1849,7 +1849,7 @@ pub const Resolver = struct {
                         else => return err,
                     };
                     const located = self.findAbstractDefinition(declaration) orelse continue;
-                    if (located.definition.participants.len == 0) continue;
+                    if (!located.definition.hasExplicitParticipants()) continue;
                     return .{
                         .source = self.sourceFor(module_index, composed.source),
                         .contract_name = self.modules[located.module_index].text(self.modules[located.module_index].declarations.items[@intFromEnum(located.definition.declaration)].name),
@@ -1864,7 +1864,7 @@ pub const Resolver = struct {
                         else => return err,
                     };
                     const located = self.findAbstractDefinition(declaration) orelse continue;
-                    if (located.definition.participants.len == 0) continue;
+                    if (!located.definition.hasExplicitParticipants()) continue;
                     return .{
                         .source = self.sourceFor(module_index, relation.source),
                         .contract_name = self.modules[located.module_index].text(self.modules[located.module_index].declarations.items[@intFromEnum(located.definition.declaration)].name),
@@ -1894,7 +1894,7 @@ pub const Resolver = struct {
                     return;
                 };
                 const located = self.findAbstractDefinition(declaration) orelse return error.InvalidContractDeclaration;
-                if (located.definition.participants.len == 0) {
+                if (!located.definition.hasExplicitParticipants()) {
                     failure.reason = "standalone satisfies requires a contract with explicit participants";
                     self.participant_conformance_failure = failure;
                     return;
@@ -2040,7 +2040,7 @@ pub const Resolver = struct {
         };
         const located = self.findAbstractDefinition(generic.base) orelse
             return self.associatedProjectionError(want_type, source, "associated projection requires a participant contract", member);
-        if (located.definition.participants.len == 0)
+        if (!located.definition.hasExplicitParticipants())
             return self.associatedProjectionError(want_type, source, "associated projection requires explicit contract participants", member);
         const storage = &self.modules[located.module_index].semantic.parameterized_storage;
         var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
@@ -2914,6 +2914,12 @@ pub const Resolver = struct {
         return contract;
     }
 
+    fn isImplicitParticipantType(self: *const Resolver, located: LocatedAbstractDefinition, ty: @import("../module/parameterized/ir.zig").ParameterizedTypeId) bool {
+        const participant = located.definition.implicit_participant orelse return false;
+        const value = self.modules[located.module_index].semantic.parameterized_storage.ir.types.items[@intFromEnum(ty)];
+        return value == .parameter and value.parameter == participant;
+    }
+
     fn recordStaticSafetyContract(self: *Resolver, located: LocatedAbstractDefinition, requirement: parameterized_storage.AbstractRequirement, bindings: *generic_mod.Resolver.Bindings, concrete: global_sg.GlobalTypeId, method: global_sg.GlobalFunctionId, output: global_sg.GlobalTypeId, source: primitives.SourceRef) !void {
         const declared = requirement.safety_contract orelse return;
         if (self.fallibleOutput(output)) try self.core.ensureErrorTracerInput(method);
@@ -2963,7 +2969,7 @@ pub const Resolver = struct {
         for (storage.ir.fields.items[input.start..][0..input.len], 0..) |field, index| {
             const ty = storage.ir.types.items[@intFromEnum(field.ty)];
             if (ty == .resolved and ty.resolved == .pointer and
-                storage.ir.types.items[@intFromEnum(ty.resolved.pointer.child)] == .abstract_self)
+                self.isImplicitParticipantType(located, ty.resolved.pointer.child))
             {
                 receiver = @intCast(index);
                 break;

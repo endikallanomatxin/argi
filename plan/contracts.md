@@ -62,6 +62,10 @@ semantics change; codegen receives concrete integer dimensions and ordinary type
 
 ## Remaining work
 
+- Move unary participant binding into the conformance adapter and unify its
+  selection/evidence with canonical participant tuples. Keep legacy source
+  spelling and unary virtual ABI as compatibility surfaces while removing
+  separate semantic selection paths.
 - Enforce unary body-declared composition. Included contract identities are now
   retained, but their requirements are not inherited yet. Preserve legacy
   explicit contract-to-contract relations while implementing those proofs.
@@ -119,3 +123,25 @@ argument-diagnostic changes. Clean and warm-cache LLVM for an imported concrete
 call are identical, with all 28 modules reused and no runtime lookup. Twelve
 new fixtures cover this extension, and the former unsupported-constructor case
 is now a positive executable fixture.
+
+## Unary participant normalization
+
+Normalize each compatibility unary declaration to one synthetic Type participant
+in the same ComptimeParameter table as explicit participants. Lower Self to an
+ordinary parameter reference and remove the special abstract-self IR type.
+Retain an explicit compatibility marker for source argument binding and existing
+virtual receiver/domain protocols. Safety receiver identification must inspect
+the participant parameter identity in the original requirement, never infer it
+from matching concrete argument types. Migrate remaining bundled virtual labels
+to contract, preserve legacy consumer aliases, and verify generics, static/virtual
+safety, frontend persistence and emitted LLVM. This changes module/global
+semantics and the cache schema; syntax and runtime representation stay stable.
+
+Unary normalization validation: all 99 contract fixtures pass. The complete
+regression passes 1,710 program tests and 363 internal tests, with 11 and 1 skips
+respectively. Source-IR and persisted-cache tests verify the shared participant
+identity, including legacy declarations and rejection of a wrong receiver's
+borrowed result. Clean and warm-cache LLVM are identical, with all 27 modules
+reused; static calls remain specialized and virtual handles retain two pointers.
+Conformance selection and virtual evidence still use compatibility adapters;
+their unification is the next migration step.

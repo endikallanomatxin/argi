@@ -913,7 +913,7 @@ fn writeType(writer: HoverWriter, graph: *const graph_mod.GlobalSemanticGraph, t
             try writer.writeAll(")");
         },
         .virtual => |abstract_type| {
-            try writer.writeAll("Virtual#(.abstract: ");
+            try writer.writeAll("Virtual#(.contract: ");
             try writeType(writer, graph, abstract_type);
             try writer.writeAll(")");
         },

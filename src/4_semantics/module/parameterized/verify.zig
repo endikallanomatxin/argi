@@ -54,6 +54,9 @@ pub fn verifyParameterizedForms(graph: *const graph_mod.ModuleSemanticGraph) !vo
     try ir_verify.verifyIR(graph);
 
     for (storage.comptime_parameters.items) |parameter| {
+        if (parameter.implicit_participant) {
+            try require(parameter.kind == .type and parameter.value_type == null and parameter.constraint == null);
+        }
         try require(verify.stringFits(parameter.name, graph.strings.items));
         try require(verify.optionalIdFits(parameter.value_type, storage.ir.types.items.len));
         try require(verify.optionalIdFits(parameter.constraint, storage.abstract_constraints.items.len));
@@ -130,6 +133,10 @@ pub fn verifyParameterizedForms(graph: *const graph_mod.ModuleSemanticGraph) !vo
         try require(verify.idFits(definition.declaration, graph.declarations.items.len));
         try require(verify.rangeFits(definition.parameters, storage.comptime_parameters.items.len));
         try require(verify.rangeFits(definition.participants, storage.comptime_parameters.items.len));
+        if (definition.implicit_participant) |participant| {
+            try require(definition.participants.len == 1 and definition.participants.start == @intFromEnum(participant));
+            try require(storage.comptime_parameters.items[@intFromEnum(participant)].implicit_participant);
+        }
         try require(verify.rangeFits(definition.composition, storage.abstract_constraints.items.len));
         for (storage.comptime_parameters.items[definition.participants.start..][0..definition.participants.len]) |parameter| try require(parameter.kind == .type);
         if (definition.participants.len != 0 and definition.parameters.len != 0) {

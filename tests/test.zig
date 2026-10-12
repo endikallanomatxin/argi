@@ -12040,3 +12040,17 @@ test "feature_tests/contracts/95X_constant_projection_concrete_unknown_participa
 test "feature_tests/contracts/96X_constant_projection_concrete_unknown_contract" {
     try buildExpectFailWithoutNoise("tests/feature_tests/contracts/96X_constant_projection_concrete_unknown_contract", "unknown or inaccessible type or contract in compile-time call arguments", "failed without a diagnostic");
 }
+
+test "feature_tests/contracts/97_unary_normalized_participant" {
+    const path = "tests/feature_tests/contracts/97_unary_normalized_participant";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/contracts/98X_unary_normalized_receiver_safety" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/98X_unary_normalized_receiver_safety", "safety contract", "panic");
+}
+
+test "feature_tests/contracts/99X_unary_reserved_self_parameter" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/99X_unary_reserved_self_parameter", "Self is reserved for the implicit unary participant", "panic");
+}

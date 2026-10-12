@@ -337,8 +337,13 @@ pub const Resolver = struct {
         const storage = &module.semantic.parameterized_storage.ir;
         return switch (storage.types.items[@intFromEnum(id)]) {
             .concrete => |value| globalizer.globalType(self.offsets[module_index], value),
-            .parameter => |parameter| bindings.types[@intFromEnum(parameter)] orelse error.UnboundGenericTypeParameter,
-            .abstract_self => self_type orelse error.AbstractSelfOutsideImplementation,
+            .parameter => |parameter| bindings.types[@intFromEnum(parameter)] orelse blk: {
+                // Compatibility syntax supplies the sole participant through this
+                // adapter; its requirements use the same type-parameter IR.
+                if (module.semantic.parameterized_storage.comptime_parameters.items[@intFromEnum(parameter)].implicit_participant)
+                    break :blk self_type orelse return error.ContractParticipantOutsideConformance;
+                return error.UnboundGenericTypeParameter;
+            },
             .projection => |value| blk: {
                 const base = try self.instantiateParameterizedType(module_index, value.base, bindings, self_type);
                 break :blk try self.projection_resolver.?(self.projection_context.?, base, module.text(value.member), .{

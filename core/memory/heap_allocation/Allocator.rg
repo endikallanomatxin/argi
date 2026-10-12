@@ -94,7 +94,7 @@ allocate(
     match acquired {
         ..error _ { result = ..error(.reason = ..out_of_memory) }
         ..ok ~storage {
-            deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(
+            deallocator :: Virtual#(.contract: Deallocator) = to_virtual#(.contract: Deallocator)(
                 .value = self
             )
             allocation ::= establish_allocation(
@@ -145,7 +145,7 @@ Allocation: Type = (
     .alignment : UIntNative
     -- The heap uses a static marker; arena children point at ArenaDomain.
     .anchor      : &Any
-    .deallocator : Virtual#(.abstract: Deallocator)
+    .deallocator : Virtual#(.contract: Deallocator)
     -- Allocator-authenticated bounds. Public receipt fields can restrict a
     -- request, but cannot enlarge this region or change the address, size,
     -- or alignment passed to physical cleanup.
@@ -166,7 +166,7 @@ trusted_establish_allocation(
         .storage     : UIntNative,
         .size        : UIntNative,
         .alignment   : UIntNative,
-        .deallocator : Virtual#(.abstract: Deallocator),
+        .deallocator : Virtual#(.contract: Deallocator),
         .anchor      : &Any                              = erase_reference#(.t: UInt8)(.base = &allocation_static_anchor).reference,
     ) -> (
         .allocation : Allocation
@@ -196,7 +196,7 @@ establish_allocation(
         .storage     : AcquiredStorage,
         .size        : UIntNative,
         .alignment   : UIntNative,
-        .deallocator : Virtual#(.abstract: Deallocator),
+        .deallocator : Virtual#(.contract: Deallocator),
         .anchor      : &Any                              = erase_reference#(.t: UInt8)(.base = &allocation_static_anchor).reference,
     ) -> (
         .allocation : Allocation

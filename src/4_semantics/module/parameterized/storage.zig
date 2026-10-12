@@ -22,6 +22,7 @@ pub const ComptimeParameterKind = enum(u8) { type, comptime_int };
 pub const GenericDispatchKind = enum(u8) { regular, abstract_contract };
 
 pub const ComptimeParameter = struct {
+    implicit_participant: bool = false,
     name: primitives.StringRange,
     kind: ComptimeParameterKind,
     value_type: ?ir.ParameterizedTypeId = null,
@@ -65,6 +66,7 @@ pub const AbstractRequirement = struct {
 };
 
 pub const AbstractDefinition = struct {
+    implicit_participant: ?ComptimeParameterId = null,
     participants: primitives.Range(ComptimeParameterId) = .{ .start = 0, .len = 0 },
     // TODO: Prove included unary requirements; currently retained for validation
     // of unsupported composition across the explicit participant boundary.
@@ -73,6 +75,10 @@ pub const AbstractDefinition = struct {
     parameters: primitives.Range(ComptimeParameterId),
     requirements: primitives.Range(AbstractRequirementId),
     domains: []const primitives.StringRange = &.{},
+
+    pub fn hasExplicitParticipants(self: AbstractDefinition) bool {
+        return self.participants.len != 0 and self.implicit_participant == null;
+    }
 };
 
 pub const DomainMapping = struct {

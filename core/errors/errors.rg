@@ -25,7 +25,7 @@ source_location(.id: SourceLocationId) -> (.location: SourceLocation) := {
 ErrorTracer: contract = (
     add_context(.self: $&Self, .location: SourceLocationId, .context: StringView) -> () where {}
     reset_context(.self: $&Self) -> () where {}
-    report(.self: $&Self, .writer: $&Virtual#(.abstract: Writer)) -> (
+    report(.self: $&Self, .writer: $&Virtual#(.contract: Writer)) -> (
         .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) where {
         on result ..ok {}
@@ -38,7 +38,7 @@ NoopErrorTracer: Type = (.marker: UInt8 = 0)
 
 NoopErrorTracer satisfies ErrorTracer
 noop_error_tracer_storage :: NoopErrorTracer = (.marker = 0)
-noop_error_tracer :: Virtual#(.abstract: ErrorTracer) = to_virtual#(.abstract: ErrorTracer)(
+noop_error_tracer :: Virtual#(.contract: ErrorTracer) = to_virtual#(.contract: ErrorTracer)(
     .value = $&noop_error_tracer_storage
 )
 
@@ -48,14 +48,14 @@ reset_context(.self: $&NoopErrorTracer) -> () := {}
 
 report(
         .self   : $&NoopErrorTracer,
-        .writer : $&Virtual#(.abstract: Writer)
+        .writer : $&Virtual#(.contract: Writer)
     ) -> (
         .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) := {
     result = ..ok Void()
 }
 
-ErrorTrace: Type = (.tracer: $&Virtual#(.abstract: ErrorTracer))
+ErrorTrace: Type = (.tracer: $&Virtual#(.contract: ErrorTracer))
 
 ErrorTrace satisfies ImplicitlyCopyable
 
@@ -64,7 +64,7 @@ Error#(.reasons: Type): Type = (.reason: reasons, .trace: ErrorTrace)
 add_context(
         .context      : StringView,
         .location     : SourceLocationId                   = error_location_id(),
-        .error_tracer : $&Virtual#(.abstract: ErrorTracer) = reach error_tracer,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = reach error_tracer,
     ) -> () := {
     add_context(.self = error_tracer, .location = location, .context = context)
 }
@@ -72,7 +72,7 @@ add_context(
 add_context(
         .context      : &Char,
         .location     : SourceLocationId                   = error_location_id(),
-        .error_tracer : $&Virtual#(.abstract: ErrorTracer) = reach error_tracer,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = reach error_tracer,
     ) -> () := {
     add_context(
         .self     = error_tracer
@@ -83,7 +83,7 @@ add_context(
 
 create_error_trace(
         .location     : SourceLocationId,
-        .error_tracer : $&Virtual#(.abstract: ErrorTracer) = reach error_tracer,
+        .error_tracer : $&Virtual#(.contract: ErrorTracer) = reach error_tracer,
     ) -> (
         .trace : ErrorTrace
     ) := {
@@ -246,7 +246,7 @@ add_context(.self: $&FixedSizeErrorTracer, .location: SourceLocationId, .context
 
 write_trace_text(
         .text   : &Char,
-        .writer : $&Virtual#(.abstract: Writer)
+        .writer : $&Virtual#(.contract: Writer)
     ) -> (
         .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) := {
@@ -264,7 +264,7 @@ write_trace_text(
 
 write_trace_uint(
         .value  : UIntNative,
-        .writer : $&Virtual#(.abstract: Writer)
+        .writer : $&Virtual#(.contract: Writer)
     ) -> (
         .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) := {
@@ -288,7 +288,7 @@ write_trace_uint(
 _error_report_entry(
         .self   : $&FixedSizeErrorTracer,
         .index  : UIntNative,
-        .writer : $&Virtual#(.abstract: Writer)
+        .writer : $&Virtual#(.contract: Writer)
     ) -> (
         .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) := {
@@ -331,7 +331,7 @@ _error_report_entry(
 
 report(
         .self   : $&FixedSizeErrorTracer,
-        .writer : $&Virtual#(.abstract: Writer)
+        .writer : $&Virtual#(.contract: Writer)
     ) -> (
         .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) := {
@@ -379,7 +379,7 @@ report_trace(
         .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) := {
     assume error_tracer ::= $&noop_error_tracer
-    virtual_writer ::= to_virtual#(.abstract: Writer)(.value = writer)
+    virtual_writer ::= to_virtual#(.contract: Writer)(.value = writer)
     report(trace&.tracer, .writer = $&virtual_writer)!
 
     result = ..ok Void()
@@ -409,7 +409,7 @@ report_error#(
         .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) := {
     assume error_tracer ::= $&noop_error_tracer
-    virtual_writer ::= to_virtual#(.abstract: Writer)(.value = writer)
+    virtual_writer ::= to_virtual#(.contract: Writer)(.value = writer)
     write_trace_text(.text = "error: ", .writer = $&virtual_writer)!
     write_trace_text(.text = message, .writer = $&virtual_writer)!
     write_trace_text(.text = "\n", .writer = $&virtual_writer)!

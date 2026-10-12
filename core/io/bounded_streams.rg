@@ -73,7 +73,7 @@ copy_stream_limited(
 }
 
 copy_stream_limited(
-        .reader : $&Virtual#(.abstract: BlockReader),
+        .reader : $&Virtual#(.contract: BlockReader),
         .writer : $&BlockWriter,
         .buffer : ArrayView#(.t: UInt8),
         .limit  : UIntNative
@@ -124,7 +124,7 @@ copy_stream_limited(
 
 copy_stream_limited(
         .reader : $&BlockReader,
-        .writer : $&Virtual#(.abstract: BlockWriter),
+        .writer : $&Virtual#(.contract: BlockWriter),
         .buffer : ArrayView#(.t: UInt8),
         .limit  : UIntNative
     ) -> (
@@ -173,8 +173,8 @@ copy_stream_limited(
 }
 
 copy_stream_limited(
-        .reader : $&Virtual#(.abstract: BlockReader),
-        .writer : $&Virtual#(.abstract: BlockWriter),
+        .reader : $&Virtual#(.contract: BlockReader),
+        .writer : $&Virtual#(.contract: BlockWriter),
         .buffer : ArrayView#(.t: UInt8),
         .limit  : UIntNative
     ) -> (
@@ -304,7 +304,7 @@ read_all_limited(
 }
 
 read_all_limited(
-        .self      : $&Virtual#(.abstract: BlockReader),
+        .self      : $&Virtual#(.contract: BlockReader),
         .buffer    : ArrayView#(.t: UInt8),
         .limit     : UIntNative,
         .allocator : $&Allocator

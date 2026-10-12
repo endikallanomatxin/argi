@@ -821,3 +821,42 @@ test "callback invocation preserves binding and field editor targets" {
     }
     try std.testing.expect(found_callback and found_entry and found_field);
 }
+
+test "unary compatibility contracts normalize Self to a type participant" {
+    const allocator = std.testing.allocator;
+    const source =
+        \\Legacy#(.Other: Type): Abstract = (borrow(.other: &Other, .source: &Self) -> (.value: &Self))
+        \\Modern#(.Other: Type): contract = (borrow(.other: &Other, .source: &Self) -> (.value: &Self))
+        \\Pair: contract#(.Left: Type, .Right: Type) = (combine(.left: &Left, .right: &Right) -> ())
+        \\
+    ;
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    const inputs = [_]module_graph.FileInput{.{ .path = "contracts/main.rg", .tree = &tree, .source = source }};
+    var graph = try module_graph.build(allocator, "contracts", &inputs);
+    defer graph.deinit(allocator);
+    _ = try parameterized_lowerer.lower(allocator, &graph, &inputs);
+    const storage = &graph.semantic.parameterized_storage;
+    try std.testing.expectEqual(@as(usize, 3), storage.abstract_definitions.items.len);
+    for (storage.abstract_definitions.items[0..2]) |definition| {
+        try std.testing.expect(!definition.hasExplicitParticipants());
+        const participant = definition.implicit_participant.?;
+        try std.testing.expectEqual(@as(u32, 1), definition.participants.len);
+        try std.testing.expectEqual(@intFromEnum(participant), definition.participants.start);
+        try std.testing.expect(storage.comptime_parameters.items[@intFromEnum(participant)].implicit_participant);
+        try std.testing.expect(participant != @as(@import("parameterized/storage.zig").ComptimeParameterId, @enumFromInt(definition.parameters.start)));
+        const requirement = storage.abstract_requirements.items[definition.requirements.start];
+        const fields = storage.ir.types.items[@intFromEnum(requirement.input)].resolved.structural.fields;
+        const other = storage.ir.types.items[@intFromEnum(storage.ir.fields.items[fields.start].ty)].resolved.pointer.child;
+        const receiver = storage.ir.types.items[@intFromEnum(storage.ir.fields.items[fields.start + 1].ty)].resolved.pointer.child;
+        try std.testing.expectEqual(participant, storage.ir.types.items[@intFromEnum(receiver)].parameter);
+        try std.testing.expect(storage.ir.types.items[@intFromEnum(other)].parameter != participant);
+        const output = storage.ir.types.items[@intFromEnum(requirement.output)].resolved.structural.fields;
+        const returned = storage.ir.types.items[@intFromEnum(storage.ir.fields.items[output.start].ty)].resolved.pointer.child;
+        try std.testing.expectEqual(participant, storage.ir.types.items[@intFromEnum(returned)].parameter);
+    }
+    const pair = storage.abstract_definitions.items[2];
+    try std.testing.expect(pair.hasExplicitParticipants());
+    try std.testing.expectEqual(@as(u32, 2), pair.participants.len);
+    try std.testing.expectEqual(@as(?@import("parameterized/storage.zig").ComptimeParameterId, null), pair.implicit_participant);
+}

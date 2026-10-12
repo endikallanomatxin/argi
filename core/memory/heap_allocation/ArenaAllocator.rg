@@ -15,7 +15,7 @@ ArenaDomain deinit(.self: $&ArenaDomain) -> () := {}
 -- Backing receipts live in block headers. No metadata or storage is acquired
 -- until the first allocation; all blocks come from the chosen backing policy.
 ArenaAllocator: Type = (
-    ._backing_allocator    : Virtual#(.abstract: Allocator)
+    ._backing_allocator    : Virtual#(.contract: Allocator)
     .domain                : ArenaDomain
     ._block_head           : UIntNative
     .block_count           : UIntNative
@@ -35,7 +35,7 @@ ArenaAllocator init(
 
     if actual_block_size == 0 { actual_block_size = 1 }
     constructed = (
-        ._backing_allocator    = to_virtual#(.abstract: Allocator)(.value = allocator)
+        ._backing_allocator    = to_virtual#(.contract: Allocator)(.value = allocator)
         .domain                = ArenaDomain()
         ._block_head           = 0
         .block_count           = 0
@@ -153,7 +153,7 @@ allocate(
     }
 
     address ::= self&._block_head + aligned_offset
-    deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(
+    deallocator :: Virtual#(.contract: Deallocator) = to_virtual#(.contract: Deallocator)(
         .value = self
     )
     allocation :: Allocation = (

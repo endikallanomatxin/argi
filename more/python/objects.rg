@@ -87,7 +87,7 @@ tuple(
 
 -- Python's next protocol is fallible. Exhaustion is a successful absent value,
 -- so this iterator deliberately uses an explicit next call instead of promising
--- the core Iterator abstract's infallible next/has_next protocol.
+-- the core Iterator contract's infallible next/has_next protocol.
 PythonIterator: Type = (._object: Object)
 
 iterate(.self: &Object) -> (.result: Errable#(PythonIterator, (..python_error))) := {

@@ -240,6 +240,7 @@ const PipeOperandOverride = struct { syntax: syn.NodeIndex, value: ir.Parameteri
 
 pub const Context = struct {
     has_contract_participants: bool = false,
+    implicit_participant: ?ir.ComptimeParameterId = null,
     in_defer: bool = false,
     defer_loop_depth: u32 = 0,
     diagnostics: ?*@import("../../../1_base/diagnostic.zig").Diagnostics = null,
@@ -338,6 +339,7 @@ pub const Context = struct {
                     const params = try self.registerParameters(abstract.generic_params, abstract.generic_params_struct);
                     self.has_contract_participants = abstract.participants_struct != null;
                     defer self.has_contract_participants = false;
+                    defer self.implicit_participant = null;
                     const participants = if (abstract.participants_struct) |participant_node| blk: {
                         const literal = self.tree.structTypeLiteral(participant_node).?;
                         if (literal.fields.len == 0) try self.contractError(declaration_node, "contract requires at least one named participant");
@@ -356,7 +358,18 @@ pub const Context = struct {
                         if (abstract.domains.len != 0) try self.contractError(declaration_node, "storage domains on explicit contract participants are not supported yet");
                         if (abstract.requires_abstracts.len != 0) try self.contractError(declaration_node, "composition of explicit participant contracts is not supported yet");
                         break :blk range;
-                    } else primitives.Range(ir.ComptimeParameterId){ .start = 0, .len = 0 };
+                    } else blk: {
+                        for (self.parameters.items) |binding| if (std.mem.eql(u8, binding.name, "Self"))
+                            try self.contractError(declaration_node, "Self is reserved for the implicit unary participant");
+                        const participant: ir.ComptimeParameterId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len)));
+                        try self.graph.semantic.parameterized_storage.comptime_parameters.append(self.allocator, .{
+                            .name = try self.writer.addString("Self"),
+                            .kind = .type,
+                            .implicit_participant = true,
+                        });
+                        self.implicit_participant = participant;
+                        break :blk primitives.Range(ir.ComptimeParameterId){ .start = @intFromEnum(participant), .len = 1 };
+                    };
                     // Both groups are visible before any bound is lowered.
                     try self.lowerParameterBounds(params, abstract.generic_params_struct);
                     try self.lowerParameterBounds(participants, abstract.participants_struct);
@@ -396,6 +409,7 @@ pub const Context = struct {
                         .declaration = decl_id,
                         .parameters = params,
                         .participants = participants,
+                        .implicit_participant = self.implicit_participant,
                         .composition = composition,
                         .requirements = .{
                             .start = req_start,
@@ -1035,7 +1049,7 @@ pub const Context = struct {
                 try self.contractError(owner, "use named participants instead of Self in this contract");
                 unreachable;
             }
-            return self.addType(.abstract_self);
+            return self.addType(.{ .parameter = self.implicit_participant orelse return error.ContractParticipantOutsideDeclaration });
         }
         if (qualifier == null) {
             if (self.parameter(name)) |binding| if (binding.kind == .type) return self.addType(.{ .parameter = binding.id });

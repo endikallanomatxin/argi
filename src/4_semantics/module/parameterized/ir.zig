@@ -90,7 +90,6 @@ pub const IntExpression = union(enum) {
 pub const Type = union(enum) {
     concrete: entities.ModuleTypeId,
     parameter: ComptimeParameterId,
-    abstract_self,
     projection: struct { base: ParameterizedTypeId, member: primitives.StringRange, source: primitives.SourceRef },
     external: entities.ExternalRefId,
     array: struct {
@@ -336,7 +335,7 @@ test "parameterized IR represents dependent type state without syntax refs" {
     defer storage.deinit(allocator);
 
     try storage.types.append(allocator, .{ .parameter = @enumFromInt(0) });
-    try storage.types.append(allocator, .abstract_self);
+    try storage.types.append(allocator, .{ .parameter = @enumFromInt(1) });
     try storage.int_expressions.append(allocator, .{ .parameter = @enumFromInt(0) });
     try storage.types.append(allocator, .{ .array = .{ .length = @enumFromInt(0), .element = @enumFromInt(0) } });
     try storage.variants.append(allocator, .{ .semantic = .{

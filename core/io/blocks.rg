@@ -256,7 +256,7 @@ write_block#(
 }
 
 read_exact(
-        .self   : $&Virtual#(.abstract: BlockReader),
+        .self   : $&Virtual#(.contract: BlockReader),
         .buffer : ArrayView#(.t: UInt8)
     ) -> (
         .result : Errable#(Void, (..stream_read_failed, ..unexpected_eof))
@@ -288,7 +288,7 @@ read_exact(
 }
 
 write_all(
-        .self   : $&Virtual#(.abstract: BlockWriter),
+        .self   : $&Virtual#(.contract: BlockWriter),
         .buffer : ArrayViewRO#(.t: UInt8)
     ) -> (
         .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
@@ -320,7 +320,7 @@ write_all(
 }
 
 copy_stream(
-        .reader : $&Virtual#(.abstract: BlockReader),
+        .reader : $&Virtual#(.contract: BlockReader),
         .writer : $&BlockWriter,
         .buffer : ArrayView#(.t: UInt8)
     ) -> (
@@ -365,7 +365,7 @@ copy_stream(
 
 copy_stream(
         .reader : $&BlockReader,
-        .writer : $&Virtual#(.abstract: BlockWriter),
+        .writer : $&Virtual#(.contract: BlockWriter),
         .buffer : ArrayView#(.t: UInt8)
     ) -> (
         .result : Errable#(
@@ -408,8 +408,8 @@ copy_stream(
 }
 
 copy_stream(
-        .reader : $&Virtual#(.abstract: BlockReader),
-        .writer : $&Virtual#(.abstract: BlockWriter),
+        .reader : $&Virtual#(.contract: BlockReader),
+        .writer : $&Virtual#(.contract: BlockWriter),
         .buffer : ArrayView#(.t: UInt8)
     ) -> (
         .result : Errable#(
@@ -485,7 +485,7 @@ transfer_stream(
 }
 
 transfer_stream(
-        .reader : $&Virtual#(.abstract: BlockReader),
+        .reader : $&Virtual#(.contract: BlockReader),
         .writer : $&Writer
     ) -> (
         .result : Errable#(
@@ -563,7 +563,7 @@ transfer_stream#(
 transfer_stream#(
         .base_type : Type: Writer
     )(
-        .reader : $&Virtual#(.abstract: BlockReader),
+        .reader : $&Virtual#(.contract: BlockReader),
         .writer : $&BufferedWriter#(.base_type: base_type)
     ) -> (
         .result : Errable#(

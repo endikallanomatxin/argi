@@ -1517,11 +1517,11 @@ pub const Resolver = struct {
         const module = &self.modules[module_index];
         const storage = &module.semantic.parameterized_storage.ir;
         return switch (storage.types.items[@intFromEnum(pattern)]) {
-            .parameter => |parameter| if (module.semantic.parameterized_storage.comptime_parameters.items[@intFromEnum(parameter)].constraint != null)
+            .parameter => |parameter| if (module.semantic.parameterized_storage.comptime_parameters.items[@intFromEnum(parameter)].constraint != null or
+                module.semantic.parameterized_storage.comptime_parameters.items[@intFromEnum(parameter)].implicit_participant)
                 .{ .bounded = 1 }
             else
                 .{},
-            .abstract_self => .{ .bounded = 1 },
             // TODO: Rank projection input constraints once tuple specificity is defined.
             .projection => .{},
             .concrete, .external => exactSpecificity(),

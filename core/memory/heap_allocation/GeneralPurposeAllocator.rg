@@ -26,7 +26,7 @@ _GeneralPurposeMapped: Type = (
 )
 
 GeneralPurposeAllocator: Type = (
-    ._backing_allocator : Virtual#(.abstract: Allocator)
+    ._backing_allocator : Virtual#(.contract: Allocator)
     ._bucket_size       : UIntNative
     ._bucket_head       : UIntNative
     ._large_head        : UIntNative
@@ -34,7 +34,7 @@ GeneralPurposeAllocator: Type = (
 
 GeneralPurposeAllocator init(.allocator: $&Allocator) -> (.result: GeneralPurposeAllocator) := {
     result = (
-        ._backing_allocator = to_virtual#(.abstract: Allocator)(.value = allocator)
+        ._backing_allocator = to_virtual#(.contract: Allocator)(.value = allocator)
         ._bucket_size       = 4096
         ._bucket_head       = 0
         ._large_head        = 0
@@ -282,7 +282,7 @@ allocate(
     match mapped {
         ..error _ { result = ..error(.reason = ..out_of_memory) }
         ..ok mapping {
-            deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(
+            deallocator :: Virtual#(.contract: Deallocator) = to_virtual#(.contract: Deallocator)(
                 .value = self
             )
             allocation ::= trusted_establish_allocation(

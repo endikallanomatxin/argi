@@ -506,3 +506,54 @@ test "frontend module cache preserves associated constant dimensions" {
     try std.testing.expect(rejected.failure != null);
     try std.testing.expect(std.mem.indexOf(u8, rejected.diagnostics, "array length must be non-negative") != null);
 }
+
+test "frontend module cache preserves unary contract participant normalization" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try @import("../test_support.zig").tmpRootPath(&tmp);
+    defer std.testing.allocator.free(root);
+    const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code =
+        \\Readable#(.Other: Type): contract = (
+        \\    read(.other: &Other, .source: &Self) -> (.value: &Int32)
+        \\        where depends_on(value, source)
+        \\)
+        \\Cell: Type = (.value: Int32)
+        \\Cell satisfies Readable#(.Other: Cell)
+        \\read(.other: &Cell, .source: &Cell) -> (.value: &Int32) := { value = &source&.value }
+        \\consume#(.T: Type: Readable#(.Other: Cell))(.other: &Cell, .source: &T) -> (.value: &Int32) := { value = read(other, source).value }
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    other ::= Cell(7)
+        \\    source ::= Cell(42)
+        \\    if consume(&other, &source)& != 42 { abort }
+        \\    handle ::= to_virtual#(.contract: Readable#(.Other: Cell))(.value = &source)
+        \\    if read(&other, &handle)& != 42 { abort }
+        \\}
+        \\
+    }};
+    {
+        var cold = ModuleCache.init(std.testing.allocator, .{});
+        defer cold.deinit();
+        try cold.enablePersistence(std.testing.io, root);
+        const result = try expectCleanEquivalent(&files, &cold);
+        defer result.deinit();
+        try std.testing.expectEqual(@as(?anyerror, null), result.failure);
+        try std.testing.expectEqual(@as(usize, 0), cold.disk_write_failures);
+    }
+    var warm = ModuleCache.init(std.testing.allocator, .{});
+    defer warm.deinit();
+    try warm.enablePersistence(std.testing.io, root);
+    const result = try expectCleanEquivalent(&files, &warm);
+    defer result.deinit();
+    try std.testing.expectEqual(@as(?anyerror, null), result.failure);
+    try std.testing.expectEqual(@as(usize, 1), result.hits);
+    try std.testing.expectEqual(@as(usize, 0), result.misses);
+    try std.testing.expectEqual(@as(usize, 0), warm.disk_rejections);
+
+    var invalid = files;
+    invalid[0].code = try std.mem.replaceOwned(u8, std.testing.allocator, files[0].code, "value = &source&.value", "value = &other&.value");
+    defer std.testing.allocator.free(invalid[0].code);
+    const rejected = try expectCleanEquivalent(&invalid, &warm);
+    defer rejected.deinit();
+    try std.testing.expect(rejected.failure != null);
+    try std.testing.expect(std.mem.indexOf(u8, rejected.diagnostics, "safety contract") != null);
+}

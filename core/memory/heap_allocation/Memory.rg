@@ -66,7 +66,7 @@ map_pages(
     match mapped {
         ..error _ { result = ..error(.reason = ..out_of_memory) }
         ..ok ~storage {
-            deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(
+            deallocator :: Virtual#(.contract: Deallocator) = to_virtual#(.contract: Deallocator)(
                 .value = self
             )
             allocation ::= establish_allocation(
