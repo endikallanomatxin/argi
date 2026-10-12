@@ -12100,3 +12100,11 @@ test "feature_tests/contracts/108X_shared_generic_associated_mismatch" {
 test "feature_tests/contracts/109X_shared_direct_associated_conflict" {
     try buildExpectFailWithoutNoise("tests/feature_tests/contracts/109X_shared_direct_associated_conflict", "conflicting", "panic");
 }
+
+test "program test shard assignment preserves fixture isolation" {
+    try @import("program_test_sharding").verifyIsolation();
+}
+
+test "program test shard assignment covers the regression inventory" {
+    try @import("program_test_sharding").verifyInventory(@embedFile("test.zig"));
+}

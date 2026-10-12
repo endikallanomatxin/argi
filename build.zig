@@ -4,7 +4,10 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const test_filters = b.option([]const []const u8, "test-filter", "Only run tests whose name contains this text (repeatable)") orelse &.{};
-    const test_progress = b.option(bool, "test-progress", "Print each test as it runs") orelse false;
+    const default_test_jobs: u32 = @intCast(@max(1, @min(16, std.Thread.getCpuCount() catch 4)));
+    const test_jobs = b.option(u32, "test-jobs", "Program test workers (default: CPU count capped at 16; 1 selects serial)") orelse default_test_jobs;
+    if (test_jobs == 0 or test_jobs > 64) @panic("test-jobs must be between 1 and 64");
+    const test_progress = b.option(bool, "test-progress", "Show active tests and record per-worker progress") orelse false;
     const frontend_build_options = b.addOptions();
     frontend_build_options.addOption([32]u8, "cache_build_id", compilerFingerprint(b) catch @panic("cannot fingerprint compiler sources"));
 
@@ -100,12 +103,45 @@ pub fn build(b: *std.Build) void {
     tests_mod.addImport("llvm_c", llvm_c_mod);
     linkLlvmModule(tests_mod, llvm_lib_path, llvm_libs_raw);
 
+    const program_options = b.addOptions();
+    program_options.addOption(u32, "workers", test_jobs);
+    program_options.addOption(bool, "progress", test_progress);
+    tests_mod.addOptions("program_test_options", program_options);
+    tests_mod.addImport("program_test_sharding", b.createModule(.{ .root_source_file = b.path("tests/sharding.zig"), .target = target, .optimize = optimize }));
     const exe_tests = b.addTest(.{
         .root_module = tests_mod,
         .filters = test_filters,
+        .test_runner = if (test_jobs > 1) .{ .path = b.path("tests/parallel_runner.zig"), .mode = .simple } else null,
     });
-    const run_exe_tests = addTestRun(b, exe_tests, test_progress);
-    run_exe_tests.step.dependOn(b.getInstallStep());
+    const program_test_step = b.step("test-programs", "Run Argi program tests");
+    if (test_jobs == 1) {
+        const run_exe_tests = addTestRun(b, exe_tests, test_progress);
+        run_exe_tests.step.dependOn(b.getInstallStep());
+        program_test_step.dependOn(&run_exe_tests.step);
+    } else {
+        const serial = b.addRunArtifact(exe_tests);
+        serial.addArg("serial");
+        serial.step.name = "program tests: shared state";
+        serial.expectExitCode(0);
+        serial.expectStdOutMatch("[programs serial]");
+        serial.has_side_effects = true;
+        serial.addArg(".zig-cache/program-tests/serial.log");
+        serial.step.dependOn(b.getInstallStep());
+        program_test_step.dependOn(&serial.step);
+        for (0..test_jobs) |worker| {
+            const run_shard = b.addRunArtifact(exe_tests);
+            run_shard.addArg(b.fmt("{d}", .{worker}));
+            // Inherited stdio takes Zig's terminal lock and would serialize
+            // workers. Capture diagnostics, but always rerun mutable fixtures.
+            run_shard.step.name = b.fmt("program tests: worker {d}", .{worker});
+            run_shard.expectExitCode(0);
+            run_shard.expectStdOutMatch("[programs ");
+            run_shard.has_side_effects = true;
+            run_shard.addArg(b.fmt(".zig-cache/program-tests/worker-{d}.log", .{worker}));
+            run_shard.step.dependOn(&serial.step);
+            program_test_step.dependOn(&run_shard.step);
+        }
+    }
 
     const internal_tests_mod = b.createModule(.{
         .root_source_file = b.path("src/internal_tests.zig"),
@@ -123,10 +159,6 @@ pub fn build(b: *std.Build) void {
 
     const internal_test_step = b.step("test-internal", "Run compiler unit tests");
     internal_test_step.dependOn(&run_internal_tests.step);
-
-    const program_test_step = b.step("test-programs", "Run Argi program tests");
-    program_test_step.dependOn(&run_exe_tests.step);
-    program_test_step.dependOn(b.getInstallStep());
 
     const benchmark_mod = b.createModule(.{
         .root_source_file = b.path("src/frontend_benchmark.zig"),

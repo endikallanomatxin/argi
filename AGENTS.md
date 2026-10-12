@@ -30,7 +30,7 @@ This repository contains a compiler for a new programming language written in Zi
 ## Usage
 
 - Build compiler: `zig build`
-- Run compiler tests: `zig build test`
+- Run compiler tests: `zig build test -j16 -Dtest-jobs=16`
 - Compile a test program: `./zig-out/bin/argi build tests/feature_tests/basics/01_minimal_main`
 
 > It might be necessary to set the following environment variables to make zig work:
@@ -80,7 +80,16 @@ feature first.
 - Keep CLI help aligned with the tool's current capabilities.
 
 - When validating the compiler locally, prefer:
-  `env ZIG_LOCAL_CACHE_DIR=$PWD/.zig-cache ZIG_GLOBAL_CACHE_DIR=$PWD/.zig-global-cache zig build test`
+  `env ZIG_LOCAL_CACHE_DIR=$PWD/.zig-cache ZIG_GLOBAL_CACHE_DIR=$PWD/.zig-global-cache zig build test -j16 -Dtest-jobs=16`
+
+- Use `-j16 -Dtest-jobs=16` for routine validation, including filtered runs.
+  Reduce both limits on constrained machines; retain the serial diagnostic
+  exception below for memory-growth investigations.
+- Program tests use one process per worker, automatically choosing the CPU count
+  capped at 16. `-Dtest-jobs=N` sets the worker count and `-jN` limits concurrent
+  build steps. Shared-state tests finish before fixture workers start; fixtures
+  stay on one worker. Per-worker totals and optional active-case progress are
+  recorded under `.zig-cache/program-tests/`.
 
 - CLI builds reuse canonical module snapshots under `.argi-cache/frontend/`.
   Use `argi build --no-cache` when comparing against a fresh frontend build;
@@ -91,8 +100,8 @@ feature first.
   source collection, codegen, and linking are outside these timings.
 
 - When investigating compiler memory growth or recursive function-summary
-  expansion, run focused tests serially with `-j1` and apply a process memory
-  limit where supported. Record the first failing test and peak memory use
+  expansion, run focused tests serially with `-j1 -Dtest-jobs=1` and apply a
+  process memory limit where supported. Record the first failing test and peak memory use
   before widening the run; avoid parallel full-suite runs during diagnosis.
   Use `-Dtest-progress=true` to identify an active case when a run stalls.
 
