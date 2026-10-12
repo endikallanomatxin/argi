@@ -150,10 +150,12 @@ The frontend preserves `implement#(...)` binders in participant patterns,
 associated definitions and inline body templates. Unique applicable generic patterns can be selected from concrete participants,
 with associated elements and inline bodies instantiated from those bindings.
 Repeated parameter occurrences enforce equality. Generic selection compares participant tuples by symbolic substitution for
-parameter leaves and closed types, including repeated-parameter equalities.
+parameter leaves, closed types, references and arrays with literal lengths,
+including repeated-parameter equalities. Reference matching preserves mutability
+and recursively infers referent parameters.
 Strictly less specific candidates are discarded; equivalent and incomparable
-maximal candidates are ambiguous. Recursive structural comparison for nested
-patterns and unqualified operation inference remain pending. Standard construction, conversion, destruction
+maximal candidates are ambiguous. Comparison of generic array lengths, nominal applications and other structural
+patterns, together with unqualified operation inference, remains pending. Standard construction, conversion, destruction
 and operator migration, composition and virtual evidence also remain pending.
 The compiler still contains transitional global overload resolution and earlier
 conformance syntax. Removal obligations are tracked in

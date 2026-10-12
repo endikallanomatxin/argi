@@ -1102,3 +1102,29 @@ test "repeated participant specificity is independent of declaration order" {
         try std.testing.expectEqual(@as(usize, 1), specialized);
     }
 }
+
+test "nested reference array specificity selects the element parameter" {
+    const allocator = std.testing.allocator;
+    const original = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, "tests/feature_tests/contracts/140_nested_reference_array_patterns/main.rg", allocator, .limited(64 * 1024));
+    defer allocator.free(original);
+    const first = std.mem.indexOf(u8, original, "implement#").?;
+    const second = std.mem.indexOfPos(u8, original, first + 1, "implement#").?;
+    const third = std.mem.indexOfPos(u8, original, second + 1, "implement#").?;
+    const main = std.mem.indexOf(u8, original, "main :=").?;
+    const reversed = try std.fmt.allocPrint(allocator, "{s}{s}{s}{s}{s}", .{ original[0..first], original[third..main], original[second..third], original[first..second], original[main..] });
+    defer allocator.free(reversed);
+    for ([_][]const u8{ original, reversed }) |source| {
+        var tree = try parseSource(allocator, source, @enumFromInt(0));
+        defer tree.deinit(allocator);
+        var module = try @import("semantizer.zig").build(allocator, "nested", &.{.{ .path = "nested/main.rg", .tree = &tree, .source = source }});
+        defer module.graph.deinit(allocator);
+        var result = try @import("../global/semantizer.zig").semantize(allocator, &.{module.graph});
+        defer result.graph.deinit(allocator);
+        try std.testing.expectEqual(@as(usize, 1), result.graph.contract_conformances.items.len);
+        const conformance = result.graph.contract_conformances.items[0];
+        const element = result.graph.generic_arguments.items[conformance.implementation_arguments.start].value.type;
+        const ty = result.graph.types.items[@intFromEnum(element)];
+        try std.testing.expect(ty == .builtin);
+        try std.testing.expectEqual(@import("../primitives/schema.zig").BuiltinType.Int32, ty.builtin);
+    }
+}

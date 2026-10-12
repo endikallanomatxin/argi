@@ -12240,3 +12240,11 @@ test "feature_tests/contracts/137_repeated_participant_specialization" {
 test "feature_tests/contracts/138X_incomparable_generic_patterns" {
     try buildExpectFailWithoutNoise("tests/feature_tests/contracts/138X_incomparable_generic_patterns", "ambiguous maximal patterns", "panic");
 }
+
+test "feature_tests/contracts/139_reference_participant_specialization" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/139_reference_participant_specialization");
+}
+
+test "feature_tests/contracts/140_nested_reference_array_patterns" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/140_nested_reference_array_patterns");
+}

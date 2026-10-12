@@ -1716,6 +1716,17 @@ pub const Resolver = struct {
         const right = self.modules[b.module].semantic.parameterized_storage.ir.types.items[@intFromEnum(b.ty)];
         if (left == .parameter or right == .parameter)
             return left == .parameter and right == .parameter and a.module == b.module and left.parameter == right.parameter;
+        if (left == .array and right == .array) {
+            const l = self.modules[a.module].semantic.parameterized_storage.ir.int_expressions.items[@intFromEnum(left.array.length)];
+            const r = self.modules[b.module].semantic.parameterized_storage.ir.int_expressions.items[@intFromEnum(right.array.length)];
+            const equal_length = if (l == .literal and r == .literal) l.literal == r.literal else l == .parameter and r == .parameter and a.module == b.module and l.parameter == r.parameter;
+            if (!equal_length) return false;
+            return self.symbolicTypesEqual(.{ .module = a.module, .ty = left.array.element }, .{ .module = b.module, .ty = right.array.element });
+        }
+        if (left == .resolved and right == .resolved and left.resolved == .pointer and right.resolved == .pointer) {
+            if (left.resolved.pointer.mutability != right.resolved.pointer.mutability) return false;
+            return self.symbolicTypesEqual(.{ .module = a.module, .ty = left.resolved.pointer.child }, .{ .module = b.module, .ty = right.resolved.pointer.child });
+        }
         var left_bindings = try generic_mod.Resolver.Bindings.init(self.allocator, self.modules[a.module].semantic.parameterized_storage.comptime_parameters.items.len);
         defer left_bindings.deinit(self.allocator);
         var right_bindings = try generic_mod.Resolver.Bindings.init(self.allocator, self.modules[b.module].semantic.parameterized_storage.comptime_parameters.items.len);
@@ -1737,6 +1748,17 @@ pub const Resolver = struct {
             if (substitutions.get(ty.parameter)) |previous| return self.symbolicTypesEqual(previous, specific);
             try substitutions.put(ty.parameter, specific);
             return true;
+        }
+        const other = self.modules[specific.module].semantic.parameterized_storage.ir.types.items[@intFromEnum(specific.ty)];
+        if (ty == .array and other == .array) {
+            const left_length = self.modules[general.module].semantic.parameterized_storage.ir.int_expressions.items[@intFromEnum(ty.array.length)];
+            const right_length = self.modules[specific.module].semantic.parameterized_storage.ir.int_expressions.items[@intFromEnum(other.array.length)];
+            if (left_length != .literal or right_length != .literal or left_length.literal != right_length.literal) return false;
+            return self.patternTypeCovers(.{ .module = general.module, .ty = ty.array.element }, .{ .module = specific.module, .ty = other.array.element }, substitutions);
+        }
+        if (ty == .resolved and ty.resolved == .pointer and other == .resolved and other.resolved == .pointer) {
+            if (ty.resolved.pointer.mutability != other.resolved.pointer.mutability) return false;
+            return self.patternTypeCovers(.{ .module = general.module, .ty = ty.resolved.pointer.child }, .{ .module = specific.module, .ty = other.resolved.pointer.child }, substitutions);
         }
         return self.symbolicTypesEqual(general, specific);
     }
@@ -2695,6 +2717,17 @@ pub const Resolver = struct {
                     return global_types.equal(self.graph, previous, actual);
                 slot.* = actual;
                 return true;
+            },
+            .resolved => |resolved| switch (resolved) {
+                .pointer => |pointer| {
+                    const actual_pointer = switch (self.graph.types.items[@intFromEnum(actual)]) {
+                        .pointer => |value| value,
+                        else => return false,
+                    };
+                    if (pointer.mutability != actual_pointer.mutability) return false;
+                    return self.inferConstraintTypePattern(module_index, pointer.child, actual_pointer.child, bindings);
+                },
+                else => {},
             },
             .array => |array| {
                 const actual_array = switch (self.graph.types.items[@intFromEnum(actual)]) {
