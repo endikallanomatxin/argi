@@ -1073,3 +1073,32 @@ test "generic implementation selection binds associated results and operation bo
         try std.testing.expectEqual(@as(u32, 1), conformance.operations.len);
     }
 }
+
+test "repeated participant specificity is independent of declaration order" {
+    const allocator = std.testing.allocator;
+    const original = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, "tests/feature_tests/contracts/137_repeated_participant_specialization/main.rg", allocator, .limited(64 * 1024));
+    defer allocator.free(original);
+    const first = std.mem.indexOf(u8, original, "implement#(.A").?;
+    const second = std.mem.indexOf(u8, original, "implement#(.T").?;
+    const main = std.mem.indexOf(u8, original, "main :=").?;
+    const reversed = try std.fmt.allocPrint(allocator, "{s}{s}{s}{s}", .{ original[0..first], original[second..main], original[first..second], original[main..] });
+    defer allocator.free(reversed);
+    for ([_][]const u8{ original, reversed }) |source| {
+        var tree = try parseSource(allocator, source, @enumFromInt(0));
+        defer tree.deinit(allocator);
+        var module = try @import("semantizer.zig").build(allocator, "specificity", &.{.{ .path = "specificity/main.rg", .tree = &tree, .source = source }});
+        defer module.graph.deinit(allocator);
+        var result = try @import("../global/semantizer.zig").semantize(allocator, &.{module.graph});
+        defer result.graph.deinit(allocator);
+        try std.testing.expectEqual(@as(usize, 2), result.graph.contract_conformances.items.len);
+        var specialized: usize = 0;
+        for (result.graph.contract_conformances.items) |conformance| {
+            const arguments = result.graph.generic_arguments.items[conformance.participants.start..][0..conformance.participants.len];
+            if (@import("../global/types.zig").equal(&result.graph, arguments[0].value.type, arguments[1].value.type)) {
+                try std.testing.expectEqual(@as(u32, 1), conformance.implementation_arguments.len);
+                specialized += 1;
+            } else try std.testing.expectEqual(@as(u32, 2), conformance.implementation_arguments.len);
+        }
+        try std.testing.expectEqual(@as(usize, 1), specialized);
+    }
+}

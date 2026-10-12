@@ -12232,3 +12232,11 @@ test "feature_tests/contracts/135X_generic_implementation_result" {
 test "feature_tests/contracts/136X_generic_implementation_overlap" {
     try buildExpectFailWithoutNoise("tests/feature_tests/contracts/136X_generic_implementation_overlap", "overlapping generic implementations", "panic");
 }
+
+test "feature_tests/contracts/137_repeated_participant_specialization" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/137_repeated_participant_specialization");
+}
+
+test "feature_tests/contracts/138X_incomparable_generic_patterns" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/138X_incomparable_generic_patterns", "ambiguous maximal patterns", "panic");
+}

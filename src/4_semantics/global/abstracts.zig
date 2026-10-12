@@ -1618,10 +1618,12 @@ pub const Resolver = struct {
 
     fn selectGenericParticipantConformance(self: *Resolver, declaration: global_sg.GlobalDeclId, participants: []const global_sg.GlobalTypeId, target: ?*generic_mod.Resolver.Bindings) anyerror!?ConformanceSelection {
         const located = self.findAbstractDefinition(declaration) orelse return null;
-        var selected_module: ?usize = null;
-        var selected_template: parameterized_storage.ContractConformance = undefined;
-        var selected_bindings: ?generic_mod.Resolver.Bindings = null;
-        defer if (selected_bindings) |*bindings| bindings.deinit(self.allocator);
+        const Candidate = struct { module: usize, template: parameterized_storage.ContractConformance, bindings: generic_mod.Resolver.Bindings };
+        var candidates: std.ArrayList(Candidate) = .empty;
+        defer {
+            for (candidates.items) |*candidate| candidate.bindings.deinit(self.allocator);
+            candidates.deinit(self.allocator);
+        }
         for (self.modules, 0..) |*module, module_index| {
             for (module.semantic.parameterized_storage.contract_conformances.items) |template| {
                 if (template.parameters.len == 0 or template.participants.len != participants.len) continue;
@@ -1637,25 +1639,37 @@ pub const Resolver = struct {
                     }
                 }
                 if (!matches or !try self.validateParameterizedImplementationConstraints(module_index, template.parameters, &bindings)) continue;
-                if (selected_module != null) {
-                    self.participant_conformance_failure = .{
-                        .source = self.sourceFor(module_index, template.source),
-                        .contract_name = module.text(switch (template.contract_ref) {
-                            .module => |id| module.declarations.items[@intFromEnum(id)].name,
-                            .external => |id| module.semantic.external_refs.items[@intFromEnum(id)].name,
-                        }),
-                        .reason = "overlapping generic implementations require structural specificity selection",
-                    };
-                    return error.InvalidContractConformance;
-                }
-                selected_module = module_index;
-                selected_template = template;
-                selected_bindings = bindings;
+                try candidates.append(self.allocator, .{ .module = module_index, .template = template, .bindings = bindings });
                 keep = true;
             }
         }
-        const module_index = selected_module orelse return null;
-        const bindings = &selected_bindings.?;
+        var selected: ?usize = null;
+        for (candidates.items, 0..) |candidate, index| {
+            var dominated = false;
+            for (candidates.items, 0..) |other, other_index| {
+                if (index == other_index) continue;
+                const covers_other = try self.patternTupleCovers(candidate.module, candidate.template, other.module, other.template);
+                const covers_candidate = try self.patternTupleCovers(other.module, other.template, candidate.module, candidate.template);
+                if (covers_other and !covers_candidate) {
+                    dominated = true;
+                    break;
+                }
+            }
+            if (dominated) continue;
+            if (selected != null) {
+                self.participant_conformance_failure = .{
+                    .source = self.sourceFor(candidate.module, candidate.template.source),
+                    .contract_name = self.modules[located.module_index].text(self.modules[located.module_index].declarations.items[@intFromEnum(located.definition.declaration)].name),
+                    .reason = "overlapping generic implementations have ambiguous maximal patterns",
+                };
+                return error.InvalidContractConformance;
+            }
+            selected = index;
+        }
+        const candidate = &candidates.items[selected orelse return null];
+        const module_index = candidate.module;
+        const selected_template = candidate.template;
+        const bindings = &candidate.bindings;
         const actual = try self.generics.instantiateParameterizedArguments(module_index, selected_template.participants, bindings);
         const associated = try self.generics.instantiateParameterizedArguments(module_index, selected_template.associated_arguments, bindings);
         var contract_bindings = try generic_mod.Resolver.Bindings.init(self.allocator, self.modules[located.module_index].semantic.parameterized_storage.comptime_parameters.items.len);
@@ -1681,6 +1695,50 @@ pub const Resolver = struct {
             try self.generics.bindGlobalArguments(located.module_index, located.definition.parameters, associated, destination);
         }
         return .{ .tuple = index };
+    }
+
+    const SymbolicPattern = struct { module: usize, ty: ir.ParameterizedTypeId };
+
+    fn patternTupleCovers(self: *Resolver, general_module: usize, general: parameterized_storage.ContractConformance, specific_module: usize, specific: parameterized_storage.ContractConformance) !bool {
+        var substitutions = std.AutoHashMap(ir.ComptimeParameterId, SymbolicPattern).init(self.allocator);
+        defer substitutions.deinit();
+        const left = self.modules[general_module].semantic.parameterized_storage.ir.generic_arguments.items[general.participants.start..][0..general.participants.len];
+        const right = self.modules[specific_module].semantic.parameterized_storage.ir.generic_arguments.items[specific.participants.start..][0..specific.participants.len];
+        for (left, right) |a, b| {
+            if (a.value != .type or b.value != .type) return false;
+            if (!try self.patternTypeCovers(.{ .module = general_module, .ty = a.value.type }, .{ .module = specific_module, .ty = b.value.type }, &substitutions)) return false;
+        }
+        return true;
+    }
+
+    fn symbolicTypesEqual(self: *Resolver, a: SymbolicPattern, b: SymbolicPattern) !bool {
+        const left = self.modules[a.module].semantic.parameterized_storage.ir.types.items[@intFromEnum(a.ty)];
+        const right = self.modules[b.module].semantic.parameterized_storage.ir.types.items[@intFromEnum(b.ty)];
+        if (left == .parameter or right == .parameter)
+            return left == .parameter and right == .parameter and a.module == b.module and left.parameter == right.parameter;
+        var left_bindings = try generic_mod.Resolver.Bindings.init(self.allocator, self.modules[a.module].semantic.parameterized_storage.comptime_parameters.items.len);
+        defer left_bindings.deinit(self.allocator);
+        var right_bindings = try generic_mod.Resolver.Bindings.init(self.allocator, self.modules[b.module].semantic.parameterized_storage.comptime_parameters.items.len);
+        defer right_bindings.deinit(self.allocator);
+        const l = self.generics.instantiateParameterizedType(a.module, a.ty, &left_bindings) catch |err| {
+            if (err == error.OutOfMemory) return err;
+            return false;
+        };
+        const r = self.generics.instantiateParameterizedType(b.module, b.ty, &right_bindings) catch |err| {
+            if (err == error.OutOfMemory) return err;
+            return false;
+        };
+        return global_types.equal(self.graph, l, r);
+    }
+
+    fn patternTypeCovers(self: *Resolver, general: SymbolicPattern, specific: SymbolicPattern, substitutions: *std.AutoHashMap(ir.ComptimeParameterId, SymbolicPattern)) !bool {
+        const ty = self.modules[general.module].semantic.parameterized_storage.ir.types.items[@intFromEnum(general.ty)];
+        if (ty == .parameter) {
+            if (substitutions.get(ty.parameter)) |previous| return self.symbolicTypesEqual(previous, specific);
+            try substitutions.put(ty.parameter, specific);
+            return true;
+        }
+        return self.symbolicTypesEqual(general, specific);
     }
 
     fn publishImplementationArguments(self: *Resolver, module_index: usize, parameters: primitives.Range(ir.ComptimeParameterId), bindings: *generic_mod.Resolver.Bindings) !primitives.Range(global_sg.GlobalGenericArgId) {

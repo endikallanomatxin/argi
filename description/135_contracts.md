@@ -149,9 +149,11 @@ Frontend snapshots preserve these declarations and operation identities.
 The frontend preserves `implement#(...)` binders in participant patterns,
 associated definitions and inline body templates. Unique applicable generic patterns can be selected from concrete participants,
 with associated elements and inline bodies instantiated from those bindings.
-Repeated parameter occurrences enforce equality. Overlapping generic patterns
-currently receive an explicit diagnostic; structural specificity selection and
-unqualified operation inference remain pending. Standard construction, conversion, destruction
+Repeated parameter occurrences enforce equality. Generic selection compares participant tuples by symbolic substitution for
+parameter leaves and closed types, including repeated-parameter equalities.
+Strictly less specific candidates are discarded; equivalent and incomparable
+maximal candidates are ambiguous. Recursive structural comparison for nested
+patterns and unqualified operation inference remain pending. Standard construction, conversion, destruction
 and operator migration, composition and virtual evidence also remain pending.
 The compiler still contains transitional global overload resolution and earlier
 conformance syntax. Removal obligations are tracked in

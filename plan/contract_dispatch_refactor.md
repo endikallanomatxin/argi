@@ -20,8 +20,9 @@ incomparable maximal candidates are errors; source/import ordering has no priori
 
 1. Extend participant pattern matching to nested nominal applications, references
    and named participant arguments. Rank generic patterns by strict structural
-   subsumption, including repeated-variable equalities. Reject equivalent and
-   incomparable maximal patterns; the current generic path rejects all overlaps.
+   subsumption recursively inside nested patterns; the current comparison handles
+   parameter leaves, closed types and repeated-variable equalities. Preserve the
+   rejection of equivalent and incomparable maximal patterns.
    Check duplicate patterns and extension ownership even for dormant templates.
 2. Validate newly instantiated evidence during resolution so nested operations
    and requirements reach the same fixed point as ordinary calls. Infer generic
