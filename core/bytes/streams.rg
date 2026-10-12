@@ -1,7 +1,6 @@
 -- Memory cursors implement the stream protocols without acquiring capabilities
 -- or storage. They retain the same backing-view lifetime as binary operations.
 ByteReader satisfies BlockReader
-ByteWriter satisfies Writer
 ByteWriter satisfies BlockWriter
 
 implement Reader#(ByteReader)(
@@ -21,30 +20,6 @@ implement Reader#(ByteReader)(
         result = ..ok ..ok byte&
     }
 )
-
-write_byte(
-        .self : $&ByteWriter,
-        .byte : UInt8
-    ) -> (
-        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()
-    ) := {
-    if remaining(self).count == 0 {
-        result = ..error(.reason = ..stream_write_failed)
-        return
-    }
-
-    target ::= unwrap_or_abort(
-        .value = get_rw_ref($&self&._bytes, .index = self&._position)
-    )
-    target&= byte
-    self&._position = self&._position + 1
-}
-
-flush(
-        .self : $&ByteWriter
-    ) -> (
-        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()
-    ) := {}
 
 read_block(
         .self   : $&ByteReader,
@@ -114,3 +89,29 @@ write_block(
 
     result = ..ok count
 }
+
+implement Writer#(ByteWriter)(
+    .write_byte = (
+            .self : $&ByteWriter,
+            .byte : UInt8
+        ) -> (
+            .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()
+        ) {
+        if remaining(self).count == 0 {
+            result = ..error(.reason = ..stream_write_failed)
+            return
+        }
+
+        target ::= unwrap_or_abort(
+            .value = get_rw_ref($&self&._bytes, .index = self&._position)
+        )
+        target&= byte
+        self&._position = self&._position + 1
+    }
+
+    .flush = (
+            .self : $&ByteWriter
+        ) -> (
+            .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()
+        ) {}
+)

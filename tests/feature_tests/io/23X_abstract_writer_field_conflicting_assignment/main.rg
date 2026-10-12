@@ -1,52 +1,30 @@
-FirstWriter : Type = ()
+FirstWriter: Type = ()
 
 FirstWriter init() -> (.result: FirstWriter) := {
     result = ()
 }
 
-write_byte(.self: $&FirstWriter, .byte: UInt8) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
-    _ ::= byte
-    result = ..ok(.value = Void())
-}
-
-flush(.self: $&FirstWriter) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
-    result = ..ok(.value = Void())
-}
-
-FirstWriter implements Writer
-
-SecondWriter : Type = ()
+SecondWriter: Type = ()
 
 SecondWriter init() -> (.result: SecondWriter) := {
     result = ()
 }
 
-write_byte(.self: $&SecondWriter, .byte: UInt8) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
-    _ ::= byte
-    result = ..ok(.value = Void())
-}
-
-flush(.self: $&SecondWriter) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
-    result = ..ok(.value = Void())
-}
-
-SecondWriter implements Writer
-
-Holder : Type = (
-    .writer: $&Writer
+Holder: Type = (
+    .writer : $&Writer
 )
 
 set_first(
-    .p: $&Holder,
-    .writer: $&FirstWriter,
-) -> () := {
+        .p      : $&Holder,
+        .writer : $&FirstWriter,
+    ) -> () := {
     p&.writer = writer
 }
 
 set_second(
-    .p: $&Holder,
-    .writer: $&SecondWriter,
-) -> () := {
+        .p      : $&Holder,
+        .writer : $&SecondWriter,
+    ) -> () := {
     p&.writer = writer
 }
 
@@ -60,3 +38,43 @@ main() -> (.status_code: Int32) := {
 
     status_code = 0
 }
+
+implement Writer#(FirstWriter)(
+    .write_byte = (
+            .self : $&FirstWriter,
+            .byte : UInt8
+        ) -> (
+            .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        ) {
+        _ ::= byte
+        result = ..ok(.value = Void())
+    }
+
+    .flush = (
+            .self : $&FirstWriter
+        ) -> (
+            .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        ) {
+        result = ..ok(.value = Void())
+    }
+)
+
+implement Writer#(SecondWriter)(
+    .write_byte = (
+            .self : $&SecondWriter,
+            .byte : UInt8
+        ) -> (
+            .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        ) {
+        _ ::= byte
+        result = ..ok(.value = Void())
+    }
+
+    .flush = (
+            .self : $&SecondWriter
+        ) -> (
+            .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        ) {
+        result = ..ok(.value = Void())
+    }
+)

@@ -176,26 +176,6 @@ close(.self: $&File) -> (.result: Errable#(Void, (..stream_close_failed))) := {
     result = ..ok Void()
 }
 
-flush(
-        .self : $&File
-    ) -> (
-        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-    ) := {
-    assume ffi := self&._ffi
-
-    if self&.stream_address == 0 {
-        result = ..error(.reason = ..stream_flush_failed)
-        return
-    }
-
-    if fflush(.stream = file_stream_pointer(self).stream).status != 0 {
-        result = ..error(.reason = ..stream_flush_failed)
-        return
-    }
-
-    result = ..ok Void()
-}
-
 implement Reader#(File)(
     .read_byte = (.self: $&File) -> (.result: Errable#(ReadByte, (..stream_read_failed))) {
         assume ffi := self&._ffi
@@ -231,34 +211,6 @@ implement Reader#(File)(
         result = ..ok ..ok byte
     }
 )
-
-write_byte(
-        .self : $&File,
-        .byte : UInt8
-    ) -> (
-        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-    ) := {
-    assume ffi := self&._ffi
-
-    if self&.stream_address == 0 {
-        result = ..error(.reason = ..stream_write_failed)
-        return
-    }
-
-    single_byte :: UInt8 = byte
-    byte_view ::= array_view#(.t: UInt8)(.data = $&single_byte)
-    wrote ::= fwrite_from(
-        .buffer = byte_view
-        .stream = file_stream_pointer(self).stream
-    ).count
-
-    if wrote != 1 {
-        result = ..error(.reason = ..stream_write_failed)
-        return
-    }
-
-    result = ..ok Void()
-}
 
 read(
         .self   : $&File,
@@ -312,8 +264,6 @@ write(
     result = ..ok wrote
 }
 
-File satisfies Writer
-
 write_block(
         .self   : $&File,
         .buffer : ArrayViewRO#(.t: UInt8)
@@ -339,3 +289,53 @@ write_block(
 
     result = ..ok count
 }
+
+implement Writer#(File)(
+    .flush = (
+            .self : $&File
+        ) -> (
+            .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+        ) {
+        assume ffi := self&._ffi
+
+        if self&.stream_address == 0 {
+            result = ..error(.reason = ..stream_flush_failed)
+            return
+        }
+
+        if fflush(.stream = file_stream_pointer(self).stream).status != 0 {
+            result = ..error(.reason = ..stream_flush_failed)
+            return
+        }
+
+        result = ..ok Void()
+    }
+
+    .write_byte = (
+            .self : $&File,
+            .byte : UInt8
+        ) -> (
+            .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+        ) {
+        assume ffi := self&._ffi
+
+        if self&.stream_address == 0 {
+            result = ..error(.reason = ..stream_write_failed)
+            return
+        }
+
+        single_byte :: UInt8 = byte
+        byte_view ::= array_view#(.t: UInt8)(.data = $&single_byte)
+        wrote ::= fwrite_from(
+            .buffer = byte_view
+            .stream = file_stream_pointer(self).stream
+        ).count
+
+        if wrote != 1 {
+            result = ..error(.reason = ..stream_write_failed)
+            return
+        }
+
+        result = ..ok Void()
+    }
+)

@@ -18,20 +18,21 @@ incomparable maximal candidates are errors; source/import ordering has no priori
 
 ## Implementation order and removal obligations
 
-1. Migrate Writer next, including generic adapters and unary virtual evidence,
-   then ErrorTracer and Allocator. Reader now uses selected scoped evidence
-   throughout its bundled adapters and callers. Preserve fallible virtual capability
-   inputs, storage acquisition proofs and cleanup. Unary receiver safety normalization
-   recognizes the original participant parameter; preserve pointer-field dependencies
+1. Migrate ErrorTracer next, then Allocator. Reader and Writer now use selected
+   scoped evidence throughout their bundled adapters and callers. Preserve fallible
+   virtual capability inputs, storage acquisition proofs and cleanup. Unary receiver
+   safety normalization recognizes the original participant parameter; preserve
+   pointer-field dependencies
    and generation facts when migrating each adapter. Continue with the remaining
    bundled core/more operations, including BorrowedOrderPolicy.
    OrderPolicy, HashPolicy and BorrowedHashPolicy already use explicit participants
    and scoped implementations. Replace each implicit receiver contract with explicit
-   participants and each global operation family with scoped implementations. Remove the superseded route as its final consumers move.
+   participants and each global operation family with scoped implementations. Remove
+   the superseded route as its final consumers move.
    Resolve unqualified calls by operation identity and participant inference.
    Replace temporary rejections of unqualified OrderPolicy.less and
-   HashPolicy.hash and Reader.read_byte with scoped-identity assertions when that resolution is
-   implemented.
+   HashPolicy.hash, Reader.read_byte and Writer.write_byte with scoped-identity
+   assertions when that resolution is implemented.
    Remove global overload lookup, legacy function declaration adapters,
    `satisfies` and `Abstract` compatibility once their consumers are migrated.
    No long-term parallel overload mechanism is intended.

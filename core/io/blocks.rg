@@ -29,7 +29,7 @@ _reader_block#(
 }
 
 _writer_block#(
-        .t : Type: Writer
+        .t : Type: Writer#(t)
     )(
         .self   : $&t,
         .buffer : ArrayViewRO#(.t: UInt8)
@@ -40,7 +40,7 @@ _writer_block#(
 
     while index < length(&buffer).count {
         byte ::= unwrap_or_abort(.value = get_ro_ref(&buffer, .index = index))
-        write_byte(self, .byte = byte&)!
+        Writer#().write_byte(self, .byte = byte&)!
         index = index + 1
     }
 
@@ -52,7 +52,7 @@ File satisfies BlockWriter
 ProcessStream satisfies BlockReader
 ProcessStream satisfies BlockWriter
 BufferedReader#(.base_type: Type: Reader#(base_type)) satisfies BlockReader
-BufferedWriter#(.base_type: Type: Writer) satisfies BlockWriter
+BufferedWriter#(.base_type: Type: Writer#(base_type)) satisfies BlockWriter
 TcpConnection satisfies BlockReader
 TcpConnection satisfies BlockWriter
 
@@ -245,7 +245,7 @@ read_block#(
 }
 
 write_block#(
-        .base_type : Type: Writer
+        .base_type : Type: Writer#(base_type)
     )(
         .self   : $&BufferedWriter#(.base_type: base_type),
         .buffer : ArrayViewRO#(.t: UInt8)
@@ -479,7 +479,7 @@ transfer_stream(
             return
         }
 
-        write_byte(writer, .byte = storage[0])!
+        Writer#().write_byte(writer, .byte = storage[0])!
         copied = copied + 1
     }
 }
@@ -509,13 +509,13 @@ transfer_stream(
             return
         }
 
-        write_byte(writer, .byte = storage[0])!
+        Writer#().write_byte(writer, .byte = storage[0])!
         copied = copied + 1
     }
 }
 
 transfer_stream#(
-        .base_type : Type: Writer
+        .base_type : Type: Writer#(base_type)
     )(
         .reader : $&BlockReader,
         .writer : $&BufferedWriter#(.base_type: base_type)
@@ -561,7 +561,7 @@ transfer_stream#(
 }
 
 transfer_stream#(
-        .base_type : Type: Writer
+        .base_type : Type: Writer#(base_type)
     )(
         .reader : $&Virtual#(.contract: BlockReader),
         .writer : $&BufferedWriter#(.base_type: base_type)

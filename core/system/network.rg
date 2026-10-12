@@ -677,8 +677,6 @@ write_all(
     result = ..ok Void()
 }
 
-TcpConnection satisfies Writer
-
 implement Reader#(TcpConnection)(
     .read_byte = (
             .self : $&TcpConnection
@@ -695,33 +693,6 @@ implement Reader#(TcpConnection)(
         }
     }
 )
-
-write_byte(
-        .self : $&TcpConnection,
-        .byte : UInt8
-    ) -> (
-        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-    ) := {
-    buffer: [1]UInt8 = (byte)
-
-    match write_all(self, .buffer = view(&buffer)) {
-        ..error _ { result = ..error(.reason = ..stream_write_failed) }
-        ..ok _ { result = ..ok Void() }
-    }
-}
-
-flush(
-        .self : $&TcpConnection
-    ) -> (
-        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-    ) := {
-    if self&._handle == 0 {
-        result = ..error(.reason = ..stream_flush_failed)
-        return
-    }
-
-    result = ..ok Void()
-}
 
 read_block(
         .self   : $&TcpConnection,
@@ -746,3 +717,32 @@ write_block(
         ..error _ { result = ..error(.reason = ..stream_write_failed) }
     }
 }
+
+implement Writer#(TcpConnection)(
+    .write_byte = (
+            .self : $&TcpConnection,
+            .byte : UInt8
+        ) -> (
+            .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+        ) {
+        buffer: [1]UInt8 = (byte)
+
+        match write_all(self, .buffer = view(&buffer)) {
+            ..error _ { result = ..error(.reason = ..stream_write_failed) }
+            ..ok _ { result = ..ok Void() }
+        }
+    }
+
+    .flush = (
+            .self : $&TcpConnection
+        ) -> (
+            .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+        ) {
+        if self&._handle == 0 {
+            result = ..error(.reason = ..stream_flush_failed)
+            return
+        }
+
+        result = ..ok Void()
+    }
+)

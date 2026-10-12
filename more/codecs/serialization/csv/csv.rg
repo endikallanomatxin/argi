@@ -148,17 +148,17 @@ write_record(
     index :: UIntNative = 0
 
     while index < length(&fields).count {
-        if index > 0 { write_byte(.self = writer, .byte = 44)! }
+        if index > 0 { Writer#().write_byte(.self = writer, .byte = 44)! }
         text ::= unwrap_or_abort(.value = get(.self = &fields, .index = index))
-        write_byte(.self = writer, .byte = 34)!
+        Writer#().write_byte(.self = writer, .byte = 34)!
         cursor :: UIntNative = 0
         while cursor < text.length {
             byte ::= bytes_get(.view = &text, .index = cursor).byte
-            write_byte(.self = writer, .byte = byte)!
-            if byte == 34 { write_byte(.self = writer, .byte = byte)! }
+            Writer#().write_byte(.self = writer, .byte = byte)!
+            if byte == 34 { Writer#().write_byte(.self = writer, .byte = byte)! }
             cursor = cursor + 1
         }
-        write_byte(.self = writer, .byte = 34)!
+        Writer#().write_byte(.self = writer, .byte = 34)!
         index = index + 1
     }
 

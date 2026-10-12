@@ -185,4 +185,7 @@ not part of the intended final language.
 > [!IMPLEMENTATION]
 > Bundled Reader uses scoped implementations for files, process streams, TCP,
 > memory cursors and buffered/limited adapters. Its former global read_byte
-> family is removed. Writer migration remains pending.
+> family is removed. Bundled Writer likewise uses scoped write_byte/flush
+> implementations for files, process streams, TCP, memory cursors and buffered
+> adapters. Formatting, terminal output and error tracing call those identities.
+> Terminal and logging flush helpers remain unique ordinary functions.

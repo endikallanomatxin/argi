@@ -119,14 +119,14 @@ print(
     result = write(writer, .text = terminator)
 }
 
-flush(
+flush := (
         .writer : $&Writer,
     ) -> (
         .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-    ) := {
+    ) {
     assume writer
 
-    result = flush(.self = writer)
+    result = Writer#().flush(.self = writer)
 }
 
 print_error(
@@ -140,7 +140,7 @@ print_error(
     i :: UIntNative = 0
 
     while i < value.length {
-        wrote ::= write_byte(writer, .byte = bytes_get(.view = &value, .index = i).byte)
+        wrote ::= Writer#().write_byte(writer, .byte = bytes_get(.view = &value, .index = i).byte)
         match wrote {
             ..ok _ {
             }
@@ -166,7 +166,7 @@ flush_error(
     ) := {
     assume writer
 
-    result = flush(.self = writer)
+    result = Writer#().flush(.self = writer)
 }
 
 print(

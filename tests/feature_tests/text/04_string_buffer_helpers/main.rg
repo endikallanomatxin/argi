@@ -21,7 +21,7 @@ DummyWriter deinit(
     deinit(.self = $&self&.bytes, .allocator = allocator)
 }
 
-write_byte(
+append_test_byte(
         .self      : $&DummyWriter,
         .byte      : UInt8,
         .allocator : $&Allocator
@@ -35,14 +35,6 @@ write_byte(
         result = ..error(.reason = ..stream_write_failed)
         return
     }
-    result = ..ok(.value = Void())
-}
-
-flush(
-        .self : $&DummyWriter
-    ) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
-    ) := {
     result = ..ok(.value = Void())
 }
 
@@ -68,14 +60,14 @@ main(.system: System) -> (.status_code: Int32) := {
     writer ::= DummyWriter(.allocator = $&allocator_storage)
     i :: UIntNative = 0
     while i < buffer.length {
-        write_byte(
+        append_test_byte(
             .self      = $&writer
             .byte      = bytes_get(.string = &buffer, .index = i).byte
             .allocator = $&allocator_storage
         )
         i = i + 1
     }
-    write_byte(.self = $&writer, .byte = 10, .allocator = $&allocator_storage)
+    append_test_byte(.self = $&writer, .byte = 10, .allocator = $&allocator_storage)
 
     if writer.bytes.length != 3 {
         status_code = 2

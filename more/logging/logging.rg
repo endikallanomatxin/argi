@@ -42,7 +42,7 @@ _write_record(
         byte ::= bytes_get(.view = &message, .index = index).byte
         if byte == 10 { write(.self = writer, .text = "\\n")! } else {
             if byte == 13 { write(.self = writer, .text = "\\r")! } else {
-                write_byte(.self = writer, .byte = byte)!
+                Writer#().write_byte(.self = writer, .byte = byte)!
             }
         }
         index = index + 1
@@ -51,12 +51,12 @@ _write_record(
     write(.self = writer, .text = "\n")!
 }
 
-FileLogger#(.t: Type: Writer): Type = (._writer: $&t, .minimum: LogLevel)
+FileLogger#(.t: Type: Writer#(t)): Type = (._writer: $&t, .minimum: LogLevel)
 
-FileLogger#(.t: Type: Writer) satisfies Logger
+FileLogger#(.t: Type: Writer#(t)) satisfies Logger
 
 FileLogger init#(
-        .t : Type: Writer
+        .t : Type: Writer#(t)
     )(
         .writer  : $&t,
         .minimum : LogLevel = ..info
@@ -65,7 +65,7 @@ FileLogger init#(
     ) := { result = (._writer = writer, .minimum = minimum) }
 
 log#(
-        .t : Type: Writer
+        .t : Type: Writer#(t)
     )(
         .self    : $&FileLogger#(.t: t),
         .level   : LogLevel,
@@ -78,24 +78,24 @@ log#(
 }
 
 flush#(
-        .t : Type: Writer
-    )(
+        .t : Type: Writer#(t)
+    ) := (
         .self : $&FileLogger#(.t: t)
     ) -> (
         .result : Errable#(Void, LogReasons)
-    ) := { result = flush(.self = self&._writer) }
+    ) { result = Writer#().flush(.self = self&._writer) }
 
-StdLogger#(.out: Type: Writer, .err: Type: Writer): Type = (
+StdLogger#(.out: Type: Writer#(out), .err: Type: Writer#(err)): Type = (
     ._out    : $&out,
     ._err    : $&err,
     .minimum : LogLevel
 )
 
-StdLogger#(.out: Type: Writer, .err: Type: Writer) satisfies Logger
+StdLogger#(.out: Type: Writer#(out), .err: Type: Writer#(err)) satisfies Logger
 
 StdLogger init#(
-        .out : Type: Writer,
-        .err : Type: Writer
+        .out : Type: Writer#(out),
+        .err : Type: Writer#(err)
     )(
         .writer       : $&out,
         .error_writer : $&err,
@@ -105,8 +105,8 @@ StdLogger init#(
     ) := { result = (._out = writer, ._err = error_writer, .minimum = minimum) }
 
 log#(
-        .out : Type: Writer,
-        .err : Type: Writer
+        .out : Type: Writer#(out),
+        .err : Type: Writer#(err)
     )(
         .self    : $&StdLogger#(.out: out, .err: err),
         .level   : LogLevel,

@@ -29,14 +29,14 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     client ::= TcpConnection(.address = bound)!
     connection ::= accept(.self = $&listener)!
     set_timeout(.self = $&connection, .milliseconds = 5000)!
-    write_byte(.self = $&client, .byte = 77)!
-    flush(.self = $&client)!
+    Writer#().write_byte(.self = $&client, .byte = 77)!
+    Writer#().flush(.self = $&client)!
     received ::= Reader#().read_byte(.self = $&connection)!
     match received { ..end { abort } ..ok value { if value != 77 { abort } } }
     close(.self = $&client)!
     match Reader#().read_byte(.self = $&connection)! { ..end {} ..ok _ { abort } }
-    match flush(.self = $&client) { ..ok _ { abort } ..error _ {} }
-    match write_byte(.self = $&client, .byte = 77) { ..ok _ { abort } ..error _ {} }
+    match Writer#().flush(.self = $&client) { ..ok _ { abort } ..error _ {} }
+    match Writer#().write_byte(.self = $&client, .byte = 77) { ..ok _ { abort } ..error _ {} }
     match local_address(.self = &client) { ..ok _ { abort } ..error _ {} }
     close(.self = $&listener)!
     match accept(.self = $&listener) { ..ok _ { abort } ..error _ {} }

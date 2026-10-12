@@ -2,7 +2,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     if length(.self = system.args).count > 1 {
         unwrap_or_abort(.value = close(.self = $&system.terminal&.stdin))
         unwrap_or_abort(.value = write(.self = $&system.terminal&.stdout, .text = "R"))
-        unwrap_or_abort(.value = flush(.self = $&system.terminal&.stdout))
+        unwrap_or_abort(.value = Writer#().flush(.self = $&system.terminal&.stdout))
         assume clock ::= system.clock
         while true {
             unwrap_or_abort(
@@ -29,7 +29,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     }
     -- Wrong-direction operations fail before crossing the native boundary.
     match Reader#().read_byte(.self = $&child.stdin) { ..error _ {} ..ok _ { abort } }
-    match write_byte(.self = $&child.stdout, .byte = 1) { ..error _ {} ..ok _ { abort } }
+    match Writer#().write_byte(.self = $&child.stdout, .byte = 1) { ..error _ {} ..ok _ { abort } }
     unwrap_or_abort(.value = terminate(.self = $&child))
     status ::= unwrap_or_abort(.value = wait(.self = $&child)).result
     #if target_os("windows") {
@@ -39,7 +39,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         match status { ..signaled value { if value.signal != 9 { abort } } ..exited _ { abort } }
     }
     -- Even after the child has exited, a broken pipe is a Writer error.
-    match write_byte(.self = $&child.stdin, .byte = 1) { ..error _ {} ..ok _ { abort } }
+    match Writer#().write_byte(.self = $&child.stdin, .byte = 1) { ..error _ {} ..ok _ { abort } }
     deinit(.self = $&child)
     orphan ::= unwrap_or_abort(
         .value = spawn(

@@ -72,8 +72,6 @@ ProcessStream: Type = (
     ._writable : Bool
 )
 
-ProcessStream satisfies Writer
-
 Process: Type = (
     ._ffi    : $&ForeignFunctionInterface
     ._handle : UIntNative
@@ -277,40 +275,6 @@ implement Reader#(ProcessStream)(
     }
 )
 
-write_byte(
-        .self : $&ProcessStream,
-        .byte : UInt8
-    ) -> (
-        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-    ) := {
-    assume ffi := self&._ffi
-
-    if self&._handle == 0 or self&._writable == false {
-        result = ..error(.reason = ..stream_write_failed)
-        return
-    }
-
-    if _process_stream_write(.handle = self&._handle, .byte = byte).status != 0 {
-        result = ..error(.reason = ..stream_write_failed)
-        return
-    }
-
-    result = ..ok Void()
-}
-
-flush(
-        .self : $&ProcessStream
-    ) -> (
-        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-    ) := {
-    if self&._handle == 0 or self&._writable == false {
-        result = ..error(.reason = ..stream_flush_failed)
-        return
-    }
-
-    result = ..ok Void()
-}
-
 ProcessStream deinit(.self: $&ProcessStream) -> () := {
     assume ffi := self&._ffi
     _process_stream_close(.handle = self&._handle)
@@ -325,3 +289,39 @@ Process deinit(.self: $&Process) -> () := {
     _process_free(.handle = self&._handle)
     self&._handle = 0
 }
+
+implement Writer#(ProcessStream)(
+    .write_byte = (
+            .self : $&ProcessStream,
+            .byte : UInt8
+        ) -> (
+            .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+        ) {
+        assume ffi := self&._ffi
+
+        if self&._handle == 0 or self&._writable == false {
+            result = ..error(.reason = ..stream_write_failed)
+            return
+        }
+
+        if _process_stream_write(.handle = self&._handle, .byte = byte).status != 0 {
+            result = ..error(.reason = ..stream_write_failed)
+            return
+        }
+
+        result = ..ok Void()
+    }
+
+    .flush = (
+            .self : $&ProcessStream
+        ) -> (
+            .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+        ) {
+        if self&._handle == 0 or self&._writable == false {
+            result = ..error(.reason = ..stream_flush_failed)
+            return
+        }
+
+        result = ..ok Void()
+    }
+)

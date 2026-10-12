@@ -2,26 +2,6 @@ DummyOutput: Type = (
     .write_count : UIntNative = 0
 )
 
-write_byte(
-        .self : $&DummyOutput,
-        .byte : UInt8,
-    ) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
-    ) := {
-    self&.write_count = self&.write_count + 1
-    result = ..ok Void()
-}
-
-flush(
-        .self : $&DummyOutput,
-    ) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
-    ) := {
-    result = ..ok Void()
-}
-
-DummyOutput implements Writer
-
 main() -> (.status_code: Int32) := {
     bytes: Array#(.n = 3, .t: UInt8) = (0, 0, 0)
     buffer ::= array_view(.array = $&bytes)
@@ -63,3 +43,23 @@ main() -> (.status_code: Int32) := {
 
     status_code = 0
 }
+
+implement Writer#(DummyOutput)(
+    .write_byte = (
+            .self : $&DummyOutput,
+            .byte : UInt8,
+        ) -> (
+            .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        ) {
+        self&.write_count = self&.write_count + 1
+        result = ..ok Void()
+    }
+
+    .flush = (
+            .self : $&DummyOutput,
+        ) -> (
+            .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        ) {
+        result = ..ok Void()
+    }
+)

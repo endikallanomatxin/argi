@@ -2845,7 +2845,7 @@ test "feature_tests/io/22_abstract_writer_field_assignment" {
 
 test "feature_tests/io/23X_abstract_writer_field_conflicting_assignment" {
     try buildExpectFailExact("tests/feature_tests/io/23X_abstract_writer_field_conflicting_assignment",
-        \\tests/feature_tests/io/23X_abstract_writer_field_conflicting_assignment/main.rg:50:17: error: field '.writer' already stores '$&FirstWriter' for abstract type '$&Writer', so it cannot also store '$&SecondWriter'
+        \\tests/feature_tests/io/23X_abstract_writer_field_conflicting_assignment/main.rg:28:17: error: field '.writer' already stores '$&FirstWriter' for abstract type '$&Writer', so it cannot also store '$&SecondWriter'
         \\      p&.writer = writer
         \\                  ^
         \\
@@ -7711,7 +7711,7 @@ test "argi run inherits stdin stdout and stderr" {
         .sub_path = "main.rg",
         .data =
         \\main(.system: System) -> (.status_code: Int32 = 7) := {
-        \\    input ::= unwrap_or_abort(.value = read_byte(.self = $&system.terminal&.stdin))
+        \\    input ::= unwrap_or_abort(.value = Reader#().read_byte(.self = $&system.terminal&.stdin))
         \\    match input {
         \\        ..ok byte {
         \\            if byte != 65 { status_code = 8 return }
@@ -12299,4 +12299,12 @@ test "feature_tests/contracts/152_reader_selected_virtual_evidence" {
 
 test "feature_tests/contracts/153X_reader_global_operation" {
     try buildExpectFailWithoutNoise("tests/feature_tests/contracts/153X_reader_global_operation", "no function named 'read_byte' exists", "panic");
+}
+
+test "feature_tests/contracts/154_writer_selected_virtual_evidence" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/154_writer_selected_virtual_evidence");
+}
+
+test "feature_tests/contracts/155X_writer_global_operation" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/155X_writer_global_operation", "no function named 'write_byte' exists", "panic");
 }

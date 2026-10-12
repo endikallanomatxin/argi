@@ -2180,6 +2180,10 @@ pub const Resolver = struct {
                     if (actual_type != .pointer) return null;
                     ty = actual_type.pointer.child;
                 }
+                // A fixed virtual interface can defer while reached capability
+                // inputs are being materialized. It must never fall through to
+                // static conformance selection for the erased handle type.
+                if (self.graph.semanticType(ty) == .virtual or self.abstractUse(ty) != null) return null;
                 return ty;
             }
         }

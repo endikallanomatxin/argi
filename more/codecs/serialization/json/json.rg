@@ -522,21 +522,21 @@ write_string(
         .result : Errable#(Void, (..invalid_utf8, ..stream_write_failed, ..stream_flush_failed)) = ..ok Void()
     ) := {
     validate_utf8(.text = text)!
-    write_byte(.self = writer, .byte = 34)!
+    Writer#().write_byte(.self = writer, .byte = 34)!
     cursor :: UIntNative = 0
 
     while cursor < text.length {
         byte ::= _byte(.text = text, .position = cursor).value
         if byte < 32 {
             write(.self = writer, .text = "\\u00")!
-            write_byte(.self = writer, .byte = _hex_ascii(.value = byte / 16).byte)!
-            write_byte(.self = writer, .byte = _hex_ascii(.value = byte % 16).byte)!
+            Writer#().write_byte(.self = writer, .byte = _hex_ascii(.value = byte / 16).byte)!
+            Writer#().write_byte(.self = writer, .byte = _hex_ascii(.value = byte % 16).byte)!
         } else {
-            if byte == 34 or byte == 92 { write_byte(.self = writer, .byte = 92)! }
-            write_byte(.self = writer, .byte = byte)!
+            if byte == 34 or byte == 92 { Writer#().write_byte(.self = writer, .byte = 92)! }
+            Writer#().write_byte(.self = writer, .byte = byte)!
         }
         cursor = cursor + 1
     }
 
-    write_byte(.self = writer, .byte = 34)!
+    Writer#().write_byte(.self = writer, .byte = 34)!
 }

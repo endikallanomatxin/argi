@@ -38,26 +38,6 @@ read_block(
 
 FailingSink: Type = (.received: UIntNative = 0)
 
-FailingSink implements Writer
-
-write_byte(
-        .self : $&FailingSink,
-        .byte : UInt8
-    ) -> (
-        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-    ) := {
-    self&.received = self&.received + 1
-    result = ..ok Void()
-}
-
-flush(
-        .self : $&FailingSink
-    ) -> (
-        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-    ) := {
-    result = ..error(.reason = ..stream_flush_failed)
-}
-
 run_main() -> !Void = ..ok Void() := {
     input: [5]UInt8 = (0, 255, 65, 66, 10)
     output ::= zeroed#([8]UInt8)()
@@ -66,10 +46,10 @@ run_main() -> !Void = ..ok Void() := {
     writer ::= BufferedWriter(.base = $&base, .buffer = view($&storage))
     source ::= Source(.bytes = view(&input))
 
-    write_byte($&writer, 80)!
+    Writer#().write_byte($&writer, 80)!
     if transfer_stream(.writer = $&writer, .reader = $&source)! != 5 { abort }
     if source.largest_request != 3 { abort }
-    flush($&writer)!
+    Writer#().flush($&writer)!
     if position(&base).count != 6 { abort }
     if output[0] != 80 or output[1] != 0 or output[2] != 255 { abort }
     if output[3] != 65 or output[4] != 66 or output[5] != 10 { abort }
@@ -77,12 +57,12 @@ run_main() -> !Void = ..ok Void() := {
 
     source.position = 0
     source.fail = true
-    write_byte($&writer, 81)!
+    Writer#().write_byte($&writer, 81)!
     match transfer_stream(.writer = $&writer, .reader = $&source) {
         ..ok _ { abort }
         ..error error { if error.reason != ..stream_read_failed { abort } }
     }
-    flush($&writer)!
+    Writer#().flush($&writer)!
     if position(&base).count != 7 or output[6] != 81 { abort }
 
     source.fail = false
@@ -109,7 +89,7 @@ run_main() -> !Void = ..ok Void() := {
     virtual_storage ::= zeroed#([2]UInt8)()
     virtual_writer ::= BufferedWriter(.base = $&virtual_base, .buffer = view($&virtual_storage))
     if transfer_stream(.reader = $&virtual, .writer = $&virtual_writer)! != 5 { abort }
-    flush($&virtual_writer)!
+    Writer#().flush($&virtual_writer)!
     if virtual_output[0] != 0 or virtual_output[1] != 255 or virtual_output[4] != 10 { abort }
 
     partial_source ::= Source(.bytes = view(&input), .fail_after = 2)
@@ -122,7 +102,7 @@ run_main() -> !Void = ..ok Void() := {
         ..error error { if error.reason != ..stream_read_failed { abort } }
     }
     if position(&partial_base).count != 0 { abort }
-    flush($&partial_writer)!
+    Writer#().flush($&partial_writer)!
     if position(&partial_base).count != 2 or partial_output[0] != 0 or partial_output[1] != 255 {
         abort
     }
@@ -135,7 +115,7 @@ run_main() -> !Void = ..ok Void() := {
         ..error error { if error.reason != ..stream_write_failed { abort } }
     }
     if source.position != 3 { abort }
-    flush($&blocked)!
+    Writer#().flush($&blocked)!
 
     flush_source ::= Source(.bytes = view(&input))
     flush_sink ::= FailingSink()
@@ -155,3 +135,23 @@ main(.writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
     run_main()!!!
     status_code = 0
 }
+
+implement Writer#(FailingSink)(
+    .write_byte = (
+            .self : $&FailingSink,
+            .byte : UInt8
+        ) -> (
+            .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+        ) {
+        self&.received = self&.received + 1
+        result = ..ok Void()
+    }
+
+    .flush = (
+            .self : $&FailingSink
+        ) -> (
+            .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+        ) {
+        result = ..error(.reason = ..stream_flush_failed)
+    }
+)

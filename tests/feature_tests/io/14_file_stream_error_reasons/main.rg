@@ -15,7 +15,7 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
-    write_result ::= write_byte(.self = $&file, .byte = 65)
+    write_result ::= Writer#().write_byte(.self = $&file, .byte = 65)
     if is(.value = write_result, .variant = ..error) {
     } else {
         status_code = 3
@@ -28,7 +28,7 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
-    flush_result ::= flush(.self = $&file)
+    flush_result ::= Writer#().flush(.self = $&file)
     if is(.value = flush_result, .variant = ..error) {
     } else {
         status_code = 5

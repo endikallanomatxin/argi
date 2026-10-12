@@ -15,7 +15,7 @@ main() -> (.status_code: Int32 = 0) := {
     if copied.count != 3 { abort }
     if position(.self = &reader).count != 3 { abort }
     if position(.self = &writer).count != 3 { abort }
-    match write_byte(.self = $&writer, .byte = 99) { ..ok _ { abort } ..error _ {} }
+    match Writer#().write_byte(.self = $&writer, .byte = 99) { ..ok _ { abort } ..error _ {} }
     if position(.self = &writer).count != 3 { abort }
     match unwrap_or_abort(.value = Reader#().read_byte(.self = $&reader)) {
         ..end { abort }
@@ -24,7 +24,7 @@ main() -> (.status_code: Int32 = 0) := {
     match unwrap_or_abort(.value = Reader#().read_byte(.self = $&reader)) {
         ..end {} ..ok _ { abort }
     }
-    unwrap_or_abort(.value = flush(.self = $&writer))
+    unwrap_or_abort(.value = Writer#().flush(.self = $&writer))
     another :: [2]UInt8 = (0, 0)
     partial ::= ByteWriter(.bytes = view(.array = $&another))
     if [

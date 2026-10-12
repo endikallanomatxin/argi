@@ -36,34 +36,6 @@ DecimalBuffer: Type = (
     .length : UIntNative = 0
 )
 
-write_byte(
-        .self : $&DecimalBuffer,
-        .byte : UInt8
-    ) -> (
-        .result : Errable#(
-            .t       : Void,
-            .reasons : (..stream_write_failed, ..stream_flush_failed)
-        )
-    ) := {
-    if self&.length == 32 { abort }
-    self&.bytes[self&.length] = byte
-    self&.length = self&.length + 1
-    result = ..ok Void()
-}
-
-flush(
-        .self : $&DecimalBuffer
-    ) -> (
-        .result : Errable#(
-            .t       : Void,
-            .reasons : (..stream_write_failed, ..stream_flush_failed)
-        )
-    ) := {
-    abort
-}
-
-DecimalBuffer implements Writer
-
 main() -> (.status_code: Int32 = 0) := {
     index :: UInt32 = 0
     buffer ::= DecimalBuffer()
@@ -84,3 +56,31 @@ main() -> (.status_code: Int32 = 0) := {
         index = index + 1
     }
 }
+
+implement Writer#(DecimalBuffer)(
+    .write_byte = (
+            .self : $&DecimalBuffer,
+            .byte : UInt8
+        ) -> (
+            .result : Errable#(
+                .t       : Void,
+                .reasons : (..stream_write_failed, ..stream_flush_failed)
+            )
+        ) {
+        if self&.length == 32 { abort }
+        self&.bytes[self&.length] = byte
+        self&.length = self&.length + 1
+        result = ..ok Void()
+    }
+
+    .flush = (
+            .self : $&DecimalBuffer
+        ) -> (
+            .result : Errable#(
+                .t       : Void,
+                .reasons : (..stream_write_failed, ..stream_flush_failed)
+            )
+        ) {
+        abort
+    }
+)

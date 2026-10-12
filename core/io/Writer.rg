@@ -1,11 +1,11 @@
-Writer: Contract = (
-    write_byte(.self: $&Self, .byte: UInt8) -> (
+Writer#(.Stream: Type): Contract = (
+    .write_byte : (.self: $&Stream, .byte: UInt8) -> (
         .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) where {
         on result ..ok {}
         on result ..error { depends_on(result, error_tracer) }
     }
-    flush(.self: $&Self) -> (
+    .flush : (.self: $&Stream) -> (
         .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) where {
         on result ..ok {}
@@ -22,7 +22,7 @@ write(
     i :: UIntNative = 0
 
     while i < text.length {
-        write_byte(self, .byte = bytes_get(.view = &text, .index = i).byte)!
+        Writer#().write_byte(self, .byte = bytes_get(.view = &text, .index = i).byte)!
         i = i + 1
     }
 
@@ -48,7 +48,7 @@ write(
 
     while wrote_count < length(&buffer).count {
         byte ::= unwrap_or_abort(.value = get_ro_ref(&buffer, .index = wrote_count))
-        write_byte(self, .byte = byte&)!
+        Writer#().write_byte(self, .byte = byte&)!
         wrote_count = wrote_count + 1
     }
 

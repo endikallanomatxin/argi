@@ -1,32 +1,10 @@
-RecordingWriter : Type = (
-    .expected: StringView
-    .count: UIntNative = 0
-    .flush_calls: UIntNative = 0
-    .fail_at: UIntNative = 999
-    .flush_failure: Bool = false
+RecordingWriter: Type = (
+    .expected      : StringView
+    .count         : UIntNative = 0
+    .flush_calls   : UIntNative = 0
+    .fail_at       : UIntNative = 999
+    .flush_failure : Bool       = false
 )
-
-write_byte(.self: $&RecordingWriter, .byte: UInt8) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
-    if self&.count == self&.fail_at {
-        if self&.flush_failure {
-            result = ..error(.reason = ..stream_flush_failed)
-        } else {
-            result = ..error(.reason = ..stream_write_failed)
-        }
-        return
-    }
-    if self&.count >= self&.expected.length { abort }
-    if byte != bytes_get(.view = &self&.expected, .index = self&.count).byte { abort }
-    self&.count = self&.count + 1
-    result = ..ok Void()
-}
-
-flush(.self: $&RecordingWriter) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
-    self&.flush_calls = self&.flush_calls + 1
-    result = ..ok Void()
-}
-
-RecordingWriter implements Writer
 
 main(.system: System) -> (.status_code: Int32 = 0) := {
     assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
@@ -47,7 +25,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     base.fail_at = base.count
     failed_value := print("x")
     if is(failed_value, .variant = ..error) {
-        if failed_value..error.reason != ..stream_write_failed { abort }
+        if failed_value ..error.reason != ..stream_write_failed { abort }
     } else { abort }
     if base.count != 14 { abort }
 
@@ -57,7 +35,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     base.fail_at = base.count + 1
     failed_terminator := print("x")
     if is(failed_terminator, .variant = ..error) {
-        if failed_terminator..error.reason != ..stream_write_failed { abort }
+        if failed_terminator ..error.reason != ..stream_write_failed { abort }
     } else { abort }
     if base.count != 15 { abort }
 
@@ -65,9 +43,40 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     base.flush_failure = true
     failed_flush := print("", .terminator = "!")
     if is(failed_flush, .variant = ..error) {
-        if failed_flush..error.reason != ..stream_flush_failed { abort }
+        if failed_flush ..error.reason != ..stream_flush_failed { abort }
     } else { abort }
     if base.flush_calls != 0 { abort }
-    unwrap_or_abort(flush(.self = writer))
+    unwrap_or_abort(Writer#().flush(.self = writer))
     if base.flush_calls != 1 { abort }
 }
+
+implement Writer#(RecordingWriter)(
+    .write_byte = (
+            .self : $&RecordingWriter,
+            .byte : UInt8
+        ) -> (
+            .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        ) {
+        if self&.count == self&.fail_at {
+            if self&.flush_failure {
+                result = ..error(.reason = ..stream_flush_failed)
+            } else {
+                result = ..error(.reason = ..stream_write_failed)
+            }
+            return
+        }
+        if self&.count >= self&.expected.length { abort }
+        if byte != bytes_get(.view = &self&.expected, .index = self&.count).byte { abort }
+        self&.count = self&.count + 1
+        result = ..ok Void()
+    }
+
+    .flush = (
+            .self : $&RecordingWriter
+        ) -> (
+            .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        ) {
+        self&.flush_calls = self&.flush_calls + 1
+        result = ..ok Void()
+    }
+)

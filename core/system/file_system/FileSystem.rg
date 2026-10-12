@@ -586,7 +586,7 @@ write_file(
         }
     }
 
-    flushed ::= flush(.self = $&file)
+    flushed ::= Writer#().flush(.self = $&file)
 
     match flushed {
         ..ok _ {

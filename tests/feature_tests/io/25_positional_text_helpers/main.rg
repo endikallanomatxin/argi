@@ -3,28 +3,6 @@ DummyOutput: Type = (
     .flush_count : Int32 = 0
 )
 
-write_byte(
-        .self : $&DummyOutput,
-        .byte : UInt8
-    ) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
-    ) := {
-    _ ::= byte
-    self&.write_count = self&.write_count + 1
-    result = ..ok(.value = Void())
-}
-
-flush(
-        .self : $&DummyOutput
-    ) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
-    ) := {
-    self&.flush_count = self&.flush_count + 1
-    result = ..ok(.value = Void())
-}
-
-DummyOutput implements Writer
-
 DummyInput: Type = (
     .index : UIntNative = 0
 )
@@ -166,3 +144,25 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     }
     deinit(.self = $&text, .allocator = $&allocator_storage)
 }
+
+implement Writer#(DummyOutput)(
+    .write_byte = (
+            .self : $&DummyOutput,
+            .byte : UInt8
+        ) -> (
+            .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        ) {
+        _ ::= byte
+        self&.write_count = self&.write_count + 1
+        result = ..ok(.value = Void())
+    }
+
+    .flush = (
+            .self : $&DummyOutput
+        ) -> (
+            .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        ) {
+        self&.flush_count = self&.flush_count + 1
+        result = ..ok(.value = Void())
+    }
+)

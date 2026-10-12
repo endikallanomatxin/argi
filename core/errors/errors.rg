@@ -255,7 +255,7 @@ write_trace_text(
     i :: UIntNative = 0
 
     while i < view.length {
-        write_byte(writer, .byte = bytes_get(.view = &view, .index = i).byte)!
+        Writer#().write_byte(writer, .byte = bytes_get(.view = &view, .index = i).byte)!
         i = i + 1
     }
 
@@ -278,7 +278,7 @@ write_trace_uint(
     while divisor > 0 {
         digit ::= remaining / divisor
         remaining = remaining % divisor
-        write_byte(writer, .byte = bytes_get(.view = &digits, .index = digit).byte)!
+        Writer#().write_byte(writer, .byte = bytes_get(.view = &digits, .index = digit).byte)!
         divisor = divisor / 10
     }
 
@@ -309,7 +309,7 @@ _error_report_entry(
         i :: UIntNative = 0
         while i < entry.context_length {
             byte ::= unwrap_or_abort(.value = get(&self&._buffer, .index = offset + i))
-            write_byte(writer, .byte = byte)!
+            Writer#().write_byte(writer, .byte = byte)!
             i = i + 1
         }
     }
@@ -320,7 +320,7 @@ _error_report_entry(
     column :: UIntNative = 1
 
     while column < location.column {
-        write_byte(writer, .byte = 32)!
+        Writer#().write_byte(writer, .byte = 32)!
         column = column + 1
     }
 
@@ -367,7 +367,7 @@ report(
         write_trace_text(.text = "  <context truncated>\n", .writer = writer)!
     }
 
-    flush(.self = writer)!
+    Writer#().flush(.self = writer)!
 
     result = ..ok Void()
 }
