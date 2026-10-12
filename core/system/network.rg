@@ -679,70 +679,74 @@ write_all(
 
 implement Reader#(TcpConnection)(
     .read_byte = (
-            .self : $&TcpConnection
-        ) -> (
-            .result : Errable#(ReadByte, (..stream_read_failed))
-        ) {
-        buffer :: [1]UInt8 = (0)
+                .self : $&TcpConnection
+            ) -> (
+                .result : Errable#(ReadByte, (..stream_read_failed))
+            ) {
+            buffer :: [1]UInt8 = (0)
 
-        match read(self, .buffer = view($&buffer)) {
-            ..error _ { result = ..error(.reason = ..stream_read_failed) }
-            ..ok count {
-                if count == 0 { result = ..ok ..end } else { result = ..ok ..ok buffer[0] }
+            match read(self, .buffer = view($&buffer)) {
+                ..error _ { result = ..error(.reason = ..stream_read_failed) }
+                ..ok count {
+                    if count == 0 { result = ..ok ..end } else { result = ..ok ..ok buffer[0] }
+                }
             }
+        }
+)
+
+implement BlockReader#(TcpConnection) (
+    .read_block = (
+            .self   : $&TcpConnection,
+            .buffer : ArrayView#(.t: UInt8)
+        ) -> (
+            .result : Errable#(UIntNative, (..stream_read_failed))
+        ) {
+        match read(self, .buffer = buffer) {
+            ..ok count { result = ..ok count }
+            ..error _ { result = ..error(.reason = ..stream_read_failed) }
         }
     }
 )
 
-read_block(
-        .self   : $&TcpConnection,
-        .buffer : ArrayView#(.t: UInt8)
-    ) -> (
-        .result : Errable#(UIntNative, (..stream_read_failed))
-    ) := {
-    match read(self, .buffer = buffer) {
-        ..ok count { result = ..ok count }
-        ..error _ { result = ..error(.reason = ..stream_read_failed) }
+implement BlockWriter#(TcpConnection) (
+    .write_block = (
+            .self   : $&TcpConnection,
+            .buffer : ArrayViewRO#(.t: UInt8)
+        ) -> (
+            .result : Errable#(UIntNative, (..stream_write_failed, ..stream_flush_failed))
+        ) {
+        match write(self, .buffer = buffer) {
+            ..ok count { result = ..ok count }
+            ..error _ { result = ..error(.reason = ..stream_write_failed) }
+        }
     }
-}
-
-write_block(
-        .self   : $&TcpConnection,
-        .buffer : ArrayViewRO#(.t: UInt8)
-    ) -> (
-        .result : Errable#(UIntNative, (..stream_write_failed, ..stream_flush_failed))
-    ) := {
-    match write(self, .buffer = buffer) {
-        ..ok count { result = ..ok count }
-        ..error _ { result = ..error(.reason = ..stream_write_failed) }
-    }
-}
+)
 
 implement Writer#(TcpConnection)(
     .write_byte = (
-            .self : $&TcpConnection,
-            .byte : UInt8
-        ) -> (
-            .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-        ) {
-        buffer: [1]UInt8 = (byte)
+                .self : $&TcpConnection,
+                .byte : UInt8
+            ) -> (
+                .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+            ) {
+            buffer: [1]UInt8 = (byte)
 
-        match write_all(self, .buffer = view(&buffer)) {
-            ..error _ { result = ..error(.reason = ..stream_write_failed) }
-            ..ok _ { result = ..ok Void() }
-        }
-    }
-
-    .flush = (
-            .self : $&TcpConnection
-        ) -> (
-            .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-        ) {
-        if self&._handle == 0 {
-            result = ..error(.reason = ..stream_flush_failed)
-            return
+            match write_all(self, .buffer = view(&buffer)) {
+                ..error _ { result = ..error(.reason = ..stream_write_failed) }
+                ..ok _ { result = ..ok Void() }
+            }
         }
 
-        result = ..ok Void()
-    }
+        .flush = (
+                .self : $&TcpConnection
+            ) -> (
+                .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+            ) {
+            if self&._handle == 0 {
+                result = ..error(.reason = ..stream_flush_failed)
+                return
+            }
+
+            result = ..ok Void()
+        }
 )

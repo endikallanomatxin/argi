@@ -1,66 +1,66 @@
 Source: Type = (.bytes: ArrayViewRO#(.t: UInt8), .position: UIntNative, .calls: UIntNative)
 
-Source implements BlockReader
-
 implement Reader#(Source)(
     .read_byte = (
-            .self : $&Source
+                .self : $&Source
+            ) -> (
+                .result : Errable#(.t: ReadByte, .reasons: (..stream_read_failed))
+            ) {
+            if self&.position == length(.self = &self&.bytes).count {
+                result = ..ok ..end
+                return
+            }
+            byte ::= unwrap_or_abort(
+                .value = get_ro_ref(.self = &self&.bytes, .index = self&.position)
+            )
+            self&.position = self&.position + 1
+            result = ..ok ..ok byte&
+        }
+)
+
+implement BlockReader#(Source) (
+    .read_block = (
+            .self   : $&Source,
+            .buffer : ArrayView#(.t: UInt8)
         ) -> (
-            .result : Errable#(.t: ReadByte, .reasons: (..stream_read_failed))
+            .result : Errable#(.t: UIntNative, .reasons: (..stream_read_failed))
         ) {
-        if self&.position == length(.self = &self&.bytes).count {
-            result = ..ok ..end
+        self&.calls = self&.calls + 1
+        if length(.self = &buffer).count == 0 {
+            result = ..ok 0
             return
         }
-        byte ::= unwrap_or_abort(
-            .value = get_ro_ref(.self = &self&.bytes, .index = self&.position)
-        )
-        self&.position = self&.position + 1
-        result = ..ok ..ok byte&
+        match Reader#().read_byte(.self = self)! {
+            ..end { result = ..ok 0 }
+            ..ok byte {
+                pointer ::= unwrap_or_abort(.value = get_rw_ref(.self = $&buffer, .index = 0))
+                pointer&= byte
+                result = ..ok 1
+            }
+        }
     }
 )
 
-read_block(
-        .self   : $&Source,
-        .buffer : ArrayView#(.t: UInt8)
-    ) -> (
-        .result : Errable#(.t: UIntNative, .reasons: (..stream_read_failed))
-    ) := {
-    self&.calls = self&.calls + 1
-    if length(.self = &buffer).count == 0 {
-        result = ..ok 0
-        return
-    }
-    match Reader#().read_byte(.self = self)! {
-        ..end { result = ..ok 0 }
-        ..ok byte {
-            pointer ::= unwrap_or_abort(.value = get_rw_ref(.self = $&buffer, .index = 0))
-            pointer&= byte
-            result = ..ok 1
-        }
-    }
-}
-
 Sink: Type = (.bytes: ArrayView#(.t: UInt8), .position: UIntNative, .stalled: Bool)
 
-Sink implements BlockWriter
-
-write_block(
-        .self   : $&Sink,
-        .buffer : ArrayViewRO#(.t: UInt8)
-    ) -> (
-        .result : Errable#(.t: UIntNative, .reasons: (..stream_write_failed, ..stream_flush_failed))
-    ) := {
-    if self&.stalled or length(.self = &buffer).count == 0 {
-        result = ..ok 0
-        return
+implement BlockWriter#(Sink) (
+    .write_block = (
+            .self   : $&Sink,
+            .buffer : ArrayViewRO#(.t: UInt8)
+        ) -> (
+            .result : Errable#(.t: UIntNative, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        ) {
+        if self&.stalled or length(.self = &buffer).count == 0 {
+            result = ..ok 0
+            return
+        }
+        byte ::= unwrap_or_abort(.value = get_ro_ref(.self = &buffer, .index = 0))
+        target ::= unwrap_or_abort(.value = get_rw_ref(.self = $&self&.bytes, .index = self&.position))
+        target&= byte&
+        self&.position = self&.position + 1
+        result = ..ok 1
     }
-    byte ::= unwrap_or_abort(.value = get_ro_ref(.self = &buffer, .index = 0))
-    target ::= unwrap_or_abort(.value = get_rw_ref(.self = $&self&.bytes, .index = self&.position))
-    target&= byte&
-    self&.position = self&.position + 1
-    result = ..ok 1
-}
+)
 
 run_main(.system: System) -> !Void = ..ok Void() := {
     assume allocator := system.page_allocator

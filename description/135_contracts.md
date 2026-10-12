@@ -224,3 +224,11 @@ those names cannot alter loop lowering. Synthetic iterable and iterator owners
 remain in the surrounding lexical scope, including borrowed and consuming
 loops. Generic code can use the same scoped operations without erasing the
 iterator's type or allocating an implicit virtual result.
+
+BlockReader and BlockWriter use explicit stream participants and selected virtual
+evidence. Their static/virtual algorithm copies have been consolidated.
+StreamTransfer scopes the general and buffered endpoint implementations to one
+two-participant identity; specialization never chooses between unrelated contracts.
+BorrowedOrderPolicy supplies owning collection comparisons without consuming
+elements. Bound unary virtual types retain their fixed interface evidence when
+passed through ordinary generic functions or static contract implementations.

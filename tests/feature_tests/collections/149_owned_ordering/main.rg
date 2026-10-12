@@ -8,14 +8,14 @@ Pair: Type = (.a: Tracked, .b: Tracked)
 
 PairOrder: Type = ()
 
-PairOrder implements BorrowedOrderPolicy#(.t: Pair)
-
-less(.self: &PairOrder, .left: &Pair, .right: &Pair) -> (.ok: Bool) := {
-    ok = [
-        left&.a.id
-        < right&.a.id
-    ]
-}
+implement BorrowedOrderPolicy#(PairOrder, Pair) (
+    .less = (.self: &PairOrder, .left: &Pair, .right: &Pair) -> (.ok: Bool) {
+        ok = [
+            left&.a.id
+            < right&.a.id
+        ]
+    }
+)
 
 RefusingAllocator: Type = ()
 
@@ -108,12 +108,12 @@ main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 
 
 implement Allocator#(RefusingAllocator)(
     .allocate = (
-            .self      : $&RefusingAllocator,
-            .size      : UIntNative,
-            .alignment : UIntNative           = 1
-        ) -> (
-            .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
-        ) {
-        result = ..error(.reason = ..out_of_memory)
-    }
+                .self      : $&RefusingAllocator,
+                .size      : UIntNative,
+                .alignment : UIntNative           = 1
+            ) -> (
+                .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+            ) {
+            result = ..error(.reason = ..out_of_memory)
+        }
 )

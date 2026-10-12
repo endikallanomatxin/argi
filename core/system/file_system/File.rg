@@ -178,38 +178,38 @@ close(.self: $&File) -> (.result: Errable#(Void, (..stream_close_failed))) := {
 
 implement Reader#(File)(
     .read_byte = (.self: $&File) -> (.result: Errable#(ReadByte, (..stream_read_failed))) {
-        assume ffi := self&._ffi
+            assume ffi := self&._ffi
 
-        if self&.stream_address == 0 {
-            result = ..error(.reason = ..stream_read_failed)
-            return
-        }
-
-        byte :: UInt8 = 0
-        byte_view ::= array_view#(.t: UInt8)(.data = $&byte)
-        read_count ::= fread_into(
-            .buffer = byte_view
-            .stream = file_stream_pointer(self).stream
-        ).count
-
-        if read_count == 0 {
-            stream ::= file_stream_pointer(self).stream
-            if ferror(.stream = stream).status != 0 {
+            if self&.stream_address == 0 {
                 result = ..error(.reason = ..stream_read_failed)
                 return
             }
 
-            if feof(.stream = stream).status != 0 {
-                result = ..ok ..end
+            byte :: UInt8 = 0
+            byte_view ::= array_view#(.t: UInt8)(.data = $&byte)
+            read_count ::= fread_into(
+                .buffer = byte_view
+                .stream = file_stream_pointer(self).stream
+            ).count
+
+            if read_count == 0 {
+                stream ::= file_stream_pointer(self).stream
+                if ferror(.stream = stream).status != 0 {
+                    result = ..error(.reason = ..stream_read_failed)
+                    return
+                }
+
+                if feof(.stream = stream).status != 0 {
+                    result = ..ok ..end
+                    return
+                }
+
+                result = ..error(.reason = ..stream_read_failed)
                 return
             }
 
-            result = ..error(.reason = ..stream_read_failed)
-            return
+            result = ..ok ..ok byte
         }
-
-        result = ..ok ..ok byte
-    }
 )
 
 read(
@@ -264,78 +264,80 @@ write(
     result = ..ok wrote
 }
 
-write_block(
-        .self   : $&File,
-        .buffer : ArrayViewRO#(.t: UInt8)
-    ) -> (
-        .result : Errable#(UIntNative, (..stream_write_failed, ..stream_flush_failed))
-    ) := {
-    assume ffi := self&._ffi
+implement BlockWriter#(File) (
+    .write_block = (
+            .self   : $&File,
+            .buffer : ArrayViewRO#(.t: UInt8)
+        ) -> (
+            .result : Errable#(UIntNative, (..stream_write_failed, ..stream_flush_failed))
+        ) {
+        assume ffi := self&._ffi
 
-    if self&.stream_address == 0 {
-        result = ..error(.reason = ..stream_write_failed)
-        return
-    }
-
-    stream ::= file_stream_pointer(self).stream
-    count ::= fwrite_from(.buffer = buffer, .stream = stream).count
-
-    if count < length(&buffer).count {
-        if ferror(.stream = stream).status != 0 {
+        if self&.stream_address == 0 {
             result = ..error(.reason = ..stream_write_failed)
             return
         }
-    }
 
-    result = ..ok count
-}
+        stream ::= file_stream_pointer(self).stream
+        count ::= fwrite_from(.buffer = buffer, .stream = stream).count
+
+        if count < length(&buffer).count {
+            if ferror(.stream = stream).status != 0 {
+                result = ..error(.reason = ..stream_write_failed)
+                return
+            }
+        }
+
+        result = ..ok count
+    }
+)
 
 implement Writer#(File)(
     .flush = (
-            .self : $&File
-        ) -> (
-            .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-        ) {
-        assume ffi := self&._ffi
+                .self : $&File
+            ) -> (
+                .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+            ) {
+            assume ffi := self&._ffi
 
-        if self&.stream_address == 0 {
-            result = ..error(.reason = ..stream_flush_failed)
-            return
+            if self&.stream_address == 0 {
+                result = ..error(.reason = ..stream_flush_failed)
+                return
+            }
+
+            if fflush(.stream = file_stream_pointer(self).stream).status != 0 {
+                result = ..error(.reason = ..stream_flush_failed)
+                return
+            }
+
+            result = ..ok Void()
         }
 
-        if fflush(.stream = file_stream_pointer(self).stream).status != 0 {
-            result = ..error(.reason = ..stream_flush_failed)
-            return
+        .write_byte = (
+                .self : $&File,
+                .byte : UInt8
+            ) -> (
+                .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+            ) {
+            assume ffi := self&._ffi
+
+            if self&.stream_address == 0 {
+                result = ..error(.reason = ..stream_write_failed)
+                return
+            }
+
+            single_byte :: UInt8 = byte
+            byte_view ::= array_view#(.t: UInt8)(.data = $&single_byte)
+            wrote ::= fwrite_from(
+                .buffer = byte_view
+                .stream = file_stream_pointer(self).stream
+            ).count
+
+            if wrote != 1 {
+                result = ..error(.reason = ..stream_write_failed)
+                return
+            }
+
+            result = ..ok Void()
         }
-
-        result = ..ok Void()
-    }
-
-    .write_byte = (
-            .self : $&File,
-            .byte : UInt8
-        ) -> (
-            .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-        ) {
-        assume ffi := self&._ffi
-
-        if self&.stream_address == 0 {
-            result = ..error(.reason = ..stream_write_failed)
-            return
-        }
-
-        single_byte :: UInt8 = byte
-        byte_view ::= array_view#(.t: UInt8)(.data = $&single_byte)
-        wrote ::= fwrite_from(
-            .buffer = byte_view
-            .stream = file_stream_pointer(self).stream
-        ).count
-
-        if wrote != 1 {
-            result = ..error(.reason = ..stream_write_failed)
-            return
-        }
-
-        result = ..ok Void()
-    }
 )

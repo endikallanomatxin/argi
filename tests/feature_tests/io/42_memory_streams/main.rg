@@ -28,13 +28,13 @@ main() -> (.status_code: Int32 = 0) := {
     another :: [2]UInt8 = (0, 0)
     partial ::= ByteWriter(.bytes = view(.array = $&another))
     if [
-        unwrap_or_abort(.value = write_block(.self = $&partial, .buffer = view(.array = &source)))
+        unwrap_or_abort(.value = BlockWriter#().write_block(.self = $&partial, .buffer = view(.array = &source)))
         != 2
     ] { abort }
     if position(.self = &partial).count != 2 { abort }
     empty ::= array_view_ro#(.t: UInt8)()
-    if unwrap_or_abort(.value = write_block(.self = $&partial, .buffer = empty)) != 0 { abort }
-    match write_block(.self = $&partial, .buffer = view(.array = &source)) {
+    if unwrap_or_abort(.value = BlockWriter#().write_block(.self = $&partial, .buffer = empty)) != 0 { abort }
+    match BlockWriter#().write_block(.self = $&partial, .buffer = view(.array = &source)) {
         ..ok _ { abort } ..error _ {}
     }
 

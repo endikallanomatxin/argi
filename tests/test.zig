@@ -12349,3 +12349,8 @@ test "feature_tests/contracts/171_iteration_operation_identity" {
     try expectSuccessfulBuild("tests/feature_tests/contracts/171_iteration_operation_identity");
     try run("tests/feature_tests/contracts/171_iteration_operation_identity");
 }
+
+test "feature_tests/contracts/172_generic_virtual_participant_bound" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/172_generic_virtual_participant_bound");
+    try run("tests/feature_tests/contracts/172_generic_virtual_participant_bound");
+}

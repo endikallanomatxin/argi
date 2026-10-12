@@ -6,35 +6,35 @@ Source: Type = (
     .fail_after      : UIntNative              = 999
 )
 
-Source implements BlockReader
-
-read_block(
-        .self   : $&Source,
-        .buffer : ArrayView#(.t: UInt8)
-    ) -> (
-        .result : Errable#(UIntNative, (..stream_read_failed))
-    ) := {
-    size ::= length(&buffer).count
-    if size > self&.largest_request { self&.largest_request = size }
-    if self&.fail or self&.position == self&.fail_after {
-        if size > 0 {
-            target ::= unwrap_or_abort(.value = get_rw_ref($&buffer, 0))
-            target&= 99
+implement BlockReader#(Source) (
+    .read_block = (
+            .self   : $&Source,
+            .buffer : ArrayView#(.t: UInt8)
+        ) -> (
+            .result : Errable#(UIntNative, (..stream_read_failed))
+        ) {
+        size ::= length(&buffer).count
+        if size > self&.largest_request { self&.largest_request = size }
+        if self&.fail or self&.position == self&.fail_after {
+            if size > 0 {
+                target ::= unwrap_or_abort(.value = get_rw_ref($&buffer, 0))
+                target&= 99
+            }
+            result = ..error(.reason = ..stream_read_failed)
+            return
         }
-        result = ..error(.reason = ..stream_read_failed)
-        return
-    }
-    if self&.position == length(&self&.bytes).count {
-        result = ..ok 0
-        return
-    }
+        if self&.position == length(&self&.bytes).count {
+            result = ..ok 0
+            return
+        }
 
-    byte ::= unwrap_or_abort(.value = get_ro_ref(&self&.bytes, self&.position))
-    target ::= unwrap_or_abort(.value = get_rw_ref($&buffer, 0))
-    target&= byte&
-    self&.position = self&.position + 1
-    result = ..ok 1
-}
+        byte ::= unwrap_or_abort(.value = get_ro_ref(&self&.bytes, self&.position))
+        target ::= unwrap_or_abort(.value = get_rw_ref($&buffer, 0))
+        target&= byte&
+        self&.position = self&.position + 1
+        result = ..ok 1
+    }
+)
 
 FailingSink: Type = (.received: UIntNative = 0)
 
@@ -138,20 +138,20 @@ main(.writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
 
 implement Writer#(FailingSink)(
     .write_byte = (
-            .self : $&FailingSink,
-            .byte : UInt8
-        ) -> (
-            .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-        ) {
-        self&.received = self&.received + 1
-        result = ..ok Void()
-    }
+                .self : $&FailingSink,
+                .byte : UInt8
+            ) -> (
+                .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+            ) {
+            self&.received = self&.received + 1
+            result = ..ok Void()
+        }
 
-    .flush = (
-            .self : $&FailingSink
-        ) -> (
-            .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-        ) {
-        result = ..error(.reason = ..stream_flush_failed)
-    }
+        .flush = (
+                .self : $&FailingSink
+            ) -> (
+                .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+            ) {
+            result = ..error(.reason = ..stream_flush_failed)
+        }
 )

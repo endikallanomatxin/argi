@@ -24,7 +24,9 @@ incomparable maximal candidates are errors; source/import ordering has no priori
    iterator cleanup. Manual generic iteration and mutable-to-readonly operation
    input adaptation share the same operation resolver. Allocator,
    Deallocator, ErrorTracer, Reader and Writer use selected scoped evidence
-   throughout their bundled adapters and callers. Preserve fallible
+   throughout their bundled adapters and callers. BlockReader and BlockWriter
+   now share their static/virtual algorithms; StreamTransfer scopes endpoint
+   specialization, and BorrowedOrderPolicy scopes owning comparisons. Preserve fallible
    virtual capability inputs, storage acquisition proofs and cleanup. Unary receiver
    safety normalization recognizes the original participant parameter; preserve
    pointer-field dependencies
@@ -79,3 +81,9 @@ operations in separate contracts, missing/duplicate/incompatible implementation
 members, alias reuse, associated results, visibility and safety. Verify cold/warm
 frontend behavior and emitted direct-call LLVM. Run focused checks with normal
 parallel workers, then one full regression after implementation stabilizes.
+
+TODO: preserve contextual fixed-array initialization inside parameterized ordinary
+function bodies. A local `[1]UInt8 = (0)` currently makes specialization report an
+incorrect generic-input mismatch; concrete bodies accept it. Keep this independent
+from virtual participant evidence and improve the body diagnostic before removing
+legacy ordinary resolution.

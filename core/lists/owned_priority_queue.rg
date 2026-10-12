@@ -1,13 +1,13 @@
 -- A minimum heap with borrowed strict-weak ordering. Equivalent values have
 -- unspecified removal order. Policy state must remain stable while populated.
-OwnedPriorityQueue#(.t: Type, .order: Type: BorrowedOrderPolicy#(.t: t)): Type = (
+OwnedPriorityQueue#(.t: Type, .order: Type: BorrowedOrderPolicy#(order, t)): Type = (
     ._items : DynamicArray#(.t: t),
     ._order : &order
 )
 
 OwnedPriorityQueue init#(
         .t     : Type,
-        .order : Type: BorrowedOrderPolicy#(.t: t)
+        .order : Type: BorrowedOrderPolicy#(order, t)
     )(
         .order     : &order,
         .allocator : $&Allocator,
@@ -23,7 +23,7 @@ OwnedPriorityQueue init#(
 
 OwnedPriorityQueue deinit#(
         .t     : Type,
-        .order : Type: BorrowedOrderPolicy#(.t: t)
+        .order : Type: BorrowedOrderPolicy#(order, t)
     )(
         .self      : $&OwnedPriorityQueue#(.t: t, .order: order),
         .allocator : $&Allocator
@@ -39,7 +39,7 @@ OwnedPriorityQueue deinit#(
 
 length#(
         .t     : Type,
-        .order : Type: BorrowedOrderPolicy#(.t: t)
+        .order : Type: BorrowedOrderPolicy#(order, t)
     )(
         .self : &OwnedPriorityQueue#(.t: t, .order: order)
     ) -> (
@@ -48,7 +48,7 @@ length#(
 
 push#(
         .t     : Type,
-        .order : Type: BorrowedOrderPolicy#(.t: t)
+        .order : Type: BorrowedOrderPolicy#(order, t)
     )(
         .self      : $&OwnedPriorityQueue#(.t: t, .order: order),
         .value     : t,
@@ -76,7 +76,7 @@ push#(
         parent ::= [child - 1] / 2
         a ::= unwrap_or_abort(.value = get_ro_ref(&self&._items, .index = child))
         b ::= unwrap_or_abort(.value = get_ro_ref(&self&._items, .index = parent))
-        if less(self&._order, .left = a, .right = b).ok == false { return }
+        if BorrowedOrderPolicy#(order, t).less(self&._order, .left = a, .right = b).ok == false { return }
         _swap_owned_array#(.t: t)($&self&._items, .left = child, .right = parent)
         child = parent
     }
@@ -84,7 +84,7 @@ push#(
 
 peek_ref#(
         .t     : Type,
-        .order : Type: BorrowedOrderPolicy#(.t: t)
+        .order : Type: BorrowedOrderPolicy#(order, t)
     )(
         .self : &OwnedPriorityQueue#(.t: t, .order: order)
     ) -> (
@@ -98,7 +98,7 @@ peek_ref#(
 
 pop#(
         .t     : Type,
-        .order : Type: BorrowedOrderPolicy#(.t: t)
+        .order : Type: BorrowedOrderPolicy#(order, t)
     )(
         .self : $&OwnedPriorityQueue#(.t: t, .order: order)
     ) -> (
@@ -120,11 +120,11 @@ pop#(
             right ::= unwrap_or_abort(
                 .value = get_ro_ref(&self&._items, .index = child + 1)
             )
-            if less(self&._order, .left = right, .right = left).ok { child = child + 1 }
+            if BorrowedOrderPolicy#(order, t).less(self&._order, .left = right, .right = left).ok { child = child + 1 }
         }
         a ::= unwrap_or_abort(.value = get_ro_ref(&self&._items, .index = child))
         b ::= unwrap_or_abort(.value = get_ro_ref(&self&._items, .index = root))
-        if less(self&._order, .left = a, .right = b).ok == false { return }
+        if BorrowedOrderPolicy#(order, t).less(self&._order, .left = a, .right = b).ok == false { return }
         _swap_owned_array#(.t: t)($&self&._items, .left = root, .right = child)
         root = child
     }

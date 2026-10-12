@@ -3050,6 +3050,11 @@ pub const Resolver = struct {
             const participants = try self.allocator.alloc(global_sg.GlobalTypeId, definition.definition.participants.len);
             defer self.allocator.free(participants);
             for (participants, 0..) |*participant, position| participant.* = selected.types[definition.definition.participants.start + position] orelse return false;
+            // A bound unary virtual participant carries evidence for its fixed
+            // interface. Do not search for a new static implementation of the
+            // virtual handle itself when validating a generic operation body.
+            if (participants.len == 1 and self.graph.semanticType(participants[0]) == .virtual)
+                return self.implementsDepth(participants[0], abstract_decl, 0);
             return try self.selectConformance(abstract_decl, participants, null, 0, null) != null;
         }
         if (!try self.implementsDepth(concrete, abstract_decl, 0)) return false;
