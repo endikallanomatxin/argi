@@ -563,3 +563,38 @@ test "frontend module cache preserves unary contract participant normalization" 
     try std.testing.expect(rejected.failure != null);
     try std.testing.expect(std.mem.indexOf(u8, rejected.diagnostics, "safety contract") != null);
 }
+
+test "frontend module cache preserves shared unary conformance selection" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try @import("../test_support.zig").tmpRootPath(&tmp);
+    defer std.testing.allocator.free(root);
+    const source = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, "tests/feature_tests/contracts/107_shared_unary_selection/main.rg", std.testing.allocator, .limited(64 * 1024));
+    defer std.testing.allocator.free(source);
+    const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code = source }};
+    {
+        var cold = ModuleCache.init(std.testing.allocator, .{});
+        defer cold.deinit();
+        try cold.enablePersistence(std.testing.io, root);
+        const result = try expectCleanEquivalent(&files, &cold);
+        defer result.deinit();
+        try std.testing.expectEqual(@as(?anyerror, null), result.failure);
+        try std.testing.expectEqual(@as(usize, 0), cold.disk_write_failures);
+    }
+    var warm = ModuleCache.init(std.testing.allocator, .{});
+    defer warm.deinit();
+    try warm.enablePersistence(std.testing.io, root);
+    const result = try expectCleanEquivalent(&files, &warm);
+    defer result.deinit();
+    try std.testing.expectEqual(@as(?anyerror, null), result.failure);
+    try std.testing.expectEqual(@as(usize, 1), result.hits);
+    try std.testing.expectEqual(@as(usize, 0), result.misses);
+    try std.testing.expectEqual(@as(usize, 0), warm.disk_rejections);
+    var invalid = files;
+    invalid[0].code = try std.mem.replaceOwned(u8, std.testing.allocator, source, ".n = 2, .T: Cell#(Int32)", ".n = 3, .T: Cell#(Int32)");
+    defer std.testing.allocator.free(invalid[0].code);
+    const rejected = try expectCleanEquivalent(&invalid, &warm);
+    defer rejected.deinit();
+    try std.testing.expect(rejected.failure != null);
+    try std.testing.expect(std.mem.indexOf(u8, rejected.diagnostics, "constraint") != null);
+}

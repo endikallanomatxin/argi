@@ -115,7 +115,7 @@ pub const Resolver = struct {
             if (!self.graph.isTypeUnresolved(destination)) return .resolved;
             var bindings = try Bindings.init(self.allocator, module.semantic.parameterized_storage.comptime_parameters.items.len);
             defer bindings.deinit(self.allocator);
-            const resolved = try self.instantiateParameterizedType(module_index, computed, &bindings, null);
+            const resolved = try self.instantiateParameterizedType(module_index, computed, &bindings);
             try self.graph.resolveType(destination, self.graph.types.items[@intFromEnum(resolved)]);
             return .resolved;
         }
@@ -161,7 +161,7 @@ pub const Resolver = struct {
             self.argument_failure = .{ .declaration = identity.base, .ty = ty, .reason = reason };
             return err;
         };
-        const body_type = try self.instantiateParameterizedType(located.module_index, located.parameterized.body, &bindings, null);
+        const body_type = try self.instantiateParameterizedType(located.module_index, located.parameterized.body, &bindings);
         const shape = switch (self.graph.types.items[@intFromEnum(body_type)]) {
             .structural => |value| @import("../primitives/type_shapes.zig").GenericInstanceShape(global_sg.Ids){ .structure = .{
                 .fields = value.fields,
@@ -331,27 +331,20 @@ pub const Resolver = struct {
         module_index: usize,
         id: ir.ParameterizedTypeId,
         bindings: *Bindings,
-        self_type: ?global_sg.GlobalTypeId,
     ) anyerror!global_sg.GlobalTypeId {
         const module = &self.modules[module_index];
         const storage = &module.semantic.parameterized_storage.ir;
         return switch (storage.types.items[@intFromEnum(id)]) {
             .concrete => |value| globalizer.globalType(self.offsets[module_index], value),
-            .parameter => |parameter| bindings.types[@intFromEnum(parameter)] orelse blk: {
-                // Compatibility syntax supplies the sole participant through this
-                // adapter; its requirements use the same type-parameter IR.
-                if (module.semantic.parameterized_storage.comptime_parameters.items[@intFromEnum(parameter)].implicit_participant)
-                    break :blk self_type orelse return error.ContractParticipantOutsideConformance;
-                return error.UnboundGenericTypeParameter;
-            },
+            .parameter => |parameter| bindings.types[@intFromEnum(parameter)] orelse return error.UnboundGenericTypeParameter,
             .projection => |value| blk: {
-                const base = try self.instantiateParameterizedType(module_index, value.base, bindings, self_type);
+                const base = try self.instantiateParameterizedType(module_index, value.base, bindings);
                 break :blk try self.projection_resolver.?(self.projection_context.?, base, module.text(value.member), .{
                     .file_index = self.offsets[module_index].file_base + value.source.file_index,
                     .offset = value.source.offset,
                 });
             },
-            .external => |external| self.instantiateExternalType(module_index, external, bindings, self_type),
+            .external => |external| self.instantiateExternalType(module_index, external, bindings),
             .array => |value| blk: {
                 const signed_length = try self.evalInt(module_index, value.length, bindings);
                 const length = std.math.cast(u64, signed_length) orelse {
@@ -360,17 +353,17 @@ pub const Resolver = struct {
                 };
                 break :blk try self.internType(.{ .array = .{
                     .length = length,
-                    .element = try self.instantiateParameterizedType(module_index, value.element, bindings, self_type),
+                    .element = try self.instantiateParameterizedType(module_index, value.element, bindings),
                 } });
             },
-            .choice_union => |value| self.instantiateChoiceUnion(module_index, value.left, value.right, bindings, self_type),
-            .resolved => |value| self.instantiateResolvedParameterizedType(module_index, value, bindings, self_type),
+            .choice_union => |value| self.instantiateChoiceUnion(module_index, value.left, value.right, bindings),
+            .resolved => |value| self.instantiateResolvedParameterizedType(module_index, value, bindings),
         };
     }
 
-    fn instantiateChoiceUnion(self: *Resolver, module_index: usize, left: ir.ParameterizedTypeId, right: ir.ParameterizedTypeId, bindings: *Bindings, self_type: ?global_sg.GlobalTypeId) !global_sg.GlobalTypeId {
-        const left_type = try self.instantiateParameterizedType(module_index, left, bindings, self_type);
-        const right_type = try self.instantiateParameterizedType(module_index, right, bindings, self_type);
+    fn instantiateChoiceUnion(self: *Resolver, module_index: usize, left: ir.ParameterizedTypeId, right: ir.ParameterizedTypeId, bindings: *Bindings) !global_sg.GlobalTypeId {
+        const left_type = try self.instantiateParameterizedType(module_index, left, bindings);
+        const right_type = try self.instantiateParameterizedType(module_index, right, bindings);
         var variants: std.ArrayList(global_sg.ChoiceVariant) = .empty;
         defer variants.deinit(self.allocator);
         for ([_]global_sg.GlobalTypeId{ left_type, right_type }) |ty| {
@@ -403,10 +396,8 @@ pub const Resolver = struct {
         module_index: usize,
         external: module_entities.ExternalRefId,
         bindings: *Bindings,
-        self_type: ?global_sg.GlobalTypeId,
     ) !global_sg.GlobalTypeId {
         _ = bindings;
-        _ = self_type;
         const module = &self.modules[module_index];
         const reference = module.semantic.external_refs.items[@intFromEnum(external)];
         const decl = try self.core.resolveDeclaration(module_index, reference, &.{ .type, .abstract_type });
@@ -424,47 +415,46 @@ pub const Resolver = struct {
         module_index: usize,
         value: ir.ResolvedType,
         bindings: *Bindings,
-        self_type: ?global_sg.GlobalTypeId,
     ) anyerror!global_sg.GlobalTypeId {
         return switch (value) {
             .builtin => |builtin| self.internType(.{ .builtin = builtin }),
             .declared => |decl| self.internType(.{ .declared = try self.resolveParameterizedDeclaration(module_index, decl) }),
             .pointer => |pointer| self.internType(.{ .pointer = .{
-                .child = try self.instantiateParameterizedType(module_index, pointer.child, bindings, self_type),
+                .child = try self.instantiateParameterizedType(module_index, pointer.child, bindings),
                 .mutability = pointer.mutability,
             } }),
             .array => |array| self.internType(.{ .array = .{
                 .length = array.length,
-                .element = try self.instantiateParameterizedType(module_index, array.element, bindings, self_type),
+                .element = try self.instantiateParameterizedType(module_index, array.element, bindings),
             } }),
             .nullable => |child| blk: {
-                const instantiated_child = try self.instantiateParameterizedType(module_index, child, bindings, self_type);
+                const instantiated_child = try self.instantiateParameterizedType(module_index, child, bindings);
                 const nullable = try self.internType(.{ .nullable = instantiated_child });
                 try global_types.materializeNullable(self.allocator, self.graph, nullable, instantiated_child, .{ .file_index = 0, .offset = 0 });
                 break :blk nullable;
             },
-            .inferred_errable => |child| self.internType(.{ .inferred_errable = try self.instantiateParameterizedType(module_index, child, bindings, self_type) }),
+            .inferred_errable => |child| self.internType(.{ .inferred_errable = try self.instantiateParameterizedType(module_index, child, bindings) }),
             .inferred_choice => |choice| self.internType(.{ .inferred_choice = .{
                 .identity = choice.identity,
                 .kind = choice.kind,
-                .variants = try self.instantiateVariants(module_index, choice.variants, bindings, self_type),
+                .variants = try self.instantiateVariants(module_index, choice.variants, bindings),
             } }),
             .structural => |shape| self.internType(.{ .structural = .{
-                .fields = try self.instantiateFields(module_index, shape.fields, bindings, self_type),
+                .fields = try self.instantiateFields(module_index, shape.fields, bindings),
                 .layout = shape.layout,
             } }),
             .structural_choice => |shape| self.internType(.{ .structural_choice = .{
-                .variants = try self.instantiateVariants(module_index, shape.variants, bindings, self_type),
+                .variants = try self.instantiateVariants(module_index, shape.variants, bindings),
                 .layout = shape.layout,
             } }),
             .generic => |generic| blk: {
                 const base = try self.resolveParameterizedDeclaration(module_index, generic.base);
-                const args = try self.instantiateParameterizedArguments(module_index, generic.arguments, bindings, self_type);
+                const args = try self.instantiateParameterizedArguments(module_index, generic.arguments, bindings);
                 const id = try self.internType(.{ .generic = .{ .base = base, .arguments = args } });
                 _ = try self.ensureGenericInstance(id);
                 break :blk id;
             },
-            .virtual => |abstract_type| self.internType(.{ .virtual = try self.instantiateParameterizedType(module_index, abstract_type, bindings, self_type) }),
+            .virtual => |abstract_type| self.internType(.{ .virtual = try self.instantiateParameterizedType(module_index, abstract_type, bindings) }),
         };
     }
 
@@ -484,7 +474,7 @@ pub const Resolver = struct {
         if (reference.computed_arguments) |arguments| {
             var bindings = try Bindings.init(self.allocator, self.modules[module_index].semantic.parameterized_storage.comptime_parameters.items.len);
             defer bindings.deinit(self.allocator);
-            return self.instantiateParameterizedArguments(module_index, arguments, &bindings, null) catch |err| {
+            return self.instantiateParameterizedArguments(module_index, arguments, &bindings) catch |err| {
                 switch (err) {
                     error.UnknownGlobalDeclaration => self.recordComptimeFailure(module_index, reference.source, "unknown or inaccessible type or contract in compile-time call arguments"),
                     error.UnknownModuleReference => self.recordComptimeFailure(module_index, reference.source, "unknown module in compile-time call arguments"),
@@ -503,7 +493,6 @@ pub const Resolver = struct {
         module_index: usize,
         range: primitives.Range(ir.ParameterizedGenericArgId),
         bindings: *Bindings,
-        self_type: ?global_sg.GlobalTypeId,
     ) !primitives.Range(global_sg.GlobalGenericArgId) {
         const module = &self.modules[module_index];
         const storage = &module.semantic.parameterized_storage.ir;
@@ -514,7 +503,7 @@ pub const Resolver = struct {
             try items.append(self.allocator, .{
                 .name = try self.graph.addString(self.allocator, module.text(argument.name)),
                 .value = switch (argument.value) {
-                    .type => |value| .{ .type = try self.instantiateParameterizedType(module_index, value, bindings, self_type) },
+                    .type => |value| .{ .type = try self.instantiateParameterizedType(module_index, value, bindings) },
                     .comptime_int => |value| .{ .comptime_int = try self.evalInt(module_index, value, bindings) },
                 },
             });
@@ -529,7 +518,6 @@ pub const Resolver = struct {
         module_index: usize,
         range: primitives.Range(ir.ParameterizedFieldId),
         bindings: *Bindings,
-        self_type: ?global_sg.GlobalTypeId,
     ) !global_sg.FieldRange {
         const module = &self.modules[module_index];
         const storage = &module.semantic.parameterized_storage.ir;
@@ -539,8 +527,8 @@ pub const Resolver = struct {
             const field = storage.fields.items[range.start + @as(u32, @intCast(offset))];
             try items.append(self.allocator, .{
                 .name = try self.graph.addString(self.allocator, module.text(field.name)),
-                .ty = try self.instantiateParameterizedType(module_index, field.ty, bindings, self_type),
-                .storage_type = if (field.storage_type) |value| try self.instantiateParameterizedType(module_index, value, bindings, self_type) else null,
+                .ty = try self.instantiateParameterizedType(module_index, field.ty, bindings),
+                .storage_type = if (field.storage_type) |value| try self.instantiateParameterizedType(module_index, value, bindings) else null,
                 .source = self.globalSource(module_index, field.source),
                 .default_value = null,
             });
@@ -555,7 +543,6 @@ pub const Resolver = struct {
         module_index: usize,
         range: primitives.Range(ir.ParameterizedVariantId),
         bindings: *Bindings,
-        self_type: ?global_sg.GlobalTypeId,
     ) !global_sg.VariantRange {
         const module = &self.modules[module_index];
         const storage = &module.semantic.parameterized_storage.ir;
@@ -582,7 +569,7 @@ pub const Resolver = struct {
                 },
                 .semantic => |value| try items.append(self.allocator, .{
                     .name = try self.graph.addString(self.allocator, module.text(value.name)),
-                    .payload_type = if (value.payload_type) |payload| try self.instantiateParameterizedType(module_index, payload, bindings, self_type) else null,
+                    .payload_type = if (value.payload_type) |payload| try self.instantiateParameterizedType(module_index, payload, bindings) else null,
                     .option_decl = null,
                     .source = self.globalSource(module_index, value.source),
                     .value = value.value,
@@ -600,7 +587,7 @@ pub const Resolver = struct {
             .literal => |value| value,
             .parameter => |parameter| bindings.ints[@intFromEnum(parameter)] orelse error.UnboundComptimeParameter,
             .projection => |value| blk: {
-                const base = try self.instantiateParameterizedType(module_index, value.base, bindings, null);
+                const base = try self.instantiateParameterizedType(module_index, value.base, bindings);
                 break :blk try self.constant_projection_resolver.?(self.projection_context.?, base, self.modules[module_index].text(value.member), self.globalSource(module_index, value.source));
             },
             .binary => |binary| blk: {

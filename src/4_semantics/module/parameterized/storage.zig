@@ -138,6 +138,8 @@ pub const Storage = struct {
     abstract_requirements: std.ArrayList(AbstractRequirement) = .empty,
     abstract_definitions: std.ArrayList(AbstractDefinition) = .empty,
     abstract_arguments: std.ArrayList(AbstractArgument) = .empty,
+    // Names share the argument index; empty names denote positional arguments.
+    abstract_argument_names: std.ArrayList(primitives.StringRange) = .empty,
     abstract_implementations: std.ArrayList(AbstractImplementation) = .empty,
     parameterized_abstract_implementations: std.ArrayList(ParameterizedAbstractImplementation) = .empty,
     contract_conformances: std.ArrayList(ContractConformance) = .empty,
@@ -153,6 +155,7 @@ pub const Storage = struct {
         self.abstract_requirements.deinit(allocator);
         self.abstract_definitions.deinit(allocator);
         self.abstract_arguments.deinit(allocator);
+        self.abstract_argument_names.deinit(allocator);
         self.abstract_implementations.deinit(allocator);
         self.parameterized_abstract_implementations.deinit(allocator);
         self.contract_conformances.deinit(allocator);
@@ -170,6 +173,7 @@ pub const Storage = struct {
             self.abstract_requirements.items.len * @sizeOf(AbstractRequirement) +
             self.abstract_definitions.items.len * @sizeOf(AbstractDefinition) +
             self.abstract_arguments.items.len * @sizeOf(AbstractArgument) +
+            self.abstract_argument_names.items.len * @sizeOf(primitives.StringRange) +
             self.abstract_implementations.items.len * @sizeOf(AbstractImplementation) +
             self.parameterized_abstract_implementations.items.len * @sizeOf(ParameterizedAbstractImplementation) +
             self.contract_conformances.items.len * @sizeOf(ContractConformance) +

@@ -152,6 +152,8 @@ pub fn verifyParameterizedForms(graph: *const graph_mod.ModuleSemanticGraph) !vo
         };
     }
 
+    try require(storage.abstract_argument_names.items.len == storage.abstract_arguments.items.len);
+    for (storage.abstract_argument_names.items) |name| try require(verify.stringFits(name, graph.strings.items));
     for (storage.abstract_arguments.items) |argument| switch (argument) {
         .none, .comptime_int => {},
         .type => |ty| try require(verify.idFits(ty, views.typeCount(graph))),

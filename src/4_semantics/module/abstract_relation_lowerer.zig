@@ -318,6 +318,7 @@ const Context = struct {
                         });
                     } else return error.InvalidAbstractArgument;
                 } else {
+                    try self.graph.semantic.parameterized_storage.abstract_argument_names.append(self.allocator, arg_name);
                     if (field.type_node) |type_node|
                         try module_args.append(self.allocator, .{ .type = try self.lowerModuleType(type_node) })
                     else if (field.default_value) |value_node|

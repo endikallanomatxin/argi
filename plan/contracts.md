@@ -62,10 +62,10 @@ semantics change; codegen receives concrete integer dimensions and ordinary type
 
 ## Remaining work
 
-- Move unary participant binding into the conformance adapter and unify its
-  selection/evidence with canonical participant tuples. Keep legacy source
-  spelling and unary virtual ABI as compatibility surfaces while removing
-  separate semantic selection paths.
+- Unify unary and tuple evidence storage and operation proof records. Shared
+  conformance selection and ordinary participant binding now precede those
+  representations; legacy source spellings and unary virtual ABI remain
+  compatibility surfaces.
 - Enforce unary body-declared composition. Included contract identities are now
   retained, but their requirements are not inherited yet. Preserve legacy
   explicit contract-to-contract relations while implementing those proofs.
@@ -174,3 +174,42 @@ checks preserve reordered associated arguments and forward member references.
 Clean and warm-cache LLVM for the mixed-member fixture are identical, with all 27
 modules reused. Its result is Int32, its array contains two i32 elements, and its
 operation remains a direct concrete call without runtime contract lookup.
+
+## Shared conformance selection and binding
+
+Route unary compatibility searches and concrete participant tuples through one
+selection entry point. Source adapters match legacy direct declarations, generic
+patterns and inherited marker contracts; selected associated elements and all
+participants then populate ordinary parameter bindings. Reuse that binding for
+associated checks, generic constraint inference and virtual storage mappings.
+Move implicit participant binding out of the generic evaluator, remove its Self
+argument, and instantiate static/erased requirements through the same conformance
+adapter. Preserve source compatibility, dispatch/safety proofs and virtual ABI.
+
+This changes global semantics and preserves direct associated argument names in
+persisted module data (cache wire version 45). Tokenizing, syntaxing and codegen
+keep their existing behavior. Cover direct/generic/inherited unary selection, tuple projections, named
+associated arguments, actual receiver identity, virtual domains, speculative
+rollback and persistent frontend reuse. Specialization ranking and joint virtual
+packages remain separate follow-up work.
+
+Direct unary declarations previously discarded argument names during module
+lowering. Preserve those names alongside argument values, normalize comparisons
+through selected parameter bindings, and validate the parallel pool in snapshots.
+Reordered named associations must retain the same meaning in static constraints,
+virtual construction, duplicate conformance checks and persisted frontend reuse.
+TODO: canonicalize bound unary contract type identities as well as selection, so
+named argument permutations share one virtual type identity across interfaces.
+
+Shared selection validation: all 109 contract fixtures pass. The complete Debug
+regression passes 1,720 program tests and 365 internal tests, with 11 and 1 skips
+respectively. New executable coverage combines direct and generic unary sources,
+reordered named type/integer associations, a second-position receiver, duplicate
+identical associations and virtual construction. Negative cases reject a generic
+associated mismatch and conflicting direct associations. A generic-evaluator test
+requires ordinary bindings for implicit and explicit participants alike. Persisted
+frontend checks preserve direct argument names and reproduce an invalid edit.
+Clean and warm-cache LLVM are identical, with all 27 modules reused. Both virtual
+handles retain two pointers and fixed operation tables; static calls remain
+specialized. Selection still preserves legacy candidate matching rules; structural
+specialization ranking and shared evidence/proof storage are not implemented.

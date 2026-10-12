@@ -184,7 +184,7 @@ assignments in `satisfies` declarations remain pending.
 > functions remain pending. Storage domains, composition and virtual conversion
 > of explicit participant contracts are rejected until joint mappings and evidence are
 > represented. Unary compatibility syntax below continues to support the
-> existing generic and virtual machinery independently.
+> existing generic and virtual behavior.
 
 ## Unary migration syntax
 
@@ -213,24 +213,26 @@ consume#(.item: Type, .source_type: Type: Readable#(item))(
 }
 ```
 
-Here `item` is a body-declared associated type; it does not independently select another
-participant. Functions remain ordinary declarations outside the contract.
+Here `item` is a body-declared associated type; it does not independently select
+another participant. Functions remain ordinary declarations outside the contract.
 
 > [!IMPLEMENTATION]
 > Unary declarations now contain one implicit Type participant. Source `Self`
 > lowers to an ordinary reference to that participant in parameterized IR; there
-> is no separate abstract-self IR type. The compatibility adapter supplies the
-> concrete or erased participant during instantiation. Legacy `Abstract` and
-> `implements` remain accepted, including mixed
-> composition. Generic conformances, associated type/value arguments, static
+> is no separate abstract-self IR type. The conformance adapter binds the
+> concrete or erased participant before ordinary type instantiation. Legacy
+> `Abstract` and `implements` remain accepted, including mixed composition. Generic conformances, associated type/value arguments, static
 > safety checking and unary virtual handles retain their existing behavior.
 > Requirements still use `Self`. Unary handles accept `Virtual#(.contract: Name)`
 > and `to_virtual#(.contract: Name)`, as well as positional arguments and the
 > legacy `.abstract` label; these spellings produce the same handle type.
 > The source compatibility surface still differs from explicit participant tuples:
 > arguments name associated elements, while the participant is implicit. Unary
-> conformance selection and virtual evidence still use compatibility adapters;
-> unifying those with tuple conformance selection remains pending.
+> lookup, associated argument checks and constraint inference now share the
+> selection entry point used by explicit participant tuples. Source adapters
+> match direct declarations, generic patterns and inherited marker contracts.
+> Virtual table and safety evidence registries still use the unary compatibility
+> representation; joint evidence and specialization ranking remain pending.
 > Bundled libraries and generated entry code use the canonical `.contract` label.
 > Specialized tuple conformance selection and
 > joint virtual packages are not implemented.

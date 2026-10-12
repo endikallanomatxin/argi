@@ -1252,7 +1252,7 @@ pub const Resolver = struct {
             self.rollbackSideEffects(side_effect_checkpoint);
             self.generics.stats = saved_stats;
         }
-        const expected = self.generics.instantiateParameterizedType(module_index, pattern, bindings, null) catch return false;
+        const expected = self.generics.instantiateParameterizedType(module_index, pattern, bindings) catch return false;
         return self.core.contextualLiteralFits(value, expected);
     }
 
@@ -1624,7 +1624,7 @@ pub const Resolver = struct {
             self.rollbackSideEffects(side_effect_checkpoint);
             self.generics.stats = saved_stats;
         }
-        const ty = self.generics.instantiateParameterizedType(module_index, pattern, bindings, null) catch return .deferred;
+        const ty = self.generics.instantiateParameterizedType(module_index, pattern, bindings) catch return .deferred;
         const fields = self.interfaceFields(ty) catch return .deferred;
         const matching_fields = self.materializeDefaultPresenceForMatch(module_index, pattern, fields) catch return .deferred;
         if (self.nested_call_context) |abstracts| {
@@ -1766,7 +1766,7 @@ pub const Resolver = struct {
                     if (pointer.mutability == .read_write and value.mutability != .read_write) return false;
                     if (try self.inferInputType(module_index, pointer.child, value.child, bindings)) return true;
                     if (self.definiteNominalReferenceMismatch(module_index, pattern, actual)) return false;
-                    const expected = self.generics.instantiateParameterizedType(module_index, pattern, bindings, null) catch return false;
+                    const expected = self.generics.instantiateParameterizedType(module_index, pattern, bindings) catch return false;
                     if (self.core.callTypesCompatible(actual, expected)) return true;
                     if (self.nested_call_context) |abstracts| {
                         return (call_compatibility.Abstract{ .core = self.core, .abstracts = abstracts }).compatible(actual, expected);
@@ -1819,7 +1819,7 @@ pub const Resolver = struct {
             },
             else => {},
         }
-        const expected = self.generics.instantiateParameterizedType(module_index, pattern, bindings, null) catch return false;
+        const expected = self.generics.instantiateParameterizedType(module_index, pattern, bindings) catch return false;
         return global_types.equal(self.graph, expected, actual);
     }
 
@@ -2111,8 +2111,8 @@ pub const Resolver = struct {
         if (!try self.inferAndValidateConstraints(located.module_index, located.parameterized.parameters, &substitutions))
             return error.GenericAbstractConstraintNotSatisfied;
 
-        const input_ty = try self.generics.instantiateParameterizedType(located.module_index, located.parameterized.input, &substitutions, null);
-        const output_ty = try self.generics.instantiateParameterizedType(located.module_index, located.parameterized.output, &substitutions, null);
+        const input_ty = try self.generics.instantiateParameterizedType(located.module_index, located.parameterized.input, &substitutions);
+        const output_ty = try self.generics.instantiateParameterizedType(located.module_index, located.parameterized.output, &substitutions);
         const input_shape = try self.interfaceFields(input_ty);
         const output_shape = try self.interfaceFields(output_ty);
         var inferred_errors = false;
@@ -2296,7 +2296,7 @@ pub const Resolver = struct {
                 .name = try self.resolver.graph.addString(self.resolver.allocator, module.text(source.name)),
                 .source = self.resolver.sourceFor(self.module_index, source.source),
                 .ty = if (source_ty) |ty|
-                    try self.resolver.generics.instantiateParameterizedType(self.module_index, ty, self.substitutions, null)
+                    try self.resolver.generics.instantiateParameterizedType(self.module_index, ty, self.substitutions)
                 else
                     @enumFromInt(0),
                 .initialization = null,
@@ -2383,7 +2383,7 @@ pub const Resolver = struct {
         }
 
         fn instantiateNodeAs(self: *InstanceContext, id: ir.ParameterizedNodeId, expected_parameterized: ir.ParameterizedTypeId) anyerror!global_sg.GlobalNodeId {
-            const expected = try self.resolver.generics.instantiateParameterizedType(self.module_index, expected_parameterized, self.substitutions, null);
+            const expected = try self.resolver.generics.instantiateParameterizedType(self.module_index, expected_parameterized, self.substitutions);
             return self.instantiateNodeWithExpected(id, expected);
         }
 
@@ -2483,7 +2483,7 @@ pub const Resolver = struct {
                 };
             }
             const ty = if (node.ty) |value|
-                try self.resolver.generics.instantiateParameterizedType(self.module_index, value, self.substitutions, null)
+                try self.resolver.generics.instantiateParameterizedType(self.module_index, value, self.substitutions)
             else if (node.content == .string_literal)
                 self.resolver.core.defaultStringLiteralType()
             else
@@ -2509,7 +2509,7 @@ pub const Resolver = struct {
                     .char_literal => |value| .{ .char_literal = value },
                     .bool_literal => |value| .{ .bool_literal = value },
                     .string_literal => |value| .{ .string_literal = try self.copyString(value) },
-                    .type_literal => |value| .{ .type_literal = try self.resolver.generics.instantiateParameterizedType(self.module_index, value, self.substitutions, null) },
+                    .type_literal => |value| .{ .type_literal = try self.resolver.generics.instantiateParameterizedType(self.module_index, value, self.substitutions) },
                     .move_value => |value| .{ .move_value = try self.instantiateNode(value) },
                     .break_statement => .break_statement,
                     .continue_statement => .continue_statement,
@@ -2671,10 +2671,10 @@ pub const Resolver = struct {
                 .comptime_parameter => self.resolveComptimeParameter(value),
                 .generic_call => blk: {
                     const name = value.name orelse return error.GenericParameterizedCallWithoutName;
-                    const args = try self.resolver.generics.instantiateParameterizedArguments(self.module_index, value.generic_arguments, self.substitutions, null);
+                    const args = try self.resolver.generics.instantiateParameterizedArguments(self.module_index, value.generic_arguments, self.substitutions);
                     const input = if (operands.items.len != 0) operands.items[0] else return error.GenericParameterizedCallWithoutInput;
                     break :blk try self.makeNamedCall(name, value.module_path, args, input, value.source, if (value.expected_type) |ty|
-                        try self.resolver.generics.instantiateParameterizedType(self.module_index, ty, self.substitutions, null)
+                        try self.resolver.generics.instantiateParameterizedType(self.module_index, ty, self.substitutions)
                     else
                         null);
                 },
@@ -2816,7 +2816,7 @@ pub const Resolver = struct {
             if (definition.kind != .comptime_int) return error.InvalidParameterizedComptimeParameter;
             const number = self.substitutions.ints[@intFromEnum(parameter)] orelse return error.UnboundComptimeParameter;
             const ty = if (definition.value_type) |parameterized_type|
-                try self.resolver.generics.instantiateParameterizedType(self.module_index, parameterized_type, self.substitutions, null)
+                try self.resolver.generics.instantiateParameterizedType(self.module_index, parameterized_type, self.substitutions)
             else
                 try self.resolver.generics.internType(.{ .builtin = .Int32 });
             return .{

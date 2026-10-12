@@ -103,7 +103,7 @@ test "parameterized pools retain immediate children across recursive lowering" {
     const int_type: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(relocation.graph.types.items.len)));
     try relocation.graph.types.append(allocator, .{ .builtin = .Int32 });
     substitutions.types[parameterized_storage.parameterized_types.items[1].parameters.start] = int_type;
-    const instantiated = try resolver.instantiateParameterizedType(0, body, &substitutions, null);
+    const instantiated = try resolver.instantiateParameterizedType(0, body, &substitutions);
     const global_fields = relocation.graph.types.items[@intFromEnum(instantiated)].structural.fields;
     try std.testing.expectEqualStrings("first", relocation.graph.text(relocation.graph.fields.items[global_fields.start].name));
     try std.testing.expectEqualStrings("second", relocation.graph.text(relocation.graph.fields.items[global_fields.start + 1].name));
@@ -877,4 +877,36 @@ test "unary compatibility contracts normalize Self to a type participant" {
     const left = storage.ir.types.items[@intFromEnum(storage.ir.fields.items[pair_input.start].ty)].resolved.pointer.child;
     try std.testing.expectEqual(pair.participants.start, @intFromEnum(storage.ir.types.items[@intFromEnum(left)].parameter));
     try std.testing.expectEqual(@as(?@import("parameterized/storage.zig").ComptimeParameterId, null), pair.implicit_participant);
+}
+
+test "contract participants require ordinary bindings in generic evaluation" {
+    const allocator = std.testing.allocator;
+    const source = "Legacy: Contract = (read(.source: &Self) -> ())\nExplicit#(.Input: Type): Contract = (read(.source: &Input) -> ())\n";
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    const inputs = [_]module_graph.FileInput{.{ .path = "contracts/main.rg", .tree = &tree, .source = source }};
+    var graph = try module_graph.build(allocator, "contracts", &inputs);
+    defer graph.deinit(allocator);
+    _ = try parameterized_lowerer.lower(allocator, &graph, &inputs);
+    const storage = &graph.semantic.parameterized_storage;
+    const globalizer = @import("../global/globalizer.zig");
+    const core = @import("../global/core.zig");
+    const generics = @import("../global/generics.zig");
+    const global_sg = @import("../global/graph.zig");
+    var relocation = try globalizer.relocate(allocator, &.{graph}, .allow_holes);
+    defer relocation.deinit(allocator);
+    var core_resolver: core.Resolver = .{ .allocator = allocator, .graph = &relocation.graph, .modules = &.{graph}, .offsets = relocation.offsets.items };
+    var resolver: generics.Resolver = .{ .allocator = allocator, .graph = &relocation.graph, .modules = &.{graph}, .offsets = relocation.offsets.items, .core = &core_resolver };
+    const int_type: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(relocation.graph.types.items.len)));
+    try relocation.graph.types.append(allocator, .{ .builtin = .Int32 });
+    for (storage.abstract_definitions.items) |definition| {
+        var bindings = try generics.Resolver.Bindings.init(allocator, storage.comptime_parameters.items.len);
+        defer bindings.deinit(allocator);
+        const requirement = storage.abstract_requirements.items[definition.requirements.start];
+        const fields = storage.ir.types.items[@intFromEnum(requirement.input)].resolved.structural.fields;
+        const parameter_type = storage.ir.types.items[@intFromEnum(storage.ir.fields.items[fields.start].ty)].resolved.pointer.child;
+        try std.testing.expectError(error.UnboundGenericTypeParameter, resolver.instantiateParameterizedType(0, parameter_type, &bindings));
+        bindings.types[definition.participants.start] = int_type;
+        try std.testing.expectEqual(int_type, try resolver.instantiateParameterizedType(0, parameter_type, &bindings));
+    }
 }

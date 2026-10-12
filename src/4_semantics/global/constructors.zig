@@ -744,7 +744,7 @@ pub const Resolver = struct {
             context,
             &bindings,
         )) return .{ .owns_type = true };
-        const input_ty = generics.instantiateParameterizedType(candidate_index, parameterized.input, &bindings, null) catch
+        const input_ty = generics.instantiateParameterizedType(candidate_index, parameterized.input, &bindings) catch
             return .{ .owns_type = true };
         const fields = types.fields(self.graph, input_ty) orelse return .{ .owns_type = true };
         return .{
@@ -784,7 +784,7 @@ pub const Resolver = struct {
                     &bindings,
                 )) return null;
                 const result_pattern = generic_functions_mod.initializerValuePattern(candidate_module, parameterized.output) orelse return null;
-                const constructed = generics.instantiateParameterizedType(candidate_index, result_pattern, &bindings, null) catch return null;
+                const constructed = generics.instantiateParameterizedType(candidate_index, result_pattern, &bindings) catch return null;
                 const identity = switch (self.graph.types.items[@intFromEnum(constructed)]) {
                     .generic => |value| value,
                     else => return null,
@@ -903,7 +903,7 @@ pub const Resolver = struct {
             context,
             &bindings,
         )) return .{};
-        const input_ty = generics.instantiateParameterizedType(candidate_index, parameterized.input, &bindings, null) catch return .{};
+        const input_ty = generics.instantiateParameterizedType(candidate_index, parameterized.input, &bindings) catch return .{};
         const fields = types.fields(self.graph, input_ty) orelse return .{};
         return .{
             .owns_type = true,

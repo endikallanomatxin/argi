@@ -12086,3 +12086,17 @@ test "feature_tests/contracts/105X_old_participant_marker" {
 test "feature_tests/contracts/106X_associated_argument_not_participant" {
     try buildExpectFailWithoutNoise("tests/feature_tests/contracts/106X_associated_argument_not_participant", "unknown argument name", "panic");
 }
+
+test "feature_tests/contracts/107_shared_unary_selection" {
+    const path = "tests/feature_tests/contracts/107_shared_unary_selection";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/contracts/108X_shared_generic_associated_mismatch" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/108X_shared_generic_associated_mismatch", "constraint", "panic");
+}
+
+test "feature_tests/contracts/109X_shared_direct_associated_conflict" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/109X_shared_direct_associated_conflict", "conflicting", "panic");
+}
