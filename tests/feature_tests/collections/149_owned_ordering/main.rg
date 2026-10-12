@@ -19,18 +19,6 @@ less(.self: &PairOrder, .left: &Pair, .right: &Pair) -> (.ok: Bool) := {
 
 RefusingAllocator: Type = ()
 
-RefusingAllocator implements Allocator
-
-allocate(
-        .self      : $&RefusingAllocator,
-        .size      : UIntNative,
-        .alignment : UIntNative           = 1
-    ) -> (
-        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
-    ) := {
-    result = ..error(.reason = ..out_of_memory)
-}
-
 run_main(.system: System) -> !Void = ..ok Void() := {
     assume allocator := system.page_allocator
     order ::= PairOrder()
@@ -117,3 +105,15 @@ main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 
     run_main(.system = system)!!!
     status_code = 0
 }
+
+implement Allocator#(RefusingAllocator)(
+    .allocate = (
+            .self      : $&RefusingAllocator,
+            .size      : UIntNative,
+            .alignment : UIntNative           = 1
+        ) -> (
+            .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+        ) {
+        result = ..error(.reason = ..out_of_memory)
+    }
+)

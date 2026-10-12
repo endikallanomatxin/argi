@@ -195,3 +195,10 @@ not part of the intended final language.
 > reset_context and report operations. Noop, fixed-buffer and custom fixture
 > policies supply selected evidence. Context convenience functions have unique
 > names for views and text; the former global operation family is removed.
+
+> [!IMPLEMENTATION]
+> Allocator and Deallocator use explicit provider participants and scoped
+> implementations, including physical allocation cleanup. Allocation retains
+> selected virtual Deallocator evidence and authenticated acquisition bounds.
+> Byte requests use the unique allocate_bytes helper; typed allocate#(T) requests
+> use an optional count defaulting to one.

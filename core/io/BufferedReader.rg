@@ -35,7 +35,7 @@ BufferedReader init#(
         actual_capacity = one
     }
 
-    buffer ::= allocate(allocator, .size = actual_capacity)!
+    buffer ::= allocate_bytes(allocator, .size = actual_capacity)!
     -- The refill view contains initialized bytes before any native read.
     index :: UIntNative = 0
 

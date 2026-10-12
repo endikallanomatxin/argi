@@ -1,12 +1,12 @@
 main(.system: System) -> (.status_code: Int32) := {
     allocator_storage :: GeneralPurposeAllocator = GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
-    first_result ::= allocate(.self = $&allocator_storage, .size = 1, .alignment = 1)
+    first_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1, .alignment = 1)
     match first_result {
         ..error _ { status_code = 1 }
         ..ok ~ first_payload {
             first ::= ~first_payload
-            second_result ::= allocate(.self = $&allocator_storage, .size = 32, .alignment = 32)
+            second_result ::= allocate_bytes(.self = $&allocator_storage, .size = 32, .alignment = 32)
             match second_result {
                 ..error _ { status_code = 2 }
                 ..ok ~ second_payload {
@@ -15,7 +15,7 @@ main(.system: System) -> (.status_code: Int32) := {
                         return }
                     if second.data.address % 32 != 0 { status_code = 4
                         return }
-                    third_result ::= allocate(.self = $&allocator_storage, .size = 4097, .alignment = 8192)
+                    third_result ::= allocate_bytes(.self = $&allocator_storage, .size = 4097, .alignment = 8192)
                     match third_result {
                         ..error _ { status_code = 5
                             return }
@@ -35,7 +35,7 @@ main(.system: System) -> (.status_code: Int32) := {
                     many ::= unwrap_or_abort(.value = DynamicArray#(.t: Allocation)(.allocator = $&allocator_storage, .capacity = 520))
                     i :: UIntNative = 0
                     while i < 520 {
-                        next_result ::= allocate(.self = $&allocator_storage, .size = 8, .alignment = 8)
+                        next_result ::= allocate_bytes(.self = $&allocator_storage, .size = 8, .alignment = 8)
                         match next_result {
                             ..error _ { status_code = 8
                                 return }

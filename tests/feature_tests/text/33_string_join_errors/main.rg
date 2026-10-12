@@ -1,26 +1,5 @@
 FailingAllocator: Type = (.attempts: UIntNative = 0)
 
-allocate(
-        .self      : $&FailingAllocator,
-        .size      : UIntNative,
-        .alignment : UIntNative          = 1
-    ) -> (
-        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
-    ) := {
-    self&.attempts = self&.attempts + 1
-    result = ..error(.reason = ..out_of_memory)
-}
-
-deallocate(
-        .self      : $&FailingAllocator,
-        .data      : RawPointer#(.t: UInt8),
-        .size      : UIntNative,
-        .alignment : UIntNative
-    ) -> () := {}
-
-FailingAllocator implements Allocator
-FailingAllocator implements Deallocator
-
 main() -> (.status_code: Int32 = 0) := {
     allocator :: FailingAllocator = (.attempts = 0)
     parts: [2]StringView = ("a", "b")
@@ -72,3 +51,25 @@ main() -> (.status_code: Int32 = 0) := {
     }
     if allocator.attempts != 1 { abort }
 }
+
+implement Allocator#(FailingAllocator)(
+    .allocate = (
+            .self      : $&FailingAllocator,
+            .size      : UIntNative,
+            .alignment : UIntNative          = 1
+        ) -> (
+            .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+        ) {
+        self&.attempts = self&.attempts + 1
+        result = ..error(.reason = ..out_of_memory)
+    }
+)
+
+implement Deallocator#(FailingAllocator)(
+    .deallocate = (
+            .self      : $&FailingAllocator,
+            .data      : RawPointer#(.t: UInt8),
+            .size      : UIntNative,
+            .alignment : UIntNative
+        ) -> () {}
+)

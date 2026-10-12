@@ -33,27 +33,27 @@ page_allocator_round_up(
     }
 }
 
-allocate(
-        .self      : $&PageAllocator,
-        .size      : UIntNative,
-        .alignment : UIntNative
-    ) -> (
-        .result : Errable#(Allocation, (..out_of_memory))
-    ) := {
-    mapped ::= map_pages(self&.memory, .size = size, .alignment = alignment)
+implement Allocator#(PageAllocator)(
+    .allocate = (
+            .self      : $&PageAllocator,
+            .size      : UIntNative,
+            .alignment : UIntNative
+        ) -> (
+            .result : Errable#(Allocation, (..out_of_memory))
+        ) {
+        mapped ::= map_pages(self&.memory, .size = size, .alignment = alignment)
 
-    match mapped {
-        ..error _ { result = ..error(.reason = ..out_of_memory) }
-        ..ok ~payload {
-            allocation ::= ~payload
-            allocation.size = size
-            -- Page padding is not part of the range granted to the caller.
-            -- Memory rounds this extent back to pages during physical cleanup.
-            allocation._storage_size = size
-            allocation._release_size = size
-            result = ..ok ~allocation
+        match mapped {
+            ..error _ { result = ..error(.reason = ..out_of_memory) }
+            ..ok ~payload {
+                allocation ::= ~payload
+                allocation.size = size
+                -- Page padding is not part of the range granted to the caller.
+                -- Memory rounds this extent back to pages during physical cleanup.
+                allocation._storage_size = size
+                allocation._release_size = size
+                result = ..ok ~allocation
+            }
         }
     }
-}
-
-PageAllocator satisfies Allocator
+)

@@ -14,7 +14,7 @@ main(.system: System) -> (.status_code: Int32) := {
     }
     }
 
-    first_result ::= allocate(.self = $&arena, .size = 8)
+    first_result ::= allocate_bytes(.self = $&arena, .size = 8)
     match first_result {
         ..error _ {
             deinit(.self = $&arena)
@@ -30,7 +30,7 @@ main(.system: System) -> (.status_code: Int32) := {
         }
     }
 
-    second_result ::= allocate(.self = $&arena, .size = 8)
+    second_result ::= allocate_bytes(.self = $&arena, .size = 8)
     match second_result {
         ..error _ {
             deinit(.self = $&arena)

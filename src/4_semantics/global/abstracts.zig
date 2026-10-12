@@ -1909,6 +1909,10 @@ pub const Resolver = struct {
         if (self.findAbstractDefinition(abstract_decl)) |located| {
             if (located.definition.hasExplicitParticipants()) {
                 if (located.definition.participants.len != 1) return false;
+                if (self.graph.semanticType(concrete) == .virtual) {
+                    const evidence = self.abstractUse(self.graph.semanticType(concrete).virtual) orelse return false;
+                    return evidence.declaration == abstract_decl and evidence.arguments.len == 0 and located.definition.parameters.len == 0;
+                }
                 return try self.selectConformance(abstract_decl, &.{concrete}, null, depth, null) != null;
             }
         }
@@ -2844,7 +2848,7 @@ pub const Resolver = struct {
         const definition = self.findAbstractDefinition(abstract_decl) orelse return false;
         if (definition.definition.hasExplicitParticipants()) {
             if (constraint.arguments.len == 0 and definition.definition.participants.len == 1)
-                return try self.selectConformance(abstract_decl, &.{concrete}, null, 0, null) != null;
+                return self.implementsDepth(concrete, abstract_decl, 0);
             const arguments = self.generics.instantiateParameterizedArguments(module_index, constraint.arguments, bindings) catch |err| {
                 if (err == error.OutOfMemory) return err;
                 return false;

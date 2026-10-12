@@ -13,7 +13,7 @@ Tracked deinit(.self: $&Tracked) -> () := {
 make_tracked(.allocator: $&Allocator, .id: Int32) -> (.result: Errable#(.t: Tracked, .reasons: (..out_of_memory))) := {
     assume allocator
 
-    allocated ::= allocate(.self = allocator, .size = 1)
+    allocated ::= allocate_bytes(.self = allocator, .size = 1)
     match allocated {
         ..error _ { result = ..error(.reason = ..out_of_memory) }
         ..ok ~ payload {

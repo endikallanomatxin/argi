@@ -10,7 +10,7 @@ main(.system: System) -> (.status_code: Int32) := {
     value :: SelfRef = (.value = 7, .reference = &seed)
     value.reference = &value.value
 
-    slots_result ::= allocate(.self = $&allocator_storage, .size = size_of(.type = SelfRef))
+    slots_result ::= allocate_bytes(.self = $&allocator_storage, .size = size_of(.type = SelfRef))
     match slots_result {
         ..error _ { status_code = 1 }
         ..ok ~ slots_payload {

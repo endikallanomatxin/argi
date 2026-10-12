@@ -10,7 +10,7 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
     }
-    result ::= allocate(.self = $&arena, .size = 8)
+    result ::= allocate_bytes(.self = $&arena, .size = 8)
     match result {
         ..error _ { status_code = 1 }
         ..ok ~ payload {

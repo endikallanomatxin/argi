@@ -5,8 +5,8 @@ BorrowingOwner deinit(.self: $&BorrowingOwner) -> () := { deinit(.self = $&self&
 main(.system: System) -> (.status_code: Int32 = 0) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
-    external_result ::= allocate(.self = $&allocator_storage, .size = 1)
-    owned_result ::= allocate(.self = $&allocator_storage, .size = 1)
+    external_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
+    owned_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
     match external_result {
         ..error _ { status_code = 1 }
         ..ok ~ external_payload {

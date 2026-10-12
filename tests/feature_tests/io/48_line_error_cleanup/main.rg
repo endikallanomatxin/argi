@@ -5,48 +5,6 @@ RecordingAllocator: Type = (
     .fail_after    : UIntNative                 = 999
 )
 
-RecordingAllocator implements Allocator
-RecordingAllocator implements Deallocator
-
-allocate(
-        .self      : $&RecordingAllocator,
-        .size      : UIntNative,
-        .alignment : UIntNative            = 1
-    ) -> (
-        .result : Errable#(Allocation, (..out_of_memory))
-    ) := {
-    if self&.allocations == self&.fail_after {
-        result = ..error(.reason = ..out_of_memory)
-        return
-    }
-
-    storage ::= malloc(.size = size, .ffi = self&.ffi)
-    if UIntNative(.value = storage) == 0 {
-        result = ..error(.reason = ..out_of_memory)
-        return
-    }
-    self&.allocations = self&.allocations + 1
-    deallocator: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(
-        .value = self
-    )
-    result = ..ok ~trusted_establish_allocation(
-        .storage     = storage
-        .size        = size
-        .alignment   = alignment
-        .deallocator = deallocator
-    )
-}
-
-deallocate(
-        .self      : $&RecordingAllocator,
-        .data      : RawPointer#(.t: UInt8),
-        .size      : UIntNative,
-        .alignment : UIntNative
-    ) -> () := {
-    self&.deallocations = self&.deallocations + 1
-    free(.address = data.address, .ffi = self&.ffi)
-}
-
 Source: Type = (.text: StringView, .position: UIntNative = 0, .fail_after: UIntNative = 999)
 
 implement Reader#(Source)(
@@ -96,3 +54,46 @@ main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 
     run_main(.system = system)!!!
     status_code = 0
 }
+
+implement Allocator#(RecordingAllocator)(
+    .allocate = (
+            .self      : $&RecordingAllocator,
+            .size      : UIntNative,
+            .alignment : UIntNative            = 1
+        ) -> (
+            .result : Errable#(Allocation, (..out_of_memory))
+        ) {
+        if self&.allocations == self&.fail_after {
+            result = ..error(.reason = ..out_of_memory)
+            return
+        }
+
+        storage ::= malloc(.size = size, .ffi = self&.ffi)
+        if UIntNative(.value = storage) == 0 {
+            result = ..error(.reason = ..out_of_memory)
+            return
+        }
+        self&.allocations = self&.allocations + 1
+        deallocator: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(
+            .value = self
+        )
+        result = ..ok ~trusted_establish_allocation(
+            .storage     = storage
+            .size        = size
+            .alignment   = alignment
+            .deallocator = deallocator
+        )
+    }
+)
+
+implement Deallocator#(RecordingAllocator)(
+    .deallocate = (
+            .self      : $&RecordingAllocator,
+            .data      : RawPointer#(.t: UInt8),
+            .size      : UIntNative,
+            .alignment : UIntNative
+        ) -> () {
+        self&.deallocations = self&.deallocations + 1
+        free(.address = data.address, .ffi = self&.ffi)
+    }
+)

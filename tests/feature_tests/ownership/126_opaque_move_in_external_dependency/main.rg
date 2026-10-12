@@ -7,7 +7,7 @@ main(.system: System) -> (.status_code: Int32) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     external :: Int32 = 7
     value :: Borrowing = (.reference = &external)
-    slots_result ::= allocate(.self = $&allocator_storage, .size = size_of(.type = Borrowing))
+    slots_result ::= allocate_bytes(.self = $&allocator_storage, .size = size_of(.type = Borrowing))
     match slots_result {
         ..error _ { status_code = 1 }
         ..ok ~ slots_payload {

@@ -29,7 +29,7 @@ store_local(
 
 main(.system: System) -> (.status_code: Int32) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    slots_result ::= allocate(.self = $&allocator_storage, .size = size_of(.type = TrackedBorrowing))
+    slots_result ::= allocate_bytes(.self = $&allocator_storage, .size = size_of(.type = TrackedBorrowing))
     match slots_result {
         ..error _ { status_code = 1 }
         ..ok ~ slots_payload {

@@ -1,6 +1,6 @@
 escape(.ffi: $&ForeignFunctionInterface) -> (.result: Allocation) := {
     allocator ::= CAllocator(ffi)
-    result = unwrap_or_abort(allocate($&allocator, .size = 8, .alignment = 1))
+    result = unwrap_or_abort(allocate_bytes($&allocator, .size = 8, .alignment = 1))
 }
 
 main(.system: System) -> () := {

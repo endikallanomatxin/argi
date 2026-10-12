@@ -1,7 +1,7 @@
 make(.allocator: $&Allocator) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) := {
     assume allocator
 
-    result = allocate(.self = allocator, .size = 1)
+    result = allocate_bytes(.self = allocator, .size = 1)
 }
 
 main(.system: System) -> (.status_code: Int32) := {

@@ -6441,7 +6441,7 @@ test "feature_tests/system/48X_general_purpose_backing_ended" {
 }
 
 test "feature_tests/system/49X_initializer_temporary_ends_backing" {
-    try buildExpectFail("tests/feature_tests/system/49X_initializer_temporary_ends_backing", "main.rg:28:24: error: reference depends on a root that has ended");
+    try buildExpectFail("tests/feature_tests/system/49X_initializer_temporary_ends_backing", "main.rg:22:30: error: reference depends on a root that has ended");
 }
 
 test "feature_tests/system/49_general_purpose_allocator_on_arena" {
@@ -12315,4 +12315,12 @@ test "feature_tests/contracts/156_tracer_selected_virtual_evidence" {
 
 test "feature_tests/contracts/157X_tracer_global_operation" {
     try buildExpectFailWithoutNoise("tests/feature_tests/contracts/157X_tracer_global_operation", "no function named 'reset_context' exists", "panic");
+}
+
+test "feature_tests/contracts/158_allocator_selected_virtual_evidence" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/158_allocator_selected_virtual_evidence");
+}
+
+test "feature_tests/contracts/159X_deallocator_global_operation" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/159X_deallocator_global_operation", "no function named 'deallocate' exists", "panic");
 }

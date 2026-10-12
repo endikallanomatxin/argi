@@ -6,7 +6,7 @@ main (.system: System) -> (.status_code: Int32) := {
     size :: UIntNative = 14
     allocator_storage :: CAllocator = CAllocator(.ffi = system.ffi)
     assume allocator ::= $&allocator_storage
-    allocated ::= allocate(.self = $&allocator_storage, .size = size)
+    allocated ::= allocate_bytes(.self = $&allocator_storage, .size = size)
     match allocated {
         ..error _ {
             status_code = 1

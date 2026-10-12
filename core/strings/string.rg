@@ -43,7 +43,7 @@ string_with_length(
     }
 
     allocation_size ::= length + 1
-    allocation ::= allocate(allocator, .size = allocation_size)!
+    allocation ::= allocate_bytes(allocator, .size = allocation_size)!
     out :: String = (.allocation = ~allocation, .length = length)
     i :: UIntNative = 0
 
@@ -78,7 +78,7 @@ string_with_capacity(
     }
 
     allocation_size ::= actual_capacity + 1
-    allocation ::= allocate(allocator, .size = allocation_size)!
+    allocation ::= allocate_bytes(allocator, .size = allocation_size)!
     out :: String = (.allocation = ~allocation, .length = 0)
     bytes_set(.string = $&out, .index = 0, .value = 0)
 
@@ -101,7 +101,7 @@ String init(
     }
 
     allocation_size ::= length + 1
-    allocation ::= allocate(allocator, .size = allocation_size)!
+    allocation ::= allocate_bytes(allocator, .size = allocation_size)!
     constructed = (.allocation = ~allocation, .length = length)
     i :: UIntNative = 0
 
@@ -138,7 +138,7 @@ String init(
     }
 
     allocation_size ::= actual_capacity + 1
-    allocation ::= allocate(allocator, .size = allocation_size)!
+    allocation ::= allocate_bytes(allocator, .size = allocation_size)!
     constructed = (.allocation = ~allocation, .length = 0)
     bytes_set(.string = $&constructed, .index = 0, .value = 0)
 
@@ -168,7 +168,7 @@ copy(
     }
 
     allocation_size ::= self&.length + 1
-    allocation ::= allocate(allocator, .size = allocation_size)!
+    allocation ::= allocate_bytes(allocator, .size = allocation_size)!
     out :: String = (.allocation = ~allocation, .length = self&.length)
 
     if allocation_size > 0 {
@@ -319,7 +319,7 @@ ensure_capacity_growing(
     }
 
     new_allocation_size ::= target_capacity + 1
-    allocate_result ::= allocate(allocator, .size = new_allocation_size)
+    allocate_result ::= allocate_bytes(allocator, .size = new_allocation_size)
 
     match allocate_result {
         ..ok ~payload {

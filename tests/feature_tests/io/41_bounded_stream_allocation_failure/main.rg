@@ -6,49 +6,6 @@ RecordingAllocator: Type = (
     .deallocations : UIntNative                 = 0
 )
 
-allocate(
-        .self      : $&RecordingAllocator,
-        .size      : UIntNative,
-        .alignment : UIntNative            = 1
-    ) -> (
-        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
-    ) := {
-    self&.attempts = self&.attempts + 1
-    if self&.attempts == self&.fail_at {
-        result = ..error(.reason = ..out_of_memory)
-        return
-    }
-    self&.allocations = self&.allocations + 1
-    storage ::= malloc(.size = size, .ffi = self&.ffi)
-    if UIntNative(.value = storage) == 0 {
-        result = ..error(.reason = ..out_of_memory)
-        return
-    }
-    deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(
-        .value = self
-    )
-    allocation ::= trusted_establish_allocation(
-        .storage     = storage
-        .size        = size
-        .alignment   = alignment
-        .deallocator = deallocator
-    )
-    result = ..ok ~allocation
-}
-
-deallocate(
-        .self      : $&RecordingAllocator,
-        .data      : RawPointer#(.t: UInt8),
-        .size      : UIntNative,
-        .alignment : UIntNative
-    ) -> () := {
-    self&.deallocations = self&.deallocations + 1
-    free(.address = data.address, .ffi = self&.ffi)
-}
-
-RecordingAllocator implements Allocator
-RecordingAllocator implements Deallocator
-
 FaultReader: Type = (.position: UIntNative = 0, .calls: UIntNative = 0, .fail_at: UIntNative = 0)
 
 FaultReader implements BlockReader
@@ -179,3 +136,47 @@ main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 
     run_main(.system = system)!!!
     status_code = 0
 }
+
+implement Allocator#(RecordingAllocator)(
+    .allocate = (
+            .self      : $&RecordingAllocator,
+            .size      : UIntNative,
+            .alignment : UIntNative            = 1
+        ) -> (
+            .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+        ) {
+        self&.attempts = self&.attempts + 1
+        if self&.attempts == self&.fail_at {
+            result = ..error(.reason = ..out_of_memory)
+            return
+        }
+        self&.allocations = self&.allocations + 1
+        storage ::= malloc(.size = size, .ffi = self&.ffi)
+        if UIntNative(.value = storage) == 0 {
+            result = ..error(.reason = ..out_of_memory)
+            return
+        }
+        deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(
+            .value = self
+        )
+        allocation ::= trusted_establish_allocation(
+            .storage     = storage
+            .size        = size
+            .alignment   = alignment
+            .deallocator = deallocator
+        )
+        result = ..ok ~allocation
+    }
+)
+
+implement Deallocator#(RecordingAllocator)(
+    .deallocate = (
+            .self      : $&RecordingAllocator,
+            .data      : RawPointer#(.t: UInt8),
+            .size      : UIntNative,
+            .alignment : UIntNative
+        ) -> () {
+        self&.deallocations = self&.deallocations + 1
+        free(.address = data.address, .ffi = self&.ffi)
+    }
+)

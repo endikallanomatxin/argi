@@ -17,7 +17,7 @@ put(.self: &Cell, .storage: $&Allocation, .value: Tracked) -> () := {
 main(.system: System) -> () := {
     assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
     drops :: Int32 = 0
-    storage ::= unwrap_or_abort(allocate(allocator, .size = 1))
+    storage ::= unwrap_or_abort(allocate_bytes(allocator, .size = 1))
     cell ::= Cell()
     erased ::= to_virtual#(Store)(&cell)
     put(&erased, $&storage, Tracked($&drops))

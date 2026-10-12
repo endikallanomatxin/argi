@@ -23,8 +23,8 @@ register_keeping(.value: $&Keeping) -> () := {
 
 main(.system: System) -> (.status_code: Int32) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    old_result ::= allocate(.self = $&allocator_storage, .size = 1)
-    target_result ::= allocate(.self = $&allocator_storage, .size = 1)
+    old_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
+    target_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
     match old_result {
         ..error _ { status_code = 1 }
         ..ok ~old_payload {

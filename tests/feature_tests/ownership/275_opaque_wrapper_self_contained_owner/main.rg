@@ -8,8 +8,8 @@ store_one(.storage: $&Allocation, .slot: $&Owner, .value: Owner) -> () := {
 
 main(.system: System) -> (.status_code: Int32 = 0) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    slots_result ::= allocate(.self = $&allocator_storage, .size = size_of(.type = Owner))
-    owned_result ::= allocate(.self = $&allocator_storage, .size = 1)
+    slots_result ::= allocate_bytes(.self = $&allocator_storage, .size = size_of(.type = Owner))
+    owned_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
     match slots_result {
         ..error _ { status_code = 1 }
         ..ok ~ slots_payload {

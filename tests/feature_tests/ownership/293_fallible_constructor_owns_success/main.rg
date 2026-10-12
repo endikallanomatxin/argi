@@ -3,7 +3,7 @@ Owned : Type = (.allocation: Allocation)
 Owned init(.allocator: $&Allocator, .fail: Bool) -> (.result: Errable#(.t: Owned, .reasons: (..out_of_memory))) := {
     constructed :: Owned
 
-    allocated ::= allocate(.self = allocator, .size = 1)
+    allocated ::= allocate_bytes(.self = allocator, .size = 1)
     match allocated {
         ..error _ {
             result = ..error(.reason = ..out_of_memory)

@@ -1,6 +1,6 @@
 main(.system: System) -> (.status_code: Int32) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    allocated ::= allocate(.self = $&allocator_storage, .size = size_of(.type = Int32))
+    allocated ::= allocate_bytes(.self = $&allocator_storage, .size = size_of(.type = Int32))
     match allocated {
         ..error _ { status_code = 1 }
         ..ok ~ payload {

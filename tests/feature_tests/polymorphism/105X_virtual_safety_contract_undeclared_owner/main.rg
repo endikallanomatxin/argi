@@ -8,7 +8,7 @@ Cell: Type = (.allocator: $&Virtual#(Allocator))
 Cell implements Factory
 
 make(.self: &Cell) -> (.value: Errable#(Allocation, (..out_of_memory))) := {
-    value = allocate(self&.allocator, .size = 1, .alignment = 1)
+    value = allocate_bytes(self&.allocator, .size = 1, .alignment = 1)
 }
 
 main(.system: System) -> () := {

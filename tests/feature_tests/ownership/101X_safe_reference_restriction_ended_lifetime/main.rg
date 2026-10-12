@@ -1,8 +1,8 @@
 unsafe_allocation := import("../../_support/unsafe_allocation")
 main(.system: System) -> (.status_code: Int32) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    source_result ::= allocate(.self = $&allocator_storage, .size = 1)
-    lifetime_result ::= allocate(.self = $&allocator_storage, .size = 1)
+    source_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
+    lifetime_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
     match source_result {
         ..error _ { status_code = 1 }
         ..ok ~ source_payload {

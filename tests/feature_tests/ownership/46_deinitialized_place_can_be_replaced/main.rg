@@ -8,7 +8,7 @@ release(.self: $&Buffer, .allocator: $&Allocator) -> () := {
 
 main(.system: System) -> (.status_code: Int32) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    first_result ::= allocate(.self = $&allocator_storage, .size = 1)
+    first_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
     match first_result {
     ..error _ { status_code = 2 }
     ..ok ~ first_payload {
@@ -16,7 +16,7 @@ main(.system: System) -> (.status_code: Int32) := {
     buffer :: Buffer = (.allocation = ~first)
     release(.self = $&buffer, .allocator = $&allocator_storage)
 
-    second_result ::= allocate(.self = $&allocator_storage, .size = 1)
+    second_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
     match second_result {
     ..error _ { status_code = 3 }
     ..ok ~ second_payload {

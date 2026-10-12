@@ -2,23 +2,6 @@
 
 CountAllocator: Type = (.backing: $&PageAllocator, .calls: UIntNative = 0, .fail: Bool = false)
 
-CountAllocator implements Allocator
-
-allocate(
-        .self      : $&CountAllocator,
-        .size      : UIntNative,
-        .alignment : UIntNative
-    ) -> (
-        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
-    ) := {
-    self&.calls = self&.calls + 1
-    if self&.fail {
-        result = ..error(.reason = ..out_of_memory)
-        return
-    }
-    result = allocate(.self = self&.backing, .size = size, .alignment = alignment)
-}
-
 ProbeWriter: Type = (.count: UIntNative = 0, .fail: Bool = false)
 
 fail() -> !Void := { result = ..error(.reason = ..bounded_test_failure) }
@@ -128,4 +111,21 @@ implement Writer#(ProbeWriter)(
         ) -> (
             .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
         ) { result = ..ok Void() }
+)
+
+implement Allocator#(CountAllocator)(
+    .allocate = (
+            .self      : $&CountAllocator,
+            .size      : UIntNative,
+            .alignment : UIntNative
+        ) -> (
+            .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+        ) {
+        self&.calls = self&.calls + 1
+        if self&.fail {
+            result = ..error(.reason = ..out_of_memory)
+            return
+        }
+        result = allocate_bytes(.self = self&.backing, .size = size, .alignment = alignment)
+    }
 )

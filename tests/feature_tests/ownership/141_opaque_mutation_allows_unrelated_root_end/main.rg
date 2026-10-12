@@ -10,8 +10,8 @@ AddressSensitive deinit(.self: $&AddressSensitive) -> () := {
 
 main(.system: System) -> (.status_code: Int32) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    slots_result ::= allocate(.self = $&allocator_storage, .size = size_of(.type = AddressSensitive))
-    unrelated_result ::= allocate(.self = $&allocator_storage, .size = 1)
+    slots_result ::= allocate_bytes(.self = $&allocator_storage, .size = size_of(.type = AddressSensitive))
+    unrelated_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
     match slots_result {
         ..error _ { status_code = 1 }
         ..ok ~ slots_payload {
