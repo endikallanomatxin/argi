@@ -1,4 +1,4 @@
-Quaternion: contract = (
+Quaternion: Contract = (
     operator + (.left: Self, .right: Self) -> (.result: Self)
     operator - (.left: Self, .right: Self) -> (.result: Self)
     operator * (.left: Self, .right: Self) -> (.result: Self)

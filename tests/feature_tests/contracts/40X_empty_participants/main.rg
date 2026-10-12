@@ -1,2 +1,2 @@
-Empty: contract#() = ()
+Empty: Contract#() = ()
 main() -> () := {}

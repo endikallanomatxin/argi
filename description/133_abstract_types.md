@@ -1,7 +1,7 @@
 # Abstract types
 
 The general replacement is [Contracts and conformance](135_contracts.md).
-`contract` and `satisfies` provide the initial unary migration spellings of
+`Contract` and `satisfies` provide the initial unary migration spellings of
 `Abstract` and `implements`. This page documents the existing unary behavior
 and its compatibility syntax.
 

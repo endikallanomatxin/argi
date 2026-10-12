@@ -22,7 +22,7 @@ source_location(.id: SourceLocationId) -> (.location: SourceLocation) := {
     location = (.source_file = "", .source_line = "", .line = 0, .column = 0)
 }
 
-ErrorTracer: contract = (
+ErrorTracer: Contract = (
     add_context(.self: $&Self, .location: SourceLocationId, .context: StringView) -> () where {}
     reset_context(.self: $&Self) -> () where {}
     report(.self: $&Self, .writer: $&Virtual#(.contract: Writer)) -> (

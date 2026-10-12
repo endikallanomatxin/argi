@@ -8,7 +8,7 @@ participants. Do not reinterpret those arguments as participants.
 
 ## Migration boundary
 
-Syntaxing accepts `Name: contract = (...)` and `Type satisfies Name` through the
+Syntaxing accepts `Name: Contract = (...)` and `Type satisfies Name` through the
 existing unary declaration and relation nodes. This preserves module identity,
 associated compile-time arguments, static proofs, and virtual safety checking.
 Tokenizing needs no keyword changes: these words are contextual identifiers.
@@ -21,7 +21,7 @@ declarations available for compatibility fixtures and external consumers.
 ## Concrete participant tuples
 
 Keep associated parameters on the declaration name and declare independent
-participants on the `contract#(...)` marker. Lower both groups into distinct
+participants on the `Contract#(...)` marker. Lower both groups into distinct
 ComptimeParameter ranges so their identities cannot be interchanged.
 Standalone `satisfies Contract#(participants) = (associated arguments)` records
 one joint conformance without selecting a privileged concrete receiver.

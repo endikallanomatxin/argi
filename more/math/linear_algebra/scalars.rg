@@ -1,4 +1,4 @@
-Scalar: contract = ()
+Scalar: Contract = ()
 
 Int8 satisfies Scalar
 Int16 satisfies Scalar

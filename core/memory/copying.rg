@@ -1,12 +1,12 @@
-InfalliblyCopyable: contract = (
+InfalliblyCopyable: Contract = (
     copy(.self: &Self) -> (.value: Self)
 )
 
-FalliblyCopyable#(.reasons: Type): contract = (
+FalliblyCopyable#(.reasons: Type): Contract = (
     copy(.self: &Self, .allocator: $&Allocator) -> (.result: Errable#(Self, reasons))
 )
 
-ImplicitlyCopyable: contract = ()
+ImplicitlyCopyable: Contract = ()
 
 ImplicitlyCopyable satisfies InfalliblyCopyable
 

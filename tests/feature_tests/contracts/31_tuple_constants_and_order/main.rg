@@ -1,4 +1,4 @@
-Pair#(.Count: Int, .Result: Type): contract#(.Left: Type, .Right: Type) = (
+Pair#(.Count: Int, .Result: Type): Contract#(.Left: Type, .Right: Type) = (
     pair(.left: &Left, .right: &Right) -> (.value: Array#(.n = Count, .t: Result)) where {}
 )
 Row: Type = (.value: Int32)

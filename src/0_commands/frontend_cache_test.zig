@@ -416,7 +416,7 @@ test "frontend module cache preserves associated projections and participant tup
     const root = try @import("../test_support.zig").tmpRootPath(&tmp);
     defer std.testing.allocator.free(root);
     const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code =
-        \\Product#(.Result: Type): contract#(.Left: Type, .Right: Type) = (
+        \\Product#(.Result: Type): Contract#(.Left: Type, .Right: Type) = (
         \\    multiply(.left: Left, .right: Right) -> (.value: Result) where {}
         \\)
         \\satisfies Product#(Int32, Int64) = (.Result: Int32)
@@ -465,7 +465,7 @@ test "frontend module cache preserves associated constant dimensions" {
     const root = try @import("../test_support.zig").tmpRootPath(&tmp);
     defer std.testing.allocator.free(root);
     const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code =
-        \\Shape#(.Count: Int): contract#(.Input: Type) = ()
+        \\Shape#(.Count: Int): Contract#(.Input: Type) = ()
         \\Cell: Type = ()
         \\Buffer#(.n: Int): Type = (.values: Array#(.n = n, .t: Int32))
         \\satisfies Shape#(Cell) = (.Count = 2)
@@ -513,7 +513,7 @@ test "frontend module cache preserves unary contract participant normalization" 
     const root = try @import("../test_support.zig").tmpRootPath(&tmp);
     defer std.testing.allocator.free(root);
     const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code =
-        \\Readable#(.Other: Type): contract = (
+        \\Readable#(.Other: Type): Contract = (
         \\    read(.other: &Other, .source: &Self) -> (.value: &Int32)
         \\        where depends_on(value, source)
         \\)

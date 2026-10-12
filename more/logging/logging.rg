@@ -4,7 +4,7 @@ LogLevel satisfies ImplicitlyCopyable
 
 LogReasons: Type = (..stream_write_failed, ..stream_flush_failed)
 
-Logger: contract = (
+Logger: Contract = (
     log(.self: $&Self, .level: LogLevel, .message: StringView) -> (
         .result : Errable#(Void, LogReasons)
     )

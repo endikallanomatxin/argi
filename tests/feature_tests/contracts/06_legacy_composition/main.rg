@@ -2,7 +2,7 @@ Base: Abstract = (
     read(.source: &Self) -> (.value: Int32) where {}
 )
 
-Combined: contract = (Base)
+Combined: Contract = (Base)
 
 Cell: Type = (.value: Int32)
 

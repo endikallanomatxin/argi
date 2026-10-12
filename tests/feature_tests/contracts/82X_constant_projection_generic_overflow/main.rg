@@ -1,4 +1,4 @@
-Shape#(.Count: Int): contract#(.Input: Type) = ()
+Shape#(.Count: Int): Contract#(.Input: Type) = ()
 Cell: Type = ()
 satisfies Shape#(Cell) = (.Count = 9223372036854775807)
 invalid#(.T: Type)(.tag: T) -> (.value: Array#(.n = Shape#(T).Count + 1, .t: Int32)) := {}

@@ -1,4 +1,4 @@
-Readable#(.item: Type): contract = (
+Readable#(.item: Type): Contract = (
     read(.source: &Self) -> (.value: item) where {}
 )
 

@@ -1,4 +1,4 @@
-Shape#(.Count: Int): contract#(.Input: Type) = ()
+Shape#(.Count: Int): Contract#(.Input: Type) = ()
 Cell: Type = ()
 satisfies Shape#(Cell) = (.Count = 2)
 Box#(.T: Type): Type = (.values: Array#(.n = Shape#(T).Count, .t: Int32))

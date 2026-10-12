@@ -1,4 +1,4 @@
-Product#(.Result: Type): contract#(.Left: Type, .Right: Type) = ()
+Product#(.Result: Type): Contract#(.Left: Type, .Right: Type) = ()
 Row: Type = ()
 Column: Type = ()
 satisfies Product#(Row, Column, Int32) = (.Result: Int32)

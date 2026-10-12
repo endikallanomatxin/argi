@@ -1,5 +1,5 @@
 dep := import("./dep")
-Product#(.Result: Type): contract#(.Left: Type, .Right: Type) = (
+Product#(.Result: Type): Contract#(.Left: Type, .Right: Type) = (
     local_product(.left: Left, .right: Right) -> (.value: Result) where {}
 )
 satisfies dep.Product#(dep.Row, dep.Column) = (.Result: Int32)

@@ -1,4 +1,4 @@
-Readable: contract = (
+Readable: Contract = (
     read(.source: &Self) -> (.value: Int32)
 )
 

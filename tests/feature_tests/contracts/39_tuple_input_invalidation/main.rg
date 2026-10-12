@@ -1,4 +1,4 @@
-Reset: contract#(.Left: Type, .Right: Type) = (
+Reset: Contract#(.Left: Type, .Right: Type) = (
     reset(.left: $&Left, .right: &Right) -> () where invalidates(left)
 )
 satisfies Reset#(Int32, Int64)

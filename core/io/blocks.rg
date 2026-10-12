@@ -1,5 +1,5 @@
 -- Block protocols preserve partial operations through static and virtual use.
-BlockReader: contract = (
+BlockReader: Contract = (
     read_block(.self: $&Self, .buffer: ArrayView#(.t: UInt8)) -> (
         .result : Errable#(UIntNative, (..stream_read_failed))
     ) where {
@@ -8,7 +8,7 @@ BlockReader: contract = (
     }
 )
 
-BlockWriter: contract = (
+BlockWriter: Contract = (
     write_block(.self: $&Self, .buffer: ArrayViewRO#(.t: UInt8)) -> (
         .result : Errable#(UIntNative, (..stream_write_failed, ..stream_flush_failed))
     ) where {

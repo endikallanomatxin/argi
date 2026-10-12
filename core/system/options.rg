@@ -1,7 +1,7 @@
 ..invalid_option
 ..missing_option_value
 
-ArgumentSource: contract = (
+ArgumentSource: Contract = (
     length(.self: &Self) -> (.count: UIntNative) where {}
     get(.self: &Self, .index: UIntNative) -> (
         .result : Errable#(StringView, (..out_of_bounds))

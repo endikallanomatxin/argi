@@ -1,4 +1,4 @@
-Capability: contract = (
+Capability: Contract = (
     score(.value: Self) -> (.result: Int32)
 )
 

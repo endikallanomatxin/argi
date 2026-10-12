@@ -1,6 +1,6 @@
 -- A strict weak order: irreflexive and transitive, with transitive equivalence
 -- when neither direction is less. Results remain stable during an algorithm.
-OrderPolicy#(.t: Type: ImplicitlyCopyable): contract = (
+OrderPolicy#(.t: Type: ImplicitlyCopyable): Contract = (
     less(.self: &Self, .left: t, .right: t) -> (.ok: Bool)
 )
 

@@ -1,4 +1,4 @@
-Pair: contract#(.Left: Type, .Right: Type) = ()
+Pair: Contract#(.Left: Type, .Right: Type) = ()
 Cell: Type = ()
 satisfies Pair#(Cell, Cell)
 main() -> () := {

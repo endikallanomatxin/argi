@@ -1,4 +1,4 @@
-Float: contract = (
+Float: Contract = (
     -- operator +(_, _) : _
     -- operator -(_, _) : _
     -- operator *(_, _) : _

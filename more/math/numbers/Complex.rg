@@ -17,7 +17,7 @@ mul#(.t: Type: Float)(.a: Complex#(.t: t), .b: Complex#(.t: t)) -> (.out: Comple
 
 -- Example using abstracts.
 
-Complex: contract = (
+Complex: Contract = (
     operator + (.left: Self, .right: Self) -> (.result: Self)
     operator - (.left: Self, .right: Self) -> (.result: Self)
     operator * (.left: Self, .right: Self) -> (.result: Self)

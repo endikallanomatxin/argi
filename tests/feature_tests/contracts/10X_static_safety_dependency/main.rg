@@ -1,4 +1,4 @@
-Source: contract = (
+Source: Contract = (
     get(.self: &Self, .other: &Int32) -> (.value: &Int32)
     where depends_on(value, self)
 )

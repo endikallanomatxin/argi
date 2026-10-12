@@ -826,8 +826,8 @@ test "unary compatibility contracts normalize Self to a type participant" {
     const allocator = std.testing.allocator;
     const source =
         \\Legacy#(.Other: Type): Abstract = (borrow(.other: &Other, .source: &Self) -> (.value: &Self))
-        \\Modern#(.Other: Type): contract = (borrow(.other: &Other, .source: &Self) -> (.value: &Self))
-        \\Pair: contract#(.Left: Type, .Right: Type) = (combine(.left: &Left, .right: &Right) -> ())
+        \\Modern#(.Other: Type): Contract = (borrow(.other: &Other, .source: &Self) -> (.value: &Self))
+        \\Pair: Contract#(.Left: Type, .Right: Type) = (combine(.left: &Left, .right: &Right) -> ())
         \\
     ;
     var tree = try parseSource(allocator, source, @enumFromInt(0));

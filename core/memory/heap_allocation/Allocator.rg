@@ -1,6 +1,6 @@
 ..out_of_memory
 
-Allocator: contract = (
+Allocator: Contract = (
     allocate(.self: $&Self, .size: UIntNative, .alignment: UIntNative) -> (
         .result : Errable#(Allocation, (..out_of_memory))
     ) where {
@@ -25,7 +25,7 @@ _require_allocation_alignment(.alignment: UIntNative) -> () := {
     if remaining != 1 { abort }
 }
 
-Deallocator: contract = (
+Deallocator: Contract = (
     deallocate(
         .self      : $&Self,
         .data      : RawPointer#(.t: UInt8),

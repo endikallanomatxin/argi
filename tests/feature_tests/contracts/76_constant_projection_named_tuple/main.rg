@@ -1,4 +1,4 @@
-Shape#(.Count: Int): contract#(.Input: Type) = ()
+Shape#(.Count: Int): Contract#(.Input: Type) = ()
 Cell: Type = ()
 satisfies Shape#(Cell) = (.Count = 2)
 sum(.values: &Array#(.n = Shape#(.Input: Cell).Count, .t: Int32)) -> (.value: Int32) := { value = values&[0] + values&[1] }

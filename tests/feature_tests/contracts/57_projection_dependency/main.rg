@@ -1,11 +1,11 @@
-Product#(.Result: Type): contract#(.Left: Type, .Right: Type) = (
+Product#(.Result: Type): Contract#(.Left: Type, .Right: Type) = (
     multiply(.left: &Left, .right: &Right) -> (.value: Result) where {}
 )
 
 Row: Type = (.value: Int32)
 Column: Type = (.value: Int32)
 
-Other#(.Result: Type): contract#(.Left: Type, .Right: Type) = (
+Other#(.Result: Type): Contract#(.Left: Type, .Right: Type) = (
     other(.left: &Left, .right: &Right) -> (.value: Result) where {}
 )
 satisfies Product#(Row, Column) = (.Result: Other#(Row, Column).Result)

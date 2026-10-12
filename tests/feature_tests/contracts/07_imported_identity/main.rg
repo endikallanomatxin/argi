@@ -3,7 +3,7 @@ app := import ("./app")
 
 -- This contract has the same short name as dep.Capability, but a different
 -- requirement. Its implementation must not affect app.consume_imported.
-Capability: contract = (
+Capability: Contract = (
     unrelated(.value: Self) -> (.result: Int32)
 )
 

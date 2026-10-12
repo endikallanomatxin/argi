@@ -1,4 +1,4 @@
-Int: contract = (
+Int: Contract = (
     -- float(_) : Float
     -- operator +(_, _) : Int
     -- operator -(_, _) : Int
@@ -22,7 +22,7 @@ UInt32 satisfies Int
 UInt64 satisfies Int
 UIntNative satisfies Int
 
-UInt: contract = ()
+UInt: Contract = ()
 
 UInt8 satisfies UInt
 UInt16 satisfies UInt

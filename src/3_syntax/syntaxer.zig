@@ -2148,7 +2148,7 @@ pub const Syntaxer = struct {
                 var marker = ty;
                 if (self.file.syntaxType(ty)) |syntax_type| if (syntax_type == .generic) {
                     const base = syntax_type.generic.base;
-                    if (self.file.tag(base) == .type_name and std.mem.eql(u8, self.tokenText(self.contentAt(@intFromEnum(self.file.mainToken(base))).identifier), "contract")) {
+                    if (self.file.tag(base) == .type_name and std.mem.eql(u8, self.tokenText(self.contentAt(@intFromEnum(self.file.mainToken(base))).identifier), "Contract")) {
                         marker = base;
                         participants_struct = syntax_type.generic.arguments;
                     }
@@ -2184,7 +2184,7 @@ pub const Syntaxer = struct {
                         .value = lit_node,
                     });
                     return try self.addNode(tag, name.token, .{ .extra = extra });
-                } else if (std.mem.eql(u8, type_name, "Abstract") or std.mem.eql(u8, type_name, "contract")) {
+                } else if (std.mem.eql(u8, type_name, "Abstract") or std.mem.eql(u8, type_name, "Contract")) {
                     var req_names = try self.addNodeRange(&.{});
                     var req_funcs = try self.addNodeRange(&.{});
                     var domains = try self.addNodeRange(&.{});

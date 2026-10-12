@@ -3,7 +3,7 @@
 [Contracts and conformance](135_contracts.md) defines the general evidence model,
 including jointly virtualized participants. The unary representation and safety
 rules below also apply to unary compatibility declarations written with
-`contract` and `satisfies`. Explicit participant contracts currently reject
+`Contract` and `satisfies`. Explicit participant contracts currently reject
 virtual conversion until their joint evidence has a representation.
 
 Abstracts express static contracts and are monomorphized by default.

@@ -819,7 +819,7 @@ fn formatHover(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSeman
             const name = graph.text(declaration.name);
             switch (declaration.kind) {
                 .type, .abstract_type => {
-                    try writer.print("{s} : {s}", .{ name, if (declaration.kind == .type) "Type" else "contract" });
+                    try writer.print("{s} : {s}", .{ name, if (declaration.kind == .type) "Type" else "Contract" });
                     if (declaration.type_id) |ty| {
                         const self_reference = switch (graph.types.items[@intFromEnum(ty)]) {
                             .declared => |target_decl| target_decl == id,

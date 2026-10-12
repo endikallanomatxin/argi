@@ -1,5 +1,5 @@
-Capability#(.item: Type): contract = ()
-Group#(.Result: Type: Capability#(Left)): contract#(.Left: Type, .Right: Type) = ()
+Capability#(.item: Type): Contract = ()
+Group#(.Result: Type: Capability#(Left)): Contract#(.Left: Type, .Right: Type) = ()
 Row: Type = ()
 Column: Type = ()
 Row satisfies Capability#(Column)

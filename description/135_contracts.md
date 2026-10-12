@@ -1,6 +1,6 @@
 # Contracts and conformance
 
-A `contract` declares capabilities and relations among one or more participant
+A `Contract` declares capabilities and relations among one or more participant
 types. It specifies required operations, associated types and compile-time
 constants, and restrictions connecting them. No participant has a privileged
 `Self` role. Unary contracts express individual capabilities; multi-participant
@@ -95,11 +95,11 @@ referents and their storage generations.
 ## Concrete participant syntax
 
 Declare associated parameters on the contract name and participant parameters
-on the `contract#(...)` marker. Standalone `satisfies` supplies the participant
+on the `Contract#(...)` marker. Standalone `satisfies` supplies the participant
 tuple first, followed by its associated arguments:
 
 ```rg
-Product#(.Result: Type): contract#(.Left: Type, .Right: Type) = (
+Product#(.Result: Type): Contract#(.Left: Type, .Right: Type) = (
     multiply(.left: &Left, .right: &Right) -> (.value: Result) where {}
 )
 
@@ -151,7 +151,7 @@ instantiation rather than proven against a generic tuple contract at declaration
 Associated integer constants can be queried in compile-time type arguments:
 
 ```argi
-Shape#(.Count: Int): contract#(.Input: Type) = ()
+Shape#(.Count: Int): Contract#(.Input: Type) = ()
 satisfies Shape#(Cell) = (.Count = 2)
 Box#(.T: Type): Type = (
     .values: Array#(.n = Shape#(T).Count, .t: Int32)
@@ -184,7 +184,7 @@ Unary compatibility syntax retains its existing argument binding while sharing
 the participant representation used by explicit contracts:
 
 ```rg
-Readable#(.item: Type): contract = (
+Readable#(.item: Type): Contract = (
     read(.source: &Self) -> (.value: &item)
         where depends_on(value, source)
 )
