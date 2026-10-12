@@ -232,3 +232,18 @@ two-participant identity; specialization never chooses between unrelated contrac
 BorrowedOrderPolicy supplies owning collection comparisons without consuming
 elements. Bound unary virtual types retain their fixed interface evidence when
 passed through ordinary generic functions or static contract implementations.
+
+Explicit contracts can require other participant contracts in their bodies. The
+selected conformance must satisfy those dependencies, including named associated
+restrictions. Dependencies retain their operation identities; implementations do
+not redefine inherited operations. Named associated constraints infer generic
+leaves only after participants select the evidence, without using a desired
+result to select an implementation.
+
+Collection indexing now follows this model: IndexableMutable requires Indexable
+and supplies only writable indexing. Resizable uses collection and allocation
+provider participants for growth, while its Removable dependency supplies
+allocation-free removal under its own unary identity. Generic collection
+algorithms preserve their collection type and derive element constraints from
+selected Item evidence. Validation of newly selected evidence joins ordinary
+resolution and cleanup before the final graph is published.

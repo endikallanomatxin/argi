@@ -55,7 +55,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         ..error _ { status_code = 1 }
         ..ok ~first_payload {
             first ::= ~first_payload
-            first_push ::= push#(.t: Tracked)(
+            first_push ::= push(
                 .allocator = $&backing
                 .self      = $&array
                 .value     = ~first
@@ -70,7 +70,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
                 ..error _ { status_code = 3 }
                 ..ok ~second_payload {
                     second ::= ~second_payload
-                    second_push ::= push#(.t: Tracked)(
+                    second_push ::= push(
                         .allocator = $&backing
                         .self      = $&array
                         .value     = ~second
@@ -79,14 +79,14 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
                         status_code = 4
                         return
                     }
-                    remaining_result ::= get_ro_ref#(.t: Tracked)(.self = &array, .index = 0).result
+                    remaining_result ::= get_ro_ref(.self = &array, .index = 0).result
                     if is(.value = remaining_result, .variant = ..error) {
                         status_code = 5
                         return
                     }
                     remaining ::= remaining_result ..ok
                     if [
-                        length#(.t: Tracked)(.self = &array).count != 1
+                        length(.self = &array).count != 1
                         or capacity#(.t: Tracked)(.self = &array).count != 1
                         or remaining&.id != 1
                     ] {

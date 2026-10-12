@@ -3,7 +3,7 @@ main() -> (.status_code: Int32) := {
     view ::= array_view#(.n = 3, .t: Int32)(.array = $&values)
     ro ::= array_view_ro#(.n = 3, .t: Int32)(.array = &values)
 
-    if length#(.t: Int32)(.self = &view).count != 3 or length#(.t: Int32)(.self = &ro).count != 3 {
+    if length(.self = &view).count != 3 or length(.self = &ro).count != 3 {
         status_code = 1
         return
     }
@@ -12,7 +12,7 @@ main() -> (.status_code: Int32) := {
         status_code = 2
         return
     }
-    observed ::= get_ro_ref#(.t: Int32)(.self = &ro, .index = 1).result
+    observed ::= get_ro_ref(.self = &ro, .index = 1).result
     if is(.value = observed, .variant = ..error) {
         status_code = 3
         return

@@ -6,7 +6,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     #defer deinit#(.t: String)(.self = $&array)
     text ::= unwrap_or_abort(.value = String(.length = 1))
     bytes_set(.string = $&text, .index = 0, .value = 65)
-    pushed ::= push#(.t: String)(.self = $&array, .value = ~text)
+    pushed ::= push(.self = $&array, .value = ~text)
     if is(.value = pushed, .variant = ..error) {
         status_code = 1
         return

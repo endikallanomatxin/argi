@@ -37,14 +37,14 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         ..ok ~ payload {
             item ::= ~payload
             push_assume_capacity#(.t: Tracked)(.self = $&array, .value = ~item)
-            popped_result ::= pop#(.t: Tracked)(.self = $&array).result
+            popped_result ::= pop(.self = $&array).result
             if is(.value = popped_result, .variant = ..error) {
                 status_code = 2
                 return
             }
             popped ::= ~popped_result..ok
 
-            if popped.id != 7 or length#(.t: Tracked)(.self = &array).count != 0 or drops != 0 {
+            if popped.id != 7 or length(.self = &array).count != 0 or drops != 0 {
                 status_code = 2
                 return
             }

@@ -53,7 +53,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
                                 ..ok ~ fourth {
                                     push_assume_capacity#(.t: Tracked)(.self = $&array, .value = ~first)
                                     push_assume_capacity#(.t: Tracked)(.self = $&array, .value = ~third)
-                                    inserted ::= insert#(.t: Tracked)(.self = $&array, .i = 1, .value = ~second)
+                                    inserted ::= insert(.self = $&array, .i = 1, .value = ~second)
                                     if is(.value = inserted, .variant = ..error) {
                                         status_code = 5
                                         return
@@ -71,18 +71,18 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
                                     }
 
                                     zero :: UIntNative = 0
-                                    removed_result ::= remove#(.t: Tracked)(.self = $&array, .i = zero).result
+                                    removed_result ::= remove(.self = $&array, .i = zero).result
                                     if is(.value = removed_result, .variant = ..error) {
                                         status_code = 7
                                         return
                                     }
                                     removed ::= ~removed_result..ok
-                                    if removed.id != 1 or length#(.t: Tracked)(.self = &array).count != 2 {
+                                    if removed.id != 1 or length(.self = &array).count != 2 {
                                         status_code = 7
                                         return
                                     }
-                                    first_remaining_result ::= get_ro_ref#(.t: Tracked)(.self = &array, .index = 0).result
-                                    second_remaining_result ::= get_ro_ref#(.t: Tracked)(.self = &array, .index = 1).result
+                                    first_remaining_result ::= get_ro_ref(.self = &array, .index = 0).result
+                                    second_remaining_result ::= get_ro_ref(.self = &array, .index = 1).result
                                     if is(.value = first_remaining_result, .variant = ..error) {
                                         status_code = 8
                                         return

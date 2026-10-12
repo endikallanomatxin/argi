@@ -10,7 +10,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
     local :: Int32 = 7
     array ::= make(allocator, &local)
-    reference ::= unwrap_or_abort(get_ro_ref#(&Int32)(&array, .index = 0))
+    reference ::= unwrap_or_abort(get_ro_ref(&array, .index = 0))
 
     if reference&&!= 7 { status_code = 1 }
 }

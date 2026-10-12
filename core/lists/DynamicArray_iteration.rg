@@ -79,7 +79,7 @@ implement#(
         ) -> (
             .ok : Bool
         ) {
-        ok = self&._index < length#(.t: t)(&self&._view).count
+        ok = self&._index < length(&self&._view).count
     }
 
     .next = (
@@ -110,7 +110,7 @@ implement#(
         ) -> (
             .ok : Bool
         ) {
-        ok = self&._index < length#(.t: t)(&self&._view).count
+        ok = self&._index < length(&self&._view).count
     }
 
     .next = (
@@ -139,7 +139,7 @@ implement#(
         ) -> (
             .ok : Bool
         ) {
-        ok = self&._index < length#(.t: t)(&self&._view).count
+        ok = self&._index < length(&self&._view).count
     }
 
     .next = (

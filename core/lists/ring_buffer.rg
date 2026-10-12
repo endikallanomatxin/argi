@@ -48,8 +48,6 @@ RingBuffer init#(
     result = ..ok ~constructed
 }
 
-length#(.t: Type)(.self: &RingBuffer#(.t: t)) -> (.count: UIntNative) := { count = self&._length }
-
 capacity#(.t: Type)(.self: &RingBuffer#(.t: t)) -> (.count: UIntNative) := {
     count = self&._capacity
 }
@@ -97,31 +95,6 @@ _ring_buffer_occupied_pointer#(
         .anchor     = self&._allocation.anchor
     ).reference
 }
-
-get_ro_ref#(
-        .t : Type
-    )(
-        .self  : &RingBuffer#(.t: t),
-        .index : UIntNative
-    ) -> (
-        .result : Errable#(&t, (..out_of_bounds))
-    ) := {
-    if index >= self&._length {
-        result = ..error(.reason = ..out_of_bounds)
-        return
-    }
-
-    mutable ::= _ring_buffer_occupied_pointer(self, .index = index).pointer
-    reference ::= read_reference#(.t: t)(.base = mutable).reference
-    borrowed ::= depend_on#(.t: &t)(
-        .value = reference
-        .on    = erase_reference#(.t: _RingBufferShape)(.base = &self&._shape).reference
-    ).result
-
-    result = ..ok borrowed
-}
-
-RingBuffer#(.t: Type) satisfies Indexable#(.t: t)
 
 push#(
         .t : Type
@@ -176,3 +149,30 @@ RingBuffer deinit#(.t: Type)(.self: $&RingBuffer#(.t: t), .allocator: $&Allocato
     trusted_opaque_mark_empty(.storage = $&self&._allocation)
     deinit(.self = $&self&._allocation)
 }
+
+implement#(.t: Type) Indexable#(RingBuffer#(.t: t)) (
+    .Item: Type = t
+
+    .length = (.self: &RingBuffer#(.t: t)) -> (.count: UIntNative) { count = self&._length }
+
+    .get_ro_ref = (
+            .self  : &RingBuffer#(.t: t),
+            .index : UIntNative
+        ) -> (
+            .result : Errable#(&t, (..out_of_bounds))
+        ) {
+        if index >= self&._length {
+            result = ..error(.reason = ..out_of_bounds)
+            return
+        }
+
+        mutable ::= _ring_buffer_occupied_pointer(self, .index = index).pointer
+        reference ::= read_reference#(.t: t)(.base = mutable).reference
+        borrowed ::= depend_on#(.t: &t)(
+            .value = reference
+            .on    = erase_reference#(.t: _RingBufferShape)(.base = &self&._shape).reference
+        ).result
+
+        result = ..ok borrowed
+    }
+)

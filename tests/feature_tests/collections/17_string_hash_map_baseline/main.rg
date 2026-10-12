@@ -25,7 +25,7 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
-    alpha ::= get#(.value: Int32)(.self = &map, .key = "alpha").value
+    alpha ::= get(.self = &map, .key = "alpha").value
     match alpha {
         ..some payload {
             if payload.value != 7 {
@@ -39,7 +39,7 @@ main(.system: System) -> (.status_code: Int32) := {
         }
     }
 
-    beta ::= get#(.value: Int32)(.self = &map, .key = "beta").value
+    beta ::= get(.self = &map, .key = "beta").value
     match beta {
         ..some payload {
             if payload.value != 2 {
@@ -53,7 +53,7 @@ main(.system: System) -> (.status_code: Int32) := {
         }
     }
 
-    missing ::= get#(.value: Int32)(.self = &map, .key = "missing").value
+    missing ::= get(.self = &map, .key = "missing").value
     if missing? {
         status_code = 8
         return
@@ -78,7 +78,7 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
-    alpha_after_delete ::= get#(.value: Int32)(.self = &map, .key = "alpha").value
+    alpha_after_delete ::= get(.self = &map, .key = "alpha").value
     match alpha_after_delete {
         ..some payload {
             if payload.value != 7 {

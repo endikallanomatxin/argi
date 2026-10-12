@@ -23,12 +23,12 @@ main(.system: System) -> (.status_code: Int32) := {
     }
     push(.self = $&copied, .value = 30, .allocator = $&allocator_storage)
 
-    if length#(.t: Int32)(.self = &arr).count != 2 {
+    if length(.self = &arr).count != 2 {
         status_code = 1
         return
     }
 
-    if length#(.t: Int32)(.self = &copied).count != 3 {
+    if length(.self = &copied).count != 3 {
         status_code = 2
         return
     }

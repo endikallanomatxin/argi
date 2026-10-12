@@ -5,9 +5,8 @@ implement OrderPolicy#(Descending, Int32)(
 )
 
 check_sorted#(
-        .policy : Type: OrderPolicy#(policy, Int32)
-    )(
-        .self  : &Indexable#(.t: Int32),
+        .policy : Type: OrderPolicy#(policy, Int32), .Collection: Type: Indexable#(.Item: Int32))(
+        .self  : &Collection,
         .order : &policy
     ) -> () := {
     count ::= length(.self = self).count

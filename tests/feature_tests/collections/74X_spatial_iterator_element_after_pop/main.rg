@@ -3,7 +3,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     push_assume_capacity#(.t: UIntNative)(.self = $&array, .value = 7)
     iterator ::= to_ro_pointer_iterator(.value = &array).iterator
     element ::= next(.self = $&iterator).value
-    removed ::= unwrap_or_abort(.value = pop#(.t: UIntNative)(.self = $&array).result)
+    removed ::= unwrap_or_abort(.value = pop(.self = $&array).result)
     observed ::= element&
     deinit#(.t: UIntNative)(.allocator = system.page_allocator, .self = $&array)
 }

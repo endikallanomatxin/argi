@@ -47,14 +47,14 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
                         ..error _ { status_code = 3 }
                         ..ok ~ third_payload {
                             third ::= ~third_payload
-                            first_push ::= push#(.t: Tracked)(.self = $&array, .value = ~first)
-                            second_push ::= push#(.t: Tracked)(.self = $&array, .value = ~second)
-                            third_push ::= push#(.t: Tracked)(.self = $&array, .value = ~third)
+                            first_push ::= push(.self = $&array, .value = ~first)
+                            second_push ::= push(.self = $&array, .value = ~second)
+                            third_push ::= push(.self = $&array, .value = ~third)
                             if is(.value = first_push, .variant = ..error) or is(.value = second_push, .variant = ..error) or is(.value = third_push, .variant = ..error) {
                                 status_code = 4
                                 return
                             }
-                            if length#(.t: Tracked)(.self = &array).count != 3 or capacity#(.t: Tracked)(.self = &array).count < 3 {
+                            if length(.self = &array).count != 3 or capacity#(.t: Tracked)(.self = &array).count < 3 {
                                 status_code = 5
                                 return
                             }

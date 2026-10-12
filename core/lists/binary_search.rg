@@ -2,9 +2,10 @@
 -- The half-open interval keeps midpoint arithmetic within UIntNative bounds.
 binary_search#(
         .t      : Type: ImplicitlyCopyable,
-        .policy : Type: OrderPolicy#(policy, t)
+        .policy : Type: OrderPolicy#(policy, t),
+        .Collection: Type: Indexable#(.Item: t)
     ) := (
-        .self  : &Indexable#(.t: t),
+        .self  : &Collection,
         .value : t,
         .order : &policy,
     ) -> (

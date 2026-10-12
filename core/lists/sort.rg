@@ -1,9 +1,10 @@
 -- Restore a max heap whose children below root are already heaps.
 _sift_down#(
         .t      : Type: ImplicitlyCopyable,
-        .policy : Type: OrderPolicy#(policy, t)
+        .policy : Type: OrderPolicy#(policy, t),
+        .Collection: Type: IndexableMutable#(.Item: t)
     ) := (
-        .self  : $&IndexableMutable#(.t: t),
+        .self  : $&Collection,
         .order : &policy,
         .start : UIntNative,
         .count : UIntNative,
@@ -37,9 +38,10 @@ _sift_down#(
 -- Policy-equivalent elements can change relative order.
 sort#(
         .t      : Type: ImplicitlyCopyable,
-        .policy : Type: OrderPolicy#(policy, t)
+        .policy : Type: OrderPolicy#(policy, t),
+        .Collection: Type: IndexableMutable#(.Item: t)
     ) := (
-        .self  : $&IndexableMutable#(.t: t),
+        .self  : $&Collection,
         .order : &policy,
     ) -> () {
     count ::= length(self).count

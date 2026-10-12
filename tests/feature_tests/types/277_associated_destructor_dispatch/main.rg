@@ -17,7 +17,7 @@ exercise(.allocator: $&Allocator) -> () := {
     deinit(.self = $&explicit)
     array ::= unwrap_or_abort(.value = DynamicArray#(.t: Box#(.t: Char))(.capacity = 1))
     element ::= Box#(.t: Char)(.value = 'b')
-    pushed ::= push#(.t: Box#(.t: Char))(.self = $&array, .value = ~element)
+    pushed ::= push(.self = $&array, .value = ~element)
     if is(.value = pushed, .variant = ..error) { abort }
 }
 main(.system: System) -> (.status_code: Int32) := {

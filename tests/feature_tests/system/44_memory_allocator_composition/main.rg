@@ -17,7 +17,7 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
     array ::= unwrap_or_abort(.value = DynamicArray#(.t: UInt8)(.capacity = 16))
-    push#(.t: UInt8)(.self = $&array, .value = 65)
+    push(.self = $&array, .value = 65)
     deinit#(.t: UInt8)(.self = $&array)
     if tracker.allocations == 0 or tracker.allocations != tracker.deallocations {
         status_code = 2

@@ -40,7 +40,7 @@ main(.system: System) -> (.status_code: Int32) := {
                             ..error _ { status_code = 8
                                 return }
                             ..ok ~ next_payload {
-                                pushed ::= push#(.t: Allocation)(.self = $&many, .allocator = $&allocator_storage, .value = ~next_payload)
+                                pushed ::= push(.self = $&many, .allocator = $&allocator_storage, .value = ~next_payload)
                                 if is(.value = pushed, .variant = ..error) { status_code = 9
                                     return }
                             }

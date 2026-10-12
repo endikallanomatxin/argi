@@ -367,7 +367,6 @@ pub const Context = struct {
                             }
                         }
                         if (abstract.domains.len != 0) try self.contractError(declaration_node, "storage domains on explicit contract participants are not supported yet");
-                        if (abstract.requires_abstracts.len != 0) try self.contractError(declaration_node, "composition of explicit participant contracts is not supported yet");
                         break :blk range;
                     } else blk: {
                         for (self.parameters.items) |binding| if (std.mem.eql(u8, binding.name, "Self"))

@@ -377,7 +377,7 @@ string_append_bytes(
     current_capacity ::= capacity(self).value
 
     if self&.length > current_capacity { abort }
-    count ::= length#(.t: UInt8)(&source).count
+    count ::= length(&source).count
 
     if count > current_capacity - self&.length { abort }
     if count > 0 {
@@ -387,12 +387,12 @@ string_append_bytes(
         ).reference
         dest_view ::= _trusted_array_view#(.t: UInt8)(
             .data   = dest_data
-            .length = length#(.t: UInt8)(&source).count
+            .length = length(&source).count
         )
         memcpy_bytes(.dst = dest_view, .src = source)
     }
 
-    self&.length = self&.length + length#(.t: UInt8)(&source).count
+    self&.length = self&.length + length(&source).count
     bytes_set(.string = self, .index = self&.length, .value = 0)
 }
 

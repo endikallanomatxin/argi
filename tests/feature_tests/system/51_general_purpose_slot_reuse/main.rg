@@ -42,21 +42,21 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         return
     }
     -- Free out of order, crossing bitmap words and including the last slot.
-    last_result ::= pop#(.t: Allocation)(.self = $&receipts).result
+    last_result ::= pop(.self = $&receipts).result
     if is(.value = last_result, .variant = ..error) {
         status_code = 9
         return
     }
     last ::= ~last_result ..ok
     deinit(.self = $&last)
-    middle_result ::= remove#(.t: Allocation)(.self = $&receipts, .i = 64).result
+    middle_result ::= remove(.self = $&receipts, .i = 64).result
     if is(.value = middle_result, .variant = ..error) {
         status_code = 9
         return
     }
     middle ::= ~middle_result ..ok
     deinit(.self = $&middle)
-    first_result ::= remove#(.t: Allocation)(.self = $&receipts, .i = 0).result
+    first_result ::= remove(.self = $&receipts, .i = 0).result
     if is(.value = first_result, .variant = ..error) {
         status_code = 9
         return
@@ -88,7 +88,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     -- Keep the other slots live while repeatedly freeing and reacquiring one.
     i = 0
     while i < 600 {
-        released_result ::= pop#(.t: Allocation)(.self = $&receipts).result
+        released_result ::= pop(.self = $&receipts).result
         if is(.value = released_result, .variant = ..error) {
             status_code = 9
             return

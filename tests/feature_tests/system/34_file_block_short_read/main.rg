@@ -74,7 +74,7 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
-    first_read ::= get#(.t: UInt8)(.self = &read_buffer, .index = 0).result
+    first_read ::= get(.self = &read_buffer, .index = 0).result
     if is(.value = first_read, .variant = ..error) {
         status_code = 10
         return
@@ -84,7 +84,7 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
-    second_read ::= get#(.t: UInt8)(.self = &read_buffer, .index = 1).result
+    second_read ::= get(.self = &read_buffer, .index = 1).result
     if is(.value = second_read, .variant = ..error) {
         status_code = 11
         return

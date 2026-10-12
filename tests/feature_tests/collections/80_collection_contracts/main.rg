@@ -1,15 +1,15 @@
-read(.items: &IndexableValue#(.t: Int32), .index: UIntNative) -> (.value: Int32) := {
+read#(.Collection: Type: IndexableValue#(.Item: Int32))(.items: &Collection, .index: UIntNative) -> (.value: Int32) := {
     value = unwrap_or_abort(.value = get(.self = items, .index = index))
 }
-borrow(.items: &Indexable#(.t: Int32)) -> (.value: Int32) := {
+borrow#(.Collection: Type: Indexable#(.Item: Int32))(.items: &Collection) -> (.value: Int32) := {
     pointer ::= unwrap_or_abort(.value = get_ro_ref(.self = items, .index = 0))
     value = pointer&
 }
-write(.items: $&IndexableMutable#(.t: Int32)) -> () := {
+write#(.Collection: Type: IndexableMutable#(.Item: Int32))(.items: $&Collection) -> () := {
     pointer ::= unwrap_or_abort(.value = get_rw_ref(.self = items, .index = 0))
     pointer& = 9
 }
-resize(.items: $&Resizable#(.t: Int32), .allocator: $&Allocator) -> (.value: Int32) := {
+resize#(.Provider: Type: Allocator#(Provider), .Collection: Type: Resizable#(.Collection: Collection, .Provider: Provider, .Item: Int32))(.items: $&Collection, .allocator: $&Provider) -> (.value: Int32) := {
     unwrap_or_abort(.value = push(.self = items, .value = 3, .allocator = allocator))
     unwrap_or_abort(.value = insert(.self = items, .i = 0, .value = 4, .allocator = allocator))
     removed ::= unwrap_or_abort(.value = remove(.self = items, .i = 0))

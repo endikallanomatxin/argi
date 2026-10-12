@@ -2035,7 +2035,7 @@ pub const Resolver = struct {
                         else => return err,
                     };
                     const located = self.findAbstractDefinition(declaration) orelse continue;
-                    if (!located.definition.hasExplicitParticipants()) continue;
+                    if (!located.definition.hasExplicitParticipants() or definition.hasExplicitParticipants()) continue;
                     return .{
                         .source = self.sourceFor(module_index, composed.source),
                         .contract_name = self.modules[located.module_index].text(self.modules[located.module_index].declarations.items[@intFromEnum(located.definition.declaration)].name),
@@ -2550,7 +2550,11 @@ pub const Resolver = struct {
     }
 
     pub fn validateParticipantConformances(self: *Resolver) !void {
-        for (0..self.graph.contract_conformances.items.len) |index| {
+        var index: usize = 0;
+        // Validating an operation body can select evidence for a dependency.
+        // Include those new entries in this pass rather than publishing calls
+        // whose selected conformance has never been checked.
+        while (index < self.graph.contract_conformances.items.len) : (index += 1) {
             const conformance = self.graph.contract_conformances.items[index];
             if (conformance.operations.len != 0) continue;
             const module_index: usize = @intFromEnum(conformance.context);
@@ -2593,6 +2597,18 @@ pub const Resolver = struct {
                             return;
                         }
                     }
+                }
+            }
+            // Dependencies preserve the referenced contract's operation identity.
+            // A conformance proves those dependencies; it does not copy their
+            // operations into its own namespace or accept replacement members.
+            for (0..located.definition.composition.len) |position| {
+                const constraint: parameterized_storage.AbstractConstraintId = @enumFromInt(located.definition.composition.start + @as(u32, @intCast(position)));
+                const participant = self.graph.generic_arguments.items[conformance.participants.start].value.type;
+                if (!try self.inferConstraintBindings(located.module_index, constraint, participant, &bindings)) {
+                    failure.reason = "a required contract dependency is not satisfied";
+                    self.participant_conformance_failure = failure;
+                    return;
                 }
             }
             // Projection resolution can make initially distinct holes identical.
@@ -3040,22 +3056,7 @@ pub const Resolver = struct {
         if (definition.definition.hasExplicitParticipants()) {
             if (constraint.arguments.len == 0 and definition.definition.participants.len == 1)
                 return self.implementsDepth(concrete, abstract_decl, 0);
-            const arguments = self.generics.instantiateParameterizedArguments(module_index, constraint.arguments, bindings) catch |err| {
-                if (err == error.OutOfMemory) return err;
-                return false;
-            };
-            var selected = try generic_mod.Resolver.Bindings.init(self.allocator, self.modules[definition.module_index].semantic.parameterized_storage.comptime_parameters.items.len);
-            defer selected.deinit(self.allocator);
-            try self.generics.bindGlobalArguments(definition.module_index, definition.definition.participants, arguments, &selected);
-            const participants = try self.allocator.alloc(global_sg.GlobalTypeId, definition.definition.participants.len);
-            defer self.allocator.free(participants);
-            for (participants, 0..) |*participant, position| participant.* = selected.types[definition.definition.participants.start + position] orelse return false;
-            // A bound unary virtual participant carries evidence for its fixed
-            // interface. Do not search for a new static implementation of the
-            // virtual handle itself when validating a generic operation body.
-            if (participants.len == 1 and self.graph.semanticType(participants[0]) == .virtual)
-                return self.implementsDepth(participants[0], abstract_decl, 0);
-            return try self.selectConformance(abstract_decl, participants, null, 0, null) != null;
+            return self.inferParticipantConstraint(module_index, constraint, concrete, definition, abstract_decl, bindings);
         }
         if (!try self.implementsDepth(concrete, abstract_decl, 0)) return false;
         if (constraint.arguments.len == 0) return true;
@@ -3079,6 +3080,63 @@ pub const Resolver = struct {
             switch (requested.value) {
                 .type => |pattern| if (!try self.inferConstraintTypePattern(module_index, pattern, selected.types[raw] orelse return false, bindings)) return false,
                 .comptime_int => |pattern| if (!try self.inferConstraintIntPattern(module_index, pattern, selected.ints[raw] orelse return false, bindings)) return false,
+            }
+        }
+        return true;
+    }
+
+    // Participants select evidence first. Named associated restrictions compare
+    // against that evidence; they never participate in choosing an implementation.
+    fn inferParticipantConstraint(self: *Resolver, module_index: usize, constraint: parameterized_storage.AbstractConstraint, concrete: global_sg.GlobalTypeId, located: LocatedAbstractDefinition, declaration: global_sg.GlobalDeclId, bindings: *generic_mod.Resolver.Bindings) !bool {
+        const module = &self.modules[module_index];
+        const target_module = &self.modules[located.module_index];
+        const parameters = target_module.semantic.parameterized_storage.comptime_parameters.items;
+        const requested = module.semantic.parameterized_storage.ir.generic_arguments.items[constraint.arguments.start..][0..constraint.arguments.len];
+        var selected = try generic_mod.Resolver.Bindings.init(self.allocator, parameters.len);
+        defer selected.deinit(self.allocator);
+        const participants = try self.allocator.alloc(global_sg.GlobalTypeId, located.definition.participants.len);
+        defer self.allocator.free(participants);
+        for (requested, 0..) |argument, position| {
+            const name = module.text(argument.name);
+            var participant: ?u32 = null;
+            for (0..located.definition.participants.len) |index| {
+                const raw = located.definition.participants.start + @as(u32, @intCast(index));
+                if ((name.len == 0 and index == position) or std.mem.eql(u8, name, target_module.text(parameters[raw].name))) participant = raw;
+            }
+            if (participant) |raw| {
+                if (argument.value != .type or selected.types[raw] != null) return false;
+                selected.types[raw] = self.generics.instantiateParameterizedType(module_index, argument.value.type, bindings) catch |err| {
+                    if (err == error.OutOfMemory) return err;
+                    return false;
+                };
+            } else {
+                var associated = false;
+                for (parameters[located.definition.parameters.start..][0..located.definition.parameters.len]) |parameter|
+                    if (name.len != 0 and std.mem.eql(u8, name, target_module.text(parameter.name))) {
+                        associated = true;
+                        break;
+                    };
+                if (!associated) return false;
+            }
+        }
+        for (participants, 0..) |*participant, position| {
+            const raw = located.definition.participants.start + @as(u32, @intCast(position));
+            participant.* = selected.types[raw] orelse if (participants.len == 1) concrete else return false;
+        }
+        // Unary virtual types carry their fixed interface's selected evidence.
+        // Associated virtual interfaces still require their representation work.
+        if (participants.len == 1 and self.graph.semanticType(participants[0]) == .virtual)
+            return located.definition.parameters.len == 0 and try self.implementsDepth(participants[0], declaration, 0);
+        if (try self.selectConformance(declaration, participants, &selected, 0, null) == null) return false;
+        for (requested) |argument| {
+            const name = module.text(argument.name);
+            for (0..located.definition.parameters.len) |index| {
+                const raw = located.definition.parameters.start + @as(u32, @intCast(index));
+                if (name.len == 0 or !std.mem.eql(u8, name, target_module.text(parameters[raw].name))) continue;
+                switch (argument.value) {
+                    .type => |pattern| if (!try self.inferConstraintTypePattern(module_index, pattern, selected.types[raw] orelse return false, bindings)) return false,
+                    .comptime_int => |pattern| if (!try self.inferConstraintIntPattern(module_index, pattern, selected.ints[raw] orelse return false, bindings)) return false,
+                }
             }
         }
         return true;

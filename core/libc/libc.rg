@@ -64,7 +64,7 @@ fread_into(
     ) -> (
         .count : UIntNative
     ) := {
-    if length#(.t: UInt8)(&buffer).count == 0 {
+    if length(&buffer).count == 0 {
         count = 0
         return
     }
@@ -72,7 +72,7 @@ fread_into(
     count = fread(
         .buffer = data#(.t: UInt8)(&buffer).pointer
         .size   = 1
-        .count  = length#(.t: UInt8)(&buffer).count
+        .count  = length(&buffer).count
         .stream = stream
     ).count
 }
@@ -83,7 +83,7 @@ fwrite_from(
     ) -> (
         .count : UIntNative
     ) := {
-    if length#(.t: UInt8)(&buffer).count == 0 {
+    if length(&buffer).count == 0 {
         count = 0
         return
     }
@@ -91,7 +91,7 @@ fwrite_from(
     count = fwrite(
         .buffer = read_reference#(.t: UInt8)(.base = data#(.t: UInt8)(&buffer).pointer).reference
         .size   = 1
-        .count  = length#(.t: UInt8)(&buffer).count
+        .count  = length(&buffer).count
         .stream = stream
     ).count
 }

@@ -69,8 +69,8 @@ pub const AbstractRequirement = struct {
 pub const AbstractDefinition = struct {
     implicit_participant: ?ComptimeParameterId = null,
     participants: primitives.Range(ComptimeParameterId) = .{ .start = 0, .len = 0 },
-    // TODO: Prove included unary requirements; currently retained for validation
-    // of unsupported composition across the explicit participant boundary.
+    // Dependencies retain their own operation namespaces and are proved against
+    // the selected participant/associated bindings.
     composition: primitives.Range(AbstractConstraintId) = .{ .start = 0, .len = 0 },
     declaration: entities.ModuleDeclId,
     parameters: primitives.Range(ComptimeParameterId),

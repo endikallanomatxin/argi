@@ -7299,11 +7299,11 @@ test "feature_tests/collections/80_collection_contracts" {
 }
 
 test "feature_tests/collections/81X_readonly_collection_mutation" {
-    try buildExpectFail("tests/feature_tests/collections/81X_readonly_collection_mutation", "does not implement");
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/collections/81X_readonly_collection_mutation", "does not satisfy abstract constraint 'IndexableMutable'");
 }
 
 test "feature_tests/collections/82X_owning_collection_value_read" {
-    try buildExpectFail("tests/feature_tests/collections/82X_owning_collection_value_read", "no overload");
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/collections/82X_owning_collection_value_read", "does not satisfy abstract constraint 'IndexableValue'");
 }
 
 test "feature_tests/text/24_string_view_search" {
@@ -12353,4 +12353,22 @@ test "feature_tests/contracts/171_iteration_operation_identity" {
 test "feature_tests/contracts/172_generic_virtual_participant_bound" {
     try expectSuccessfulBuild("tests/feature_tests/contracts/172_generic_virtual_participant_bound");
     try run("tests/feature_tests/contracts/172_generic_virtual_participant_bound");
+}
+
+test "feature_tests/contracts/173_selected_associated_constraint" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/173_selected_associated_constraint");
+    try run("tests/feature_tests/contracts/173_selected_associated_constraint");
+}
+
+test "feature_tests/contracts/174X_selected_associated_constraint_mismatch" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/174X_selected_associated_constraint_mismatch", "does not satisfy abstract constraint 'Source'");
+}
+
+test "feature_tests/contracts/175_contract_dependency_identity" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/175_contract_dependency_identity");
+    try run("tests/feature_tests/contracts/175_contract_dependency_identity");
+}
+
+test "feature_tests/contracts/176X_missing_contract_dependency" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/176X_missing_contract_dependency", "a required contract dependency is not satisfied");
 }

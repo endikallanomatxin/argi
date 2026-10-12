@@ -571,11 +571,14 @@ pub const Syntaxer = struct {
             }
 
             if (self.tokenIs(.hash)) {
-                try self.diags.add(self.tokenLocation(), .syntax, "operation-local generic parameters are not supported in contracts; declare associated members in the contract body", .{});
-                return SyntaxerError.ExpectedIdentifier;
-            }
-
-            if (self.tokenIs(.open_parenthesis)) {
+                self.index = @intFromEnum(name.token);
+                const dependency = try self.parseType() orelse return SyntaxerError.ExpectedIdentifier;
+                if (self.tokenIs(.open_parenthesis)) {
+                    try self.diags.add(self.tokenLocation(), .syntax, "operation-local generic parameters are not supported in contracts; declare associated members in the contract body", .{});
+                    return SyntaxerError.ExpectedIdentifier;
+                }
+                try self.scratch.append(self.allocator, dependency);
+            } else if (self.tokenIs(.open_parenthesis)) {
                 try self.scratch.append(self.allocator, try self.parseContractRequirement(name, false));
             } else {
                 try self.scratch.append(self.allocator, try self.addNode(.type_name, name.token, .{ .token_and_optional_token = .{ .token = name.token, .optional = .none } }));
@@ -593,7 +596,7 @@ pub const Syntaxer = struct {
         var index = scratch_top;
         while (index < items_end) : (index += 1) {
             const item = self.scratch.items[index];
-            if (self.file.tag(item) == .type_name) try self.scratch.append(self.allocator, item);
+            if (self.file.tag(item) == .type_name or self.file.tag(item) == .generic_type_instantiation) try self.scratch.append(self.allocator, item);
         }
         const funcs_start = self.scratch.items.len;
         index = scratch_top;

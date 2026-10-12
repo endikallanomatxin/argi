@@ -35,6 +35,6 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     transfer_owned(&mover, $&source, $&destination)
 
     offset :: UIntNative = 0
-    element ::= unwrap_or_abort(get_ro_ref#(Int32)(.self = &destination, .index = offset))
+    element ::= unwrap_or_abort(get_ro_ref(.self = &destination, .index = offset))
     if element&!= 42 { status_code = 1 }
 }

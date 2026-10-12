@@ -67,17 +67,17 @@ main(.system: System) -> (.status_code: Int32) := {
                         ..error _ { status_code = 12 }
                         ..ok ~third_payload {
                             third ::= ~third_payload
-                            push#(.t: Tracked)(
+                            push(
                                 .allocator = $&backing
                                 .self      = $&array
                                 .value     = ~first
                             )
-                            push#(.t: Tracked)(
+                            push(
                                 .allocator = $&backing
                                 .self      = $&array
                                 .value     = ~second
                             )
-                            push#(.t: Tracked)(
+                            push(
                                 .allocator = $&backing
                                 .self      = $&array
                                 .value     = ~third

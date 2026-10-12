@@ -19,10 +19,6 @@ Deque init#(
     }
 }
 
-length#(.t: Type)(.self: &Deque#(.t: t)) -> (.count: UIntNative) := {
-    count = self&._ring._length
-}
-
 capacity#(.t: Type)(.self: &Deque#(.t: t)) -> (.count: UIntNative) := {
     count = self&._ring._capacity
 }
@@ -191,38 +187,6 @@ pop_back#(.t: Type)(.self: $&Deque#(.t: t)) -> (.result: Errable#(t, (..empty)))
     result = ..ok ~moved
 }
 
-get_ro_ref#(
-        .t : Type
-    )(
-        .self  : &Deque#(.t: t),
-        .index : UIntNative
-    ) -> (
-        .result : Errable#(&t, (..out_of_bounds))
-    ) := {
-    result = get_ro_ref(&self&._ring, .index = index)
-}
-
-get_rw_ref#(
-        .t : Type
-    )(
-        .self  : $&Deque#(.t: t),
-        .index : UIntNative
-    ) -> (
-        .result : Errable#($&t, (..out_of_bounds))
-    ) := {
-    if index >= self&._ring._length {
-        result = ..error(.reason = ..out_of_bounds)
-        return
-    }
-
-    pointer ::= _ring_buffer_occupied_pointer(&self&._ring, .index = index).pointer
-
-    result = ..ok depend_on#(.t: $&t)(
-        .value = pointer
-        .on    = erase_reference#(.t: _RingBufferShape)(.base = &self&._ring._shape).reference
-    ).result
-}
-
 get#(
         .t : Type: ImplicitlyCopyable
     )(
@@ -236,8 +200,48 @@ get#(
     result = ..ok pointer&
 }
 
-Deque#(.t: Type) satisfies Indexable#(.t: t)
-
 Deque deinit#(.t: Type)(.self: $&Deque#(.t: t), .allocator: $&Allocator = reach allocator) -> () := {
     deinit(.self = $&self&._ring, .allocator = allocator)
 }
+
+implement#(.t: Type) Indexable#(Deque#(.t: t)) (
+    .Item: Type = t
+
+    .length = (.self: &Deque#(.t: t)) -> (.count: UIntNative) {
+        count = self&._ring._length
+    }
+
+    .get_ro_ref = (
+            .self  : &Deque#(.t: t),
+            .index : UIntNative
+        ) -> (
+            .result : Errable#(&t, (..out_of_bounds))
+        ) {
+        result = get_ro_ref(&self&._ring, .index = index)
+    }
+)
+
+implement#(
+        .t : Type
+    ) IndexableMutable#(Deque#(.t: t)) (
+    .Item: Type = t
+
+    .get_rw_ref = (
+            .self  : $&Deque#(.t: t),
+            .index : UIntNative
+        ) -> (
+            .result : Errable#($&t, (..out_of_bounds))
+        ) {
+        if index >= self&._ring._length {
+            result = ..error(.reason = ..out_of_bounds)
+            return
+        }
+
+        pointer ::= _ring_buffer_occupied_pointer(&self&._ring, .index = index).pointer
+
+        result = ..ok depend_on#(.t: $&t)(
+            .value = pointer
+            .on    = erase_reference#(.t: _RingBufferShape)(.base = &self&._ring._shape).reference
+        ).result
+    }
+)

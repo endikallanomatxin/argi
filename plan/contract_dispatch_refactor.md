@@ -31,7 +31,13 @@ incomparable maximal candidates are errors; source/import ordering has no priori
    safety normalization recognizes the original participant parameter; preserve
    pointer-field dependencies
    and generation facts when migrating each adapter. Continue with the remaining
-   bundled core/more operations, including BorrowedOrderPolicy.
+   bundled core/more operations, including copying and argument sources.
+   Indexable, IndexableMutable and IndexableValue now use selected Item evidence,
+   with dependency identities rather than copied requirements. Resizable selects
+   collection/allocation-provider tuples for growth; Removable selects only the
+   collection for pop/remove. Named associated restrictions compare against the
+   selected evidence and infer ordinary generic leaves. Newly selected evidence
+   participates in the resolution/cleanup fixed point.
    OrderPolicy, HashPolicy and BorrowedHashPolicy already use explicit participants
    and scoped implementations. Replace each implicit receiver contract with explicit
    participants and each global operation family with scoped implementations. Remove
@@ -87,3 +93,18 @@ function bodies. A local `[1]UInt8 = (0)` currently makes specialization report 
 incorrect generic-input mismatch; concrete bodies accept it. Keep this independent
 from virtual participant evidence and improve the body diagnostic before removing
 legacy ordinary resolution.
+
+## Execution record
+
+- Ruling: retain one operation identity for readonly indexing; mutable/value
+  contracts require Indexable with equal Item evidence rather than repeating
+  length/get_ro_ref. This preserves dependency namespaces. If incorrect, callers
+  needing an independently specialized readonly implementation must declare a
+  different capability explicitly.
+- Ruling: Resizable selects Collection and Provider for allocating growth;
+  Removable selects Collection alone for pop/remove. Allocation-free operations
+  cannot infer a Provider participant. If incorrect, protocol names need revision,
+  but ownership and allocation dependencies remain explicit.
+- Selected evidence validation joins the ordinary resolution/cleanup fixed point;
+  newly selected dependencies are validated in the same pass. Negative spatial
+  fixtures exposed previously unvalidated operation tables during this migration.

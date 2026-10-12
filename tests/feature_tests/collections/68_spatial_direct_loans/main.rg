@@ -7,12 +7,12 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     push_assume_capacity#(.t: UIntNative)(.self = $&array, .value = 7)
     borrowed ::= loan(.array = &array).element
     if borrowed& != 7 { status_code = 1 }
-    mutable ::= unwrap_or_abort(.value = get_rw_ref#(.t: UIntNative)(.self = $&array, .index = 0).result)
+    mutable ::= unwrap_or_abort(.value = get_rw_ref(.self = $&array, .index = 0).result)
     mutable& = 9
     if borrowed& != 9 { status_code = 2 }
-    removed ::= unwrap_or_abort(.value = pop#(.t: UIntNative)(.self = $&array).result)
+    removed ::= unwrap_or_abort(.value = pop(.self = $&array).result)
     push_assume_capacity#(.t: UIntNative)(.self = $&array, .value = 11)
-    fresh ::= unwrap_or_abort(.value = get_ro_ref#(.t: UIntNative)(.self = &array, .index = 0).result)
+    fresh ::= unwrap_or_abort(.value = get_ro_ref(.self = &array, .index = 0).result)
     if fresh& != 11 { status_code = 3 }
     iterator ::= to_rw_pointer_iterator(.value = $&array).iterator
     element ::= next(.self = $&iterator).value

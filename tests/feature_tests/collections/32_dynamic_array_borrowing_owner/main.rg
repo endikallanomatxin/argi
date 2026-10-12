@@ -34,14 +34,14 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
                             array ::= unwrap_or_abort(.value = DynamicArray#(.t: BorrowingOwner)(.capacity = 1))
                             first ::= BorrowingOwner(.id = 1, .allocation = ~first_payload, .borrowed = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&external, .offset = 0).reference)
                             second ::= BorrowingOwner(.id = 2, .allocation = ~second_payload, .borrowed = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&external, .offset = 0).reference)
-                            first_push ::= push#(.t: BorrowingOwner)(.self = $&array, .value = ~first)
-                            second_push ::= push#(.t: BorrowingOwner)(.self = $&array, .value = ~second)
+                            first_push ::= push(.self = $&array, .value = ~first)
+                            second_push ::= push(.self = $&array, .value = ~second)
                             if is(.value = first_push, .variant = ..error) or is(.value = second_push, .variant = ..error) {
                                 status_code = 4
                                 return
                             }
 
-                            popped_result ::= pop#(.t: BorrowingOwner)(.self = $&array).result
+                            popped_result ::= pop(.self = $&array).result
                             if is(.value = popped_result, .variant = ..error) {
                                 status_code = 5
                                 return

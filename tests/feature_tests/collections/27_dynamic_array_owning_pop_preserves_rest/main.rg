@@ -42,7 +42,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
                     second ::= ~second_payload
                     push_assume_capacity#(.t: Tracked)(.self = $&array, .value = ~first)
                     push_assume_capacity#(.t: Tracked)(.self = $&array, .value = ~second)
-                    popped_result ::= pop#(.t: Tracked)(.self = $&array).result
+                    popped_result ::= pop(.self = $&array).result
                     if is(.value = popped_result, .variant = ..error) {
                         status_code = 3
                         return

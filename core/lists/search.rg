@@ -1,9 +1,10 @@
 -- Equality search copies only implicitly copyable elements. Returning an
 -- index creates no element loan; structural changes can make it stale.
 find#(
-        .t : Type: ImplicitlyCopyable
+        .t : Type: ImplicitlyCopyable,
+        .Collection: Type: Indexable#(.Item: t)
     )(
-        .self  : &Indexable#(.t: t),
+        .self  : &Collection,
         .value : t,
     ) -> (
         .index : ?UIntNative
@@ -24,9 +25,10 @@ find#(
 }
 
 contains#(
-        .t : Type: ImplicitlyCopyable
+        .t : Type: ImplicitlyCopyable,
+        .Collection: Type: Indexable#(.Item: t)
     )(
-        .self  : &Indexable#(.t: t),
+        .self  : &Collection,
         .value : t,
     ) -> (
         .ok : Bool

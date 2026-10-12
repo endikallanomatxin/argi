@@ -228,7 +228,7 @@ read(
     stream ::= file_stream_pointer(self).stream
     read_count ::= fread_into(.buffer = buffer, .stream = stream).count
 
-    if read_count < length#(.t: UInt8)(&buffer).count {
+    if read_count < length(&buffer).count {
         if ferror(.stream = stream).status != 0 {
             result = ..error(.reason = ..stream_read_failed)
             return
@@ -254,7 +254,7 @@ write(
     stream ::= file_stream_pointer(self).stream
     wrote ::= fwrite_from(.buffer = buffer, .stream = stream).count
 
-    if wrote < length#(.t: UInt8)(&buffer).count {
+    if wrote < length(&buffer).count {
         if ferror(.stream = stream).status != 0 {
             result = ..error(.reason = ..stream_write_failed)
             return

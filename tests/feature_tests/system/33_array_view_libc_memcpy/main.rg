@@ -15,7 +15,7 @@ main() -> (.status_code: Int32) := {
 
     memcpy_bytes(.dst = dst, .src = src)
 
-    dst0 ::= get#(.t: UInt8)(.self = &dst, .index = 0).result
+    dst0 ::= get(.self = &dst, .index = 0).result
     if is(.value = dst0, .variant = ..error) {
         status_code = 13
         return
@@ -25,7 +25,7 @@ main() -> (.status_code: Int32) := {
         return
     }
 
-    dst1 ::= get#(.t: UInt8)(.self = &dst, .index = 1).result
+    dst1 ::= get(.self = &dst, .index = 1).result
     if is(.value = dst1, .variant = ..error) {
         status_code = 14
         return
@@ -35,7 +35,7 @@ main() -> (.status_code: Int32) := {
         return
     }
 
-    dst2 ::= get#(.t: UInt8)(.self = &dst, .index = 2).result
+    dst2 ::= get(.self = &dst, .index = 2).result
     if is(.value = dst2, .variant = ..error) {
         status_code = 15
         return
@@ -45,7 +45,7 @@ main() -> (.status_code: Int32) := {
         return
     }
 
-    dst3 ::= get#(.t: UInt8)(.self = &dst, .index = 3).result
+    dst3 ::= get(.self = &dst, .index = 3).result
     if is(.value = dst3, .variant = ..error) {
         status_code = 16
         return

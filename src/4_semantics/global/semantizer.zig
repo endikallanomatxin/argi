@@ -651,6 +651,21 @@ pub fn semantizeWithOptions(
             if (errors.refreshPropagationResults()) changed = true;
             if (options.profile_io) |io| profile_errors_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - errors_start;
             if (try completePropagatedReachCalls(&core, modules, relocation.offsets.items)) changed = true;
+            // Evidence selected by newly specialized bodies belongs to this
+            // fixed point. Its operation bodies must become reachable and have
+            // their cleanup finalized before construction metadata is retired.
+            const evidence_functions = relocation.graph.functions.items.len;
+            const evidence_types = relocation.graph.types.items.len;
+            const evidence_conformances = relocation.graph.contract_conformances.items.len;
+            abstracts.validateParticipantConformances() catch |err| {
+                try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, &generics);
+                try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, abstracts.participant_conformance_failure);
+                return err;
+            };
+            try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, abstracts.participant_conformance_failure);
+            if (evidence_functions != relocation.graph.functions.items.len or
+                evidence_types != relocation.graph.types.items.len or
+                evidence_conformances != relocation.graph.contract_conformances.items.len) changed = true;
             if (reachable) |set| {
                 if (try reachability_mod.expand(allocator, &relocation.graph, set)) changed = true;
             }
