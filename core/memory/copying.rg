@@ -2,7 +2,9 @@ InfalliblyCopyable: Contract = (
     copy(.self: &Self) -> (.value: Self)
 )
 
-FalliblyCopyable#(.reasons: Type): Contract = (
+FalliblyCopyable: Contract = (
+    .reasons: Type
+
     copy(.self: &Self, .allocator: $&Allocator) -> (.result: Errable#(Self, reasons))
 )
 

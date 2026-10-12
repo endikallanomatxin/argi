@@ -1,4 +1,6 @@
-Shape#(.Count: Int): Contract#(.Left: Type, .Right: Type) = ()
+Shape#(.Left: Type, .Right: Type): Contract = (
+    .Count: Int
+)
 Row: Type = ()
 Column: Type = ()
 satisfies Shape#(Row, Column) = (.Count = 2)

@@ -1,2 +1,2 @@
-Pair: Contract#(.Left: Type, .Right: Int) = ()
+Pair#(.Left: Type, .Right: Int): Contract = ()
 main() -> () := {}

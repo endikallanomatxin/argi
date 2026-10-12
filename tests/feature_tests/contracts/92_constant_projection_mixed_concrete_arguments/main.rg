@@ -1,4 +1,6 @@
-Shape#(.Count: Int): Contract#(.Input: Type) = ()
+Shape#(.Input: Type): Contract = (
+    .Count: Int
+)
 Cell: Type = ()
 satisfies Shape#(Cell) = (.Count = 2)
 first#(.T: Type, .n: Int)(.values: &Array#(.n = n, .t: T)) -> (.value: T) := { value = values&[0] }

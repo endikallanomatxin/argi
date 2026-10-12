@@ -1,4 +1,7 @@
-Fixed#(.n: UIntNative, .item: Type): Contract = (
+Fixed: Contract = (
+    .n: UIntNative
+    .item: Type
+
     read(.self: &Self) -> (.value: item) where {}
 )
 

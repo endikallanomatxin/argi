@@ -6,7 +6,9 @@ _owned_hash_discard#(.t: Type)(.value: t, .allocator: $&Allocator) -> () := {
 }
 
 -- Ownership-bearing keys are hashed by reference, never copied for lookup.
-BorrowedHashPolicy#(.key: Type): Contract = (
+BorrowedHashPolicy: Contract = (
+    .key: Type
+
     hash(.self: &Self, .key: &key) -> (.hash: UIntNative)
     eql(.self: &Self, .left: &key, .right: &key) -> (.ok: Bool)
 )

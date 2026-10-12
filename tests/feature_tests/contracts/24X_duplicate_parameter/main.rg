@@ -1,4 +1,6 @@
-Product#(.Result: Type): Contract#(.Left: Type, .Result: Type) = (
+Product#(.Left: Type, .Result: Type): Contract = (
+    .Result: Type
+
     multiply(.left: &Left, .right: &Right) -> (.value: Result) where {}
 )
 Row: Type = (.value: Int32)

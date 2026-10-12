@@ -1,2 +1,4 @@
-Shape#(.Count: Int): Contract#(.Input: Type) = ()
+Shape#(.Input: Type): Contract = (
+    .Count: Int
+)
 Cell: Type = ()

@@ -1,4 +1,6 @@
-Shape#(.Count: Int): Contract#(.Input: Type) = ()
+Shape#(.Input: Type): Contract = (
+    .Count: Int
+)
 Cell: Type = ()
 satisfies Shape#(Cell) = (.Count = 1)
 Buffer#(.n: Int): Type = (.values: Array#(.n = n, .t: Int32))

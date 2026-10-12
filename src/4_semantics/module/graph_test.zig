@@ -826,8 +826,14 @@ test "unary compatibility contracts normalize Self to a type participant" {
     const allocator = std.testing.allocator;
     const source =
         \\Legacy#(.Other: Type): Abstract = (borrow(.other: &Other, .source: &Self) -> (.value: &Self))
-        \\Modern#(.Other: Type): Contract = (borrow(.other: &Other, .source: &Self) -> (.value: &Self))
-        \\Pair: Contract#(.Left: Type, .Right: Type) = (combine(.left: &Left, .right: &Right) -> ())
+        \\Modern: Contract = (
+        \\    .Other: Type
+        \\    borrow(.other: &Other, .source: &Self) -> (.value: &Self))
+        \\Pair#(.Left: Type, .Right: Type): Contract = (
+        \\    combine(.left: &Left, .right: &Right) -> (.value: Result)
+        \\    .Result: Type
+        \\    .Count: Int
+        \\)
         \\
     ;
     var tree = try parseSource(allocator, source, @enumFromInt(0));
@@ -858,5 +864,17 @@ test "unary compatibility contracts normalize Self to a type participant" {
     const pair = storage.abstract_definitions.items[2];
     try std.testing.expect(pair.hasExplicitParticipants());
     try std.testing.expectEqual(@as(u32, 2), pair.participants.len);
+    try std.testing.expectEqual(@as(u32, 2), pair.parameters.len);
+    try std.testing.expect(pair.parameters.start + pair.parameters.len <= pair.participants.start);
+    try std.testing.expectEqualStrings("Result", graph.text(storage.comptime_parameters.items[pair.parameters.start].name));
+    try std.testing.expectEqualStrings("Count", graph.text(storage.comptime_parameters.items[pair.parameters.start + 1].name));
+    try std.testing.expectEqual(.comptime_int, storage.comptime_parameters.items[pair.parameters.start + 1].kind);
+    const pair_requirement = storage.abstract_requirements.items[pair.requirements.start];
+    const pair_output = storage.ir.types.items[@intFromEnum(pair_requirement.output)].resolved.structural.fields;
+    const result_type = storage.ir.fields.items[pair_output.start].ty;
+    try std.testing.expectEqual(pair.parameters.start, @intFromEnum(storage.ir.types.items[@intFromEnum(result_type)].parameter));
+    const pair_input = storage.ir.types.items[@intFromEnum(pair_requirement.input)].resolved.structural.fields;
+    const left = storage.ir.types.items[@intFromEnum(storage.ir.fields.items[pair_input.start].ty)].resolved.pointer.child;
+    try std.testing.expectEqual(pair.participants.start, @intFromEnum(storage.ir.types.items[@intFromEnum(left)].parameter));
     try std.testing.expectEqual(@as(?@import("parameterized/storage.zig").ComptimeParameterId, null), pair.implicit_participant);
 }

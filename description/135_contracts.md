@@ -94,13 +94,15 @@ referents and their storage generations.
 
 ## Concrete participant syntax
 
-Declare associated parameters on the contract name and participant parameters
-on the `Contract#(...)` marker. Standalone `satisfies` supplies the participant
-tuple first, followed by its associated arguments:
+Declare participant parameters on the contract name and associated types or
+constants inside its body. Standalone `satisfies` supplies the participant tuple
+first, followed by the associated definitions:
 
 ```rg
-Product#(.Result: Type): Contract#(.Left: Type, .Right: Type) = (
-    multiply(.left: &Left, .right: &Right) -> (.value: Result) where {}
+Product#(.Left: Type, .Right: Type): Contract = (
+    .Result: Type
+
+    multiply(.left: &Left, .right: &Right) -> (.value: Result)
 )
 
 Row: Type = (.value: Int32)
@@ -114,11 +116,15 @@ multiply(.left: &Row, .right: &Column) -> (.value: Int32) := {
 ```
 
 Participants are named type parameters, including when there is only one.
-Requirements use those names directly; `Self` is rejected. Associated parameters
+Requirements use those names directly; `Self` is rejected. Associated members
 may be types or integers and may have bounds referencing participant parameters.
 Both groups are registered before their bounds are lowered. Conformance arguments
 use the usual named or positional compile-time syntax; omitting `= (...)` is valid
-when the contract has no associated parameters.
+when the contract has no associated members. Associated members may appear before
+or after operations; their declaration order does not affect name resolution.
+Defaults are not supported: the selected conformance supplies their definitions.
+The former `Name#(associated): Contract#(participants)` spelling is rejected with
+migration guidance. Legacy `Abstract` declarations retain their original syntax.
 
 The complete concrete tuple identifies a conformance. Reordering named arguments
 does not create another identity; repeating a tuple is an ambiguity even if its
@@ -151,7 +157,9 @@ instantiation rather than proven against a generic tuple contract at declaration
 Associated integer constants can be queried in compile-time type arguments:
 
 ```argi
-Shape#(.Count: Int): Contract#(.Input: Type) = ()
+Shape#(.Input: Type): Contract = (
+    .Count: Int
+)
 satisfies Shape#(Cell) = (.Count = 2)
 Box#(.T: Type): Type = (
     .values: Array#(.n = Shape#(T).Count, .t: Int32)
@@ -184,7 +192,9 @@ Unary compatibility syntax retains its existing argument binding while sharing
 the participant representation used by explicit contracts:
 
 ```rg
-Readable#(.item: Type): Contract = (
+Readable: Contract = (
+    .item: Type
+
     read(.source: &Self) -> (.value: &item)
         where depends_on(value, source)
 )
@@ -203,7 +213,7 @@ consume#(.item: Type, .source_type: Type: Readable#(item))(
 }
 ```
 
-Here `item` is an associated parameter; it does not independently select another
+Here `item` is a body-declared associated type; it does not independently select another
 participant. Functions remain ordinary declarations outside the contract.
 
 > [!IMPLEMENTATION]

@@ -416,10 +416,12 @@ test "frontend module cache preserves associated projections and participant tup
     const root = try @import("../test_support.zig").tmpRootPath(&tmp);
     defer std.testing.allocator.free(root);
     const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code =
-        \\Product#(.Result: Type): Contract#(.Left: Type, .Right: Type) = (
+        \\Product#(.Left: Type, .Right: Type): Contract = (
         \\    multiply(.left: Left, .right: Right) -> (.value: Result) where {}
+        \\    .Result: Type
+        \\    .Count: Int
         \\)
-        \\satisfies Product#(Int32, Int64) = (.Result: Int32)
+        \\satisfies Product#(Int32, Int64) = (.Count = 2, .Result: Int32)
         \\multiply(.left: Int32, .right: Int64) -> (.value: Int32) := { value = 0 }
         \\projected() -> (.value: Product#(Int32, Int64).Result) := { value = 0 }
         \\Box#(.T: Type): Type = (.value: Product#(T, Int64).Result)
@@ -465,7 +467,9 @@ test "frontend module cache preserves associated constant dimensions" {
     const root = try @import("../test_support.zig").tmpRootPath(&tmp);
     defer std.testing.allocator.free(root);
     const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code =
-        \\Shape#(.Count: Int): Contract#(.Input: Type) = ()
+        \\Shape#(.Input: Type): Contract = (
+        \\    .Count: Int
+        \\)
         \\Cell: Type = ()
         \\Buffer#(.n: Int): Type = (.values: Array#(.n = n, .t: Int32))
         \\satisfies Shape#(Cell) = (.Count = 2)
@@ -513,7 +517,9 @@ test "frontend module cache preserves unary contract participant normalization" 
     const root = try @import("../test_support.zig").tmpRootPath(&tmp);
     defer std.testing.allocator.free(root);
     const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code =
-        \\Readable#(.Other: Type): Contract = (
+        \\Readable: Contract = (
+        \\    .Other: Type
+        \\
         \\    read(.other: &Other, .source: &Self) -> (.value: &Int32)
         \\        where depends_on(value, source)
         \\)

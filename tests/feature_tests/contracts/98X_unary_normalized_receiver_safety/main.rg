@@ -1,4 +1,6 @@
-Readable#(.Other: Type): Contract = (
+Readable: Contract = (
+    .Other: Type
+
     read(.other: &Other, .source: &Self) -> (.value: &Int32)
         where depends_on(value, source)
 )

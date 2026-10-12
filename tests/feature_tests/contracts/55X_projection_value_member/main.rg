@@ -1,4 +1,7 @@
-Product#(.Result: Type, .Count: Int): Contract#(.Left: Type, .Right: Type) = (
+Product#(.Left: Type, .Right: Type): Contract = (
+    .Result: Type
+    .Count: Int
+
     multiply(.left: &Left, .right: &Right) -> (.value: Result) where {}
 )
 

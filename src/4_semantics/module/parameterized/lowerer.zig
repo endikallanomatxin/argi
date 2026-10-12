@@ -337,6 +337,12 @@ pub const Context = struct {
                     self.parameters.clearRetainingCapacity();
                     self.abstract_parameters.clearRetainingCapacity();
                     const params = try self.registerParameters(abstract.generic_params, abstract.generic_params_struct);
+                    for (self.parameters.items, 0..) |binding, position| {
+                        for (self.parameters.items[0..position]) |previous| {
+                            if (std.mem.eql(u8, previous.name, binding.name))
+                                try self.contractError(declaration_node, "duplicate associated contract member name");
+                        }
+                    }
                     self.has_contract_participants = abstract.participants_struct != null;
                     defer self.has_contract_participants = false;
                     defer self.implicit_participant = null;

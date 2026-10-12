@@ -1,11 +1,17 @@
-Iterable#(.t: Type): Contract = (
+Iterable: Contract = (
+    .t: Type
+
     to_iterator(.value: &Self) -> (.iterator: Iterator#(.t: t))
 )
 
-ROPointerIterable#(.t: Type): Contract = (
+ROPointerIterable: Contract = (
+    .t: Type
+
     to_ro_pointer_iterator(.value: &Self) -> (.iterator: Iterator#(.t: &t))
 )
 
-RWPointerIterable#(.t: Type): Contract = (
+RWPointerIterable: Contract = (
+    .t: Type
+
     to_rw_pointer_iterator(.value: $&Self) -> (.iterator: Iterator#(.t: $&t))
 )

@@ -1,4 +1,6 @@
-Source#(.item: Type): Contract = (
+Source: Contract = (
+    .item: Type
+
     get(.self: &Self) -> (.value: &item) where depends_on(value, self)
 )
 

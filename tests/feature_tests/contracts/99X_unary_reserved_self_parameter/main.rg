@@ -1,2 +1,4 @@
-Broken#(.Self: Type): Contract = ()
+Broken: Contract = (
+    .Self: Type
+)
 main() -> () := {}

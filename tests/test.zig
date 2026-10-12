@@ -9580,7 +9580,7 @@ test "feature_tests/polymorphism/54X_virtual_bound_borrow_after_cleanup" {
 }
 
 test "feature_tests/polymorphism/55X_virtual_method_generic" {
-    try buildExpectFail("tests/feature_tests/polymorphism/55X_virtual_method_generic", "method-local generic parameters");
+    try buildExpectFail("tests/feature_tests/polymorphism/55X_virtual_method_generic", "operation-local generic parameters");
 }
 
 test "feature_tests/python/13_numpy_vector" {
@@ -12053,4 +12053,36 @@ test "feature_tests/contracts/98X_unary_normalized_receiver_safety" {
 
 test "feature_tests/contracts/99X_unary_reserved_self_parameter" {
     try buildExpectFailWithoutNoise("tests/feature_tests/contracts/99X_unary_reserved_self_parameter", "Self is reserved for the implicit unary participant", "panic");
+}
+
+test "feature_tests/contracts/100_body_associated_members" {
+    const path = "tests/feature_tests/contracts/100_body_associated_members";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/contracts/101_explicit_unary_body_member" {
+    const path = "tests/feature_tests/contracts/101_explicit_unary_body_member";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/contracts/102X_duplicate_body_member" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/102X_duplicate_body_member", "duplicate associated contract member name", "panic");
+}
+
+test "feature_tests/contracts/103X_body_member_missing_type" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/103X_body_member_missing_type", "associated contract members require a type declaration", "panic");
+}
+
+test "feature_tests/contracts/104X_body_member_default" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/104X_body_member_default", "associated contract members are supplied by satisfies", "panic");
+}
+
+test "feature_tests/contracts/105X_old_participant_marker" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/105X_old_participant_marker", "declare contract participants on the name", "panic");
+}
+
+test "feature_tests/contracts/106X_associated_argument_not_participant" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/106X_associated_argument_not_participant", "unknown argument name", "panic");
 }

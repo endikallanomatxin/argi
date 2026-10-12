@@ -1,4 +1,4 @@
-First: Contract#(.Left: Type, .Right: Type) = (
+First#(.Left: Type, .Right: Type): Contract = (
     first(.left: &Left, .right: &Right) -> (.value: &Left) where depends_on(value, left)
 )
 Cell: Type = (.value: Int32)

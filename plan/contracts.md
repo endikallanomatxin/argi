@@ -20,8 +20,8 @@ declarations available for compatibility fixtures and external consumers.
 
 ## Concrete participant tuples
 
-Keep associated parameters on the declaration name and declare independent
-participants on the `Contract#(...)` marker. Lower both groups into distinct
+Declare independent participants on the contract name and associated members
+inside its body. Lower both groups into distinct
 ComptimeParameter ranges so their identities cannot be interchanged.
 Standalone `satisfies Contract#(participants) = (associated arguments)` records
 one joint conformance without selecting a privileged concrete receiver.
@@ -145,3 +145,32 @@ borrowed result. Clean and warm-cache LLVM are identical, with all 27 modules
 reused; static calls remain specialized and virtual handles retain two pointers.
 Conformance selection and virtual evidence still use compatibility adapters;
 their unification is the next migration step.
+
+
+## Body-declared associated members
+
+Parse `Name#(.Participant: Type): Contract = (.Result: Type, .Count: Int, ...)`.
+The name's compile-time parameters select the conformance; body members are
+associated outputs supplied by satisfies. Preserve the existing disjoint
+participant and associated parameter ranges in syntax-free IR, registering both
+before resolving operation signatures or bounds. Reject the former Contract#
+marker syntax with migration guidance. Migrate all bundled associated declarations,
+fixtures and specification examples. Implicit unary Self declarations retain their
+existing conformance and virtual argument binding, with associated declarations
+moved into the body; legacy Abstract syntax remains unchanged.
+
+This affects syntaxing and module lowering. Tokenizing, global tuple selection,
+associated projections and codegen keep their existing representations. Validate
+multiple members, declaration ordering, explicit unary participants, diagnostics,
+frontend persistence and generic/virtual compatibility, then run the full suite.
+
+Body-member validation: all 106 contract fixtures pass. The complete Debug suite
+passes 1,717 program tests and 363 internal tests, with 11 and 1 skips respectively.
+New cases cover mixed associated types/constants, members declared after operations,
+explicit unary participants, duplicate or incomplete members, unsupported defaults,
+old-marker migration diagnostics and rejection of associated participant arguments.
+Source-IR assertions verify disjoint participant/member identities; persisted-cache
+checks preserve reordered associated arguments and forward member references.
+Clean and warm-cache LLVM for the mixed-member fixture are identical, with all 27
+modules reused. Its result is Int32, its array contains two i32 elements, and its
+operation remains a direct concrete call without runtime contract lookup.

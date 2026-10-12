@@ -1,6 +1,8 @@
 -- Equal keys must have equal hashes. Both operations must remain stable while
 -- keys are stored; borrowed key bytes must remain live and unchanged.
-HashPolicy#(.key: Type: ImplicitlyCopyable): Contract = (
+HashPolicy: Contract = (
+    .key: Type: ImplicitlyCopyable
+
     hash(.self: &Self, .key: key) -> (.hash: UIntNative)
     eql(.self: &Self, .left: key, .right: key) -> (.ok: Bool)
 )
