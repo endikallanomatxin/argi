@@ -407,8 +407,10 @@ pub const Resolver = struct {
         const abstract_use = self.abstractUse(abstract_ty) orelse return null;
         const abstract_decl = abstract_use.declaration;
         const located = self.findAbstractDefinition(abstract_decl) orelse return null;
-        if (located.definition.hasExplicitParticipants()) {
-            self.virtual_signature_failure = .{ .source = self.sourceFor(module_index, reference.source), .method_name = "to_virtual", .reason = "explicit participants require joint virtual evidence, which is not supported yet" };
+        if (located.definition.hasExplicitParticipants() and
+            (located.definition.participants.len != 1 or located.definition.parameters.len != 0 or abstract_use.arguments.len != 0))
+        {
+            self.virtual_signature_failure = .{ .source = self.sourceFor(module_index, reference.source), .method_name = "to_virtual", .reason = if (located.definition.participants.len != 1) "explicit participants require joint virtual evidence, which is not supported yet" else "unary virtual evidence currently requires no associated parameters; use the unbound unary contract" };
             return null;
         }
 
@@ -429,7 +431,13 @@ pub const Resolver = struct {
         };
         const concrete = pointer.child;
         if (!try self.validateVirtualContract(abstract_ty, located, self.sourceFor(module_index, reference.source), pointer.mutability)) return null;
-        if (!self.concreteImplements(concrete, abstract_ty)) {
+        const evidence = if (located.definition.hasExplicitParticipants())
+            try self.selectConformance(abstract_decl, &.{concrete}, null, 0, null)
+        else
+            null;
+        if ((located.definition.hasExplicitParticipants() and evidence == null) or
+            (!located.definition.hasExplicitParticipants() and !self.concreteImplements(concrete, abstract_ty)))
+        {
             self.virtual_signature_failure = .{ .source = self.sourceFor(module_index, reference.source), .method_name = "to_virtual", .reason = "the concrete type does not implement the selected abstract with these associated arguments" };
             return null;
         }
@@ -441,7 +449,12 @@ pub const Resolver = struct {
         const storage = &self.modules[located.module_index].semantic.parameterized_storage;
         for (storage.abstract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len], 0..) |requirement, method_index| {
             const instance = (try self.requirementInstanceForAbstractUse(abstract_use, concrete, located, requirement, @intCast(method_index))) orelse return null;
-            const implementation = self.findConcreteMethod(self.modules[located.module_index].text(requirement.name), instance.input, instance.output) orelse return null;
+            // A virtual table freezes the selected evidence. Scoped operations
+            // never re-enter global overload lookup when a type is erased.
+            const implementation = if (evidence) |selected|
+                try self.resolveOperationBinding(self.graph.contract_conformances.items[selected.tuple], method_index)
+            else
+                self.findConcreteMethod(self.modules[located.module_index].text(requirement.name), instance.input, instance.output) orelse return null;
             if (self.fallibleOutput(instance.output)) try self.core.ensureErrorTracerInput(implementation);
             try methods.append(self.allocator, implementation);
             const erased = (try self.requirementInstanceForAbstractUse(abstract_use, abstract_ty, located, requirement, @intCast(method_index))) orelse return null;
@@ -1032,13 +1045,21 @@ pub const Resolver = struct {
         reach: reach_context.Context,
     ) !?global_sg.Node {
         if (reference.module_path != null or reference.generic_arguments != null) return null;
-        const module = &self.modules[module_index];
+        return self.makeVirtualOperationCall(self.modules[module_index].text(reference.name), null, input, source, reach);
+    }
+
+    fn makeVirtualOperationCall(
+        self: *Resolver,
+        method_name: []const u8,
+        contract: ?global_sg.GlobalDeclId,
+        input: global_sg.GlobalNodeId,
+        source: primitives.SourceRef,
+        reach: reach_context.Context,
+    ) !?global_sg.Node {
         const literal = switch (self.graph.nodes.items[@intFromEnum(input)].content) {
             .struct_value_literal => |item| item,
             else => return null,
         };
-        const method_name = module.text(reference.name);
-
         for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |actual| {
             const actual_ty = self.graph.nodes.items[@intFromEnum(actual.value)].ty orelse continue;
             const pointee = switch (self.graph.types.items[@intFromEnum(actual_ty)]) {
@@ -1050,6 +1071,7 @@ pub const Resolver = struct {
                 else => pointee,
             };
             const abstract_use = self.abstractUse(abstract_ty) orelse continue;
+            if (contract) |declaration| if (declaration != abstract_use.declaration) continue;
             const located = self.findAbstractDefinition(abstract_use.declaration) orelse continue;
             if (!try self.validateVirtualContract(abstract_ty, located, source, null)) return null;
             const parameterized_forms_storage = &self.modules[located.module_index].semantic.parameterized_storage;
@@ -1136,6 +1158,8 @@ pub const Resolver = struct {
         located: LocatedAbstractDefinition,
         bindings: *generic_mod.Resolver.Bindings,
     ) bool {
+        if (located.definition.hasExplicitParticipants())
+            return located.definition.participants.len == 1 and located.definition.parameters.len == 0 and abstract_use.arguments.len == 0;
         self.generics.bindGlobalArguments(located.module_index, located.definition.parameters, abstract_use.arguments, bindings) catch return false;
         return true;
     }
@@ -1497,7 +1521,12 @@ pub const Resolver = struct {
         var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
         defer bindings.deinit(self.allocator);
         if (!self.bindAbstractUseArguments(abstract_use, located, &bindings)) return null;
-        bindImplicitParticipant(located, self_type, &bindings);
+        if (located.definition.hasExplicitParticipants()) {
+            // The unary participant is hidden by this handle. Instantiate its
+            // fixed interface with the erased receiver identity; implementation
+            // signatures are instantiated separately with the concrete type.
+            bindings.types[located.definition.participants.start] = self_type;
+        } else bindImplicitParticipant(located, self_type, &bindings);
         return .{
             .declaration = abstract_use.declaration,
             .method_index = method_index,
@@ -1740,6 +1769,55 @@ pub const Resolver = struct {
         return true;
     }
 
+    // Nominal patterns compare declaration identities and bind arguments in the
+    // declaration's parameter order. Source spelling and module-local IDs do
+    // not identify a nominal family, and named arguments may reorder its inputs.
+    fn nominalPatternArgument(self: *Resolver, module_index: usize, arguments: primitives.Range(ir.ParameterizedGenericArgId), position: usize, name: []const u8) ?ir.GenericArgument {
+        const module = &self.modules[module_index];
+        for (module.semantic.parameterized_storage.ir.generic_arguments.items[arguments.start..][0..arguments.len], 0..) |argument, index| {
+            const actual_name = module.text(argument.name);
+            if ((actual_name.len == 0 and index == position) or std.mem.eql(u8, actual_name, name)) return argument;
+        }
+        return null;
+    }
+
+    fn nominalConcreteArgument(self: *Resolver, arguments: primitives.Range(global_sg.GlobalGenericArgId), position: usize, name: []const u8) ?global_sg.GenericArgument {
+        for (self.graph.generic_arguments.items[arguments.start..][0..arguments.len], 0..) |argument, index| {
+            const actual_name = self.graph.text(argument.name);
+            if ((actual_name.len == 0 and index == position) or std.mem.eql(u8, actual_name, name)) return argument;
+        }
+        return null;
+    }
+
+    fn nominalPatternsCover(self: *Resolver, a: SymbolicPattern, b: SymbolicPattern, substitutions: ?*PatternSubstitutions) !bool {
+        const left = self.modules[a.module].semantic.parameterized_storage.ir.types.items[@intFromEnum(a.ty)].resolved.generic;
+        const right = self.modules[b.module].semantic.parameterized_storage.ir.types.items[@intFromEnum(b.ty)].resolved.generic;
+        const declaration = try self.generics.resolveParameterizedDeclaration(a.module, left.base);
+        if (declaration != try self.generics.resolveParameterizedDeclaration(b.module, right.base)) return false;
+        const located = self.findParameterizedType(declaration) orelse return false;
+        if (left.arguments.len != located.parameterized.parameters.len or right.arguments.len != left.arguments.len) return false;
+        for (0..located.parameterized.parameters.len) |position| {
+            const parameter = self.modules[located.module_index].semantic.parameterized_storage.comptime_parameters.items[located.parameterized.parameters.start + position];
+            const name = self.modules[located.module_index].text(parameter.name);
+            const l = self.nominalPatternArgument(a.module, left.arguments, position, name) orelse return false;
+            const r = self.nominalPatternArgument(b.module, right.arguments, position, name) orelse return false;
+            if (l.value == .type and r.value == .type) {
+                const lp: SymbolicPattern = .{ .module = a.module, .ty = l.value.type };
+                const rp: SymbolicPattern = .{ .module = b.module, .ty = r.value.type };
+                if (substitutions) |mapping| {
+                    if (!try self.patternTypeCovers(lp, rp, mapping)) return false;
+                } else if (!try self.symbolicTypesEqual(lp, rp)) return false;
+            } else if (l.value == .comptime_int and r.value == .comptime_int) {
+                const lp: SymbolicIntPattern = .{ .module = a.module, .expression = l.value.comptime_int };
+                const rp: SymbolicIntPattern = .{ .module = b.module, .expression = r.value.comptime_int };
+                if (substitutions) |mapping| {
+                    if (!try self.patternIntCovers(lp, rp, mapping)) return false;
+                } else if (!self.symbolicIntsEqual(lp, rp)) return false;
+            } else return false;
+        }
+        return true;
+    }
+
     fn symbolicTypesEqual(self: *Resolver, a: SymbolicPattern, b: SymbolicPattern) !bool {
         const left = self.modules[a.module].semantic.parameterized_storage.ir.types.items[@intFromEnum(a.ty)];
         const right = self.modules[b.module].semantic.parameterized_storage.ir.types.items[@intFromEnum(b.ty)];
@@ -1753,6 +1831,8 @@ pub const Resolver = struct {
             if (left.resolved.pointer.mutability != right.resolved.pointer.mutability) return false;
             return self.symbolicTypesEqual(.{ .module = a.module, .ty = left.resolved.pointer.child }, .{ .module = b.module, .ty = right.resolved.pointer.child });
         }
+        if (left == .resolved and right == .resolved and left.resolved == .generic and right.resolved == .generic)
+            return self.nominalPatternsCover(a, b, null);
         var left_bindings = try generic_mod.Resolver.Bindings.init(self.allocator, self.modules[a.module].semantic.parameterized_storage.comptime_parameters.items.len);
         defer left_bindings.deinit(self.allocator);
         var right_bindings = try generic_mod.Resolver.Bindings.init(self.allocator, self.modules[b.module].semantic.parameterized_storage.comptime_parameters.items.len);
@@ -1784,6 +1864,8 @@ pub const Resolver = struct {
             if (ty.resolved.pointer.mutability != other.resolved.pointer.mutability) return false;
             return self.patternTypeCovers(.{ .module = general.module, .ty = ty.resolved.pointer.child }, .{ .module = specific.module, .ty = other.resolved.pointer.child }, substitutions);
         }
+        if (ty == .resolved and other == .resolved and ty.resolved == .generic and other.resolved == .generic)
+            return self.nominalPatternsCover(general, specific, substitutions);
         return self.symbolicTypesEqual(general, specific);
     }
 
@@ -2003,6 +2085,8 @@ pub const Resolver = struct {
             self.participant_conformance_failure = failure;
             return null;
         }
+        if (located.definition.participants.len == 1 and use.arguments.len == 0)
+            return self.makeVirtualOperationCall(name, use.declaration, input, source, context);
         const storage = &self.modules[located.module_index].semantic.parameterized_storage;
         var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
         defer bindings.deinit(self.allocator);
@@ -2776,6 +2860,28 @@ pub const Resolver = struct {
                     if (pointer.mutability != actual_pointer.mutability) return false;
                     return self.inferConstraintTypePattern(module_index, pointer.child, actual_pointer.child, bindings);
                 },
+                .generic => |nominal| {
+                    const concrete = switch (self.graph.types.items[@intFromEnum(actual)]) {
+                        .generic => |value| value,
+                        else => return false,
+                    };
+                    const declaration = try self.generics.resolveParameterizedDeclaration(module_index, nominal.base);
+                    if (declaration != concrete.base) return false;
+                    const located = self.findParameterizedType(declaration) orelse return false;
+                    if (nominal.arguments.len != located.parameterized.parameters.len or concrete.arguments.len != nominal.arguments.len) return false;
+                    for (0..located.parameterized.parameters.len) |position| {
+                        const parameter = self.modules[located.module_index].semantic.parameterized_storage.comptime_parameters.items[located.parameterized.parameters.start + position];
+                        const name = self.modules[located.module_index].text(parameter.name);
+                        const wanted = self.nominalPatternArgument(module_index, nominal.arguments, position, name) orelse return false;
+                        const given = self.nominalConcreteArgument(concrete.arguments, position, name) orelse return false;
+                        if (wanted.value == .type and given.value == .type) {
+                            if (!try self.inferConstraintTypePattern(module_index, wanted.value.type, given.value.type, bindings)) return false;
+                        } else if (wanted.value == .comptime_int and given.value == .comptime_int) {
+                            if (!try self.inferConstraintIntPattern(module_index, wanted.value.comptime_int, given.value.comptime_int, bindings)) return false;
+                        } else return false;
+                    }
+                    return true;
+                },
                 else => {},
             },
             .array => |array| {
@@ -3097,8 +3203,14 @@ pub const Resolver = struct {
         return contract;
     }
 
-    fn isImplicitParticipantType(self: *const Resolver, located: LocatedAbstractDefinition, ty: @import("../module/parameterized/ir.zig").ParameterizedTypeId) bool {
-        const participant = located.definition.implicit_participant orelse return false;
+    fn isUnaryReceiverParticipantType(self: *const Resolver, located: LocatedAbstractDefinition, ty: @import("../module/parameterized/ir.zig").ParameterizedTypeId) bool {
+        // Identify the receiver from the requirement's symbolic participant,
+        // never from coincident concrete argument types. Explicit unary
+        // contracts use the same receiver normalization as implicit Self.
+        const participant = located.definition.implicit_participant orelse if (located.definition.hasExplicitParticipants() and located.definition.participants.len == 1)
+            @as(ir.ComptimeParameterId, @enumFromInt(located.definition.participants.start))
+        else
+            return false;
         const value = self.modules[located.module_index].semantic.parameterized_storage.ir.types.items[@intFromEnum(ty)];
         return value == .parameter and value.parameter == participant;
     }
@@ -3152,7 +3264,7 @@ pub const Resolver = struct {
         for (storage.ir.fields.items[input.start..][0..input.len], 0..) |field, index| {
             const ty = storage.ir.types.items[@intFromEnum(field.ty)];
             if (ty == .resolved and ty.resolved == .pointer and
-                self.isImplicitParticipantType(located, ty.resolved.pointer.child))
+                self.isUnaryReceiverParticipantType(located, ty.resolved.pointer.child))
             {
                 receiver = @intCast(index);
                 break;

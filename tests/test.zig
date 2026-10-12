@@ -12264,3 +12264,31 @@ test "feature_tests/contracts/143X_order_policy_global_operation" {
 test "feature_tests/contracts/144X_hash_policy_global_operation" {
     try buildExpectFailWithoutNoise("tests/feature_tests/contracts/144X_hash_policy_global_operation", "no function named 'hash' exists", "panic");
 }
+
+test "feature_tests/contracts/145_nominal_reader_implementations" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/145_nominal_reader_implementations");
+}
+
+test "feature_tests/contracts/146_nominal_pattern_specificity" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/146_nominal_pattern_specificity");
+}
+
+test "feature_tests/contracts/147X_equivalent_nominal_patterns" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/147X_equivalent_nominal_patterns", "overlapping generic implementations have ambiguous maximal patterns", "panic");
+}
+
+test "feature_tests/contracts/148X_incomparable_nominal_patterns" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/148X_incomparable_nominal_patterns", "overlapping generic implementations have ambiguous maximal patterns", "panic");
+}
+
+test "feature_tests/contracts/149X_scoped_virtual_mutability" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/149X_scoped_virtual_mutability", "a mutable Self receiver requires a mutable concrete reference", "panic");
+}
+
+test "feature_tests/contracts/150_scoped_virtual_writer" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/150_scoped_virtual_writer");
+}
+
+test "feature_tests/contracts/151X_scoped_virtual_receiver_dependencies" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/151X_scoped_virtual_receiver_dependencies", "a storage transition is not permitted by this preservation contract", "_implement$");
+}

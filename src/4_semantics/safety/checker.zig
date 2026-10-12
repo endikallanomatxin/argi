@@ -306,7 +306,7 @@ pub const SafetyChecker = struct {
         contract = try contracts.withOutcomeGuards(self.allocator, contract);
         summary = try summary_engine.refreshOutcomeGuards(self.allocator, summary);
         if (contracts.check(contract, summary)) |failure| {
-            const method_name = self.graph.text(self.graph.declaration(function.declaration).name);
+            const method_name = self.graph.text(self.graph.declarationSourceName(function.declaration));
             if (failure.input) |path| {
                 const input_name = if (path.input_index < function.input.len) self.graph.text(self.graph.fields.items[function.input.start + path.input_index].name) else "implicit input";
                 try self.report(source, "method '{s}' violates its Abstract safety contract: {s} involving input '{s}'", .{ method_name, failure.description(), input_name });

@@ -18,22 +18,27 @@ incomparable maximal candidates are errors; source/import ordering has no priori
 
 ## Implementation order and removal obligations
 
-1. Migrate remaining bundled core/more operations and tests, starting with
-   BorrowedOrderPolicy; OrderPolicy, HashPolicy and BorrowedHashPolicy already
-   use explicit participants and scoped implementations. Replace each implicit
-   receiver contract with explicit participants and each global operation family with scoped
-   implementations. Remove the superseded route as its final consumers move.
+1. Migrate Reader and Writer first, including generic adapters and unary virtual
+   evidence, then ErrorTracer and Allocator. Preserve fallible virtual capability
+   inputs, storage acquisition proofs and cleanup. Unary receiver safety normalization
+   recognizes the original participant parameter; preserve pointer-field dependencies
+   and generation facts when migrating each adapter. Continue with the remaining
+   bundled core/more operations, including BorrowedOrderPolicy.
+   OrderPolicy, HashPolicy and BorrowedHashPolicy already use explicit participants
+   and scoped implementations. Replace each implicit receiver contract with explicit
+   participants and each global operation family with scoped implementations. Remove the superseded route as its final consumers move.
    Resolve unqualified calls by operation identity and participant inference.
    Replace temporary rejections of unqualified OrderPolicy.less and
-   HashPolicy.hash with scoped-identity assertions when that resolution is implemented.
+   HashPolicy.hash with scoped-identity assertions when that resolution is
+   implemented.
    Remove global overload lookup, legacy function declaration adapters,
    `satisfies` and `Abstract` compatibility once their consumers are migrated.
    No long-term parallel overload mechanism is intended.
-2. Add nested nominal pattern matching and named participant arguments when
-   needed by these migrations. Extend symbolic comparison to remaining shapes;
-   current substitution handles type and integer parameter leaves, closed types,
-   references, arrays and repeated-variable equalities. Keep arithmetic expressions
-   conservative without inverse inference. Preserve rejection of equivalent and
+2. Add named participant arguments and extend symbolic comparison to remaining
+   shapes as needed by these migrations. Current substitution handles type and
+   integer parameter leaves, closed types, references, arrays, nominal applications
+   with positional/named arguments and repeated-variable equalities. Keep
+   arithmetic expressions conservative without inverse inference. Preserve rejection of equivalent and
    incomparable maximal patterns. Check duplicate patterns and extension ownership
    even for dormant templates.
 3. Validate newly instantiated evidence during resolution so nested operations
@@ -45,8 +50,9 @@ incomparable maximal candidates are errors; source/import ordering has no priori
 4. Introduce standard Init, Convert, Deinit and operator contracts. Replace the
    old constructor/destructor/operator indexes with explicit operation identities,
    preserving resource initialization, cleanup and capability dependencies.
-5. Route unary virtual construction through selected implementation evidence;
-   support joint packages only with explicit representation and safety proofs.
+5. Extend unary selected virtual evidence to associated parameters and storage
+   domains; the unbound unary case already uses scoped implementations. Support
+   joint packages only with explicit representation and safety proofs.
    Remove the remaining compatibility registry adapters and internal Abstract names.
 
 Each step must leave persisted frontend graphs, speculative rollback, dormant

@@ -156,9 +156,16 @@ including repeated-parameter equalities. Reference matching preserves mutability
 and recursively infers referent parameters.
 Strictly less specific candidates are discarded; equivalent and incomparable
 maximal candidates are ambiguous. Integer substitutions preserve repeated array-length equalities across participants.
-Symbolic arithmetic equivalence, nominal applications and other structural
-patterns, together with unqualified operation inference, remain pending. Standard construction, conversion, destruction
-and operator migration, composition and virtual evidence also remain pending.
+Nominal application patterns match declaration identities and recursively bind
+type and integer arguments in declaration order, including named arguments.
+Symbolic arithmetic equivalence and other structural patterns, together with
+unqualified operation inference, remain pending. Standard construction, conversion, destruction
+and operator migration, composition and joint virtual evidence remain pending.
+Unbound unary contracts with explicit participants and no associated parameters
+can construct virtual handles using selected implementation evidence. Qualified
+virtual calls use `Contract#().operation(...)`; the handle supplies the hidden
+participant. Their tables reuse the existing representation and declared safety
+checks, including mutable receiver permissions and fallible capability inputs.
 Bundled OrderPolicy uses explicit policy and element participants, scoped inline
 implementations and qualified calls throughout sort, binary search and priority
 queues. Its former global less functions and unary conformance declarations have
