@@ -979,6 +979,15 @@ test "scoped implementation evidence retains call and source identities" {
     defer tree.deinit(allocator);
     var module = try @import("semantizer.zig").build(allocator, "scoped", &.{.{ .path = "scoped/main.rg", .tree = &tree, .source = source }});
     defer module.graph.deinit(allocator);
+    const storage = &module.graph.semantic.parameterized_storage;
+    try std.testing.expectEqual(@as(usize, 2), storage.contract_conformances.items.len);
+    for (storage.contract_conformances.items) |conformance| {
+        try std.testing.expectEqual(@as(u32, 2), conformance.participants.len);
+        for (storage.ir.generic_arguments.items[conformance.participants.start..][0..conformance.participants.len]) |argument| {
+            try std.testing.expect(argument.value == .type);
+            try std.testing.expect(storage.ir.types.items[@intFromEnum(argument.value.type)] == .concrete);
+        }
+    }
     var result = try @import("../global/semantizer.zig").semantize(allocator, &.{module.graph});
     defer result.graph.deinit(allocator);
     try @import("../global/verify.zig").verifyGlobal(&result.graph);

@@ -102,6 +102,7 @@ const Context = struct {
     }
 
     fn lowerConformance(self: *Context, node: syn.NodeIndex, relation: syn.ContractConformance) !void {
+        self.params.clearRetainingCapacity();
         if (hasParams(relation.generic_params, relation.generic_params_struct))
             try self.conformanceError(node, "generic participant conformances are not supported yet");
         const syntax_type = self.tree.syntaxType(relation.contract_type) orelse return error.ExpectedContractType;
@@ -113,7 +114,7 @@ const Context = struct {
         const participants = try self.lowerConformanceArguments(if (syntax_type == .generic) syntax_type.generic.arguments else null);
         var operations: primitives.Range(parameterized_storage.ContractOperationId) = .{ .start = 0, .len = 0 };
         const associated = if (relation.implementation_members) |members| blk: {
-            var arguments: std.ArrayList(entities.GenericArgument) = .empty;
+            var arguments: std.ArrayList(ir.GenericArgument) = .empty;
             defer arguments.deinit(self.allocator);
             const operation_start: u32 = @intCast(self.graph.semantic.parameterized_storage.contract_operations.items.len);
             for (self.tree.structTypeLiteral(members).?.fields) |member_node| {
@@ -124,10 +125,10 @@ const Context = struct {
                     const kind = self.tree.syntaxType(annotation) orelse return error.InvalidContractArgument;
                     if (kind != .name) try self.conformanceError(member_node, "associated implementation elements require Type or Int annotations");
                     const kind_name = self.tree.tokenTextFromSource(self.source, kind.name.name_token);
-                    const argument: entities.GenericArgument.Value = if (std.mem.eql(u8, kind_name, "Type"))
-                        .{ .type = try self.lowerModuleType(value) }
+                    const argument: ir.GenericArgument.Value = if (std.mem.eql(u8, kind_name, "Type"))
+                        .{ .type = try self.lowerConformanceType(value) }
                     else if (std.mem.eql(u8, kind_name, "Int"))
-                        .{ .comptime_int = try self.evalInt(value) }
+                        .{ .comptime_int = try self.lowerConformanceInt(value) }
                     else {
                         try self.conformanceError(member_node, "associated implementation elements require Type or Int annotations");
                         unreachable;
@@ -183,9 +184,7 @@ const Context = struct {
                 });
             }
             operations = .{ .start = operation_start, .len = @intCast(self.graph.semantic.parameterized_storage.contract_operations.items.len - operation_start) };
-            const argument_start: u32 = @intCast(@import("views.zig").genericArgumentCount(self.graph));
-            for (arguments.items) |argument| _ = try self.writer.addGenericArgument(argument);
-            break :blk entities.GenericArgRange{ .start = argument_start, .len = @intCast(arguments.items.len) };
+            break :blk try self.publishConformanceArguments(arguments.items);
         } else try self.lowerConformanceArguments(relation.associated_arguments);
         try self.graph.semantic.parameterized_storage.contract_conformances.append(self.allocator, .{
             .explicit_operations = relation.implementation_members != null,
@@ -197,16 +196,16 @@ const Context = struct {
         });
     }
 
-    fn lowerConformanceArguments(self: *Context, optional: ?syn.NodeIndex) !entities.GenericArgRange {
-        var arguments: std.ArrayList(entities.GenericArgument) = .empty;
+    fn lowerConformanceArguments(self: *Context, optional: ?syn.NodeIndex) !primitives.Range(ir.ParameterizedGenericArgId) {
+        var arguments: std.ArrayList(ir.GenericArgument) = .empty;
         defer arguments.deinit(self.allocator);
         if (optional) |node| {
             for (self.tree.structTypeLiteral(node).?.fields) |field_node| {
                 const field = self.tree.structTypeField(field_node).?;
-                const value: entities.GenericArgument.Value = if (field.type_node) |type_node|
-                    .{ .type = try self.lowerModuleType(type_node) }
+                const value: ir.GenericArgument.Value = if (field.type_node) |type_node|
+                    .{ .type = try self.lowerConformanceType(type_node) }
                 else if (field.default_value) |value_node|
-                    .{ .comptime_int = try self.evalInt(value_node) }
+                    .{ .comptime_int = try self.lowerConformanceInt(value_node) }
                 else
                     return error.InvalidContractArgument;
                 try arguments.append(self.allocator, .{
@@ -215,9 +214,35 @@ const Context = struct {
                 });
             }
         }
-        const start: u32 = @intCast(@import("views.zig").genericArgumentCount(self.graph));
-        for (arguments.items) |argument| _ = try self.writer.addGenericArgument(argument);
-        return .{ .start = start, .len = @intCast(arguments.items.len) };
+        return self.publishConformanceArguments(arguments.items);
+    }
+
+    fn publishConformanceArguments(self: *Context, arguments: []const ir.GenericArgument) !primitives.Range(ir.ParameterizedGenericArgId) {
+        const pool = &self.graph.semantic.parameterized_storage.ir.generic_arguments;
+        const start: u32 = @intCast(pool.items.len);
+        try pool.appendSlice(self.allocator, arguments);
+        return .{ .start = start, .len = @intCast(arguments.len) };
+    }
+
+    fn lowerConformanceType(self: *Context, node: syn.NodeIndex) !ir.ParameterizedTypeId {
+        // Closed definitions retain unresolved module projections until all
+        // conformance evidence is published. Generic patterns use the same IR
+        // pool, with parameter leaves instead of concrete module type leaves.
+        const pool = &self.graph.semantic.parameterized_storage.ir.types;
+        const ty = try self.lowerModuleType(node);
+        const index: u32 = @intCast(pool.items.len);
+        try pool.append(self.allocator, .{ .concrete = ty });
+        return @enumFromInt(index);
+    }
+
+    fn lowerConformanceInt(self: *Context, node: syn.NodeIndex) !ir.ParameterizedIntExprId {
+        var lowerer = self.parameterizedContext();
+        defer lowerer.bindings.deinit();
+        const value = try lowerer.lowerGenericValue(node, false);
+        return switch (value) {
+            .comptime_int => |integer| integer,
+            .type => error.InvalidContractArgument,
+        };
     }
 
     fn lowerImplementation(self: *Context, node: syn.NodeIndex, relation: syn.AbstractImplements) !void {

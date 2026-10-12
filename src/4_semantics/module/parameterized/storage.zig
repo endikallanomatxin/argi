@@ -121,8 +121,8 @@ pub const ContractConformance = struct {
     explicit_operations: bool = false,
     operations: primitives.Range(ContractOperationId) = .{ .start = 0, .len = 0 },
     contract_ref: DeclarationRef,
-    participants: entities.GenericArgRange,
-    associated_arguments: entities.GenericArgRange,
+    participants: primitives.Range(ir.ParameterizedGenericArgId),
+    associated_arguments: primitives.Range(ir.ParameterizedGenericArgId),
     source: primitives.SourceRef,
 };
 

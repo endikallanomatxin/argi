@@ -18,8 +18,8 @@ incomparable maximal candidates are errors; source/import ordering has no priori
 
 ## Implementation order and removal obligations
 
-1. Replace concrete-only participant and associated argument storage with one
-   parameterized conformance representation. Lower implementation binders and
+1. Use the shared parameterized conformance argument representation to lower
+   implementation binders and
    preserve their relationships in participant patterns, associated definitions
    and inline function templates. Match candidates from participants, then rank
    patterns by strict structural subsumption, including repeated-variable

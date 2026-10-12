@@ -179,8 +179,8 @@ pub fn verifyParameterizedForms(graph: *const graph_mod.ModuleSemanticGraph) !vo
 
     for (storage.contract_conformances.items) |conformance| {
         try declarationRef(graph, conformance.contract_ref);
-        try require(verify.rangeFits(conformance.participants, views.genericArgumentCount(graph)));
-        try require(verify.rangeFits(conformance.associated_arguments, views.genericArgumentCount(graph)));
+        try require(verify.rangeFits(conformance.participants, storage.ir.generic_arguments.items.len));
+        try require(verify.rangeFits(conformance.associated_arguments, storage.ir.generic_arguments.items.len));
         try require(verify.rangeFits(conformance.operations, storage.contract_operations.items.len));
         try require(verify.sourceFits(conformance.source, graph.file_offsets.items.len));
     }

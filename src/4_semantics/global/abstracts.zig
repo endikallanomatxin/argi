@@ -1902,13 +1902,15 @@ pub const Resolver = struct {
                 const storage = &self.modules[located.module_index].semantic.parameterized_storage;
                 var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
                 defer bindings.deinit(self.allocator);
-                const participants = try self.generics.relocateModuleArguments(module_index, conformance.participants);
+                var implementation_bindings = try generic_mod.Resolver.Bindings.init(self.allocator, module.semantic.parameterized_storage.comptime_parameters.items.len);
+                defer implementation_bindings.deinit(self.allocator);
+                const participants = try self.generics.instantiateParameterizedArguments(module_index, conformance.participants, &implementation_bindings);
                 self.generics.bindGlobalArguments(located.module_index, located.definition.participants, participants, &bindings) catch |err| {
                     failure.reason = conformanceArgumentFailure(err) orelse return err;
                     self.participant_conformance_failure = failure;
                     return;
                 };
-                const associated = try self.generics.relocateModuleArguments(module_index, conformance.associated_arguments);
+                const associated = try self.generics.instantiateParameterizedArguments(module_index, conformance.associated_arguments, &implementation_bindings);
                 self.generics.bindGlobalArguments(located.module_index, located.definition.parameters, associated, &bindings) catch |err| {
                     failure.reason = conformanceArgumentFailure(err) orelse return err;
                     self.participant_conformance_failure = failure;
