@@ -1,13 +1,13 @@
 -- A minimum heap with borrowed strict-weak ordering. Equivalent values have
 -- unspecified removal order. Policy state must remain stable while populated.
-PriorityQueue#(.t: Type: ImplicitlyCopyable, .order: Type: OrderPolicy#(.t: t)): Type = (
+PriorityQueue#(.t: Type: ImplicitlyCopyable, .order: Type: OrderPolicy#(order, t)): Type = (
     ._items : DynamicArray#(.t: t),
     ._order : &order
 )
 
 PriorityQueue init#(
         .t     : Type: ImplicitlyCopyable,
-        .order : Type: OrderPolicy#(.t: t)
+        .order : Type: OrderPolicy#(order, t)
     )(
         .order     : &order,
         .allocator : $&Allocator,
@@ -23,7 +23,7 @@ PriorityQueue init#(
 
 PriorityQueue deinit#(
         .t     : Type: ImplicitlyCopyable,
-        .order : Type: OrderPolicy#(.t: t)
+        .order : Type: OrderPolicy#(order, t)
     )(
         .self      : $&PriorityQueue#(.t: t, .order: order),
         .allocator : $&Allocator
@@ -34,7 +34,7 @@ PriorityQueue deinit#(
 
 length#(
         .t     : Type: ImplicitlyCopyable,
-        .order : Type: OrderPolicy#(.t: t)
+        .order : Type: OrderPolicy#(order, t)
     )(
         .self : &PriorityQueue#(.t: t, .order: order)
     ) -> (
@@ -43,7 +43,7 @@ length#(
 
 push#(
         .t     : Type: ImplicitlyCopyable,
-        .order : Type: OrderPolicy#(.t: t)
+        .order : Type: OrderPolicy#(order, t)
     )(
         .self      : $&PriorityQueue#(.t: t, .order: order),
         .value     : t,
@@ -59,7 +59,7 @@ push#(
         parent ::= [child - 1] / 2
         a ::= unwrap_or_abort(.value = get_ro_ref(&self&._items, .index = child))&
         b ::= unwrap_or_abort(.value = get_ro_ref(&self&._items, .index = parent))&
-        if less(self&._order, .left = a, .right = b).ok == false { return }
+        if OrderPolicy#(order, t).less(self&._order, .left = a, .right = b).ok == false { return }
         _swap_indexed_values#(.t: t)($&self&._items, .left = child, .right = parent)
         child = parent
     }
@@ -67,7 +67,7 @@ push#(
 
 peek#(
         .t     : Type: ImplicitlyCopyable,
-        .order : Type: OrderPolicy#(.t: t)
+        .order : Type: OrderPolicy#(order, t)
     )(
         .self : &PriorityQueue#(.t: t, .order: order)
     ) -> (
@@ -81,7 +81,7 @@ peek#(
 
 pop#(
         .t     : Type: ImplicitlyCopyable,
-        .order : Type: OrderPolicy#(.t: t)
+        .order : Type: OrderPolicy#(order, t)
     )(
         .self : $&PriorityQueue#(.t: t, .order: order)
     ) -> (
@@ -103,11 +103,16 @@ pop#(
             right ::= unwrap_or_abort(
                 .value = get_ro_ref(&self&._items, .index = child + 1)
             )&
-            if less(self&._order, .left = right, .right = left).ok { child = child + 1 }
+            if OrderPolicy#(order, t).less(self&._order, .left = right, .right = left).ok {
+                child = [
+                    child
+                    + 1
+                ]
+            }
         }
         a ::= unwrap_or_abort(.value = get_ro_ref(&self&._items, .index = child))&
         b ::= unwrap_or_abort(.value = get_ro_ref(&self&._items, .index = root))&
-        if less(self&._order, .left = a, .right = b).ok == false { return }
+        if OrderPolicy#(order, t).less(self&._order, .left = a, .right = b).ok == false { return }
         _swap_indexed_values#(.t: t)($&self&._items, .left = root, .right = child)
         root = child
     }

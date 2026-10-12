@@ -2688,6 +2688,17 @@ pub const Resolver = struct {
         };
     }
 
+    pub fn constraintArgumentsKnown(self: *Resolver, module_index: usize, constraint_id: parameterized_storage.AbstractConstraintId, bindings: *generic_mod.Resolver.Bindings) !bool {
+        const constraint = self.modules[module_index].semantic.parameterized_storage.abstract_constraints.items[@intFromEnum(constraint_id)];
+        const definition = self.findAbstractDefinition(try self.constraintDeclaration(module_index, constraint_id)) orelse return false;
+        if (!definition.definition.hasExplicitParticipants()) return true;
+        _ = self.generics.instantiateParameterizedArguments(module_index, constraint.arguments, bindings) catch |err| {
+            if (err == error.OutOfMemory) return err;
+            return false;
+        };
+        return true;
+    }
+
     pub fn inferConstraintBindings(
         self: *Resolver,
         module_index: usize,
@@ -2699,6 +2710,20 @@ pub const Resolver = struct {
         const storage = &module.semantic.parameterized_storage;
         const constraint = storage.abstract_constraints.items[@intFromEnum(constraint_id)];
         const abstract_decl = try self.constraintDeclaration(module_index, constraint_id);
+        const definition = self.findAbstractDefinition(abstract_decl) orelse return false;
+        if (definition.definition.hasExplicitParticipants()) {
+            const arguments = self.generics.instantiateParameterizedArguments(module_index, constraint.arguments, bindings) catch |err| {
+                if (err == error.OutOfMemory) return err;
+                return false;
+            };
+            var selected = try generic_mod.Resolver.Bindings.init(self.allocator, self.modules[definition.module_index].semantic.parameterized_storage.comptime_parameters.items.len);
+            defer selected.deinit(self.allocator);
+            try self.generics.bindGlobalArguments(definition.module_index, definition.definition.participants, arguments, &selected);
+            const participants = try self.allocator.alloc(global_sg.GlobalTypeId, definition.definition.participants.len);
+            defer self.allocator.free(participants);
+            for (participants, 0..) |*participant, position| participant.* = selected.types[definition.definition.participants.start + position] orelse return false;
+            return try self.selectConformance(abstract_decl, participants, null, 0, null) != null;
+        }
         if (!try self.implementsDepth(concrete, abstract_decl, 0)) return false;
         if (constraint.arguments.len == 0) return true;
         const located = self.findAbstractDefinition(abstract_decl) orelse return false;
@@ -2921,10 +2946,8 @@ pub const Resolver = struct {
                 const param_raw = parameterized.parameters.start + @as(u32, @intCast(offset));
                 const parameter = module.semantic.parameterized_storage.comptime_parameters.items[param_raw];
                 const constraint_id = parameter.constraint orelse continue;
-                const constraint = module.semantic.parameterized_storage.abstract_constraints.items[@intFromEnum(constraint_id)];
-                const abstract_decl = try self.resolveDeclarationRef(module_index, constraint.abstract_ref, .abstract_type);
                 const concrete = bindings.types[param_raw] orelse return error.AbstractConstraintRequiresTypeParameter;
-                const satisfied = try self.implements(concrete, abstract_decl);
+                const satisfied = try self.inferConstraintBindings(module_index, constraint_id, concrete, &bindings);
                 if (!satisfied) return error.GenericAbstractConstraintNotSatisfied;
             }
         }

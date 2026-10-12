@@ -252,7 +252,8 @@ implement reversal would duplicate ownership.
 
 ## Ordering policies
 
-`OrderPolicy<T>` provides `less(.self, .left, .right) -> Bool` for implicitly
+`OrderPolicy#(Policy, T)` provides the static operation
+`OrderPolicy#(Policy, T).less(.self, .left, .right) -> (.ok: Bool)` for implicitly
 copyable elements. It defines a strict weak order: no value is less than
 itself, less-than is transitive, and equivalence is transitive. Two elements
 are equivalent when neither is less than the other; this need not coincide
@@ -261,7 +262,8 @@ with their `==` operator or complete record equality.
 Algorithms borrow a policy instance explicitly as `.order`. Its answers must
 remain consistent throughout an operation, and it must not mutate the
 collection or the backing data used for comparison. Applications can supply
-descending orders and comparisons by selected record fields.
+descending orders and comparisons by selected record fields through `implement`
+declarations. Policies no longer provide global `less` overloads.
 
 Core supplies `Int32OrderPolicy`, `UIntNativeOrderPolicy`, and
 `StringViewOrderPolicy`. String views use lexicographic unsigned-byte order,

@@ -922,6 +922,7 @@ pub const Resolver = struct {
         var made_progress = true;
         while (made_progress) {
             made_progress = false;
+            var failed = false;
             var before: usize = 0;
             for (parameters.start..parameters.start + parameters.len) |raw| {
                 const parameter = storage.comptime_parameters.items[raw];
@@ -943,12 +944,13 @@ pub const Resolver = struct {
                     // parameters. Their existing argument diagnostic names the
                     // source input, so do not expose compiler parameter names.
                     if (self.constraint_diagnostics != null and
+                        try abstracts.constraintArgumentsKnown(module_index, constraint_id, bindings) and
                         !std.mem.startsWith(u8, self.modules[module_index].text(parameter.name), "__abstract_")) self.failed_constraint = .{
                         .abstract_decl = try abstracts.constraintDeclaration(module_index, constraint_id),
                         .actual = concrete,
                         .parameter_name = self.modules[module_index].text(parameter.name),
                     };
-                    return false;
+                    failed = true;
                 }
             }
 
@@ -961,6 +963,7 @@ pub const Resolver = struct {
                 };
             }
             made_progress = after > before;
+            if (!made_progress and failed) return false;
         }
 
         // Every bound constraint was checked in the last no-progress round.
@@ -971,6 +974,7 @@ pub const Resolver = struct {
             if (parameter.kind != .type) return false;
             if (bindings.types[raw] == null) return false;
         }
+        self.failed_constraint = null;
         return true;
     }
 

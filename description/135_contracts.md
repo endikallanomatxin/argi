@@ -159,7 +159,14 @@ maximal candidates are ambiguous. Integer substitutions preserve repeated array-
 Symbolic arithmetic equivalence, nominal applications and other structural
 patterns, together with unqualified operation inference, remain pending. Standard construction, conversion, destruction
 and operator migration, composition and virtual evidence also remain pending.
+Bundled OrderPolicy uses explicit policy and element participants, scoped inline
+implementations and qualified calls throughout sort, binary search and priority
+queues. Its former global less functions and unary conformance declarations have
+been removed. Sort, binary_search and _sift_down use unique ordinary declarations.
+Generic function instance validation shares the same tuple-aware contract check
+used during selection.
+
 The compiler still contains transitional global overload resolution and earlier
-conformance syntax. Removal obligations are tracked in
+conformance syntax for other contracts. Removal obligations are tracked in
 `plan/contract_dispatch_refactor.md`; existing `Abstract`/`satisfies` adapters are
 not part of the intended final language.

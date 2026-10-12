@@ -18,25 +18,29 @@ incomparable maximal candidates are errors; source/import ordering has no priori
 
 ## Implementation order and removal obligations
 
-1. Extend participant pattern matching to nested nominal applications and named
-   participant arguments. Extend comparison to remaining structural shapes;
-   the current substitution handles type and integer parameter leaves, closed
-   types, references, arrays and repeated-variable equalities. Keep arithmetic
-   expressions conservative without introducing inverse constraint inference. Preserve the
-   rejection of equivalent and incomparable maximal patterns.
-   Check duplicate patterns and extension ownership even for dormant templates.
-2. Validate newly instantiated evidence during resolution so nested operations
+1. Migrate remaining bundled core/more operations and tests, starting with
+   HashPolicy and BorrowedOrderPolicy. Replace each implicit receiver contract
+   with explicit participants and each global operation family with scoped
+   implementations. Remove the superseded route as its final consumers move.
+   Resolve unqualified calls by operation identity and participant inference.
+   Replace the temporary rejection of unqualified OrderPolicy.less with a
+   scoped-identity assertion when that resolution is implemented.
+   Remove global overload lookup, legacy function declaration adapters,
+   `satisfies` and `Abstract` compatibility once their consumers are migrated.
+   No long-term parallel overload mechanism is intended.
+2. Add nested nominal pattern matching and named participant arguments when
+   needed by these migrations. Extend symbolic comparison to remaining shapes;
+   current substitution handles type and integer parameter leaves, closed types,
+   references, arrays and repeated-variable equalities. Keep arithmetic expressions
+   conservative without inverse inference. Preserve rejection of equivalent and
+   incomparable maximal patterns. Check duplicate patterns and extension ownership
+   even for dormant templates.
+3. Validate newly instantiated evidence during resolution so nested operations
    and requirements reach the same fixed point as ordinary calls. Infer generic
-   alias arguments from selected input signatures,
-   without selecting by return type. Enforce extension ownership from nominal
-   participant families; migrate generic constraints/composition without changing
-   operation identities.
-3. Resolve unqualified calls by operation identity and participant inference.
-   Migrate bundled core/more operations and tests. Remove global overload lookup,
-   legacy function declaration adapters, `satisfies` and `Abstract` compatibility.
-   No long-term parallel overload mechanism is intended. Give editor references
-   and rename actions operation targets distinct from their implementation bodies;
-   current navigation follows bodies and rename is disabled for those targets.
+   alias arguments from selected inputs without selecting by return type.
+   Preserve extension ownership and composition operation identities. Give editor
+   references and rename actions operation targets distinct from implementation
+   bodies; current navigation follows bodies and rename is disabled for them.
 4. Introduce standard Init, Convert, Deinit and operator contracts. Replace the
    old constructor/destructor/operator indexes with explicit operation identities,
    preserving resource initialization, cleanup and capability dependencies.
