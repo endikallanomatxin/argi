@@ -12,7 +12,6 @@ pub fn lower(
     allocator: std.mem.Allocator,
     graph: *graph_mod.ModuleSemanticGraph,
     files: []const graph_mod.FileInput,
-    diagnostics: ?*@import("../../1_base/diagnostic.zig").Diagnostics,
 ) !Stats {
     var writer = writer_mod.Writer.init(allocator, graph);
     var stats: Stats = .{};
@@ -25,6 +24,14 @@ pub fn lower(
             if (call.type_arguments.len == 0 and call.type_arguments_struct == null) continue;
             const source_offset = file.tree.location(node).offset;
             const external = findCallReference(graph, file_index, source_offset) orelse continue;
+            if (call.type_arguments_struct) |literal| {
+                if (containsProjection(file.tree, literal)) {
+                    const arguments = try @import("parameterized/lowerer.zig").lowerConcreteArguments(graph, &writer, file_index, file.tree, file.source, literal);
+                    graph.semantic.external_refs.items[@intFromEnum(external)].computed_arguments = arguments;
+                    stats.generic_calls += 1;
+                    continue;
+                }
+            }
             // Lower nested types first, then publish one contiguous argument
             // range. Their own arguments share this pool but belong elsewhere.
             var arguments = std.array_list.Managed(entities.GenericArgument).init(allocator);
@@ -37,15 +44,7 @@ pub fn lower(
                     const value: entities.GenericArgument.Value = if (field.type_node) |type_node|
                         .{ .type = try lowerType(graph, &writer, file, file_index, type_node) }
                     else if (field.default_value) |value_node|
-                        .{ .comptime_int = evalInt(file.tree, file.source, value_node) catch |err| {
-                            if (err == error.AssociatedConstantCallArgumentUnsupported) {
-                                if (diagnostics) |bag| {
-                                    try bag.add(file.tree.location(value_node), .semantic, "associated constant arguments in concrete calls are not supported yet; use a generic wrapper", .{});
-                                    return error.Reported;
-                                }
-                            }
-                            return err;
-                        } }
+                        .{ .comptime_int = try evalInt(file.tree, file.source, value_node) }
                     else
                         return error.InvalidGenericCallArgument;
                     try arguments.append(.{ .name = name, .value = value });
@@ -95,8 +94,6 @@ fn lowerType(
 }
 
 fn evalInt(tree: *const syn.FileSyntaxTree, source: []const u8, node: syn.NodeIndex) !i64 {
-    // TODO: retain concrete call integer expressions until global tuple resolution.
-    if (tree.tag(node) == .associated_type_projection) return error.AssociatedConstantCallArgumentUnsupported;
     if (tree.literal(node)) |literal| {
         var value = try std.fmt.parseInt(i64, tree.tokenTextFromSource(source, literal.token), 0);
         if (literal.negative) value = -value;
@@ -117,6 +114,16 @@ fn evalInt(tree: *const syn.FileSyntaxTree, source: []const u8, node: syn.NodeIn
 
 test "generic call arguments live on semantic external refs" {
     // Both the qualifier and generic argument range carry optional presence.
-    // Associated projections retain a base or an anonymous compile-time type.
-    try std.testing.expect(@sizeOf(entities.ExternalRef) <= 60);
+    // Associated queries retain symbolic type and call arguments.
+    try std.testing.expect(@sizeOf(entities.ExternalRef) <= 72);
+}
+
+fn containsProjection(tree: *const syn.FileSyntaxTree, node: syn.NodeIndex) bool {
+    if (tree.tag(node) == .associated_type_projection) return true;
+    if (tree.binaryOperation(node)) |operation| return containsProjection(tree, operation.lhs) or containsProjection(tree, operation.rhs);
+    if (tree.structTypeLiteral(node)) |literal| for (literal.fields) |field_node| {
+        const field = tree.structTypeField(field_node) orelse continue;
+        if (field.default_value) |value| if (containsProjection(tree, value)) return true;
+    };
+    return false;
 }

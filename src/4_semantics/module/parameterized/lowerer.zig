@@ -91,6 +91,42 @@ pub fn lowerConcreteTypeExpression(graph: *graph_mod.ModuleSemanticGraph, writer
     return context.lowerType(node, false);
 }
 
+pub fn lowerConcreteArguments(graph: *graph_mod.ModuleSemanticGraph, writer: *writer_mod.Writer, file_index: u32, tree: *const syn.FileSyntaxTree, source: []const u8, node: syn.NodeIndex) !primitives.Range(ir.ParameterizedGenericArgId) {
+    var context = Context{
+        .allocator = writer.allocator,
+        .graph = graph,
+        .files = &.{},
+        .writer = writer.*,
+        .parameters = std.array_list.Managed(ParameterBinding).init(writer.allocator),
+        .abstract_parameters = std.array_list.Managed(AbstractParameterBinding).init(writer.allocator),
+        .bindings = std.array_list.Managed(BindingName).init(writer.allocator),
+        .file_index = file_index,
+        .tree = tree,
+        .source = source,
+    };
+    defer context.parameters.deinit();
+    defer context.abstract_parameters.deinit();
+    defer context.bindings.deinit();
+    const literal = tree.structTypeLiteral(node) orelse return error.InvalidGenericCallArguments;
+    var arguments: std.ArrayList(ir.GenericArgument) = .empty;
+    defer arguments.deinit(writer.allocator);
+    for (literal.fields) |field_node| {
+        const field = tree.structTypeField(field_node) orelse return error.InvalidGenericCallArgument;
+        try arguments.append(writer.allocator, .{
+            .name = try writer.addString(tree.tokenTextFromSource(source, field.name_token)),
+            .value = if (field.type_node) |ty|
+                .{ .type = try context.lowerType(ty, false) }
+            else if (field.default_value) |value|
+                try context.lowerGenericValue(value, false)
+            else
+                return error.InvalidGenericCallArgument,
+        });
+    }
+    const start: u32 = @intCast(graph.semantic.parameterized_storage.ir.generic_arguments.items.len);
+    try graph.semantic.parameterized_storage.ir.generic_arguments.appendSlice(writer.allocator, arguments.items);
+    return .{ .start = start, .len = @intCast(arguments.items.len) };
+}
+
 pub fn needsLinkedLowering(
     graph: *const graph_mod.ModuleSemanticGraph,
     files: []const graph_mod.FileInput,

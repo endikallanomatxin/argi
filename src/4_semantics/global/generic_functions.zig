@@ -482,10 +482,10 @@ pub const Resolver = struct {
         value: anytype,
     ) !resolution.Result {
         const reference = module.semantic.external_refs.items[@intFromEnum(value.callee)];
-        const local_args = reference.generic_arguments;
+        const arguments = try self.generics.resolveCallArguments(module_index, reference);
         const name = module.text(reference.name);
         const input = globalizer.globalNode(o, value.input);
-        if (local_args == null and reference.module_path == null) {
+        if (arguments == null and reference.module_path == null) {
             const conversion_reach = ReachInferenceContext.fromModule(module, o, value.visible_bindings, value.owner_function);
             if (try self.makeIntegerConversion(name, input, self.sourceFor(module_index, reference.source), conversion_reach)) |node| {
                 self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = node;
@@ -493,7 +493,7 @@ pub const Resolver = struct {
                 return .resolved;
             }
         }
-        if (local_args == null and reference.module_path == null and std.mem.eql(u8, name, "UIntNative")) {
+        if (arguments == null and reference.module_path == null and std.mem.eql(u8, name, "UIntNative")) {
             const node = (try self.makeAddressConversion(input, self.sourceFor(module_index, reference.source))) orelse return .deferred;
             self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = node;
             self.stats.calls += 1;
@@ -523,8 +523,8 @@ pub const Resolver = struct {
             defer {
                 if (self.profile_io) |io| self.profile_source_selection_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - started;
             }
-            break :blk if (local_args) |args|
-                self.resolveExplicitGenericFunction(module_index, module, reference, try self.generics.relocateModuleArguments(module_index, args), input, reach) catch |err| switch (err) {
+            break :blk if (arguments) |args|
+                self.resolveExplicitGenericFunction(module_index, module, reference, args, input, reach) catch |err| switch (err) {
                     error.NoMatchingGenericFunction => return .not_applicable,
                     error.DeferredGenericFunction => return .deferred,
                     error.AmbiguousGenericFunction => return .invalid,
@@ -1356,8 +1356,7 @@ pub const Resolver = struct {
         // TODO: Preserve selected-body instantiation failures separately from
         // selection failures, so rejected bounds do not hide a nested error.
         const selected = selection: {
-            if (reference.generic_arguments) |arguments| {
-                const relocated = try self.generics.relocateModuleArguments(current_module, arguments);
+            if (try self.generics.resolveCallArguments(current_module, reference)) |relocated| {
                 _ = self.resolveExplicitGenericFunction(current_module, module, reference, relocated, input, reach) catch break :selection false;
             } else {
                 _ = self.resolveImplicitGenericFunction(current_module, module, reference, input, reach) catch break :selection false;

@@ -475,6 +475,24 @@ pub const Resolver = struct {
         };
     }
 
+    pub fn resolveCallArguments(self: *Resolver, module_index: usize, reference: module_entities.ExternalRef) !?primitives.Range(global_sg.GlobalGenericArgId) {
+        if (reference.computed_arguments) |arguments| {
+            var bindings = try Bindings.init(self.allocator, self.modules[module_index].semantic.parameterized_storage.comptime_parameters.items.len);
+            defer bindings.deinit(self.allocator);
+            return self.instantiateParameterizedArguments(module_index, arguments, &bindings, null) catch |err| {
+                switch (err) {
+                    error.UnknownGlobalDeclaration => self.recordComptimeFailure(module_index, reference.source, "unknown or inaccessible type or contract in compile-time call arguments"),
+                    error.UnknownModuleReference => self.recordComptimeFailure(module_index, reference.source, "unknown module in compile-time call arguments"),
+                    error.AmbiguousGlobalDeclaration, error.AmbiguousModuleReference => self.recordComptimeFailure(module_index, reference.source, "ambiguous type or module in compile-time call arguments"),
+                    else => {},
+                }
+                return err;
+            };
+        }
+        if (reference.generic_arguments) |arguments| return try self.relocateModuleArguments(module_index, arguments);
+        return null;
+    }
+
     pub fn instantiateParameterizedArguments(
         self: *Resolver,
         module_index: usize,

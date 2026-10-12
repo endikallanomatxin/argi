@@ -163,6 +163,7 @@ pub const ExternalRef = struct {
     module_path: ?primitives.StringRange,
     name: primitives.StringRange,
     generic_arguments: ?GenericArgRange = null,
+    computed_arguments: ?primitives.Range(@import("parameterized/ir.zig").ParameterizedGenericArgId) = null,
     projection_base: ?ModuleTypeId = null,
     computed_type: ?@import("parameterized/ir.zig").ParameterizedTypeId = null,
     source: primitives.SourceRef,

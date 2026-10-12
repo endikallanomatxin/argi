@@ -92,6 +92,8 @@ pub fn verifyModule(graph: *const graph_mod.ModuleSemanticGraph) !void {
         if (reference.module_path) |path| try require(verify.stringFits(path, graph.strings.items));
         try require(verify.optionalIdFits(reference.projection_base, views.typeCount(graph)));
         try require(verify.optionalIdFits(reference.computed_type, graph.semantic.parameterized_storage.ir.types.items.len));
+        if (reference.computed_arguments) |arguments|
+            try require(verify.rangeFits(arguments, graph.semantic.parameterized_storage.ir.generic_arguments.items.len));
         if (reference.generic_arguments) |arguments|
             try require(verify.rangeFits(arguments, views.genericArgumentCount(graph)));
         try require(verify.sourceFits(reference.source, graph.file_offsets.items.len));

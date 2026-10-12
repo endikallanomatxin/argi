@@ -255,8 +255,8 @@ pub const Resolver = struct {
     ) !resolution.Result {
         if (value.callee_value != null) return .not_applicable;
         const reference = module.semantic.external_refs.items[@intFromEnum(value.callee)];
-        if (reference.generic_arguments) |arguments|
-            return self.resolveExplicitGenericCall(module_index, module, o, value, reference, arguments);
+        if (reference.generic_arguments != null or reference.computed_arguments != null)
+            return self.resolveExplicitGenericCall(module_index, module, o, value, reference);
 
         const declaration_id = self.core.resolveDeclaration(module_index, reference, &.{.type}) catch |err| switch (err) {
             error.UnknownGlobalDeclaration => return .not_applicable,
@@ -399,7 +399,6 @@ pub const Resolver = struct {
         o: globalizer.Offsets,
         value: anytype,
         reference: module_entities.ExternalRef,
-        local_arguments: module_entities.GenericArgRange,
     ) !resolution.Result {
         // Generic construction can be retried by the global fixed point while
         // dependencies in the initializer body are still unresolved. Keep the
@@ -409,22 +408,33 @@ pub const Resolver = struct {
         const checkpoint = self.graph.checkpoint();
         const side_effect_checkpoint = generic_functions.checkpointSideEffects();
         var committed = false;
+        var failed = false;
         defer if (!committed) {
+            const comptime_failure = self.generics.?.comptime_failure;
+            const projection_failure = if (self.abstracts) |abstracts| abstracts.participant_conformance_failure else null;
             self.graph.rollback(checkpoint);
             generic_functions.rollbackSideEffects(side_effect_checkpoint);
+            if (failed) {
+                self.generics.?.comptime_failure = comptime_failure;
+                if (self.abstracts) |abstracts| abstracts.participant_conformance_failure = projection_failure;
+            }
         };
+        errdefer failed = true;
 
         const declaration_id = self.core.resolveDeclaration(module_index, reference, &.{.type}) catch |err| switch (err) {
             error.UnknownGlobalDeclaration => return .not_applicable,
             else => return err,
         };
         const generics = self.generics.?;
-        const arguments = try generics.relocateModuleArguments(module_index, local_arguments);
+        const arguments = (try generics.resolveCallArguments(module_index, reference)).?;
         const ty = try generics.internType(.{ .generic = .{
             .base = declaration_id,
             .arguments = arguments,
         } });
-        _ = generics.ensureGenericInstance(ty) catch return .deferred;
+        _ = generics.ensureGenericInstance(ty) catch |err| switch (err) {
+            error.InvalidAssociatedTypeProjection, error.InvalidArrayLength, error.ComptimeIntegerOverflow, error.ComptimeDivisionByZero => return err,
+            else => return .deferred,
+        };
 
         const input = globalizer.globalNode(o, value.input);
         const initializer = try self.findGenericInitializer(

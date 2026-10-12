@@ -65,8 +65,8 @@ semantics change; codegen receives concrete integer dimensions and ordinary type
 - Enforce unary body-declared composition. Included contract identities are now
   retained, but their requirements are not inherited yet. Preserve legacy
   explicit contract-to-contract relations while implementing those proofs.
-- Extend integer projections to concrete call value arguments, ordinary runtime
-  expressions and associated-value assignments in conformance declarations.
+- Extend integer projections to ordinary runtime expressions and associated-value
+  assignments in conformance declarations.
 - Add tuple constraints to generic compile-time parameter checking, so declarations
   can use contract guarantees before concrete instantiation.
 - Select applicable conformances using structural pattern specificity; diagnose
@@ -100,3 +100,22 @@ tests, with 11 and 1 skips respectively. Clean and persisted-cache LLVM for the
 generic call argument fixture are identical; the warm frontend reuses all 27
 modules. Generated IR uses concrete `[2 x i32]` storage and direct specialized
 calls. The persisted snapshot test also verifies a negative-dimension edit.
+
+## Concrete call projection arguments
+
+Store dependent call arguments in syntax-free parameterized IR on the call's
+external reference. Evaluate them through the shared generic evaluator after
+conformance preparation, and pass canonical concrete arguments to existing
+function and constructor selection. Cover named arguments, arithmetic, missing
+members, imports, selection diagnostics and persisted snapshots. Syntax remains
+unchanged; module/global semantics and the cache wire format change, while
+codegen continues to receive ordinary specialized calls.
+
+Concrete call projection validation: all 96 contract fixtures pass within a
+197-case regression covering contracts, generics, compile-time parameters,
+constructors and modules. The complete internal suite passes 361 tests with
+one skip; the updated persisted snapshot test also passes after the final
+argument-diagnostic changes. Clean and warm-cache LLVM for an imported concrete
+call are identical, with all 28 modules reused and no runtime lookup. Twelve
+new fixtures cover this extension, and the former unsupported-constructor case
+is now a positive executable fixture.

@@ -666,7 +666,7 @@ pub const Resolver = struct {
 
     fn resolveCall(self: *Resolver, module_index: usize, module: *const module_sg.ModuleSemanticGraph, o: globalizer.Offsets, value: anytype) !resolution.Result {
         const reference = module.semantic.external_refs.items[@intFromEnum(value.callee)];
-        if (reference.generic_arguments != null) return .not_applicable;
+        if (reference.generic_arguments != null or reference.computed_arguments != null) return .not_applicable;
         const input = globalizer.globalNode(o, value.input);
         if (value.callee_value) |local| {
             const pointer = globalizer.globalNode(o, local);

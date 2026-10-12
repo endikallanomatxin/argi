@@ -2608,7 +2608,7 @@ fn diagnoseUnresolvedCall(
                 return true;
             }
 
-            if (reference.module_path == null and reference.generic_arguments == null and std.mem.eql(u8, name, "to_virtual") and call.expected_type == null) {
+            if (reference.module_path == null and reference.generic_arguments == null and reference.computed_arguments == null and std.mem.eql(u8, name, "to_virtual") and call.expected_type == null) {
                 try diagnostics.add(diagnosticLocation(graph, diagnostics, source), .semantic, "cannot infer the abstract parameter of 'to_virtual'; provide a Virtual result type or '#(AbstractName)'", .{});
                 return true;
             }

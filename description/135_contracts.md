@@ -165,9 +165,9 @@ non-negative; division by zero and signed integer overflow are diagnosed.
 Concrete projected type applications are persisted as syntax-free compile-time
 expressions in frontend snapshots. They introduce no runtime evidence or lookup.
 Integer projections are currently supported in type applications and explicit
-compile-time call arguments inside generic function bodies. Concrete call value
-arguments, ordinary runtime expressions and associated-value assignments in
-`satisfies` declarations remain pending.
+compile-time call arguments in concrete and generic function bodies, including
+constructor arguments. Ordinary runtime expressions and associated-value
+assignments in `satisfies` declarations remain pending.
 
 > [!IMPLEMENTATION]
 > Explicit participant conformances currently require concrete tuples and

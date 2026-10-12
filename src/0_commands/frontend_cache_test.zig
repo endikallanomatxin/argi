@@ -467,14 +467,16 @@ test "frontend module cache preserves associated constant dimensions" {
     const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code =
         \\Shape#(.Count: Int): contract#(.Input: Type) = ()
         \\Cell: Type = ()
+        \\Buffer#(.n: Int): Type = (.values: Array#(.n = n, .t: Int32))
         \\satisfies Shape#(Cell) = (.Count = 2)
         \\Box#(.T: Type): Type = (.values: Array#(.n = Shape#(T).Count, .t: Int32))
         \\read(.values: &Array#(.n = Shape#(Cell).Count, .t: Int32)) -> (.value: Int32) := { value = values&[0] + values&[1] }
         \\take#(.n: Int)(.values: &Array#(.n = n, .t: Int32)) -> (.value: Int32) := { value = values&[0] + values&[1] }
         \\forward#(.T: Type)(.tag: T, .values: &Array#(.n = Shape#(T).Count, .t: Int32)) -> (.value: Int32) := { value = take#(.n = Shape#(T).Count)(values).value }
         \\main() -> (.status_code: Int32) := {
-        \\    box ::= Box#(Cell)((20, 22))
-        \\    status_code = forward(Cell(), &box.values).value - 42
+        \\    buffer ::= Buffer#(.n = Shape#(Cell).Count)((20, 22))
+        \\    box ::= Box#(Cell)(buffer.values)
+        \\    status_code = forward(Cell(), &box.values).value + take#(.n = Shape#(Cell).Count)(&box.values).value - 84
         \\}
         \\
     }};

@@ -11979,6 +11979,64 @@ test "feature_tests/contracts/83X_constant_projection_generic_negative_dimension
     try buildExpectFailWithoutNoise("tests/feature_tests/contracts/83X_constant_projection_generic_negative_dimension", "array length must be non-negative", "panic");
 }
 
-test "feature_tests/contracts/84X_constant_projection_concrete_call_argument" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/84X_constant_projection_concrete_call_argument", "associated constant arguments in concrete calls are not supported yet", "failed without a diagnostic");
+test "feature_tests/contracts/84_constant_projection_concrete_call_argument" {
+    const path = "tests/feature_tests/contracts/84_constant_projection_concrete_call_argument";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/contracts/85_constant_projection_concrete_function" {
+    const path = "tests/feature_tests/contracts/85_constant_projection_concrete_function";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/contracts/86_constant_projection_concrete_arithmetic" {
+    const path = "tests/feature_tests/contracts/86_constant_projection_concrete_arithmetic";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/contracts/87X_constant_projection_constructor_unknown_member" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/87X_constant_projection_constructor_unknown_member", "unknown associated constant", "failed without a diagnostic");
+}
+
+test "feature_tests/contracts/88X_constant_projection_constructor_missing_tuple" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/88X_constant_projection_constructor_missing_tuple", "no conformance for the projected participant tuple", "failed without a diagnostic");
+}
+
+test "feature_tests/contracts/89X_constant_projection_constructor_negative_dimension" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/89X_constant_projection_constructor_negative_dimension", "array length must be non-negative", "failed without a diagnostic");
+}
+
+test "feature_tests/contracts/90X_constant_projection_constructor_overflow" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/90X_constant_projection_constructor_overflow", "compile-time integer arithmetic overflow", "failed without a diagnostic");
+}
+
+test "feature_tests/contracts/91X_constant_projection_concrete_function_division_by_zero" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/91X_constant_projection_concrete_function_division_by_zero", "division by zero in compile-time expression", "failed without a diagnostic");
+}
+
+test "feature_tests/contracts/92_constant_projection_mixed_concrete_arguments" {
+    const path = "tests/feature_tests/contracts/92_constant_projection_mixed_concrete_arguments";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/contracts/93_constant_projection_imported_concrete_call" {
+    const path = "tests/feature_tests/contracts/93_constant_projection_imported_concrete_call";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/contracts/94X_constant_projection_concrete_kind_mismatch" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/94X_constant_projection_concrete_kind_mismatch", "associated element is not an integer constant", "failed without a diagnostic");
+}
+
+test "feature_tests/contracts/95X_constant_projection_concrete_unknown_participant" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/95X_constant_projection_concrete_unknown_participant", "unknown or inaccessible type or contract in compile-time call arguments", "failed without a diagnostic");
+}
+
+test "feature_tests/contracts/96X_constant_projection_concrete_unknown_contract" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/96X_constant_projection_concrete_unknown_contract", "unknown or inaccessible type or contract in compile-time call arguments", "failed without a diagnostic");
 }
