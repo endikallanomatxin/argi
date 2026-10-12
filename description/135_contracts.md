@@ -208,3 +208,11 @@ not part of the intended final language.
 > ordinary functions compete by identity, never by cross-contract specificity.
 > Multiple applicable identities require explicit qualification. Static and
 > generic bodies share this lookup; unary virtual inputs retain their identity.
+
+> [!IMPLEMENTATION]
+> Scoped requirement inputs retain lexical reach defaults. Unqualified operation
+> selection can infer direct participants from visible capability bindings and
+> field paths, including unary virtual evidence. A missing capability does not
+> supply an inferred type. Selected calls materialize the requirement defaults
+> through the ordinary reached-argument path. Conformance ambiguities remain
+> diagnostics after speculative selection rolls back.

@@ -2080,6 +2080,7 @@ pub const Resolver = struct {
     pub const OperationCandidates = struct {
         items: std.ArrayList(OperationCandidate) = .empty,
         deferred: bool = false,
+        failure: ?ParticipantConformanceFailure = null,
 
         pub fn deinit(self: *OperationCandidates, allocator: std.mem.Allocator) void {
             for (self.items.items) |candidate| allocator.free(candidate.participants);
@@ -2090,7 +2091,7 @@ pub const Resolver = struct {
     /// Compare operation identities using their input signatures. Conformance
     /// specificity determines associated signatures within one identity, never
     /// a priority between contracts. Probes publish no evidence or runtime body.
-    pub fn operationCandidates(self: *Resolver, module_index: usize, name: []const u8, input: global_sg.GlobalNodeId) !OperationCandidates {
+    pub fn operationCandidates(self: *Resolver, module_index: usize, name: []const u8, input: global_sg.GlobalNodeId, context: reach_context.Context) !OperationCandidates {
         var result: OperationCandidates = .{};
         errdefer result.deinit(self.allocator);
         if (std.mem.startsWith(u8, name, "_")) return result;
@@ -2102,7 +2103,7 @@ pub const Resolver = struct {
                 const storage = &module.semantic.parameterized_storage;
                 for (storage.abstract_requirements.items[definition.requirements.start..][0..definition.requirements.len]) |requirement| {
                     if (!requirement.scoped or !std.mem.eql(u8, module.text(requirement.name), name)) continue;
-                    if (try self.probeOperationCandidate(.{ .module_index = owner, .definition = definition }, declaration, requirement, input, &result.deferred)) |candidate|
+                    if (try self.probeOperationCandidate(.{ .module_index = owner, .definition = definition }, declaration, requirement, input, context, &result.deferred, &result.failure)) |candidate|
                         try result.items.append(self.allocator, candidate);
                 }
             }
@@ -2110,7 +2111,7 @@ pub const Resolver = struct {
         return result;
     }
 
-    fn probeOperationCandidate(self: *Resolver, located: LocatedAbstractDefinition, declaration: global_sg.GlobalDeclId, requirement: parameterized_storage.AbstractRequirement, input: global_sg.GlobalNodeId, deferred: *bool) !?OperationCandidate {
+    fn probeOperationCandidate(self: *Resolver, located: LocatedAbstractDefinition, declaration: global_sg.GlobalDeclId, requirement: parameterized_storage.AbstractRequirement, input: global_sg.GlobalNodeId, context: reach_context.Context, deferred: *bool, failure: *?ParticipantConformanceFailure) !?OperationCandidate {
         const literal = switch (self.graph.node(input).content) {
             .struct_value_literal => |value| value,
             else => return null,
@@ -2132,9 +2133,11 @@ pub const Resolver = struct {
         const fields = storage.ir.types.items[@intFromEnum(requirement.input)].resolved.structural.fields;
         var virtual = false;
         for (storage.ir.fields.items[fields.start..][0..fields.len], 0..) |field, position| {
+            var explicit = false;
             for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len], 0..) |actual, index| {
                 const name = self.graph.text(actual.name);
                 if (!((name.len == 0 and position == index) or std.mem.eql(u8, name, module.text(field.name)))) continue;
+                explicit = true;
                 const actual_ty = self.graph.node(actual.value).ty orelse {
                     deferred.* = true;
                     return null;
@@ -2161,6 +2164,25 @@ pub const Resolver = struct {
                 // available now, then check the entire selected signature below.
                 _ = try self.inferConstraintTypePattern(located.module_index, field.ty, actual_ty, &bindings);
             }
+            if (!explicit) if (field.default_value) |value| {
+                const reach = try self.generics.instantiateReachDefault(located.module_index, value) orelse continue;
+                const ty = self.core.probeReachedType(context, reach, deferred) orelse continue;
+                const pattern = storage.ir.types.items[@intFromEnum(field.ty)];
+                const actual = self.graph.semanticType(ty);
+                if (located.definition.participants.len == 1 and pattern == .resolved and pattern.resolved == .pointer and
+                    self.isUnaryReceiverParticipantType(located, pattern.resolved.pointer.child) and actual == .pointer)
+                {
+                    const child = self.graph.semanticType(actual.pointer.child);
+                    if (child == .virtual) {
+                        const use = self.abstractUse(child.virtual) orelse continue;
+                        if (use.declaration != declaration or use.arguments.len != 0) continue;
+                        bindings.types[located.definition.participants.start] = child.virtual;
+                        virtual = true;
+                        continue;
+                    }
+                }
+                _ = try self.inferConstraintTypePattern(located.module_index, field.ty, ty, &bindings);
+            };
         }
         const participants = try self.allocator.alloc(global_sg.GlobalTypeId, located.definition.participants.len);
         errdefer self.allocator.free(participants);
@@ -2174,6 +2196,14 @@ pub const Resolver = struct {
             const selected = self.selectConformance(declaration, participants, &bindings, 0, deferred) catch |err| {
                 self.allocator.free(participants);
                 if (err == error.OutOfMemory) return err;
+                if (self.participant_conformance_failure) |diagnostic| {
+                    var retained = diagnostic;
+                    // Probe-local signature IDs disappear on rollback. Names
+                    // and source locations belong to immutable module data.
+                    retained.input = null;
+                    retained.output = null;
+                    failure.* = retained;
+                }
                 return null;
             };
             if (selected == null) {
@@ -2186,7 +2216,7 @@ pub const Resolver = struct {
             if (err == error.OutOfMemory) return err;
             return null;
         };
-        switch (self.core.matchCallInput(global_types.fields(self.graph, required) orelse return error.InvalidAbstractRequirementInput, input)) {
+        switch (try self.core.matchCallInputWithReach(global_types.fields(self.graph, required) orelse return error.InvalidAbstractRequirementInput, input, context)) {
             .score => return .{ .declaration = declaration, .participants = participants, .virtual = virtual },
             .deferred => deferred.* = true,
             .no_match => {},
@@ -2196,6 +2226,18 @@ pub const Resolver = struct {
     }
 
     pub fn callOperationCandidate(self: *Resolver, module_index: usize, candidate: OperationCandidate, name: []const u8, input: global_sg.GlobalNodeId, context: reach_context.Context, source: primitives.SourceRef) !?global_sg.Node {
+        if (candidate.virtual) {
+            const located = self.findAbstractDefinition(candidate.declaration) orelse return null;
+            const storage = &self.modules[located.module_index].semantic.parameterized_storage;
+            const requirement = for (storage.abstract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len]) |requirement| {
+                if (std.mem.eql(u8, self.modules[located.module_index].text(requirement.name), name)) break requirement;
+            } else return null;
+            var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
+            defer bindings.deinit(self.allocator);
+            bindings.types[located.definition.participants.start] = candidate.participants[0];
+            const required = try self.generics.instantiateParameterizedType(located.module_index, requirement.input, &bindings);
+            if (!try self.core.completeCallInputFieldsWithReach(global_types.fields(self.graph, required).?, input, context)) return null;
+        }
         const start: u32 = @intCast(self.graph.generic_arguments.items.len);
         if (!candidate.virtual) for (candidate.participants) |participant|
             try self.graph.generic_arguments.append(self.allocator, .{ .name = .{ .start = 0, .len = 0 }, .value = .{ .type = participant } });
@@ -2246,7 +2288,7 @@ pub const Resolver = struct {
             participant.* = bindings.types[located.definition.participants.start + position].?;
             if (!self.typeSelectionReady(participant.*, 0)) return null;
         }
-        const selected = try self.selectConformance(use.declaration, participants, null, 0, null) orelse {
+        const selected = try self.selectConformance(use.declaration, participants, &bindings, 0, null) orelse {
             failure.reason = "no conformance for the qualified operation's participants";
             self.participant_conformance_failure = failure;
             return null;
@@ -2265,6 +2307,10 @@ pub const Resolver = struct {
             self.graph.function_refs.items[conformance.operations.start + method_index]
         else
             return null;
+        const requirement = storage.abstract_requirements.items[located.definition.requirements.start + method_index];
+        const required_type = try self.generics.instantiateParameterizedType(located.module_index, requirement.input, &bindings);
+        const required_fields = global_types.fields(self.graph, required_type) orelse return error.InvalidAbstractRequirementInput;
+        if (!try self.core.completeCallInputFieldsWithReach(required_fields, input, context)) return null;
         const function = self.graph.function(method);
         switch (self.core.matchCallInput(function.input, input)) {
             .deferred => return null,

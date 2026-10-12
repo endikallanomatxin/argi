@@ -31,7 +31,9 @@ incomparable maximal candidates are errors; source/import ordering has no priori
    participants and each global operation family with scoped implementations. Remove
    the superseded route as its final consumers move.
    Extend operation input inference to nested associated patterns and reached
-   participants, and stabilize ambiguous-conformance diagnostics during probes.
+   adaptation of by-value bindings. Lexical reach defaults now infer direct
+   participants and field paths, including unary virtual receivers. Conformance
+   ambiguity diagnostics survive probes.
    Current direct participant inference shares identity selection between
    concrete/generic bodies and compares ordinary generic applicability without
    instantiating its body. Explicit qualified calls remain the escape hatch.

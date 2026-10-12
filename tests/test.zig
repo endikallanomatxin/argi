@@ -12352,3 +12352,19 @@ test "feature_tests/contracts/165_unqualified_distinct_inputs" {
 test "feature_tests/contracts/166X_generic_operation_identity_ambiguity" {
     try buildExpectFailWithoutNoise("tests/feature_tests/contracts/166X_generic_operation_identity_ambiguity", "multiple applicable operation identities", "panic");
 }
+
+test "feature_tests/contracts/167_reached_contract_participant" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/167_reached_contract_participant");
+}
+
+test "feature_tests/contracts/168_reached_operation_field_path" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/168_reached_operation_field_path");
+}
+
+test "feature_tests/contracts/169_reached_virtual_operation" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/169_reached_virtual_operation");
+}
+
+test "feature_tests/contracts/170X_unqualified_conformance_ambiguity" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/170X_unqualified_conformance_ambiguity", "ambiguous maximal patterns", "no function named");
+}

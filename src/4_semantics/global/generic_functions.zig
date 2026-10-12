@@ -1024,8 +1024,12 @@ pub const Resolver = struct {
 
     pub fn resolveOperationIdentity(self: *Resolver, module_index: usize, name: []const u8, input: global_sg.GlobalNodeId, reach: ReachInferenceContext, source: primitives.SourceRef) !?global_sg.Node {
         const abstracts = self.nested_call_context orelse return null;
-        var candidates = try abstracts.operationCandidates(module_index, name, input);
+        var candidates = try abstracts.operationCandidates(module_index, name, input, reach);
         defer candidates.deinit(self.allocator);
+        if (candidates.failure) |failure| {
+            abstracts.participant_conformance_failure = failure;
+            return error.InvalidContractConformance;
+        }
         if (candidates.items.items.len == 0) return null;
         const ordinary = try self.core.matchUnqualifiedFunctionByNameWithReach(module_index, name, input, reach);
         const generic = try self.implicitOrdinaryApplicable(module_index, name, input, reach);

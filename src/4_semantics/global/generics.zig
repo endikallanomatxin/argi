@@ -513,6 +513,36 @@ pub const Resolver = struct {
         return .{ .start = start, .len = range.len };
     }
 
+    /// Contract signatures retain lexical reach defaults. Ordinary expression
+    /// defaults still belong to function-body instantiation; this path does not
+    /// execute defaults while constructing a type.
+    pub fn instantiateReachDefault(self: *Resolver, module_index: usize, id: ir.ParameterizedNodeId) !?global_sg.GlobalNodeId {
+        const module = &self.modules[module_index];
+        const storage = &module.semantic.parameterized_storage.ir;
+        const node = storage.nodes.items[@intFromEnum(id)];
+        const resolved = switch (node) {
+            .resolved => |value| value,
+            else => return null,
+        };
+        const local_id = switch (resolved.content) {
+            .reach_directive => |value| value,
+            else => return null,
+        };
+        const local = storage.reaches.items[@intFromEnum(local_id)];
+        const alternatives_start: u32 = @intCast(self.graph.reach_alternatives.items.len);
+        for (storage.reach_alternatives.items[local.alternatives.start..][0..local.alternatives.len]) |alternative| {
+            const segments_start: u32 = @intCast(self.graph.reach_segments.items.len);
+            for (storage.reach_segments.items[alternative.segments.start..][0..alternative.segments.len]) |segment|
+                try self.graph.reach_segments.append(self.allocator, try self.graph.addString(self.allocator, module.text(segment)));
+            try self.graph.reach_alternatives.append(self.allocator, .{ .segments = .{ .start = segments_start, .len = alternative.segments.len } });
+        }
+        const reach: global_sg.GlobalReachId = @enumFromInt(@as(u32, @intCast(self.graph.reaches.items.len)));
+        try self.graph.reaches.append(self.allocator, .{ .alternatives = .{ .start = alternatives_start, .len = local.alternatives.len } });
+        const global: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.graph.nodes.items.len)));
+        try self.graph.nodes.append(self.allocator, .{ .source = self.globalSource(module_index, resolved.source), .ty = null, .content = .{ .reach_directive = reach } });
+        return global;
+    }
+
     fn instantiateFields(
         self: *Resolver,
         module_index: usize,
@@ -530,7 +560,7 @@ pub const Resolver = struct {
                 .ty = try self.instantiateParameterizedType(module_index, field.ty, bindings),
                 .storage_type = if (field.storage_type) |value| try self.instantiateParameterizedType(module_index, value, bindings) else null,
                 .source = self.globalSource(module_index, field.source),
-                .default_value = null,
+                .default_value = if (field.default_value) |value| try self.instantiateReachDefault(module_index, value) else null,
             });
         }
         const start: u32 = @intCast(self.graph.fields.items.len);

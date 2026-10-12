@@ -1335,6 +1335,39 @@ pub const Resolver = struct {
         return .{ .hit = hit, .dereference_child = dereference_child };
     }
 
+    /// Discover a lexical capability's concrete type before a contract's
+    /// participant is known. This does not propagate a new caller parameter:
+    /// that would infer a participant from an unconstrained missing capability.
+    pub fn probeReachedType(self: *Resolver, context: reach_context.Context, default_node: global_sg.GlobalNodeId, deferred: *bool) ?global_sg.GlobalTypeId {
+        const reach = self.graph.reaches.items[@intFromEnum(self.graph.node(default_node).content.reach_directive)];
+        for (self.graph.reach_alternatives.items[reach.alternatives.start..][0..reach.alternatives.len]) |alternative| {
+            if (alternative.segments.len == 0) continue;
+            const segments = self.graph.reach_segments.items[alternative.segments.start..][0..alternative.segments.len];
+            var index = context.bindingCount();
+            while (index > 0) {
+                index -= 1;
+                const id = context.bindingAt(index);
+                const binding = self.graph.binding(id);
+                if (!std.mem.eql(u8, self.graph.text(binding.name), self.graph.text(segments[0]))) continue;
+                if (self.graph.isBindingTypeUnresolved(id)) {
+                    deferred.* = true;
+                    return null;
+                }
+                var ty = binding.ty;
+                for (segments[1..]) |segment| {
+                    const field = self.reachedField(ty, self.graph.text(segment)) orelse return null;
+                    ty = field.hit.field.storage_type orelse field.hit.field.ty;
+                }
+                if (self.graph.isTypeUnresolved(ty)) {
+                    deferred.* = true;
+                    return null;
+                }
+                return ty;
+            }
+        }
+        return null;
+    }
+
     pub fn probeReachedDefaultWithCompatibility(
         self: *Resolver,
         context: reach_context.Context,
