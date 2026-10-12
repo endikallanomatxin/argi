@@ -1698,10 +1698,39 @@ pub const Resolver = struct {
     }
 
     const SymbolicPattern = struct { module: usize, ty: ir.ParameterizedTypeId };
+    const SymbolicIntPattern = struct { module: usize, expression: ir.ParameterizedIntExprId };
+    const PatternSubstitutions = struct {
+        types: std.AutoHashMap(ir.ComptimeParameterId, SymbolicPattern),
+        integers: std.AutoHashMap(ir.ComptimeParameterId, SymbolicIntPattern),
+    };
+
+    fn symbolicIntsEqual(self: *Resolver, a: SymbolicIntPattern, b: SymbolicIntPattern) bool {
+        const left = self.modules[a.module].semantic.parameterized_storage.ir.int_expressions.items[@intFromEnum(a.expression)];
+        const right = self.modules[b.module].semantic.parameterized_storage.ir.int_expressions.items[@intFromEnum(b.expression)];
+        return switch (left) {
+            .literal => |value| right == .literal and value == right.literal,
+            .parameter => |parameter| right == .parameter and a.module == b.module and parameter == right.parameter,
+            else => a.module == b.module and a.expression == b.expression,
+        };
+    }
+
+    fn patternIntCovers(self: *Resolver, general: SymbolicIntPattern, specific: SymbolicIntPattern, substitutions: *PatternSubstitutions) !bool {
+        const expression = self.modules[general.module].semantic.parameterized_storage.ir.int_expressions.items[@intFromEnum(general.expression)];
+        if (expression == .parameter) {
+            if (substitutions.integers.get(expression.parameter)) |previous| return self.symbolicIntsEqual(previous, specific);
+            try substitutions.integers.put(expression.parameter, specific);
+            return true;
+        }
+        return self.symbolicIntsEqual(general, specific);
+    }
 
     fn patternTupleCovers(self: *Resolver, general_module: usize, general: parameterized_storage.ContractConformance, specific_module: usize, specific: parameterized_storage.ContractConformance) !bool {
-        var substitutions = std.AutoHashMap(ir.ComptimeParameterId, SymbolicPattern).init(self.allocator);
-        defer substitutions.deinit();
+        var substitutions = PatternSubstitutions{
+            .types = std.AutoHashMap(ir.ComptimeParameterId, SymbolicPattern).init(self.allocator),
+            .integers = std.AutoHashMap(ir.ComptimeParameterId, SymbolicIntPattern).init(self.allocator),
+        };
+        defer substitutions.types.deinit();
+        defer substitutions.integers.deinit();
         const left = self.modules[general_module].semantic.parameterized_storage.ir.generic_arguments.items[general.participants.start..][0..general.participants.len];
         const right = self.modules[specific_module].semantic.parameterized_storage.ir.generic_arguments.items[specific.participants.start..][0..specific.participants.len];
         for (left, right) |a, b| {
@@ -1717,10 +1746,7 @@ pub const Resolver = struct {
         if (left == .parameter or right == .parameter)
             return left == .parameter and right == .parameter and a.module == b.module and left.parameter == right.parameter;
         if (left == .array and right == .array) {
-            const l = self.modules[a.module].semantic.parameterized_storage.ir.int_expressions.items[@intFromEnum(left.array.length)];
-            const r = self.modules[b.module].semantic.parameterized_storage.ir.int_expressions.items[@intFromEnum(right.array.length)];
-            const equal_length = if (l == .literal and r == .literal) l.literal == r.literal else l == .parameter and r == .parameter and a.module == b.module and l.parameter == r.parameter;
-            if (!equal_length) return false;
+            if (!self.symbolicIntsEqual(.{ .module = a.module, .expression = left.array.length }, .{ .module = b.module, .expression = right.array.length })) return false;
             return self.symbolicTypesEqual(.{ .module = a.module, .ty = left.array.element }, .{ .module = b.module, .ty = right.array.element });
         }
         if (left == .resolved and right == .resolved and left.resolved == .pointer and right.resolved == .pointer) {
@@ -1742,18 +1768,16 @@ pub const Resolver = struct {
         return global_types.equal(self.graph, l, r);
     }
 
-    fn patternTypeCovers(self: *Resolver, general: SymbolicPattern, specific: SymbolicPattern, substitutions: *std.AutoHashMap(ir.ComptimeParameterId, SymbolicPattern)) !bool {
+    fn patternTypeCovers(self: *Resolver, general: SymbolicPattern, specific: SymbolicPattern, substitutions: *PatternSubstitutions) !bool {
         const ty = self.modules[general.module].semantic.parameterized_storage.ir.types.items[@intFromEnum(general.ty)];
         if (ty == .parameter) {
-            if (substitutions.get(ty.parameter)) |previous| return self.symbolicTypesEqual(previous, specific);
-            try substitutions.put(ty.parameter, specific);
+            if (substitutions.types.get(ty.parameter)) |previous| return self.symbolicTypesEqual(previous, specific);
+            try substitutions.types.put(ty.parameter, specific);
             return true;
         }
         const other = self.modules[specific.module].semantic.parameterized_storage.ir.types.items[@intFromEnum(specific.ty)];
         if (ty == .array and other == .array) {
-            const left_length = self.modules[general.module].semantic.parameterized_storage.ir.int_expressions.items[@intFromEnum(ty.array.length)];
-            const right_length = self.modules[specific.module].semantic.parameterized_storage.ir.int_expressions.items[@intFromEnum(other.array.length)];
-            if (left_length != .literal or right_length != .literal or left_length.literal != right_length.literal) return false;
+            if (!try self.patternIntCovers(.{ .module = general.module, .expression = ty.array.length }, .{ .module = specific.module, .expression = other.array.length }, substitutions)) return false;
             return self.patternTypeCovers(.{ .module = general.module, .ty = ty.array.element }, .{ .module = specific.module, .ty = other.array.element }, substitutions);
         }
         if (ty == .resolved and ty.resolved == .pointer and other == .resolved and other.resolved == .pointer) {

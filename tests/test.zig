@@ -12248,3 +12248,11 @@ test "feature_tests/contracts/139_reference_participant_specialization" {
 test "feature_tests/contracts/140_nested_reference_array_patterns" {
     try expectSuccessfulBuild("tests/feature_tests/contracts/140_nested_reference_array_patterns");
 }
+
+test "feature_tests/contracts/141_generic_array_length_specialization" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/141_generic_array_length_specialization");
+}
+
+test "feature_tests/contracts/142_repeated_array_length_specialization" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/142_repeated_array_length_specialization");
+}

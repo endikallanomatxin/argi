@@ -19,9 +19,10 @@ incomparable maximal candidates are errors; source/import ordering has no priori
 ## Implementation order and removal obligations
 
 1. Extend participant pattern matching to nested nominal applications and named
-   participant arguments. Extend symbolic substitution to generic array lengths
-   and other structural shapes; the current comparison handles parameter leaves,
-   closed types, references, literal-length arrays and repeated-variable equalities. Preserve the
+   participant arguments. Extend comparison to remaining structural shapes;
+   the current substitution handles type and integer parameter leaves, closed
+   types, references, arrays and repeated-variable equalities. Keep arithmetic
+   expressions conservative without introducing inverse constraint inference. Preserve the
    rejection of equivalent and incomparable maximal patterns.
    Check duplicate patterns and extension ownership even for dormant templates.
 2. Validate newly instantiated evidence during resolution so nested operations
