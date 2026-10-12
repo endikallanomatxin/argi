@@ -148,10 +148,31 @@ is instantiated. It does not infer participants from an associated result.
 Until tuple constraints are supported, the function is checked for each
 instantiation rather than proven against a generic tuple contract at declaration.
 
+Associated integer constants can be queried in compile-time type arguments:
+
+```argi
+Shape#(.Count: Int): contract#(.Input: Type) = ()
+satisfies Shape#(Cell) = (.Count = 2)
+Box#(.T: Type): Type = (
+    .values: Array#(.n = Shape#(T).Count, .t: Int32)
+)
+```
+
+These projections remain symbolic in generic type and function signatures and
+resolve from the selected concrete conformance. Integer arithmetic can combine
+projections with other compile-time expressions. Array dimensions must be
+non-negative; division by zero and signed integer overflow are diagnosed.
+Concrete projected type applications are persisted as syntax-free compile-time
+expressions in frontend snapshots. They introduce no runtime evidence or lookup.
+Integer projections are currently supported in type applications and explicit
+compile-time call arguments inside generic function bodies. Concrete call value
+arguments, ordinary runtime expressions and associated-value assignments in
+`satisfies` declarations remain pending.
+
 > [!IMPLEMENTATION]
 > Explicit participant conformances currently require concrete tuples and
 > concrete operation implementations. Generic conformances, specialized tuple
-> selection, associated constant projections and tuple bounds in generic
+> selection and tuple bounds in generic
 > functions remain pending. Storage domains, composition and virtual conversion
 > of explicit participant contracts are rejected until joint mappings and evidence are
 > represented. Unary compatibility syntax below continues to support the
@@ -193,7 +214,7 @@ participant. Functions remain ordinary declarations outside the contract.
 > and `to_virtual#(.contract: Name)`, as well as positional arguments and the
 > legacy `.abstract` label; these spellings produce the same handle type.
 > This compatibility surface is distinct from explicit participant tuples.
-> Associated constant projections, specialized tuple conformance selection and
+> Specialized tuple conformance selection and
 > joint virtual packages are not implemented.
 > Existing unary associated arguments remain unique per concrete type and
 > contract; conflicting arguments are errors, not specialized conformances.

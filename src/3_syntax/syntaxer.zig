@@ -461,6 +461,29 @@ pub const Syntaxer = struct {
         return base;
     }
 
+    fn parseAssociatedValueProjection(self: *Syntaxer, name: syn.TokenIndex, qualifier: ?syn.TokenIndex, arguments: syn.NodeRange, named_arguments: ?syn.NodeIndex) SyntaxerError!syn.NodeIndex {
+        const literal = named_arguments orelse blk: {
+            // Extra-data growth must not invalidate the argument range being read.
+            const values = try self.allocator.dupe(syn.NodeIndex, self.file.nodeRange(arguments));
+            defer self.allocator.free(values);
+            var fields: std.ArrayList(syn.NodeIndex) = .empty;
+            defer fields.deinit(self.allocator);
+            for (values, 0..) |value, position| {
+                const extra = try self.addExtra(syn.FieldExtra{
+                    .type_node = syn.OptionalNodeIndex.init(value),
+                    .default_value = .none,
+                });
+                try fields.append(self.allocator, try self.addNode(.positional_type_field, self.file.mainToken(value), .{ .u32_and_extra = .{ .value = @intCast(position), .extra = extra } }));
+            }
+            break :blk try self.addNode(.struct_type_literal, name, .{ .extra_range = try self.addNodeRange(fields.items) });
+        };
+        const base = try self.addNode(.type_name, name, .{ .token_and_optional_token = .{ .token = name, .optional = syn.OptionalTokenIndex.init(qualifier) } });
+        const instance = try self.addNode(.generic_type_instantiation, name, .{ .node_and_node = .{ .first = base, .second = literal } });
+        self.advanceOne();
+        const member = try self.parseName();
+        return try self.addNode(.associated_type_projection, member.token, .{ .node = instance });
+    }
+
     // Parse an abstract body: a parenthesized, comma-separated list of items.
     // Each item can be:
     //   - an identifier: composed abstract name (e.g., Addable)
@@ -1213,6 +1236,7 @@ pub const Syntaxer = struct {
                     } else self.file.mainToken(node);
                     var type_args = try self.addNodeRange(&.{});
                     var type_args_struct: ?syn.NodeIndex = null;
+                    const has_comptime_arguments = self.tokenIs(.hash);
                     if (self.tokenIs(.hash)) {
                         self.advanceOne();
                         if (self.comptime_arguments_are_named()) {
@@ -1220,6 +1244,10 @@ pub const Syntaxer = struct {
                         } else {
                             type_args = try self.parseTypeList();
                         }
+                    }
+                    if (self.tokenIs(.dot) and has_comptime_arguments) {
+                        node = try self.parseAssociatedValueProjection(callee_token, qualifier, type_args, type_args_struct);
+                        continue;
                     }
                     if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
                     const struct_value_literal = try self.parseCollectionLiteral(true);
@@ -1442,6 +1470,7 @@ pub const Syntaxer = struct {
                 }
                 var type_args = try self.addNodeRange(&.{});
                 var type_args_struct: ?syn.NodeIndex = null;
+                const has_comptime_arguments = self.tokenIs(.hash);
                 if (self.tokenIs(.open_bracket) and self.lookaheadIsTypeArgument()) {
                     // Explicit type arguments on call site (old syntax)
                     type_args = try self.parseTypeList();
@@ -1452,6 +1481,9 @@ pub const Syntaxer = struct {
                     } else {
                         type_args = try self.parseTypeList();
                     }
+                }
+                if (self.tokenIs(.dot) and has_comptime_arguments) {
+                    break :blk try self.parseAssociatedValueProjection(name_token, null, type_args, type_args_struct);
                 }
                 if (self.tokenIs(.open_parenthesis)) { // Call.
                     const struct_value_literal = try self.parseCollectionLiteral(true);

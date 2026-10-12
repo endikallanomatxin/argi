@@ -12,6 +12,7 @@ pub fn lower(
     allocator: std.mem.Allocator,
     graph: *graph_mod.ModuleSemanticGraph,
     files: []const graph_mod.FileInput,
+    diagnostics: ?*@import("../../1_base/diagnostic.zig").Diagnostics,
 ) !Stats {
     var writer = writer_mod.Writer.init(allocator, graph);
     var stats: Stats = .{};
@@ -36,7 +37,15 @@ pub fn lower(
                     const value: entities.GenericArgument.Value = if (field.type_node) |type_node|
                         .{ .type = try lowerType(graph, &writer, file, file_index, type_node) }
                     else if (field.default_value) |value_node|
-                        .{ .comptime_int = try evalInt(file.tree, file.source, value_node) }
+                        .{ .comptime_int = evalInt(file.tree, file.source, value_node) catch |err| {
+                            if (err == error.AssociatedConstantCallArgumentUnsupported) {
+                                if (diagnostics) |bag| {
+                                    try bag.add(file.tree.location(value_node), .semantic, "associated constant arguments in concrete calls are not supported yet; use a generic wrapper", .{});
+                                    return error.Reported;
+                                }
+                            }
+                            return err;
+                        } }
                     else
                         return error.InvalidGenericCallArgument;
                     try arguments.append(.{ .name = name, .value = value });
@@ -86,6 +95,8 @@ fn lowerType(
 }
 
 fn evalInt(tree: *const syn.FileSyntaxTree, source: []const u8, node: syn.NodeIndex) !i64 {
+    // TODO: retain concrete call integer expressions until global tuple resolution.
+    if (tree.tag(node) == .associated_type_projection) return error.AssociatedConstantCallArgumentUnsupported;
     if (tree.literal(node)) |literal| {
         var value = try std.fmt.parseInt(i64, tree.tokenTextFromSource(source, literal.token), 0);
         if (literal.negative) value = -value;
@@ -106,6 +117,6 @@ fn evalInt(tree: *const syn.FileSyntaxTree, source: []const u8, node: syn.NodeIn
 
 test "generic call arguments live on semantic external refs" {
     // Both the qualifier and generic argument range carry optional presence.
-    // Associated projections additionally retain their module-level base type.
-    try std.testing.expect(@sizeOf(entities.ExternalRef) <= 52);
+    // Associated projections retain a base or an anonymous compile-time type.
+    try std.testing.expect(@sizeOf(entities.ExternalRef) <= 60);
 }

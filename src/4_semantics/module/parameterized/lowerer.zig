@@ -72,6 +72,25 @@ pub fn lowerLinked(
     return ctx.lowerDeclarations();
 }
 
+pub fn lowerConcreteTypeExpression(graph: *graph_mod.ModuleSemanticGraph, writer: *writer_mod.Writer, file_index: u32, tree: *const syn.FileSyntaxTree, source: []const u8, node: syn.NodeIndex) !ir.ParameterizedTypeId {
+    var context = Context{
+        .allocator = writer.allocator,
+        .graph = graph,
+        .files = &.{},
+        .writer = writer.*,
+        .parameters = std.array_list.Managed(ParameterBinding).init(writer.allocator),
+        .abstract_parameters = std.array_list.Managed(AbstractParameterBinding).init(writer.allocator),
+        .bindings = std.array_list.Managed(BindingName).init(writer.allocator),
+        .file_index = file_index,
+        .tree = tree,
+        .source = source,
+    };
+    defer context.parameters.deinit();
+    defer context.abstract_parameters.deinit();
+    defer context.bindings.deinit();
+    return context.lowerType(node, false);
+}
+
 pub fn needsLinkedLowering(
     graph: *const graph_mod.ModuleSemanticGraph,
     files: []const graph_mod.FileInput,
@@ -960,7 +979,7 @@ pub const Context = struct {
             .array => |value| blk: {
                 const length = try self.lowerIntExpressionFromToken(value.length_token);
                 const element = try self.lowerType(value.element, allow_self);
-                break :blk try self.addType(.{ .array = .{ .length = length, .element = element } });
+                break :blk try self.addType(.{ .array = .{ .length = length, .element = element, .source = self.sourceRef(node) } });
             },
             .generic => |value| self.lowerGenericType(value, allow_self),
             .projection => |value| self.addType(.{ .projection = .{
@@ -1044,7 +1063,7 @@ pub const Context = struct {
                 } else return error.InvalidArrayArguments;
             }
             if (length == null or element == null) return error.InvalidArrayArguments;
-            return self.addType(.{ .array = .{ .length = length.?, .element = element.? } });
+            return self.addType(.{ .array = .{ .length = length.?, .element = element.?, .source = self.sourceRef(generic.base) } });
         }
         if (name.qualifier_token == null and std.mem.eql(u8, base_text, "Errable")) {
             const literal = self.tree.structTypeLiteral(generic.arguments) orelse return error.InvalidGenericParameterizedArguments;
@@ -1115,6 +1134,8 @@ pub const Context = struct {
     }
 
     pub fn lowerGenericValue(self: *Context, node: syn.NodeIndex, allow_self: bool) !ir.GenericArgument.Value {
+        // A value argument uses integer projections; type arguments use lowerType.
+        if (self.tree.tag(node) == .associated_type_projection) return .{ .comptime_int = try self.lowerIntExpression(node) };
         if (self.tree.tag(node) == .identifier) {
             const token = self.tree.mainToken(node);
             const name = self.tree.tokenTextFromSource(self.source, token);
@@ -1156,7 +1177,14 @@ pub const Context = struct {
         return self.addInt(.{ .literal = value });
     }
 
-    fn lowerIntExpression(self: *Context, node: syn.NodeIndex) anyerror!ir.ParameterizedIntExprId {
+    pub fn lowerIntExpression(self: *Context, node: syn.NodeIndex) anyerror!ir.ParameterizedIntExprId {
+        if (self.tree.syntaxType(node)) |syntax| if (syntax == .projection) {
+            return self.addInt(.{ .projection = .{
+                .base = try self.lowerType(syntax.projection.base, false),
+                .member = try self.writer.addString(self.tree.tokenTextFromSource(self.source, syntax.projection.member_token)),
+                .source = self.sourceRef(node),
+            } });
+        };
         if (self.tree.literal(node)) |literal| {
             const text = self.tree.tokenTextFromSource(self.source, literal.token);
             var value = std.fmt.parseInt(i64, text, 0) catch return error.InvalidParameterizedComptimeInteger;
@@ -1182,6 +1210,7 @@ pub const Context = struct {
             .operator = operator,
             .left = try self.lowerIntExpression(op.lhs),
             .right = try self.lowerIntExpression(op.rhs),
+            .source = self.sourceRef(node),
         } });
     }
 

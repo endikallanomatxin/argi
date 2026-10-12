@@ -167,6 +167,31 @@ pub const Context = struct {
     }
 
     fn lowerGeneric(self: *Context, owner: syn.NodeIndex, generic: syn.GenericType) anyerror!entities.ModuleTypeId {
+        if (self.hasAssociatedConstant(generic.arguments)) {
+            const external_start = self.graph.semantic.external_refs.items.len;
+            const computed = try @import("parameterized/lowerer.zig").lowerConcreteTypeExpression(self.graph, self.writer, self.file_index, self.tree, self.source, owner);
+            // Preserve lexical import aliases in the anonymous expression.
+            for (self.graph.semantic.external_refs.items[external_start..]) |*external| {
+                const path = external.module_path orelse continue;
+                var alias_index = self.module_aliases.len;
+                while (alias_index != 0) {
+                    alias_index -= 1;
+                    const alias = self.module_aliases[alias_index];
+                    if (std.mem.eql(u8, self.graph.text(path), self.graph.text(alias.name))) {
+                        external.module_path = alias.path;
+                        break;
+                    }
+                }
+            }
+            const reference = try self.writer.addExternalRef(.{
+                .kind = .type,
+                .module_path = null,
+                .name = try self.writer.addString("compile-time type"),
+                .computed_type = computed,
+                .source = self.sourceRef(owner),
+            });
+            return self.writer.addExternalType(reference);
+        }
         const arguments_literal = self.tree.structTypeLiteral(generic.arguments) orelse return error.InvalidGenericArguments;
         const base = self.tree.syntaxType(generic.base) orelse return error.InvalidGenericBase;
         const base_name = if (base == .name and base.name.qualifier_token == null) self.tree.tokenTextFromSource(self.source, base.name.name_token) else "";
@@ -233,6 +258,19 @@ pub const Context = struct {
             .name => |name| self.lowerName(owner, name.name_token, name.qualifier_token, range),
             else => error.InvalidGenericBase,
         };
+    }
+
+    fn hasAssociatedConstant(self: *const Context, node: syn.NodeIndex) bool {
+        if (self.tree.tag(node) == .associated_type_projection) return true;
+        if (self.tree.binaryOperation(node)) |operation|
+            return self.hasAssociatedConstant(operation.lhs) or self.hasAssociatedConstant(operation.rhs);
+        if (self.tree.structTypeLiteral(node)) |literal| {
+            for (literal.fields) |field_node| {
+                const field = self.tree.structTypeField(field_node) orelse continue;
+                if (field.default_value) |value| if (self.hasAssociatedConstant(value)) return true;
+            }
+        }
+        return false;
     }
 
     fn evalComptimeInt(self: *Context, node: syn.NodeIndex) anyerror!i64 {

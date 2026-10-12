@@ -364,6 +364,7 @@ pub fn semantizeWithOptions(
     };
     generics.projection_context = &abstracts;
     generics.projection_resolver = abstract_mod.Resolver.resolveAssociatedType;
+    generics.constant_projection_resolver = abstract_mod.Resolver.resolveAssociatedInt;
     constructors.abstracts = &abstracts;
     control.generic_functions = &generic_functions;
     control.abstracts = &abstracts;
@@ -414,11 +415,13 @@ pub fn semantizeWithOptions(
     try abstracts.prepareParticipantConformances();
     try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, abstracts.participant_conformance_failure);
     abstracts.resolveAssociatedTypes() catch |err| {
+        try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, &generics);
         try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, abstracts.participant_conformance_failure);
         return err;
     };
     _ = generics.materializeKnownTypes() catch |err| {
         try reportGenericArgumentFailure(&relocation.graph, options.diagnostics, &generics);
+        try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, &generics);
         try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, abstracts.participant_conformance_failure);
         return err;
     };
@@ -530,7 +533,11 @@ pub fn semantizeWithOptions(
         };
     }
     // Explicit conformance bodies must be checked even if main never calls them.
-    try abstracts.validateParticipantConformances();
+    abstracts.validateParticipantConformances() catch |err| {
+        try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, &generics);
+        try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, abstracts.participant_conformance_failure);
+        return err;
+    };
     try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, abstracts.participant_conformance_failure);
     var reachable_storage: reachability_mod.FunctionSet = undefined;
     var reachable: ?*reachability_mod.FunctionSet = null;
@@ -591,6 +598,7 @@ pub fn semantizeWithOptions(
                     options.profile_io,
                     options.diagnostics,
                 ) catch |err| {
+                    try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, &generics);
                     try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, abstracts.participant_conformance_failure);
                     return err;
                 }) changed = true;
@@ -617,6 +625,7 @@ pub fn semantizeWithOptions(
             profileAccumulate(options.profile_io, sweep_start, &profile_addresses_ns);
             sweep_start = profileTimestamp(options.profile_io);
             if (generics.materializeKnownTypes() catch |err| {
+                try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, &generics);
                 try reportGenericArgumentFailure(&relocation.graph, options.diagnostics, &generics);
                 try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, abstracts.participant_conformance_failure);
                 return err;
@@ -1742,7 +1751,7 @@ fn resolveTypeOperation(
         else => unreachable,
     };
     const reference = module.semantic.external_refs.items[@intFromEnum(value.external)];
-    const result = if (reference.generic_arguments != null or reference.projection_base != null)
+    const result = if (reference.generic_arguments != null or reference.projection_base != null or reference.computed_type != null)
         try generics.tryResolve(module_index, module, o, operation)
     else
         try core.tryResolve(module_index, module, o, operation);
@@ -3418,6 +3427,14 @@ test "call diagnostic type names tolerate unresolved slots" {
     try std.testing.expectEqualStrings("<unresolved>", name.items);
 }
 
+fn reportComptimeExpressionFailure(graph: *const global_sg.GlobalSemanticGraph, diagnostics: ?*diagnostics_mod.Diagnostics, generics: *const generic_mod.Resolver) !void {
+    const failure = generics.comptime_failure orelse return;
+    if (diagnostics) |bag| {
+        try bag.add(diagnosticLocation(graph, bag, failure.source), .semantic, "{s}", .{failure.reason});
+        return error.Reported;
+    }
+}
+
 fn reportGenericArgumentFailure(graph: *const global_sg.GlobalSemanticGraph, diagnostics: ?*diagnostics_mod.Diagnostics, generics: *const generic_mod.Resolver) !void {
     const sink = diagnostics orelse return;
     const failure = generics.argument_failure orelse return;
@@ -3444,7 +3461,9 @@ fn reportParticipantConformanceFailure(allocator: std.mem.Allocator, graph: *con
     if (diagnostics) |bag| {
         var message = std.array_list.Managed(u8).init(allocator);
         defer message.deinit();
-        if (failure.is_projection) {
+        if (failure.is_value_projection) {
+            try appendFormatted(&message, allocator, "invalid associated constant projection '{s}': {s}", .{ failure.contract_name, failure.reason });
+        } else if (failure.is_projection) {
             try appendFormatted(&message, allocator, "invalid associated type projection '{s}': {s}", .{ failure.contract_name, failure.reason });
         } else {
             try appendFormatted(&message, allocator, "invalid conformance for contract '{s}': {s}", .{ failure.contract_name, failure.reason });

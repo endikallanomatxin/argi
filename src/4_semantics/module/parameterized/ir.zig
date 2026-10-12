@@ -78,10 +78,12 @@ pub const IntBinaryOperator = enum(u8) { add, subtract, multiply, divide, modulo
 pub const IntExpression = union(enum) {
     literal: i64,
     parameter: ComptimeParameterId,
+    projection: struct { base: ParameterizedTypeId, member: primitives.StringRange, source: primitives.SourceRef },
     binary: struct {
         operator: IntBinaryOperator,
         left: ParameterizedIntExprId,
         right: ParameterizedIntExprId,
+        source: ?primitives.SourceRef = null,
     },
 };
 
@@ -94,6 +96,7 @@ pub const Type = union(enum) {
     array: struct {
         length: ParameterizedIntExprId,
         element: ParameterizedTypeId,
+        source: ?primitives.SourceRef = null,
     },
     choice_union: struct { left: ParameterizedTypeId, right: ParameterizedTypeId },
     resolved: primitives.SemanticType(Ids),

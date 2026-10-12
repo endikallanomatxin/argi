@@ -49,12 +49,24 @@ uniqueness after resolving participant projections. The frontend cache stores
 both forms with an updated wire version.
 This affects syntax and semantics; codegen receives an ordinary resolved type.
 
+## Associated integer projections
+
+Retain `Contract#(A, B).Count` as a compile-time integer expression in
+parameterized IR. Concrete type applications with dependent arguments use
+anonymous parameterized type records, resolved after tuple associations are
+prepared. Reuse canonical tuple selection and associated member kind checks.
+Preserve symbolic expressions until participant bindings are available, without
+inferring participants from projected integers. Cover array dimensions, generic
+records, arithmetic, invalid members and frontend cache round trips. Syntax and
+semantics change; codegen receives concrete integer dimensions and ordinary types.
+
 ## Remaining work
 
 - Enforce unary body-declared composition. Included contract identities are now
   retained, but their requirements are not inherited yet. Preserve legacy
   explicit contract-to-contract relations while implementing those proofs.
-- Extend implemented symbolic associated type projections to compile-time values.
+- Extend integer projections to concrete call value arguments, ordinary runtime
+  expressions and associated-value assignments in conformance declarations.
 - Add tuple constraints to generic compile-time parameter checking, so declarations
   can use contract guarantees before concrete instantiation.
 - Select applicable conformances using structural pattern specificity; diagnose
@@ -81,3 +93,10 @@ Cover ordinary and constrained static calls, generic conformances, associated
 compile-time types and values, composition with legacy abstracts, imported
 identities, virtual dispatch, missing operations and borrowed-result escapes.
 Check clean and reused frontend builds and emitted LLVM dispatch representation.
+
+Integer projection validation: all 84 contract fixtures pass, including 19 new
+cases. The full Debug regression passes 1,695 program tests and 361 internal
+tests, with 11 and 1 skips respectively. Clean and persisted-cache LLVM for the
+generic call argument fixture are identical; the warm frontend reuses all 27
+modules. Generated IR uses concrete `[2 x i32]` storage and direct specialized
+calls. The persisted snapshot test also verifies a negative-dimension edit.

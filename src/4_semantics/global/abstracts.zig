@@ -128,6 +128,7 @@ pub const ImplementationConflict = struct {
 
 pub const ParticipantConformanceFailure = struct {
     is_projection: bool = false,
+    is_value_projection: bool = false,
     source: primitives.SourceRef,
     contract_name: []const u8,
     reason: []const u8,
@@ -2023,20 +2024,29 @@ pub const Resolver = struct {
 
     pub fn resolveAssociatedType(context: *anyopaque, base: global_sg.GlobalTypeId, member: []const u8, source: primitives.SourceRef) anyerror!global_sg.GlobalTypeId {
         const self: *Resolver = @ptrCast(@alignCast(context));
+        return (try self.resolveAssociatedElement(base, member, source, true)).type;
+    }
+
+    pub fn resolveAssociatedInt(context: *anyopaque, base: global_sg.GlobalTypeId, member: []const u8, source: primitives.SourceRef) anyerror!i64 {
+        const self: *Resolver = @ptrCast(@alignCast(context));
+        return (try self.resolveAssociatedElement(base, member, source, false)).comptime_int;
+    }
+
+    fn resolveAssociatedElement(self: *Resolver, base: global_sg.GlobalTypeId, member: []const u8, source: primitives.SourceRef, want_type: bool) anyerror!global_sg.GenericArgument.Value {
         if (self.graph.isTypeUnresolved(base)) return error.UnresolvedAssociatedType;
         const generic = switch (self.graph.types.items[@intFromEnum(base)]) {
             .generic => |value| value,
-            else => return self.projectionError(source, "associated type projection requires a participant contract", member),
+            else => return self.associatedProjectionError(want_type, source, "associated projection requires a participant contract", member),
         };
         const located = self.findAbstractDefinition(generic.base) orelse
-            return self.projectionError(source, "associated type projection requires a participant contract", member);
+            return self.associatedProjectionError(want_type, source, "associated projection requires a participant contract", member);
         if (located.definition.participants.len == 0)
-            return self.projectionError(source, "associated type projection requires explicit contract participants", member);
+            return self.associatedProjectionError(want_type, source, "associated projection requires explicit contract participants", member);
         const storage = &self.modules[located.module_index].semantic.parameterized_storage;
         var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
         defer bindings.deinit(self.allocator);
         self.generics.bindGlobalArguments(located.module_index, located.definition.participants, generic.arguments, &bindings) catch |err| {
-            return self.projectionError(source, conformanceArgumentFailure(err) orelse return err, member);
+            return self.associatedProjectionError(want_type, source, conformanceArgumentFailure(err) orelse return err, member);
         };
         for (located.definition.participants.start..located.definition.participants.start + located.definition.participants.len) |raw| {
             if (!self.typeSelectionReady(bindings.types[raw].?, 0)) return error.UnresolvedAssociatedType;
@@ -2045,12 +2055,12 @@ pub const Resolver = struct {
         for (0..located.definition.parameters.len) |i| {
             const parameter = storage.comptime_parameters.items[located.definition.parameters.start + i];
             if (std.mem.eql(u8, self.modules[located.module_index].text(parameter.name), member)) {
-                if (parameter.kind != .type) return self.projectionError(source, "associated element is not a type", member);
+                if ((parameter.kind == .type) != want_type) return self.associatedProjectionError(want_type, source, if (want_type) "associated element is not a type" else "associated element is not an integer constant", member);
                 position = i;
                 break;
             }
         }
-        const associated_index = position orelse return self.projectionError(source, "unknown associated type", member);
+        const associated_index = position orelse return self.associatedProjectionError(want_type, source, if (want_type) "unknown associated type" else "unknown associated constant", member);
         var deferred = false;
         for (self.graph.contract_conformances.items) |conformance| {
             if (conformance.declaration != generic.base) continue;
@@ -2069,12 +2079,12 @@ pub const Resolver = struct {
                 }
             }
             if (!equal) continue;
-            const result = self.graph.generic_arguments.items[conformance.associated_arguments.start + associated_index].value.type;
-            if (!self.typeSelectionReady(result, 0)) return error.UnresolvedAssociatedType;
+            const result = self.graph.generic_arguments.items[conformance.associated_arguments.start + associated_index].value;
+            if (result == .type and !self.typeSelectionReady(result.type, 0)) return error.UnresolvedAssociatedType;
             return result;
         }
         if (deferred) return error.UnresolvedAssociatedType;
-        return self.projectionError(source, "no conformance for the projected participant tuple", member);
+        return self.associatedProjectionError(want_type, source, "no conformance for the projected participant tuple", member);
     }
 
     fn typeSelectionReady(self: *const Resolver, ty: global_sg.GlobalTypeId, depth: usize) bool {
@@ -2103,6 +2113,11 @@ pub const Resolver = struct {
         };
     }
 
+    fn associatedProjectionError(self: *Resolver, want_type: bool, source: primitives.SourceRef, reason: []const u8, member: []const u8) error{InvalidAssociatedTypeProjection} {
+        self.participant_conformance_failure = .{ .is_projection = true, .is_value_projection = !want_type, .source = source, .contract_name = member, .reason = reason };
+        return error.InvalidAssociatedTypeProjection;
+    }
+
     fn projectionError(self: *Resolver, source: primitives.SourceRef, reason: []const u8, member: []const u8) error{InvalidAssociatedTypeProjection} {
         self.participant_conformance_failure = .{ .is_projection = true, .source = source, .contract_name = member, .reason = reason };
         return error.InvalidAssociatedTypeProjection;
@@ -2123,10 +2138,14 @@ pub const Resolver = struct {
                         else => continue,
                     };
                     const reference = module.semantic.external_refs.items[@intFromEnum(external)];
-                    const base = reference.projection_base orelse continue;
+                    if (reference.projection_base == null and reference.computed_type == null) continue;
                     const destination = globalizer.globalType(o, local);
                     if (!self.graph.isTypeUnresolved(destination)) continue;
-                    const result = resolveAssociatedType(self, globalizer.globalType(o, base), module.text(reference.name), self.sourceFor(module_index, reference.source)) catch |err| switch (err) {
+                    const result = (if (reference.computed_type) |computed| blk: {
+                        var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, module.semantic.parameterized_storage.comptime_parameters.items.len);
+                        defer bindings.deinit(self.allocator);
+                        break :blk self.generics.instantiateParameterizedType(module_index, computed, &bindings, null);
+                    } else resolveAssociatedType(self, globalizer.globalType(o, reference.projection_base.?), module.text(reference.name), self.sourceFor(module_index, reference.source))) catch |err| switch (err) {
                         error.UnresolvedAssociatedType => {
                             remaining += 1;
                             continue;
@@ -2148,7 +2167,7 @@ pub const Resolver = struct {
                             else => continue,
                         };
                         const reference = module.semantic.external_refs.items[@intFromEnum(external)];
-                        if (reference.projection_base == null or !self.graph.isTypeUnresolved(globalizer.globalType(self.offsets[module_index], local))) continue;
+                        if ((reference.projection_base == null and reference.computed_type == null) or !self.graph.isTypeUnresolved(globalizer.globalType(self.offsets[module_index], local))) continue;
                         return self.projectionError(self.sourceFor(module_index, reference.source), "cyclic or unresolved associated type projection", module.text(reference.name));
                     }
                 }
@@ -2605,7 +2624,7 @@ pub const Resolver = struct {
                 slot.* = actual;
                 break :blk true;
             },
-            .binary => (self.generics.evalInt(module_index, pattern, bindings) catch return false) == actual,
+            .binary, .projection => (self.generics.evalInt(module_index, pattern, bindings) catch return false) == actual,
         };
     }
 

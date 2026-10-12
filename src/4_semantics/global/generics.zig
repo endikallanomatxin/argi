@@ -25,6 +25,8 @@ pub const Stats = struct {
     type_intern_ns_by_tag: [tag_count]u64 = @splat(0),
 };
 
+pub const ComptimeFailure = struct { source: primitives.SourceRef, reason: []const u8 };
+
 pub const Resolver = struct {
     const PointerKey = struct {
         child: global_sg.GlobalTypeId,
@@ -38,9 +40,11 @@ pub const Resolver = struct {
     core: *core_mod.Resolver,
     profile_io: ?std.Io = null,
     stats: Stats = .{},
+    comptime_failure: ?ComptimeFailure = null,
     argument_failure: ?struct { declaration: global_sg.GlobalDeclId, ty: global_sg.GlobalTypeId, reason: []const u8 } = null,
     projection_context: ?*anyopaque = null,
     projection_resolver: ?*const fn (*anyopaque, global_sg.GlobalTypeId, []const u8, primitives.SourceRef) anyerror!global_sg.GlobalTypeId = null,
+    constant_projection_resolver: ?*const fn (*anyopaque, global_sg.GlobalTypeId, []const u8, primitives.SourceRef) anyerror!i64 = null,
     pointer_types: std.AutoHashMapUnmanaged(PointerKey, global_sg.GlobalTypeId) = .empty,
 
     pub fn deinit(self: *Resolver) void {
@@ -106,6 +110,15 @@ pub const Resolver = struct {
         value: anytype,
     ) !resolution.Result {
         const reference = module.semantic.external_refs.items[@intFromEnum(value.external)];
+        if (reference.computed_type) |computed| {
+            const destination = globalizer.globalType(o, value.destination);
+            if (!self.graph.isTypeUnresolved(destination)) return .resolved;
+            var bindings = try Bindings.init(self.allocator, module.semantic.parameterized_storage.comptime_parameters.items.len);
+            defer bindings.deinit(self.allocator);
+            const resolved = try self.instantiateParameterizedType(module_index, computed, &bindings, null);
+            try self.graph.resolveType(destination, self.graph.types.items[@intFromEnum(resolved)]);
+            return .resolved;
+        }
         if (reference.projection_base) |base| {
             const destination = globalizer.globalType(o, value.destination);
             if (!self.graph.isTypeUnresolved(destination)) return .resolved;
@@ -334,10 +347,17 @@ pub const Resolver = struct {
                 });
             },
             .external => |external| self.instantiateExternalType(module_index, external, bindings, self_type),
-            .array => |value| self.internType(.{ .array = .{
-                .length = @intCast(try self.evalInt(module_index, value.length, bindings)),
-                .element = try self.instantiateParameterizedType(module_index, value.element, bindings, self_type),
-            } }),
+            .array => |value| blk: {
+                const signed_length = try self.evalInt(module_index, value.length, bindings);
+                const length = std.math.cast(u64, signed_length) orelse {
+                    self.recordComptimeFailure(module_index, value.source, "array length must be non-negative");
+                    return error.InvalidArrayLength;
+                };
+                break :blk try self.internType(.{ .array = .{
+                    .length = length,
+                    .element = try self.instantiateParameterizedType(module_index, value.element, bindings, self_type),
+                } });
+            },
             .choice_union => |value| self.instantiateChoiceUnion(module_index, value.left, value.right, bindings, self_type),
             .resolved => |value| self.instantiateResolvedParameterizedType(module_index, value, bindings, self_type),
         };
@@ -556,18 +576,46 @@ pub const Resolver = struct {
         return switch (expression) {
             .literal => |value| value,
             .parameter => |parameter| bindings.ints[@intFromEnum(parameter)] orelse error.UnboundComptimeParameter,
+            .projection => |value| blk: {
+                const base = try self.instantiateParameterizedType(module_index, value.base, bindings, null);
+                break :blk try self.constant_projection_resolver.?(self.projection_context.?, base, self.modules[module_index].text(value.member), self.globalSource(module_index, value.source));
+            },
             .binary => |binary| blk: {
                 const left = try self.evalInt(module_index, binary.left, bindings);
                 const right = try self.evalInt(module_index, binary.right, bindings);
                 break :blk switch (binary.operator) {
-                    .add => left + right,
-                    .subtract => left - right,
-                    .multiply => left * right,
-                    .divide => if (right == 0) error.ComptimeDivisionByZero else @divTrunc(left, right),
-                    .modulo => if (right == 0) error.ComptimeDivisionByZero else @mod(left, right),
+                    .add => std.math.add(i64, left, right) catch {
+                        self.recordComptimeFailure(module_index, binary.source, "compile-time integer arithmetic overflow");
+                        return error.ComptimeIntegerOverflow;
+                    },
+                    .subtract => std.math.sub(i64, left, right) catch {
+                        self.recordComptimeFailure(module_index, binary.source, "compile-time integer arithmetic overflow");
+                        return error.ComptimeIntegerOverflow;
+                    },
+                    .multiply => std.math.mul(i64, left, right) catch {
+                        self.recordComptimeFailure(module_index, binary.source, "compile-time integer arithmetic overflow");
+                        return error.ComptimeIntegerOverflow;
+                    },
+                    .divide, .modulo => blk_division: {
+                        if (right == 0) {
+                            self.recordComptimeFailure(module_index, binary.source, "division by zero in compile-time expression");
+                            return error.ComptimeDivisionByZero;
+                        }
+                        if (left == std.math.minInt(i64) and right == -1) {
+                            if (binary.operator == .modulo) break :blk_division 0;
+                            self.recordComptimeFailure(module_index, binary.source, "compile-time integer arithmetic overflow");
+                            return error.ComptimeIntegerOverflow;
+                        }
+                        break :blk_division if (binary.operator == .divide) @divTrunc(left, right) else @mod(left, right);
+                    },
                 };
             },
         };
+    }
+
+    fn recordComptimeFailure(self: *Resolver, module_index: usize, source: ?primitives.SourceRef, reason: []const u8) void {
+        const location = source orelse return;
+        self.comptime_failure = .{ .source = self.globalSource(module_index, location), .reason = reason };
     }
 
     pub fn internType(self: *Resolver, value: global_sg.GlobalType) !global_sg.GlobalTypeId {

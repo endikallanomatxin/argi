@@ -145,7 +145,7 @@ pub const Resolver = struct {
                     .resolved => continue,
                 };
                 const reference = module.semantic.external_refs.items[@intFromEnum(external)];
-                if (reference.kind != .type or reference.projection_base != null) continue;
+                if (reference.kind != .type or (reference.projection_base != null or reference.computed_type != null)) continue;
                 if (reference.module_path == null and reference.generic_arguments == null) {
                     const name = module.text(reference.name);
                     const resolved_builtin = primitives.builtinTypeNamedForTarget(name, self.graph.target.stdTarget());
@@ -657,7 +657,7 @@ pub const Resolver = struct {
 
     fn resolveTypeHole(self: *Resolver, module_index: usize, module: *const module_sg.ModuleSemanticGraph, o: globalizer.Offsets, value: anytype) !resolution.Result {
         const reference = module.semantic.external_refs.items[@intFromEnum(value.external)];
-        if (reference.generic_arguments != null or reference.projection_base != null) return .not_applicable;
+        if (reference.generic_arguments != null or (reference.projection_base != null or reference.computed_type != null)) return .not_applicable;
         const target = self.resolveDeclaration(module_index, reference, &.{ .type, .abstract_type }) catch return .deferred;
         try self.graph.resolveType(globalizer.globalType(o, value.destination), .{ .declared = target });
         self.stats.external_types += 1;

@@ -11888,3 +11888,97 @@ test "feature_tests/contracts/64_projection_borrow" {
 test "feature_tests/contracts/65X_projection_borrow_escape" {
     try buildExpectFailWithoutNoise("tests/feature_tests/contracts/65X_projection_borrow_escape", "function output cannot depend on a local storage generation that ends before return", "panic");
 }
+
+test "feature_tests/contracts/66_constant_projection_dimension" {
+    const test_path = "tests/feature_tests/contracts/66_constant_projection_dimension";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/contracts/67_constant_projection_generic_dimension" {
+    const test_path = "tests/feature_tests/contracts/67_constant_projection_generic_dimension";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/contracts/68_constant_projection_arithmetic" {
+    const test_path = "tests/feature_tests/contracts/68_constant_projection_arithmetic";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/contracts/69X_constant_projection_unknown_member" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/69X_constant_projection_unknown_member", "unknown associated constant", "panic");
+}
+
+test "feature_tests/contracts/70X_constant_projection_missing_tuple" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/70X_constant_projection_missing_tuple", "no conformance for the projected participant tuple", "panic");
+}
+
+test "feature_tests/contracts/71X_constant_projection_type_member" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/71X_constant_projection_type_member", "associated element is not an integer constant", "panic");
+}
+
+test "feature_tests/contracts/72X_constant_projection_negative_dimension" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/72X_constant_projection_negative_dimension", "array length must be non-negative", "panic");
+}
+
+test "feature_tests/contracts/73X_constant_projection_overflow" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/73X_constant_projection_overflow", "compile-time integer arithmetic overflow", "panic");
+}
+
+test "feature_tests/contracts/74X_constant_projection_division_by_zero" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/74X_constant_projection_division_by_zero", "division by zero in compile-time expression", "panic");
+}
+
+test "feature_tests/contracts/75X_constant_projection_empty_tuple" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/75X_constant_projection_empty_tuple", "missing argument", "panic");
+}
+
+test "feature_tests/contracts/76_constant_projection_named_tuple" {
+    const test_path = "tests/feature_tests/contracts/76_constant_projection_named_tuple";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/contracts/77_constant_projection_generic_type_argument" {
+    const test_path = "tests/feature_tests/contracts/77_constant_projection_generic_type_argument";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/contracts/78_constant_projection_generic_call_argument" {
+    const test_path = "tests/feature_tests/contracts/78_constant_projection_generic_call_argument";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/contracts/79_constant_projection_imported_tuple" {
+    const test_path = "tests/feature_tests/contracts/79_constant_projection_imported_tuple";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/contracts/80_constant_projection_generic_record_argument" {
+    const test_path = "tests/feature_tests/contracts/80_constant_projection_generic_record_argument";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/contracts/81_constant_projection_participant_tuple" {
+    const test_path = "tests/feature_tests/contracts/81_constant_projection_participant_tuple";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/contracts/82X_constant_projection_generic_overflow" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/82X_constant_projection_generic_overflow", "compile-time integer arithmetic overflow", "panic");
+}
+
+test "feature_tests/contracts/83X_constant_projection_generic_negative_dimension" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/83X_constant_projection_generic_negative_dimension", "array length must be non-negative", "panic");
+}
+
+test "feature_tests/contracts/84X_constant_projection_concrete_call_argument" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/84X_constant_projection_concrete_call_argument", "associated constant arguments in concrete calls are not supported yet", "failed without a diagnostic");
+}

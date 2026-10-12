@@ -91,10 +91,11 @@ pub const Resolver = struct {
         reached_calls: usize = 0,
         reached_signatures: usize = 0,
         abstracts: ?abstract_mod.Resolver.CacheCheckpoint = null,
+        comptime_failure: ?generic_mod.ComptimeFailure = null,
     };
 
     pub fn checkpointSideEffects(self: *const Resolver) SideEffectCheckpoint {
-        var saved: SideEffectCheckpoint = .{ .reached_calls = self.core.reached_calls.items.len, .reached_signatures = self.core.reached_signature_changes.items.len };
+        var saved: SideEffectCheckpoint = .{ .comptime_failure = self.generics.comptime_failure, .reached_calls = self.core.reached_calls.items.len, .reached_signatures = self.core.reached_signature_changes.items.len };
         if (self.ownership_context) |context| {
             if (self.ownership_checkpoint) |checkpoint|
                 saved.ownership = checkpoint(context);
@@ -105,6 +106,7 @@ pub const Resolver = struct {
     }
 
     pub fn rollbackSideEffects(self: *Resolver, saved: SideEffectCheckpoint) void {
+        self.generics.comptime_failure = saved.comptime_failure;
         self.core.rollbackReachedCalls(saved.reached_calls);
         self.core.rollback_reached_signatures(saved.reached_signatures);
         if (saved.abstracts) |checkpoint|
@@ -526,7 +528,7 @@ pub const Resolver = struct {
                     error.NoMatchingGenericFunction => return .not_applicable,
                     error.DeferredGenericFunction => return .deferred,
                     error.AmbiguousGenericFunction => return .invalid,
-                    error.InvalidAssociatedTypeProjection => return err,
+                    error.InvalidAssociatedTypeProjection, error.InvalidArrayLength, error.ComptimeIntegerOverflow, error.ComptimeDivisionByZero => return err,
                     else => return .deferred,
                 }
             else
@@ -534,7 +536,7 @@ pub const Resolver = struct {
                     error.NoMatchingGenericFunction => return .not_applicable,
                     error.DeferredGenericFunction => return .deferred,
                     error.AmbiguousGenericFunction => return .invalid,
-                    error.InvalidAssociatedTypeProjection => return err,
+                    error.InvalidAssociatedTypeProjection, error.InvalidArrayLength, error.ComptimeIntegerOverflow, error.ComptimeDivisionByZero => return err,
                     error.ConflictingGenericArgument => return err,
                     else => return .deferred,
                 };
@@ -1548,6 +1550,7 @@ pub const Resolver = struct {
         const storage = &self.modules[module_index].semantic.parameterized_storage.ir;
         return switch (storage.int_expressions.items[@intFromEnum(expression)]) {
             .literal => exactSpecificity(),
+            .projection => .{},
             .parameter => .{},
             .binary => |binary| blk: {
                 var result: ParameterizedSpecificity = .{ .structure = 1 };
@@ -1841,7 +1844,7 @@ pub const Resolver = struct {
             // Composite expressions are constraints rather than invertible
             // bindings. Once their operands have been inferred elsewhere the
             // regular evaluator validates the dependent value.
-            .binary => (self.generics.evalInt(module_index, expression, bindings) catch return false) == actual,
+            .binary, .projection => (self.generics.evalInt(module_index, expression, bindings) catch return false) == actual,
         };
     }
 
@@ -2086,9 +2089,11 @@ pub const Resolver = struct {
         const saved_stats = self.stats;
         const saved_generic_stats = self.generics.stats;
         errdefer {
+            const comptime_failure = self.generics.comptime_failure;
             const projection_failure = if (self.nested_call_context) |abstracts| abstracts.participant_conformance_failure else null;
             self.graph.rollback(checkpoint);
             self.rollbackSideEffects(side_effect_checkpoint);
+            self.generics.comptime_failure = comptime_failure;
             // A selected instantiation must keep its projection diagnostic;
             // speculative signature probes restore theirs through checkpoints.
             if (self.nested_call_context) |abstracts| if (projection_failure) |failure| {

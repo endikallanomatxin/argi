@@ -9,9 +9,15 @@ pub fn verifyIR(graph: *const graph_mod.ModuleSemanticGraph) !void {
     const bounds = makeBounds(graph);
 
     for (storage.int_expressions.items) |expression| switch (expression) {
+        .projection => |value| {
+            try require(verify.idFits(value.base, storage.types.items.len));
+            try require(verify.stringFits(value.member, graph.strings.items));
+            try require(verify.sourceFits(value.source, graph.file_offsets.items.len));
+        },
         .literal => {},
         .parameter => |id| try require(verify.idFits(id, graph.semantic.parameterized_storage.comptime_parameters.items.len)),
         .binary => |value| {
+            if (value.source) |source| try require(verify.sourceFits(source, graph.file_offsets.items.len));
             try require(verify.idFits(value.left, storage.int_expressions.items.len));
             try require(verify.idFits(value.right, storage.int_expressions.items.len));
         },
@@ -28,6 +34,7 @@ pub fn verifyIR(graph: *const graph_mod.ModuleSemanticGraph) !void {
         },
         .external => |id| try require(verify.idFits(id, graph.semantic.external_refs.items.len)),
         .array => |value| {
+            if (value.source) |source| try require(verify.sourceFits(source, graph.file_offsets.items.len));
             try require(verify.idFits(value.length, storage.int_expressions.items.len));
             try require(verify.idFits(value.element, storage.types.items.len));
         },
