@@ -1022,6 +1022,21 @@ pub const Resolver = struct {
         );
     }
 
+    pub fn resolveOperationIdentity(self: *Resolver, module_index: usize, name: []const u8, input: global_sg.GlobalNodeId, reach: ReachInferenceContext, source: primitives.SourceRef) !?global_sg.Node {
+        const abstracts = self.nested_call_context orelse return null;
+        var candidates = try abstracts.operationCandidates(module_index, name, input);
+        defer candidates.deinit(self.allocator);
+        if (candidates.items.items.len == 0) return null;
+        const ordinary = try self.core.matchUnqualifiedFunctionByNameWithReach(module_index, name, input, reach);
+        const generic = try self.implicitOrdinaryApplicable(module_index, name, input, reach);
+        if (candidates.items.items.len > 1 or ordinary == .function or ordinary == .ambiguous or generic == .applicable) {
+            abstracts.participant_conformance_failure = .{ .source = source, .contract_name = name, .operation = name, .reason = "multiple applicable operation identities; qualify the contract operation explicitly" };
+            return error.AmbiguousOperationIdentity;
+        }
+        if (candidates.deferred or ordinary == .deferred or generic == .deferred) return error.DeferredOperationIdentity;
+        return abstracts.callOperationCandidate(module_index, candidates.items.items[0], name, input, reach, source);
+    }
+
     /// Compiler-generated calls participate in exactly the same generic
     /// inference and declaration-specificity ordering as source calls.
     pub fn resolveImplicitGenericFunctionByName(
@@ -1050,7 +1065,52 @@ pub const Resolver = struct {
         return false;
     }
 
+    const ImplicitGenericSelection = struct {
+        declaration: global_sg.GlobalDeclId,
+        arguments: primitives.Range(global_sg.GlobalGenericArgId),
+    };
+
     fn resolveImplicitGenericFunctionFiltered(
+        self: *Resolver,
+        current_module: usize,
+        name: []const u8,
+        module_filter: ?global_sg.GlobalModuleId,
+        input: global_sg.GlobalNodeId,
+        reach: ?ReachInferenceContext,
+        ambiguity_candidates: ?*std.ArrayList(global_sg.GlobalDeclId),
+    ) !global_sg.GlobalFunctionId {
+        const selected = try self.selectImplicitGenericFunctionFiltered(current_module, name, module_filter, input, reach, ambiguity_candidates);
+        const started = self.profileTimestamp();
+        const result = try self.instantiate(selected.declaration, selected.arguments);
+        self.addProfileTime(started, &self.selection_profile.implicit_final_instantiation_ns);
+        return result;
+    }
+
+    /// Identity lookup checks generic applicability without instantiating a body.
+    /// The same selector supplies the arguments used by ordinary resolution.
+    pub fn implicitOrdinaryApplicable(self: *Resolver, module_index: usize, name: []const u8, input: global_sg.GlobalNodeId, reach: ReachInferenceContext) !enum { applicable, missing, deferred } {
+        const checkpoint = self.graph.checkpoint();
+        const side_effects = self.checkpointSideEffects();
+        const failed = self.failed_constraint;
+        const argument_failure = self.generics.argument_failure;
+        defer {
+            self.graph.rollback(checkpoint);
+            self.rollbackSideEffects(side_effects);
+            self.failed_constraint = failed;
+            self.generics.argument_failure = argument_failure;
+        }
+        _ = self.selectImplicitGenericFunctionFiltered(module_index, name, null, input, reach, null) catch |err| {
+            return switch (err) {
+                error.OutOfMemory => err,
+                error.DeferredGenericFunction => .deferred,
+                error.AmbiguousGenericFunction => .applicable,
+                else => .missing,
+            };
+        };
+        return .applicable;
+    }
+
+    fn selectImplicitGenericFunctionFiltered(
         self: *Resolver,
         current_module: usize,
         name: []const u8,
@@ -1058,7 +1118,7 @@ pub const Resolver = struct {
         input: global_sg.GlobalNodeId,
         reach_context: ?ReachInferenceContext,
         ambiguity_candidates: ?*std.ArrayList(global_sg.GlobalDeclId),
-    ) !global_sg.GlobalFunctionId {
+    ) !ImplicitGenericSelection {
         if (self.profile_io != null) self.selection_profile.implicit_calls += 1;
         const literal = switch (self.graph.nodes.items[@intFromEnum(input)].content) {
             .struct_value_literal => |literal| literal,
@@ -1232,10 +1292,7 @@ pub const Resolver = struct {
         }
         if (tied) return error.AmbiguousGenericFunction;
         const declaration = best orelse return if (saw_deferred) error.DeferredGenericFunction else if (candidate_count == 1 and conflicting_candidates == 1) error.ConflictingGenericArgument else error.NoMatchingGenericFunction;
-        const instantiate_start = self.profileTimestamp();
-        const result = try self.instantiate(declaration, best_arguments);
-        self.addProfileTime(instantiate_start, &self.selection_profile.implicit_final_instantiation_ns);
-        return result;
+        return .{ .declaration = declaration, .arguments = best_arguments };
     }
 
     fn contextualParameterizedLiteralFits(
@@ -3084,6 +3141,9 @@ pub const Resolver = struct {
             const visible = try self.resolver.allocator.dupe(global_sg.GlobalBindingId, self.resolver.graph.binding_refs.items[input_bindings.start..][0..input_bindings.len]);
             defer self.resolver.allocator.free(visible);
             const nested_reach = ReachInferenceContext.fromGlobal(visible, self.function);
+            if (module_path == null and arguments.len == 0) {
+                if (try self.resolver.resolveOperationIdentity(self.module_index, name, input, nested_reach, self.resolver.sourceFor(self.module_index, source))) |operation| return operation;
+            }
             const function = blk: {
                 break :blk if (arguments.len != 0)
                     self.resolver.resolveExplicitGenericFunction(

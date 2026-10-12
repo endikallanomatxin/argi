@@ -12257,12 +12257,12 @@ test "feature_tests/contracts/142_repeated_array_length_specialization" {
     try expectSuccessfulBuild("tests/feature_tests/contracts/142_repeated_array_length_specialization");
 }
 
-test "feature_tests/contracts/143X_order_policy_global_operation" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/143X_order_policy_global_operation", "no function named 'less' exists", "panic");
+test "feature_tests/contracts/143_order_policy_unqualified_operation" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/143_order_policy_unqualified_operation");
 }
 
-test "feature_tests/contracts/144X_hash_policy_global_operation" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/144X_hash_policy_global_operation", "no function named 'hash' exists", "panic");
+test "feature_tests/contracts/144_hash_policy_unqualified_operation" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/144_hash_policy_unqualified_operation");
 }
 
 test "feature_tests/contracts/145_nominal_reader_implementations" {
@@ -12297,24 +12297,24 @@ test "feature_tests/contracts/152_reader_selected_virtual_evidence" {
     try expectSuccessfulBuild("tests/feature_tests/contracts/152_reader_selected_virtual_evidence");
 }
 
-test "feature_tests/contracts/153X_reader_global_operation" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/153X_reader_global_operation", "no function named 'read_byte' exists", "panic");
+test "feature_tests/contracts/153_reader_unqualified_operation" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/153_reader_unqualified_operation");
 }
 
 test "feature_tests/contracts/154_writer_selected_virtual_evidence" {
     try expectSuccessfulBuild("tests/feature_tests/contracts/154_writer_selected_virtual_evidence");
 }
 
-test "feature_tests/contracts/155X_writer_global_operation" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/155X_writer_global_operation", "no function named 'write_byte' exists", "panic");
+test "feature_tests/contracts/155_writer_unqualified_operation" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/155_writer_unqualified_operation");
 }
 
 test "feature_tests/contracts/156_tracer_selected_virtual_evidence" {
     try expectSuccessfulBuild("tests/feature_tests/contracts/156_tracer_selected_virtual_evidence");
 }
 
-test "feature_tests/contracts/157X_tracer_global_operation" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/157X_tracer_global_operation", "no function named 'reset_context' exists", "panic");
+test "feature_tests/contracts/157_tracer_unqualified_operation" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/157_tracer_unqualified_operation");
 }
 
 test "feature_tests/contracts/158_allocator_selected_virtual_evidence" {
@@ -12323,4 +12323,32 @@ test "feature_tests/contracts/158_allocator_selected_virtual_evidence" {
 
 test "feature_tests/contracts/159X_deallocator_global_operation" {
     try buildExpectFailWithoutNoise("tests/feature_tests/contracts/159X_deallocator_global_operation", "no function named 'deallocate' exists", "panic");
+}
+
+test "feature_tests/contracts/160_unqualified_operation_identities" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/160_unqualified_operation_identities");
+}
+
+test "feature_tests/contracts/161X_unqualified_contract_ambiguity" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/161X_unqualified_contract_ambiguity", "multiple applicable operation identities", "panic");
+}
+
+test "feature_tests/contracts/162X_unqualified_ordinary_ambiguity" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/162X_unqualified_ordinary_ambiguity", "multiple applicable operation identities", "panic");
+}
+
+test "feature_tests/contracts/163_unqualified_virtual_operation" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/163_unqualified_virtual_operation");
+}
+
+test "feature_tests/contracts/164X_unqualified_generic_ordinary_ambiguity" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/164X_unqualified_generic_ordinary_ambiguity", "multiple applicable operation identities", "panic");
+}
+
+test "feature_tests/contracts/165_unqualified_distinct_inputs" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/165_unqualified_distinct_inputs");
+}
+
+test "feature_tests/contracts/166X_generic_operation_identity_ambiguity" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/166X_generic_operation_identity_ambiguity", "multiple applicable operation identities", "panic");
 }

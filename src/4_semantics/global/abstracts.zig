@@ -2071,6 +2071,138 @@ pub const Resolver = struct {
         return .resolved;
     }
 
+    pub const OperationCandidate = struct {
+        declaration: global_sg.GlobalDeclId,
+        participants: []global_sg.GlobalTypeId,
+        virtual: bool = false,
+    };
+
+    pub const OperationCandidates = struct {
+        items: std.ArrayList(OperationCandidate) = .empty,
+        deferred: bool = false,
+
+        pub fn deinit(self: *OperationCandidates, allocator: std.mem.Allocator) void {
+            for (self.items.items) |candidate| allocator.free(candidate.participants);
+            self.items.deinit(allocator);
+        }
+    };
+
+    /// Compare operation identities using their input signatures. Conformance
+    /// specificity determines associated signatures within one identity, never
+    /// a priority between contracts. Probes publish no evidence or runtime body.
+    pub fn operationCandidates(self: *Resolver, module_index: usize, name: []const u8, input: global_sg.GlobalNodeId) !OperationCandidates {
+        var result: OperationCandidates = .{};
+        errdefer result.deinit(self.allocator);
+        if (std.mem.startsWith(u8, name, "_")) return result;
+        for (self.modules, 0..) |module, owner| {
+            for (module.semantic.parameterized_storage.abstract_definitions.items) |definition| {
+                if (!definition.hasExplicitParticipants()) continue;
+                const declaration = globalizer.globalDecl(self.offsets[owner], definition.declaration);
+                if (!self.core.declarationVisible(module_index, declaration, null)) continue;
+                const storage = &module.semantic.parameterized_storage;
+                for (storage.abstract_requirements.items[definition.requirements.start..][0..definition.requirements.len]) |requirement| {
+                    if (!requirement.scoped or !std.mem.eql(u8, module.text(requirement.name), name)) continue;
+                    if (try self.probeOperationCandidate(.{ .module_index = owner, .definition = definition }, declaration, requirement, input, &result.deferred)) |candidate|
+                        try result.items.append(self.allocator, candidate);
+                }
+            }
+        }
+        return result;
+    }
+
+    fn probeOperationCandidate(self: *Resolver, located: LocatedAbstractDefinition, declaration: global_sg.GlobalDeclId, requirement: parameterized_storage.AbstractRequirement, input: global_sg.GlobalNodeId, deferred: *bool) !?OperationCandidate {
+        const literal = switch (self.graph.node(input).content) {
+            .struct_value_literal => |value| value,
+            else => return null,
+        };
+        const checkpoint = self.graph.checkpoint();
+        const caches = self.checkpointImplementationCaches();
+        const comptime_failure = self.generics.comptime_failure;
+        const argument_failure = self.generics.argument_failure;
+        defer {
+            self.graph.rollback(checkpoint);
+            self.rollbackImplementationCaches(caches);
+            self.generics.comptime_failure = comptime_failure;
+            self.generics.argument_failure = argument_failure;
+        }
+        const module = &self.modules[located.module_index];
+        const storage = &module.semantic.parameterized_storage;
+        var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
+        defer bindings.deinit(self.allocator);
+        const fields = storage.ir.types.items[@intFromEnum(requirement.input)].resolved.structural.fields;
+        var virtual = false;
+        for (storage.ir.fields.items[fields.start..][0..fields.len], 0..) |field, position| {
+            for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len], 0..) |actual, index| {
+                const name = self.graph.text(actual.name);
+                if (!((name.len == 0 and position == index) or std.mem.eql(u8, name, module.text(field.name)))) continue;
+                const actual_ty = self.graph.node(actual.value).ty orelse {
+                    deferred.* = true;
+                    return null;
+                };
+                if (!self.typeSelectionReady(actual_ty, 0)) {
+                    deferred.* = true;
+                    return null;
+                }
+                const ty = self.graph.semanticType(actual_ty);
+                const pattern = storage.ir.types.items[@intFromEnum(field.ty)];
+                if (located.definition.participants.len == 1 and pattern == .resolved and pattern.resolved == .pointer and
+                    self.isUnaryReceiverParticipantType(located, pattern.resolved.pointer.child) and ty == .pointer)
+                {
+                    const child = self.graph.semanticType(ty.pointer.child);
+                    if (child == .virtual) {
+                        const use = self.abstractUse(child.virtual) orelse return null;
+                        if (use.declaration != declaration or use.arguments.len != 0) return null;
+                        bindings.types[located.definition.participants.start] = child.virtual;
+                        virtual = true;
+                        continue;
+                    }
+                }
+                // Input patterns can mention associated elements. Infer what is
+                // available now, then check the entire selected signature below.
+                _ = try self.inferConstraintTypePattern(located.module_index, field.ty, actual_ty, &bindings);
+            }
+        }
+        const participants = try self.allocator.alloc(global_sg.GlobalTypeId, located.definition.participants.len);
+        errdefer self.allocator.free(participants);
+        for (participants, 0..) |*participant, index| {
+            participant.* = bindings.types[located.definition.participants.start + index] orelse {
+                self.allocator.free(participants);
+                return null;
+            };
+        }
+        if (!virtual) {
+            const selected = self.selectConformance(declaration, participants, &bindings, 0, deferred) catch |err| {
+                self.allocator.free(participants);
+                if (err == error.OutOfMemory) return err;
+                return null;
+            };
+            if (selected == null) {
+                self.allocator.free(participants);
+                return null;
+            }
+        }
+        const required = self.generics.instantiateParameterizedType(located.module_index, requirement.input, &bindings) catch |err| {
+            self.allocator.free(participants);
+            if (err == error.OutOfMemory) return err;
+            return null;
+        };
+        switch (self.core.matchCallInput(global_types.fields(self.graph, required) orelse return error.InvalidAbstractRequirementInput, input)) {
+            .score => return .{ .declaration = declaration, .participants = participants, .virtual = virtual },
+            .deferred => deferred.* = true,
+            .no_match => {},
+        }
+        self.allocator.free(participants);
+        return null;
+    }
+
+    pub fn callOperationCandidate(self: *Resolver, module_index: usize, candidate: OperationCandidate, name: []const u8, input: global_sg.GlobalNodeId, context: reach_context.Context, source: primitives.SourceRef) !?global_sg.Node {
+        const start: u32 = @intCast(self.graph.generic_arguments.items.len);
+        if (!candidate.virtual) for (candidate.participants) |participant|
+            try self.graph.generic_arguments.append(self.allocator, .{ .name = .{ .start = 0, .len = 0 }, .value = .{ .type = participant } });
+        const base = try self.generics.internType(.{ .generic = .{ .base = candidate.declaration, .arguments = .{ .start = start, .len = if (candidate.virtual) 0 else @intCast(candidate.participants.len) } } });
+        return self.makeScopedOperationCall(module_index, base, name, input, context, source);
+    }
+
     pub fn makeScopedOperationCall(self: *Resolver, module_index: usize, base: global_sg.GlobalTypeId, name: []const u8, input: global_sg.GlobalNodeId, context: reach_context.Context, source: primitives.SourceRef) !?global_sg.Node {
         const use = self.typeAbstractUse(base) orelse return null;
         const located = self.findAbstractDefinition(use.declaration) orelse return null;

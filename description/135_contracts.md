@@ -158,8 +158,7 @@ Strictly less specific candidates are discarded; equivalent and incomparable
 maximal candidates are ambiguous. Integer substitutions preserve repeated array-length equalities across participants.
 Nominal application patterns match declaration identities and recursively bind
 type and integer arguments in declaration order, including named arguments.
-Symbolic arithmetic equivalence and other structural patterns, together with
-unqualified operation inference, remain pending. Standard construction, conversion, destruction
+Symbolic arithmetic equivalence and other structural patterns remain pending. Standard construction, conversion, destruction
 and operator migration, composition and joint virtual evidence remain pending.
 Unbound unary contracts with explicit participants and no associated parameters
 can construct virtual handles using selected implementation evidence. Qualified
@@ -202,3 +201,10 @@ not part of the intended final language.
 > selected virtual Deallocator evidence and authenticated acquisition bounds.
 > Byte requests use the unique allocate_bytes helper; typed allocate#(T) requests
 > use an optional count defaulting to one.
+
+> [!IMPLEMENTATION]
+> Unqualified scoped operations infer participants from inputs and check the
+> selected associated signature. Applicable contract identities and applicable
+> ordinary functions compete by identity, never by cross-contract specificity.
+> Multiple applicable identities require explicit qualification. Static and
+> generic bodies share this lookup; unary virtual inputs retain their identity.

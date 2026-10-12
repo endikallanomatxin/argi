@@ -30,10 +30,11 @@ incomparable maximal candidates are errors; source/import ordering has no priori
    and scoped implementations. Replace each implicit receiver contract with explicit
    participants and each global operation family with scoped implementations. Remove
    the superseded route as its final consumers move.
-   Resolve unqualified calls by operation identity and participant inference.
-   Replace temporary rejections of unqualified OrderPolicy.less and
-   HashPolicy.hash, Reader.read_byte and Writer.write_byte with scoped-identity
-   assertions when that resolution is implemented.
+   Extend operation input inference to nested associated patterns and reached
+   participants, and stabilize ambiguous-conformance diagnostics during probes.
+   Current direct participant inference shares identity selection between
+   concrete/generic bodies and compares ordinary generic applicability without
+   instantiating its body. Explicit qualified calls remain the escape hatch.
    Remove global overload lookup, legacy function declaration adapters,
    `satisfies` and `Abstract` compatibility once their consumers are migrated.
    No long-term parallel overload mechanism is intended.

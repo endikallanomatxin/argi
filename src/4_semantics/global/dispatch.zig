@@ -132,6 +132,22 @@ pub const Resolver = struct {
         // A lexical callable value shadows named functions and constructors.
         if (operation == .resolve_call and operation.resolve_call.callee_value != null)
             return self.core.tryResolve(module_index, module, o, operation);
+        if (operation == .resolve_call) {
+            const call = operation.resolve_call;
+            const reference = module.semantic.external_refs.items[@intFromEnum(call.callee)];
+            if (reference.module_path == null and reference.generic_arguments == null) {
+                const context = reach_context.Context.fromModule(module, o, call.visible_bindings, call.owner_function);
+                const selected = self.generic_functions.resolveOperationIdentity(module_index, module.text(reference.name), globalizer.globalNode(o, call.input), context, .{ .file_index = o.file_base + reference.source.file_index, .offset = reference.source.offset }) catch |err| switch (err) {
+                    error.AmbiguousOperationIdentity => return .invalid,
+                    error.DeferredOperationIdentity => return .deferred,
+                    else => return err,
+                };
+                if (selected) |node| {
+                    self.core.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, call.node))] = node;
+                    return .resolved;
+                }
+            }
+        }
         var stage_start = self.profileTimestamp();
         const error_result = try self.errors.tryResolveCall(module_index, module, o, operation);
         self.profilePendingStage(.errors, stage_start, error_result);
