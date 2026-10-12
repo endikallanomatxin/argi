@@ -192,6 +192,8 @@ pub const Mutability = enum(u32) { constant, variable };
 pub const PointerMutability = enum(u32) { read_only, read_write };
 
 pub const FunctionExtra = struct {
+    identity_definition: u32 = 0,
+    contract_member: u32 = 0,
     name_token: TokenIndex,
     constructor_type: OptionalTokenIndex = .none,
     destructor_type: OptionalTokenIndex = .none,
@@ -208,6 +210,7 @@ pub const FunctionExtra = struct {
 pub const IfExtra = struct { then_block: NodeIndex, else_block: OptionalNodeIndex };
 pub const FieldExtra = struct { type_node: OptionalNodeIndex, default_value: OptionalNodeIndex };
 pub const GenericValueExtra = struct {
+    implementation_members: OptionalNodeIndex = .none,
     generic_params_start: ExtraIndex,
     generic_params_end: ExtraIndex,
     generic_params_struct: OptionalNodeIndex,
@@ -227,6 +230,7 @@ pub const AbstractExtra = struct {
     domains_end: ExtraIndex,
 };
 pub const CallExtra = struct {
+    contract_type: OptionalNodeIndex = .none,
     module_qualifier: OptionalTokenIndex,
     type_arguments_start: ExtraIndex,
     type_arguments_end: ExtraIndex,
@@ -241,6 +245,8 @@ pub const ForExtra = struct { name_token: TokenIndex, iterable: NodeIndex, body:
 pub const MatchCaseExtra = struct { payload_name: OptionalTokenIndex, body: NodeIndex };
 
 pub const FunctionDeclaration = struct {
+    identity_definition: bool = false,
+    contract_member: bool = false,
     name_token: TokenIndex,
     constructor_type: ?TokenIndex = null,
     destructor_type: ?TokenIndex = null,
@@ -266,6 +272,7 @@ pub const OperatorName = enum {
 };
 pub const IfStatement = struct { condition: NodeIndex, then_block: NodeIndex, else_block: ?NodeIndex };
 pub const FunctionCall = struct {
+    contract_type: ?NodeIndex = null,
     callee_token: TokenIndex,
     module_qualifier: ?TokenIndex,
     type_arguments: []const NodeIndex,
@@ -302,6 +309,7 @@ pub const ContractConformance = struct {
     generic_params_struct: ?NodeIndex,
     contract_type: NodeIndex,
     associated_arguments: ?NodeIndex,
+    implementation_members: ?NodeIndex = null,
 };
 pub const AbstractDeclaration = struct {
     participants_struct: ?NodeIndex = null,
@@ -312,7 +320,7 @@ pub const AbstractDeclaration = struct {
     requires_functions: []const NodeIndex,
     domains: []const NodeIndex,
 };
-pub const AbstractFunctionRequirement = struct { name_token: TokenIndex, input: NodeIndex, output: NodeIndex, safety_contract: ?NodeIndex = null };
+pub const AbstractFunctionRequirement = struct { scoped: bool = false, name_token: TokenIndex, input: NodeIndex, output: NodeIndex, safety_contract: ?NodeIndex = null };
 pub const GenericType = struct { base: NodeIndex, arguments: NodeIndex };
 pub const Type = union(enum) {
     name: struct { name_token: TokenIndex, qualifier_token: ?TokenIndex },
@@ -511,6 +519,8 @@ pub const FileSyntaxTree = struct {
         if (node_tag != .function_declaration and node_tag != .function_declaration_once and node_tag != .c_function_pointer_declaration) return null;
         const extra = tree.extraData(FunctionExtra, tree.data(node).extra);
         return .{
+            .identity_definition = extra.identity_definition != 0,
+            .contract_member = extra.contract_member != 0,
             .name_token = extra.name_token,
             .constructor_type = extra.constructor_type.unwrap(),
             .destructor_type = extra.destructor_type.unwrap(),
@@ -576,6 +586,7 @@ pub const FileSyntaxTree = struct {
         if (tree.tag(node) != .function_call) return null;
         const extra = tree.extraData(CallExtra, tree.data(node).extra);
         return .{
+            .contract_type = extra.contract_type.unwrap(),
             .callee_token = tree.mainToken(node),
             .module_qualifier = extra.module_qualifier.unwrap(),
             .type_arguments = tree.nodeRange(.{ .start = extra.type_arguments_start, .end = extra.type_arguments_end }),
@@ -713,7 +724,7 @@ pub const FileSyntaxTree = struct {
         if (tree.tag(node) != .contract_conformance) return null;
         const payload = tree.genericValuePayload(node);
         const extra = tree.extraData(GenericValueExtra, tree.data(node).extra);
-        return .{ .generic_params = payload.generic_params, .generic_params_struct = payload.generic_params_struct, .contract_type = payload.value, .associated_arguments = extra.safety_contract.unwrap() };
+        return .{ .generic_params = payload.generic_params, .generic_params_struct = payload.generic_params_struct, .contract_type = payload.value, .associated_arguments = extra.safety_contract.unwrap(), .implementation_members = extra.implementation_members.unwrap() };
     }
 
     pub fn abstractDefaultsTo(tree: *const FileSyntaxTree, node: NodeIndex) ?AbstractDefaultsTo {
@@ -739,7 +750,7 @@ pub const FileSyntaxTree = struct {
     pub fn abstractFunctionRequirement(tree: *const FileSyntaxTree, node: NodeIndex) ?AbstractFunctionRequirement {
         if (tree.tag(node) != .abstract_function_requirement) return null;
         const extra = tree.extraData(FunctionExtra, tree.data(node).extra);
-        return .{ .name_token = extra.name_token, .input = extra.input, .output = extra.output, .safety_contract = extra.safety_contract.unwrap() };
+        return .{ .scoped = extra.contract_member != 0, .name_token = extra.name_token, .input = extra.input, .output = extra.output, .safety_contract = extra.safety_contract.unwrap() };
     }
 
     pub fn syntaxType(tree: *const FileSyntaxTree, node: NodeIndex) ?Type {

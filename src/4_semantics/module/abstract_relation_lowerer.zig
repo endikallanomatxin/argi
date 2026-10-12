@@ -111,8 +111,85 @@ const Context = struct {
         const name = self.tree.tokenTextFromSource(self.source, base.name.name_token);
         const reference = try self.declarationRef(base_node, name, .abstract);
         const participants = try self.lowerConformanceArguments(if (syntax_type == .generic) syntax_type.generic.arguments else null);
-        const associated = try self.lowerConformanceArguments(relation.associated_arguments);
+        var operations: primitives.Range(parameterized_storage.ContractOperationId) = .{ .start = 0, .len = 0 };
+        const associated = if (relation.implementation_members) |members| blk: {
+            var arguments: std.ArrayList(entities.GenericArgument) = .empty;
+            defer arguments.deinit(self.allocator);
+            const operation_start: u32 = @intCast(self.graph.semantic.parameterized_storage.contract_operations.items.len);
+            for (self.tree.structTypeLiteral(members).?.fields) |member_node| {
+                const member = self.tree.structTypeField(member_node).?;
+                const member_name = self.tree.tokenTextFromSource(self.source, member.name_token);
+                const value = member.default_value orelse return error.InvalidContractArgument;
+                if (member.type_node) |annotation| {
+                    const kind = self.tree.syntaxType(annotation) orelse return error.InvalidContractArgument;
+                    if (kind != .name) try self.conformanceError(member_node, "associated implementation elements require Type or Int annotations");
+                    const kind_name = self.tree.tokenTextFromSource(self.source, kind.name.name_token);
+                    const argument: entities.GenericArgument.Value = if (std.mem.eql(u8, kind_name, "Type"))
+                        .{ .type = try self.lowerModuleType(value) }
+                    else if (std.mem.eql(u8, kind_name, "Int"))
+                        .{ .comptime_int = try self.evalInt(value) }
+                    else {
+                        try self.conformanceError(member_node, "associated implementation elements require Type or Int annotations");
+                        unreachable;
+                    };
+                    try arguments.append(self.allocator, .{ .name = try self.writer.addString(member_name), .value = argument });
+                    continue;
+                }
+                const storage = &self.graph.semantic.parameterized_storage;
+                for (storage.contract_operations.items[operation_start..]) |previous| {
+                    if (std.mem.eql(u8, self.graph.text(previous.name), member_name))
+                        try self.conformanceError(member_node, "duplicate implementation operation");
+                }
+                if (self.tree.functionDeclaration(value) != null) {
+                    const declaration = for (self.graph.declarations.items, 0..) |candidate, raw| {
+                        if (candidate.kind == .function and candidate.module_file_index == self.file_index and candidate.source_offset == self.tree.location(value).offset)
+                            break @as(entities.ModuleDeclId, @enumFromInt(@as(u32, @intCast(raw))));
+                    } else return error.MissingImplementationFunction;
+                    try storage.contract_operations.append(self.allocator, .{
+                        .instantiate_associated = true,
+                        .name = try self.writer.addString(member_name),
+                        .function = .{ .module = declaration },
+                        .source = self.sourceRef(member_node),
+                    });
+                    continue;
+                }
+                var qualifier: ?syn.TokenIndex = null;
+                const function_token = switch (self.tree.tag(value)) {
+                    .identifier => self.tree.mainToken(value),
+                    .struct_field_access => field: {
+                        const access = self.tree.structFieldAccess(value).?;
+                        if (self.tree.tag(access.value) != .identifier) {
+                            try self.conformanceError(member_node, "implementation operation aliases require an ordinary function name");
+                            unreachable;
+                        }
+                        qualifier = self.tree.mainToken(access.value);
+                        break :field access.field_token;
+                    },
+                    else => {
+                        try self.conformanceError(member_node, "implementation operation aliases require an ordinary function name");
+                        unreachable;
+                    },
+                };
+                const function_ref = try self.writer.addExternalRef(.{
+                    .kind = .function,
+                    .name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, function_token)),
+                    .module_path = if (qualifier) |token| try self.writer.addString(self.tree.tokenTextFromSource(self.source, token)) else null,
+                    .source = self.sourceRef(member_node),
+                });
+                try storage.contract_operations.append(self.allocator, .{
+                    .name = try self.writer.addString(member_name),
+                    .function = .{ .external = function_ref },
+                    .source = self.sourceRef(member_node),
+                });
+            }
+            operations = .{ .start = operation_start, .len = @intCast(self.graph.semantic.parameterized_storage.contract_operations.items.len - operation_start) };
+            const argument_start: u32 = @intCast(@import("views.zig").genericArgumentCount(self.graph));
+            for (arguments.items) |argument| _ = try self.writer.addGenericArgument(argument);
+            break :blk entities.GenericArgRange{ .start = argument_start, .len = @intCast(arguments.items.len) };
+        } else try self.lowerConformanceArguments(relation.associated_arguments);
         try self.graph.semantic.parameterized_storage.contract_conformances.append(self.allocator, .{
+            .explicit_operations = relation.implementation_members != null,
+            .operations = operations,
             .contract_ref = reference,
             .participants = participants,
             .associated_arguments = associated,

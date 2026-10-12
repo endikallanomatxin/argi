@@ -67,10 +67,26 @@ pub fn verifyGlobal(graph: *const graph_mod.GlobalSemanticGraph) !void {
         try require(verify.rangeFits(value.participants, graph.generic_arguments.items.len));
         try require(value.participants.len != 0);
         try require(verify.rangeFits(value.operations, graph.function_refs.items.len));
+        try require(verify.rangeFits(value.operation_bindings, graph.contract_operation_bindings.items.len));
         for (graph.function_refs.items[value.operations.start..][0..value.operations.len]) |method| try require(verify.idFits(method, graph.functions.items.len));
         for (graph.generic_arguments.items[value.participants.start..][0..value.participants.len]) |argument| try require(argument.value == .type);
         try require(verify.rangeFits(value.associated_arguments, graph.generic_arguments.items.len));
         try require(verify.sourceFits(value.source, graph.files.items.len));
+    }
+    for (graph.nodes.items) |node| {
+        if (node.content != .function_call) continue;
+        const call = node.content.function_call;
+        if (call.contract_operation) |identity| {
+            try require(identity.conformance < graph.contract_conformances.items.len);
+            const conformance = graph.contract_conformances.items[identity.conformance];
+            try require(identity.index < conformance.operations.len);
+            try require(graph.function_refs.items[conformance.operations.start + identity.index] == call.callee);
+        }
+    }
+    for (graph.contract_operation_bindings.items) |binding| {
+        try require(verify.stringFits(binding.name, graph.strings.items));
+        try require(verify.idFits(binding.declaration, graph.declarations.items.len));
+        try require(graph.declaration(binding.declaration).kind == .function);
     }
     for (graph.abstract_safety_conformances.items) |value| {
         try require(verify.idFits(value.method, graph.functions.items.len));

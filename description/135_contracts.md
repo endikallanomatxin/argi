@@ -1,248 +1,155 @@
-# Contracts and conformance
+# Functions, contracts, and conformance
 
-A `Contract` declares capabilities and relations among one or more participant
-types. It specifies required operations, associated types and compile-time
-constants, and restrictions connecting them. No participant has a privileged
-`Self` role. Unary contracts express individual capabilities; multi-participant
-contracts express relations such as a product between two matrix types.
+## Operation identities
 
-Contract parameters use Argi's existing `#(...)` compile-time parameter syntax.
-There is no separate angle-bracket generic syntax.
-
-## Conformance and associated elements
-
-A `satisfies` declaration establishes explicit conformance for a combination of
-participants. For one contract and a concrete participant tuple, the selected
-conformance uniquely determines its associated elements. A matrix product's
-result type may differ from either operand.
-
-Conformances can be generic or specialized. Resolution considers applicable
-conformances, selects the uniquely most specific one, and rejects incomparable
-maximal candidates. Associated elements come from that selection. A specialized
-conformance may change both the required result type and the applicable algorithm.
-
-Participants select conformance; associated elements are obtained from it.
-Resolution does not search backwards from a desired associated result to infer
-participants. Generic associated projections remain symbolic until sufficient
-participant information is known.
-
-> [!QUESTION]
-> Type projections use `Product#(A, B).Result`. Exact specialization rules remain
-> to be settled. The concrete participant syntax below is the current
-> implementation surface and uses existing compile-time parameters.
-> Restrictions do not require a general constraint solver or arbitrary inference.
-
-## Operations and dispatch
-
-Contracts refer to existing function families. They introduce neither a function
-namespace nor independent method implementations. Ordinary multiple dispatch
-selects an operation using its input types.
-
-The selected conformance fixes associated elements and restrictions. Operation
-resolution must select an implementation unambiguously and then check that its
-signature and safety effects satisfy those promises. An incompatible result is
-an error; the expected result cannot hide an ambiguous operation or cause fallback
-to a less specific implementation.
-
-Conformance proves the expressed contract, not the mathematical correctness of
-an algorithm. Adding a function specialization cannot silently contradict the
-associated elements of a selected conformance.
-
-> [!QUESTION]
-> Module visibility, permitted external conformances, and extension rules must
-> define a stable resolution context. In particular, imported declarations must
-> not silently alter the associated meaning of already checked generic code.
-
-## Generic code
-
-Generic algorithms state their required contracts rather than depending on a
-particular representation. Their bodies use the operations and associated
-elements guaranteed by those contracts.
-
-Once participants are concrete, the compiler selects conformance, resolves its
-associated elements, selects compatible operations, and specializes the code.
-Contracts and restrictions are checked at compile time. Constraints can compose
-contracts, compare associated types, and relate compile-time constants without
-requiring inverse inference of arbitrary types.
-
-## Virtual evidence
-
-`virtual` hides concrete participant types while retaining values and evidence
-of their joint conformance. Construction takes place where those types are known.
-It selects conformance and operations, resolves associated elements, and checks
-ownership, loans, aliasing and storage effects before erasing representation.
-
-Dynamic invocation uses the operations selected at construction. It performs no
-new multiple dispatch. The evidence remains tied to the packaged participants.
-
-Unary borrowing handles can retain the existing object pointer and operations
-table representation without allocation or ownership transfer. A contract
-relating several hidden types requires a joint package: separately virtualized
-values provide no evidence that their combination satisfies that relation.
-Not every contract must be virtualizable.
-
-Dynamic inputs and outputs need usable representations without knowing hidden
-types. A result can have a known layout, use caller-provided storage through an
-explicit protocol, or be packaged with its own evidence. No implicit allocation
-or automatic conversion to a common representation follows from virtualization.
-Different virtual packages need not share the same hidden associated type.
-
-Safety evidence retains the dependencies and effects of every participant,
-including relations between participants. Erasure cannot weaken lifetime,
-ownership or aliasing obligations. A returned loan still depends on its concrete
-referents and their storage generations.
-
-## Concrete participant syntax
-
-Declare participant parameters on the contract name and associated types or
-constants inside its body. Standalone `satisfies` supplies the participant tuple
-first, followed by the associated definitions:
-
-```rg
-Product#(.Left: Type, .Right: Type): Contract = (
-    .Result: Type
-
-    multiply(.left: &Left, .right: &Right) -> (.value: Result)
-)
-
-Row: Type = (.value: Int32)
-Column: Type = (.value: Int32)
-
-satisfies Product#(Row, Column) = (.Result: Int32)
-
-multiply(.left: &Row, .right: &Column) -> (.value: Int32) := {
-    value = left&.value * right&.value
-}
-```
-
-Participants are named type parameters, including when there is only one.
-Requirements use those names directly; `Self` is rejected. Associated members
-may be types or integers and may have bounds referencing participant parameters.
-Both groups are registered before their bounds are lowered. Conformance arguments
-use the usual named or positional compile-time syntax; omitting `= (...)` is valid
-when the contract has no associated members. Associated members may appear before
-or after operations; their declaration order does not affect name resolution.
-Defaults are not supported: the selected conformance supplies their definitions.
-The former `Name#(associated): Contract#(participants)` spelling is rejected with
-migration guidance. Legacy `Abstract` declarations retain their original syntax.
-
-The complete concrete tuple identifies a conformance. Reordering named arguments
-does not create another identity; repeating a tuple is an ambiguity even if its
-associated arguments differ. Reversing distinct participant types creates a
-different tuple. Participant types may themselves be generic instantiations.
-
-Conformance checks concrete operation signatures in the declaring module's
-ordinary visibility context, then checks associated outputs and safety promises.
-Its operations are analyzed even when no executable root calls them, so unused
-conformance declarations cannot bypass safety checking. Imported contracts keep
-their defining declaration identity. Tuple evidence is compile-time metadata;
-ordinary calls keep their existing lowering and allocate no evidence at runtime.
-
-Associated types can be queried as `Product#(Row, Column).Result`, including
-named participant arguments and imported contract identities. The query selects
-the concrete tuple evidence and preserves the associated type's nominal identity.
-Missing conformances, unknown members and integer members in type positions are
-errors. Dependencies between associated type projections are resolved before
-generic records are materialized and operation signatures are checked; unresolved
-cycles are errors. Tuple uniqueness is checked again after resolving participant
-projections.
-
-A generic function can return `Product#(A, B).Result` when ordinary input
-inference or explicit compile-time arguments determine `A` and `B`. The
-projection remains symbolic in parameterized IR and resolves when the function
-is instantiated. It does not infer participants from an associated result.
-Until tuple constraints are supported, the function is checked for each
-instantiation rather than proven against a generic tuple contract at declaration.
-
-Associated integer constants can be queried in compile-time type arguments:
+An ordinary function has one identity in its module namespace. It can be generic,
+but its name cannot be overloaded, including by changing compile-time parameter
+count or types. Ordinary declarations use the existing `#(...)` parameter syntax:
 
 ```argi
-Shape#(.Input: Type): Contract = (
-    .Count: Int
-)
-satisfies Shape#(Cell) = (.Count = 2)
-Box#(.T: Type): Type = (
-    .values: Array#(.n = Shape#(T).Count, .t: Int32)
-)
-```
-
-These projections remain symbolic in generic type and function signatures and
-resolve from the selected concrete conformance. Integer arithmetic can combine
-projections with other compile-time expressions. Array dimensions must be
-non-negative; division by zero and signed integer overflow are diagnosed.
-Concrete projected type applications are persisted as syntax-free compile-time
-expressions in frontend snapshots. They introduce no runtime evidence or lookup.
-Integer projections are currently supported in type applications and explicit
-compile-time call arguments in concrete and generic function bodies, including
-constructor arguments. Ordinary runtime expressions and associated-value
-assignments in `satisfies` declarations remain pending.
-
-> [!IMPLEMENTATION]
-> Explicit participant conformances currently require concrete tuples and
-> concrete operation implementations. Generic conformances, specialized tuple
-> selection and tuple bounds in generic
-> functions remain pending. Storage domains, composition and virtual conversion
-> of explicit participant contracts are rejected until joint mappings and evidence are
-> represented. Unary compatibility syntax below continues to support the
-> existing generic and virtual behavior.
-
-## Unary migration syntax
-
-Unary compatibility syntax retains its existing argument binding while sharing
-the participant representation used by explicit contracts:
-
-```rg
-Readable: Contract = (
-    .item: Type
-
-    read(.source: &Self) -> (.value: &item)
-        where depends_on(value, source)
-)
-
-Cell#(.item: Type): Type = (.value: item)
-Cell#(.item: Type) satisfies Readable#(item)
-
-read#(.item: Type)(.source: &Cell#(item)) -> (.value: &item) := {
-    value = &source&.value
+square := (.value: Int32) -> (.result: Int32) {
+    result = value * value
 }
 
-consume#(.item: Type, .source_type: Type: Readable#(item))(
-    .source: &source_type
-) -> (.value: &item) := {
-    value = read(source)
+identity#(.T: Type) := (.value: T) -> (.result: T) {
+    result = value
 }
 ```
 
-Here `item` is a body-declared associated type; it does not independently select
-another participant. Functions remain ordinary declarations outside the contract.
+A contract is a static structure describing capabilities and relations among its
+participant types. It has no runtime representation. Its operations are named
+static members with their own identities; they are not stored function fields.
+Two contracts can declare operations with the same member name without sharing
+an operation identity. No participant is privileged as `Self`.
 
-> [!IMPLEMENTATION]
-> Unary declarations now contain one implicit Type participant. Source `Self`
-> lowers to an ordinary reference to that participant in parameterized IR; there
-> is no separate abstract-self IR type. The conformance adapter binds the
-> concrete or erased participant before ordinary type instantiation. Legacy
-> `Abstract` and `implements` remain accepted, including mixed composition. Generic conformances, associated type/value arguments, static
-> safety checking and unary virtual handles retain their existing behavior.
-> Requirements still use `Self`. Unary handles accept `Virtual#(.contract: Name)`
-> and `to_virtual#(.contract: Name)`, as well as positional arguments and the
-> legacy `.abstract` label; these spellings produce the same handle type.
-> The source compatibility surface still differs from explicit participant tuples:
-> arguments name associated elements, while the participant is implicit. Unary
-> lookup, associated argument checks and constraint inference now share the
-> selection entry point used by explicit participant tuples. Source adapters
-> match direct declarations, generic patterns and inherited marker contracts.
-> Fully resolved direct unary declarations publish canonical participants,
-> associated arguments and selected operations in the same static evidence
-> registry as explicit tuples; equivalent duplicate declarations share one record.
-> Instantiated generic unary evidence has not yet migrated to that registry.
-> Virtual table and safety evidence registries still use the unary compatibility
-> representation; joint evidence and specialization ranking remain pending.
-> Bundled libraries and generated entry code use the canonical `.contract` label.
-> Specialized tuple conformance selection and
-> joint virtual packages are not implemented.
-> Existing unary associated arguments remain unique per concrete type and
-> contract; conflicting arguments are errors, not specialized conformances.
-> Diagnostics still describe these internal declarations as abstracts.
+```argi
+Product#(.Left: Type, .Right: Type): Contract = (
+    .Result: Type
+    .multiply: (.left: &Left, .right: &Right) -> (.result: Result)
+)
+```
 
-`defaultsto` is a separate representation-default mechanism. It does not establish
-conformance and is not part of the general contract model.
+Contracts can declare operations, associated types/constants, type/value
+restrictions, safety guarantees, and dependencies on other contracts. Dependency
+composition preserves the original operation identities instead of duplicating
+members under the composing contract.
+
+## Implementations and specialization
+
+`implement` supplies a contract's operations and associated elements for a tuple
+of participants. It does not use an assignment after the contract application:
+
+```argi
+implement Product#(Row, Column) (
+    .Result: Type = Int32
+    .multiply = (.left: &Row, .right: &Column) -> (.result: Int32) {
+        result = left&.value * right&.value
+    }
+)
+```
+
+Members can reuse a uniquely identified ordinary function:
+
+```argi
+implement Product#(Row, Column) (
+    .Result: Type = Int32
+    .multiply = multiply_row_column
+)
+```
+
+Generic binders belong after `implement`, for example
+`implement#(.T: Type) Copyable#(Box#(T)) (...)`. Applicable conformances are ranked
+by structural pattern specificity. Select one uniquely most specific conformance;
+reject equivalent patterns and incomparable maximal candidates. Return types
+never select conformance. The selected conformance uniquely fixes associated
+elements and required signatures. An incompatible signature is an error and does
+not cause fallback to a less specific conformance.
+
+An external implementation must be declared in the contract's defining module
+or the defining module of a nominal participant. Validate visible overlaps
+without giving source order or import order any priority.
+
+## Calling operations
+
+Qualified calls identify the operation explicitly:
+
+```argi
+result ::= Product#(Row, Column).multiply(&row, &column).result
+```
+
+Unqualified calls consider visible ordinary functions and contract operations.
+Infer participants from inputs and explicit compile-time arguments. Participants
+that cannot be inferred must be provided explicitly, without using expected
+return types or arbitrary inverse inference through associated elements.
+
+A contract identity is applicable if its participants can be established and a
+conformance can be selected. If multiple identities are applicable, require
+qualification. Never compare conformance specificity across different contracts.
+After identifying the operation, select its conformance, resolve associated
+elements, and check the call against the selected signature and safety promises.
+
+Generic code retains symbolic associated projections, such as
+`Product#(Left, Right).Result`, until participant bindings are available. Contracts
+provide compile-time guarantees; specialization and monomorphization produce
+ordinary concrete calls. Constraints are checks on known or inferred parameters,
+not a general constraint-solving mechanism.
+
+## Standard operations
+
+Construction uses `Init#(T)`, with associated `Args` and `Result` and an `init`
+operation. `T(...)` supplies fields of `Args`, including their defaults. `Result`
+is `T` or an `Errable` containing `T`; eligible types without a custom Init retain
+structural construction. Alternative construction uses explicitly named functions
+or conversions instead of constructor overloads.
+
+Conversion uses `Convert#(Source, Target)` and its associated `Result`. The result
+must be `Target` or an `Errable` containing it. Explicit conversion syntax is
+`convert#(.to: Target)(.value = source)`. No separate TryConvert is needed.
+
+`Deinit#(T)` provides an infallible mutable-reference operation and can use
+available assumed capabilities. Automatic cleanup retains compiler checks for
+initializedness, ownership transfer, reference invalidation and double destruction.
+Structural destruction remains available where no custom Deinit is required.
+
+Operators identify standard contracts such as Add, Multiply and Equal. Their
+conformances use the same participant dispatch and obey explicit copy, move and
+reference rules.
+
+## Virtual evidence and safety
+
+Virtualization hides concrete participants while preserving values and selected
+conformance evidence. At construction the compiler selects the conformance,
+resolves associated elements and fixes the operation implementations. Dynamic
+calls use that evidence; they do not repeat static multiple-dispatch search.
+
+Several hidden participants require joint evidence. Independently erased values
+do not establish a contract relating their hidden types. A joint package avoids
+requiring a general runtime multiple-dispatch mechanism.
+
+Not every contract must be virtualizable. Dynamic signatures need usable input
+and output representations: known layouts, explicit caller-storage protocols, or
+explicitly packaged results with evidence. There are no implicit allocations or
+conversions to a common representation.
+
+Conformance and virtual evidence preserve lifetimes, ownership, aliasing,
+capability dependencies, hidden-storage effects and relationships between
+participants. Type erasure never weakens these obligations. Contract checking
+proves the expressed promises, not mathematical correctness of an algorithm.
+
+## Implementation status
+
+The compiler accepts unique ordinary declarations with `:=`, scoped contract
+operation signatures, and concrete `implement` declarations with inline bodies
+or ordinary-function aliases. Qualified operation calls preserve their contract
+identity through generic function specialization and select direct calls. Associated
+Type and Int elements are bound to inline bodies; signature, visibility, extension
+ownership and declared safety guarantees are checked, including unused operations.
+Frontend snapshots preserve these declarations and operation identities.
+
+Generic implementation patterns, structural specialization and unqualified
+operation inference remain pending. Standard construction, conversion, destruction
+and operator migration, composition and virtual evidence also remain pending.
+The compiler still contains transitional global overload resolution and earlier
+conformance syntax. Removal obligations are tracked in
+`plan/contract_dispatch_refactor.md`; existing `Abstract`/`satisfies` adapters are
+not part of the intended final language.

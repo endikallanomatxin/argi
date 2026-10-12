@@ -187,6 +187,14 @@ pub fn declarationSyntaxNode(files: []const FileInput, declaration: Declaration)
     for (tree.roots) |node| {
         if (tree.location(node).offset == declaration.source_offset) return node;
     }
+    for (tree.roots) |root| {
+        const conformance = tree.contractConformance(root) orelse continue;
+        const members = conformance.implementation_members orelse continue;
+        for (tree.structTypeLiteral(members).?.fields) |field| {
+            const value = tree.structTypeField(field).?.default_value orelse continue;
+            if (tree.functionDeclaration(value) != null and tree.location(value).offset == declaration.source_offset) return value;
+        }
+    }
     return null;
 }
 
@@ -852,6 +860,25 @@ fn discoverFile(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, input
             .module_file_index = module_file_index,
             .generic_parameter_count = genericParameterCount(tree, node),
         });
+    }
+    for (tree.roots) |root| {
+        const conformance = tree.contractConformance(root) orelse continue;
+        const members = conformance.implementation_members orelse continue;
+        for (tree.structTypeLiteral(members).?.fields) |field| {
+            const value = tree.structTypeField(field).?.default_value orelse continue;
+            if (tree.functionDeclaration(value) == null) continue;
+            // Implementation bodies have private declaration identities and
+            // never enter a source-visible global operation family.
+            const name = try std.fmt.allocPrint(allocator, "_implement${d}${d}${s}", .{ module_file_index, tree.location(root).offset, tree.tokenTextFromSource(source, tree.mainToken(value)) });
+            defer allocator.free(name);
+            try graph.declarations.append(allocator, .{
+                .kind = .function,
+                .name = try graph.addString(allocator, name),
+                .source_offset = tree.location(value).offset,
+                .module_file_index = module_file_index,
+                .generic_parameter_count = genericParameterCount(tree, value),
+            });
+        }
     }
     // Syntax-node order permits binary lookup during ModuleSema construction
     // without retaining a dense map for every expression node.

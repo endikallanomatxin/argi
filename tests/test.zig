@@ -12108,3 +12108,115 @@ test "program test shard assignment preserves fixture isolation" {
 test "program test shard assignment covers the regression inventory" {
     try @import("program_test_sharding").verifyInventory(@embedFile("test.zig"));
 }
+
+test "feature_tests/contracts/110_ordinary_function_identity" {
+    const path = "tests/feature_tests/contracts/110_ordinary_function_identity";
+    try expectSuccessfulBuild(path);
+    try run(path);
+}
+
+test "feature_tests/contracts/111X_ordinary_function_overload" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/111X_ordinary_function_overload", "ordinary function 'read' has more than one declaration", "panic");
+}
+
+test "feature_tests/contracts/112X_ordinary_generic_arity" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/112X_ordinary_generic_arity", "ordinary function 'identity' has more than one declaration", "panic");
+}
+
+test "feature_tests/contracts/113_scoped_operation_alias" {
+    const path = "tests/feature_tests/contracts/113_scoped_operation_alias";
+    try expectSuccessfulBuild(path);
+    try run(path);
+}
+
+test "feature_tests/contracts/114_scoped_generic_call" {
+    const path = "tests/feature_tests/contracts/114_scoped_generic_call";
+    try expectSuccessfulBuild(path);
+    try run(path);
+}
+
+test "feature_tests/contracts/115_inline_operation_bodies" {
+    const path = "tests/feature_tests/contracts/115_inline_operation_bodies";
+    try expectSuccessfulBuild(path);
+    try run(path);
+}
+
+test "feature_tests/contracts/116_inline_no_associated" {
+    const path = "tests/feature_tests/contracts/116_inline_no_associated";
+    try expectSuccessfulBuild(path);
+    try run(path);
+}
+
+test "feature_tests/contracts/117X_duplicate_operation_identity" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/117X_duplicate_operation_identity", "duplicate contract operation identity", "panic");
+}
+
+test "feature_tests/contracts/118X_missing_implementation_operation" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/118X_missing_implementation_operation", "missing implementation operation", "panic");
+}
+
+test "feature_tests/contracts/119X_unknown_implementation_operation" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/119X_unknown_implementation_operation", "unknown implementation operation", "panic");
+}
+
+test "feature_tests/contracts/120X_duplicate_implementation_operation" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/120X_duplicate_implementation_operation", "duplicate implementation operation", "panic");
+}
+
+test "feature_tests/contracts/121X_implementation_result_mismatch" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/121X_implementation_result_mismatch", "operation returns an incompatible associated result", "panic");
+}
+
+test "feature_tests/contracts/122X_implementation_input_mismatch" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/122X_implementation_input_mismatch", "incompatible input signature", "panic");
+}
+
+test "feature_tests/contracts/123X_operation_requires_explicit_implementation" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/123X_operation_requires_explicit_implementation", "require an implement declaration", "panic");
+}
+
+test "feature_tests/contracts/124X_unknown_operation_alias" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/124X_unknown_operation_alias", "unknown or inaccessible implementation function", "panic");
+}
+
+test "feature_tests/contracts/125X_qualified_operation_argument_mismatch" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/125X_qualified_operation_argument_mismatch", "arguments do not match the selected contract operation", "panic");
+}
+
+test "feature_tests/contracts/126X_inline_safety_contract" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/126X_inline_safety_contract", "safety contract", "panic");
+}
+
+test "feature_tests/contracts/127_scoped_operation_statements" {
+    const path = "tests/feature_tests/contracts/127_scoped_operation_statements";
+    try expectSuccessfulBuild(path);
+    try run(path);
+}
+
+test "feature_tests/contracts/128_imported_contract_owned_participant" {
+    const path = "tests/feature_tests/contracts/128_imported_contract_owned_participant";
+    try expectSuccessfulBuild(path);
+    try run(path);
+}
+
+test "feature_tests/contracts/129X_external_implementation_ownership" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/129X_external_implementation_ownership", "must belong to the contract module or a nominal participant module", "panic");
+}
+
+test "feature_tests/contracts/130X_private_contract_operation" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/130X_private_contract_operation", "private to its defining module", "panic");
+}
+
+test "feature_tests/contracts/131X_private_operation_alias" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/131X_private_operation_alias", "unknown or inaccessible implementation function", "panic");
+}
+
+test "feature_tests/contracts/132_inline_safety_contract" {
+    const path = "tests/feature_tests/contracts/132_inline_safety_contract";
+    try expectSuccessfulBuild(path);
+    try run(path);
+}
+
+test "feature_tests/contracts/133X_ordinary_identity_across_files" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/133X_ordinary_identity_across_files", "ordinary function 'same_name' has more than one declaration", "panic");
+}

@@ -20,6 +20,7 @@ pub const Occurrence = struct {
     // Constructor calls spell their nominal family, while navigation targets
     // the selected init declaration. These are distinct source identities.
     constructor_call: bool = false,
+    operation_name_start: u32 = std.math.maxInt(u32),
 };
 
 /// Cold editor index derived from the final semantic graph. It intentionally
@@ -45,7 +46,7 @@ pub const Index = struct {
                 .{ .declaration = decl_id };
             try result.add(allocator, .{
                 .source = declaration.source,
-                .len = @intCast(graph.text(declaration.name).len),
+                .len = @intCast(graph.text(graph.declarationSourceName(decl_id)).len),
                 .target = target,
                 .declaration = true,
             });
@@ -83,12 +84,13 @@ pub const Index = struct {
                 if (call.callee_value != null) continue;
                 const function = graph.functions.items[@intFromEnum(call.callee)];
                 const declaration = graph.declarations.items[@intFromEnum(function.declaration)];
-                const name = if (declaration.constructor_type) |owner| graph.declaration(owner).name else declaration.name;
+                const name = graph.callSourceName(call);
                 try result.add(allocator, .{
                     .source = node.source,
                     .len = @intCast(graph.text(name).len),
                     .target = .{ .function = call.callee },
                     .constructor_call = declaration.constructor_type != null,
+                    .operation_name_start = if (call.contract_operation != null) name.start else std.math.maxInt(u32),
                 });
             },
             .struct_value_literal => {
@@ -130,7 +132,7 @@ pub const Index = struct {
                     .{ .declaration = decl_id };
                 try result.add(allocator, .{
                     .source = node.source,
-                    .len = @intCast(graph.text(declaration.name).len),
+                    .len = @intCast(graph.text(graph.declarationSourceName(decl_id)).len),
                     .target = target,
                 });
             },
@@ -225,10 +227,10 @@ pub const Index = struct {
         return switch (target) {
             .function => |id| blk: {
                 const function = graph.functions.items[@intFromEnum(id)];
-                break :blk graph.text(graph.declarations.items[@intFromEnum(function.declaration)].name);
+                break :blk graph.text(graph.declarationSourceName(function.declaration));
             },
             .binding => |id| graph.text(graph.bindings.items[@intFromEnum(id)].name),
-            .declaration => |id| graph.text(graph.declarations.items[@intFromEnum(id)].name),
+            .declaration => |id| graph.text(graph.declarationSourceName(id)),
             .field => |id| graph.text(graph.fields.items[@intFromEnum(id)].name),
             .variant => |id| graph.text(graph.variants.items[@intFromEnum(id)].name),
         };
@@ -256,6 +258,8 @@ pub fn occurrence_matches_source(graph: *const graph_mod.GlobalSemanticGraph, db
             const owner = graph.declaration(function.declaration).constructor_type.?;
             break :blk graph.text(graph.declaration(owner).name);
         }
+        if (occurrence.operation_name_start != std.math.maxInt(u32))
+            break :blk graph.text(.{ .start = occurrence.operation_name_start, .len = occurrence.len });
         break :blk Index.targetName(graph, occurrence.target);
     };
     const offset: usize = occurrence.source.offset;
@@ -340,5 +344,6 @@ fn lessOccurrence(_: void, a: Occurrence, b: Occurrence) bool {
 test "GlobalSG editor index keeps semantic identity in compact IDs" {
     try std.testing.expectEqual(@as(usize, 4), @sizeOf(graph_mod.GlobalFunctionId));
     try std.testing.expectEqual(@as(usize, 4), @sizeOf(graph_mod.GlobalBindingId));
-    try std.testing.expect(@sizeOf(Occurrence) <= 24);
+    // Operation spellings reuse the occurrence length and add one string offset.
+    try std.testing.expect(@sizeOf(Occurrence) <= 28);
 }

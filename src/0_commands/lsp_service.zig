@@ -433,7 +433,7 @@ pub const LanguageService = struct {
                 const declaration = analysis.graph.declarations.items[@intFromEnum(function.declaration)];
                 break :blk editor_index.Occurrence{
                     .source = declaration.source,
-                    .len = @intCast(analysis.graph.text(declaration.name).len),
+                    .len = @intCast(analysis.graph.text(analysis.graph.declarationSourceName(function.declaration)).len),
                     .target = occurrence.target,
                     .declaration = true,
                 };
@@ -515,6 +515,11 @@ pub const LanguageService = struct {
         var work = arena.allocator();
         var analysis = (try self.collectAnalysis(&work, doc)) orelse return null;
         const occurrence = analysis.index.occurrenceAt(&analysis.graph, &analysis.source_db, doc.path, position.line, position.character) orelse return null;
+        // Operation aliases retain the implementation as their navigation target.
+        // Renaming that target must not rename the distinct contract identity.
+        for (analysis.index.occurrences.items) |reference| {
+            if (reference.operation_name_start != std.math.maxInt(u32) and editor_index.targetsEqual(reference.target, occurrence.target)) return null;
+        }
         if (occurrence.target == .function) {
             const function = analysis.graph.functions.items[@intFromEnum(occurrence.target.function)];
             // init is a reserved declaration name; renaming its calls would
@@ -801,9 +806,8 @@ fn formatHover(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSeman
     switch (target) {
         .function => |id| {
             const function = graph.functions.items[@intFromEnum(id)];
-            const declaration = graph.declarations.items[@intFromEnum(function.declaration)];
             if (function.flags.is_once) try writer.writeAll("once ");
-            try writer.print("{s}(", .{graph.text(declaration.name)});
+            try writer.print("{s}(", .{graph.text(graph.declarationSourceName(function.declaration))});
             try writeFieldRange(writer, graph, function.input);
             try writer.writeAll(") -> (");
             try writeFieldRange(writer, graph, function.output);
@@ -816,7 +820,7 @@ fn formatHover(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSeman
         },
         .declaration => |id| {
             const declaration = graph.declarations.items[@intFromEnum(id)];
-            const name = graph.text(declaration.name);
+            const name = graph.text(graph.declarationSourceName(id));
             switch (declaration.kind) {
                 .type, .abstract_type => {
                     try writer.print("{s} : {s}", .{ name, if (declaration.kind == .type) "Type" else "Contract" });
@@ -1858,4 +1862,41 @@ test "LSP positional type arguments remain type tokens" {
         try std.testing.expect(!std.mem.eql(u8, child.name, "Int32"));
         try std.testing.expect(!std.mem.eql(u8, child.name, "Reasons"));
     }
+}
+
+test "LSP scoped implementation navigation retains written operation names" {
+    const code =
+        \\Reader#(.T: Type): Contract = (.read: (.value: &T) -> (.result: Int32))
+        \\Cell: Type = (.value: Int32)
+        \\implement Reader#(Cell) (
+        \\    .read = (.value: &Cell) -> (.result: Int32) { result = value&.value }
+        \\)
+        \\main := () -> (.status_code: Int32 = 0) {
+        \\    cell ::= Cell(42)
+        \\    answer ::= Reader#(Cell).read(&cell).result
+        \\}
+    ;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.rg", .data = code });
+    const path = try @import("../test_support.zig").tmpFilePath(&tmp, "main.rg");
+    defer std.testing.allocator.free(path);
+    var service = LanguageService.init(std.testing.allocator, std.testing.io);
+    defer service.deinit();
+    const uri = "file:///scoped-operations.rg";
+    const diagnostics = try service.openDocument(uri, path, 1, code);
+    defer diagnostics.deinit();
+    try std.testing.expectEqual(@as(usize, 0), diagnostics.items.len);
+    const position = Position{ .line = 7, .character = 29 };
+    const definition = (try service.definition(uri, position)).?;
+    defer definition.deinit(std.testing.allocator);
+    try std.testing.expectEqualStrings(path, definition.path);
+    try std.testing.expectEqual(@as(u32, 3), definition.range.start.line);
+    try std.testing.expectEqual(@as(u32, 5), definition.range.start.character);
+    try std.testing.expectEqual(@as(u32, 9), definition.range.end.character);
+    const hover = (try service.hover(uri, position)).?;
+    defer std.testing.allocator.free(hover.contents);
+    try std.testing.expect(std.mem.startsWith(u8, hover.contents, "```argi\nread("));
+    try std.testing.expect(std.mem.indexOf(u8, hover.contents, "_implement") == null);
+    try std.testing.expectEqual(@as(?PrepareRename, null), try service.prepareRename(uri, position));
 }

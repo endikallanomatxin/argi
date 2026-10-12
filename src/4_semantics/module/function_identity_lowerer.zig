@@ -50,6 +50,24 @@ pub fn lower(
     return stats;
 }
 
+pub fn validateOrdinaryIdentities(graph: *const module_sg.ModuleSemanticGraph, files: []const module_sg.FileInput, diagnostics: ?*diagnostics_mod.Diagnostics) !void {
+    for (graph.declarations.items, 0..) |declaration, index| {
+        if (declaration.kind != .function) continue;
+        const file = files[declaration.module_file_index];
+        const node = module_sg.declarationSyntaxNode(files, declaration) orelse continue;
+        const function = file.tree.functionDeclaration(node) orelse continue;
+        // Remove this source adapter when legacy overload declarations migrate.
+        // Ordinary identities are unique regardless of runtime or generic arity.
+        if (!function.identity_definition) continue;
+        for (graph.declarations.items, 0..) |other, other_index| {
+            if (index == other_index or other.kind != .function) continue;
+            if (!std.mem.eql(u8, graph.text(declaration.name), graph.text(other.name))) continue;
+            if (diagnostics) |bag| try bag.add(file.tree.tokenLocation(function.name_token), .semantic, "ordinary function '{s}' has more than one declaration; provide specialized behavior through a contract implementation", .{graph.text(declaration.name)});
+            return error.DuplicateOrdinaryFunction;
+        }
+    }
+}
+
 fn validateBundledPrimitives(
     graph: *const module_sg.ModuleSemanticGraph,
     files: []const module_sg.FileInput,
@@ -111,6 +129,7 @@ fn validatePrimitiveDeclaration(
 }
 
 fn isDeinit(file: module_sg.FileInput, node: @import("../../3_syntax/syntax_tree.zig").NodeIndex) bool {
+    if (file.tree.functionDeclaration(node)) |function| if (function.contract_member) return false;
     const name = file.tree.functionNameFromSource(file.source, node) orelse return false;
     return switch (name) {
         .operator => false,

@@ -83,6 +83,7 @@ pub fn finishLinked(
     // and default values still need source syntax. Finish that construction
     // work first; everything after canonicalization consumes one Module* ID
     // space and must not depend on the discovery-time construction prefixes.
+    try function_identity_lowerer.validateOrdinaryIdentities(graph, files, diagnostics);
     const module_aliases = try module_alias_lowerer.lower(allocator, graph, files);
     const initializers = try initializer_lowerer.lower(allocator, graph, files, diagnostics);
     try lowerNominalLayouts(allocator, graph, files);

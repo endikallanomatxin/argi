@@ -181,6 +181,7 @@ fn verifyPending(graph: *const graph_mod.ModuleSemanticGraph, operation: entitie
             try require(verify.idFits(value.destination, views.typeCount(graph)));
         },
         .resolve_call => |value| {
+            try require(verify.optionalIdFits(value.contract_type, views.typeCount(graph)));
             try require(verify.idFits(value.node, semantic.nodes.items.len));
             try require(verify.idFits(value.callee, semantic.external_refs.items.len));
             try require(verify.optionalIdFits(value.callee_value, semantic.nodes.items.len));

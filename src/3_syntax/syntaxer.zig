@@ -512,6 +512,15 @@ pub const Syntaxer = struct {
                     return SyntaxerError.ExpectedStructField;
                 }
                 self.advanceOne();
+                if (self.tokenIs(.open_parenthesis)) {
+                    try self.scratch.append(self.allocator, try self.parseContractRequirement(member, true));
+                    self.skipNewLinesAndComments();
+                    if (self.tokenIs(.comma)) {
+                        self.advanceOne();
+                        self.skipNewLinesAndComments();
+                    }
+                    continue;
+                }
                 var member_type = try self.parseType() orelse return SyntaxerError.ExpectedIdentifier;
                 if (self.tokenIs(.colon)) {
                     if (self.file.tag(member_type) != .type_name or !std.mem.eql(u8, self.tokenText(self.contentAt(@intFromEnum(self.file.mainToken(member_type))).identifier), "Type")) {
@@ -567,28 +576,7 @@ pub const Syntaxer = struct {
             }
 
             if (self.tokenIs(.open_parenthesis)) {
-                const in_st = try self.parseStructTypeLiteral();
-                if (!self.tokenIs(.arrow)) return SyntaxerError.ExpectedArrow;
-                self.advanceOne();
-                const out_st = try self.parseStructTypeLiteral();
-                self.skipNewLinesAndComments();
-                const safety_contract: ?syn.NodeIndex = if (self.currentIdentifierEquals("where")) blk: {
-                    self.advanceOne();
-                    self.skipNewLinesAndComments();
-                    break :blk if (self.tokenIs(.open_brace)) try self.parseSafetyContract() else try self.parseExpression();
-                } else null;
-                const empty = try self.addNodeRange(&.{});
-                const extra = try self.addExtra(syn.FunctionExtra{
-                    .name_token = name.token,
-                    .generic_params_start = empty.start,
-                    .generic_params_end = empty.end,
-                    .generic_params_struct = .none,
-                    .input = in_st,
-                    .output = out_st,
-                    .body = .none,
-                    .safety_contract = syn.OptionalNodeIndex.init(safety_contract),
-                });
-                try self.scratch.append(self.allocator, try self.addNode(.abstract_function_requirement, name.token, .{ .extra = extra }));
+                try self.scratch.append(self.allocator, try self.parseContractRequirement(name, false));
             } else {
                 try self.scratch.append(self.allocator, try self.addNode(.type_name, name.token, .{ .token_and_optional_token = .{ .token = name.token, .optional = .none } }));
             }
@@ -632,6 +620,103 @@ pub const Syntaxer = struct {
             .req_funcs = try self.addNodeRange(self.scratch.items[funcs_start..domains_start]),
             .domains = try self.addNodeRange(self.scratch.items[domains_start..associated_start]),
         };
+    }
+
+    fn parseContractRequirement(self: *Syntaxer, name: ParsedName, scoped: bool) SyntaxerError!syn.NodeIndex {
+        const input = try self.parseStructTypeLiteral();
+        if (!self.tokenIs(.arrow)) return SyntaxerError.ExpectedArrow;
+        self.advanceOne();
+        const output = try self.parseStructTypeLiteral();
+        self.skipNewLinesAndComments();
+        const safety: ?syn.NodeIndex = if (self.currentIdentifierEquals("where")) blk: {
+            self.advanceOne();
+            self.skipNewLinesAndComments();
+            break :blk if (self.tokenIs(.open_brace)) try self.parseSafetyContract() else try self.parseExpression();
+        } else null;
+        const empty = try self.addNodeRange(&.{});
+        const extra = try self.addExtra(syn.FunctionExtra{
+            .contract_member = @intFromBool(scoped),
+            .name_token = name.token,
+            .generic_params_start = empty.start,
+            .generic_params_end = empty.end,
+            .generic_params_struct = .none,
+            .input = input,
+            .output = output,
+            .body = .none,
+            .safety_contract = syn.OptionalNodeIndex.init(safety),
+        });
+        return self.addNode(.abstract_function_requirement, name.token, .{ .extra = extra });
+    }
+
+    fn parseImplementationMembers(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
+        if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
+        const open: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
+        self.advanceOne();
+        self.skipNewLinesAndComments();
+        const top = self.scratch.items.len;
+        defer self.scratch.shrinkRetainingCapacity(top);
+        while (!self.tokenIs(.close_parenthesis)) {
+            if (!self.tokenIs(.dot)) return SyntaxerError.ExpectedStructField;
+            self.advanceOne();
+            const member = try self.parseName();
+            const kind: ?syn.NodeIndex = if (self.tokenIs(.colon)) blk: {
+                self.advanceOne();
+                break :blk try self.parseType() orelse return SyntaxerError.ExpectedIdentifier;
+            } else null;
+            if (!self.tokenIs(.equal)) return SyntaxerError.ExpectedDeclarationOrAssignment;
+            self.advanceOne();
+            self.skipNewLinesAndComments();
+            const value = if (kind) |annotation| value: {
+                if (self.file.tag(annotation) == .type_name and std.mem.eql(u8, self.tokenText(self.contentAt(@intFromEnum(self.file.mainToken(annotation))).identifier), "Type"))
+                    break :value try self.parseType() orelse return SyntaxerError.ExpectedIdentifier;
+                break :value try self.parseExpression();
+            } else if (self.tokenIs(.open_parenthesis) and self.looksLikeFunctionDeclarationInput(self.index)) inline_body: {
+                const input = try self.parseStructTypeLiteral();
+                if (!self.tokenIs(.arrow)) return SyntaxerError.ExpectedArrow;
+                self.advanceOne();
+                const output = try self.parseFunctionOutputType();
+                self.skipNewLinesAndComments();
+                const body = try self.parseCodeBlock();
+                const empty = try self.addNodeRange(&.{});
+                const function = try self.addExtra(syn.FunctionExtra{
+                    .contract_member = 1,
+                    .name_token = member.token,
+                    .generic_params_start = empty.start,
+                    .generic_params_end = empty.end,
+                    .generic_params_struct = .none,
+                    .input = input,
+                    .output = output,
+                    .body = syn.OptionalNodeIndex.init(body),
+                });
+                break :inline_body try self.addNode(.function_declaration, member.token, .{ .extra = function });
+            } else try self.parseExpression();
+            const extra = try self.addExtra(syn.FieldExtra{ .type_node = syn.OptionalNodeIndex.init(kind), .default_value = syn.OptionalNodeIndex.init(value) });
+            try self.scratch.append(self.allocator, try self.addNode(.struct_type_field, member.token, .{ .extra = extra }));
+            self.skipNewLinesAndComments();
+            if (self.tokenIs(.comma)) {
+                self.advanceOne();
+                self.skipNewLinesAndComments();
+            }
+        }
+        self.advanceOne();
+        const members_end = self.scratch.items.len;
+        for (top..members_end) |index| {
+            const member = self.file.structTypeField(self.scratch.items[index]).?;
+            if (member.type_node != null) try self.scratch.append(self.allocator, self.scratch.items[index]);
+        }
+        const parameter_range = try self.addNodeRange(self.scratch.items[members_end..]);
+        const parameters = try self.addNode(.struct_type_literal, open, .{ .extra_range = parameter_range });
+        for (top..members_end) |index| {
+            const value = self.file.structTypeField(self.scratch.items[index]).?.default_value.?;
+            if (self.file.functionDeclaration(value) == null) continue;
+            var function = self.file.extraData(syn.FunctionExtra, self.file.data(value).extra);
+            function.generic_params_start = parameter_range.start;
+            function.generic_params_end = parameter_range.end;
+            function.generic_params_struct = syn.OptionalNodeIndex.init(if (parameter_range.start == parameter_range.end) null else parameters);
+            const function_extra = try self.addExtra(function);
+            self.file.nodes.items(.data)[@intFromEnum(value)] = .{ .extra = function_extra };
+        }
+        return self.addNode(.struct_type_literal, open, .{ .extra_range = try self.addNodeRange(self.scratch.items[top..members_end]) });
     }
 
     fn parseSafetyContract(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
@@ -1268,6 +1353,23 @@ pub const Syntaxer = struct {
                 continue;
             }
 
+            if (self.tokenIs(.open_parenthesis) and self.file.tag(node) == .associated_type_projection) {
+                const contract_type = self.file.data(node).node;
+                const operation_token = self.file.mainToken(node);
+                const input = try self.parseCollectionLiteral(true);
+                const empty = try self.addNodeRange(&.{});
+                const extra = try self.addExtra(syn.CallExtra{
+                    .contract_type = syn.OptionalNodeIndex.init(contract_type),
+                    .module_qualifier = .none,
+                    .type_arguments_start = empty.start,
+                    .type_arguments_end = empty.end,
+                    .type_arguments_struct = .none,
+                    .input = input,
+                });
+                node = try self.addNode(.function_call, operation_token, .{ .extra = extra });
+                continue;
+            }
+
             if (self.tokenIs(.open_parenthesis) or self.tokenIs(.hash)) {
                 if (self.file.tag(node) == .struct_field_access or (allow_identifier_calls and self.file.tag(node) == .identifier)) {
                     var qualifier: ?syn.TokenIndex = null;
@@ -1800,6 +1902,7 @@ pub const Syntaxer = struct {
         generic_params: syn.NodeRange,
         generic_params_struct: ?syn.NodeIndex,
         lifecycle_type: ?syn.TokenIndex,
+        identity_definition: bool,
     ) SyntaxerError!syn.NodeIndex {
         const input = try self.parseStructTypeLiteral();
 
@@ -1807,6 +1910,20 @@ pub const Syntaxer = struct {
         self.advanceOne();
         const output = try self.parseFunctionOutputType();
         self.skipNewLinesAndComments();
+        if (identity_definition) {
+            const body = try self.parseCodeBlock();
+            const extra = try self.addExtra(syn.FunctionExtra{
+                .identity_definition = 1,
+                .name_token = name.token,
+                .generic_params_start = generic_params.start,
+                .generic_params_end = generic_params.end,
+                .generic_params_struct = syn.OptionalNodeIndex.init(generic_params_struct),
+                .input = input,
+                .output = output,
+                .body = syn.OptionalNodeIndex.init(body),
+            });
+            return try self.addNode(if (is_once) .function_declaration_once else .function_declaration, name.token, .{ .extra = extra });
+        }
         if (!self.tokenIs(.colon)) return SyntaxerError.ExpectedColon;
         self.advanceOne();
 
@@ -1901,7 +2018,7 @@ pub const Syntaxer = struct {
         const name = try self.parseName();
         if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
 
-        const decl_node = try self.parseNamedFunctionLikeDeclaration(name, false, try self.addNodeRange(&.{}), null, null);
+        const decl_node = try self.parseNamedFunctionLikeDeclaration(name, false, try self.addNodeRange(&.{}), null, null, false);
         const function = self.file.functionDeclaration(decl_node).?;
 
         if (function.body == null) {
@@ -2067,6 +2184,20 @@ pub const Syntaxer = struct {
             generic_params = try self.parseGenericParamNames();
         }
 
+        if (std.mem.eql(u8, name.text, "implement")) {
+            if (is_once) return SyntaxerError.ExpectedDeclarationOrAssignment;
+            const contract_type = try self.parseType() orelse return SyntaxerError.ExpectedConformanceType;
+            const members = try self.parseImplementationMembers();
+            const extra = try self.addExtra(syn.GenericValueExtra{
+                .generic_params_start = generic_params.start,
+                .generic_params_end = generic_params.end,
+                .generic_params_struct = syn.OptionalNodeIndex.init(generic_params_struct),
+                .value = contract_type,
+                .implementation_members = syn.OptionalNodeIndex.init(members),
+            });
+            return self.addNode(.contract_conformance, name.token, .{ .extra = extra });
+        }
+
         if (std.mem.eql(u8, name.text, "satisfies") and self.currentContent() == .identifier) {
             if (is_once) return SyntaxerError.ExpectedDeclarationOrAssignment;
             const contract_type = (try self.parseType()) orelse return SyntaxerError.ExpectedConformanceType;
@@ -2082,6 +2213,24 @@ pub const Syntaxer = struct {
                 .safety_contract = syn.OptionalNodeIndex.init(associated_arguments),
             });
             return try self.addNode(.contract_conformance, name.token, .{ .extra = extra });
+        }
+
+        if (self.tokenIs(.colon) and self.contentAt(self.index + 1) == .equal) {
+            var input_index = self.index + 2;
+            while (self.contentAt(input_index) == .new_line or self.contentAt(input_index) == .comment) : (input_index += 1) {}
+            if (self.contentAt(input_index) == .open_parenthesis and self.looksLikeFunctionDeclarationInput(input_index)) {
+                self.advanceOne();
+                self.advanceOne();
+                self.skipNewLinesAndComments();
+                return self.parseNamedFunctionLikeDeclaration(name, is_once, generic_params, generic_params_struct, lifecycle_type, true);
+            }
+        }
+
+        if (self.tokenIs(.dot) and (generic_params.start != generic_params.end or generic_params_struct != null)) {
+            if (is_once) return SyntaxerError.ExpectedDeclarationOrAssignment;
+            const member = try self.parseAssociatedValueProjection(name.token, null, generic_params, generic_params_struct);
+            const expression = try self.parseHandleTail(try self.parsePostfix(member));
+            return self.addNode(.expression_statement, self.file.mainToken(expression), .{ .node = expression });
         }
 
         // Build identifier node to parse postfix (for p.x, p& etc.)
@@ -2114,6 +2263,7 @@ pub const Syntaxer = struct {
                     generic_params,
                     generic_params_struct,
                     lifecycle_type,
+                    false,
                 );
                 return declaration;
             } else {

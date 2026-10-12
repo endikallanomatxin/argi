@@ -181,7 +181,14 @@ pub fn verifyParameterizedForms(graph: *const graph_mod.ModuleSemanticGraph) !vo
         try declarationRef(graph, conformance.contract_ref);
         try require(verify.rangeFits(conformance.participants, views.genericArgumentCount(graph)));
         try require(verify.rangeFits(conformance.associated_arguments, views.genericArgumentCount(graph)));
+        try require(verify.rangeFits(conformance.operations, storage.contract_operations.items.len));
         try require(verify.sourceFits(conformance.source, graph.file_offsets.items.len));
+    }
+
+    for (storage.contract_operations.items) |operation| {
+        try require(verify.stringFits(operation.name, graph.strings.items));
+        try declarationRef(graph, operation.function);
+        try require(verify.sourceFits(operation.source, graph.file_offsets.items.len));
     }
 
     for (storage.abstract_defaults.items) |default| {

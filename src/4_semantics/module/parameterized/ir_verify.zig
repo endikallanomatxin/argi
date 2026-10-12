@@ -146,6 +146,7 @@ fn verifyPending(graph: *const graph_mod.ModuleSemanticGraph, pending: ir.Pendin
             try require(verify.rangeFits(value.generic_arguments, storage.generic_arguments.items.len));
             try require(verify.rangeFits(value.match_cases, storage.match_cases.items.len));
             try require(verify.optionalIdFits(value.expected_type, storage.types.items.len));
+            try require(verify.optionalIdFits(value.contract_type, storage.types.items.len));
             try require(verify.sourceFits(value.source, graph.file_offsets.items.len));
         },
         .resolve_copy => |value| try require(verify.idFits(value.value, storage.nodes.items.len)),

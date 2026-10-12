@@ -95,7 +95,15 @@ pub const AbstractSafetyConformance = struct {
 };
 // Static conformance evidence owns canonical declaration-order arguments. It has no
 // erased receiver and participates in the ordinary append-only checkpoints.
+pub const ContractOperationBindingId = enum(u32) { _ };
+pub const ContractOperationBinding = struct {
+    name: StringRange,
+    declaration: GlobalDeclId,
+    instantiate_associated: bool = false,
+};
 pub const ContractConformance = struct {
+    operation_bindings: primitives.Range(ContractOperationBindingId) = .{ .start = 0, .len = 0 },
+    explicit_operations: bool = false,
     context: GlobalModuleId = @enumFromInt(0),
     declaration: GlobalDeclId,
     participants: primitives.Range(GlobalGenericArgId),
@@ -259,6 +267,7 @@ pub const GlobalSemanticGraph = struct {
     virtualizes: std.ArrayList(Virtualize) = .empty,
     abstract_safety_conformances: std.ArrayList(AbstractSafetyConformance) = .empty,
     contract_conformances: std.ArrayList(ContractConformance) = .empty,
+    contract_operation_bindings: std.ArrayList(ContractOperationBinding) = .empty,
     virtual_calls: std.ArrayList(VirtualCall) = .empty,
     reach_segments: std.ArrayList(StringRange) = .empty,
     reach_alternatives: std.ArrayList(ReachAlternative) = .empty,
@@ -326,19 +335,36 @@ pub const GlobalSemanticGraph = struct {
         self.lookup.deinit(allocator);
         self.construction.deinit(allocator);
         inline for (.{
-            &self.modules,               &self.module_aliases,        &self.files,                      &self.declarations,
-            &self.symbols,               &self.symbol_declarations,   &self.types,                      &self.generic_instances,
-            &self.functions,             &self.function_operators,    &self.generic_function_instances, &self.bindings,
-            &self.nodes,                 &self.blocks,                &self.fields,                     &self.variants,
-            &self.generic_arguments,     &self.value_fields,          &self.switch_cases,               &self.switches,
-            &self.auto_deinit_fields,    &self.auto_deinits,          &self.virtual_registries,         &self.virtualizes,
-            &self.virtual_calls,         &self.reach_segments,        &self.reach_alternatives,         &self.reaches,
-            &self.nullable_unwraps,      &self.testing_expect_errors, &self.error_propagations,         &self.error_contexts,
-            &self.node_refs,             &self.type_refs,             &self.binding_refs,               &self.function_refs,
-            &self.virtual_registry_refs, &self.strings,               &self.roots,                      &self.abstract_safety_conformances,
-            &self.contract_conformances,
+            &self.modules,               &self.module_aliases,              &self.files,                      &self.declarations,
+            &self.symbols,               &self.symbol_declarations,         &self.types,                      &self.generic_instances,
+            &self.functions,             &self.function_operators,          &self.generic_function_instances, &self.bindings,
+            &self.nodes,                 &self.blocks,                      &self.fields,                     &self.variants,
+            &self.generic_arguments,     &self.value_fields,                &self.switch_cases,               &self.switches,
+            &self.auto_deinit_fields,    &self.auto_deinits,                &self.virtual_registries,         &self.virtualizes,
+            &self.virtual_calls,         &self.reach_segments,              &self.reach_alternatives,         &self.reaches,
+            &self.nullable_unwraps,      &self.testing_expect_errors,       &self.error_propagations,         &self.error_contexts,
+            &self.node_refs,             &self.type_refs,                   &self.binding_refs,               &self.function_refs,
+            &self.virtual_registry_refs, &self.strings,                     &self.roots,                      &self.abstract_safety_conformances,
+            &self.contract_conformances, &self.contract_operation_bindings,
         }) |list| list.deinit(allocator);
         self.* = .{};
+    }
+
+    pub fn declarationSourceName(self: *const GlobalSemanticGraph, id: GlobalDeclId) StringRange {
+        for (self.contract_operation_bindings.items) |operation_binding|
+            if (operation_binding.instantiate_associated and operation_binding.declaration == id) return operation_binding.name;
+        return self.declaration(id).name;
+    }
+
+    pub fn callSourceName(self: *const GlobalSemanticGraph, call: anytype) StringRange {
+        if (call.contract_operation) |identity| {
+            const conformance = self.contract_conformances.items[identity.conformance];
+            if (conformance.explicit_operations)
+                return self.contract_operation_bindings.items[conformance.operation_bindings.start + identity.index].name;
+        }
+        const decl_entry = self.declaration(self.function(call.callee).declaration);
+        if (decl_entry.constructor_type) |owner| return self.declaration(owner).name;
+        return self.declarationSourceName(self.function(call.callee).declaration);
     }
 
     pub fn text(self: *const GlobalSemanticGraph, range: StringRange) []const u8 {
@@ -659,6 +685,7 @@ pub const GlobalSemanticGraph = struct {
             self.virtualizes.items.len * @sizeOf(Virtualize) +
             self.abstract_safety_conformances.items.len * @sizeOf(AbstractSafetyConformance) +
             self.contract_conformances.items.len * @sizeOf(ContractConformance) +
+            self.contract_operation_bindings.items.len * @sizeOf(ContractOperationBinding) +
             self.virtual_calls.items.len * @sizeOf(VirtualCall) +
             self.reach_segments.items.len * @sizeOf(StringRange) +
             self.reach_alternatives.items.len * @sizeOf(ReachAlternative) +

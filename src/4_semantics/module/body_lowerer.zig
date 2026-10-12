@@ -727,9 +727,9 @@ const Context = struct {
                 } }, null);
                 callee_value = field.node;
             }
-        } else if (self.lookupBinding(name_text)) |binding| {
+        } else if (call.contract_type == null) if (self.lookupBinding(name_text)) |binding| {
             callee_value = (try self.resolved(node, binding.ty, .{ .binding_use = binding.id })).node;
-        }
+        };
         const input = try self.lowerNode(call.input, null);
         try self.captureAssumedFields(node, input.node);
         const module_path = if (callee_value != null)
@@ -746,6 +746,7 @@ const Context = struct {
         });
         const visible_bindings = try self.captureVisibleBindings();
         return self.pending(node, .{ .resolve_call = .{
+            .contract_type = if (call.contract_type) |contract| try self.lowerType(contract) else null,
             .node = self.nextNodeId(),
             .callee = external,
             .callee_value = callee_value,

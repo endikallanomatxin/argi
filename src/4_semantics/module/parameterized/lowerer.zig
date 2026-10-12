@@ -295,7 +295,12 @@ pub const Context = struct {
                     self.bindings.clearRetainingCapacity();
                     const explicit = hasGenericParameters(function.generic_params, function.generic_params_struct);
                     const parameter_start: u32 = @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len);
-                    if (explicit) _ = try self.lowerParameters(function.generic_params, function.generic_params_struct);
+                    if (explicit) {
+                        const registered = try self.registerParameters(function.generic_params, function.generic_params_struct);
+                        // Inline members bind compiler-level associated elements.
+                        // Their Int marker is not a runtime numeric contract.
+                        if (!function.contract_member) try self.lowerParameterBounds(registered, function.generic_params_struct);
+                    }
                     const explicit_count: u32 = @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len - parameter_start);
                     try self.collectLocalAbstractParameters(function.input);
                     const params: primitives.Range(ir.ComptimeParameterId) = .{
@@ -401,10 +406,19 @@ pub const Context = struct {
                     for (abstract.requires_functions) |requirement_node| {
                         const requirement = self.tree.abstractFunctionRequirement(requirement_node) orelse continue;
                         const name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, requirement.name_token));
+                        if (requirement.scoped) {
+                            for (self.graph.semantic.parameterized_storage.abstract_requirements.items[req_start..]) |previous| {
+                                if (std.mem.eql(u8, self.graph.text(previous.name), self.graph.text(name)))
+                                    try self.contractError(requirement_node, "duplicate contract operation identity");
+                            }
+                            for (self.parameters.items) |binding| if (std.mem.eql(u8, binding.name, self.graph.text(name)))
+                                try self.contractError(requirement_node, "contract operations and associated elements require distinct names");
+                        }
                         const input = try self.lowerType(requirement.input, true);
                         const output = try self.lowerType(requirement.output, true);
                         const safety_contract = try self.lowerMethodSafetyContract(requirement, domains.items);
                         try self.graph.semantic.parameterized_storage.abstract_requirements.append(self.allocator, .{
+                            .scoped = requirement.scoped,
                             .name = name,
                             .input = input,
                             .output = output,
@@ -1463,6 +1477,10 @@ pub const Context = struct {
             const pending_id = self.graph.semantic.parameterized_storage.ir.nodes.items[@intFromEnum(id)].pending;
             self.graph.semantic.parameterized_storage.ir.pending.items[@intFromEnum(pending_id)].resolve_expression.generic_arguments = .{ .start = start, .len = @intCast(arguments.items.len) };
             self.graph.semantic.parameterized_storage.ir.pending.items[@intFromEnum(pending_id)].resolve_expression.module_path = if (call.module_qualifier) |token| try self.writer.addString(self.tree.tokenTextFromSource(self.source, token)) else null;
+            if (call.contract_type) |contract| {
+                const contract_type = try self.lowerType(contract, false);
+                self.graph.semantic.parameterized_storage.ir.pending.items[@intFromEnum(pending_id)].resolve_expression.contract_type = contract_type;
+            }
             return id;
         }
         if (self.tree.symbolDeclaration(node)) |declaration| {

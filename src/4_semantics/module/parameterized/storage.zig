@@ -58,6 +58,7 @@ pub const ParameterizedType = struct {
 };
 
 pub const AbstractRequirement = struct {
+    scoped: bool = false,
     name: primitives.StringRange,
     input: ir.ParameterizedTypeId,
     output: ir.ParameterizedTypeId,
@@ -109,7 +110,16 @@ pub const ParameterizedAbstractImplementation = struct {
 };
 
 // Tuple evidence keeps selector arguments separate from associated outputs.
+pub const ContractOperationId = enum(u32) { _ };
+pub const ContractOperation = struct {
+    instantiate_associated: bool = false,
+    name: primitives.StringRange,
+    function: DeclarationRef,
+    source: primitives.SourceRef,
+};
 pub const ContractConformance = struct {
+    explicit_operations: bool = false,
+    operations: primitives.Range(ContractOperationId) = .{ .start = 0, .len = 0 },
     contract_ref: DeclarationRef,
     participants: entities.GenericArgRange,
     associated_arguments: entities.GenericArgRange,
@@ -143,6 +153,7 @@ pub const Storage = struct {
     abstract_implementations: std.ArrayList(AbstractImplementation) = .empty,
     parameterized_abstract_implementations: std.ArrayList(ParameterizedAbstractImplementation) = .empty,
     contract_conformances: std.ArrayList(ContractConformance) = .empty,
+    contract_operations: std.ArrayList(ContractOperation) = .empty,
     abstract_defaults: std.ArrayList(AbstractDefault) = .empty,
     parameterized_abstract_defaults: std.ArrayList(ParameterizedAbstractDefault) = .empty,
 
@@ -159,6 +170,7 @@ pub const Storage = struct {
         self.abstract_implementations.deinit(allocator);
         self.parameterized_abstract_implementations.deinit(allocator);
         self.contract_conformances.deinit(allocator);
+        self.contract_operations.deinit(allocator);
         self.abstract_defaults.deinit(allocator);
         self.parameterized_abstract_defaults.deinit(allocator);
         self.* = .{};
@@ -177,6 +189,7 @@ pub const Storage = struct {
             self.abstract_implementations.items.len * @sizeOf(AbstractImplementation) +
             self.parameterized_abstract_implementations.items.len * @sizeOf(ParameterizedAbstractImplementation) +
             self.contract_conformances.items.len * @sizeOf(ContractConformance) +
+            self.contract_operations.items.len * @sizeOf(ContractOperation) +
             self.abstract_defaults.items.len * @sizeOf(AbstractDefault) +
             self.parameterized_abstract_defaults.items.len * @sizeOf(ParameterizedAbstractDefault);
     }

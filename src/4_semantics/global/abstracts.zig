@@ -196,6 +196,9 @@ pub const Resolver = struct {
     };
 
     allocator: std.mem.Allocator,
+    function_context: ?*anyopaque = null,
+    instantiate_function: ?*const fn (*anyopaque, global_sg.GlobalDeclId, primitives.Range(global_sg.GlobalGenericArgId)) anyerror!global_sg.GlobalFunctionId = null,
+
     graph: *global_sg.GlobalSemanticGraph,
     modules: []const module_sg.ModuleSemanticGraph,
     offsets: []const globalizer.Offsets,
@@ -1787,6 +1790,92 @@ pub const Resolver = struct {
         return null;
     }
 
+    pub fn resolveScopedOperation(self: *Resolver, module_index: usize, module: *const module_sg.ModuleSemanticGraph, offsets: globalizer.Offsets, call: anytype) !resolution.Result {
+        const reference = module.semantic.external_refs.items[@intFromEnum(call.callee)];
+        const context = reach_context.Context.fromModule(module, offsets, call.visible_bindings, call.owner_function);
+        const node = try self.makeScopedOperationCall(module_index, globalizer.globalType(offsets, call.contract_type.?), module.text(reference.name), globalizer.globalNode(offsets, call.input), context, self.sourceFor(module_index, reference.source)) orelse
+            return if (self.participant_conformance_failure != null) .invalid else .deferred;
+        self.graph.nodes.items[@intFromEnum(globalizer.globalNode(offsets, call.node))] = node;
+        return .resolved;
+    }
+
+    pub fn makeScopedOperationCall(self: *Resolver, module_index: usize, base: global_sg.GlobalTypeId, name: []const u8, input: global_sg.GlobalNodeId, context: reach_context.Context, source: primitives.SourceRef) !?global_sg.Node {
+        const use = self.typeAbstractUse(base) orelse return null;
+        const located = self.findAbstractDefinition(use.declaration) orelse return null;
+        var failure: ParticipantConformanceFailure = .{
+            .source = source,
+            .contract_name = self.modules[located.module_index].text(self.modules[located.module_index].declarations.items[@intFromEnum(located.definition.declaration)].name),
+            .operation = name,
+            .reason = "",
+        };
+        if (std.mem.startsWith(u8, name, "_") and module_index != located.module_index and
+            !(self.modules[module_index].is_bundled_core and self.modules[located.module_index].is_bundled_core))
+        {
+            failure.reason = "contract operation is private to its defining module";
+            self.participant_conformance_failure = failure;
+            return null;
+        }
+        if (!located.definition.hasExplicitParticipants()) {
+            failure.reason = "qualified contract operations require explicit participants";
+            self.participant_conformance_failure = failure;
+            return null;
+        }
+        const storage = &self.modules[located.module_index].semantic.parameterized_storage;
+        var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
+        defer bindings.deinit(self.allocator);
+        self.generics.bindGlobalArguments(located.module_index, located.definition.participants, use.arguments, &bindings) catch |err| {
+            failure.reason = conformanceArgumentFailure(err) orelse return err;
+            self.participant_conformance_failure = failure;
+            return null;
+        };
+        const participants = try self.allocator.alloc(global_sg.GlobalTypeId, located.definition.participants.len);
+        defer self.allocator.free(participants);
+        for (participants, 0..) |*participant, position| {
+            participant.* = bindings.types[located.definition.participants.start + position].?;
+            if (!self.typeSelectionReady(participant.*, 0)) return null;
+        }
+        const selected = try self.selectConformance(use.declaration, participants, null, 0, null) orelse {
+            failure.reason = "no conformance for the qualified operation's participants";
+            self.participant_conformance_failure = failure;
+            return null;
+        };
+        const conformance = self.graph.contract_conformances.items[selected.tuple];
+        const method_index = for (storage.abstract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len], 0..) |requirement, index| {
+            if (std.mem.eql(u8, name, self.modules[located.module_index].text(requirement.name))) break index;
+        } else {
+            failure.reason = "unknown contract operation";
+            self.participant_conformance_failure = failure;
+            return null;
+        };
+        const method = if (conformance.explicit_operations)
+            try self.resolveOperationBinding(conformance, method_index)
+        else if (conformance.operations.len > method_index)
+            self.graph.function_refs.items[conformance.operations.start + method_index]
+        else
+            return null;
+        const function = self.graph.function(method);
+        switch (self.core.matchCallInput(function.input, input)) {
+            .deferred => return null,
+            .no_match => {
+                failure.reason = "arguments do not match the selected contract operation";
+                self.participant_conformance_failure = failure;
+                return null;
+            },
+            .score => {},
+        }
+        if (!try self.core.completeCallInputFieldsWithReach(function.input, input, context)) return null;
+        try self.core.trackReachedCall(method, input, context, false);
+        return .{
+            .source = source,
+            .ty = try self.core.functionOutputType(method),
+            .content = .{ .function_call = .{
+                .contract_operation = .{ .conformance = @intCast(selected.tuple), .index = @intCast(method_index) },
+                .callee = method,
+                .input = input,
+            } },
+        };
+    }
+
     pub fn prepareParticipantConformances(self: *Resolver) !void {
         for (self.modules, 0..) |*module, module_index| {
             for (module.semantic.parameterized_storage.contract_conformances.items) |conformance| {
@@ -1842,6 +1931,21 @@ pub const Resolver = struct {
                         return;
                     }
                 }
+                const operations = if (conformance.explicit_operations)
+                    self.prepareOperationBindings(module_index, located, conformance, &failure) catch |err| {
+                        if (err != error.InvalidContractConformance) return err;
+                        self.participant_conformance_failure = failure;
+                        return;
+                    }
+                else blk: {
+                    const requirements = storage.abstract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len];
+                    for (requirements) |requirement| if (requirement.scoped) {
+                        failure.reason = "contract member operations require an implement declaration with explicit operation bindings";
+                        self.participant_conformance_failure = failure;
+                        return;
+                    };
+                    break :blk primitives.Range(global_sg.ContractOperationBindingId){ .start = 0, .len = 0 };
+                };
                 // Make canonical associations available before checking operation signatures.
                 // This provisional evidence cannot escape a failed compilation.
                 const canonical_participants = try self.publishConformanceArguments(located, located.definition.participants, &bindings);
@@ -1851,10 +1955,76 @@ pub const Resolver = struct {
                     .declaration = declaration,
                     .participants = canonical_participants,
                     .associated_arguments = canonical_associated,
+                    .explicit_operations = conformance.explicit_operations,
+                    .operation_bindings = operations,
                     .source = failure.source,
                 });
             }
         }
+    }
+
+    fn prepareOperationBindings(self: *Resolver, module_index: usize, located: LocatedAbstractDefinition, conformance: parameterized_storage.ContractConformance, failure: *ParticipantConformanceFailure) !primitives.Range(global_sg.ContractOperationBindingId) {
+        const storage = &self.modules[module_index].semantic.parameterized_storage;
+        const required_storage = &self.modules[located.module_index].semantic.parameterized_storage;
+        const requirements = required_storage.abstract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len];
+        const supplied = storage.contract_operations.items[conformance.operations.start..][0..conformance.operations.len];
+        for (supplied) |operation| {
+            const name = self.modules[module_index].text(operation.name);
+            var found = false;
+            for (requirements) |requirement| if (std.mem.eql(u8, name, self.modules[located.module_index].text(requirement.name))) {
+                found = true;
+                break;
+            };
+            if (!found) {
+                failure.source = self.sourceFor(module_index, operation.source);
+                failure.operation = name;
+                failure.reason = "unknown implementation operation";
+                return error.InvalidContractConformance;
+            }
+        }
+        var functions: std.ArrayList(global_sg.ContractOperationBinding) = .empty;
+        defer functions.deinit(self.allocator);
+        for (requirements) |requirement| {
+            const name = self.modules[located.module_index].text(requirement.name);
+            const operation = for (supplied) |operation| {
+                if (std.mem.eql(u8, name, self.modules[module_index].text(operation.name))) break operation;
+            } else {
+                failure.operation = name;
+                failure.reason = "missing implementation operation";
+                return error.InvalidContractConformance;
+            };
+            failure.operation = name;
+            const declaration = self.resolveDeclarationRef(module_index, operation.function, .function) catch |err| {
+                failure.source = self.sourceFor(module_index, operation.source);
+                failure.reason = switch (err) {
+                    error.UnknownGlobalDeclaration => "unknown or inaccessible implementation function",
+                    error.AmbiguousGlobalDeclaration => "implementation operation must identify one ordinary function",
+                    else => return err,
+                };
+                return error.InvalidContractConformance;
+            };
+            try functions.append(self.allocator, .{ .name = try self.graph.addString(self.allocator, name), .declaration = declaration, .instantiate_associated = operation.instantiate_associated });
+        }
+        const start: u32 = @intCast(self.graph.contract_operation_bindings.items.len);
+        try self.graph.contract_operation_bindings.appendSlice(self.allocator, functions.items);
+        return .{ .start = start, .len = @intCast(functions.items.len) };
+    }
+
+    fn resolveOperationBinding(self: *Resolver, conformance: global_sg.ContractConformance, index: usize) !global_sg.GlobalFunctionId {
+        const binding = self.graph.contract_operation_bindings.items[conformance.operation_bindings.start + index];
+        if (self.graph.declaration(binding.declaration).function_id) |function| {
+            if (!self.graph.function(function).flags.is_abstract_dispatch) return function;
+        }
+        if (!binding.instantiate_associated) {
+            self.participant_conformance_failure = .{
+                .source = conformance.source,
+                .contract_name = self.graph.text(self.graph.declaration(conformance.declaration).name),
+                .reason = "generic implementation function aliases are not supported yet",
+            };
+            return error.InvalidContractOperation;
+        }
+        const instantiate = self.instantiate_function orelse return error.MissingOperationInstantiator;
+        return instantiate(self.function_context.?, binding.declaration, conformance.associated_arguments);
     }
 
     pub fn validateParticipantConformances(self: *Resolver) !void {
@@ -1873,6 +2043,21 @@ pub const Resolver = struct {
                 .contract_name = self.modules[located.module_index].text(self.modules[located.module_index].declarations.items[@intFromEnum(located.definition.declaration)].name),
                 .reason = "",
             };
+            if (conformance.explicit_operations and located.module_index != module_index) {
+                var owns_participant = false;
+                for (self.graph.generic_arguments.items[conformance.participants.start..][0..conformance.participants.len]) |argument| {
+                    if (global_types.nominalTypeOwner(self.graph, argument.value.type)) |owner|
+                        if (@intFromEnum(owner) == module_index) {
+                            owns_participant = true;
+                            break;
+                        };
+                }
+                if (!owns_participant) {
+                    failure.reason = "an implementation must belong to the contract module or a nominal participant module";
+                    self.participant_conformance_failure = failure;
+                    return;
+                }
+            }
             inline for (.{ located.definition.participants, located.definition.parameters }) |parameters| {
                 for (parameters.start..parameters.start + parameters.len) |raw| {
                     const parameter = storage.comptime_parameters.items[raw];
@@ -1907,17 +2092,33 @@ pub const Resolver = struct {
             var operations: std.ArrayList(global_sg.GlobalFunctionId) = .empty;
             defer operations.deinit(self.allocator);
             const first = bindings.types[located.definition.participants.start].?;
-            for (storage.abstract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len]) |requirement| {
+            for (storage.abstract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len], 0..) |requirement, operation_index| {
                 const name = self.modules[located.module_index].text(requirement.name);
                 const input = try self.generics.instantiateParameterizedType(located.module_index, requirement.input, &bindings);
                 const output = try self.generics.instantiateParameterizedType(located.module_index, requirement.output, &bindings);
-                const selected = self.selectConcreteMethodVisible(name, input, output, module_index);
+                const selected: MethodSelection = if (conformance.explicit_operations) selected: {
+                    const method = try self.resolveOperationBinding(conformance, operation_index);
+                    const function = self.graph.function(method);
+                    const required_inputs = global_types.fields(self.graph, input).?;
+                    const required_outputs = global_types.fields(self.graph, output).?;
+                    if (!self.inputFieldsSatisfyRequirement(required_inputs, function.input)) break :selected .missing;
+                    for (0..required_inputs.len) |position| {
+                        if (!std.mem.eql(u8, self.graph.text(self.graph.fields.items[required_inputs.start + position].name), self.graph.text(self.graph.fields.items[function.input.start + position].name))) break :selected .missing;
+                    }
+                    if (required_outputs.len != function.output.len) break :selected .incompatible_output;
+                    for (0..required_outputs.len) |position| {
+                        const required = self.graph.fields.items[required_outputs.start + position];
+                        const actual = self.graph.fields.items[function.output.start + position];
+                        if (!global_types.equal(self.graph, required.ty, actual.ty) or !std.mem.eql(u8, self.graph.text(required.name), self.graph.text(actual.name))) break :selected .incompatible_output;
+                    }
+                    break :selected .{ .function = method };
+                } else self.selectConcreteMethodVisible(name, input, output, module_index);
                 if (selected != .function) {
                     failure.operation = name;
                     failure.input = input;
                     failure.output = output;
                     failure.reason = switch (selected) {
-                        .missing => "missing operation",
+                        .missing => if (conformance.explicit_operations) "implementation operation has an incompatible input signature" else "missing operation",
                         .ambiguous => "ambiguous operation",
                         .incompatible_output => "operation returns an incompatible associated result",
                         .function => unreachable,

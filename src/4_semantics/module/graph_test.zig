@@ -945,3 +945,63 @@ test "unary and tuple conformances publish canonical static evidence" {
         try std.testing.expectEqualStrings(if (unary) "read" else "multiply", result.graph.text(result.graph.declaration(result.graph.function(method).declaration).name));
     }
 }
+
+test "qualified operation statements preserve contract identity" {
+    const allocator = std.testing.allocator;
+    const source = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, "tests/feature_tests/contracts/125X_qualified_operation_argument_mismatch/main.rg", allocator, .limited(64 * 1024));
+    defer allocator.free(source);
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    var calls: usize = 0;
+    for (tree.nodes.items(.tag), 0..) |tag, raw| {
+        if (tag != .function_call) continue;
+        const call = tree.functionCall(@enumFromInt(@as(u32, @intCast(raw)))).?;
+        try std.testing.expect(call.contract_type != null);
+        calls += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 1), calls);
+    var module = try @import("semantizer.zig").build(allocator, "scoped", &.{.{ .path = "scoped/main.rg", .tree = &tree, .source = source }});
+    defer module.graph.deinit(allocator);
+    var pending: usize = 0;
+    for (module.graph.semantic.pending_operations.items) |operation| {
+        if (operation != .resolve_call) continue;
+        try std.testing.expect(operation.resolve_call.contract_type != null);
+        pending += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 1), pending);
+}
+
+test "scoped implementation evidence retains call and source identities" {
+    const allocator = std.testing.allocator;
+    const source = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, "tests/feature_tests/contracts/115_inline_operation_bodies/main.rg", allocator, .limited(64 * 1024));
+    defer allocator.free(source);
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    var module = try @import("semantizer.zig").build(allocator, "scoped", &.{.{ .path = "scoped/main.rg", .tree = &tree, .source = source }});
+    defer module.graph.deinit(allocator);
+    var result = try @import("../global/semantizer.zig").semantize(allocator, &.{module.graph});
+    defer result.graph.deinit(allocator);
+    try @import("../global/verify.zig").verifyGlobal(&result.graph);
+    try std.testing.expectEqual(@as(usize, 2), result.graph.contract_conformances.items.len);
+    try std.testing.expectEqual(@as(usize, 2), result.graph.contract_operation_bindings.items.len);
+    for (result.graph.contract_conformances.items) |conformance| {
+        try std.testing.expect(conformance.explicit_operations);
+        try std.testing.expectEqual(@as(u32, 1), conformance.operations.len);
+        try std.testing.expectEqual(@as(u32, 1), conformance.operation_bindings.len);
+        const method = result.graph.function_refs.items[conformance.operations.start];
+        try std.testing.expectEqualStrings("multiply", result.graph.text(result.graph.declarationSourceName(result.graph.function(method).declaration)));
+    }
+    var calls: usize = 0;
+    for (result.graph.nodes.items) |node| {
+        if (node.content != .function_call) continue;
+        const call = node.content.function_call;
+        if (call.contract_operation == null) continue;
+        try std.testing.expectEqualStrings("multiply", result.graph.text(result.graph.callSourceName(call)));
+        calls += 1;
+    }
+    try std.testing.expect(calls >= 3);
+    const saved = result.graph.checkpoint();
+    _ = try result.graph.contract_operation_bindings.addOne(allocator);
+    result.graph.rollback(saved);
+    try std.testing.expectEqual(@as(usize, 2), result.graph.contract_operation_bindings.items.len);
+}

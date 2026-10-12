@@ -463,8 +463,18 @@ fn isGlobalDeclaration(tag: syn.Node.Tag) bool {
 fn firstToken(tree: *const syn.FileSyntaxTree, node: syn.NodeIndex) usize {
     var first: usize = @intFromEnum(tree.mainToken(node));
     if (tree.tag(node) == .assume_statement and first != 0) return first - 1;
-    if (tree.functionCall(node)) |call| if (call.module_qualifier) |qualifier| {
-        return @min(first, @intFromEnum(qualifier));
+    if (tree.functionCall(node)) |call| {
+        if (call.contract_type) |contract_type| first = @min(first, firstToken(tree, contract_type));
+        if (call.module_qualifier) |qualifier| first = @min(first, @intFromEnum(qualifier));
+        return first;
+    }
+    if (tree.syntaxType(node)) |ty| switch (ty) {
+        .name => |name| if (name.qualifier_token) |qualifier| {
+            first = @min(first, @intFromEnum(qualifier));
+        },
+        .generic => |generic| first = @min(first, firstToken(tree, generic.base)),
+        .projection => |projection| first = @min(first, firstToken(tree, projection.base)),
+        else => {},
     };
     if (tree.functionDeclaration(node)) |function| {
         if (function.constructor_type orelse function.destructor_type) |receiver| first = @intFromEnum(receiver);

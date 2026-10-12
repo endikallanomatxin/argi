@@ -188,6 +188,7 @@ pub const PendingExpressionDetail = union(enum(u8)) {
 };
 
 pub const PendingExpression = struct {
+    contract_type: ?ParameterizedTypeId = null,
     requires_errable: bool = false,
     kind: PendingExpressionKind,
     assumed_arguments: ?ParameterizedNodeId = null,

@@ -369,6 +369,8 @@ pub fn semantizeWithOptions(
     control.generic_functions = &generic_functions;
     control.abstracts = &abstracts;
     defer abstracts.deinit();
+    abstracts.function_context = &generic_functions;
+    abstracts.instantiate_function = generic_functions_mod.Resolver.instantiateReferencedFunction;
     generic_functions.nested_call_context = &abstracts;
     generic_functions.nested_call_resolver = abstract_mod.Resolver.resolveNestedCall;
     generic_functions.nested_constructor_context = &constructors;
@@ -606,6 +608,7 @@ pub fn semantizeWithOptions(
                     return err;
                 }) changed = true;
             }
+            try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, abstracts.participant_conformance_failure);
             if (options.profile_io) |io| profile_pending_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - pending_start;
 
             var sweep_start = profileTimestamp(options.profile_io);
@@ -3477,10 +3480,13 @@ fn reportParticipantConformanceFailure(allocator: std.mem.Allocator, graph: *con
             try appendFormatted(&message, allocator, "invalid conformance for contract '{s}': {s}", .{ failure.contract_name, failure.reason });
         }
         if (failure.operation) |operation| {
-            try appendFormatted(&message, allocator, "\n  required operation: {s} ", .{operation});
-            try appendFieldShape(&message, graph, global_types.fields(graph, failure.input.?).?);
-            try message.appendSlice(" -> ");
-            try appendFieldShape(&message, graph, global_types.fields(graph, failure.output.?).?);
+            try appendFormatted(&message, allocator, "\n  required operation: {s}", .{operation});
+            if (failure.input) |input| if (failure.output) |output| {
+                try message.append(' ');
+                try appendFieldShape(&message, graph, global_types.fields(graph, input).?);
+                try message.appendSlice(" -> ");
+                try appendFieldShape(&message, graph, global_types.fields(graph, output).?);
+            };
         }
         try bag.add(diagnosticLocation(graph, bag, failure.source), .semantic, "{s}", .{message.items});
         return error.Reported;

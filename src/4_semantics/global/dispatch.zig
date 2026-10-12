@@ -127,6 +127,8 @@ pub const Resolver = struct {
         o: globalizer.Offsets,
         operation: module_entities.PendingOperation,
     ) !resolution.Result {
+        if (operation == .resolve_call and operation.resolve_call.contract_type != null)
+            return self.abstracts.resolveScopedOperation(module_index, module, o, operation.resolve_call);
         // A lexical callable value shadows named functions and constructors.
         if (operation == .resolve_call and operation.resolve_call.callee_value != null)
             return self.core.tryResolve(module_index, module, o, operation);

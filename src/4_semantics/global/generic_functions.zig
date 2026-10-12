@@ -2061,6 +2061,11 @@ pub const Resolver = struct {
         return try self.instantiate(declaration, arguments);
     }
 
+    pub fn instantiateReferencedFunction(context: *anyopaque, declaration: global_sg.GlobalDeclId, arguments: primitives.Range(global_sg.GlobalGenericArgId)) anyerror!global_sg.GlobalFunctionId {
+        const self: *Resolver = @ptrCast(@alignCast(context));
+        return self.instantiate(declaration, arguments);
+    }
+
     pub fn instantiate(
         self: *Resolver,
         declaration: global_sg.GlobalDeclId,
@@ -2096,7 +2101,7 @@ pub const Resolver = struct {
             // A selected instantiation must keep its projection diagnostic;
             // speculative signature probes restore theirs through checkpoints.
             if (self.nested_call_context) |abstracts| if (projection_failure) |failure| {
-                if (failure.is_projection) abstracts.participant_conformance_failure = failure;
+                if (failure.is_projection or failure.operation != null) abstracts.participant_conformance_failure = failure;
             };
             self.stats = saved_stats;
             self.generics.stats = saved_generic_stats;
@@ -2673,6 +2678,15 @@ pub const Resolver = struct {
                     const name = value.name orelse return error.GenericParameterizedCallWithoutName;
                     const args = try self.resolver.generics.instantiateParameterizedArguments(self.module_index, value.generic_arguments, self.substitutions);
                     const input = if (operands.items.len != 0) operands.items[0] else return error.GenericParameterizedCallWithoutInput;
+                    if (value.contract_type) |contract| {
+                        const base = try self.resolver.generics.instantiateParameterizedType(self.module_index, contract, self.substitutions);
+                        var context = try self.operatorContext(value.assumed_arguments);
+                        defer self.resolver.allocator.free(context.global.visible_bindings);
+                        if (self.resolver.graph.node(input).content == .struct_value_literal)
+                            context.global.assumed_fields = self.resolver.graph.node(input).content.struct_value_literal.assumed_fields;
+                        const contracts = self.resolver.nested_call_context orelse return error.InvalidContractOperation;
+                        break :blk try contracts.makeScopedOperationCall(self.module_index, base, self.resolver.modules[self.module_index].text(name), input, context, self.resolver.sourceFor(self.module_index, value.source)) orelse error.InvalidContractOperation;
+                    }
                     break :blk try self.makeNamedCall(name, value.module_path, args, input, value.source, if (value.expected_type) |ty|
                         try self.resolver.generics.instantiateParameterizedType(self.module_index, ty, self.substitutions)
                     else

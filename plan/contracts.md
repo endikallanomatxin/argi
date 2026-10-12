@@ -1,4 +1,8 @@
-# Contract implementation
+# Contract implementation (preceding migration)
+
+The contract-scoped dispatch design supersedes this implementation plan. See
+`contract_dispatch_refactor.md` for the accepted model and removal obligations.
+The sections below record the preceding implementation and its validation.
 
 Contracts select evidence for a participant tuple. Associated elements belong to
 that selected evidence, while operations remain ordinary dispatch families.
