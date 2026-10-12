@@ -36,7 +36,7 @@ main(.system: System) -> (.status_code: Int32) := {
     failed ::= fail()
     i :: UIntNative = 0
     while i < 1000 {
-        add_context(.context = "bounded context")
+        add_context_text(.context = "bounded context")
         i = i + 1
     }
     if counting_allocator.calls != 0 {
@@ -47,7 +47,7 @@ main(.system: System) -> (.status_code: Int32) := {
     match failed {
         ..ok _ { status_code = 2 }
         ..error&err {
-            first_report ::= report_trace(.trace = &err&.trace, .writer = $&writer)
+            first_report ::= report_trace(.tracer = err&.tracer, .writer = $&writer)
             match first_report { ..ok _ {} ..error _ {
                     status_code = 3
                     return
@@ -56,9 +56,9 @@ main(.system: System) -> (.status_code: Int32) := {
                 status_code = 4
                 return
             }
-            reset_context(.self = error_tracer)
+            ErrorTracer#().reset_context(.self = error_tracer)
             writer.count = 0
-            empty_report ::= report_trace(.trace = &err&.trace, .writer = $&writer)
+            empty_report ::= report_trace(.tracer = err&.tracer, .writer = $&writer)
             match empty_report { ..ok _ {} ..error _ {
                     status_code = 5
                     return
@@ -68,7 +68,7 @@ main(.system: System) -> (.status_code: Int32) := {
                 return
             }
             writer.fail = true
-            broken ::= report_trace(.trace = &err&.trace, .writer = $&writer)
+            broken ::= report_trace(.tracer = err&.tracer, .writer = $&writer)
             match broken {
                 ..ok _ {
                     status_code = 7
@@ -81,7 +81,7 @@ main(.system: System) -> (.status_code: Int32) := {
                     }
                     writer.fail = false
                     writer.count = 0
-                    silent ::= report_trace(.trace = &report_error&.trace, .writer = $&writer)
+                    silent ::= report_trace(.tracer = report_error&.tracer, .writer = $&writer)
                     if writer.count != 0 {
                         status_code = 9
                         return
@@ -96,7 +96,10 @@ main(.system: System) -> (.status_code: Int32) := {
             writer.count = 0
             virtual_writer ::= to_virtual#(Writer)($&writer)
             unwrap_or_abort(
-                .value = report(.self = $&virtual_unbuffered, .writer = $&virtual_writer)
+                .value = ErrorTracer#().report(
+                    .self   = $&virtual_unbuffered
+                    .writer = $&virtual_writer
+                )
             )
             if writer.count != 43 or counting_allocator.calls != 0 {
                 status_code = 10

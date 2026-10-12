@@ -1549,18 +1549,18 @@ pub const Context = struct {
                 if (payload_node == .resolved and payload_node.resolved.content == .struct_value_literal) {
                     const fields = payload_node.resolved.content.struct_value_literal.fields;
                     var has_reason = false;
-                    var has_trace = false;
+                    var has_tracer = false;
                     for (storage.value_fields.items[fields.start..][0..fields.len]) |field| {
                         has_reason = has_reason or std.mem.eql(u8, self.graph.text(field.name), "reason");
-                        has_trace = has_trace or std.mem.eql(u8, self.graph.text(field.name), "trace");
+                        has_tracer = has_tracer or std.mem.eql(u8, self.graph.text(field.name), "tracer");
                     }
-                    if (has_reason and !has_trace) {
+                    if (has_reason and !has_tracer) {
                         const location = try self.syntheticErrorCall(node, "error_location_id", null);
-                        const trace = try self.syntheticErrorCall(node, "create_error_trace", location);
+                        const trace = try self.syntheticErrorCall(node, "capture_error_tracer", location);
                         const start: u32 = @intCast(storage.value_fields.items.len);
                         try storage.value_fields.ensureUnusedCapacity(self.allocator, fields.len + 1);
                         storage.value_fields.appendSliceAssumeCapacity(storage.value_fields.items[fields.start..][0..fields.len]);
-                        try storage.value_fields.append(self.allocator, .{ .name = try self.writer.addString("trace"), .value = trace });
+                        try storage.value_fields.append(self.allocator, .{ .name = try self.writer.addString("tracer"), .value = trace });
                         storage.nodes.items[@intFromEnum(payload_id)].resolved.content.struct_value_literal.fields = .{ .start = start, .len = fields.len + 1 };
                     }
                 }
@@ -1775,11 +1775,10 @@ pub const Context = struct {
     // Specialization retains the ordinary report call and containing return.
     fn lowerReportReturnBlock(self: *Context, node: syn.NodeIndex, failure: ir.ParameterizedBindingId) !ir.ParameterizedBlockId {
         const use = try self.addResolvedNode(node, null, .{ .binding_use = failure });
-        const trace = try self.addPending(node, .field_access, &.{use}, try self.writer.addString("trace"), null, .none);
-        const reference = try self.addPending(node, .address_of, &.{trace}, null, null, .{ .pointer_mutability = .read_only });
+        const trace = try self.addPending(node, .field_access, &.{use}, try self.writer.addString("tracer"), null, .none);
         const storage = &self.graph.semantic.parameterized_storage.ir;
         const start: u32 = @intCast(storage.value_fields.items.len);
-        try storage.value_fields.append(self.allocator, .{ .name = try self.writer.addString("trace"), .value = reference });
+        try storage.value_fields.append(self.allocator, .{ .name = try self.writer.addString("tracer"), .value = trace });
         const input = try self.addResolvedNode(node, null, .{ .struct_value_literal = .{ .fields = .{ .start = start, .len = 1 } } });
         try self.captureAssumedFields(node, input);
         const report = try self.addPending(node, .generic_call, &.{input}, try self.writer.addString("report_trace"), null, .none);

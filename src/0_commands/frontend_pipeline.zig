@@ -277,8 +277,8 @@ pub const FrontendPipeline = struct {
                 "        ..ok _ {{}}\n" ++
                 "        ..error $&error {{\n" ++
                 "            assume error_tracer ::= $&noop_error_tracer\n" ++
-                "            report_trace(.trace = &error&.trace, .writer = $&terminal&.stderr)\n" ++
-                "            error&.trace = (.tracer = $&noop_error_tracer)\n" ++
+                "            report_trace(.tracer = error&.tracer, .writer = $&terminal&.stderr)\n" ++
+                "            error&.tracer = $&noop_error_tracer\n" ++
                 "        }}\n" ++
                 "    }}\n" ++
                 "    result = ~test_result", .{ target, call_args })

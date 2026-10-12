@@ -122,7 +122,7 @@ pub const Resolver = struct {
         for (self.graph.functions.items) |function| {
             const owner = self.graph.moduleForDeclaration(function.declaration) orelse continue;
             if (!self.graph.modules.items[@intFromEnum(owner)].is_bundled_core) continue;
-            if (!std.mem.eql(u8, self.graph.text(self.graph.declaration(function.declaration).name), "create_error_trace")) continue;
+            if (!std.mem.eql(u8, self.graph.text(self.graph.declaration(function.declaration).name), "capture_error_tracer")) continue;
             for (self.graph.fields.items[function.input.start..][0..function.input.len]) |field|
                 if (std.mem.eql(u8, self.graph.text(field.name), "error_tracer")) return field;
         }

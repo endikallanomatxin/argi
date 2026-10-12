@@ -6624,11 +6624,11 @@ test "feature_tests/types/69_error_tracer_truncation" {
     try expectSuccessfulBuild(path);
     try runExpectStderr(path, 0,
         \\error trace (most recent first):
-        \\  at tests/feature_tests/types/69_error_tracer_truncation/main.rg:9:5: latest
-        \\        add_context(.context = "latest")
+        \\  at tests/feature_tests/types/69_error_tracer_truncation/main.rg:11:5: latest
+        \\        add_context_text(.context = "latest")
         \\        ^
         \\  <context truncated>
-        \\  at tests/feature_tests/types/69_error_tracer_truncation/main.rg:2:31
+        \\  at tests/feature_tests/types/69_error_tracer_truncation/main.rg:3:31
         \\    fail() -> !Void := { result = ..error(.reason = ..truncated_test_failure) }
         \\                                  ^
         \\
@@ -12307,4 +12307,12 @@ test "feature_tests/contracts/154_writer_selected_virtual_evidence" {
 
 test "feature_tests/contracts/155X_writer_global_operation" {
     try buildExpectFailWithoutNoise("tests/feature_tests/contracts/155X_writer_global_operation", "no function named 'write_byte' exists", "panic");
+}
+
+test "feature_tests/contracts/156_tracer_selected_virtual_evidence" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/156_tracer_selected_virtual_evidence");
+}
+
+test "feature_tests/contracts/157X_tracer_global_operation" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/157X_tracer_global_operation", "no function named 'reset_context' exists", "panic");
 }

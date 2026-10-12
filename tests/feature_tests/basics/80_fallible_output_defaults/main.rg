@@ -1,5 +1,5 @@
 ..default_failed
-default_failure() -> !Void = ..error(.reason = ..default_failed, .trace = (.tracer = $&noop_error_tracer)) := {}
+default_failure() -> !Void = ..error(.reason = ..default_failed, .tracer = $&noop_error_tracer) := {}
 value() -> !Int32 = ..ok 42 := {}
 noop#(.t: Type)() -> !Void = ..ok Void() := {}
 run_main() -> !Void = ..ok Void() := {

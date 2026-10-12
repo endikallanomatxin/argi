@@ -47,11 +47,11 @@ held by the configured tracer, not embedded in each error value.
 ```rg
 Error#(.reasons: Choice) : Type = (
     .reason: reasons
-    .trace: ErrorTrace
+    .tracer: $&Virtual#(.contract: ErrorTracer)
 )
 ```
 
-`.reason` must be a `choice` without payloads. `ErrorTrace` retains a reference
+`.reason` must be a `choice` without payloads. The `.tracer` field retains a reference
 to the original virtual `ErrorTracer`. The bundled policies use a shared log,
 so the reference itself is the complete handle.
 Creating an error records its origin through that tracer. The tracer must
@@ -118,7 +118,7 @@ reason inference, and this syntax also applies to non-`Void` and generic
 functions. `-> !Void` alone does not declare a success default.
 
 > [!IMPLEMENTATION]
-> An error-producing output default currently needs an explicit `.trace`;
+> An error-producing output default currently needs an explicit `.tracer`;
 > automatic creation from the function's reached tracer is not available in
 > output initializers. Success defaults such as `..ok Void()` need no tracer.
 
@@ -268,13 +268,13 @@ returning an Errable has no special entry-wrapper support.
 
 ## Error tracing
 
-`ErrorTracer` is an `Abstract` for the tracing policy:
+`ErrorTracer#(Tracer)` is a contract for the tracing policy:
 
 ```rg
-ErrorTracer : Abstract = (
-    add_context(.self: $&Self, .location: SourceLocationId, .context: StringView) -> ()
-    reset_context(...) -- infallible: clear retained context and reuse storage
-    report(...)  -- write a trace; may return an I/O error
+ErrorTracer#(.Tracer: Type): Contract = (
+    .add_context: (.self: $&Tracer, .location: SourceLocationId, .context: StringView) -> ()
+    .reset_context: (...) -- infallible: clear retained context and reuse storage
+    .report: (...)  -- write a trace; may return an I/O error
 )
 ```
 
@@ -284,7 +284,7 @@ the location and context. `add_context` cannot return an error: propagation must
 still succeed when tracing cannot retain or emit an entry. A policy may
 allocate or write during `add_context`, but must handle those failures internally.
 `report` resolves locations and writes the trace; it may return an I/O error.
-The capability has type `$&Virtual#(.abstract: ErrorTracer)`. A tracer may
+The capability has type `$&Virtual#(.contract: ErrorTracer)`. A tracer may
 be supplied through `reach error_tracer`, so intermediate
 functions need not list it manually. This capability selects the tracer when
 an error is created. Later propagation and reporting use the reference in
@@ -299,7 +299,7 @@ run()
 ```
 
 The positional comptime argument of `to_virtual#(ErrorTracer)` selects the
-abstract. Alternatively, a declared `$&Virtual#(.abstract: ErrorTracer)`
+contract. Alternatively, a declared `$&Virtual#(.contract: ErrorTracer)`
 capability type permits `to_virtual($&_)` through contextual inference. The
 concrete tracer and virtual wrapper temporaries remain alive for the enclosing
 `assume` scope. The capability is still a pointer to the virtual wrapper.
@@ -405,7 +405,7 @@ my_thing := fallible() handle error, value {
             value = 0
         }
         ..permission_denied {
-            report(.trace = &error.trace)!
+            report_trace(.tracer = error.tracer)!
             value = 1
         }
     }
@@ -452,7 +452,7 @@ Omit the value binding to handle an error and continue without recovering a valu
 
 ```rg
 save() handle error {
-    report(.trace = &error.trace)!
+    report_trace(.tracer = error.tracer)!
 }
 continue_work()
 ```
@@ -465,3 +465,8 @@ Both forms keep `return`, `abort`, `!`, and other control transfers relative to
 the enclosing function or loop; a handler is an ordinary lexical block, not a
 new function. Owned payloads and handler locals receive ordinary cleanup on
 normal continuation and on control transfers.
+
+The ordinary `add_context` helper accepts a `StringView`; `add_context_text`
+accepts zero-terminated text. Both reach the tracer capability and call its
+scoped operation. Direct operations use `ErrorTracer#(T).add_context(...)`,
+`reset_context` and `report`; virtual calls use `ErrorTracer#()` instead.

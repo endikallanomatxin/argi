@@ -68,5 +68,5 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         }
     }
 
-    flush(output)!!! { status_code = 1 }
+    Writer#().flush(output)!!! { status_code = 1 }
 }

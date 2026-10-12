@@ -28,8 +28,8 @@ run(.system: System) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory)
         | to_virtual($&_)
         | $&_
     ]
-    add_context(.context = "inferred virtual tracer")
-    reset_context(.self = error_tracer)
+    add_context_text(.context = "inferred virtual tracer")
+    ErrorTracer#().reset_context(.self = error_tracer)
     result = ..ok Void()
 }
 
@@ -37,25 +37,10 @@ run(.system: System) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory)
 -- conversion, independently of the infallible fixed-buffer tracer.
 FailTracer: Type = (.marker: UInt8)
 
-FailTracer implements ErrorTracer
-
 FailTracer init() -> (.result: Errable#(.t: FailTracer, .reasons: (..out_of_memory))) := {
     constructed :: FailTracer
 
     result = ..error(.reason = ..out_of_memory)
-}
-
-add_context(.self: $&FailTracer, .location: SourceLocationId, .context: StringView) -> () := {}
-
-reset_context(.self: $&FailTracer) -> () := {}
-
-report(
-        .self   : $&FailTracer,
-        .writer : $&Virtual#(.abstract: Writer)
-    ) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
-    ) := {
-    result = ..ok Void()
 }
 
 failed_init() -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
@@ -122,3 +107,18 @@ main(.system: System) -> (.status_code: Int32) := {
         ..error _ { status_code = 1 }
     }
 }
+
+implement ErrorTracer#(FailTracer)(
+    .add_context = (.self: $&FailTracer, .location: SourceLocationId, .context: StringView) -> () {}
+
+    .reset_context = (.self: $&FailTracer) -> () {}
+
+    .report = (
+            .self   : $&FailTracer,
+            .writer : $&Virtual#(.abstract: Writer)
+        ) -> (
+            .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        ) {
+        result = ..ok Void()
+    }
+)

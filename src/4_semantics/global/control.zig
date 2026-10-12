@@ -121,9 +121,9 @@ pub const Resolver = struct {
         const ok_name = try self.graph.addString(self.allocator, "ok");
         const error_name = try self.graph.addString(self.allocator, "error");
         const reason_name = try self.graph.addString(self.allocator, "reason");
-        const trace_name = try self.graph.addString(self.allocator, "trace");
+        const trace_name = try self.graph.addString(self.allocator, "tracer");
         const source = self.syntheticSource();
-        const trace_ty = self.errorTraceType() orelse return error.MissingErrorTraceType;
+        const trace_ty = try self.errorTracerType();
         const reasons_ty: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(self.graph.types.items.len)));
         try self.graph.types.append(self.allocator, .{ .inferred_choice = .{
             .identity = @intFromEnum(id),
@@ -155,12 +155,18 @@ pub const Resolver = struct {
         } });
     }
 
-    fn errorTraceType(self: *const Resolver) ?global_sg.GlobalTypeId {
-        for (self.graph.declarations.items) |declaration| {
-            if (declaration.kind != .type or !std.mem.eql(u8, self.graph.text(declaration.name), "ErrorTrace")) continue;
-            return declaration.type_id;
+    fn errorTracerType(self: *Resolver) !global_sg.GlobalTypeId {
+        for (self.graph.declarations.items, 0..) |declaration, index| {
+            if (declaration.kind != .abstract_type or !std.mem.eql(u8, self.graph.text(declaration.name), "ErrorTracer")) continue;
+            const contract: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(self.graph.types.items.len)));
+            try self.graph.types.append(self.allocator, .{ .declared = @enumFromInt(@as(u32, @intCast(index))) });
+            const handle: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(self.graph.types.items.len)));
+            try self.graph.types.append(self.allocator, .{ .virtual = contract });
+            const reference: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(self.graph.types.items.len)));
+            try self.graph.types.append(self.allocator, .{ .pointer = .{ .child = handle, .mutability = .read_write } });
+            return reference;
         }
-        return null;
+        return error.MissingErrorTracerType;
     }
 
     fn resolveChoiceLiteral(self: *Resolver, module: *const module_sg.ModuleSemanticGraph, o: globalizer.Offsets, value: anytype) !resolution.Result {
@@ -845,7 +851,7 @@ test "global control resolver materializes nullable into an explicit choice shap
     try std.testing.expectEqualStrings("some", graph.text(graph.variants.items[variants.start + 1].name));
 }
 
-test "inferred errable keeps an open reason choice and concrete trace field" {
+test "inferred errable keeps an open reason choice and direct tracer reference" {
     const allocator = std.testing.allocator;
     var graph: global_sg.GlobalSemanticGraph = .{};
     defer graph.deinit(allocator);
@@ -854,8 +860,8 @@ test "inferred errable keeps an open reason choice and concrete trace field" {
     try graph.types.append(allocator, .{ .declared = @enumFromInt(0) });
     try graph.types.append(allocator, .{ .inferred_errable = @enumFromInt(0) });
     try graph.declarations.append(allocator, .{
-        .kind = .type,
-        .name = try graph.addString(allocator, "ErrorTrace"),
+        .kind = .abstract_type,
+        .name = try graph.addString(allocator, "ErrorTracer"),
         .source = source,
         .type_id = @enumFromInt(1),
     });
@@ -864,8 +870,8 @@ test "inferred errable keeps an open reason choice and concrete trace field" {
     const error_variant = types.findVariant(&graph, @enumFromInt(2), "error").?;
     const payload_ty = error_variant.variant.payload_type.?;
     const reason = types.findField(&graph, payload_ty, "reason").?;
-    const trace = types.findField(&graph, payload_ty, "trace").?;
-    try std.testing.expectEqual(@as(global_sg.GlobalTypeId, @enumFromInt(1)), trace.field.ty);
+    const trace = types.findField(&graph, payload_ty, "tracer").?;
+    try std.testing.expectEqual(.read_write, graph.semanticType(trace.field.ty).pointer.mutability);
     try std.testing.expectEqual(primitives.InferredChoiceKind.reasons, graph.types.items[@intFromEnum(reason.field.ty)].inferred_choice.kind);
     try resolver.ensureInferredReasonVariant(reason.field.ty, "first", source);
     try resolver.ensureInferredReasonVariant(reason.field.ty, "second", source);

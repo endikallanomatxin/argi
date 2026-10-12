@@ -1018,7 +1018,7 @@ pub const Resolver = struct {
         const result = self.graph.fields.items[fields.start].ty;
         const error_variant = global_types.findVariant(self.graph, result, "error") orelse return false;
         const payload = error_variant.variant.payload_type orelse return false;
-        return global_types.findField(self.graph, payload, "trace") != null;
+        return global_types.findField(self.graph, payload, "tracer") != null;
     }
 
     // A fallible virtual slot needs a uniform capability input, including for

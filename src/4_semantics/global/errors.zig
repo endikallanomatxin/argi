@@ -517,8 +517,8 @@ pub const Resolver = struct {
         if (global_types.equal(self.graph, source, target)) return true;
         const source_reason = global_types.findField(self.graph, source, "reason") orelse return false;
         const target_reason = global_types.findField(self.graph, target, "reason") orelse return false;
-        const source_trace = global_types.findField(self.graph, source, "trace") orelse return false;
-        const target_trace = global_types.findField(self.graph, target, "trace") orelse return false;
+        const source_trace = global_types.findField(self.graph, source, "tracer") orelse return false;
+        const target_trace = global_types.findField(self.graph, target, "tracer") orelse return false;
         if (!global_types.equal(self.graph, source_trace.field.ty, target_trace.field.ty)) return false;
         const source_variants = global_types.variants(self.graph, source_reason.field.ty) orelse return false;
         const open_reasons = if (self.graph.resolvedSemanticType(target_reason.field.ty)) |ty| switch (ty) {
@@ -756,9 +756,9 @@ test "error payload propagation requires a superset of reasons" {
     try graph.types.append(allocator, .{ .structural_choice = .{ .variants = .{ .start = 0, .len = 1 } } });
     try graph.types.append(allocator, .{ .structural_choice = .{ .variants = .{ .start = 1, .len = 2 } } });
     try graph.fields.append(allocator, .{ .name = try graph.addString(allocator, "reason"), .ty = @enumFromInt(1), .source = source });
-    try graph.fields.append(allocator, .{ .name = try graph.addString(allocator, "trace"), .ty = @enumFromInt(0), .source = source });
+    try graph.fields.append(allocator, .{ .name = try graph.addString(allocator, "tracer"), .ty = @enumFromInt(0), .source = source });
     try graph.fields.append(allocator, .{ .name = try graph.addString(allocator, "reason"), .ty = @enumFromInt(2), .source = source });
-    try graph.fields.append(allocator, .{ .name = try graph.addString(allocator, "trace"), .ty = @enumFromInt(0), .source = source });
+    try graph.fields.append(allocator, .{ .name = try graph.addString(allocator, "tracer"), .ty = @enumFromInt(0), .source = source });
     try graph.types.append(allocator, .{ .structural = .{ .fields = .{ .start = 0, .len = 2 } } });
     try graph.types.append(allocator, .{ .structural = .{ .fields = .{ .start = 2, .len = 2 } } });
     const resolver: Resolver = .{ .allocator = allocator, .graph = &graph, .modules = &.{}, .offsets = &.{}, .core = undefined };
@@ -769,7 +769,7 @@ test "error payload propagation requires a superset of reasons" {
     try graph.types.append(allocator, .{ .inferred_choice = .{ .identity = 99, .kind = .reasons, .variants = .{ .start = @intCast(graph.variants.items.len), .len = 0 } } });
     const field_start: u32 = @intCast(graph.fields.items.len);
     try graph.fields.append(allocator, .{ .name = try graph.addString(allocator, "reason"), .ty = open_reasons, .source = source });
-    try graph.fields.append(allocator, .{ .name = try graph.addString(allocator, "trace"), .ty = @enumFromInt(0), .source = source });
+    try graph.fields.append(allocator, .{ .name = try graph.addString(allocator, "tracer"), .ty = @enumFromInt(0), .source = source });
     const open_payload: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(graph.types.items.len)));
     try graph.types.append(allocator, .{ .structural = .{ .fields = .{ .start = field_start, .len = 2 } } });
     var mutable_resolver = resolver;

@@ -189,3 +189,9 @@ not part of the intended final language.
 > implementations for files, process streams, TCP, memory cursors and buffered
 > adapters. Formatting, terminal output and error tracing call those identities.
 > Terminal and logging flush helpers remain unique ordinary functions.
+
+> [!IMPLEMENTATION]
+> Bundled ErrorTracer uses explicit tracer participants and scoped add_context,
+> reset_context and report operations. Noop, fixed-buffer and custom fixture
+> policies supply selected evidence. Context convenience functions have unique
+> names for views and text; the former global operation family is removed.

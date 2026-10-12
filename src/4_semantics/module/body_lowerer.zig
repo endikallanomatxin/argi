@@ -654,10 +654,9 @@ const Context = struct {
     // enclosing function's output and cleanup rules.
     fn lowerReportReturnBlock(self: *Context, node: syn.NodeIndex, failure: entities.ModuleBindingId) !entities.ModuleBlockId {
         const error_use = try self.resolved(node, null, .{ .binding_use = failure });
-        const trace = try self.pending(node, .{ .resolve_field = .{ .node = self.nextNodeId(), .value = error_use.node, .field_name = try self.writer.addString("trace"), .source = self.sourceRef(node) } }, null);
-        const reference = try self.pending(node, .{ .resolve_address = .{ .node = self.nextNodeId(), .value = trace.node, .mutability = .read_only, .collapse_existing_pointer = false } }, null);
+        const trace = try self.pending(node, .{ .resolve_field = .{ .node = self.nextNodeId(), .value = error_use.node, .field_name = try self.writer.addString("tracer"), .source = self.sourceRef(node) } }, null);
         const start: u32 = @intCast(self.graph.semantic.value_fields.items.len);
-        try self.graph.semantic.value_fields.append(self.allocator, .{ .name = try self.writer.addString("trace"), .value = reference.node });
+        try self.graph.semantic.value_fields.append(self.allocator, .{ .name = try self.writer.addString("tracer"), .value = trace.node });
         const input = try self.resolved(node, null, .{ .struct_value_literal = .{ .fields = .{ .start = start, .len = 1 } } });
         try self.captureAssumedFields(node, input.node);
         const callee = try self.writer.addExternalRef(.{ .kind = .function, .module_path = null, .name = try self.writer.addString("report_trace"), .source = self.sourceRef(node) });
@@ -854,20 +853,20 @@ const Context = struct {
             if (payload_node == .resolved and payload_node.resolved.content == .struct_value_literal) {
                 const fields = payload_node.resolved.content.struct_value_literal.fields;
                 var has_reason = false;
-                var has_trace = false;
+                var has_tracer = false;
                 for (self.graph.semantic.value_fields.items[fields.start..][0..fields.len]) |field| {
                     has_reason = has_reason or std.mem.eql(u8, self.graph.text(field.name), "reason");
-                    has_trace = has_trace or std.mem.eql(u8, self.graph.text(field.name), "trace");
+                    has_tracer = has_tracer or std.mem.eql(u8, self.graph.text(field.name), "tracer");
                 }
-                if (has_reason and !has_trace) {
-                    // Trace creation is an ordinary reached call, so its
+                if (has_reason and !has_tracer) {
+                    // Capturing the tracer is an ordinary reached call, so its
                     // receiver dependency participates in safety summaries.
                     const location = try self.syntheticErrorCall(node, "error_location_id", null);
-                    const trace = try self.syntheticErrorCall(node, "create_error_trace", location);
+                    const trace = try self.syntheticErrorCall(node, "capture_error_tracer", location);
                     const start: u32 = @intCast(self.graph.semantic.value_fields.items.len);
                     try self.graph.semantic.value_fields.ensureUnusedCapacity(self.allocator, fields.len + 1);
                     self.graph.semantic.value_fields.appendSliceAssumeCapacity(self.graph.semantic.value_fields.items[fields.start..][0..fields.len]);
-                    try self.graph.semantic.value_fields.append(self.allocator, .{ .name = try self.writer.addString("trace"), .value = trace });
+                    try self.graph.semantic.value_fields.append(self.allocator, .{ .name = try self.writer.addString("tracer"), .value = trace });
                     self.graph.semantic.nodes.items[@intFromEnum(payload_id)].resolved.content.struct_value_literal.fields = .{ .start = start, .len = fields.len + 1 };
                 }
             }

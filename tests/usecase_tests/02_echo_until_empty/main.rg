@@ -5,9 +5,9 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     output ::= $&system.terminal&.stdout
     assume reader ::= $&system.terminal&.stdin
     #defer {
-        flush(output) handle error {
+        Writer#().flush(output) handle error {
             status_code = 1
-            report_trace(.trace = &error.trace, .writer = writer) handle ignored {}
+            report_trace(.tracer = error.tracer, .writer = writer) handle ignored {}
         }
     }
 
@@ -19,7 +19,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
                 if text == "" { break }
 
                 print(text, .writer = output)!!! { status_code = 1 }
-                flush(output)!!! { status_code = 1 }
+                Writer#().flush(output)!!! { status_code = 1 }
             }
         }
     }

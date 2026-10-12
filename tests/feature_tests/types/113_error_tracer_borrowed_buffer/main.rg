@@ -14,12 +14,12 @@ main() -> (.status_code: Int32 = 0) := {
     tracer ::= FixedSizeErrorTracer(.buffer = buffer)
     context: StringView = "unaligned context"
     location ::= error_location_id()
-    add_context(.self = $&tracer, .location = location, .context = context)
-    add_context(.self = $&tracer, .location = location, .context = context)
-    add_context(.self = $&tracer, .location = location, .context = context)
+    ErrorTracer#().add_context(.self = $&tracer, .location = location, .context = context)
+    ErrorTracer#().add_context(.self = $&tracer, .location = location, .context = context)
+    ErrorTracer#().add_context(.self = $&tracer, .location = location, .context = context)
     writer ::= ProbeWriter()
     virtual_writer ::= to_virtual#(Writer)($&writer)
-    unwrap_or_abort(.value = report(.self = $&tracer, .writer = $&virtual_writer))
+    unwrap_or_abort(.value = ErrorTracer#().report(.self = $&tracer, .writer = $&virtual_writer))
     if writer.bytes <= 43 or writer.bytes > 4096 {
         status_code = 1
         return
@@ -28,9 +28,9 @@ main() -> (.status_code: Int32 = 0) := {
         status_code = 2
         return
     }
-    reset_context(.self = $&tracer)
+    ErrorTracer#().reset_context(.self = $&tracer)
     writer.bytes = 0
-    unwrap_or_abort(.value = report(.self = $&tracer, .writer = $&virtual_writer))
+    unwrap_or_abort(.value = ErrorTracer#().report(.self = $&tracer, .writer = $&virtual_writer))
     if writer.bytes != 43 {
         status_code = 3
         return
@@ -40,21 +40,21 @@ main() -> (.status_code: Int32 = 0) := {
 
     empty ::= FixedSizeErrorTracer(.buffer = view($&zeroed#(.t: [0]UInt8)()))
     tiny ::= FixedSizeErrorTracer(.buffer = view($&zeroed#(.t: [143]UInt8)()))
-    add_context(.self = $&empty, .location = location, .context = context)
-    add_context(.self = $&tiny, .location = location, .context = context)
+    ErrorTracer#().add_context(.self = $&empty, .location = location, .context = context)
+    ErrorTracer#().add_context(.self = $&tiny, .location = location, .context = context)
     writer.bytes = 0
-    unwrap_or_abort(.value = report(.self = $&empty, .writer = $&virtual_writer))
+    unwrap_or_abort(.value = ErrorTracer#().report(.self = $&empty, .writer = $&virtual_writer))
     empty_count ::= writer.bytes
     writer.bytes = 0
-    unwrap_or_abort(.value = report(.self = $&tiny, .writer = $&virtual_writer))
+    unwrap_or_abort(.value = ErrorTracer#().report(.self = $&tiny, .writer = $&virtual_writer))
     if empty_count <= 43 or writer.bytes != empty_count {
         status_code = 4
         return
     }
-    reset_context(.self = $&empty)
-    reset_context(.self = $&tiny)
+    ErrorTracer#().reset_context(.self = $&empty)
+    ErrorTracer#().reset_context(.self = $&tiny)
     writer.bytes = 0
-    unwrap_or_abort(.value = report(.self = $&tiny, .writer = $&virtual_writer))
+    unwrap_or_abort(.value = ErrorTracer#().report(.self = $&tiny, .writer = $&virtual_writer))
     if writer.bytes != 43 { status_code = 5 }
 }
 

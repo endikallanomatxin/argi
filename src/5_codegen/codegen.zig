@@ -1736,7 +1736,7 @@ pub const CodeGenerator = struct {
         const source_error_index = try self.variantIndex(source_errable_type, propagation.error_variant);
         const propagated_error_index = try self.variantIndex(propagation.propagated_errable_type, propagation.propagated_error_variant);
         const payload = c.LLVMBuildExtractValue(self.builder, value.value_ref, source_error_index + 1, "error.payload");
-        const traced_payload = try self.appendErrorTrace(payload, propagation.error_payload_type, source, context, null);
+        const traced_payload = try self.appendErrorContext(payload, propagation.error_payload_type, source, context, null);
         const converted_payload = try self.coerceErrorPayload(traced_payload, propagation.error_payload_type, propagation.propagated_error_payload_type);
         propagated = c.LLVMBuildInsertValue(self.builder, propagated, propagated_error_tag, 0, "error.return.tag");
         propagated = c.LLVMBuildInsertValue(self.builder, propagated, converted_payload, propagated_error_index + 1, "error.return.payload");
@@ -1761,7 +1761,7 @@ pub const CodeGenerator = struct {
         return .{ .value_ref = result, .type_ref = try self.toLLVMType(result_ty), .ty = result_ty };
     }
 
-    fn appendErrorTrace(
+    fn appendErrorContext(
         self: *CodeGenerator,
         error_value: llvm.c.LLVMValueRef,
         error_ty: graph_mod.GlobalTypeId,
@@ -1769,8 +1769,8 @@ pub const CodeGenerator = struct {
         context_node: ?graph_mod.GlobalNodeId,
         context_pointer: ?llvm.c.LLVMValueRef,
     ) !llvm.c.LLVMValueRef {
-        const trace = types.findField(self.graph, error_ty, "trace") orelse return CodegenError.InvalidType;
-        const trace_value = c.LLVMBuildExtractValue(self.builder, error_value, trace.index, "error.trace");
+        const trace = types.findField(self.graph, error_ty, "tracer") orelse return CodegenError.InvalidType;
+        const trace_value = c.LLVMBuildExtractValue(self.builder, error_value, trace.index, "error.tracer");
         const context_value = if (context_node) |node| try self.visitNode(node) else null;
         const is_view = if (context_value) |value| if (value.ty) |ty| types.findField(self.graph, ty, "length") != null else false else false;
         const helper = try self.runtimeFunction(if (is_view) "_add_error_context" else "_add_error_context_text");
@@ -1946,7 +1946,7 @@ pub const CodeGenerator = struct {
         const error_variant = types.findVariant(self.graph, expect.result_type, "error") orelse return CodegenError.InvalidType;
         const payload_ty = error_variant.variant.payload_type orelse return CodegenError.InvalidType;
         const payload = c.LLVMBuildExtractValue(self.builder, result, error_variant.index + 1, "expect_error.failure.payload");
-        const traced = try self.appendErrorTrace(payload, payload_ty, source, null, context);
+        const traced = try self.appendErrorContext(payload, payload_ty, source, null, context);
         result = c.LLVMBuildInsertValue(self.builder, result, traced, error_variant.index + 1, "expect_error.failure.trace");
         return result;
     }
@@ -1988,15 +1988,15 @@ pub const CodeGenerator = struct {
     fn coerceErrorPayload(self: *CodeGenerator, value: llvm.c.LLVMValueRef, source_ty: graph_mod.GlobalTypeId, target_ty: graph_mod.GlobalTypeId) !llvm.c.LLVMValueRef {
         if (types.equal(self.graph, source_ty, target_ty)) return value;
         const source_reason = types.findField(self.graph, source_ty, "reason") orelse return CodegenError.InvalidType;
-        const source_trace = types.findField(self.graph, source_ty, "trace") orelse return CodegenError.InvalidType;
+        const source_trace = types.findField(self.graph, source_ty, "tracer") orelse return CodegenError.InvalidType;
         const target_reason = types.findField(self.graph, target_ty, "reason") orelse return CodegenError.InvalidType;
-        const target_trace = types.findField(self.graph, target_ty, "trace") orelse return CodegenError.InvalidType;
+        const target_trace = types.findField(self.graph, target_ty, "tracer") orelse return CodegenError.InvalidType;
         const reason = c.LLVMBuildExtractValue(self.builder, value, source_reason.index, "error.reason");
-        const trace = c.LLVMBuildExtractValue(self.builder, value, source_trace.index, "error.trace");
+        const trace = c.LLVMBuildExtractValue(self.builder, value, source_trace.index, "error.tracer");
         const converted_reason = try self.coerceReasonChoice(reason, source_reason.field.ty, target_reason.field.ty);
         var result = c.LLVMGetUndef(try self.toLLVMType(target_ty));
         result = c.LLVMBuildInsertValue(self.builder, result, converted_reason, target_reason.index, "error.reason.converted");
-        result = c.LLVMBuildInsertValue(self.builder, result, trace, target_trace.index, "error.trace.converted");
+        result = c.LLVMBuildInsertValue(self.builder, result, trace, target_trace.index, "error.tracer.converted");
         return result;
     }
 

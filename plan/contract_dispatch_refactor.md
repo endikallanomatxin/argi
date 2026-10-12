@@ -18,7 +18,7 @@ incomparable maximal candidates are errors; source/import ordering has no priori
 
 ## Implementation order and removal obligations
 
-1. Migrate ErrorTracer next, then Allocator. Reader and Writer now use selected
+1. Migrate Allocator next. ErrorTracer, Reader and Writer now use selected
    scoped evidence throughout their bundled adapters and callers. Preserve fallible
    virtual capability inputs, storage acquisition proofs and cleanup. Unary receiver
    safety normalization recognizes the original participant parameter; preserve

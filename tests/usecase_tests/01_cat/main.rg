@@ -8,9 +8,9 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         view($&zeroed#([8192]UInt8)())
     )
     #defer {
-        flush(output) handle error {
+        Writer#().flush(output) handle error {
             status_code = 1
-            report_trace(.trace = &error.trace, .writer = writer) handle ignored {}
+            report_trace(.tracer = error.tracer, .writer = writer) handle ignored {}
         }
     }
 
@@ -41,20 +41,20 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
                 transfer_stream(stdin, output)!!! { status_code = 1 }
             } else {
                 file_reader ::= open_read(system.file_system, path) handle error, value {
-                    add_context(.context = path, .error_tracer = error.trace.tracer)
-                    report_trace(.trace = &error.trace, .writer = writer) handle ignored {}
+                    add_context(.context = path, .error_tracer = error.tracer)
+                    report_trace(.tracer = error.tracer, .writer = writer) handle ignored {}
                     status_code = 1
                     return
                 }
                 transfer_stream($&file_reader, output) handle error, value {
-                    add_context(.context = path, .error_tracer = error.trace.tracer)
-                    report_trace(.trace = &error.trace, .writer = writer) handle ignored {}
+                    add_context(.context = path, .error_tracer = error.tracer)
+                    report_trace(.tracer = error.tracer, .writer = writer) handle ignored {}
                     status_code = 1
                     return
                 }
                 close($&file_reader) handle error, value {
-                    add_context(.context = path, .error_tracer = error.trace.tracer)
-                    report_trace(.trace = &error.trace, .writer = writer) handle ignored {}
+                    add_context(.context = path, .error_tracer = error.tracer)
+                    report_trace(.tracer = error.tracer, .writer = writer) handle ignored {}
                     status_code = 1
                     return
                 }

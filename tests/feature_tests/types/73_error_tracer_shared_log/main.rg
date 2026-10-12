@@ -26,7 +26,7 @@ report_value(.value: &Errable#(.t: Void, .reasons: Failures), .writer: $&Probe) 
     match value&{
         ..ok _ { abort }
         ..error&error {
-            unwrap_or_abort(.value = report_trace(.trace = &error&.trace, .writer = writer))
+            unwrap_or_abort(.value = report_trace(.tracer = error&.tracer, .writer = writer))
         }
     }
 }
@@ -37,8 +37,8 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     assume error_tracer ::= $&virtual
     first ::= fail(.second = false)
     second ::= fail(.second = true)
-    add_context(.context = "evicted context")
-    add_context(.context = "retained context")
+    add_context_text(.context = "evicted context")
+    add_context_text(.context = "retained context")
     writer ::= Probe()
     report_value(.value = &first, .writer = $&writer)
     count ::= writer.count
@@ -52,7 +52,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         status_code = 2
         return
     }
-    reset_context(.self = $&virtual)
+    ErrorTracer#().reset_context(.self = $&virtual)
     report_value(.value = &first, .writer = $&writer)
     if writer.count != 43 {
         status_code = 3
@@ -92,7 +92,9 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     }
     writer.count = 0
     writer_virtual ::= to_virtual#(Writer)($&writer)
-    unwrap_or_abort(.value = report(.self = $&other_virtual, .writer = $&writer_virtual))
+    unwrap_or_abort(
+        .value = ErrorTracer#().report(.self = $&other_virtual, .writer = $&writer_virtual)
+    )
     if writer.count != 43 { status_code = 11 }
 }
 

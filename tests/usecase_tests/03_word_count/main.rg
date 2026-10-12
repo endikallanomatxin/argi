@@ -9,9 +9,9 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         view($&zeroed#([8192]UInt8)())
     )
     #defer {
-        flush(output) handle error {
+        Writer#().flush(output) handle error {
             status_code = 1
-            report_trace(.trace = &error.trace, .writer = writer) handle ignored {}
+            report_trace(.tracer = error.tracer, .writer = writer) handle ignored {}
         }
     }
 

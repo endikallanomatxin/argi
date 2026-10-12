@@ -24,7 +24,7 @@ finish(
         fail() handle error {
             state&= state&* 10 + 2
             result = 1
-            report_trace(.trace = &error.trace, .writer = writer) handle ignored {}
+            report_trace(.tracer = error.tracer, .writer = writer) handle ignored {}
         }
     }
     #defer {
