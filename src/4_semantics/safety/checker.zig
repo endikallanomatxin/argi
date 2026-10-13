@@ -285,7 +285,7 @@ pub const SafetyChecker = struct {
                 try self.report(source, "method '{s}' cannot prove transfers: move the declared input to the output directly or through lexical owners", .{self.graph.text(self.graph.declaration(function.declaration).name)});
         }
         var summary = (try inference.contractImplementationSummary(method, receiver)) orelse {
-            try self.report(source, "cannot verify Abstract safety contract for this implementation", .{});
+            try self.report(source, "cannot verify safety contract for this implementation", .{});
             return;
         };
         var scalar_invalidates: std.ArrayList(u32) = .empty;
@@ -316,8 +316,8 @@ pub const SafetyChecker = struct {
             const method_name = self.graph.text(self.graph.declarationSourceName(function.declaration));
             if (failure.input) |path| {
                 const input_name = if (path.input_index < function.input.len) self.graph.text(self.graph.fields.items[function.input.start + path.input_index].name) else "implicit input";
-                try self.report(source, "method '{s}' violates its Abstract safety contract: {s} involving input '{s}'", .{ method_name, failure.description(), input_name });
-            } else try self.report(source, "method '{s}' violates its Abstract safety contract: {s}", .{ method_name, failure.description() });
+                try self.report(source, "method '{s}' violates its safety contract: {s} involving input '{s}'", .{ method_name, failure.description(), input_name });
+            } else try self.report(source, "method '{s}' violates its safety contract: {s}", .{ method_name, failure.description() });
             if (failure.outcome) |outcome| {
                 if (outcome.output_index < function.output.len) {
                     const output = self.graph.fields.items[function.output.start + outcome.output_index];
@@ -335,7 +335,7 @@ pub const SafetyChecker = struct {
                     };
                 }
             }
-            try self.report(declared.source, "the Abstract safety contract is declared here", .{});
+            try self.report(declared.source, "the safety contract is declared here", .{});
         }
     }
 

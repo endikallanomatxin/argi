@@ -4571,7 +4571,7 @@ test "feature_tests/polymorphism/30X_virtual_declared_dependency_escape" {
 test "feature_tests/polymorphism/31X_virtual_contract_rejects_deinit" {
     try buildExpectFail(
         "tests/feature_tests/polymorphism/31X_virtual_contract_rejects_deinit",
-        "violates its Abstract safety contract",
+        "violates its safety contract",
     );
 }
 
@@ -4610,63 +4610,63 @@ test "feature_tests/ownership/219_virtual_preservation_allows_self_mutation" {
 test "feature_tests/ownership/220X_virtual_contract_rejects_hidden_dependency" {
     try buildExpectFail(
         "tests/feature_tests/ownership/220X_virtual_contract_rejects_hidden_dependency",
-        "violates its Abstract safety contract",
+        "violates its safety contract",
     );
 }
 
 test "feature_tests/ownership/221X_virtual_contract_rejects_conditional_deinit" {
     try buildExpectFail(
         "tests/feature_tests/ownership/221X_virtual_contract_rejects_conditional_deinit",
-        "violates its Abstract safety contract",
+        "violates its safety contract",
     );
 }
 
 test "feature_tests/ownership/222X_virtual_contract_rejects_conditional_opaque_transfer" {
     try buildExpectFail(
         "tests/feature_tests/ownership/222X_virtual_contract_rejects_conditional_opaque_transfer",
-        "violates its Abstract safety contract",
+        "violates its safety contract",
     );
 }
 
 test "feature_tests/ownership/222X_virtual_contract_rejects_opaque_source_transfer" {
     try buildExpectFail(
         "tests/feature_tests/ownership/222X_virtual_contract_rejects_opaque_source_transfer",
-        "violates its Abstract safety contract",
+        "violates its safety contract",
     );
 }
 
 test "feature_tests/ownership/223X_virtual_contract_rejects_ambiguous_opaque_storage" {
     try buildExpectFail(
         "tests/feature_tests/ownership/223X_virtual_contract_rejects_ambiguous_opaque_storage",
-        "violates its Abstract safety contract",
+        "violates its safety contract",
     );
 }
 
 test "feature_tests/ownership/224X_virtual_contract_rejects_self_destruction" {
     try buildExpectFail(
         "tests/feature_tests/ownership/224X_virtual_contract_rejects_self_destruction",
-        "violates its Abstract safety contract",
+        "violates its safety contract",
     );
 }
 
 test "feature_tests/ownership/225X_virtual_contract_nonleading_receiver" {
     try buildExpectFail(
         "tests/feature_tests/ownership/225X_virtual_contract_nonleading_receiver",
-        "violates its Abstract safety contract",
+        "violates its safety contract",
     );
 }
 
 test "feature_tests/ownership/226X_virtual_contract_rejects_conditional_opaque_drop" {
     try buildExpectFail(
         "tests/feature_tests/ownership/226X_virtual_contract_rejects_conditional_opaque_drop",
-        "violates its Abstract safety contract",
+        "violates its safety contract",
     );
 }
 
 test "feature_tests/ownership/227X_virtual_contract_rejects_opaque_drop" {
     try buildExpectFail(
         "tests/feature_tests/ownership/227X_virtual_contract_rejects_opaque_drop",
-        "violates its Abstract safety contract",
+        "violates its safety contract",
     );
 }
 
@@ -6751,7 +6751,7 @@ test "safety wrapper parity for fallible initialization outcomes" {
 
 test "safety wrapper parity for recursion and virtual dispatch" {
     try expectSafetyWrapperParity("tests/feature_tests/polymorphism/41_recursive_virtual_summaries", null);
-    try expectSafetyWrapperParity("tests/feature_tests/ownership/220X_virtual_contract_rejects_hidden_dependency", "violates its Abstract safety contract");
+    try expectSafetyWrapperParity("tests/feature_tests/ownership/220X_virtual_contract_rejects_hidden_dependency", "violates its safety contract");
     try expectSafetyWrapperParity("tests/feature_tests/polymorphism/30X_virtual_declared_dependency_escape", "function output cannot depend on a local storage generation that ends before return");
 }
 
@@ -11440,7 +11440,7 @@ test "tests/feature_tests/polymorphism/315X_abstract_joint_output_partial_proof"
 }
 
 test "tests/feature_tests/polymorphism/316X_abstract_joint_output_wrong_implementation" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/316X_abstract_joint_output_wrong_implementation", "Abstract safety contract", "failed without a diagnostic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/316X_abstract_joint_output_wrong_implementation", "safety contract", "failed without a diagnostic");
 }
 
 test "tests/feature_tests/polymorphism/317X_abstract_joint_output_overwritten_selector" {

@@ -287,7 +287,7 @@ selected payload.
 Each function has an inferred Safety Summary. It records required live input
 dependencies, value effects, Place post-states, and opaque-storage effects.
 Callers instantiate these symbolic effects at their own Places and roots.
-Abstract safety contracts bound the effects allowed through virtual dispatch.
+safety contracts bound the effects allowed through virtual dispatch.
 Concrete implementations must satisfy their contract independently, and virtual
 calls use that contract. See `134_virtual_types.md` for dependency declarations
 and the remaining implementation gaps during migration from combined summaries.

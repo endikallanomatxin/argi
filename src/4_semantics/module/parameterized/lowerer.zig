@@ -568,7 +568,7 @@ pub const Context = struct {
     }
 
     fn lowerDependencyClause(self: *Context, requirement: syn.AbstractFunctionRequirement, node: syn.NodeIndex, dependencies: *std.ArrayList(primitives.MethodSafetyContract.Dependency), referents: *std.ArrayList(primitives.MethodSafetyContract.Dependency), invalidates: *std.ArrayList(u32), domains: []const primitives.StringRange, domain_dependencies: *std.ArrayList(primitives.MethodSafetyContract.DomainDependency), invalidated_domains: *std.ArrayList(primitives.MethodSafetyContract.DomainInput), owned_outputs: *std.ArrayList(u32), transfers: *std.ArrayList(primitives.MethodSafetyContract.Dependency), consumed_inputs: *std.ArrayList(u32), relocations: *std.ArrayList(primitives.MethodSafetyContract.Relocation), retained_inputs: *std.ArrayList(primitives.MethodSafetyContract.Retention), emptied_inputs: *std.ArrayList(primitives.MethodSafetyContract.StorageInput), storage_sources: *std.ArrayList(primitives.MethodSafetyContract.StorageDependency)) !void {
-        const call = self.tree.functionCall(node) orelse return self.contractError(node, "expected depends_on, refers_to, owns, transfers, consumes, relocates, invalidates, retains, empties or from_storage in an Abstract safety contract");
+        const call = self.tree.functionCall(node) orelse return self.contractError(node, "expected depends_on, refers_to, owns, transfers, consumes, relocates, invalidates, retains, empties or from_storage in a safety contract");
         const name = self.tree.tokenTextFromSource(self.source, call.callee_token);
         if ((std.mem.eql(u8, name, "retains") or std.mem.eql(u8, name, "empties") or std.mem.eql(u8, name, "from_storage")) and call.module_qualifier == null and call.type_arguments.len == 0 and call.type_arguments_struct == null) {
             const arguments = self.tree.structValueLiteral(call.input).?;
@@ -684,7 +684,7 @@ pub const Context = struct {
         }
         if (call.module_qualifier != null or call.type_arguments.len != 0 or call.type_arguments_struct != null or
             (!is_referent and !std.mem.eql(u8, name, "depends_on")))
-            return self.contractError(node, "expected depends_on, refers_to, owns, transfers, consumes, relocates, invalidates, retains, empties or from_storage in an Abstract safety contract");
+            return self.contractError(node, "expected depends_on, refers_to, owns, transfers, consumes, relocates, invalidates, retains, empties or from_storage in a safety contract");
         const literal = self.tree.structValueLiteral(call.input).?;
         if (literal.fields.len < 2) return self.contractError(node, "depends_on requires an output followed by one or more inputs");
         if (is_referent and literal.fields.len != 2) return self.contractError(node, "refers_to requires exactly one output and one reference input");

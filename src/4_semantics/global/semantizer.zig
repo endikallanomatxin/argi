@@ -724,7 +724,7 @@ pub fn semantizeWithOptions(
         if (options.diagnostics) |diagnostics| {
             const location = diagnosticLocation(&relocation.graph, diagnostics, failure.source);
             if (failure.static_contract) {
-                try diagnostics.add(location, .semantic, "invalid Abstract safety contract for '{s}': {s}", .{ failure.method_name, failure.reason });
+                try diagnostics.add(location, .semantic, "invalid safety contract for '{s}': {s}", .{ failure.method_name, failure.reason });
             } else {
                 try diagnostics.add(location, .semantic, "cannot use '{s}' for virtual dispatch: {s}", .{ failure.method_name, failure.reason });
             }
