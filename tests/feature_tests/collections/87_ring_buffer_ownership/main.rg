@@ -15,7 +15,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     if extracted.id != 1 { abort }
     wrapped ::= Tracked(.id = 4)
     unwrap_or_abort(.value = push(.self = $&ring, .value = ~wrapped, .allocator = allocator))
-    deinit(.self = $&ring, .allocator = allocator)
+    deinit(.self = $&ring)
     if drops != 3 or extracted.id != 1 { abort }
     deinit(.self = $&extracted)
     if drops != 4 { abort }
@@ -27,7 +27,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     unwrap_or_abort(.value = push(.self = $&strings, .value = ~first, .allocator = allocator))
     unwrap_or_abort(.value = push(.self = $&strings, .value = ~second, .allocator = allocator))
     survivor ::= unwrap_or_abort(.value = pop(.self = $&strings))
-    deinit(.self = $&strings, .allocator = allocator)
+    deinit(.self = $&strings)
     if as_view(.self = &survivor).view != "a" { abort }
-    deinit(.self = $&survivor, .allocator = allocator)
+    deinit(.self = $&survivor)
 }

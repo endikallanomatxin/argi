@@ -76,7 +76,7 @@ main(.system: System) -> (.status_code: Int32) := {
                                 return
                             }
 
-                            deinit#(.t: Tracked)(.allocator = $&backing, .self = $&array)
+                            deinit( .self = $&array)
                             if first_drops != 1 or second_drops != 1 or third_drops != 1 {
                                 status_code = 21
                                 return

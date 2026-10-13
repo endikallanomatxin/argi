@@ -34,10 +34,12 @@ _exception_copy(
         .status : Int32
     ): CFunction(.symbol = "_argi_python_exception_copy")
 
-Exception deinit(.self: $&Exception) -> () := {
-    assume ffi := self&._ffi
-    _exception_release(.handle = self&._handle)
-}
+implement Deinit#(Exception) (
+    .deinit = (.self: $&Exception) -> () {
+        assume ffi := self&._ffi
+        _exception_release(.handle = self&._handle)
+    }
+)
 
 snapshot_error(.self: &Python) -> (.exception: Exception) := {
     assume ffi := self&._ffi

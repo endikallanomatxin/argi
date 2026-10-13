@@ -10,7 +10,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     unwrap_or_abort(.value = push(.self = $&ring, .value = ~b, .allocator = system.page_allocator))
     if is(.value = push(.self = $&ring, .value = ~rejected, .allocator = system.page_allocator), .variant = ..error) == false { abort }
     popped ::= unwrap_or_abort(.value = pop(.self = $&ring))
-    deinit(.self = $&ring, .allocator = system.page_allocator)
+    deinit(.self = $&ring)
     if drops != 2 { abort }
     deinit(.self = $&popped)
     if drops != 3 { abort }

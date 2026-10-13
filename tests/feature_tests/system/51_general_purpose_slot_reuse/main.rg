@@ -116,7 +116,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         status_code = 7
         return
     }
-    deinit#(.t: Allocation)(.self = $&receipts, .allocator = system.page_allocator)
+    deinit(.self = $&receipts)
     if tracker.deallocations != 1 or has_live_allocations(.self = &allocator).has_live {
         status_code = 8
     }

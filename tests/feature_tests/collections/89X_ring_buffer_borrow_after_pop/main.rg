@@ -4,5 +4,5 @@ main(.system: System) -> () := {
     borrowed ::= unwrap_or_abort(.value = get_ro_ref(.self = &ring, .index = 0))
     removed ::= unwrap_or_abort(.value = pop(.self = $&ring))
     observed ::= borrowed&
-    deinit(.self = $&ring, .allocator = system.page_allocator)
+    deinit(.self = $&ring)
 }

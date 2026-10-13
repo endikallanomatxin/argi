@@ -1,10 +1,11 @@
 _WalkFrame: Type = (.directory: Directory, .path: Path, .depth: UIntNative)
 
-_WalkFrame deinit(.self: $&_WalkFrame, .allocator: $&Allocator) -> () := {
-    assume allocator
-    deinit(.self = $&self&.directory)
-    deinit(.self = $&self&.path)
-}
+implement Deinit#(_WalkFrame) (
+    .deinit = (.self: $&_WalkFrame) -> () {
+        deinit(.self = $&self&.directory)
+        deinit(.self = $&self&.path)
+    }
+)
 
 WalkEntry: Type = (.path: Path, .info: FileMetadata, .depth: UIntNative)
 
@@ -47,15 +48,15 @@ DirectoryWalker init(
     )
 }
 
-DirectoryWalker deinit(.self: $&DirectoryWalker, .allocator: $&Allocator) -> () := {
-    assume allocator
+implement Deinit#(DirectoryWalker) (
+    .deinit = (.self: $&DirectoryWalker) -> () {
+        while length(&self&._frames).count > 0 {
+            discarded ::= ~unwrap_or_abort(.value = pop($&self&._frames))
+        }
 
-    while length(&self&._frames).count > 0 {
-        discarded ::= ~unwrap_or_abort(.value = pop($&self&._frames))
+        deinit(.self = $&self&._frames)
     }
-
-    deinit(.self = $&self&._frames)
-}
+)
 
 -- EOF is sticky. Errors are terminal and preserve all owners for cleanup.
 next(

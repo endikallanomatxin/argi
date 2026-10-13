@@ -12583,3 +12583,8 @@ test "feature_tests/numbers/17_color_float_representation" {
     try expectSuccessfulBuild("tests/feature_tests/numbers/17_color_float_representation");
     try run("tests/feature_tests/numbers/17_color_float_representation");
 }
+
+test "feature_tests/contracts/220_deinit_collection_elements" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/220_deinit_collection_elements");
+    try run("tests/feature_tests/contracts/220_deinit_collection_elements");
+}

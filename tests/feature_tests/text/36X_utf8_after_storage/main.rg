@@ -3,7 +3,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     text ::= format(.value = "hello", .allocator = allocator)!
     validated ::= Utf8View(.text = as_view(.self = &text))!
     iterator ::= to_iterator(.value = &validated).iterator
-    deinit(.self = $&text, .allocator = allocator)
+    deinit(.self = $&text)
     next(.self = $&iterator)
 }
 

@@ -8,7 +8,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         )
     )
     if as_view(.self = &joined).view != "a----b" { abort }
-    deinit(.self = $&joined, .allocator = system.page_allocator)
+    deinit(.self = $&joined)
     joined_empty_separator ::= unwrap_or_abort(
         .value = join(
             .parts     = array_view_ro(.array = &parts).view
@@ -17,7 +17,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         )
     )
     if as_view(.self = &joined_empty_separator).view != "ab" { abort }
-    deinit(.self = $&joined_empty_separator, .allocator = system.page_allocator)
+    deinit(.self = $&joined_empty_separator)
     empty_parts: [0]StringView = ()
     empty ::= unwrap_or_abort(
         .value = join(
@@ -27,7 +27,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         )
     )
     if empty.length != 0 { abort }
-    deinit(.self = $&empty, .allocator = system.page_allocator)
+    deinit(.self = $&empty)
     source ::= unwrap_or_abort(.value = String(.allocator = system.page_allocator, .length = 3))
     bytes_set(.string = $&source, .index = 0, .value = 97)
     bytes_set(.string = $&source, .index = 1, .value = 0)
@@ -41,9 +41,9 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
             .allocator = system.page_allocator
         )
     )
-    deinit(.self = $&source, .allocator = system.page_allocator)
+    deinit(.self = $&source)
     if independent.length != 9 { abort }
     if bytes_get(.string = &independent, .index = 7).byte != 0 { abort }
     if bytes_get(.string = &independent, .index = 8).byte != 98 { abort }
-    deinit(.self = $&independent, .allocator = system.page_allocator)
+    deinit(.self = $&independent)
 }

@@ -295,7 +295,7 @@ reserve#(
     }
 
     deinit(.self = $&self&._table._entries)
-    deinit(.self = $&self&._table._slots, .allocator = allocator)
+    deinit(.self = $&self&._table._slots)
     _owned_hash_invalidate(self)
     -- Replace the table as one ownership unit so its backing roots change
     -- together; independent field replacement retains obsolete sibling facts.
@@ -475,30 +475,28 @@ remove#(
     }
 }
 
-OwnedHashMap deinit#(
+implement#(
         .key    : Type,
         .value  : Type,
         .policy : Type: BorrowedHashPolicy#(policy, key)
-    )(
-        .self      : $&OwnedHashMap#(.key: key, .value: value, .policy: policy),
-        .allocator : $&Allocator
-    ) -> () := {
-    assume allocator
-    index :: UIntNative = 0
+    ) Deinit#(OwnedHashMap#(.key: key, .value: value, .policy: policy)) (
+    .deinit = (.self: $&OwnedHashMap#(.key: key, .value: value, .policy: policy)) -> () {
+        index :: UIntNative = 0
 
-    while index < capacity(self).count {
-        if _trusted_dynamic_array_get(.array = &self&._table._slots, .index = index).state == 1 {
-            slot ::= _trusted_uninit_slot#(.t: OwnedHashMapEntry#(.key: key, .value: value))(
-                .allocation = &self&._table._entries
-                .index      = index
-            )
-            entry ::= _trusted_uninit_take(.allocation = $&self&._table._entries, .slot = slot)
+        while index < capacity(self).count {
+            if _trusted_dynamic_array_get(.array = &self&._table._slots, .index = index).state == 1 {
+                slot ::= _trusted_uninit_slot#(.t: OwnedHashMapEntry#(.key: key, .value: value))(
+                    .allocation = &self&._table._entries
+                    .index      = index
+                )
+                entry ::= _trusted_uninit_take(.allocation = $&self&._table._entries, .slot = slot)
+            }
+            index = index + 1
         }
-        index = index + 1
-    }
 
-    trusted_opaque_mark_empty(.storage = $&self&._table._entries)
-    deinit(.self = $&self&._table._entries)
-    deinit(.self = $&self&._table._slots, .allocator = allocator)
-    policy ::= ~self&._policy
-}
+        trusted_opaque_mark_empty(.storage = $&self&._table._entries)
+        deinit(.self = $&self&._table._entries)
+        deinit(.self = $&self&._table._slots)
+        policy ::= ~self&._policy
+    }
+)

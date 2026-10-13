@@ -49,7 +49,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
                             popped ::= ~popped_result..ok
                             observed ::= popped.borrowed&
                             if observed == 255 { status_code = 5 }
-                            deinit#(.t: BorrowingOwner)(.self = $&array)
+                            deinit(.self = $&array)
                             if first_drops != 1 or second_drops != 0 { status_code = 6 }
                             deinit(.self = $&popped)
                             if second_drops != 1 { status_code = 7 }

@@ -206,7 +206,7 @@ _hash_map_grow#(
         index = index + 1
     }
 
-    deinit(.self = $&self&._slots, .allocator = allocator)
+    deinit(.self = $&self&._slots)
     self&._slots = ~fresh
 
     result = ..ok Void()
@@ -369,14 +369,13 @@ remove#(
     }
 }
 
-HashMap deinit#(
+implement#(
         .key    : Type: ImplicitlyCopyable,
         .value  : Type: ImplicitlyCopyable,
         .policy : Type: HashPolicy#(policy, key)
-    )(
-        .self      : $&HashMap#(.key: key, .value: value, .policy: policy),
-        .allocator : $&Allocator
-    ) -> () := {
-    deinit(.self = $&self&._slots, .allocator = allocator)
-    trusted_opaque_drop(.slot = $&self&._policy, .allocator = allocator)
-}
+    ) Deinit#(HashMap#(.key: key, .value: value, .policy: policy)) (
+    .deinit = (.self: $&HashMap#(.key: key, .value: value, .policy: policy)) -> () {
+        deinit(.self = $&self&._slots)
+        policy ::= ~self&._policy
+    }
+)

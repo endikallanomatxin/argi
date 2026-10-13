@@ -6,38 +6,32 @@ DynamicArrayOwningIterator#(.t: Type): Type = (
     ._end        : UIntNative
 )
 
-DynamicArrayOwningIterator deinit#(
+implement#(
         .t : Type
-    )(
-        .self      : $&DynamicArrayOwningIterator#(.t: t),
-        .allocator : $&Allocator
-    ) -> () := {
-    assume allocator
+    ) Deinit#(DynamicArrayOwningIterator#(.t: t)) (
+    .deinit = (.self: $&DynamicArrayOwningIterator#(.t: t)) -> () {
+        while self&._next < self&._end {
+            discarded ::= ~next(self).value
+        }
 
-    while self&._next < self&._end {
-        discarded ::= ~next(self).value
+        trusted_opaque_mark_empty(.storage = $&self&._allocation)
+        deinit(.self = $&self&._allocation)
     }
-
-    trusted_opaque_mark_empty(.storage = $&self&._allocation)
-    deinit(.self = $&self&._allocation)
-}
+)
 
 DequeOwningIterator#(.t: Type): Type = (._owner: Deque#(.t: t))
 
-DequeOwningIterator deinit#(
+implement#(
         .t : Type
-    )(
-        .self      : $&DequeOwningIterator#(.t: t),
-        .allocator : $&Allocator
-    ) -> () := {
-    assume allocator
+    ) Deinit#(DequeOwningIterator#(.t: t)) (
+    .deinit = (.self: $&DequeOwningIterator#(.t: t)) -> () {
+        while has_next(self).ok {
+            discarded ::= ~next(self).value
+        }
 
-    while has_next(self).ok {
-        discarded ::= ~next(self).value
+        deinit(.self = $&self&._owner)
     }
-
-    deinit(.self = $&self&._owner, .allocator = allocator)
-}
+)
 
 implement#(
         .t : Type

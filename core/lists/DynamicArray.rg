@@ -84,32 +84,29 @@ DynamicArray init#(
     }
 }
 
-DynamicArray deinit#(
+implement#(
         .t : Type
-    )(
-        .allocator : $&Allocator,
-        .self      : $&DynamicArray#(.t: t)
-    ) -> () := {
-    assume allocator
+    ) Deinit#(DynamicArray#(.t: t)) (
+    .deinit = (.self: $&DynamicArray#(.t: t)) -> () {
+        -- Lexical owners recursively destroy fields in logical order.
+        i :: UIntNative = 0
 
-    -- Lexical owners recursively destroy fields in logical order.
-    i :: UIntNative = 0
+        while i < self&._length {
+            slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &self&._allocation, .index = i)
+            discarded ::= ~_trusted_uninit_take#(.t: t)(
+                .allocation = $&self&._allocation
+                .slot       = slot
+            )
+            i = i + 1
+        }
+        -- Capacity records whether backing allocation ownership exists.
+        trusted_opaque_mark_empty(.storage = $&self&._allocation)
 
-    while i < self&._length {
-        slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &self&._allocation, .index = i)
-        discarded ::= ~_trusted_uninit_take#(.t: t)(
-            .allocation = $&self&._allocation
-            .slot       = slot
-        )
-        i = i + 1
+        if self&._capacity != 0 {
+            deinit(.self = $&self&._allocation)
+        }
     }
-    -- Capacity records whether backing allocation ownership exists.
-    trusted_opaque_mark_empty(.storage = $&self&._allocation)
-
-    if self&._capacity != 0 {
-        deinit(.self = $&self&._allocation)
-    }
-}
+)
 
 copy#(
         .t : Type: InfalliblyCopyable
@@ -141,7 +138,7 @@ copy#(
         element ::= copy(ptr)
         pushed ::= push(.allocator = allocator, .self = $&out, .value = ~element)
         if is(.value = pushed, .variant = ..error) {
-            deinit#(.t: t)(.allocator = allocator, .self = $&out)
+            deinit( .self = $&out)
             result = ..error(.reason = ..out_of_memory)
             return
         }
@@ -190,7 +187,7 @@ copy#(
                 push_assume_capacity#(.t: t)($&out, .value = ~payload)
             }
             ..error ~err {
-                deinit#(.t: t)(.allocator = allocator, .self = $&out)
+                deinit( .self = $&out)
                 result = ..error(.reason = err.reason)
                 return
             }

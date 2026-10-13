@@ -79,8 +79,12 @@ incomparable maximal candidates are errors; source/import ordering has no priori
    operations for automatic/explicit cleanup, including generic specialization,
    imported owners and ordinary function aliases. Lifecycle wrappers preserve
    alias behavior and forward reached capability inputs. Migrated native owners
-   and shape markers no longer use legacy destructor declarations. Continue with
-   the generic collection/allocator-bearing destructor families. Replace the
+   and shape markers no longer use legacy destructor declarations. Generic bundled
+   collections, buffered streams and path owners now select Deinit evidence too.
+   Owned opaque storage may be emptied only after definite consumption is proved;
+   borrowed referents and retention remain separate obligations. Nested collection
+   elements and partial owners use recursive lexical cleanup. Continue with
+   remaining more-library destructor families and legacy fixture adapters. Replace the
    old constructor/destructor/operator indexes with explicit operation identities,
    preserving resource initialization, cleanup and capability dependencies.
 5. Extend unary selected virtual evidence to associated parameters and storage

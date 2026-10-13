@@ -30,7 +30,7 @@ main(.system: System) -> (.status_code: Int32) := {
                 and is(.value = step_4, .variant = ..ok)
             ] {
             } else {
-                deinit(.self = $&out, .allocator = $&allocator_storage)
+                deinit(.self = $&out)
                 status_code = 7
                 return
             }
@@ -38,12 +38,12 @@ main(.system: System) -> (.status_code: Int32) := {
             out_view ::= as_view(.self = &out)
             if out_view == "answer=42, ok=true" {
             } else {
-                deinit(.self = $&out, .allocator = $&allocator_storage)
+                deinit(.self = $&out)
                 status_code = 2
                 return
             }
 
-            deinit(.self = $&out, .allocator = $&allocator_storage)
+            deinit(.self = $&out)
         }
     }
 
@@ -58,11 +58,11 @@ main(.system: System) -> (.status_code: Int32) := {
             text_view ::= as_view(.self = &text)
             if text_view == "-105" {
             } else {
-                deinit(.self = $&text, .allocator = $&allocator_storage)
+                deinit(.self = $&text)
                 status_code = 4
                 return
             }
-            deinit(.self = $&text, .allocator = $&allocator_storage)
+            deinit(.self = $&text)
         }
     }
 
@@ -78,11 +78,11 @@ main(.system: System) -> (.status_code: Int32) := {
             text_view ::= as_view(.self = &text)
             if text_view == "demo" {
             } else {
-                deinit(.self = $&text, .allocator = $&allocator_storage)
+                deinit(.self = $&text)
                 status_code = 6
                 return
             }
-            deinit(.self = $&text, .allocator = $&allocator_storage)
+            deinit(.self = $&text)
         }
     }
 

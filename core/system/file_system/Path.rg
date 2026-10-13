@@ -89,14 +89,11 @@ path_with_view(
     result = ..ok(.text = ~text)
 }
 
-Path deinit(
-        .self      : $&Path,
-        .allocator : $&Allocator,
-    ) -> () := {
-    assume allocator
-
-    deinit(.self = $&self&.text, .allocator = allocator)
-}
+implement Deinit#(Path) (
+    .deinit = (.self: $&Path) -> () {
+        deinit(.self = $&self&.text)
+    }
+)
 
 copy(
         .self      : &Path,

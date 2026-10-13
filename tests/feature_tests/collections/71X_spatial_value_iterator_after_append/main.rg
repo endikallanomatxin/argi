@@ -4,5 +4,5 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     iterator ::= to_iterator(.value = &array).iterator
     push_assume_capacity#(.t: UIntNative)(.self = $&array, .value = 8)
     observed ::= next(.self = $&iterator).value
-    deinit#(.t: UIntNative)(.allocator = system.page_allocator, .self = $&array)
+    deinit( .self = $&array)
 }

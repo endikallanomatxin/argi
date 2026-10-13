@@ -152,20 +152,14 @@ StringHashMap init#(
     )
 }
 
-StringHashMap deinit#(
+implement#(
         .value : Type
-    )(
-        .allocator : $&Allocator,
-        .self      : $&StringHashMap#(.value: value),
-    ) -> () := {
-    assume allocator
-
-    deinit#(.t: UIntNative)(.allocator = allocator, .self = $&self&.buckets)
-    deinit#(.t: StringHashMapEntry#(.value: value))(
-        .allocator = allocator
-        .self      = $&self&.entries
-    )
-}
+    ) Deinit#(StringHashMap#(.value: value)) (
+    .deinit = (.self: $&StringHashMap#(.value: value)) -> () {
+        deinit(.self = $&self&.buckets)
+        deinit(.self = $&self&.entries)
+    }
+)
 
 string_hash_map_rehash#(
         .value : Type
@@ -182,7 +176,7 @@ string_hash_map_rehash#(
         return
     }
 
-    deinit#(.t: UIntNative)(.allocator = allocator, .self = $&self&.buckets)
+    deinit(.self = $&self&.buckets)
     string_hash_map_prepare_buckets(
         .allocator = allocator
         .buckets   = $&self&.buckets

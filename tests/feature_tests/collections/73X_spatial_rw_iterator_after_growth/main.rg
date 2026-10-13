@@ -5,5 +5,5 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     unwrap_or_abort(.value = ensure_capacity#(.t: UIntNative)(.allocator = system.page_allocator, .self = $&array, .capacity = 8).result)
     element ::= next(.self = $&iterator).value
     element& = 3
-    deinit#(.t: UIntNative)(.allocator = system.page_allocator, .self = $&array)
+    deinit( .self = $&array)
 }

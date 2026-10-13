@@ -18,7 +18,7 @@ DummyWriter deinit(
     ) -> () := {
     assume allocator
 
-    deinit(.self = $&self&.bytes, .allocator = allocator)
+    deinit(.self = $&self&.bytes)
 }
 
 append_test_byte(
@@ -90,7 +90,7 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
-    deinit(.self = $&buffer, .allocator = $&allocator_storage)
+    deinit(.self = $&buffer)
     deinit(.self = $&writer, .allocator = $&allocator_storage)
     status_code = 0
 }

@@ -31,7 +31,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     source ::= unwrap_or_abort(DynamicArray#(Int32)(.capacity = 2))
     unwrap_or_abort(push(.self = $&source, .value = 42))
     destination ::= unwrap_or_abort(DynamicArray#(Int32)(.capacity = 1))
-    deinit#(Int32)(.self = $&destination)
+    deinit(.self = $&destination)
     transfer_owned(&mover, $&source, $&destination)
 
     offset :: UIntNative = 0

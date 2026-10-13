@@ -39,7 +39,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     allocator.fail = false
     unwrap_or_abort(.value = put(.self = $&map, .key = 4, .value = 4, .allocator = $&allocator))
     if allocator.allocations != 2 or allocator.deallocations != 1 { abort }
-    deinit(.self = $&map, .allocator = $&allocator)
+    deinit(.self = $&map)
     if allocator.deallocations != 2 { abort }
 }
 

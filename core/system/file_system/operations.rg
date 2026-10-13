@@ -391,11 +391,10 @@ close(.self: $&TemporaryDirectory) -> (.result: Errable#(Void, _FilesystemReason
     result = ..ok Void()
 }
 
-TemporaryDirectory deinit(
-        .self      : $&TemporaryDirectory,
-        .allocator : $&Allocator           = reach allocator
-    ) -> () := {
-    assume ffi := self&._filesystem&._ffi
-    _fs_temp_cleanup(.handle = self&._handle)
-    deinit(.self = $&self&._path, .allocator = allocator)
-}
+implement Deinit#(TemporaryDirectory) (
+    .deinit = (.self: $&TemporaryDirectory) -> () {
+        assume ffi := self&._filesystem&._ffi
+        _fs_temp_cleanup(.handle = self&._handle)
+        deinit(.self = $&self&._path)
+    }
+)

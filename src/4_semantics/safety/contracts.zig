@@ -405,6 +405,18 @@ fn permitsEmptyStorage(contract: Contract, storage: facts.InputPath) bool {
     return false;
 }
 
+// Consumption permits emptying storage owned by that input, after definite
+// destruction is proved. It grants no retention or borrowed-storage effects.
+fn permitsConsumedStorageEmpty(contract: Contract, storage: facts.InputPath, states: []const facts.PlacePostState) bool {
+    for (storage.projections) |projection| if (projection == .dereference) return false;
+    for (contract.consumed_inputs) |input| {
+        if (!covers(&.{input}, storage)) continue;
+        for (states) |state| if (samePath(state.target, input) and
+            state.initializedness == .deinitialized and state.ends_previous_roots) return true;
+    }
+    return false;
+}
+
 fn inheritOutputPermissions(allocator: std.mem.Allocator, output: *Output, common: Output) anyerror!void {
     output.dependencies = try std.mem.concat(allocator, facts.InputPath, &.{ common.dependencies, output.dependencies });
     output.domains = try std.mem.concat(allocator, facts.InputDomain, &.{ common.domains, output.domains });
@@ -538,7 +550,7 @@ pub fn check(contract: Contract, summary: facts.SafetySummary) ?Failure {
         if (!outcome.reachable) continue;
         const allowed = effectsForSelector(contract, outcome);
         for (allowed.emptied_inputs) |storage| if (!containsExactPath(outcome.opaque_storage_empties, storage) and !containsExactPath(summary.opaque_storage_empties, storage)) return .{ .kind = .missing_empty_storage, .input = storage, .outcome = .{ .output_index = outcome.output_index, .parent_variants = outcome.parent_variants, .variant_index = outcome.variant_index } };
-        for (outcome.opaque_storage_empties) |storage| if (!containsExactPath(allowed.emptied_inputs, storage)) return .{ .kind = .unsupported_opaque_effect, .input = storage };
+        for (outcome.opaque_storage_empties) |storage| if (!containsExactPath(allowed.emptied_inputs, storage) and !permitsConsumedStorageEmpty(allowed, storage, outcome.input_post_states)) return .{ .kind = .unsupported_opaque_effect, .input = storage };
         for (allowed.relocations) |relocation| {
             if (!provesRelocation(relocation, outcome.input_post_states)) return .{ .kind = .missing_relocation, .input = relocation.destination, .outcome = .{ .output_index = outcome.output_index, .parent_variants = outcome.parent_variants, .variant_index = outcome.variant_index } };
         }
@@ -559,7 +571,7 @@ pub fn check(contract: Contract, summary: facts.SafetySummary) ?Failure {
         if (!permitsRetention(contract, effect.storage, effect.hidden_dependencies)) return .{ .kind = .unsupported_opaque_effect, .input = effect.storage };
     }
     for (summary.opaque_storage_empties) |path| {
-        if (!permitsEmptyStorage(contract, path)) return .{ .kind = .unsupported_opaque_effect, .input = path };
+        if (!permitsEmptyStorage(contract, path) and !permitsConsumedStorageEmpty(contract, path, summary.input_post_states)) return .{ .kind = .unsupported_opaque_effect, .input = path };
     }
     for (contract.emptied_inputs) |path| {
         if (!containsExactPath(summary.opaque_storage_empties, path)) return .{ .kind = .missing_empty_storage, .input = path };
@@ -1493,4 +1505,35 @@ test "inherited general contract transitions apply once" {
     try std.testing.expectEqual(@as(usize, 1), merged.consumed_inputs.len);
     try std.testing.expectEqual(@as(usize, 1), merged.relocations.len);
     try std.testing.expectEqual(@as(usize, 1), merged.retained_inputs.len);
+}
+
+test "consumption permits emptying owned storage without borrowed or retention effects" {
+    const input: facts.InputPath = .{ .input_index = 0 };
+    const storage: facts.InputPath = .{ .input_index = 0, .projections = &.{.{ .field = 0 }} };
+    const consumed: facts.PlacePostState = .{ .target = input, .initializedness = .deinitialized, .ends_previous_roots = true };
+    const contract: Contract = .{ .outputs = &.{}, .consumed_inputs = &.{input} };
+    try std.testing.expect(check(contract, .{ .input_post_states = &.{consumed}, .opaque_storage_empties = &.{storage} }) == null);
+    try std.testing.expectEqual(.missing_consumption, check(contract, .{ .opaque_storage_empties = &.{storage} }).?.kind);
+    const external = [_]facts.InputPath{
+        .{ .input_index = 0, .projections = &.{ .{ .field = 0 }, .dereference } },
+        .{ .input_index = 1, .projections = &.{.{ .field = 0 }} },
+        .{ .input_index = 0, .storage_domain = 0 },
+    };
+    for (external) |path| try std.testing.expectEqual(.unsupported_opaque_effect, check(contract, .{ .input_post_states = &.{consumed}, .opaque_storage_empties = &.{path} }).?.kind);
+    try std.testing.expectEqual(.unsupported_opaque_effect, check(contract, .{ .input_post_states = &.{consumed}, .opaque_storage_effects = &.{.{ .storage = storage, .hidden_dependencies = .{} }} }).?.kind);
+}
+
+test "selected consumption only permits owned storage empties on that outcome" {
+    const input: facts.InputPath = .{ .input_index = 0 };
+    const storage: facts.InputPath = .{ .input_index = 0, .projections = &.{.{ .field = 0 }} };
+    const consumed: facts.PlacePostState = .{ .target = input, .initializedness = .deinitialized, .ends_previous_roots = true };
+    const selected: Contract = .{ .outputs = &.{.{}}, .consumed_inputs = &.{input} };
+    const contract: Contract = .{ .outputs = &.{.{}}, .outcomes = &.{.{ .output_index = 0, .variant_index = 1, .effects = &selected }} };
+    var summary: facts.SafetySummary = .{ .outputs = &.{.{}}, .outcome_post_states = &.{.{ .output_index = 0, .variant_index = 1, .input_post_states = &.{consumed}, .opaque_storage_empties = &.{storage} }} };
+    try std.testing.expect(check(contract, summary) == null);
+    summary.outcome_post_states = &.{
+        .{ .output_index = 0, .variant_index = 1, .input_post_states = &.{consumed}, .opaque_storage_empties = &.{storage} },
+        .{ .output_index = 0, .variant_index = 0, .input_post_states = &.{}, .opaque_storage_empties = &.{storage} },
+    };
+    try std.testing.expectEqual(.unsupported_opaque_effect, check(contract, summary).?.kind);
 }

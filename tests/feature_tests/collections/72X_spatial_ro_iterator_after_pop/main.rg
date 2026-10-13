@@ -5,5 +5,5 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     removed ::= unwrap_or_abort(.value = pop(.self = $&array).result)
     element ::= next(.self = $&iterator).value
     observed ::= element&
-    deinit#(.t: UIntNative)(.allocator = system.page_allocator, .self = $&array)
+    deinit( .self = $&array)
 }

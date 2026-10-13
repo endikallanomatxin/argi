@@ -18,5 +18,5 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     element ::= next(.self = $&iterator).value
     element& = 13
     if fresh& != 13 { status_code = 4 }
-    deinit#(.t: UIntNative)(.allocator = system.page_allocator, .self = $&array)
+    deinit( .self = $&array)
 }

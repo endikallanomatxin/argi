@@ -8,6 +8,6 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     bytes_set(.string = $&text, .index = 1, .value = 97)
     bytes_set(.string = $&text, .index = 2, .value = 32)
     view ::= forward(.text = as_view(.self = &text).view).view
-    deinit(.self = $&text, .allocator = system.page_allocator)
+    deinit(.self = $&text)
     if contains(.self = view, .pattern = "a").ok { abort }
 }

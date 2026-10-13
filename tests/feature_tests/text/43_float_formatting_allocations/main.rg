@@ -20,7 +20,7 @@ expect_formatted#(
     if allocator&.allocations != before + 1 or allocator&.last_size != expected.length + 1 {
         abort
     }
-    deinit(.self = $&output, .allocator = allocator)
+    deinit(.self = $&output)
     if allocator&.deallocations != freed + 1 { abort }
 }
 
@@ -65,7 +65,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     )
     if as_view(.self = &output).view != "1.7976931348623157e308-5e-324" { abort }
     if allocator.allocations != before { abort }
-    deinit(.self = $&output, .allocator = $&allocator)
+    deinit(.self = $&output)
     value64 = 0.1
     failed ::= format(.value = value64, .allocator = $&allocator)
     if is(.value = failed, .variant = ..error) {

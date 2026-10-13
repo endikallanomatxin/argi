@@ -2,7 +2,7 @@ drops :: Int32 = 0
 record_drop(.amount: Int32) -> () := { drops = drops + amount }
 Box#(.t: Type) : Type = (.value: t)
 Other : Type = (.value: Int32)
-Box deinit#(.t: Type)(.allocator: $&Allocator, .box: $&Box#(.t: t)) -> () := {
+Box deinit#(.t: Type)(.box: $&Box#(.t: t)) -> () := {
     record_drop(.amount = 1)
     nested ::= Other(.value = 0)
     deinit(.self = $&nested)

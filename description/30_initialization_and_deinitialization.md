@@ -42,23 +42,31 @@ parameters but cannot select overloads distinguished only by return type.
 Additional constructor parameters follow ordinary inference and default rules;
 no parameters are implicitly introduced into the constructor's scope.
 
-A destructor is declared as `T deinit(...)`. Like constructors, destructors
-belong to a nominal type declared in the same module and declare their own
-compile-time parameters. They receive a mutable reference to that type and
-return no values. The receiver name remains an ordinary input name; additional
-inputs follow ordinary call resolution, including assumed capabilities.
+Custom destruction uses the standard `Deinit` contract. Its consuming operation
+receives a mutable reference and returns no values:
 
 ```rg
-Point deinit(.self: $&Point) -> () := {}
+implement Deinit#(Point) (
+    .deinit = (.self: $&Point) -> () {}
+)
+
+implement#(.t: Type) Deinit#(Box#(.t: t)) (
+    .deinit = (.self: $&Box#(.t: t)) -> () {}
+)
 ```
 
-Explicit calls use `deinit(.self = $&point)`. Automatic cleanup searches the
-associated type family before matching the receiver and any additional inputs.
-A generic destructor expresses its concrete receiver in the input type:
+Explicit calls use `Deinit#(Point).deinit(.self = $&point)` or the unqualified
+`deinit(.self = $&point)` when its operation identity is unambiguous. Automatic
+cleanup selects the same conformance and operation, including generic
+specializations. The implementation must prove definite consumption of its
+receiver. Consuming an owner may empty its owned storage; it grants no permission
+to consume borrowed referents or retain new values in hidden storage.
 
-```rg
-Box deinit#(.t: Type)(.self: $&Box#(.t: t)) -> () := {}
-```
+Bundled owners retain their deallocation evidence, so their destructors do not
+require a separate allocator argument. Legacy `T deinit(...)` declarations remain
+supported for unmigrated families. Mixing both mechanisms for one family is an
+error; legacy declarations are a migration adapter rather than another lifecycle
+model.
 
 `deinit` ends a live value and releases the resources it is responsible for.
 A type may define this operation when cleanup is needed. Types without one do

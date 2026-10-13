@@ -32,7 +32,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     if contains(.self = &set, .key = zero).ok == false { abort }
     allocator.fail = false
     unwrap_or_abort(.value = insert(.self = $&set, .key = missing, .allocator = $&allocator))
-    deinit(.self = $&set, .allocator = $&allocator)
+    deinit(.self = $&set)
     if allocator.allocations != 2 or allocator.deallocations != 2 { abort }
 }
 

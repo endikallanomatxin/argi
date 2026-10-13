@@ -9,6 +9,6 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     array ::= unwrap_or_abort(.value = DynamicArray#(.t: UIntNative)(.allocator = system.page_allocator, .capacity = 2))
     push_assume_capacity#(.t: UIntNative)(.self = $&array, .value = 7)
     view ::= window(.array = $&array).view
-    deinit#(.t: UIntNative)(.allocator = system.page_allocator, .self = $&array)
+    deinit( .self = $&array)
     observed ::= read_window(.view = &view).value
 }

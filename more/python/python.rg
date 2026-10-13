@@ -159,15 +159,19 @@ Python init(
     result = ..ok(._handle = handle, ._ffi = ffi)
 }
 
-Python deinit(.self: $&Python) -> () := {
-    assume ffi := self&._ffi
-    _stop(.context = self&._handle)
-}
+implement Deinit#(Python) (
+    .deinit = (.self: $&Python) -> () {
+        assume ffi := self&._ffi
+        _stop(.context = self&._handle)
+    }
+)
 
-Object deinit(.self: $&Object) -> () := {
-    assume ffi := self&._python&._ffi
-    _release(.context = self&._python&._handle, .object = self&._handle)
-}
+implement Deinit#(Object) (
+    .deinit = (.self: $&Object) -> () {
+        assume ffi := self&._python&._ffi
+        _release(.context = self&._python&._handle, .object = self&._handle)
+    }
+)
 
 _owned(
         .self   : &Python,

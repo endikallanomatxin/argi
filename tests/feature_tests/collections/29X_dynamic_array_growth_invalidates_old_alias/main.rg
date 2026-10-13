@@ -21,5 +21,5 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     }
 
     status_code = old_alias&
-    deinit#(.t: Int32)(.self = $&array)
+    deinit(.self = $&array)
 }

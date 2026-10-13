@@ -31,7 +31,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
                 status_code = 2
                 return
             }
-            deinit#(.t: Tracked)(.self = $&array)
+            deinit(.self = $&array)
             if drops != 1 {
                 status_code = 3
                 return

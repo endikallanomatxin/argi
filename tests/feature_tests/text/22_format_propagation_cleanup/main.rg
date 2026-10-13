@@ -16,7 +16,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     if is(.value = formatted, .variant = ..ok) { status_code = 1 }
     if failing.allocations != 1 or failing.deallocations != 0 { status_code = 2 }
     if out.length != 0 { status_code = 3 }
-    deinit(.self = $&out, .allocator = $&backing)
+    deinit(.self = $&out)
 }
 
 implement Allocator#(FailFirstAllocator)(

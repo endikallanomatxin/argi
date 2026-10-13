@@ -200,9 +200,11 @@ get#(
     result = ..ok pointer&
 }
 
-Deque deinit#(.t: Type)(.self: $&Deque#(.t: t), .allocator: $&Allocator = reach allocator) -> () := {
-    deinit(.self = $&self&._ring, .allocator = allocator)
-}
+implement#(.t: Type) Deinit#(Deque#(.t: t)) (
+    .deinit = (.self: $&Deque#(.t: t)) -> () {
+        deinit(.self = $&self&._ring)
+    }
+)
 
 implement#(.t: Type) Indexable#(Deque#(.t: t)) (
     .Item: Type = t

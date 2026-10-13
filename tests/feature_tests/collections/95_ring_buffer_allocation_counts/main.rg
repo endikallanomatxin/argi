@@ -24,7 +24,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         index = index + 1
     }
     if allocator.allocations != 1 or allocator.deallocations != 0 { abort }
-    deinit(.self = $&ring, .allocator = $&allocator)
+    deinit(.self = $&ring)
     if allocator.deallocations != 1 { abort }
     strings ::= unwrap_or_abort(
         .value = RingBuffer#(.t: String)(.capacity = 1, .allocator = $&allocator)
@@ -42,10 +42,10 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     ] { abort }
     if allocator.allocations != 4 or allocator.deallocations != 2 { abort }
     survivor ::= unwrap_or_abort(.value = pop(.self = $&strings))
-    deinit(.self = $&strings, .allocator = $&allocator)
+    deinit(.self = $&strings)
     if allocator.deallocations != 3 { abort }
     if as_view(.self = &survivor).view != "a" { abort }
-    deinit(.self = $&survivor, .allocator = $&allocator)
+    deinit(.self = $&survivor)
     if allocator.deallocations != 4 { abort }
 }
 

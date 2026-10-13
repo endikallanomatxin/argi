@@ -115,10 +115,11 @@ reserve#(
     result = reserve($&self&._map, .capacity = capacity, .allocator = allocator)
 }
 
-OwnedHashSet deinit#(
+implement#(
         .key    : Type,
         .policy : Type: BorrowedHashPolicy#(policy, key)
-    )(
-        .self      : $&OwnedHashSet#(.key: key, .policy: policy),
-        .allocator : $&Allocator
-    ) -> () := { deinit(.self = $&self&._map, .allocator = allocator) }
+    ) Deinit#(OwnedHashSet#(.key: key, .policy: policy)) (
+    .deinit = (.self: $&OwnedHashSet#(.key: key, .policy: policy)) -> () {
+        deinit(.self = $&self&._map)
+    }
+)

@@ -6,7 +6,7 @@ test named_optional_view_return(.system: System) -> !() := {
         .allocator = $&allocator_storage,
         .view = c_string_as_view(.text = "/tmp/file.txt"),
     ))
-    #defer deinit(.self = $&path, .allocator = $&allocator_storage)
+    #defer deinit(.self = $&path)
 
     name ::= file_name(.self = &path).value
     match name {

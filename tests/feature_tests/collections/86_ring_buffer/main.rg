@@ -19,5 +19,5 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         if unwrap_or_abort(.value = pop(.self = $&ring)) != round + 3 { abort }
         round = round + 1
     }
-    deinit(.self = $&ring, .allocator = allocator)
+    deinit(.self = $&ring)
 }

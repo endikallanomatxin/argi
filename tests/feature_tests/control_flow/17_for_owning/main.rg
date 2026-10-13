@@ -125,7 +125,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     push(.self = $&source, .value = Tracked(.id = 19), .allocator = allocator)!
     for ~item in source { push(.self = $&target, .value = ~item, .allocator = allocator)! }
     if drops != 17 { abort }
-    deinit(.self = $&target, .allocator = allocator)
+    deinit(.self = $&target)
     if drops != 19 { abort }
 
     wrapped ::= Deque#(.t: Int32)(.allocator = allocator, .capacity = 3)!

@@ -40,7 +40,7 @@ exercise(.allocator: $&Allocator) -> (.status: Int32 = 0) := {
     fresh ::= array_view#(.t: UIntNative)(.array = $&array).view
     if length(.self = &fresh).count != 3 { status = 11 }
     if unwrap_or_abort(.value = get(.self = &fresh, .index = 2).result) != 99 { status = 12 }
-    deinit#(.t: UIntNative)(.allocator = allocator, .self = $&array)
+    deinit( .self = $&array)
 }
 
 main(.system: System) -> (.status_code: Int32 = 0) := {

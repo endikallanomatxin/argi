@@ -113,6 +113,6 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
-    deinit#(.value: Int32)(.self = $&map)
+    deinit(.self = $&map)
     status_code = 0
 }

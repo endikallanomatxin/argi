@@ -92,12 +92,11 @@ capacity#(
         .count : UIntNative
     ) := { count = capacity(&self&._map).count }
 
-HashSet deinit#(
+implement#(
         .key    : Type: ImplicitlyCopyable,
         .policy : Type: HashPolicy#(policy, key)
-    )(
-        .self      : $&HashSet#(.key: key, .policy: policy),
-        .allocator : $&Allocator
-    ) -> () := {
-    deinit(.self = $&self&._map, .allocator = allocator)
-}
+    ) Deinit#(HashSet#(.key: key, .policy: policy)) (
+    .deinit = (.self: $&HashSet#(.key: key, .policy: policy)) -> () {
+        deinit(.self = $&self&._map)
+    }
+)

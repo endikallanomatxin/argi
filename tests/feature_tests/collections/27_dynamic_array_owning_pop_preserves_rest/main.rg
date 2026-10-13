@@ -49,7 +49,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
                     }
                     popped ::= ~popped_result..ok
 
-                    deinit#(.t: Tracked)(.self = $&array)
+                    deinit(.self = $&array)
                     if first_drops != 1 or second_drops != 0 {
                         status_code = 3
                         return

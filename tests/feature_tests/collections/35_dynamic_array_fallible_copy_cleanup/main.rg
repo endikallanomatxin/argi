@@ -17,7 +17,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     assume allocator ::= $&allocator_storage
 
     source ::= unwrap_or_abort(.value = DynamicArray#(.t: String)(.capacity = 3))
-    #defer deinit#(.t: String)(.self = $&source)
+    #defer deinit(.self = $&source)
 
     first ::= unwrap_or_abort(.value = String(.length = 1))
     second ::= unwrap_or_abort(.value = String(.length = 1))

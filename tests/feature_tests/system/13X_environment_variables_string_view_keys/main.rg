@@ -29,6 +29,6 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
-    deinit(.self = $&home_string, .allocator = $&allocator_storage)
+    deinit(.self = $&home_string)
     status_code = 0
 }

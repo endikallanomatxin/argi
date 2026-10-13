@@ -18,13 +18,13 @@ BufferedWriter init#(
     result = (.base = base, .buffer = buffer, .length = 0)
 }
 
-BufferedWriter deinit#(
+implement#(
         .base_type : Type: Writer#(base_type)
-    )(
-        .self : $&BufferedWriter#(.base_type: base_type)
-    ) -> () := {
-    buffered_writer_flush(self)
-}
+    ) Deinit#(BufferedWriter#(.base_type: base_type)) (
+    .deinit = (.self: $&BufferedWriter#(.base_type: base_type)) -> () {
+        buffered_writer_flush(self)
+    }
+)
 
 buffered_writer_flush#(
         .base_type : Type: Writer#(base_type)

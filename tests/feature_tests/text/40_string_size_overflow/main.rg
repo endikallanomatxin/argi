@@ -87,7 +87,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     string_append_bytes(.self = $&text, .source = array_view_ro(.array = &empty).view)
     if as_view(.self = &text).view != "xyz" { abort }
     if bytes_get(.string = &text, .index = 3).byte != 0 { abort }
-    deinit(.self = $&text, .allocator = system.page_allocator)
+    deinit(.self = $&text)
 }
 
 implement Allocator#(FailingAllocator)(

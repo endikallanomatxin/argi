@@ -11,7 +11,7 @@ make_text(
             text ::= ~created_payload
             pushed ::= push_byte(.self = $&text, .byte = 65, .allocator = allocator)
             if is(.value = pushed, .variant = ..error) {
-                deinit(.self = $&text, .allocator = allocator)
+                deinit(.self = $&text)
                 result = ..error(.reason = ..out_of_memory)
                 return
             }
@@ -33,10 +33,10 @@ main(.system: System) -> (.status_code: Int32) := {
             text ::= ~payload
             view ::= as_view(.self = &text)
             if view == "A" {
-                deinit(.self = $&text, .allocator = $&allocator_storage)
+                deinit(.self = $&text)
                 status_code = 0
             } else {
-                deinit(.self = $&text, .allocator = $&allocator_storage)
+                deinit(.self = $&text)
                 status_code = 1
             }
         }

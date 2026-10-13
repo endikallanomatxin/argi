@@ -11,7 +11,7 @@ Holder init(.allocator: $&Allocator) -> (.result: Holder) := {
 Holder deinit(.self: $&Holder, .allocator: $&Allocator) -> () := {
     assume allocator
 
-    deinit(.self = $&self&.buffer, .allocator = allocator)
+    deinit(.self = $&self&.buffer)
 }
 
 append(.self: $&Holder, .allocator: $&Allocator) -> () := {

@@ -55,14 +55,14 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     allocator.fail_at = 0
     put(.self = $&map, .key = 4, .value = Tracked(.id = 6), .allocator = $&allocator)!
     if drops != 2 or length(.self = &map).count != 5 { abort }
-    deinit(.self = $&map, .allocator = $&allocator)
+    deinit(.self = $&map)
     if drops != 7 or allocator.allocations != allocator.deallocations { abort }
     allocator.fail_at = allocator.attempts + 2
     match OwnedHashMap#(.key: Int32, .value: Tracked, .policy: Int32HashPolicy)(
         .policy    = Int32HashPolicy()
         .allocator = $&allocator
     ) { ..ok ~owner {
-            deinit(.self = $&owner, .allocator = $&allocator)
+            deinit(.self = $&owner)
             abort
         } ..error _ {} }
     if allocator.allocations != allocator.deallocations { abort }
@@ -71,7 +71,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         .policy    = Policy()
         .allocator = $&allocator
     ) { ..ok ~owner {
-            deinit(.self = $&owner, .allocator = $&allocator)
+            deinit(.self = $&owner)
             abort
         } ..error _ {} }
     if policy_drops != 1 { abort }
@@ -80,7 +80,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         .policy    = Policy()
         .allocator = $&allocator
     ) { ..ok ~owner {
-            deinit(.self = $&owner, .allocator = $&allocator)
+            deinit(.self = $&owner)
             abort
         } ..error _ {} }
     if policy_drops != 2 or allocator.allocations != allocator.deallocations { abort }

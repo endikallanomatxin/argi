@@ -53,7 +53,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     query.id = 3
     extracted ::= extract(.self = $&map, .key = &query).result
     if key_drops != 2 or value_drops != 2 or length(.self = &map).count != 28 { abort }
-    deinit(.self = $&map, .allocator = allocator)
+    deinit(.self = $&map)
     if key_drops != 30 or value_drops != 30 or policy_drops != 1 { abort }
     match extracted {
         ..none { abort }
@@ -75,7 +75,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     if has_next(.self = &iterator).ok { abort }
     query.id = 5
     taken ::= extract(.self = $&set, .key = &query).result
-    deinit(.self = $&set, .allocator = allocator)
+    deinit(.self = $&set)
     if policy_drops != 2 or key_drops != 32 { abort }
     match taken {
         ..none { abort }

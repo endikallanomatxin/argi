@@ -16,7 +16,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
             status_code = 2
             return
         }
-        deinit(.self = $&local, .allocator = $&allocator_storage)
+        deinit(.self = $&local)
         i = i + 1
     }
 }

@@ -22,7 +22,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     output ::= unwrap_or_abort(.value = semver.format(.value = &version, .allocator = $&allocator)).result
     if as_view(.self = &output).view != "1.2.3-alpha+001" { abort }
     if allocator.allocations != 1 or allocator.last_size != 16 { abort }
-    deinit(.self = $&output, .allocator = $&allocator)
+    deinit(.self = $&output)
     buffer ::= unwrap_or_abort(.value = String(.capacity = 64, .allocator = $&allocator)).result
     allocator.fail = true
     unwrap_or_abort(.value = push_view(.self = $&buffer, .view = "v", .allocator = $&allocator))
@@ -39,13 +39,11 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         ..error _ {} ..ok ~text {
             deinit(
                 .self = $&text
-
-                .allocator = $&allocator
             )
             abort
         }
     }
-    deinit(.self = $&buffer, .allocator = $&allocator)
+    deinit(.self = $&buffer)
     if allocator.deallocations != 2 { abort }
     writer ::= RecordingWriter(.expected = "1.2.3-alpha+001")
     unwrap_or_abort(.value = semver.format_into(.out = $&writer, .value = &version))

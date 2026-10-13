@@ -41,7 +41,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     }
     if remove(.self = $&set, .key = 0, .allocator = allocator).removed { abort }
     if length(.self = &set).count != 0 { abort }
-    deinit(.self = $&set, .allocator = allocator)
+    deinit(.self = $&set)
     text ::= unwrap_or_abort(
         .value = HashSet#(.key: StringView, .policy: StringViewHashPolicy)(
             .policy    = StringViewHashPolicy()
@@ -61,5 +61,5 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     }
     if contains(.self = &text, .key = right).ok == false { abort }
     if length(.self = &text).count != 1 { abort }
-    deinit(.self = $&text, .allocator = allocator)
+    deinit(.self = $&text)
 }

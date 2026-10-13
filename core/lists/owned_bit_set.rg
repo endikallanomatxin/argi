@@ -23,10 +23,11 @@ BitSet init(
     result = ..ok(._storage = ~storage, ._count = count)
 }
 
-BitSet deinit(.self: $&BitSet, .allocator: $&Allocator) -> () := {
-    assume allocator
-    deinit(.self = $&self&._storage, .allocator = allocator)
-}
+implement Deinit#(BitSet) (
+    .deinit = (.self: $&BitSet) -> () {
+        deinit(.self = $&self&._storage)
+    }
+)
 
 length(.self: &BitSet) -> (.count: UIntNative) := { count = self&._count }
 

@@ -49,7 +49,7 @@ main(.system: System) -> (.status_code: Int32) := {
                     }
                     if has_live_allocations(.self = &allocator_storage).has_live == false { status_code = 11
                         return }
-                    deinit#(.t: Allocation)(.self = $&many, .allocator = $&allocator_storage)
+                    deinit(.self = $&many)
                     if has_live_allocations(.self = &allocator_storage).has_live { status_code = 12
                         return }
                     status_code = 0

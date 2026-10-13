@@ -35,7 +35,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     query :: Int32 = 1
     remove(.self = $&map, .key = &query, .allocator = allocator)
     if drops != 2 { abort }
-    deinit(.self = $&map, .allocator = allocator)
+    deinit(.self = $&map)
     if drops != 21 { abort }
 }
 

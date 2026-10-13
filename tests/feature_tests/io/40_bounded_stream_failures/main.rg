@@ -104,7 +104,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         .allocator = allocator
     ) {
         ..ok ~owner {
-            deinit(.self = $&owner, .allocator = allocator)
+            deinit(.self = $&owner)
             abort
         }
         ..error error { if error.reason != ..stream_read_failed { abort } }

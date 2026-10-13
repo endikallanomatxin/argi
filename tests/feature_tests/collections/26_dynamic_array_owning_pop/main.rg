@@ -31,7 +31,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     made ::= make_tracked(.allocator = $&allocator_storage, .id = 7)
     match made {
         ..error _ {
-            deinit#(.t: Tracked)(.self = $&array)
+            deinit(.self = $&array)
             status_code = 1
         }
         ..ok ~ payload {
@@ -49,7 +49,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
                 return
             }
 
-            deinit#(.t: Tracked)(.self = $&array)
+            deinit(.self = $&array)
             if drops != 0 {
                 status_code = 3
                 return

@@ -36,7 +36,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     set(.self = $&array, .index = 0, .value = _pair(.id = 6).value, .allocator = allocator)!
     if drops != 10 { abort }
     if unwrap_or_abort(.value = get_ro_ref(.self = &array, .index = 0))&.first.id != 6 { abort }
-    deinit(.self = $&array, .allocator = allocator)
+    deinit(.self = $&array)
     if drops != 12 { abort }
     ring ::= RingBuffer#(.t: Pair)(.capacity = 2, .allocator = allocator)!
     push(.self = $&ring, .value = _pair(.id = 7).value, .allocator = allocator)!
@@ -48,7 +48,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     { extracted ::= ~unwrap_or_abort(.value = pop(.self = $&ring)) }
     if drops != 16 { abort }
     push(.self = $&ring, .value = _pair(.id = 10).value, .allocator = allocator)!
-    deinit(.self = $&ring, .allocator = allocator)
+    deinit(.self = $&ring)
     if drops != 20 { abort }
     deque ::= Deque#(.t: Pair)(.capacity = 1, .allocator = allocator)!
     push_back(.self = $&deque, .value = _pair(.id = 11).value, .allocator = allocator)!
@@ -60,7 +60,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         ..ok _ { abort } ..error error { if error.reason != ..out_of_memory { abort } }
     }
     if drops != 24 { abort }
-    deinit(.self = $&deque, .allocator = allocator)
+    deinit(.self = $&deque)
     if drops != 26 { abort }
 }
 

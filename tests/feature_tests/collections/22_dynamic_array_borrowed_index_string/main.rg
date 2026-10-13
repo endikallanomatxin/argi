@@ -7,7 +7,7 @@ main(.system: System) -> (.status_code: Int32) := {
     bytes_set(.string = $&text, .index = 1, .value = 75)
 
     strings ::= unwrap_or_abort(.value = DynamicArray#(.t: String)(.capacity = 1))
-    #defer deinit(.self = $&strings, .allocator = $&allocator_storage)
+    #defer deinit(.self = $&strings)
     push(.self = $&strings, .value = ~text, .allocator = $&allocator_storage)
 
     first_ptr_result ::= get_ro_ref(.self = &strings, .index = 0).result

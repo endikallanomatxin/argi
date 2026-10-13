@@ -14,18 +14,18 @@ main(.system: System) -> (.status_code: Int32) := {
     value ::= value_result..ok
     push(.self = $&destination, .value = value)
 
-    deinit#(.t: UIntNative)(.self = $&source)
+    deinit(.self = $&source)
     destination_result ::= get(.self = &destination, .index = 0).result
     if is(.value = destination_result, .variant = ..error) {
         status_code = 2
         return
     }
     if destination_result..ok != 7 {
-        deinit#(.t: UIntNative)(.self = $&destination)
+        deinit(.self = $&destination)
         status_code = 1
         return
     }
 
-    deinit#(.t: UIntNative)(.self = $&destination)
+    deinit(.self = $&destination)
     status_code = 0
 }

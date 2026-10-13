@@ -22,7 +22,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         source ::= unwrap_or_abort(DynamicArray#(Int32)(.capacity = 2))
         unwrap_or_abort(push(.self = $&source, .value = 42))
         destination ::= unwrap_or_abort(DynamicArray#(Int32)(.capacity = 1))
-        deinit#(Int32)(.self = $&destination)
+        deinit(.self = $&destination)
         offset :: UIntNative = 0
         escaped = unwrap_or_abort(get_ro_ref(.self = &source, .index = offset))
         transfer_if($&source, $&destination, true)

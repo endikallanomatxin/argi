@@ -4,5 +4,5 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     iterator ::= to_iterator(.value = &array).iterator
     
     iterator._index = 100
-    deinit#(.t: UIntNative)(.allocator = system.page_allocator, .self = $&array)
+    deinit( .self = $&array)
 }

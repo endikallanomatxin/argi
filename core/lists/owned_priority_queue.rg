@@ -21,21 +21,18 @@ OwnedPriorityQueue init#(
     result = ..ok(._items = ~items, ._order = order)
 }
 
-OwnedPriorityQueue deinit#(
+implement#(
         .t     : Type,
         .order : Type: BorrowedOrderPolicy#(order, t)
-    )(
-        .self      : $&OwnedPriorityQueue#(.t: t, .order: order),
-        .allocator : $&Allocator
-    ) -> () := {
-    assume allocator
+    ) Deinit#(OwnedPriorityQueue#(.t: t, .order: order)) (
+    .deinit = (.self: $&OwnedPriorityQueue#(.t: t, .order: order)) -> () {
+        while length(&self&._items).count > 0 {
+            discarded ::= ~unwrap_or_abort(.value = pop($&self&._items))
+        }
 
-    while length(&self&._items).count > 0 {
-        discarded ::= ~unwrap_or_abort(.value = pop($&self&._items))
+        deinit(.self = $&self&._items)
     }
-
-    deinit(.self = $&self&._items, .allocator = allocator)
-}
+)
 
 length#(
         .t     : Type,

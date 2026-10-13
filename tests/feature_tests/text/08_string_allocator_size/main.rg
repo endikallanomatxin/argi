@@ -20,7 +20,7 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
-    deinit(.self = $&text, .allocator = $&allocator_storage)
+    deinit(.self = $&text)
     if allocator_storage.dealloc_count != 1 {
         status_code = 2
         return

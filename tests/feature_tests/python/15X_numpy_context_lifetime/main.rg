@@ -7,6 +7,6 @@ main(.system: System) -> () := {
     vector ::= unwrap_or_abort(
         .value = numpy.Vector64(.interpreter = &interpreter, .values = view(.array = &values))
     )
-    python.deinit(.self = $&interpreter)
+    Deinit#(python.Python).deinit(.self = $&interpreter)
     numpy.sum(.self = &vector)
 }

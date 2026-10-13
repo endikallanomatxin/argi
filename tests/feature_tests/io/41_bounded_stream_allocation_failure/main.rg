@@ -42,7 +42,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         .allocator = $&allocator
     ) {
         ..ok ~owner {
-            deinit(.self = $&owner, .allocator = $&allocator)
+            deinit(.self = $&owner)
             abort
         }
         ..error error { if error.reason != ..out_of_memory { abort } }
@@ -56,7 +56,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         .allocator = $&allocator
     ) {
         ..ok ~owner {
-            deinit(.self = $&owner, .allocator = $&allocator)
+            deinit(.self = $&owner)
             abort
         }
         ..error error { if error.reason != ..out_of_memory { abort } }
@@ -76,7 +76,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         .allocator = $&allocator
     ) {
         ..ok ~owner {
-            deinit(.self = $&owner, .allocator = $&allocator)
+            deinit(.self = $&owner)
             abort
         }
         ..error error { if error.reason != ..stream_read_failed { abort } }
@@ -92,7 +92,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         .allocator = $&allocator
     ) {
         ..ok ~owner {
-            deinit(.self = $&owner, .allocator = $&allocator)
+            deinit(.self = $&owner)
             abort
         }
         ..error error { if error.reason != ..size_limit_exceeded { abort } }
@@ -115,7 +115,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         .allocator = $&allocator
     ) {
         ..ok ~owner {
-            deinit(.self = $&owner, .allocator = $&allocator)
+            deinit(.self = $&owner)
             abort
         }
         ..error error { if error.reason != ..size_overflow { abort } }
@@ -128,7 +128,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         .allocator = $&allocator
     )!
     if owned.length != 8 or capacity(.self = &owned).value > 8 { abort }
-    deinit(.self = $&owned, .allocator = $&allocator)
+    deinit(.self = $&owned)
     if allocator.allocations != allocator.deallocations { abort }
 }
 

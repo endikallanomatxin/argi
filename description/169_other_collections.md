@@ -42,7 +42,7 @@ copying a borrowed key or value does not acquire its backing storage.
   cleanup invalidate element borrows; acquire a new reference after mutation.
 - `remove(.self, .key, .allocator)` reports whether an entry was removed.
 - `length` reports entries, `capacity` reports slots, and
-  `deinit(.self, .allocator)` releases the table and owned policy.
+  `deinit(.self)` releases the table and owned policy.
 
 `HashMap` implements `Iterable<HashMapEntry<K, V>>`: `for entry in map`
 visits copied `.key`/`.value` pairs. `to_key_iterator` and `to_value_iterator`
@@ -111,7 +111,7 @@ Zero-sized elements remain distinct logical occupied slots.
 - `get_ro_ref(.self, .index)` borrows an occupied element in FIFO order,
   or reports `out_of_bounds`. The buffer implements `Indexable<T>` and
   supports equality search when its elements satisfy that algorithm's contract.
-- `deinit(.self, .allocator)` destroys the remaining occupied elements once
+- `deinit(.self)` destroys the remaining occupied elements once
   and releases the backing allocation. Vacant slots are never read or dropped.
 
 Push and pop do not allocate queue storage. Element cleanup may have its own

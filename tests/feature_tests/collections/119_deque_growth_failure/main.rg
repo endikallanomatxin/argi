@@ -42,7 +42,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     front ::= pop_front(.self = $&queue)!
     back ::= pop_back(.self = $&queue)!
     if front.id != 2 or back.id != 3 { abort }
-    deinit(.self = $&queue, .allocator = $&allocator)
+    deinit(.self = $&queue)
     if allocator.deallocations != 2 or drops != 1 { abort }
     deinit(.self = $&first)
     deinit(.self = $&front)

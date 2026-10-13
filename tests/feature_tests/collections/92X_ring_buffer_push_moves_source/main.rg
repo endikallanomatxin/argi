@@ -5,5 +5,5 @@ main(.system: System) -> () := {
     item ::= Tracked(.id = 1)
     unwrap_or_abort(.value = push(.self = $&ring, .value = ~item, .allocator = system.page_allocator))
     observed ::= item.id
-    deinit(.self = $&ring, .allocator = system.page_allocator)
+    deinit(.self = $&ring)
 }

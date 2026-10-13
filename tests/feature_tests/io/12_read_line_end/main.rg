@@ -33,7 +33,7 @@ main(.system: System) -> (.status_code: Int32) := {
                 }
                 ..ok ~line_payload {
                     line ::= ~line_payload
-                    deinit(.self = $&line, .allocator = $&allocator_storage)
+                    deinit(.self = $&line)
                     status_code = 1
                 }
             }

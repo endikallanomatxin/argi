@@ -21,7 +21,11 @@ Vector64 init(
     result = ..ok(._object = ~object, ._length = length(&values).count)
 }
 
-Vector64 deinit(.self: $&Vector64) -> () := { python.deinit(.self = $&self&._object) }
+implement Deinit#(Vector64) (
+    .deinit = (.self: $&Vector64) -> () {
+        Deinit#(python.Object).deinit(.self = $&self&._object)
+    }
+)
 
 length(.self: &Vector64) -> (.count: UIntNative) := { count = self&._length }
 

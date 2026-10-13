@@ -17,7 +17,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     )
     if allocator.allocations != 1 or allocator.last_size != 6 { abort }
     if bytes_get(.string = &output, .index = output.length).byte != 0 { abort }
-    deinit(.self = $&output, .allocator = $&allocator)
+    deinit(.self = $&output)
     if allocator.deallocations != 1 { abort }
     empty: [0]StringView = ()
     output_empty ::= unwrap_or_abort(
@@ -28,7 +28,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         )
     )
     if allocator.allocations != 2 or allocator.last_size != 1 { abort }
-    deinit(.self = $&output_empty, .allocator = $&allocator)
+    deinit(.self = $&output_empty)
     if allocator.deallocations != 2 { abort }
 }
 

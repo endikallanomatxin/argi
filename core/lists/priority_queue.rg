@@ -21,16 +21,14 @@ PriorityQueue init#(
     result = ..ok(._items = ~items, ._order = order)
 }
 
-PriorityQueue deinit#(
+implement#(
         .t     : Type: ImplicitlyCopyable,
         .order : Type: OrderPolicy#(order, t)
-    )(
-        .self      : $&PriorityQueue#(.t: t, .order: order),
-        .allocator : $&Allocator
-    ) -> () := {
-    assume allocator
-    deinit(.self = $&self&._items, .allocator = allocator)
-}
+    ) Deinit#(PriorityQueue#(.t: t, .order: order)) (
+    .deinit = (.self: $&PriorityQueue#(.t: t, .order: order)) -> () {
+        deinit(.self = $&self&._items)
+    }
+)
 
 length#(
         .t     : Type: ImplicitlyCopyable,

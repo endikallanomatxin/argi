@@ -125,7 +125,7 @@ read_all_limited(
             }
             fresh ::= string_with_capacity(.allocator = allocator, .capacity = grown)!
             push_view($&fresh, .view = as_view(&out), .allocator = allocator)!
-            deinit(.self = $&out, .allocator = allocator)
+            deinit(.self = $&out)
             out = ~fresh
         }
         destination ::= unwrap_or_abort(

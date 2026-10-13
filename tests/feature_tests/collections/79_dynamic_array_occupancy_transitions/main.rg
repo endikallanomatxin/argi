@@ -25,6 +25,6 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     deinit(.self = $&remaining)
     empty ::= pop(.self = $&array).result
     if is(.value = empty, .variant = ..error) == false { status_code = 5 }
-    deinit#(.t: Tracked)(.self = $&array)
+    deinit(.self = $&array)
     if drops != 4 { status_code = 6 }
 }

@@ -66,7 +66,7 @@ main(.system: System) -> (.status_code: Int32) := {
                         return
                     }
 
-                    deinit(.self = $&line, .allocator = $&allocator_storage)
+                    deinit(.self = $&line)
                     status_code = 0
                 }
             }

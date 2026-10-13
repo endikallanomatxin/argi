@@ -11,5 +11,5 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     view ::= window(.array = $&array).view
     unwrap_or_abort(.value = ensure_capacity#(.t: UIntNative)(.allocator = system.page_allocator, .self = $&array, .capacity = 4).result)
     observed ::= read_window(.view = &view).value
-    deinit#(.t: UIntNative)(.allocator = system.page_allocator, .self = $&array)
+    deinit( .self = $&array)
 }

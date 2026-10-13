@@ -6,7 +6,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     )!
     put(.self = $&map, .key = 1, .value = 10, .allocator = allocator)!
     iterator ::= to_key_iterator(.value = &map).iterator
-    deinit(.self = $&map, .allocator = allocator)
+    deinit(.self = $&map)
     if has_next(.self = &iterator).ok { abort }
 }
 

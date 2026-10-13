@@ -7,8 +7,8 @@ Pair : Type = (
 Pair deinit(.self: $&Pair, .allocator: $&Allocator) -> () := {
     assume allocator
 
-    deinit(.self = $&self&.changing, .allocator = allocator)
-    deinit(.self = $&self&.stable, .allocator = allocator)
+    deinit(.self = $&self&.changing)
+    deinit(.self = $&self&.stable)
 }
 
 main(.system: System) -> (.status_code: Int32 = 0) := {

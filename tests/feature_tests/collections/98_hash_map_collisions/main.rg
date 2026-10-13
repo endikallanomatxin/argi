@@ -63,5 +63,5 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         ..some entry { if entry.value != 99 { abort } }
     }
     if length(.self = &map).count != 2 or capacity(.self = &map).count != 8 { abort }
-    deinit(.self = $&map, .allocator = allocator)
+    deinit(.self = $&map)
 }

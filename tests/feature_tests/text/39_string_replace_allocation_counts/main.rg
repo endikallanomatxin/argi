@@ -17,13 +17,13 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     )
     if allocator.allocations != 1 or allocator.last_size != 8 { abort }
     if as_view(.self = &output).view != "xyzbxyz" { abort }
-    deinit(.self = $&output, .allocator = $&allocator)
+    deinit(.self = $&output)
     if allocator.deallocations != 1 { abort }
     empty ::= unwrap_or_abort(
         .value = replace(.self = "aa", .pattern = "a", .replacement = "", .allocator = $&allocator)
     )
     if allocator.allocations != 2 or allocator.last_size != 1 { abort }
-    deinit(.self = $&empty, .allocator = $&allocator)
+    deinit(.self = $&empty)
     if allocator.deallocations != 2 { abort }
 }
 

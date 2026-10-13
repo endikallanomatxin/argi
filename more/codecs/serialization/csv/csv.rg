@@ -2,15 +2,15 @@ CsvReasons: Type = (..invalid_csv, ..out_of_memory, ..size_limit_exceeded)
 
 CsvRecord: Type = (.fields: DynamicArray#(.t: String))
 
-CsvRecord deinit(.self: $&CsvRecord, .allocator: $&Allocator) -> () := {
-    assume allocator
+implement Deinit#(CsvRecord) (
+    .deinit = (.self: $&CsvRecord) -> () {
+        while length(&self&.fields).count > 0 {
+            discarded ::= ~unwrap_or_abort(.value = pop(.self = $&self&.fields))
+        }
 
-    while length(&self&.fields).count > 0 {
-        discarded ::= ~unwrap_or_abort(.value = pop(.self = $&self&.fields))
+        deinit(.self = $&self&.fields)
     }
-
-    deinit(.self = $&self&.fields)
-}
+)
 
 -- Borrowed input must remain unchanged. Records own decoded fields, including
 -- embedded line breaks and doubled quotes. Accept CRLF and LF record endings;

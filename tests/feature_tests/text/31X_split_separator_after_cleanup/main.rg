@@ -4,7 +4,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     iterator ::= unwrap_or_abort(
         .value = split(.self = "a,b", .separator = as_view(.self = &separator).view)
     )
-    deinit(.self = $&separator, .allocator = system.page_allocator)
+    deinit(.self = $&separator)
     segment ::= next(.self = $&iterator).value
     if segment == "a" { abort }
 }

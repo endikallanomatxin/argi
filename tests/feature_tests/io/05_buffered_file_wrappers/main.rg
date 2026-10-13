@@ -38,7 +38,7 @@ main(.system: System) -> (.status_code: Int32) := {
     }
 
     Writer#().flush(.self = $&output_writer)
-    deinit(.self = $&input_reader, .allocator = $&allocator_storage)
+    deinit(.self = $&input_reader)
     deinit(.self = $&output_writer)
     status_code = 0
 }

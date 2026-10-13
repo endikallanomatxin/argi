@@ -133,7 +133,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         .allocator = allocator
     ) {
         ..ok ~owner {
-            deinit(.self = $&owner, .allocator = allocator)
+            deinit(.self = $&owner)
             abort
         }
         ..error error { if error.reason != ..size_limit_exceeded { abort } }
@@ -147,7 +147,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         .allocator = allocator
     ) {
         ..ok ~owner {
-            deinit(.self = $&owner, .allocator = allocator)
+            deinit(.self = $&owner)
             abort
         }
         ..error error { if error.reason != ..size_limit_exceeded { abort } }
@@ -164,7 +164,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     calls = source.calls
     match read_all_limited(.self = $&source, .buffer = empty, .limit = 4, .allocator = allocator) {
         ..ok ~owner {
-            deinit(.self = $&owner, .allocator = allocator)
+            deinit(.self = $&owner)
             abort
         } ..error error { if error.reason != ..invalid_stream_buffer { abort } }
     }

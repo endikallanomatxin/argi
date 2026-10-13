@@ -103,7 +103,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         return
     }
 
-    deinit(.self = $&buffer, .allocator = $&allocator_storage)
+    deinit(.self = $&buffer)
 
     stdin_storage = (
         .index = 0
@@ -137,12 +137,12 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
                         return
                     }
 
-                    deinit(.self = $&line, .allocator = $&allocator_storage)
+                    deinit(.self = $&line)
                 }
             }
         }
     }
-    deinit(.self = $&text, .allocator = $&allocator_storage)
+    deinit(.self = $&text)
 }
 
 implement Writer#(DummyOutput)(

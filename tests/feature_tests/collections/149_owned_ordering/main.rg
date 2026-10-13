@@ -69,7 +69,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         ..none { abort } ..some ~entry { if entry.value.a.id != 1 { abort } }
     }
     if drops != 8 { abort }
-    deinit(.self = $&queue, .allocator = allocator)
+    deinit(.self = $&queue)
     if drops != 12 { abort }
     refusal ::= RefusingAllocator()
     bounded ::= OwnedPriorityQueue#(.t: Pair, .order: PairOrder)(
@@ -97,7 +97,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
                 != 4
             ] { abort } }
     }
-    deinit(.self = $&bounded, .allocator = allocator)
+    deinit(.self = $&bounded)
     if drops != 16 { abort }
 }
 

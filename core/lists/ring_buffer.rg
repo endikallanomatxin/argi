@@ -142,16 +142,16 @@ pop#(.t: Type)(.self: $&RingBuffer#(.t: t)) -> (.result: Errable#(t, (..empty)))
     result = ..ok ~value
 }
 
-RingBuffer deinit#(.t: Type)(.self: $&RingBuffer#(.t: t), .allocator: $&Allocator) -> () := {
-    assume allocator
+implement#(.t: Type) Deinit#(RingBuffer#(.t: t)) (
+    .deinit = (.self: $&RingBuffer#(.t: t)) -> () {
+        while self&._length > 0 {
+            discarded ::= ~unwrap_or_abort(.value = pop(self))
+        }
 
-    while self&._length > 0 {
-        discarded ::= ~unwrap_or_abort(.value = pop(self))
+        trusted_opaque_mark_empty(.storage = $&self&._allocation)
+        deinit(.self = $&self&._allocation)
     }
-
-    trusted_opaque_mark_empty(.storage = $&self&._allocation)
-    deinit(.self = $&self&._allocation)
-}
+)
 
 implement#(.t: Type) Indexable#(RingBuffer#(.t: t)) (
     .Item: Type = t

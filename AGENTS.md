@@ -162,6 +162,11 @@ feature first.
   constructor lookup indexed by that family, independently of output types;
   speculative specializations must roll back their index entries.
   Migrated cleanup uses `implement Deinit#(T)` and its consuming self operation.
+  All bundled core and more destructor families use this mechanism, including
+  generic collections and optional Python owners. Cleanup of allocated owners
+  uses the deallocation evidence stored in Allocation, without a separate
+  allocator input. Definite whole-owner consumption permits emptying owned
+  opaque storage, never borrowed referents or retaining new hidden values.
   Automatic and explicit cleanup select the same evidence. Lifecycle wrappers
   preserve ordinary alias-function behavior and forward optional/reached
   capabilities through tracked calls. They create no second destructor registry.

@@ -58,7 +58,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
                                 status_code = 5
                                 return
                             }
-                            deinit#(.t: Tracked)(.self = $&array)
+                            deinit(.self = $&array)
                             if first_drops != 1 or second_drops != 1 or third_drops != 1 {
                                 status_code = 6
                                 return

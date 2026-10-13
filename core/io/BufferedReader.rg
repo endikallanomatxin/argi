@@ -56,16 +56,13 @@ BufferedReader init#(
     result = ..ok ~constructed
 }
 
-BufferedReader deinit#(
+implement#(
         .base_type : Type: Reader#(base_type)
-    )(
-        .self      : $&BufferedReader#(.base_type: base_type),
-        .allocator : $&Allocator,
-    ) -> () := {
-    assume allocator
-
-    deinit(.self = $&self&.buffer)
-}
+    ) Deinit#(BufferedReader#(.base_type: base_type)) (
+    .deinit = (.self: $&BufferedReader#(.base_type: base_type)) -> () {
+        deinit(.self = $&self&.buffer)
+    }
+)
 
 implement#(
     .base_type : Type: Reader#(base_type)

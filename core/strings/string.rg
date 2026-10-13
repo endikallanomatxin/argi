@@ -145,14 +145,11 @@ String init(
     result = ..ok ~constructed
 }
 
-String deinit(
-        .allocator : $&Allocator,
-        .self      : $&String,
-    ) -> () := {
-    assume allocator
-
-    deinit(.self = $&self&.allocation)
-}
+implement Deinit#(String) (
+    .deinit = (.self: $&String) -> () {
+        deinit(.self = $&self&.allocation)
+    }
+)
 
 copy(
         .self      : &String,

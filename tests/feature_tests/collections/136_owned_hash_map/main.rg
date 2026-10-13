@@ -28,7 +28,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     if length(.self = &map).count != 1 { abort }
     extracted ::= extract(.self = $&map, .key = &query).result
     if length(.self = &map).count != 0 { abort }
-    deinit(.self = $&map, .allocator = allocator)
+    deinit(.self = $&map)
     match extracted {
         ..none { abort }
         ..some ~payload {
