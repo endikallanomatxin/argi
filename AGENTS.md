@@ -166,6 +166,14 @@ feature first.
   Reach defaults describe lexical lookup, not values to type-check before lookup.
   Scaled durations, relative deadlines, precise Unix timestamps and copied paths
   use named factories rather than legacy constructor overloads.
+  Explicit conversion uses `Convert#(Source, Target)` through the unique ordinary
+  `convert#(.to: Target)(.value = source)` entry. Result is Target or one Errable
+  containing it; never infer participants from Result. Prefer the ordinary pipe
+  spelling `source | convert#(.to: Target)(_)` at call sites; group compound
+  source expressions with scalar brackets. Integer range checking
+  belongs to core conformances, with compiler hooks limited to primitive casts
+  and representable bounds. Numeric type-call conversions are rejected.
+  Reference-to-address conversion grants no reference validity or acquisition.
   Constructor declarations use only Init; `TypeName init(...)` is rejected with
   a migration diagnostic. Construction has no nominal initializer association,
   legacy constructor index or output-based generic inference. Preserve speculative
@@ -350,6 +358,10 @@ feature first.
   propagate opaque-content requirements separately from pointer liveness through
   calls and cleanup. Trusted slot reads use backing-owner identities; reading a
   region anchor or releasing allocation metadata does not read stored elements.
+  Safety branch states share a per-function root namespace. Fresh resources and
+  lexical generations must never collide when independently created branches
+  join. Initial identities of the same place can materialize on either branch;
+  ended generations cannot be revived by later lexical-slot reuse.
   Summary place paths distinguish a reference-valued field's slot from its
   pointee with explicit dereference
   projections; writing through the reference must preserve the field's facts.

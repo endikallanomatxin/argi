@@ -104,7 +104,8 @@ or conversions instead of constructor overloads.
 
 Conversion uses `Convert#(Source, Target)` and its associated `Result`. The result
 must be `Target` or an `Errable` containing it. Explicit conversion syntax is
-`convert#(.to: Target)(.value = source)`. No separate TryConvert is needed.
+`convert#(.to: Target)(.value = source)`, usually written as
+`source | convert#(.to: Target)(_)`. No separate TryConvert is needed.
 
 `Deinit#(T)` provides an infallible mutable-reference operation and can use
 available assumed capabilities. Automatic cleanup retains compiler checks for
@@ -159,8 +160,10 @@ maximal candidates are ambiguous. Integer substitutions preserve repeated array-
 Nominal application patterns match declaration identities and recursively bind
 type and integer arguments in declaration order, including named arguments.
 Symbolic arithmetic equivalence and other structural patterns remain pending.
-Construction and destruction use Init and Deinit; conversion and operator
-migration, composition and joint virtual evidence remain pending.
+Construction, destruction and explicit conversion use Init, Deinit and Convert.
+Integer conversions and reference-address observation use selected Convert
+evidence; numeric type-call conversions are rejected. Operator migration,
+composition and joint virtual evidence remain pending.
 Unbound unary contracts with explicit participants and no associated parameters
 can construct virtual handles using selected implementation evidence. Qualified
 unary calls use `Contract#().operation(...)`; a concrete input infers the

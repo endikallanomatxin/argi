@@ -41,7 +41,7 @@ main() -> (.status_code: Int32 = 0) := {
     buffer ::= DecimalBuffer()
     -- Every finite binary16 encoding, including both zeros and all subnormals.
     while index < 65536 {
-        bits ::= unwrap_or_abort(.value = UInt16(.value = index)).result
+        bits ::= unwrap_or_abort(.value = index | convert#(.to: UInt16)(_)).result
         if bits % 32768 < 31744 {
             original ::= trusted_reinterpret_reference#(.from: UInt16, .to: Float16)(.base = &bits).reference&
             buffer.length = 0

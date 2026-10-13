@@ -12721,3 +12721,51 @@ test "feature_tests/contracts/247_ordinary_deinit_has_no_cleanup_identity" {
 test "feature_tests/ownership/348X_deferred_reference_effects_through_wrapper" {
     try buildExpectFailWithoutParseNoise("tests/feature_tests/ownership/348X_deferred_reference_effects_through_wrapper", "reference depends on a root that has ended");
 }
+
+test "feature_tests/contracts/248_convert_destination_dispatch" {
+    const path = "tests/feature_tests/contracts/248_convert_destination_dispatch";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/contracts/249X_convert_invalid_result" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/249X_convert_invalid_result", "Convert.Result must be its target participant type");
+}
+
+test "feature_tests/contracts/250_convert_owned_identity" {
+    const path = "tests/feature_tests/contracts/250_convert_owned_identity";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/contracts/251X_convert_owned_copy" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/251X_convert_owned_copy", "cannot be copied implicitly");
+}
+
+test "feature_tests/contracts/252_convert_generic_specialization" {
+    const path = "tests/feature_tests/contracts/252_convert_generic_specialization";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/contracts/253_convert_borrowed_result" {
+    const path = "tests/feature_tests/contracts/253_convert_borrowed_result";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/contracts/254X_convert_borrowed_escape" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/254X_convert_borrowed_escape", "local storage generation");
+}
+
+test "feature_tests/contracts/255X_generic_unknown_argument" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/255X_generic_unknown_argument", "unknown compile-time argument in call to 'identity'");
+}
+
+test "feature_tests/contracts/256X_legacy_numeric_type_call" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/256X_legacy_numeric_type_call", "numeric type-call conversions are unsupported; use convert");
+}
+
+test "feature_tests/contracts/257X_convert_fallible_wrong_target" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/257X_convert_fallible_wrong_target", "Convert.Result must be its target participant type");
+}

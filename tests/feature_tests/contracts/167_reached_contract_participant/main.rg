@@ -17,6 +17,6 @@ main := () -> (.status_code: Int32 = 0) {
     assume counter ::= $&state
     bump(.amount = 7)
     Counting#(Counter).bump(.amount = 3)
-    forward(Int32(.value = 2))
+    forward(2 | convert#(.to: Int32)(_))
     if state.value != 12 { abort }
 }

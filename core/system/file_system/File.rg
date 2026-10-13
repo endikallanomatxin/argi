@@ -82,7 +82,7 @@ open(
     opened: &Any = fopen(.path = path, .mode = mode_text)
     p&= (
         ._ffi           = ffi
-        .stream_address = UIntNative(.value = opened)
+        .stream_address = opened | convert#(.to: UIntNative)(_)
         .should_close   = 1                           == 1
     )
 
@@ -129,7 +129,7 @@ init_stdin(.p: $&File, .ffi: $&ForeignFunctionInterface = reach ffi) -> () := {
     stream: &Any = fdopen(.fd = 0, .mode = mode_text)
     p&= (
         ._ffi           = ffi
-        .stream_address = UIntNative(.value = stream)
+        .stream_address = stream | convert#(.to: UIntNative)(_)
         .should_close   = 0                           == 1
     )
 }
@@ -139,7 +139,7 @@ init_stdout(.p: $&File, .ffi: $&ForeignFunctionInterface = reach ffi) -> () := {
     stream: &Any = fdopen(.fd = 1, .mode = mode_text)
     p&= (
         ._ffi           = ffi
-        .stream_address = UIntNative(.value = stream)
+        .stream_address = stream | convert#(.to: UIntNative)(_)
         .should_close   = 0                           == 1
     )
 }
@@ -149,7 +149,7 @@ init_stderr(.p: $&File, .ffi: $&ForeignFunctionInterface = reach ffi) -> () := {
     stream: &Any = fdopen(.fd = 2, .mode = mode_text)
     p&= (
         ._ffi           = ffi
-        .stream_address = UIntNative(.value = stream)
+        .stream_address = stream | convert#(.to: UIntNative)(_)
         .should_close   = 0                           == 1
     )
 }

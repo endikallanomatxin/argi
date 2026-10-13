@@ -27,12 +27,10 @@ encode(
             .index  = index * 2
             .value  = bytes_get(
                 .view  = &alphabet
-                .index = UIntNative(
-                    .value = [
+                .index = [
                         byte
                         / 16
-                    ]
-                )
+                    ] | convert#(.to: UIntNative)(_)
             ).byte
         )
         bytes_set(
@@ -40,12 +38,10 @@ encode(
             .index  = index * 2 + 1
             .value  = bytes_get(
                 .view  = &alphabet
-                .index = UIntNative(
-                    .value = [
+                .index = [
                         byte
                         % 16
-                    ]
-                )
+                    ] | convert#(.to: UIntNative)(_)
             ).byte
         )
         index = index + 1

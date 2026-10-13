@@ -49,25 +49,25 @@ _utf8_decode(.text: StringView, .offset: UIntNative) -> (.result: _Utf8Decode) :
 
     if first < 128 {
         width = 1
-        code = UInt32(.value = first)
+        code = first | convert#(.to: UInt32)(_)
     }
 
     if first >= 194 and first <= 223 {
         width = 2
         minimum = 128
-        code = UInt32(.value = first - 192)
+        code = [first - 192] | convert#(.to: UInt32)(_)
     }
 
     if first >= 224 and first <= 239 {
         width = 3
         minimum = 2048
-        code = UInt32(.value = first - 224)
+        code = [first - 224] | convert#(.to: UInt32)(_)
     }
 
     if first >= 240 and first <= 244 {
         width = 4
         minimum = 65536
-        code = UInt32(.value = first - 240)
+        code = [first - 240] | convert#(.to: UInt32)(_)
     }
 
     if width == 0 {
@@ -88,7 +88,7 @@ _utf8_decode(.text: StringView, .offset: UIntNative) -> (.result: _Utf8Decode) :
             result = ..invalid
             return
         }
-        code = code * 64 + UInt32(.value = byte - 128)
+        code = code * 64 + [byte - 128] | convert#(.to: UInt32)(_)
         index = index + 1
     }
 
@@ -182,7 +182,7 @@ utf8_encode(
     if width == 3 { first = 224 + code / 4096 }
     if width == 4 { first = 240 + code / 262144 }
     pointer ::= unwrap_or_abort(.value = get_rw_ref($&buffer, .index = offset))
-    pointer&= unwrap_or_abort(.value = UInt8(.value = first))
+    pointer&= unwrap_or_abort(.value = first | convert#(.to: UInt8)(_))
     divisor :: UInt32 = 1
 
     if width == 3 { divisor = 64 }
@@ -191,7 +191,7 @@ utf8_encode(
 
     while index < width {
         pointer ::= unwrap_or_abort(.value = get_rw_ref($&buffer, .index = offset + index))
-        pointer&= unwrap_or_abort(.value = UInt8(.value = 128 + code / divisor % 64))
+        pointer&= unwrap_or_abort(.value = [128 + code / divisor % 64] | convert#(.to: UInt8)(_))
         divisor = divisor / 64
         index = index + 1
     }

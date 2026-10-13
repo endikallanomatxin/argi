@@ -152,7 +152,7 @@ implement Allocator#(RecordingAllocator)(
             }
             self&.allocations = self&.allocations + 1
             storage ::= malloc(.size = size, .ffi = self&.ffi)
-            if UIntNative(.value = storage) == 0 {
+            if storage | convert#(.to: UIntNative)(_) == 0 {
                 result = ..error(.reason = ..out_of_memory)
                 return
             }

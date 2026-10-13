@@ -1,4 +1,4 @@
-const lifecycle_contracts = @import("../global/lifecycle_contracts.zig");
+const standard_contracts = @import("../global/standard_contracts.zig");
 const std = @import("std");
 const profile = @import("../../1_base/profile.zig");
 const diagnostics = @import("../../1_base/diagnostic.zig");
@@ -70,6 +70,8 @@ pub const SafetyChecker = struct {
         tracker: facts.Tracker,
         places: std.array_list.Managed(facts.PlaceFacts),
         symbolic_pointees: std.array_list.Managed(SymbolicPointeeState),
+        // TODO: Give branch-created acquisition capabilities distinct shared
+        // identities as well; validity roots already use the joint namespace.
         storage_capabilities: std.array_list.Managed(StorageCapabilityState),
         ownership_edges: std.array_list.Managed(OwnershipEdge),
         storage_generations: std.array_list.Managed(StorageGeneration),
@@ -116,6 +118,7 @@ pub const SafetyChecker = struct {
             defer if (stats) |s| profile.accumulate(io, start, &s.state_copy_ns);
             var out = FunctionState.init(allocator);
             errdefer out.deinit();
+            out.tracker.namespace = self.tracker.namespace;
             try out.tracker.roots.appendSlice(self.tracker.roots.items);
             try out.places.appendSlice(self.places.items);
             try out.symbolic_pointees.appendSlice(self.symbolic_pointees.items);
@@ -235,7 +238,10 @@ pub const SafetyChecker = struct {
         for (self.graph.functions.items, 0..) |function, raw| {
             if (function.body == null or function.safety_primitive != .none) continue;
             const id: graph_mod.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
+            var namespace: facts.Tracker.RootNamespace = .{};
+            defer namespace.initial_storage.deinit(self.allocator);
             var state = FunctionState.init(self.allocator);
+            state.tracker.namespace = &namespace;
             defer state.deinit();
             try self.seedFunctionInputs(function, &state);
             try self.call_stack.append(id);
@@ -482,7 +488,7 @@ pub const SafetyChecker = struct {
             const declaration = self.graph.declaration(function.declaration);
 
             const id: graph_mod.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
-            if (lifecycle_contracts.initializedType(self.graph, id) == null) continue;
+            if (standard_contracts.initializedType(self.graph, id) == null) continue;
             if (initializer_contract.classify(self.graph, id) == .invalid)
                 try self.report(declaration.source, "initializer must return its constructed type or one Errable of that type", .{});
         }
@@ -4956,6 +4962,27 @@ pub const SafetyChecker = struct {
             }
             return entry.generation;
         };
+        if (state.tracker.namespace) |namespace| {
+            for (namespace.initial_storage.items) |initial| if (initial.storage.eql(storage)) {
+                const index = @intFromEnum(initial.root);
+                if (index >= state.tracker.roots.items.len or !state.tracker.roots.items[index].present) {
+                    try state.tracker.materialize(initial.root);
+                }
+                if (state.tracker.isAlive(initial.root)) {
+                    try state.storage_generations.append(.{ .storage = storage, .generation = initial.root });
+                    return initial.root;
+                }
+                // An ended incarnation cannot become the initial generation
+                // again when a lexical slot is reused in a later iteration.
+                const root = try state.tracker.establish(.fresh);
+                try state.storage_generations.append(.{ .storage = storage, .generation = root });
+                return root;
+            };
+            const root = try state.tracker.establish(.fresh);
+            try namespace.initial_storage.append(self.allocator, .{ .storage = storage, .root = root });
+            try state.storage_generations.append(.{ .storage = storage, .generation = root });
+            return root;
+        }
         const root = try state.tracker.establish(.fresh);
         try state.storage_generations.append(.{ .storage = storage, .generation = root });
         return root;
@@ -5122,8 +5149,9 @@ pub const SafetyChecker = struct {
             try self.report(source, "function output cannot depend on a local storage generation that ends before return (storage rooted at '{s}'); return an owned value instead, or create the owner in the caller and pass a reference to it", .{name});
             return;
         }
-        if (valueDependsOnDeadRoot(value, state))
+        if (valueDependsOnDeadRoot(value, state)) {
             try self.report(source, "returned reference depends on a root that has ended", .{});
+        }
     }
 
     fn rejectEscapingOutputBindings(
@@ -5248,6 +5276,8 @@ pub const SafetyChecker = struct {
         if (!right.reachable) return self.copyState(destination, left);
 
         var joined = FunctionState.init(self.allocator);
+        joined.tracker.namespace = left.tracker.namespace;
+        std.debug.assert(left.tracker.namespace == right.tracker.namespace);
         errdefer joined.deinit();
 
         for (left.symbolic_pointees.items) |pointee| {
@@ -5270,25 +5300,28 @@ pub const SafetyChecker = struct {
         const root_count = @max(left.tracker.roots.items.len, right.tracker.roots.items.len);
         for (0..root_count) |index| {
             const id: facts.ValidityRootId = @enumFromInt(index);
-            const left_state: @TypeOf(left.tracker.roots.items[0].state) = if (index < left.tracker.roots.items.len)
+            const left_present = index < left.tracker.roots.items.len and left.tracker.roots.items[index].present;
+            const right_present = index < right.tracker.roots.items.len and right.tracker.roots.items[index].present;
+            const left_state: @TypeOf(left.tracker.roots.items[0].state) = if (left_present)
                 left.tracker.roots.items[index].state
             else if (self.storageGenerationWasOnlyMaterializedIn(id, right, left))
                 .alive
             else
                 .dead;
-            const right_state: @TypeOf(right.tracker.roots.items[0].state) = if (index < right.tracker.roots.items.len)
+            const right_state: @TypeOf(right.tracker.roots.items[0].state) = if (right_present)
                 right.tracker.roots.items[index].state
             else if (self.storageGenerationWasOnlyMaterializedIn(id, left, right))
                 .alive
             else
                 .dead;
-            const left_owned = index < left.tracker.roots.items.len and left.tracker.roots.items[index].owned_resource;
-            const right_owned = index < right.tracker.roots.items.len and right.tracker.roots.items[index].owned_resource;
+            const left_owned = left_present and left.tracker.roots.items[index].owned_resource;
+            const right_owned = right_present and right.tracker.roots.items[index].owned_resource;
             try joined.tracker.roots.append(.{
                 .id = id,
+                .present = left_present or right_present,
                 .state = if (left_state == right_state) left_state else .maybe_alive,
                 .owned_resource = left_owned or right_owned,
-                .outcome_guard = if (index < left.tracker.roots.items.len and index < right.tracker.roots.items.len and
+                .outcome_guard = if (left_present and right_present and
                     left.tracker.roots.items[index].outcome_guard == right.tracker.roots.items[index].outcome_guard)
                     left.tracker.roots.items[index].outcome_guard
                 else
@@ -5816,7 +5849,6 @@ pub const SafetyChecker = struct {
         materialized: *const FunctionState,
         other: *const FunctionState,
     ) bool {
-        _ = self;
         var storage: ?facts.Place = null;
         for (materialized.storage_generations.items) |entry| if (entry.generation == root) {
             storage = entry.storage;
@@ -5824,6 +5856,9 @@ pub const SafetyChecker = struct {
         };
         const target = storage orelse return false;
         for (other.storage_generations.items) |entry| if (entry.storage.eql(target)) return false;
+        // Program-lifetime bindings are initialized independently of whether
+        // this path has read them and materialized their place facts.
+        if (self.graph.isModuleBinding(target.root)) return true;
 
         var projection_count = target.projections.len;
         while (true) {
@@ -6445,7 +6480,7 @@ fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChe
         if (!found) return false;
     }
     for (left.tracker.roots.items, right.tracker.roots.items) |a, b|
-        if (a.state != b.state or a.owned_resource != b.owned_resource or a.outcome_guard != b.outcome_guard) return false;
+        if (a.present != b.present or a.state != b.state or a.owned_resource != b.owned_resource or a.outcome_guard != b.outcome_guard) return false;
     for (left.storage_capabilities.items, right.storage_capabilities.items) |a, b|
         if (a != b) return false;
     for (left.lexical_storage_generations.items) |root|
@@ -8062,4 +8097,59 @@ test "mixed dependency guards capture mutable entry facts before replacement" {
     try std.testing.expectEqual(@as(usize, 1), prepared.len);
     try std.testing.expectEqual(@as(u32, 1), prepared[0].proof.entry_facts.terms[0].variant_index);
     try std.testing.expectEqual(@as(?u32, 2), (try checker.entryConditionValue(arguments[0], &.{.dereference}, &state)).?.known_choice_variant);
+}
+
+test "branch root identities separate owned resources from lexical temporaries" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(allocator, undefined, undefined);
+    defer checker.deinit();
+    var namespace: facts.Tracker.RootNamespace = .{};
+    var entry = SafetyChecker.FunctionState.init(allocator);
+    defer entry.deinit();
+    entry.tracker.namespace = &namespace;
+    var owner_branch = try entry.clone(allocator, null);
+    defer owner_branch.deinit();
+    var temporary_branch = try entry.clone(allocator, null);
+    defer temporary_branch.deinit();
+    const owner = try owner_branch.tracker.establish(.fresh);
+    owner_branch.tracker.roots.items[@intFromEnum(owner)].owned_resource = true;
+    const temporary = try temporary_branch.tracker.establish(.fresh);
+    try std.testing.expect(owner != temporary);
+    temporary_branch.tracker.end(temporary);
+    try temporary_branch.lexical_storage_generations.append(temporary);
+    var joined = SafetyChecker.FunctionState.init(allocator);
+    defer joined.deinit();
+    try checker.joinState(&joined, &owner_branch, &temporary_branch);
+    const result: facts.ValueFacts = .{ .dependencies = &.{.{ .root = owner }}, .owned_roots = &.{owner} };
+    try std.testing.expect(checker.escapingLocalRoot(@enumFromInt(0), result, &joined) == null);
+    try std.testing.expect(joined.tracker.roots.items[@intFromEnum(owner)].owned_resource);
+    try std.testing.expect(!joined.tracker.roots.items[@intFromEnum(temporary)].owned_resource);
+    try std.testing.expectEqual(.dead, joined.tracker.roots.items[@intFromEnum(temporary)].state);
+}
+
+test "branches share initial storage identities without reviving ended generations" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(allocator, undefined, undefined);
+    defer checker.deinit();
+    var namespace: facts.Tracker.RootNamespace = .{};
+    var entry = SafetyChecker.FunctionState.init(allocator);
+    defer entry.deinit();
+    entry.tracker.namespace = &namespace;
+    var left = try entry.clone(allocator, null);
+    defer left.deinit();
+    var right = try entry.clone(allocator, null);
+    defer right.deinit();
+    const storage = facts.Place{ .root = @enumFromInt(0) };
+    const initial = try checker.storageGeneration(&left, storage);
+    try std.testing.expectEqual(initial, try checker.storageGeneration(&right, storage));
+    left.tracker.end(initial);
+    _ = left.storage_generations.pop();
+    const replacement = try checker.storageGeneration(&left, storage);
+    try std.testing.expect(replacement != initial);
+    try std.testing.expect(!left.tracker.isAlive(initial));
+    try std.testing.expect(right.tracker.isAlive(initial));
 }

@@ -36,7 +36,7 @@ _array_storage#(
     count ::= length(&values).count
     address :: UIntNative = 0
 
-    if count != 0 { address = UIntNative(.value = data(.self = &values).pointer) }
+    if count != 0 { address = data(.self = &values).pointer | convert#(.to: UIntNative)(_) }
 
     result = _owned(
         .self   = self
@@ -62,7 +62,7 @@ _copy_numeric#(
     capacity ::= length(&destination).count
     address :: UIntNative = 0
 
-    if capacity != 0 { address = UIntNative(.value = data(.self = &destination).pointer) }
+    if capacity != 0 { address = data(.self = &destination).pointer | convert#(.to: UIntNative)(_) }
     copied :: UIntNative = 0
 
     if [

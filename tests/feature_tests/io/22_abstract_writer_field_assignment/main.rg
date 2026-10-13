@@ -23,8 +23,8 @@ main() -> (.status_code: Int32) := {
 
     holder = Holder(.writer = $&writer)
 
-    writer_address :: UIntNative = UIntNative(.value = $&writer)
-    stored_address :: UIntNative = UIntNative(.value = holder.writer)
+    writer_address :: UIntNative = $&writer | convert#(.to: UIntNative)(_)
+    stored_address :: UIntNative = holder.writer | convert#(.to: UIntNative)(_)
     if writer_address == stored_address {
         status_code = 0
     } else {

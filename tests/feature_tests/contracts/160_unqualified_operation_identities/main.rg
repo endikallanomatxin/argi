@@ -12,7 +12,7 @@ implement Product#(Int32, UInt8)(
                 .result : Int32
             ) { result = [
                 left
-                * Int32(.value = right)
+                * right | convert#(.to: Int32)(_)
             ] }
     )
 

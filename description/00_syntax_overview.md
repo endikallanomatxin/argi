@@ -120,7 +120,7 @@ x := point_ref&.x
 `&Point` is a read-only reference type; `$&Point` is its mutable counterpart.
 References cannot be null. An optional reference uses `?&Point`. Reference
 arithmetic is not allowed. Low-level address calculations use
-`UIntNative(.value = reference)`. A calculated address becomes a reference
+`reference | convert#(.to: UIntNative)(_)`. A calculated address becomes a reference
 only through a core operation that establishes its validity root.
 
 References are checked when used and do not keep their referent alive. See

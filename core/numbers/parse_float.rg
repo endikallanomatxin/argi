@@ -46,7 +46,7 @@ _float_parse#(
             if byte < 48 or byte > 57 { break }
             has_digit = true
             if point { fractional = fractional + 1 }
-            digit ::= UInt32(.value = byte - 48)
+            digit ::= [byte - 48] | convert#(.to: UInt32)(_)
             if significant != 0 or digit != 0 {
                 significant = significant + 1
                 -- Binary64's most demanding midpoint is a multiple of
@@ -97,7 +97,7 @@ _float_parse#(
                 result = ..error(.reason = ..invalid_input)
                 return
             }
-            digit ::= UIntNative(.value = digit_byte - 48)
+            digit ::= [digit_byte - 48] | convert#(.to: UIntNative)(_)
             if exponent <= cap / 10 {
                 exponent = exponent * 10 + digit
                 if exponent > cap { exponent = cap }
@@ -137,14 +137,14 @@ _float_parse#(
             result = ..error(.reason = ..out_of_range)
             return
         }
-        power = unwrap_or_abort(.value = Int32(.value = difference)).result
+        power = unwrap_or_abort(.value = difference | convert#(.to: Int32)(_)).result
     } else {
         difference ::= negative_power - positive_power
         if difference > 1200 {
             result = ..error(.reason = ..out_of_range)
             return
         }
-        power = 0 - unwrap_or_abort(.value = Int32(.value = difference)).result
+        power = 0 - unwrap_or_abort(.value = difference | convert#(.to: Int32)(_)).result
     }
     -- A retained significand has at most 800 digits. Powers outside these
     -- bounds cannot approach any supported finite nonzero float. Within the

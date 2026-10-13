@@ -16,16 +16,16 @@ _space(.text: StringView, .position: UIntNative) -> (.next: UIntNative) := {
 
 _hex(.byte: UInt8) -> (.value: UInt32 = 16) := {
     if byte >= 48 and byte <= 57 {
-        value = UInt32(.value = byte - 48)
+        value = [byte - 48] | convert#(.to: UInt32)(_)
         return
     }
 
     if byte >= 65 and byte <= 70 {
-        value = UInt32(.value = byte - 55)
+        value = [byte - 55] | convert#(.to: UInt32)(_)
         return
     }
 
-    if byte >= 97 and byte <= 102 { value = UInt32(.value = byte - 87) }
+    if byte >= 97 and byte <= 102 { value = [byte - 87] | convert#(.to: UInt32)(_) }
 }
 
 _quad(
@@ -476,7 +476,7 @@ decode_string(
             if code < 128 {
                 push_byte(
                     .self = $&decoded
-                    .byte = unwrap_or_abort(.value = UInt8(.value = code))
+                    .byte = unwrap_or_abort(.value = code | convert#(.to: UInt8)(_))
                 )!
             } else {
                 width :: UIntNative = 2
@@ -492,14 +492,14 @@ decode_string(
                     divisor = 262144
                     prefix = 240
                 }
-                first ::= unwrap_or_abort(.value = UInt8(.value = prefix + code / divisor))
+                first ::= unwrap_or_abort(.value = [prefix + code / divisor] | convert#(.to: UInt8)(_))
                 push_byte(.self = $&decoded, .byte = first)!
                 continuation :: UInt32 = 128
                 offset :: UIntNative = 1
                 while offset < width {
                     divisor = divisor / 64
                     next_byte ::= unwrap_or_abort(
-                        .value = UInt8(.value = continuation + code / divisor % 64)
+                        .value = [continuation + code / divisor % 64] | convert#(.to: UInt8)(_)
                     )
                     push_byte(.self = $&decoded, .byte = next_byte)!
                     offset = offset + 1

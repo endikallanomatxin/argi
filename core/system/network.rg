@@ -550,7 +550,7 @@ read(
     size ::= length(&buffer).count
     address :: UIntNative = 0
 
-    if size != 0 { address = UIntNative(.value = data(&buffer).pointer) }
+    if size != 0 { address = data(&buffer).pointer | convert#(.to: UIntNative)(_) }
     received :: UIntNative = 0
     peer :: _NetworkAddress = (._bytes = zeroed#(.t: [128]UInt8)(), ._length = 0)
 
@@ -581,7 +581,7 @@ write(
     size ::= length(&buffer).count
     address :: UIntNative = 0
 
-    if size != 0 { address = UIntNative(.value = data(&buffer).pointer) }
+    if size != 0 { address = data(&buffer).pointer | convert#(.to: UIntNative)(_) }
     sent :: UIntNative = 0
 
     if [
@@ -640,13 +640,13 @@ send_to(
     size ::= length(&buffer).count
     address :: UIntNative = 0
 
-    if size != 0 { address = UIntNative(.value = data(&buffer).pointer) }
+    if size != 0 { address = data(&buffer).pointer | convert#(.to: UIntNative)(_) }
     sent :: UIntNative = 0
     status ::= _network_send(
         .handle = self&._handle
         .bytes  = raw_pointer#(.t: UInt8)(.address = address).raw
         .length = size
-        .peer   = raw_pointer#(.t: _NetworkAddress)(.address = UIntNative(.value = &peer._native)).raw
+        .peer   = raw_pointer#(.t: _NetworkAddress)(.address = &peer._native | convert#(.to: UIntNative)(_)).raw
         .sent   = $&sent
     ).status
 
@@ -673,7 +673,7 @@ receive_from(
     size ::= length(&buffer).count
     address :: UIntNative = 0
 
-    if size != 0 { address = UIntNative(.value = data(&buffer).pointer) }
+    if size != 0 { address = data(&buffer).pointer | convert#(.to: UIntNative)(_) }
     received :: UIntNative = 0
     peer :: _NetworkAddress = (._bytes = zeroed#(.t: [128]UInt8)(), ._length = 0)
     status ::= _network_receive(

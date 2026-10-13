@@ -38,6 +38,11 @@ Names identify concrete OS, architecture, or ABI tags; unknown names are errors.
 These compiler operations require one positional literal string argument and
 have no runtime effects or capability inputs.
 
+`target_pointer_bits(64)` checks the target pointer width with a positional
+integer literal. It includes ABI-specific widths, such as 32-bit pointers on
+x86_64 with the x32 ABI. The numeric conversion conformances use this predicate
+to classify `UIntNative` widening conversions.
+
 Use `#if` to select declarations, imports, or statements:
 
 ```rg

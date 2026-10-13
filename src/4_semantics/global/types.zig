@@ -1,5 +1,5 @@
 const std = @import("std");
-const lifecycle_contracts = @import("lifecycle_contracts.zig");
+const standard_contracts = @import("standard_contracts.zig");
 const graph_mod = @import("graph.zig");
 const primitives = @import("../primitives/schema.zig");
 
@@ -25,6 +25,14 @@ pub const LayoutError = error{
     UnmaterializedGenericType,
     TypeHasNoRuntimeLayout,
 };
+
+/// Init and Convert return their target directly or in one Errable success payload.
+pub fn resultMatchesTarget(graph: *const graph_mod.GlobalSemanticGraph, result: graph_mod.GlobalTypeId, target: graph_mod.GlobalTypeId) bool {
+    if (equal(graph, result, target)) return true;
+    if (!isErrable(graph, result)) return false;
+    const ok = findVariant(graph, result, "ok") orelse return false;
+    return equal(graph, ok.variant.payload_type orelse return false, target);
+}
 
 /// Local handling accepts the bundled Errable family and the identity-bearing
 /// inferred form used by fallible output shorthand, never arbitrary choices
@@ -176,7 +184,7 @@ pub fn deinitFunction(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod
     if (graph.semanticType(ty) == .pointer) return null;
     for (graph.functions.items, 0..) |function, raw| {
         if (!function.flags.is_deinit or function.input.len == 0) continue;
-        if (lifecycle_contracts.deinitializedType(graph, @enumFromInt(@as(u32, @intCast(raw))))) |participant| {
+        if (standard_contracts.deinitializedType(graph, @enumFromInt(@as(u32, @intCast(raw))))) |participant| {
             if (equal(graph, participant, ty)) return @enumFromInt(@as(u32, @intCast(raw)));
         }
     }
@@ -195,7 +203,7 @@ pub fn deinitFunctionForInput(graph: *const graph_mod.GlobalSemanticGraph, value
     var found: ?graph_mod.GlobalFunctionId = null;
     for (graph.functions.items, 0..) |function, raw| {
         if (!function.flags.is_deinit) continue;
-        const participant = lifecycle_contracts.deinitializedType(graph, @enumFromInt(@as(u32, @intCast(raw)))) orelse continue;
+        const participant = standard_contracts.deinitializedType(graph, @enumFromInt(@as(u32, @intCast(raw)))) orelse continue;
         if (!equal(graph, participant, value_type)) continue;
         var self_matches = false;
         var arguments_match = true;

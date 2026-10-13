@@ -32,7 +32,7 @@ read_uint16(
         position :: UIntNative = index
         if order == ..little { position = last - index }
         byte ::= get_ro_ref(&bytes, .index = offset + position)!
-        value = value * 256 + UInt16(.value = byte&)
+        value = value * 256 + byte& | convert#(.to: UInt16)(_)
         index = index + 1
     }
 
@@ -64,7 +64,7 @@ write_uint16(
         position :: UIntNative = index
         if order == ..big { position = last - index }
         byte ::= get_rw_ref($&bytes, .index = offset + position)!
-        byte&= unwrap_or_abort(.value = UInt8(.value = remaining % 256))
+        byte&= unwrap_or_abort(.value = [remaining % 256] | convert#(.to: UInt8)(_))
         remaining = remaining / 256
         index = index + 1
     }
@@ -95,7 +95,7 @@ read_uint32(
         position :: UIntNative = index
         if order == ..little { position = last - index }
         byte ::= get_ro_ref(&bytes, .index = offset + position)!
-        value = value * 256 + UInt32(.value = byte&)
+        value = value * 256 + byte& | convert#(.to: UInt32)(_)
         index = index + 1
     }
 
@@ -127,7 +127,7 @@ write_uint32(
         position :: UIntNative = index
         if order == ..big { position = last - index }
         byte ::= get_rw_ref($&bytes, .index = offset + position)!
-        byte&= unwrap_or_abort(.value = UInt8(.value = remaining % 256))
+        byte&= unwrap_or_abort(.value = [remaining % 256] | convert#(.to: UInt8)(_))
         remaining = remaining / 256
         index = index + 1
     }
@@ -158,7 +158,7 @@ read_uint64(
         position :: UIntNative = index
         if order == ..little { position = last - index }
         byte ::= get_ro_ref(&bytes, .index = offset + position)!
-        value = value * 256 + UInt64(.value = byte&)
+        value = value * 256 + byte& | convert#(.to: UInt64)(_)
         index = index + 1
     }
 
@@ -190,7 +190,7 @@ write_uint64(
         position :: UIntNative = index
         if order == ..big { position = last - index }
         byte ::= get_rw_ref($&bytes, .index = offset + position)!
-        byte&= unwrap_or_abort(.value = UInt8(.value = remaining % 256))
+        byte&= unwrap_or_abort(.value = [remaining % 256] | convert#(.to: UInt8)(_))
         remaining = remaining / 256
         index = index + 1
     }

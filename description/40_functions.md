@@ -66,6 +66,7 @@ fields, `_` denotes the whole result structure; `_.field` selects one field:
 result ::= 20 | add(.left = _, .right = 22)
 sum ::= point | add(.left = _.x, .right = _.y)
 is_error ::= value | is(_, ..error)
+wide ::= small | convert#(.to: Int64)(_)
 ```
 
 The placeholder may be borrowed explicitly, for example

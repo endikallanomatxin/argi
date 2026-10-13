@@ -11,7 +11,7 @@ to_object(
     ) -> (
         .result : Errable#(Object, (..python_error))
     ) := {
-    result = integer(.self = self, .value = Int64(.value = value))
+    result = integer(.self = self, .value = value | convert#(.to: Int64)(_))
 }
 
 to_object(
@@ -20,7 +20,7 @@ to_object(
     ) -> (
         .result : Errable#(Object, (..python_error))
     ) := {
-    result = integer(.self = self, .value = Int64(.value = value))
+    result = integer(.self = self, .value = value | convert#(.to: Int64)(_))
 }
 
 to_object(
@@ -29,7 +29,7 @@ to_object(
     ) -> (
         .result : Errable#(Object, (..python_error))
     ) := {
-    result = integer(.self = self, .value = Int64(.value = value))
+    result = integer(.self = self, .value = value | convert#(.to: Int64)(_))
 }
 
 to_object(
@@ -47,7 +47,7 @@ to_object(
     ) -> (
         .result : Errable#(Object, (..python_error))
     ) := {
-    result = integer(.self = self, .value = UInt64(.value = value))
+    result = integer(.self = self, .value = value | convert#(.to: UInt64)(_))
 }
 
 to_object(
@@ -56,7 +56,7 @@ to_object(
     ) -> (
         .result : Errable#(Object, (..python_error))
     ) := {
-    result = integer(.self = self, .value = UInt64(.value = value))
+    result = integer(.self = self, .value = value | convert#(.to: UInt64)(_))
 }
 
 to_object(
@@ -65,7 +65,7 @@ to_object(
     ) -> (
         .result : Errable#(Object, (..python_error))
     ) := {
-    result = integer(.self = self, .value = UInt64(.value = value))
+    result = integer(.self = self, .value = value | convert#(.to: UInt64)(_))
 }
 
 to_object(
@@ -83,7 +83,7 @@ to_object(
     ) -> (
         .result : Errable#(Object, (..python_error))
     ) := {
-    result = integer(.self = self, .value = UInt64(.value = value))
+    result = integer(.self = self, .value = value | convert#(.to: UInt64)(_))
 }
 
 to_object(

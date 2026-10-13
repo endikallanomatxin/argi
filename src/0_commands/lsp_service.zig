@@ -6,7 +6,7 @@ const diag = @import("../1_base/diagnostic.zig");
 const token = @import("../2_tokens/token.zig");
 const st = @import("../3_syntax/syntax_tree.zig");
 const graph_mod = @import("../4_semantics/global/graph.zig");
-const lifecycle_contracts = @import("../4_semantics/global/lifecycle_contracts.zig");
+const standard_contracts = @import("../4_semantics/global/standard_contracts.zig");
 const global_types = @import("../4_semantics/global/types.zig");
 const editor_index = @import("lsp_index.zig");
 const completion = @import("lsp_completion.zig");
@@ -523,7 +523,7 @@ pub const LanguageService = struct {
         }
         if (occurrence.target == .function) {
             // Init operation wrappers retain their contract identity.
-            if (lifecycle_contracts.initializedType(&analysis.graph, occurrence.target.function) != null) return null;
+            if (standard_contracts.initializedType(&analysis.graph, occurrence.target.function) != null) return null;
         }
         return .{
             .range = sourceRange(&analysis, occurrence.source, occurrence.len) orelse return null,

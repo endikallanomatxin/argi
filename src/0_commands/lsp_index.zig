@@ -1,7 +1,7 @@
 const std = @import("std");
 const source_db = @import("../1_base/source_db.zig");
 const graph_mod = @import("../4_semantics/global/graph.zig");
-const lifecycle_contracts = @import("../4_semantics/global/lifecycle_contracts.zig");
+const standard_contracts = @import("../4_semantics/global/standard_contracts.zig");
 const types = @import("../4_semantics/global/types.zig");
 const primitives = @import("../4_semantics/primitives/schema.zig");
 
@@ -83,7 +83,7 @@ pub const Index = struct {
         for (graph.nodes.items) |node| switch (node.content) {
             .function_call => |call| {
                 if (call.callee_value != null) continue;
-                const initialized = if (lifecycle_contracts.initializedType(graph, call.callee)) |ty| switch (graph.resolvedSemanticType(ty) orelse continue) {
+                const initialized = if (standard_contracts.initializedType(graph, call.callee)) |ty| switch (graph.resolvedSemanticType(ty) orelse continue) {
                     .declared => |owner| owner,
                     .generic => |identity| identity.base,
                     else => null,
@@ -258,7 +258,7 @@ pub fn occurrence_matches_source(graph: *const graph_mod.GlobalSemanticGraph, db
     const source = db.get(file).source;
     const name = blk: {
         if (occurrence.constructor_call) {
-            const ty = lifecycle_contracts.initializedType(graph, occurrence.target.function) orelse return false;
+            const ty = standard_contracts.initializedType(graph, occurrence.target.function) orelse return false;
             const owner = switch (graph.resolvedSemanticType(ty) orelse return false) {
                 .declared => |id| id,
                 .generic => |identity| identity.base,

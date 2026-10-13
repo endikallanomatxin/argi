@@ -1,8 +1,8 @@
 const std = @import("std");
 const graph_mod = @import("graph.zig");
 
-/// Standard lifecycle identities belong to bundled core. A same-named user
-/// contract cannot change compiler construction or cleanup semantics.
+/// Standard contract identities belong to bundled core. A same-named user
+/// contract cannot change construction, cleanup or conversion guarantees.
 pub fn standardDeclaration(graph: *const graph_mod.GlobalSemanticGraph, name: []const u8) ?graph_mod.GlobalDeclId {
     for (graph.declarations.items, 0..) |declaration, index| {
         if (declaration.kind != .abstract_type or !std.mem.eql(u8, graph.text(declaration.name), name)) continue;

@@ -246,7 +246,7 @@ _ipv4_valid(.text: StringView) -> (.ok: Bool = false) := {
         } else {
             byte ::= bytes_get(.view = &text, .index = i).byte
             if _digit(.byte = byte).ok == false or i - start >= 3 { return }
-            number = number * 10 + UIntNative(.value = byte - 48)
+            number = number * 10 + [byte - 48] | convert#(.to: UIntNative)(_)
         }
         i = i + 1
     }
@@ -510,12 +510,12 @@ encode_component(
             push_byte(.self = $&output, .byte = 37, .allocator = allocator)!
             push_byte(
                 .self      = $&output
-                .byte      = bytes_get(.view = &hex, .index = UIntNative(.value = byte / 16)).byte
+                .byte      = bytes_get(.view = &hex, .index = [byte / 16] | convert#(.to: UIntNative)(_)).byte
                 .allocator = allocator
             )!
             push_byte(
                 .self      = $&output
-                .byte      = bytes_get(.view = &hex, .index = UIntNative(.value = byte % 16)).byte
+                .byte      = bytes_get(.view = &hex, .index = [byte % 16] | convert#(.to: UIntNative)(_)).byte
                 .allocator = allocator
             )!
         }

@@ -200,6 +200,12 @@ pub const PlaceFacts = struct {
 };
 
 pub const Tracker = struct {
+    /// Cloned branch states share identities, never reuse another branch's ID.
+    pub const RootNamespace = struct {
+        next_id: u32 = 0,
+        initial_storage: std.ArrayList(struct { storage: Place, root: ValidityRootId }) = .empty,
+    };
+    namespace: ?*RootNamespace = null,
     allocator: std.mem.Allocator,
     roots: std.array_list.Managed(ValidityRoot),
 
@@ -215,11 +221,27 @@ pub const Tracker = struct {
         return switch (rooting) {
             .inherit => |root| root,
             .fresh => blk: {
-                const id: ValidityRootId = @enumFromInt(self.roots.items.len);
-                try self.roots.append(.{ .id = id });
+                const index = if (self.namespace) |namespace| identity: {
+                    const next = namespace.next_id;
+                    namespace.next_id += 1;
+                    break :identity next;
+                } else @as(u32, @intCast(self.roots.items.len));
+                const id: ValidityRootId = @enumFromInt(index);
+                try self.materialize(id);
                 break :blk id;
             },
         };
+    }
+
+    /// Materialize an identity that exists on another branch without reviving
+    /// a generation already observed and ended on this path.
+    pub fn materialize(self: *Tracker, id: ValidityRootId) !void {
+        const index = @intFromEnum(id);
+        while (self.roots.items.len <= index) {
+            const absent: ValidityRootId = @enumFromInt(self.roots.items.len);
+            try self.roots.append(.{ .id = absent, .state = .dead, .present = false });
+        }
+        if (!self.roots.items[index].present) self.roots.items[index] = .{ .id = id };
     }
 
     pub fn end(self: *Tracker, id: ValidityRootId) void {

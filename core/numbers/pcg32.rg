@@ -83,12 +83,12 @@ next_uint32(.self: $&Pcg32) -> (.value: UInt32) := {
     }
 
     rotated ::= mixed / divisor + [mixed % divisor] * [4294967296 / divisor]
-    value = unwrap_or_abort(.value = UInt32(.value = rotated)).result
+    value = unwrap_or_abort(.value = rotated | convert#(.to: UInt32)(_)).result
 }
 
 next_uint64(.self: $&Pcg32) -> (.value: UInt64) := {
-    high ::= UInt64(.value = next_uint32(self).value)
-    low ::= UInt64(.value = next_uint32(self).value)
+    high ::= next_uint32(self).value | convert#(.to: UInt64)(_)
+    low ::= next_uint32(self).value | convert#(.to: UInt64)(_)
     value = high * 4294967296 + low
 }
 
@@ -107,14 +107,14 @@ uniform_uint32(
         return
     }
 
-    bound ::= UInt64(.value = upper_bound)
+    bound ::= upper_bound | convert#(.to: UInt64)(_)
     space: UInt64 = 4294967296
     threshold ::= [space - bound] % bound
 
     while true {
-        candidate ::= UInt64(.value = next_uint32(self).value)
+        candidate ::= next_uint32(self).value | convert#(.to: UInt64)(_)
         if candidate >= threshold {
-            result = ..ok unwrap_or_abort(.value = UInt32(.value = candidate % bound)).result
+            result = ..ok unwrap_or_abort(.value = [candidate % bound] | convert#(.to: UInt32)(_)).result
             return
         }
     }
@@ -164,7 +164,7 @@ _pcg_fraction#(.t: Type: Float)(.sample: UInt64, .bits: UInt32) -> (.value: t) :
 next_float16(.self: $&Pcg32) -> (.value: Float16) := {
     value = _pcg_fraction#(.t: Float16)(
         .sample = [
-            UInt64(.value = next_uint32(self).value)
+            next_uint32(self).value | convert#(.to: UInt64)(_)
             / 2097152
         ]
 
@@ -175,7 +175,7 @@ next_float16(.self: $&Pcg32) -> (.value: Float16) := {
 next_float32(.self: $&Pcg32) -> (.value: Float32) := {
     value = _pcg_fraction#(.t: Float32)(
         .sample = [
-            UInt64(.value = next_uint32(self).value)
+            next_uint32(self).value | convert#(.to: UInt64)(_)
             / 256
         ]
 

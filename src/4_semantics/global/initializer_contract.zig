@@ -2,7 +2,7 @@ const std = @import("std");
 const graph_mod = @import("graph.zig");
 const types = @import("types.zig");
 const generics_mod = @import("generics.zig");
-const lifecycle_contracts = @import("lifecycle_contracts.zig");
+const standard_contracts = @import("standard_contracts.zig");
 
 /// Constructors return their value directly; fallible construction places it
 /// in the ordinary Errable success payload instead of refining an input place.
@@ -14,13 +14,6 @@ pub const Result = union(enum) {
     },
     invalid,
 };
-
-pub fn resultMatchesTarget(graph: *const graph_mod.GlobalSemanticGraph, result: graph_mod.GlobalTypeId, target: graph_mod.GlobalTypeId) bool {
-    if (types.equal(graph, result, target)) return true;
-    if (!types.isErrable(graph, result)) return false;
-    const ok = types.findVariant(graph, result, "ok") orelse return false;
-    return types.equal(graph, ok.variant.payload_type orelse return false, target);
-}
 
 pub fn classify(graph: *const graph_mod.GlobalSemanticGraph, function_id: graph_mod.GlobalFunctionId) Result {
     const function = graph.function(function_id);
@@ -77,6 +70,6 @@ pub fn constructedType(
 }
 
 fn matchesAssociation(graph: *const graph_mod.GlobalSemanticGraph, function: graph_mod.GlobalFunctionId, ty: graph_mod.GlobalTypeId) bool {
-    if (lifecycle_contracts.initializedType(graph, function)) |target| return types.equal(graph, target, ty);
+    if (standard_contracts.initializedType(graph, function)) |target| return types.equal(graph, target, ty);
     return false;
 }

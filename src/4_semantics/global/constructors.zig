@@ -12,7 +12,7 @@ const generic_functions_mod = @import("generic_functions.zig");
 const types = @import("types.zig");
 const abstract_mod = @import("abstracts.zig");
 const initializer_contract = @import("initializer_contract.zig");
-const lifecycle_contracts = @import("lifecycle_contracts.zig");
+const standard_contracts = @import("standard_contracts.zig");
 const c_abi = @import("c_abi.zig");
 const module_linker = @import("module_linker.zig");
 const diagnostics_mod = @import("../../1_base/diagnostic.zig");
@@ -51,7 +51,7 @@ pub const Resolver = struct {
         const parameterized = generics.isParameterizedTypeDeclaration(declaration_id);
         const ty = if (parameterized) blk: {
             if (arguments.len == 0) {
-                const identity = lifecycle_contracts.standardDeclaration(self.graph, "Init") orelse return null;
+                const identity = standard_contracts.standardDeclaration(self.graph, "Init") orelse return null;
                 const selection = try self.inferContractArguments(identity, null, declaration_id, input, reach, source) orelse return null;
                 _ = try generics.ensureGenericInstance(selection.target);
                 return self.contractInitializer(module_index, selection.target, input, reach, source);
@@ -319,7 +319,7 @@ pub const Resolver = struct {
             self.graph.rollback(checkpoint);
             generic_functions.rollbackSideEffects(side_effects);
         };
-        const declaration = lifecycle_contracts.standardDeclaration(self.graph, "Init") orelse return null;
+        const declaration = standard_contracts.standardDeclaration(self.graph, "Init") orelse return null;
         const abstracts = self.abstracts orelse return null;
         const selected_arguments = try self.inferContractArguments(declaration, ty, null, input, reach, source) orelse return null;
         const arguments_type = selected_arguments.args;
@@ -363,7 +363,7 @@ pub const Resolver = struct {
         const call = try abstracts.makeScopedOperationCall(module_index, contract_type, "init", wrapped, reach, source) orelse return error.DeferredContractInitializer;
         const result_type = call.ty orelse return error.DeferredContractInitializer;
         if (self.graph.isTypeUnresolved(result_type)) return error.DeferredContractInitializer;
-        if (!initializer_contract.resultMatchesTarget(self.graph, result_type, ty)) {
+        if (!types.resultMatchesTarget(self.graph, result_type, ty)) {
             try self.reportConstructorError(source, "Init.Result must be its participant type or one Errable containing that type");
             return error.InvalidInitializerResult;
         }
@@ -454,7 +454,7 @@ pub const Resolver = struct {
             };
         }
 
-        if (lifecycle_contracts.standardDeclaration(self.graph, "Init")) |identity| {
+        if (standard_contracts.standardDeclaration(self.graph, "Init")) |identity| {
             const reach = reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function);
             if (self.inferContractArguments(identity, null, declaration_id, input, reach, self.graph.node(input).source) catch |err| {
                 if (err == error.DeferredContractInitializer) return .deferred;

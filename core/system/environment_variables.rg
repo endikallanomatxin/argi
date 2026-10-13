@@ -17,7 +17,7 @@ environment_variables_get_c_string(
         .value : ?StringView
     ) := {
     raw_ptr ::= getenv(.name = key).value
-    raw_addr :: UIntNative = UIntNative(.value = raw_ptr)
+    raw_addr :: UIntNative = raw_ptr | convert#(.to: UIntNative)(_)
 
     if raw_addr == 0 {
         value = ..none

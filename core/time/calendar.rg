@@ -55,14 +55,14 @@ unix_timestamp(
         return
     }
 
-    previous ::= Int64(.value = date.year) - 1
+    previous ::= date.year | convert#(.to: Int64)(_) - 1
     days ::= previous * 365 + previous / 4 - previous / 100 + previous / 400 - 719162
     month :: UInt32 = 1
 
     while month < date.month {
         days = [
             days
-            + Int64(.value = days_in_month(.year = date.year, .month = month).count)
+            + days_in_month(.year = date.year, .month = month).count | convert#(.to: Int64)(_)
         ]
         month = [
             month
@@ -70,12 +70,12 @@ unix_timestamp(
         ]
     }
 
-    days = days + Int64(.value = date.day) - 1
+    days = days + date.day | convert#(.to: Int64)(_) - 1
     seconds ::= [
         days * 86400
-        + Int64(.value = date.hour) * 3600
-        + Int64(.value = date.minute) * 60
-        + Int64(.value = date.second)
+        + date.hour | convert#(.to: Int64)(_) * 3600
+        + date.minute | convert#(.to: Int64)(_) * 60
+        + date.second | convert#(.to: Int64)(_)
     ]
 
     result = unix_timestamp_precise(.seconds = seconds, .nanoseconds = date.nanoseconds)
@@ -98,7 +98,7 @@ utc_date(
     within ::= shifted % 86400
     cycles ::= days / 146097
     days = days % 146097
-    year ::= unwrap_or_abort(.value = Int32(.value = cycles * 400 + 1))
+    year ::= unwrap_or_abort(.value = [cycles * 400 + 1] | convert#(.to: Int32)(_))
 
     while true {
         year_days :: Int64 = 365
@@ -111,7 +111,7 @@ utc_date(
     month :: UInt32 = 1
 
     while true {
-        month_days ::= Int64(.value = days_in_month(.year = year, .month = month).count)
+        month_days ::= days_in_month(.year = year, .month = month).count | convert#(.to: Int64)(_)
         if days < month_days { break }
         days = days - month_days
         month = month + 1
@@ -121,36 +121,28 @@ utc_date(
         .year  = year
         .month = month
         .day   = unwrap_or_abort(
-            .value = UInt32(
-                .value = [
+            .value = [
                     days
                     + 1
-                ]
-            )
+                ] | convert#(.to: UInt32)(_)
         )
         .hour = unwrap_or_abort(
-            .value = UInt32(
-                .value = [
+            .value = [
                     within
                     / 3600
-                ]
-            )
+                ] | convert#(.to: UInt32)(_)
         )
         .minute = unwrap_or_abort(
-            .value = UInt32(
-                .value = [
+            .value = [
                     [within % 3600]
                     / 60
-                ]
-            )
+                ] | convert#(.to: UInt32)(_)
         )
         .second = unwrap_or_abort(
-            .value = UInt32(
-                .value = [
+            .value = [
                     within
                     % 60
-                ]
-            )
+                ] | convert#(.to: UInt32)(_)
         )
         .nanoseconds = nanoseconds(&timestamp).value
     )
@@ -161,5 +153,5 @@ weekday(.date: UtcDateTime) -> (.result: Errable#(UInt32, (..out_of_range))) := 
     timestamp ::= unix_timestamp(.date = date)!
     days ::= [unix_seconds(&timestamp).value + 62135596800] / 86400
 
-    result = ..ok unwrap_or_abort(.value = UInt32(.value = [days + 1] % 7))
+    result = ..ok unwrap_or_abort(.value = [[days + 1] % 7] | convert#(.to: UInt32)(_))
 }

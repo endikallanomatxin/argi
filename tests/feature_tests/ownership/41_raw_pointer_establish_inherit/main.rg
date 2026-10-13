@@ -1,6 +1,6 @@
 main() -> (.status_code: Int32) := {
     value :: Int32 = 9
-    address ::= UIntNative(.value = $&value)
+    address ::= $&value | convert#(.to: UIntNative)(_)
     raw ::= raw_pointer#(.t: Int32)(.address = address)
     reference ::= trusted_establish_inherited_reference#(.t: Int32)(.raw = raw, .root = $&value)
     status_code = reference& - 9

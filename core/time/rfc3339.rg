@@ -18,7 +18,7 @@ _date_digits(
             result = ..error(.reason = ..invalid_datetime)
             return
         }
-        value = value * 10 + UInt32(.value = byte - 48)
+        value = value * 10 + [byte - 48] | convert#(.to: UInt32)(_)
         index = index + 1
     }
 
@@ -64,7 +64,7 @@ parse_utc(
 
     date ::= UtcDateTime(
         .year = unwrap_or_abort(
-            .value = Int32(.value = _date_digits(.text = text, .start = 0, .count = 4)!)
+            .value = _date_digits(.text = text, .start = 0, .count = 4)! | convert#(.to: Int32)(_)
         )
         .month       = _date_digits(.text = text, .start = 5, .count = 2)!
         .day         = _date_digits(.text = text, .start = 8, .count = 2)!
@@ -94,7 +94,7 @@ _write_date_digits(
     while index > 0 {
         index = index - 1
         target ::= unwrap_or_abort(.value = get_rw_ref($&buffer, .index = start + index))
-        target&= unwrap_or_abort(.value = UInt8(.value = remaining % 10 + 48))
+        target&= unwrap_or_abort(.value = [remaining % 10 + 48] | convert#(.to: UInt8)(_))
         remaining = remaining / 10
     }
 }
@@ -135,7 +135,7 @@ format_utc_into(
         .buffer = buffer
         .start  = 0
         .count  = 4
-        .value  = unwrap_or_abort(.value = UInt32(.value = date.year))
+        .value  = unwrap_or_abort(.value = date.year | convert#(.to: UInt32)(_))
     )
     _write_date_digits(.buffer = buffer, .start = 5, .count = 2, .value = date.month)
     _write_date_digits(.buffer = buffer, .start = 8, .count = 2, .value = date.day)

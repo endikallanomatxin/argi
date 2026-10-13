@@ -93,6 +93,6 @@ compare_exchange(
     ) := {
     assume ffi := self&._ffi
     packed ::= _atomic_compare(.handle = self&._handle, .expected = expected, .desired = desired).packed
-    observed = unwrap_or_abort(.value = UInt32(.value = packed % 4294967296))
+    observed = unwrap_or_abort(.value = [packed % 4294967296] | convert#(.to: UInt32)(_))
     swapped = packed / 4294967296 != 0
 }

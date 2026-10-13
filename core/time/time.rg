@@ -114,7 +114,7 @@ monotonic_now(
     }
 
     maximum: UInt64 = 18446744073709551615
-    fraction ::= UInt64(.value = reading.nanoseconds)
+    fraction ::= reading.nanoseconds | convert#(.to: UInt64)(_)
 
     if reading.nanoseconds >= 1000000000 or reading.seconds > [maximum - fraction] / 1000000000 {
         result = ..error(.reason = ..out_of_range)
@@ -159,7 +159,7 @@ sleep(
     }
 
     whole ::= duration._nanoseconds / 1000000000
-    fraction ::= unwrap_or_abort(.value = UInt32(.value = duration._nanoseconds % 1000000000)).result
+    fraction ::= unwrap_or_abort(.value = [duration._nanoseconds % 1000000000] | convert#(.to: UInt32)(_)).result
 
     if _platform_sleep(.seconds = whole, .nanoseconds = fraction).status != 0 {
         result = ..error(.reason = ..sleep_failed)

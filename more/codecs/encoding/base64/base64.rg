@@ -6,17 +6,17 @@ _alphabet() -> (.text: StringView) := {
 
 _value(.byte: UInt8) -> (.value: UInt32 = 255) := {
     if byte >= 65 and byte <= 90 {
-        value = UInt32(.value = byte - 65)
+        value = [byte - 65] | convert#(.to: UInt32)(_)
         return
     }
 
     if byte >= 97 and byte <= 122 {
-        value = UInt32(.value = byte - 97) + 26
+        value = [byte - 97] | convert#(.to: UInt32)(_) + 26
         return
     }
 
     if byte >= 48 and byte <= 57 {
-        value = UInt32(.value = byte - 48) + 52
+        value = [byte - 48] | convert#(.to: UInt32)(_) + 52
         return
     }
 
@@ -43,12 +43,11 @@ encode(
     output :: UIntNative = 0
 
     while index < count {
-        a ::= UInt32(.value = unwrap_or_abort(.value = get(.self = &bytes, .index = index)))
+        a ::= unwrap_or_abort(.value = get(.self = &bytes, .index = index)) | convert#(.to: UInt32)(_)
         b :: UInt32 = 0
         c :: UInt32 = 0
         if count - index > 1 {
-            b = UInt32(
-                .value = unwrap_or_abort(
+            b = [unwrap_or_abort(
                     .value = get(
                         .self  = &bytes
                         .index = [
@@ -56,12 +55,10 @@ encode(
                             + 1
                         ]
                     )
-                )
-            )
+                )] | convert#(.to: UInt32)(_)
         }
         if count - index > 2 {
-            c = UInt32(
-                .value = unwrap_or_abort(
+            c = [unwrap_or_abort(
                     .value = get(
                         .self  = &bytes
                         .index = [
@@ -69,20 +66,17 @@ encode(
                             + 2
                         ]
                     )
-                )
-            )
+                )] | convert#(.to: UInt32)(_)
         }
         bytes_set(
             .string = $&text
             .index  = output
             .value  = bytes_get(
                 .view  = &alphabet
-                .index = UIntNative(
-                    .value = [
+                .index = [
                         a
                         / 4
-                    ]
-                )
+                    ] | convert#(.to: UIntNative)(_)
             ).byte
         )
         bytes_set(
@@ -90,12 +84,10 @@ encode(
             .index  = output + 1
             .value  = bytes_get(
                 .view  = &alphabet
-                .index = UIntNative(
-                    .value = [
+                .index = [
                         [a % 4] * 16
                         + b / 16
-                    ]
-                )
+                    ] | convert#(.to: UIntNative)(_)
             ).byte
         )
         third :: UInt8 = 61
@@ -103,23 +95,19 @@ encode(
         if count - index > 1 {
             third = bytes_get(
                 .view  = &alphabet
-                .index = UIntNative(
-                    .value = [
+                .index = [
                         [b % 16] * 4
                         + c / 64
-                    ]
-                )
+                    ] | convert#(.to: UIntNative)(_)
             ).byte
         }
         if count - index > 2 {
             fourth = bytes_get(
                 .view  = &alphabet
-                .index = UIntNative(
-                    .value = [
+                .index = [
                         c
                         % 64
-                    ]
-                )
+                    ] | convert#(.to: UIntNative)(_)
             ).byte
         }
         bytes_set(.string = $&text, .index = output + 2, .value = third)
@@ -185,24 +173,20 @@ decode(
         push_assume_capacity(
             .self  = $&bytes
             .value = unwrap_or_abort(
-                .value = UInt8(
-                    .value = [
+                .value = [
                         a * 4
                         + b / 16
-                    ]
-                )
+                    ] | convert#(.to: UInt8)(_)
             )
         )
         if c != 255 {
             push_assume_capacity(
                 .self  = $&bytes
                 .value = unwrap_or_abort(
-                    .value = UInt8(
-                        .value = [
+                    .value = [
                             [b % 16] * 16
                             + c / 4
-                        ]
-                    )
+                        ] | convert#(.to: UInt8)(_)
                 )
             )
         }
@@ -210,12 +194,10 @@ decode(
             push_assume_capacity(
                 .self  = $&bytes
                 .value = unwrap_or_abort(
-                    .value = UInt8(
-                        .value = [
+                    .value = [
                             [c % 4] * 64
                             + d
-                        ]
-                    )
+                        ] | convert#(.to: UInt8)(_)
                 )
             )
         }

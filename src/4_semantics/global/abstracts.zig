@@ -1,5 +1,4 @@
-const lifecycle_contracts = @import("lifecycle_contracts.zig");
-const initializer_contract = @import("initializer_contract.zig");
+const standard_contracts = @import("standard_contracts.zig");
 const type_arguments = @import("../module/type_arguments.zig");
 const std = @import("std");
 const module_views = @import("../module/views.zig");
@@ -2675,7 +2674,7 @@ pub const Resolver = struct {
         if (index < conformance.operations.len)
             return self.graph.function_refs.items[conformance.operations.start + index];
         const method = try self.resolveOperationBody(conformance, index);
-        if (lifecycle_contracts.standardDeclaration(self.graph, "Deinit") == conformance.declaration)
+        if (standard_contracts.standardDeclaration(self.graph, "Deinit") == conformance.declaration)
             return self.makeDestructorOperation(method, try self.core.functionOutputType(method), conformance.source);
         return method;
     }
@@ -2848,7 +2847,7 @@ pub const Resolver = struct {
                     self.participant_conformance_failure = failure;
                     return;
                 }
-                if (lifecycle_contracts.standardDeclaration(self.graph, "Init") == conformance.declaration) {
+                if (standard_contracts.standardDeclaration(self.graph, "Init") == conformance.declaration) {
                     const required_inputs = global_types.fields(self.graph, input).?;
                     const required_outputs = global_types.fields(self.graph, output).?;
                     const arguments = self.graph.fields.items[required_inputs.start].ty;
@@ -2859,8 +2858,19 @@ pub const Resolver = struct {
                         return;
                     }
                     const result = self.graph.fields.items[required_outputs.start].ty;
-                    if (!self.graph.isTypeUnresolved(result) and !initializer_contract.resultMatchesTarget(self.graph, result, first)) {
+                    if (!self.graph.isTypeUnresolved(result) and !global_types.resultMatchesTarget(self.graph, result, first)) {
                         failure.reason = "Init.Result must be its participant type or one Errable containing that type";
+                        self.participant_conformance_failure = failure;
+                        return;
+                    }
+                }
+
+                if (standard_contracts.standardDeclaration(self.graph, "Convert") == conformance.declaration) {
+                    const required_outputs = global_types.fields(self.graph, output).?;
+                    const result = self.graph.fields.items[required_outputs.start].ty;
+                    const target = self.graph.generic_arguments.items[conformance.participants.start + 1].value.type;
+                    if (!self.graph.isTypeUnresolved(result) and !global_types.resultMatchesTarget(self.graph, result, target)) {
+                        failure.reason = "Convert.Result must be its target participant type or one Errable containing that type";
                         self.participant_conformance_failure = failure;
                         return;
                     }

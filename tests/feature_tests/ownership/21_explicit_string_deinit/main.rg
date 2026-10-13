@@ -27,7 +27,7 @@ implement Allocator#(CountingAllocator)(
             .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
         ) {
         storage ::= malloc(.size = size, .ffi = self&.ffi)
-        raw_addr :: UIntNative = UIntNative(.value = storage)
+        raw_addr :: UIntNative = storage | convert#(.to: UIntNative)(_)
         self&.alloc_count = self&.alloc_count + 1
         deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(
             .value = self

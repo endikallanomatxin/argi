@@ -15,7 +15,7 @@ main() -> (.status_code: Int32 = 0) := {
     all :: StringView = (.data = &bytes[0], .length = 8)
     trimmed ::= forward(.text = all).view
     if trimmed != "x" { abort }
-    if UIntNative(.value = trimmed.data) != UIntNative(.value = &bytes[6]) { abort }
+    if trimmed.data | convert#(.to: UIntNative)(_) != &bytes[6] | convert#(.to: UIntNative)(_) { abort }
     binary: [3]UInt8 = (32, 0, 32)
     zeros :: StringView = (.data = &binary[0], .length = 3)
     zero ::= trim(.self = zeros).view
