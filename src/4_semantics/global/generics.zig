@@ -543,16 +543,32 @@ pub const Resolver = struct {
         return global;
     }
 
-    // Record argument shapes retain scalar defaults without executing runtime
-    // expressions during type construction. Function interfaces materialize
+    // Record argument shapes retain scalar and payload-free choice defaults
+    // without executing runtime expressions. Function interfaces materialize
     // their complete defaults separately in their concrete binding context.
-    fn instantiateScalarFieldDefault(self: *Resolver, module_index: usize, id: ir.ParameterizedNodeId, ty: global_sg.GlobalTypeId, bindings: *Bindings) !?global_sg.GlobalNodeId {
+    fn instantiateConstantFieldDefault(self: *Resolver, module_index: usize, id: ir.ParameterizedNodeId, ty: global_sg.GlobalTypeId, bindings: *Bindings) !?global_sg.GlobalNodeId {
         if (try self.instantiateReachDefault(module_index, id)) |node| return node;
         const module = &self.modules[module_index];
         const node = module.semantic.parameterized_storage.ir.nodes.items[@intFromEnum(id)];
         const resolved = switch (node) {
             .resolved => |value| value,
-            else => return null,
+            .pending => |pending_id| {
+                const pending = module.semantic.parameterized_storage.ir.pending.items[@intFromEnum(pending_id)];
+                if (pending != .resolve_expression or pending.resolve_expression.kind != .choice_literal) return null;
+                const choice = pending.resolve_expression;
+                if (choice.operands.len != 0) return null;
+                const name = choice.name orelse return null;
+                _ = try self.ensureGenericInstance(ty);
+                const variant = global_types.findVariant(self.graph, ty, module.text(name)) orelse return null;
+                if (variant.variant.payload_type != null) return null;
+                const global: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.graph.nodes.items.len)));
+                try self.graph.nodes.append(self.allocator, .{
+                    .source = self.globalSource(module_index, choice.source),
+                    .ty = ty,
+                    .content = .{ .choice_literal = .{ .choice_type = ty, .variant = variant.id, .payload = null } },
+                });
+                return global;
+            },
         };
         const content: global_sg.Node.Content = switch (resolved.content) {
             .int_literal => |value| .{ .int_literal = value },
@@ -586,7 +602,7 @@ pub const Resolver = struct {
                 .ty = ty,
                 .storage_type = if (field.storage_type) |value| try self.instantiateParameterizedType(module_index, value, bindings) else null,
                 .source = self.globalSource(module_index, field.source),
-                .default_value = if (field.default_value) |value| try self.instantiateScalarFieldDefault(module_index, value, ty, bindings) else null,
+                .default_value = if (field.default_value) |value| try self.instantiateConstantFieldDefault(module_index, value, ty, bindings) else null,
             });
         }
         const start: u32 = @intCast(self.graph.fields.items.len);

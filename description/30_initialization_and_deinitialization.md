@@ -5,42 +5,47 @@ contains a value, and raw allocated bytes do not yet contain a `T`. A value
 becomes live only after it has been fully initialized. Reading it beforehand
 is an error.
 
-A constructor is declared as `T init(...)` and returns one complete `T`, or
-one `Errable#(T, R)` when construction can fail. Calling `T(...)`
-invokes that constructor. No uninitialized destination is passed into `init`;
-the successful value is returned directly or transferred into `..ok`. An error
-carries no constructed value. Ordinary ownership and automatic cleanup rules
+Canonical construction uses the standard `Init` contract. Its selected
+conformance defines an argument record and a result of `T` or `Errable#(T, R)`.
+Calling `T(...)` completes that record and invokes the selected `init` operation.
+No uninitialized destination is passed into it: the successful value is returned
+directly or transferred into `..ok`. Ordinary ownership and automatic cleanup
 apply to intermediate values on every exit.
 
 ```rg
-Point init(.x: Int32, .y: Int32) -> (.result: Point) := {
-    result = (.x = x, .y = y)
-}
+Point: Type = (.x: Int32, .y: Int32)
+implement Init#(Point) (
+    .Args: Type = (.x: Int32, .y: Int32 = 0)
+    .Result: Type = Point
+    .init = (.args: Args) -> (.result: Result) {
+        result = (.x = args.x, .y = args.y)
+    }
+)
+
+point ::= Point(.x = 10)
 ```
 
-The type before `init` names the nominal type declaration in the same module.
-It associates the constructor with that type, independently of its output.
-The association narrows the candidate set; input types select an overload
-within it. Output types do not distinguish overloads. A visible constructor
-owns construction even when its inputs do not match a particular call;
-callers cannot bypass it through automatic field-wise construction. Types
-without custom constructors can be initialized directly.
-
-Constructors declare their own compile-time parameters after `init`, exactly
-as ordinary functions do. The associated name identifies a type family;
-the returned type expresses its concrete generic arguments:
+Generic implementations declare their compile-time parameters after `implement`:
 
 ```rg
-Box init#(.t: Type)(.value: t) -> (.result: Box#(.t: t)) := {
-    result = (.value = value)
-}
+Box#(.T: Type): Type = (.value: T)
+implement#(.T: Type) Init#(Box#(T)) (
+    .Args: Type = (.value: T)
+    .Result: Type = Box#(T)
+    .init = (.args: Args) -> (.result: Result) { result = (.value = args.value) }
+)
 ```
 
-Parameters can be inferred from inputs or from an explicitly requested type
-such as `Box#(.t: Int32)(...)`. The requested type can bind constructor
-parameters but cannot select overloads distinguished only by return type.
-Additional constructor parameters follow ordinary inference and default rules;
-no parameters are implicitly introduced into the constructor's scope.
+The requested type, such as `Box#(Int32)`, selects the conformance. Argument or
+result mismatches do not select another conformance or bypass custom construction.
+Record defaults retain scalar literals, payload-free choice variants and lexical
+reach directives without executing runtime expressions during type materialization.
+The selected operation preserves argument loans and projected output dependencies.
+
+Types without custom construction can use structural initialization. Legacy
+`T init(...)` declarations remain available while their families migrate; mixing
+legacy initializers with `Init` for one family is rejected. Alternative factories
+use ordinary functions with distinct names.
 
 Custom destruction uses the standard `Deinit` contract. Its consuming operation
 receives a mutable reference and returns no values:

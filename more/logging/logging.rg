@@ -4,10 +4,10 @@ implement ImplicitlyCopyable#(LogLevel) ()
 
 LogReasons: Type = (..stream_write_failed, ..stream_flush_failed)
 
-Logger: Contract = (
-    log(.self: $&Self, .level: LogLevel, .message: StringView) -> (
+Logger#(.Value: Type): Contract = (
+    .log: (.self: $&Value, .level: LogLevel, .message: StringView) -> (
         .result : Errable#(Void, LogReasons)
-    )
+    ) where {}
 )
 
 _rank(.level: LogLevel) -> (.value: Int32) := {
@@ -53,29 +53,26 @@ _write_record(
 
 FileLogger#(.t: Type: Writer#(t)): Type = (._writer: $&t, .minimum: LogLevel)
 
-FileLogger#(.t: Type: Writer#(t)) satisfies Logger
+implement#(.t: Type: Writer#(t)) Init#(FileLogger#(.t: t)) (
+    .Args: Type = (.writer: $&t, .minimum: LogLevel = ..info)
+    .Result: Type = FileLogger#(.t: t)
+    .init = (.args: Args) -> (.result: Result) { result = (._writer = args.writer, .minimum = args.minimum) }
+)
 
-FileLogger init#(
+implement#(
         .t : Type: Writer#(t)
-    )(
-        .writer  : $&t,
-        .minimum : LogLevel = ..info
-    ) -> (
-        .result : FileLogger#(.t: t)
-    ) := { result = (._writer = writer, .minimum = minimum) }
-
-log#(
-        .t : Type: Writer#(t)
-    )(
+    ) Logger#(FileLogger#(.t: t)) (
+    .log = (
         .self    : $&FileLogger#(.t: t),
         .level   : LogLevel,
         .message : StringView
     ) -> (
         .result : Errable#(Void, LogReasons) = ..ok Void()
-    ) := {
-    if _rank(.level = level).value < _rank(.level = self&.minimum).value { return }
-    _write_record(.writer = self&._writer, .level = level, .message = message)!
-}
+    ) {
+        if _rank(.level = level).value < _rank(.level = self&.minimum).value { return }
+        _write_record(.writer = self&._writer, .level = level, .message = message)!
+    }
+)
 
 flush#(
         .t : Type: Writer#(t)
@@ -91,43 +88,39 @@ StdLogger#(.out: Type: Writer#(out), .err: Type: Writer#(err)): Type = (
     .minimum : LogLevel
 )
 
-StdLogger#(.out: Type: Writer#(out), .err: Type: Writer#(err)) satisfies Logger
+implement#(.out: Type: Writer#(out), .err: Type: Writer#(err)) Init#(StdLogger#(.out: out, .err: err)) (
+    .Args: Type = (.writer: $&out, .error_writer: $&err, .minimum: LogLevel = ..info)
+    .Result: Type = StdLogger#(.out: out, .err: err)
+    .init = (.args: Args) -> (.result: Result) { result = (._out = args.writer, ._err = args.error_writer, .minimum = args.minimum) }
+)
 
-StdLogger init#(
+implement#(
         .out : Type: Writer#(out),
         .err : Type: Writer#(err)
-    )(
-        .writer       : $&out,
-        .error_writer : $&err,
-        .minimum      : LogLevel = ..info
-    ) -> (
-        .result : StdLogger#(.out: out, .err: err)
-    ) := { result = (._out = writer, ._err = error_writer, .minimum = minimum) }
-
-log#(
-        .out : Type: Writer#(out),
-        .err : Type: Writer#(err)
-    )(
+    ) Logger#(StdLogger#(.out: out, .err: err)) (
+    .log = (
         .self    : $&StdLogger#(.out: out, .err: err),
         .level   : LogLevel,
         .message : StringView
     ) -> (
         .result : Errable#(Void, LogReasons) = ..ok Void()
-    ) := {
-    if _rank(.level = level).value < _rank(.level = self&.minimum).value { return }
-    if _rank(.level = level).value >= 2 {
-        _write_record(.writer = self&._err, .level = level, .message = message)!
-    } else { _write_record(.writer = self&._out, .level = level, .message = message)! }
-}
+    ) {
+        if _rank(.level = level).value < _rank(.level = self&.minimum).value { return }
+        if _rank(.level = level).value >= 2 {
+            _write_record(.writer = self&._err, .level = level, .message = message)!
+        } else { _write_record(.writer = self&._out, .level = level, .message = message)! }
+    }
+)
 
 NullLogger: Type = ()
 
-NullLogger satisfies Logger
-
-log(
+implement Logger#(NullLogger) (
+    .log = (
         .self    : $&NullLogger,
         .level   : LogLevel,
         .message : StringView
     ) -> (
         .result : Errable#(Void, LogReasons) = ..ok Void()
-    ) := {}
+    ) {
+    }
+)

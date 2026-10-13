@@ -133,7 +133,8 @@ legacy ordinary resolution.
   blocks structural fallback on argument mismatch and rejects legacy initializers
   of the same family. If incorrect, customization requires an explicit protocol
   extension; it never silently changes construction or ownership.
-- TODO: extend generic record defaults beyond scalar literals and reach directives
+- TODO: extend generic record defaults beyond scalar literals, payload-free choice
+  variants and reach directives
   through a caller-aware expression instantiation path. Do not execute effectful
   defaults while materializing types.
 
@@ -188,3 +189,33 @@ legacy ordinary resolution.
 
 - Validation: numeric classification and nominal ownership passed 1836 programs
   (11 skipped, no failures or leaks) and 374 compiler tests (1 skipped).
+
+- All bundled core/more destructor families now use Deinit, including generic
+  collections, path owners, buffered streams and optional Python owners. Generic
+  collection cleanup recursively destroys stored owners on success and error
+  exits. Explicit cleanup needs no separate allocator: Allocation retains its
+  selected deallocation evidence. Legacy allocator/generic call arguments were
+  removed from their consumers.
+- Consumption permits emptying owned opaque storage only after definite
+  destruction is proved. Borrowed referents, unrelated inputs, symbolic domains
+  and retention effects remain rejected. Outcome-selected consumption uses the
+  selected outcome's definite proof.
+- Validation: the bundled destruction run covered 1837 program cases (11 skipped).
+  One legacy fixture's unused allocator prevented nested element cleanup; after
+  removing that dependency its 93-case worker passed. The other workers passed,
+  and 376 compiler tests passed (1 skipped), with no leaks.
+- Generic Init argument shapes retain payload-free choice defaults. Matching
+  accepts already-equal scalar defaults while retaining range checks. Logger
+  construction now uses selected Args/Result evidence and preserves writer loans.
+- Logger has explicit Value participants and scoped static/virtual operations;
+  FileLogger, StdLogger and NullLogger no longer share a global log overload
+  family. Scalar classification also uses explicit participant conformances.
+- Numeric post-values may retain place-origin evidence without granting hidden
+  storage permissions. Exclude that evidence from the numeric occupancy check,
+  retaining it for identity checking and keeping resource effects constrained.
+  A reached capability used by array-element destruction is covered together
+  with rejection of consuming that capability's owned storage.
+
+- Validation: 230 contract/logging/more cases and 850 ownership,
+  polymorphism, collection and loop cases passed, with no failures or leaks.
+  All 376 compiler tests passed (1 skipped).

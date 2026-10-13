@@ -1,14 +1,14 @@
-Scalar: Contract = ()
+Scalar#(.Value: Type): Contract = ()
 
-Int8 satisfies Scalar
-Int16 satisfies Scalar
-Int32 satisfies Scalar
-Int64 satisfies Scalar
-UInt8 satisfies Scalar
-UInt16 satisfies Scalar
-UInt32 satisfies Scalar
-UInt64 satisfies Scalar
-UIntNative satisfies Scalar
-Float16 satisfies Scalar
-Float32 satisfies Scalar
-Float64 satisfies Scalar
+implement Scalar#(Int8) ()
+implement Scalar#(Int16) ()
+implement Scalar#(Int32) ()
+implement Scalar#(Int64) ()
+implement Scalar#(UInt8) ()
+implement Scalar#(UInt16) ()
+implement Scalar#(UInt32) ()
+implement Scalar#(UInt64) ()
+implement Scalar#(UIntNative) ()
+implement Scalar#(Float16) ()
+implement Scalar#(Float32) ()
+implement Scalar#(Float64) ()

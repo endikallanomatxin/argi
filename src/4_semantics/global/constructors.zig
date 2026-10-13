@@ -286,7 +286,7 @@ pub const Resolver = struct {
             if (self.core.callArgumentNamed(literal, position, self.graph.text(field.name)) != null) continue;
             const default = field.default_value orelse continue;
             const default_type = self.graph.node(default).ty orelse continue;
-            if (!self.core.callTypesCompatible(default_type, field.ty) and !self.core.contextualLiteralFits(default, field.ty)) {
+            if (!types.equal(self.graph, default_type, field.ty) and !self.core.callTypesCompatible(default_type, field.ty) and !self.core.contextualLiteralFits(default, field.ty)) {
                 try self.reportConstructorError(source, "default value is incompatible with its selected Init.Args field type");
                 return error.InvalidInitializerArguments;
             }

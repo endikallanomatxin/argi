@@ -601,7 +601,12 @@ pub const Infer = struct {
                 },
                 else => false,
             };
-            if (numeric_contents and facts.isEmptyValue(state.value))
+            // Numeric place origins retain selector evidence, not hidden
+            // lifetime or acquisition permissions. Keep them on the post-value
+            // for identity checking, but exclude them from this occupancy test.
+            var content_permissions = state.value;
+            content_permissions.input_place_values = &.{};
+            if (numeric_contents and facts.isEmptyValue(content_permissions))
                 state.may_repopulate_opaque_storage = false;
             // Scalar receiver fields are implementation details, not fields of
             // the erased Virtual handle. They carry no published borrow state.

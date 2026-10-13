@@ -12588,3 +12588,30 @@ test "feature_tests/contracts/220_deinit_collection_elements" {
     try expectSuccessfulBuild("tests/feature_tests/contracts/220_deinit_collection_elements");
     try run("tests/feature_tests/contracts/220_deinit_collection_elements");
 }
+
+test "feature_tests/contracts/221_init_generic_choice_defaults" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/221_init_generic_choice_defaults");
+    try run("tests/feature_tests/contracts/221_init_generic_choice_defaults");
+}
+
+test "feature_tests/contracts/222X_init_generic_default_out_of_range" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/222X_init_generic_default_out_of_range", "default value is incompatible with its selected Init.Args field type");
+}
+
+test "feature_tests/contracts/223_deinit_collection_reached_capability" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/223_deinit_collection_reached_capability");
+    try run("tests/feature_tests/contracts/223_deinit_collection_reached_capability");
+}
+
+test "feature_tests/contracts/224X_deinit_reached_capability_consumes_storage" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/224X_deinit_reached_capability_consumes_storage", "a storage transition is not permitted by this preservation contract");
+}
+
+test "feature_tests/logging/02_scoped_loggers" {
+    try expectSuccessfulBuild("tests/feature_tests/logging/02_scoped_loggers");
+    try run("tests/feature_tests/logging/02_scoped_loggers");
+}
+
+test "feature_tests/logging/03X_logger_writer_lifetime" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/logging/03X_logger_writer_lifetime", "function output cannot depend on a local storage generation that ends before return");
+}
