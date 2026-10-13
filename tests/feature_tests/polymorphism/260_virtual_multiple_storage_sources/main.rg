@@ -4,7 +4,11 @@ Tracked: Type = (.drops: $&Int32)
 
 Pair: Type = (.first: Tracked, .second: Tracked)
 
-Tracked deinit(.self: $&Tracked) -> () := { self&.drops&= self&.drops&+ 1 }
+implement Deinit#(Tracked) (
+    .deinit = (.self: $&Tracked) -> () {
+        self&.drops&= self&.drops&+ 1
+    }
+)
 
 Slots: Type = ()
 

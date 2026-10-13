@@ -7,7 +7,11 @@ implement Init#(Resource, ()) (
     }
 )
 
-Resource deinit(.res: $&Resource) -> () := {}
+implement Deinit#(Resource) (
+    .deinit = (.self: $&Resource) -> () {
+
+    }
+)
 
 main() -> (.status_code: Int32) := {
     first := Resource()

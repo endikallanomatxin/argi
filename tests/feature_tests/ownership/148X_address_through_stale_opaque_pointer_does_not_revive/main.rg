@@ -3,8 +3,11 @@ Value : Type = (
     .number: UInt8
 )
 
-Value deinit(.self: $&Value) -> () := {
-}
+implement Deinit#(Value) (
+    .deinit = (.self: $&Value) -> () {
+
+    }
+)
 
 main(.system: System) -> (.status_code: Int32) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)

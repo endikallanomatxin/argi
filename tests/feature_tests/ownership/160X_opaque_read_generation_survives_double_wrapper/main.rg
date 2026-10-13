@@ -5,8 +5,11 @@ Borrowing : Type = (
 
 external :: UInt8 = 7
 
-Borrowing deinit(.self: $&Borrowing) -> () := {
-}
+implement Deinit#(Borrowing) (
+    .deinit = (.self: $&Borrowing) -> () {
+
+    }
+)
 
 extract_inner(.slot: $&Borrowing) -> (.result: $&UInt8) := {
     result = slot&.reference

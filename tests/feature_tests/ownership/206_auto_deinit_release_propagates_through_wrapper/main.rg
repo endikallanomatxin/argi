@@ -3,11 +3,17 @@ Borrowing : Type = (.reference: $&UInt8)
 Container : Type = (.marker: UInt8)
 Domain : Type = (.storage: $&Container)
 
-Borrowing deinit(.self: $&Borrowing) -> () := {}
+implement Deinit#(Borrowing) (
+    .deinit = (.self: $&Borrowing) -> () {
 
-Domain deinit(.self: $&Domain) -> () := {
-    trusted_opaque_mark_empty(.storage = self&.storage)
-}
+    }
+)
+
+implement Deinit#(Domain) (
+    .deinit = (.self: $&Domain) -> () {
+        trusted_opaque_mark_empty(.storage = self&.storage)
+    }
+)
 
 release_on_exit(.storage: $&Container) -> () := {
     domain ::= Domain(.storage = storage)

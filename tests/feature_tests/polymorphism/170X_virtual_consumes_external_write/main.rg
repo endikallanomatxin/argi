@@ -8,10 +8,12 @@ Manager implements Releaser
 
 Resource: Type = (.external: $&Int32)
 
-Resource deinit(.self: $&Resource) -> () := {
-    self&.external&= 42
-    drops = drops + 1
-}
+implement Deinit#(Resource) (
+    .deinit = (.self: $&Resource) -> () {
+        self&.external&= 42
+        drops = drops + 1
+    }
+)
 
 drops :: Int32 = 0
 

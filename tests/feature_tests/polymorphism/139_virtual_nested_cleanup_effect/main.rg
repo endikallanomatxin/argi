@@ -8,7 +8,11 @@ Cell implements Action
 
 Change: Type = (.target: $&Int32)
 
-Change deinit(.self: $&Change) -> () := { self&.target&= 42 }
+implement Deinit#(Change) (
+    .deinit = (.self: $&Change) -> () {
+        self&.target&= 42
+    }
+)
 
 run(.self: &Cell, .target: $&Int32) -> () := {
     if true {

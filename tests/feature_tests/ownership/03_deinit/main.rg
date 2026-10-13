@@ -20,11 +20,13 @@ implement Init#(Resource, (.counter: $&Int32, .status: $&Int32)) (
     }
 )
 
-Resource deinit(.res: $&Resource) -> () := {
-    puts(.string="Deinitializing resource\n")
-    global_counter_ptr& = global_counter_ptr& + 1
-    global_status_ptr& = 0
-}
+implement Deinit#(Resource) (
+    .deinit = (.self: $&Resource) -> () {
+        puts(.string="Deinitializing resource\n")
+        global_counter_ptr& = global_counter_ptr& + 1
+        global_status_ptr& = 0
+    }
+)
 
 verify(.counter: $&Int32, .status: $&Int32) -> () := {
     puts(.string="Verifying resource\n")

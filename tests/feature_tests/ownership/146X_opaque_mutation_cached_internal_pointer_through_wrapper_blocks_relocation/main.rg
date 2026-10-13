@@ -3,8 +3,11 @@ AddressSensitive : Type = (
     .next: Nullable#(.t: $&UInt8)
 )
 
-AddressSensitive deinit(.self: $&AddressSensitive) -> () := {
-}
+implement Deinit#(AddressSensitive) (
+    .deinit = (.self: $&AddressSensitive) -> () {
+
+    }
+)
 
 set_next(.slot: $&AddressSensitive, .target: $&UInt8) -> () := {
     slot&.next = ..some(.value = target)

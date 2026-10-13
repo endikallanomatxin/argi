@@ -158,8 +158,9 @@ Strictly less specific candidates are discarded; equivalent and incomparable
 maximal candidates are ambiguous. Integer substitutions preserve repeated array-length equalities across participants.
 Nominal application patterns match declaration identities and recursively bind
 type and integer arguments in declaration order, including named arguments.
-Symbolic arithmetic equivalence and other structural patterns remain pending. Standard construction, conversion, destruction
-and operator migration, composition and joint virtual evidence remain pending.
+Symbolic arithmetic equivalence and other structural patterns remain pending.
+Construction and destruction use Init and Deinit; conversion and operator
+migration, composition and joint virtual evidence remain pending.
 Unbound unary contracts with explicit participants and no associated parameters
 can construct virtual handles using selected implementation evidence. Qualified
 unary calls use `Contract#().operation(...)`; a concrete input infers the
@@ -302,11 +303,14 @@ structural cleanup share that route. A lifecycle wrapper gives the selected
 operation destruction semantics without changing a reused ordinary function.
 Optional/reached capability inputs still propagate through tracked calls.
 
-The first bundled Deinit migrations include allocation receipts and backing
+Bundled Deinit implementations include allocation receipts and backing
 allocations, arena owners/domains, collection shape markers, fixed tracers, native
 process/network/directory owners, terminal endpoints, atomic cells and cancellation
-sources. The old declarations of those families are removed. Mixed legacy/scoped
-cleanup is rejected. Bundled generic collection destructors now use the stored
+sources. All bundled core, official more and compiler fixture destructor
+declarations use Deinit. The old syntax, nominal associations, family indexes
+and ordinary-function fallback have been removed. A negative fixture checks the
+migration diagnostic. Ordinary function names confer no destruction semantics.
+Bundled generic collection destructors use the stored
 deallocation evidence without separate allocator inputs.
 
 Even an empty destructor requires an initialized owner. Unknown pointer inputs

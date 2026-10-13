@@ -199,29 +199,6 @@ fn printStats(
     std.debug.print("      implicit destructors:    {d:.3} ms ({d} lookups)\n", .{
         milliseconds(semantic_timings.implicit_destructor_ns), semantic.destructor_lookups,
     });
-    std.debug.print("      generic lookup:          {d:.3} ms\n", .{milliseconds(semantic_timings.implicit_generic_lookup_ns)});
-    const implicit = semantic.implicit_lookup;
-    std.debug.print("  implicit function lookup (matching time excludes completion):\n", .{});
-    std.debug.print("    ordinary: {d:.3} ms, {d} calls, {d} resolved, {d} deferred, {d} no match, {d} ambiguous\n", .{
-        milliseconds(implicit.ordinary_matching_ns), implicit.ordinary_calls,
-        implicit.ordinary_resolved,                  implicit.ordinary_deferred,
-        implicit.ordinary_no_match,                  implicit.ordinary_ambiguous,
-    });
-    std.debug.print("    abstract-compatible: {d:.3} ms, {d} calls, {d} resolved, {d} deferred, {d} no match, {d} ambiguous\n", .{
-        milliseconds(implicit.abstract_compatible_matching_ns), implicit.abstract_compatible_calls,
-        implicit.abstract_compatible_resolved,                  implicit.abstract_compatible_deferred,
-        implicit.abstract_compatible_no_match,                  implicit.abstract_compatible_ambiguous,
-    });
-    std.debug.print("    generic: {d:.3} ms, {d} calls, {d} resolved, {d} deferred, {d} no match, {d} ambiguous\n", .{
-        milliseconds(implicit.generic_matching_ns), implicit.generic_calls,
-        implicit.generic_resolved,                  implicit.generic_deferred,
-        implicit.generic_no_match,                  implicit.generic_ambiguous,
-    });
-    std.debug.print("    completion: {d:.3} ms, {d} calls, {d} deferred\n", .{
-        milliseconds(implicit.ordinary_completion_ns + implicit.abstract_compatible_completion_ns + implicit.generic_completion_ns),
-        implicit.ordinary_completion_calls + implicit.abstract_compatible_completion_calls + implicit.generic_completion_calls,
-        implicit.ordinary_completion_deferred + implicit.abstract_compatible_completion_deferred + implicit.generic_completion_deferred,
-    });
     const destructor = semantic.ownership;
     std.debug.print("  destructor resolution: {d} success, {d} failed\n", .{
         destructor.destructor_successes, destructor.destructor_failures,

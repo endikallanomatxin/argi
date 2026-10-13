@@ -4,7 +4,11 @@ View: Abstract = (
 
 Cell: Type = (.value: Int32)
 
-Cell deinit(.self: $&Cell) -> () := {}
+implement Deinit#(Cell) (
+    .deinit = (.self: $&Cell) -> () {
+
+    }
+)
 
 Holder: Type = (.cell: Cell)
 

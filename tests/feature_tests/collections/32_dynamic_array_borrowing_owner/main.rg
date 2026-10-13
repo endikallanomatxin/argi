@@ -8,11 +8,13 @@ BorrowingOwner : Type = (
 first_drops :: Int32 = 0
 second_drops :: Int32 = 0
 
-BorrowingOwner deinit(.self: $&BorrowingOwner) -> () := {
-    if self&.id == 1 { first_drops = first_drops + 1 }
-    if self&.id == 2 { second_drops = second_drops + 1 }
-    deinit(.self = $&self&.allocation)
-}
+implement Deinit#(BorrowingOwner) (
+    .deinit = (.self: $&BorrowingOwner) -> () {
+        if self&.id == 1 { first_drops = first_drops + 1 }
+        if self&.id == 2 { second_drops = second_drops + 1 }
+        deinit(.self = $&self&.allocation)
+    }
+)
 
 main(.system: System) -> (.status_code: Int32 = 0) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)

@@ -1,7 +1,10 @@
 Marker : Type = (.value: Int32)
 
-Marker deinit(.self: $&Marker) -> () := {
-}
+implement Deinit#(Marker) (
+    .deinit = (.self: $&Marker) -> () {
+
+    }
+)
 
 main() -> (.status_code: Int32) := {
     source :: Marker = (.value = 1)

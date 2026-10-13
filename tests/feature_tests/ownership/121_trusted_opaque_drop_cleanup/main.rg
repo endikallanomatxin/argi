@@ -5,17 +5,19 @@ first_drops :: Int32 = 0
 second_drops :: Int32 = 0
 third_drops :: Int32 = 0
 
-Tracked deinit(.self: $&Tracked) -> () := {
-    if self&.id == 1 {
-        first_drops = first_drops + 1
+implement Deinit#(Tracked) (
+    .deinit = (.self: $&Tracked) -> () {
+        if self&.id == 1 {
+            first_drops = first_drops + 1
+        }
+        if self&.id == 2 {
+            second_drops = second_drops + 1
+        }
+        if self&.id == 3 {
+            third_drops = third_drops + 1
+        }
     }
-    if self&.id == 2 {
-        second_drops = second_drops + 1
-    }
-    if self&.id == 3 {
-        third_drops = third_drops + 1
-    }
-}
+)
 
 store_wrapper(.slot: $&Tracked, .value: Tracked) -> () := {
     trusted_opaque_move#(.t: Tracked)(.destination = slot, .source = ~value)

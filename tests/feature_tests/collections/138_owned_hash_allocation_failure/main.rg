@@ -10,13 +10,21 @@ Tracked: Type = (.id: Int32)
 
 drops :: Int32 = 0
 
-Tracked deinit(.self: $&Tracked) -> () := { drops = drops + 1 }
+implement Deinit#(Tracked) (
+    .deinit = (.self: $&Tracked) -> () {
+        drops = drops + 1
+    }
+)
 
 Policy: Type = ()
 
 policy_drops :: UIntNative = 0
 
-Policy deinit(.self: $&Policy) -> () := { policy_drops = policy_drops + 1 }
+implement Deinit#(Policy) (
+    .deinit = (.self: $&Policy) -> () {
+        policy_drops = policy_drops + 1
+    }
+)
 
 implement BorrowedHashPolicy#(Policy, Int32)(
     .hash = (.self: &Policy, .key: &Int32) -> (.hash: UIntNative) { hash = 0 }

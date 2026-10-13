@@ -2865,22 +2865,7 @@ pub const Resolver = struct {
                         return;
                     }
                 }
-                if (lifecycle_contracts.standardDeclaration(self.graph, "Deinit") == conformance.declaration) {
-                    const owner = switch (self.graph.semanticType(first)) {
-                        .declared => |id| id,
-                        .generic => |identity| identity.base,
-                        else => null,
-                    };
-                    if (owner) |family| {
-                        if ((try self.graph.destructorsFor(self.allocator, family)).len != 0 or
-                            (try self.graph.parameterizedDestructorsFor(self.allocator, self.modules, family)).len != 0)
-                        {
-                            failure.reason = "type declares both Deinit and legacy destructors; migrate its cleanup to Deinit";
-                            self.participant_conformance_failure = failure;
-                            return;
-                        }
-                    }
-                }
+
                 try self.recordStaticSafetyContract(located, requirement, &bindings, first, selected.function, output, failure.source);
                 try operations.append(self.allocator, selected.function);
             }

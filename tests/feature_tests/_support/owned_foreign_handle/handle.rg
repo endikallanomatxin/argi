@@ -40,9 +40,11 @@ read(.self: &OwnedHandle) -> (.value: CInt) := {
     value = _read(.handle = self&._handle, .ffi = self&._ffi)
 }
 
-OwnedHandle deinit(.self: $&OwnedHandle) -> () := {
-    _destroy(.handle = self&._handle, .ffi = self&._ffi)
-}
+implement Deinit#(OwnedHandle) (
+    .deinit = (.self: $&OwnedHandle) -> () {
+        _destroy(.handle = self&._handle, .ffi = self&._ffi)
+    }
+)
 
 GenericHandle#(.t: Type) : Type = (
     ._handle: RawPointer#(.t: ForeignHandle)
@@ -68,6 +70,8 @@ implement#(.t: Type) Init#(GenericHandle#(.t: t), (.tag: t, .ffi: $&ForeignFunct
     }
 )
 
-GenericHandle deinit#(.t: Type)(.self: $&GenericHandle#(.t: t)) -> () := {
-    _destroy(.handle = self&._handle, .ffi = self&._ffi)
-}
+implement#(.t: Type) Deinit#(GenericHandle#(.t: t)) (
+    .deinit = (.self: $&GenericHandle#(.t: t)) -> () {
+        _destroy(.handle = self&._handle, .ffi = self&._ffi)
+    }
+)

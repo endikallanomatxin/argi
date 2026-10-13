@@ -2,10 +2,12 @@ Large: Type = (.reference: &Int32, .values: [128]Int32)
 
 drops :: Int32 = 0
 
-Large deinit(.self: $&Large) -> () := {
-    if self&.reference&!= 31 { abort }
-    drops = drops + 1
-}
+implement Deinit#(Large) (
+    .deinit = (.self: $&Large) -> () {
+        if self&.reference&!= 31 { abort }
+        drops = drops + 1
+    }
+)
 
 make(.reference: &Int32) -> (.result: Large) := {
     result = Large(reference, zeroed#([128]Int32)())

@@ -1,6 +1,10 @@
 Resource: Type = (.value: Int32)
 
-Resource deinit(.self: $&Resource) -> () := {}
+implement Deinit#(Resource) (
+    .deinit = (.self: $&Resource) -> () {
+
+    }
+)
 
 transfer_if(.source: $&Resource, .destination: $&Resource, .move: Bool) -> (.result: ?Int32) := {
     if move { relocate(source, destination) }

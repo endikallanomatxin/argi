@@ -5,10 +5,12 @@ Tracked : Type = (
 
 drops :: Int32 = 0
 
-Tracked deinit(.self: $&Tracked) -> () := {
-    drops = drops + 1
-    deinit(.self = $&self&.allocation)
-}
+implement Deinit#(Tracked) (
+    .deinit = (.self: $&Tracked) -> () {
+        drops = drops + 1
+        deinit(.self = $&self&.allocation)
+    }
+)
 
 make_tracked(.allocator: $&Allocator, .id: Int32) -> (.result: Errable#(.t: Tracked, .reasons: (..out_of_memory))) := {
     assume allocator

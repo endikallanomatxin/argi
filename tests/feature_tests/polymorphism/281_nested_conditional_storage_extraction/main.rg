@@ -4,7 +4,11 @@ Tracked: Type = (.drops: $&Int32)
 
 NestedResult: Type = (..some ?Tracked, ..none)
 
-Tracked deinit(.self: $&Tracked) -> () := { self&.drops&= self&.drops&+ 1 }
+implement Deinit#(Tracked) (
+    .deinit = (.self: $&Tracked) -> () {
+        self&.drops&= self&.drops&+ 1
+    }
+)
 
 SlotProtocol: Abstract = (
     domain contents

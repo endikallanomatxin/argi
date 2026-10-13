@@ -4,7 +4,11 @@ drops :: Int32 = 0
 
 Owner: Type = (.value: Int32)
 
-Owner deinit(.self: $&Owner) -> () := { drops = drops + 1 }
+implement Deinit#(Owner) (
+    .deinit = (.self: $&Owner) -> () {
+        drops = drops + 1
+    }
+)
 
 fail() -> (.result: Errable#(Void, (..failure))) := {
     result = ..error(.reason = ..failure)

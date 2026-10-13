@@ -4,12 +4,12 @@ Pair : Type = (
     .stable: String
 )
 
-Pair deinit(.self: $&Pair, .allocator: $&Allocator) -> () := {
-    assume allocator
-
-    deinit(.self = $&self&.changing)
-    deinit(.self = $&self&.stable)
-}
+implement Deinit#(Pair) (
+    .deinit = (.self: $&Pair) -> () {
+            deinit(.self = $&self&.changing)
+        deinit(.self = $&self&.stable)
+    }
+)
 
 main(.system: System) -> (.status_code: Int32 = 0) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
@@ -39,5 +39,5 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         status_code = 2
         return
     }
-    deinit(.self = $&pair, .allocator = $&allocator_storage)
+    deinit(.self = $&pair)
 }

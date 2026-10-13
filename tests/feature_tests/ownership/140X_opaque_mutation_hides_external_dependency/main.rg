@@ -3,8 +3,11 @@ AddressSensitive : Type = (
     .reference: Nullable#(.t: $&UInt8)
 )
 
-AddressSensitive deinit(.self: $&AddressSensitive) -> () := {
-}
+implement Deinit#(AddressSensitive) (
+    .deinit = (.self: $&AddressSensitive) -> () {
+
+    }
+)
 
 main(.system: System) -> (.status_code: Int32) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)

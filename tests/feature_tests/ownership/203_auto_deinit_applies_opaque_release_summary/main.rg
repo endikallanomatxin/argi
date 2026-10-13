@@ -3,11 +3,17 @@ Borrowing : Type = (.reference: $&UInt8)
 
 Container : Type = (.marker: UInt8)
 
-Borrowing deinit(.self: $&Borrowing) -> () := {}
+implement Deinit#(Borrowing) (
+    .deinit = (.self: $&Borrowing) -> () {
 
-Container deinit(.self: $&Container) -> () := {
-    trusted_opaque_mark_empty(.storage = self)
-}
+    }
+)
+
+implement Deinit#(Container) (
+    .deinit = (.self: $&Container) -> () {
+        trusted_opaque_mark_empty(.storage = self)
+    }
+)
 
 main(.system: System) -> (.status_code: Int32) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)

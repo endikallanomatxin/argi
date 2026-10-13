@@ -198,7 +198,6 @@ fn appendDeclarations(allocator: std.mem.Allocator, result: *global_sg.GlobalSem
             .struct_fields = if (value.struct_fields) |range| relocateEntityRange(global_sg.GlobalFieldId, o.field_base, range) else null,
             .choice_variants = if (value.choice_variants) |range| relocateEntityRange(global_sg.GlobalVariantId, o.variant_base, range) else null,
             .generic_parameter_count = value.generic_parameter_count,
-            .destructor_type = if (value.destructor_type) |id| globalDecl(o, id) else null,
             .struct_layout = value.struct_layout,
             .choice_layout = value.choice_layout,
         });

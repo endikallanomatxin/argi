@@ -32,10 +32,6 @@ pub const Resolver = struct {
     offsets: []const globalizer.Offsets,
     profile_io: ?std.Io = null,
     stats: Stats = .{},
-    // Automatic cleanup supplies its nominal family; explicit calls continue
-    // to use ordinary input dispatch. Restore this around nested resolution.
-    destructor_owner: ?global_sg.GlobalDeclId = null,
-
     // Instantiated bodies and cleanup calls have no module pending operation
     // to revisit when a callee gains a transitive reached input. Retain their
     // lexical context until the signatures reach the semantizing fixed point.
@@ -453,10 +449,7 @@ pub const Resolver = struct {
         var best_score: u32 = 0;
         var tied = false;
         var saw_deferred = false;
-        const candidates = if (std.mem.eql(u8, name, "deinit") and self.destructor_owner != null)
-            try self.graph.destructorsFor(self.allocator, self.destructor_owner.?)
-        else
-            try self.graph.functionsNamed(self.allocator, name);
+        const candidates = try self.graph.functionsNamed(self.allocator, name);
         for (candidates) |id| {
             const function = self.graph.functions.items[@intFromEnum(id)];
             if (function.flags.is_abstract_dispatch or function.flags.is_c_function_pointer) continue;
@@ -497,10 +490,7 @@ pub const Resolver = struct {
         var best_score: u32 = 0;
         var tied = false;
         var saw_deferred = false;
-        const candidates = if (std.mem.eql(u8, name, "deinit") and self.destructor_owner != null)
-            try self.graph.destructorsFor(self.allocator, self.destructor_owner.?)
-        else
-            try self.graph.functionsNamed(self.allocator, name);
+        const candidates = try self.graph.functionsNamed(self.allocator, name);
         for (candidates) |id| {
             const function = self.graph.functions.items[@intFromEnum(id)];
             if (function.flags.is_abstract_dispatch or function.flags.is_c_function_pointer) continue;

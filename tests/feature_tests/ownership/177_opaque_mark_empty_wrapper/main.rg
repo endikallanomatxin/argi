@@ -3,8 +3,11 @@ Borrowing : Type = (
     .reference: $&UInt8
 )
 
-Borrowing deinit(.self: $&Borrowing) -> () := {
-}
+implement Deinit#(Borrowing) (
+    .deinit = (.self: $&Borrowing) -> () {
+
+    }
+)
 
 release_storage(.storage: $&Allocation) -> () := {
     trusted_opaque_mark_empty(.storage = storage)

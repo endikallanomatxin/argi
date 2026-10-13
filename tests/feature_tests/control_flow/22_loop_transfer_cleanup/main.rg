@@ -2,7 +2,11 @@ Tracked: Type = ()
 
 drops :: Int32 = 0
 
-Tracked deinit(.self: $&Tracked) -> () := { drops = drops + 1 }
+implement Deinit#(Tracked) (
+    .deinit = (.self: $&Tracked) -> () {
+        drops = drops + 1
+    }
+)
 
 main() -> (.status_code: Int32 = 0) := {
     while true {

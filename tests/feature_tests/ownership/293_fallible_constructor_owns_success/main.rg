@@ -26,9 +26,11 @@ implement#(.AllocatorProvider: Type: Allocator) Init#(Owned, (.allocator: $&Allo
     }
 )
 
-Owned deinit(.self: $&Owned) -> () := {
-    deinit(.self = $&self&.allocation)
-}
+implement Deinit#(Owned) (
+    .deinit = (.self: $&Owned) -> () {
+        deinit(.self = $&self&.allocation)
+    }
+)
 
 main(.system: System) -> (.status_code: Int32 = 0) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)

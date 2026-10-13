@@ -2,7 +2,11 @@ BackingAllocator: Type = (
     .page : $&PageAllocator
 )
 
-BackingAllocator deinit(.self: $&BackingAllocator) -> () := {}
+implement Deinit#(BackingAllocator) (
+    .deinit = (.self: $&BackingAllocator) -> () {
+
+    }
+)
 
 main(.system: System) -> (.status_code: Int32) := {
     backing ::= BackingAllocator(.page = system.page_allocator)

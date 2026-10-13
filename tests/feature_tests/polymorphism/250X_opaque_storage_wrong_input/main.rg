@@ -6,7 +6,11 @@ Store: Abstract = (
 
 Tracked: Type = (.reference: &Int32)
 
-Tracked deinit(.self: $&Tracked) -> () := {}
+implement Deinit#(Tracked) (
+    .deinit = (.self: $&Tracked) -> () {
+
+    }
+)
 
 Cell: Type = ()
 

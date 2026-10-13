@@ -15,9 +15,11 @@ Consuming implements OpaqueStorer
 
 drops :: Int32 = 0
 
-Tracked deinit(.self: $&Tracked) -> () := {
-    drops = drops + 1
-}
+implement Deinit#(Tracked) (
+    .deinit = (.self: $&Tracked) -> () {
+        drops = drops + 1
+    }
+)
 
 store(.self: $&Keeping, .storage: $&Allocation, .slot: $&Tracked, .source: $&Tracked) -> () := {}
 

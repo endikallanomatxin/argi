@@ -2,7 +2,11 @@ unsafe_allocation := import ("../../_support/unsafe_allocation")
 
 Tracked: Type = (.drops: $&Int32)
 
-Tracked deinit(.self: $&Tracked) -> () := { self&.drops&= self&.drops&+ 1 }
+implement Deinit#(Tracked) (
+    .deinit = (.self: $&Tracked) -> () {
+        self&.drops&= self&.drops&+ 1
+    }
+)
 
 SlotProtocol: Abstract = (
     domain left

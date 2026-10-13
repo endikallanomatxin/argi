@@ -4,7 +4,11 @@ Resource: Type = (.value: Int32)
 
 drops :: Int32 = 0
 
-Resource deinit(.self: $&Resource) -> () := { drops = drops + 1 }
+implement Deinit#(Resource) (
+    .deinit = (.self: $&Resource) -> () {
+        drops = drops + 1
+    }
+)
 
 Releaser: Abstract = (
     release(.self: &Self, .resource: $&Resource, .mode: Selection) -> (.value: Int32) where {

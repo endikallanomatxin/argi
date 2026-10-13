@@ -11,7 +11,11 @@ Manager: Type = (.unused: Int32)
 
 Manager implements Releaser
 
-Resource deinit(.self: $&Resource) -> () := {}
+implement Deinit#(Resource) (
+    .deinit = (.self: $&Resource) -> () {
+
+    }
+)
 
 release(.self: &Manager, .resource: $&Resource, .consume: Bool) -> (.result: ?Int32) := {
     if consume {

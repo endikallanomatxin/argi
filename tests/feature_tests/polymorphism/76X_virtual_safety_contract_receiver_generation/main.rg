@@ -4,7 +4,11 @@ Source: Abstract = (
 
 Resource: Type = (.value: Int32)
 
-Resource deinit(.self: $&Resource) -> () := {}
+implement Deinit#(Resource) (
+    .deinit = (.self: $&Resource) -> () {
+
+    }
+)
 
 Cell: Type = (.resource: Resource)
 

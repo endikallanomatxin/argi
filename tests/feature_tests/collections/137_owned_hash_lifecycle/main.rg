@@ -4,11 +4,19 @@ key_drops :: Int32 = 0
 value_drops :: Int32 = 0
 policy_drops :: Int32 = 0
 
-Tracked deinit(.self: $&Tracked) -> () := { value_drops = value_drops + 1 }
+implement Deinit#(Tracked) (
+    .deinit = (.self: $&Tracked) -> () {
+        value_drops = value_drops + 1
+    }
+)
 
 Key: Type = (.id: Int32)
 
-Key deinit(.self: $&Key) -> () := { key_drops = key_drops + 1 }
+implement Deinit#(Key) (
+    .deinit = (.self: $&Key) -> () {
+        key_drops = key_drops + 1
+    }
+)
 
 Policy: Type = ()
 
@@ -20,7 +28,11 @@ implement BorrowedHashPolicy#(Policy, Key)(
     }
 )
 
-Policy deinit(.self: $&Policy) -> () := { policy_drops = policy_drops + 1 }
+implement Deinit#(Policy) (
+    .deinit = (.self: $&Policy) -> () {
+        policy_drops = policy_drops + 1
+    }
+)
 
 run_main(.system: System) -> !Void = ..ok Void() := {
     assume allocator := system.page_allocator

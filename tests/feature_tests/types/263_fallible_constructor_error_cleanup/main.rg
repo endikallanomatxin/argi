@@ -1,5 +1,9 @@
 Widget : Type = (.cleanups: $&Int32)
-Widget deinit(.self: $&Widget) -> () := { self&.cleanups& = self&.cleanups& + 1 }
+implement Deinit#(Widget) (
+    .deinit = (.self: $&Widget) -> () {
+        self&.cleanups& = self&.cleanups& + 1
+    }
+)
 
 implement Init#(Widget, (.cleanups: $&Int32)) (
     .Result: Type = Errable#(.t: Widget, .reasons: (..rejected))

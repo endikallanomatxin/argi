@@ -9,7 +9,11 @@ Tracked: Type = (.id: Int32)
 
 drops :: Int32 = 0
 
-Tracked deinit(.self: $&Tracked) -> () := { drops = drops + 1 }
+implement Deinit#(Tracked) (
+    .deinit = (.self: $&Tracked) -> () {
+        drops = drops + 1
+    }
+)
 
 run_main(.system: System) -> !Void = ..ok Void() := {
     allocator :: RecordingAllocator = (.ffi = system.ffi)

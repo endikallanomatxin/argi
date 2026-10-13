@@ -8,9 +8,11 @@ Cell implements Factory
 
 Owned: Type = (.value: Int32)
 
-Owned deinit(.self: $&Owned) -> () := {
-    drops = drops + 1
-}
+implement Deinit#(Owned) (
+    .deinit = (.self: $&Owned) -> () {
+        drops = drops + 1
+    }
+)
 
 drops :: Int32 = 0
 

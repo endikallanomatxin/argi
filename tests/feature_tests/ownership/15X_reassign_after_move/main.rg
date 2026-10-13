@@ -7,7 +7,11 @@ implement Init#(Resource, ()) (
     }
 )
 
-Resource deinit(.res: $&Resource) -> () := {}
+implement Deinit#(Resource) (
+    .deinit = (.self: $&Resource) -> () {
+
+    }
+)
 
 consume(.res: Resource) -> (.status_code: Int32) := {
     status_code = 0

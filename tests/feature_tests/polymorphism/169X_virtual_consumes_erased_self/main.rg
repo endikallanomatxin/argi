@@ -6,7 +6,11 @@ Manager: Type = (.unused: Int32)
 
 Manager implements Releaser
 
-Manager deinit(.self: $&Manager) -> () := {}
+implement Deinit#(Manager) (
+    .deinit = (.self: $&Manager) -> () {
+
+    }
+)
 
 release(.self: $&Manager) -> () := { deinit(self) }
 

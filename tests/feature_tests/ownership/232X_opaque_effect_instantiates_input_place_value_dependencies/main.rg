@@ -2,7 +2,11 @@ unsafe_allocation := import("../../_support/unsafe_allocation")
 Borrowing : Type = (.reference: $&UInt8)
 Container : Type = (.marker: UInt8)
 
-Borrowing deinit(.self: $&Borrowing) -> () := {}
+implement Deinit#(Borrowing) (
+    .deinit = (.self: $&Borrowing) -> () {
+
+    }
+)
 
 implement InfalliblyCopyable#(Borrowing) (
     .copy = (.self: &Borrowing) -> (.value: Borrowing) {

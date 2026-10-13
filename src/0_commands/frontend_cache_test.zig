@@ -235,20 +235,23 @@ test "frontend module cache bounds memory and preserves leased snapshots" {
 test "frontend module cache reruns safety on cached ownership effects" {
     var session = ModuleCache.init(std.testing.allocator, .{});
     defer session.deinit();
-    const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code = "Resource : Type = ()\n" ++
-        "Resource deinit(.res: $&Resource) -> () := {}\n" ++
-        "consume(.res: Resource) -> (.result: Int32 = 0) := {}\n" ++
-        "main() -> (.status_code: Int32) := {\n" ++
-        "handle := Resource()\n" ++
-        "status_code = consume(.res = ~handle).result\n" ++
-        "status_code = consume(.res = handle).result\n}\n" }};
+    const files = [_]sf.SourceFile{
+        .{ .path = "app/main.rg", .code = "Resource : Type = ()\n" ++
+            "implement Deinit#(Resource) (.deinit = (.self: $&Resource) -> () {})\n" ++
+            "consume(.res: Resource) -> (.result: Int32 = 0) := {}\n" ++
+            "main() -> (.status_code: Int32) := {\n" ++
+            "handle := Resource()\n" ++
+            "status_code = consume(.res = ~handle).result\n" ++
+            "status_code = consume(.res = handle).result\n}\n" },
+        .{ .path = "core/lifecycle.rg", .origin = .bundled_core, .code = "Deinit#(.T: Type): Contract = (.deinit: (.self: $&T) -> () where consumes(self))\n" },
+    };
     const first = try expectCleanEquivalent(&files, &session);
     defer first.deinit();
     try std.testing.expect(first.failure != null);
     try std.testing.expect(std.mem.indexOf(u8, first.diagnostics, "moved") != null);
     const again = try expectCleanEquivalent(&files, &session);
     defer again.deinit();
-    try std.testing.expectEqual(@as(usize, 1), again.hits);
+    try std.testing.expectEqual(files.len, again.hits);
     try std.testing.expectEqualStrings(first.diagnostics, again.diagnostics);
 }
 

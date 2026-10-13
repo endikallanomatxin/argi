@@ -7,7 +7,11 @@ implement Init#(Resource, ()) (
     }
 )
 
-Resource deinit(.res: $&Resource) -> () := {}
+implement Deinit#(Resource) (
+    .deinit = (.self: $&Resource) -> () {
+
+    }
+)
 
 
 copy(.self: &Resource, .tag: Int32 = 1) -> (.value: Resource) := {

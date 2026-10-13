@@ -14,9 +14,11 @@ implement Init#(Resource, (.counter: $&Int32)) (
     }
 )
 
-Resource deinit(.res: $&Resource) -> () := {
-    global_counter_ptr& = global_counter_ptr& + 1
-}
+implement Deinit#(Resource) (
+    .deinit = (.self: $&Resource) -> () {
+        global_counter_ptr& = global_counter_ptr& + 1
+    }
+)
 
 create_and_drop(.counter: $&Int32) -> () := {
     handle := Resource(.counter = counter)

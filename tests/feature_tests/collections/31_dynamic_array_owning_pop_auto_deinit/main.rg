@@ -4,10 +4,12 @@ Tracked : Type = (
 
 drops :: Int32 = 0
 
-Tracked deinit(.self: $&Tracked) -> () := {
-    drops = drops + 1
-    deinit(.self = $&self&.allocation)
-}
+implement Deinit#(Tracked) (
+    .deinit = (.self: $&Tracked) -> () {
+        drops = drops + 1
+        deinit(.self = $&self&.allocation)
+    }
+)
 
 take_last(.array: $&DynamicArray#(.t: Tracked)) -> () := {
     popped_result ::= pop(.self = array).result

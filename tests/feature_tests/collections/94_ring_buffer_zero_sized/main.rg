@@ -1,6 +1,10 @@
 Empty : Type = ()
 drops :: Int32 = 0
-Empty deinit(.self: $&Empty) -> () := { drops = drops + 1 }
+implement Deinit#(Empty) (
+    .deinit = (.self: $&Empty) -> () {
+        drops = drops + 1
+    }
+)
 main(.system: System) -> (.status_code: Int32 = 0) := {
     ring ::= unwrap_or_abort(.value = RingBuffer#(.t: Empty)(.capacity = 2, .allocator = system.page_allocator))
     a ::= Empty()

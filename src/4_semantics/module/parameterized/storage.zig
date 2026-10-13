@@ -47,7 +47,6 @@ pub const ParameterizedFunction = struct {
     operator: ?callable.OperatorKind = null,
     /// Destructor identity is resolved once while FileST is available. Global
     /// ownership consumes this bit and never infers temporal semantics by name.
-    is_deinit: bool = false,
     safety_primitive: primitives.SafetyPrimitive = .none,
 };
 
@@ -211,9 +210,7 @@ test "module parameterized storage owns lowered parameterized IR" {
         .output_bindings = .{ .start = 1, .len = 1 },
         .body = null,
         .operator = .add,
-        .is_deinit = true,
     });
     try std.testing.expectEqual(@as(u32, 1), storage.parameterized_functions.items[0].input_bindings.len);
     try std.testing.expectEqual(callable.OperatorKind.add, storage.parameterized_functions.items[0].operator.?);
-    try std.testing.expect(storage.parameterized_functions.items[0].is_deinit);
 }

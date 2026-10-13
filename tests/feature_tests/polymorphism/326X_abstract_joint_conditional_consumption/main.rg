@@ -2,7 +2,11 @@ Outcome: Type = (..yes, ..no)
 
 Resource: Type = (.value: Int32)
 
-Resource deinit(.self: $&Resource) -> () := {}
+implement Deinit#(Resource) (
+    .deinit = (.self: $&Resource) -> () {
+
+    }
+)
 
 Releaser: Abstract = (
     release(.self: &Self, .resource: $&Resource) -> (.first: Outcome, .second: Outcome) where {

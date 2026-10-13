@@ -9,8 +9,11 @@ Keeping: Type = (.value: Int32)
 Closing implements Closable
 Keeping implements Closable
 
-Closing deinit(.self: $&Closing) -> () := {
-}
+implement Deinit#(Closing) (
+    .deinit = (.self: $&Closing) -> () {
+
+    }
+)
 
 close(.self: $&Closing) -> () := {
     deinit(.self = self)

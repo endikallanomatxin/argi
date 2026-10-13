@@ -4,7 +4,11 @@ Readable#(.item: Type): Abstract = (
 
 Box: Type = (.value: Int32)
 
-Box deinit(.self: $&Box) -> () := {}
+implement Deinit#(Box) (
+    .deinit = (.self: $&Box) -> () {
+
+    }
+)
 
 Box implements Readable#(.item: Int32)
 

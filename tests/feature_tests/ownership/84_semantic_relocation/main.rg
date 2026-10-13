@@ -1,8 +1,10 @@
 Holder : Type = (.allocation: Allocation)
 
-Holder deinit(.self: $&Holder) -> () := {
-    deinit(.self = $&self&.allocation)
-}
+implement Deinit#(Holder) (
+    .deinit = (.self: $&Holder) -> () {
+        deinit(.self = $&self&.allocation)
+    }
+)
 
 main(.system: System) -> (.status_code: Int32) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)

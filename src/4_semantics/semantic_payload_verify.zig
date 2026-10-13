@@ -45,7 +45,6 @@ pub fn declaration(comptime Ids: type, value: primitives.Declaration(Ids), bound
     try require(verify.sourceFits(value.source, bounds.files));
     try require(verify.optionalIdFits(value.type_id, bounds.types));
     try require(verify.optionalIdFits(value.function_id, bounds.functions));
-    try require(verify.optionalIdFits(value.destructor_type, bounds.declarations));
     if (value.struct_fields) |range| try require(verify.rangeFits(range, bounds.fields));
     if (value.choice_variants) |range| try require(verify.rangeFits(range, bounds.variants));
 }

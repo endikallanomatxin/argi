@@ -1881,7 +1881,7 @@ test "feature_tests/ownership/04_noncopyable_temporary_values" {
 
 test "feature_tests/ownership/05X_noncopyable_assignment" {
     try buildExpectFailExact("tests/feature_tests/ownership/05X_noncopyable_assignment",
-        \\tests/feature_tests/ownership/05X_noncopyable_assignment/main.rg:14:15: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
+        \\tests/feature_tests/ownership/05X_noncopyable_assignment/main.rg:18:15: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
         \\      second := first
         \\                ^
         \\
@@ -1890,7 +1890,7 @@ test "feature_tests/ownership/05X_noncopyable_assignment" {
 
 test "feature_tests/ownership/06X_noncopyable_argument_by_value" {
     try buildExpectFailExact("tests/feature_tests/ownership/06X_noncopyable_argument_by_value",
-        \\tests/feature_tests/ownership/06X_noncopyable_argument_by_value/main.rg:18:34: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
+        \\tests/feature_tests/ownership/06X_noncopyable_argument_by_value/main.rg:22:34: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
         \\      status_code = consume(.res = handle)
         \\                                   ^
         \\
@@ -1899,7 +1899,7 @@ test "feature_tests/ownership/06X_noncopyable_argument_by_value" {
 
 test "feature_tests/ownership/07X_noncopyable_struct_field" {
     try buildExpectFailExact("tests/feature_tests/ownership/07X_noncopyable_struct_field",
-        \\tests/feature_tests/ownership/07X_noncopyable_struct_field/main.rg:18:33: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
+        \\tests/feature_tests/ownership/07X_noncopyable_struct_field/main.rg:22:33: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
         \\      wrapped : Wrapper = (.res = handle)
         \\                                  ^
         \\
@@ -1908,7 +1908,7 @@ test "feature_tests/ownership/07X_noncopyable_struct_field" {
 
 test "feature_tests/ownership/08X_noncopyable_output_binding" {
     try buildExpectFailExact("tests/feature_tests/ownership/08X_noncopyable_output_binding",
-        \\tests/feature_tests/ownership/08X_noncopyable_output_binding/main.rg:13:11: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
+        \\tests/feature_tests/ownership/08X_noncopyable_output_binding/main.rg:17:11: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
         \\      out = res
         \\            ^
         \\
@@ -1941,7 +1941,7 @@ test "feature_tests/ownership/13_move_operator" {
 
 test "feature_tests/ownership/14X_use_after_move" {
     try buildExpectFailExact("tests/feature_tests/ownership/14X_use_after_move",
-        \\tests/feature_tests/ownership/14X_use_after_move/main.rg:19:34: error: binding 'handle' was moved and cannot be used again (moved at tests/feature_tests/ownership/14X_use_after_move/main.rg:18:34)
+        \\tests/feature_tests/ownership/14X_use_after_move/main.rg:23:34: error: binding 'handle' was moved and cannot be used again (moved at tests/feature_tests/ownership/14X_use_after_move/main.rg:22:34)
         \\      status_code = consume(.res = handle)
         \\                                   ^
         \\
@@ -1950,7 +1950,7 @@ test "feature_tests/ownership/14X_use_after_move" {
 
 test "feature_tests/ownership/15X_reassign_after_move" {
     try buildExpectFailExact("tests/feature_tests/ownership/15X_reassign_after_move",
-        \\tests/feature_tests/ownership/15X_reassign_after_move/main.rg:19:5: error: binding 'handle' was moved and cannot be reassigned (moved at tests/feature_tests/ownership/15X_reassign_after_move/main.rg:18:34)
+        \\tests/feature_tests/ownership/15X_reassign_after_move/main.rg:23:5: error: binding 'handle' was moved and cannot be reassigned (moved at tests/feature_tests/ownership/15X_reassign_after_move/main.rg:22:34)
         \\      handle = Resource()
         \\      ^
         \\
@@ -2133,7 +2133,7 @@ test "feature_tests/types/28X_match_omit_payload_pattern" {
 
 test "feature_tests/types/32X_match_value_noncopyable_payload" {
     try buildExpectFailExact("tests/feature_tests/types/32X_match_value_noncopyable_payload",
-        \\tests/feature_tests/types/32X_match_value_noncopyable_payload/main.rg:17:14: error: type '{...}' cannot be copied implicitly; use '~value' to transfer ownership
+        \\tests/feature_tests/types/32X_match_value_noncopyable_payload/main.rg:20:14: error: type '{...}' cannot be copied implicitly; use '~value' to transfer ownership
         \\          ..ok payload {
         \\               ^
         \\
@@ -2146,7 +2146,7 @@ test "feature_tests/types/47X_match_value_payload_ambiguous_copy" {
 
 test "feature_tests/types/48X_match_move_payload_consumes_binding" {
     try buildExpectFailExact("tests/feature_tests/types/48X_match_move_payload_consumes_binding",
-        \\tests/feature_tests/types/48X_match_move_payload_consumes_binding/main.rg:25:8: error: binding 'value' was moved and cannot be used again (moved at tests/feature_tests/types/48X_match_move_payload_consumes_binding/main.rg:16:11)
+        \\tests/feature_tests/types/48X_match_move_payload_consumes_binding/main.rg:28:8: error: binding 'value' was moved and cannot be used again (moved at tests/feature_tests/types/48X_match_move_payload_consumes_binding/main.rg:19:11)
         \\      if value == ..error {
         \\         ^
         \\
@@ -3081,7 +3081,7 @@ test "feature_tests/ownership/35_system_move_by_value" {
 
 test "feature_tests/ownership/36X_double_move" {
     try buildExpectFailExact("tests/feature_tests/ownership/36X_double_move",
-        \\tests/feature_tests/ownership/36X_double_move/main.rg:19:35: error: binding 'handle' was moved and cannot be used again (moved at tests/feature_tests/ownership/36X_double_move/main.rg:18:34)
+        \\tests/feature_tests/ownership/36X_double_move/main.rg:23:35: error: binding 'handle' was moved and cannot be used again (moved at tests/feature_tests/ownership/36X_double_move/main.rg:22:34)
         \\      status_code = consume(.res = ~handle)
         \\                                    ^
         \\
@@ -4307,13 +4307,8 @@ test "feature_tests/ownership/206_auto_deinit_release_propagates_through_wrapper
     try runExpect(test_path, 0);
 }
 
-test "feature_tests/ownership/207X_auto_deinit_input_post_state_propagates_through_wrapper" {
-    try buildExpectFailExact("tests/feature_tests/ownership/207X_auto_deinit_input_post_state_propagates_through_wrapper",
-        \\tests/feature_tests/ownership/207X_auto_deinit_input_post_state_propagates_through_wrapper/main.rg:31:41: error: reference depends on a root that has ended
-        \\                      observed ::= holder.reference&
-        \\                                          ^
-        \\
-    );
+test "feature_tests/ownership/207X_deinit_replaces_borrowed_reference" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/ownership/207X_deinit_replaces_borrowed_reference", "method 'deinit' violates its safety contract");
 }
 
 test "feature_tests/ownership/208_structural_auto_deinit_effects_propagate_through_wrapper" {
@@ -4483,7 +4478,7 @@ test "feature_tests/ownership/31_array_of_pointers_is_copyable" {
 
 test "feature_tests/ownership/32X_array_of_noncopyable_is_not_copyable" {
     try buildExpectFailExact("tests/feature_tests/ownership/32X_array_of_noncopyable_is_not_copyable",
-        \\tests/feature_tests/ownership/32X_array_of_noncopyable_is_not_copyable/main.rg:14:15: error: type '[2]Resource' cannot be copied implicitly; use '~value' to transfer ownership
+        \\tests/feature_tests/ownership/32X_array_of_noncopyable_is_not_copyable/main.rg:18:15: error: type '[2]Resource' cannot be copied implicitly; use '~value' to transfer ownership
         \\      copied := resources
         \\                ^
         \\
@@ -6168,7 +6163,7 @@ test "dormant match payload copy diagnostics respect reachability" {
         .data =
         \\Token : Type = (.value: Int32)
         \\
-        \\deinit(.self: $&Token) -> () := {}
+        \\implement Deinit#(Token) (.deinit = (.self: $&Token) -> () {})
         \\
         \\Result : Type = (
         \\    ..ok(.token: Token)
@@ -6406,7 +6401,7 @@ test "feature_tests/system/48X_general_purpose_backing_ended" {
 }
 
 test "feature_tests/system/49X_initializer_temporary_ends_backing" {
-    try buildExpectFail("tests/feature_tests/system/49X_initializer_temporary_ends_backing", "main.rg:27:30: error: reference depends on a root that has ended");
+    try buildExpectFail("tests/feature_tests/system/49X_initializer_temporary_ends_backing", "main.rg:31:30: error: reference depends on a root that has ended");
 }
 
 test "feature_tests/system/49_general_purpose_allocator_on_arena" {
@@ -8675,11 +8670,11 @@ test "feature_tests/types/277_associated_destructor_dispatch" {
 }
 
 test "feature_tests/types/278X_destructor_wrong_association" {
-    try buildExpectFail("tests/feature_tests/types/278X_destructor_wrong_association", "destructor must receive a mutable reference to its associated type");
+    try buildExpectFail("tests/feature_tests/types/278X_destructor_wrong_association", "implementation operation has an incompatible input signature");
 }
 
 test "feature_tests/types/279X_destructor_unknown_type" {
-    try buildExpectFail("tests/feature_tests/types/279X_destructor_unknown_type", "destructor type 'Missing' must name a type declared in this module");
+    try buildExpectFail("tests/feature_tests/types/279X_destructor_unknown_type", "an implementation participant type is unknown or unresolved");
 }
 
 test "feature_tests/basics/58_bracket_expression_grouping" {
@@ -12496,7 +12491,7 @@ test "feature_tests/contracts/205X_deinit_uninitialized" {
 }
 
 test "feature_tests/contracts/206X_deinit_legacy_collision" {
-    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/206X_deinit_legacy_collision", "type declares both Deinit and legacy destructors");
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/206X_deinit_legacy_collision", "legacy destructor declarations are unsupported; use implement Deinit");
 }
 
 test "feature_tests/contracts/207X_deinit_result" {
@@ -12715,4 +12710,14 @@ test "feature_tests/contracts/245X_init_nested_reference_repeated" {
 
 test "feature_tests/contracts/246X_init_reference_fields_alias" {
     try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/246X_init_reference_fields_alias", "consumed inputs alias the same storage");
+}
+
+test "feature_tests/contracts/247_ordinary_deinit_has_no_cleanup_identity" {
+    const path = "tests/feature_tests/contracts/247_ordinary_deinit_has_no_cleanup_identity";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/ownership/348X_deferred_reference_effects_through_wrapper" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/ownership/348X_deferred_reference_effects_through_wrapper", "reference depends on a root that has ended");
 }

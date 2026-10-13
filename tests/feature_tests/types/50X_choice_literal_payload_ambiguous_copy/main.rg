@@ -9,7 +9,11 @@ implement Init#(Payload, (.value: Int32)) (
     }
 )
 
-Payload deinit(.payload: $&Payload) -> () := {}
+implement Deinit#(Payload) (
+    .deinit = (.self: $&Payload) -> () {
+
+    }
+)
 
 
 copy(.self: &Payload, .tag: Int32 = 1) -> (.value: Payload) := {

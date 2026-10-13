@@ -71,7 +71,6 @@ pub const Declaration = struct {
     struct_fields: ?FieldRange = null,
     choice_variants: ?FieldRange = null,
     generic_parameter_count: ?u32 = null,
-    destructor_type: ?ModuleDeclId = null,
 };
 
 pub const FileOffsets = struct {
@@ -265,7 +264,6 @@ pub const ModuleSemanticGraphBuilder = struct {
                 .type_reference_count = @intCast(self.graph.type_references.items.len - type_reference_base),
             });
         }
-        try associateLifecycleFunctions(&self.graph, files);
         try buildSymbolIndex(self.allocator, &self.graph);
         try predeclareTypes(self.allocator, &self.graph);
         resolveModuleTypeReferences(&self.graph);
@@ -330,31 +328,6 @@ fn resolveModuleTypeReferences(graph: *ModuleSemanticGraph) void {
                 },
                 else => {},
             }
-        }
-    }
-}
-
-// Lifecycle functions belong to nominal declarations independently of their outputs.
-// Its compile-time parameters remain local to its own function signature.
-fn associateLifecycleFunctions(graph: *ModuleSemanticGraph, files: []const FileInput) !void {
-    for (graph.declarations.items) |*declaration| {
-        if (declaration.kind != .function) continue;
-        const node = declarationSyntaxNode(files, declaration.*) orelse continue;
-        const file = files[declaration.module_file_index];
-        const function = file.tree.functionDeclaration(node) orelse continue;
-        const token = function.destructor_type orelse continue;
-        const name = file.tree.tokenTextFromSource(file.source, token);
-        for (graph.declarations.items, 0..) |candidate, raw| {
-            if (candidate.kind != .type or !std.mem.eql(u8, graph.text(candidate.name), name)) continue;
-            declaration.destructor_type = @enumFromInt(@as(u32, @intCast(raw)));
-            break;
-        }
-        if (declaration.destructor_type == null) {
-            if (file.diagnostics) |diagnostics| {
-                try diagnostics.add(file.tree.tokenLocation(token), .semantic, "{s} type '{s}' must name a type declared in this module", .{ "destructor", name });
-                return error.Reported;
-            }
-            return error.UnknownDestructorType;
         }
     }
 }

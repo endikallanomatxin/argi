@@ -13,38 +13,6 @@ const abstract_mod = @import("abstracts.zig");
 const error_mod = @import("errors.zig");
 const call_compatibility = @import("call_compatibility.zig");
 
-pub const ImplicitLookupStats = struct {
-    ordinary_calls: u64 = 0,
-    ordinary_resolved: u64 = 0,
-    ordinary_no_match: u64 = 0,
-    ordinary_deferred: u64 = 0,
-    ordinary_ambiguous: u64 = 0,
-    ordinary_matching_ns: u64 = 0,
-    ordinary_completion_calls: u64 = 0,
-    ordinary_completion_deferred: u64 = 0,
-    ordinary_completion_ns: u64 = 0,
-
-    abstract_compatible_calls: u64 = 0,
-    abstract_compatible_resolved: u64 = 0,
-    abstract_compatible_no_match: u64 = 0,
-    abstract_compatible_deferred: u64 = 0,
-    abstract_compatible_ambiguous: u64 = 0,
-    abstract_compatible_matching_ns: u64 = 0,
-    abstract_compatible_completion_calls: u64 = 0,
-    abstract_compatible_completion_deferred: u64 = 0,
-    abstract_compatible_completion_ns: u64 = 0,
-
-    generic_calls: u64 = 0,
-    generic_resolved: u64 = 0,
-    generic_no_match: u64 = 0,
-    generic_deferred: u64 = 0,
-    generic_ambiguous: u64 = 0,
-    generic_matching_ns: u64 = 0,
-    generic_completion_calls: u64 = 0,
-    generic_completion_deferred: u64 = 0,
-    generic_completion_ns: u64 = 0,
-};
-
 pub const PendingCallStage = enum {
     errors,
     ordinary,
@@ -73,17 +41,11 @@ pub const Resolver = struct {
     control: *control_mod.Resolver,
     errors: *error_mod.Resolver,
     profile_io: ?std.Io = null,
-    profile_generic_ns: i96 = 0,
-    implicit_lookup_stats: ImplicitLookupStats = .{},
     pending_call_stages: [@typeInfo(PendingCallStage).@"enum".fields.len]PendingCallStageStats = @splat(.{}),
 
     fn profileTimestamp(self: *const Resolver) i96 {
         if (self.profile_io) |io| return std.Io.Timestamp.now(io, .boot).nanoseconds;
         return 0;
-    }
-
-    fn profileAccumulate(self: *Resolver, start: i96, elapsed: *u64) void {
-        if (self.profile_io != null) elapsed.* += @intCast(self.profileTimestamp() - start);
     }
 
     fn profilePendingStage(self: *Resolver, stage: PendingCallStage, start: i96, result: resolution.Result) void {
@@ -194,135 +156,5 @@ pub const Resolver = struct {
         const control_result = try self.control.tryResolve(module_index, module, o, operation);
         self.profilePendingStage(.control, stage_start, control_result);
         return if (control_result.allowsFallback()) .deferred else control_result;
-    }
-
-    pub const ImplicitFunctionCall = struct {
-        function: global_sg.GlobalFunctionId,
-        input: global_sg.GlobalNodeId,
-    };
-
-    pub fn resolveImplicitFunction(
-        self: *Resolver,
-        module_index: usize,
-        name: []const u8,
-        input: global_sg.GlobalNodeId,
-        reach: reach_context.Context,
-    ) !?ImplicitFunctionCall {
-        if (self.profile_io != null) self.implicit_lookup_stats.ordinary_calls += 1;
-        var stage_start = self.profileTimestamp();
-        const ordinary = try self.core.matchUnqualifiedFunctionByNameWithReach(module_index, name, input, reach);
-        self.profileAccumulate(stage_start, &self.implicit_lookup_stats.ordinary_matching_ns);
-        switch (ordinary) {
-            .function => |function| {
-                if (self.profile_io != null) self.implicit_lookup_stats.ordinary_resolved += 1;
-                if (self.profile_io != null) self.implicit_lookup_stats.ordinary_completion_calls += 1;
-                stage_start = self.profileTimestamp();
-                if (!try self.core.completeCallInputFieldsWithReach(
-                    self.core.graph.functions.items[@intFromEnum(function)].input,
-                    input,
-                    reach,
-                )) {
-                    self.profileAccumulate(stage_start, &self.implicit_lookup_stats.ordinary_completion_ns);
-                    if (self.profile_io != null) self.implicit_lookup_stats.ordinary_completion_deferred += 1;
-                    return error.DeferredImplicitFunction;
-                }
-                self.profileAccumulate(stage_start, &self.implicit_lookup_stats.ordinary_completion_ns);
-                return .{ .function = function, .input = input };
-            },
-            .ambiguous => {
-                if (self.profile_io != null) self.implicit_lookup_stats.ordinary_ambiguous += 1;
-                return error.AmbiguousImplicitFunction;
-            },
-            .deferred => if (self.profile_io != null) {
-                self.implicit_lookup_stats.ordinary_deferred += 1;
-            },
-            .no_match => if (self.profile_io != null) {
-                self.implicit_lookup_stats.ordinary_no_match += 1;
-            },
-        }
-
-        const ordinary_deferred = ordinary == .deferred;
-        const compatibility = call_compatibility.Abstract{ .core = self.core, .abstracts = self.abstracts };
-        if (self.profile_io != null) self.implicit_lookup_stats.abstract_compatible_calls += 1;
-        stage_start = self.profileTimestamp();
-        const abstract_ordinary = try call_compatibility.matchUnqualifiedFunctionByNameWithReach(
-            compatibility,
-            module_index,
-            name,
-            input,
-            reach,
-        );
-        self.profileAccumulate(stage_start, &self.implicit_lookup_stats.abstract_compatible_matching_ns);
-        switch (abstract_ordinary) {
-            .function => |function| {
-                if (self.profile_io != null) self.implicit_lookup_stats.abstract_compatible_resolved += 1;
-                if (self.profile_io != null) self.implicit_lookup_stats.abstract_compatible_completion_calls += 1;
-                stage_start = self.profileTimestamp();
-                if (!try self.core.completeCallInputFieldsWithReachCompatibility(
-                    self.core.graph.functions.items[@intFromEnum(function)].input,
-                    input,
-                    reach,
-                    compatibility.additionalTypeCompatibility(),
-                )) {
-                    self.profileAccumulate(stage_start, &self.implicit_lookup_stats.abstract_compatible_completion_ns);
-                    if (self.profile_io != null) self.implicit_lookup_stats.abstract_compatible_completion_deferred += 1;
-                    return error.DeferredImplicitFunction;
-                }
-                self.profileAccumulate(stage_start, &self.implicit_lookup_stats.abstract_compatible_completion_ns);
-                return .{ .function = function, .input = input };
-            },
-            .deferred => {
-                if (self.profile_io != null) self.implicit_lookup_stats.abstract_compatible_deferred += 1;
-                return error.DeferredImplicitFunction;
-            },
-            .ambiguous => {
-                if (self.profile_io != null) self.implicit_lookup_stats.abstract_compatible_ambiguous += 1;
-                return error.AmbiguousImplicitFunction;
-            },
-            .no_match => {
-                if (self.profile_io != null) self.implicit_lookup_stats.abstract_compatible_no_match += 1;
-                if (ordinary_deferred) return error.DeferredImplicitFunction;
-            },
-        }
-
-        if (self.profile_io != null) self.implicit_lookup_stats.generic_calls += 1;
-        const generic_start = self.profileTimestamp();
-        const generic_result = self.generic_functions.resolveImplicitGenericFunctionByName(
-            module_index,
-            name,
-            input,
-            reach,
-        );
-        self.profileAccumulate(generic_start, &self.implicit_lookup_stats.generic_matching_ns);
-        if (self.profile_io) |io| self.profile_generic_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - generic_start;
-        const function = generic_result catch |err| switch (err) {
-            error.NoMatchingGenericFunction, error.ConflictingGenericArgument => {
-                if (self.profile_io != null) self.implicit_lookup_stats.generic_no_match += 1;
-                return null;
-            },
-            error.DeferredGenericFunction => {
-                if (self.profile_io != null) self.implicit_lookup_stats.generic_deferred += 1;
-                return error.DeferredImplicitFunction;
-            },
-            error.AmbiguousGenericFunction => {
-                if (self.profile_io != null) self.implicit_lookup_stats.generic_ambiguous += 1;
-                return error.AmbiguousImplicitFunction;
-            },
-            else => return err,
-        };
-        if (self.profile_io != null) self.implicit_lookup_stats.generic_resolved += 1;
-        if (self.profile_io != null) self.implicit_lookup_stats.generic_completion_calls += 1;
-        stage_start = self.profileTimestamp();
-        if (!try self.core.completeCallInputFieldsWithReach(
-            self.core.graph.functions.items[@intFromEnum(function)].input,
-            input,
-            reach,
-        )) {
-            self.profileAccumulate(stage_start, &self.implicit_lookup_stats.generic_completion_ns);
-            if (self.profile_io != null) self.implicit_lookup_stats.generic_completion_deferred += 1;
-            return error.DeferredImplicitFunction;
-        }
-        self.profileAccumulate(stage_start, &self.implicit_lookup_stats.generic_completion_ns);
-        return .{ .function = function, .input = input };
     }
 };

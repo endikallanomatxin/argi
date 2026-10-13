@@ -9,7 +9,11 @@ Probe implements Other
 
 bump(.self: $&Probe) -> () := { self&.counter&= self&.counter&+ 10 }
 
-Probe deinit(.self: $&Probe) -> () := { self&.counter&= self&.counter&+ 1 }
+implement Deinit#(Probe) (
+    .deinit = (.self: $&Probe) -> () {
+        self&.counter&= self&.counter&+ 1
+    }
+)
 
 record#(.t: Type)(.value: t, .counter: $&UIntNative) -> () := {
     counter&= counter&+ 1

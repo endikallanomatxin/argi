@@ -2,12 +2,18 @@ drops :: Int32 = 0
 record_drop(.amount: Int32) -> () := { drops = drops + amount }
 Box#(.t: Type) : Type = (.value: t)
 Other : Type = (.value: Int32)
-Box deinit#(.t: Type)(.box: $&Box#(.t: t)) -> () := {
-    record_drop(.amount = 1)
-    nested ::= Other(.value = 0)
-    deinit(.self = $&nested)
-}
-Other deinit(.self: $&Other) -> () := { record_drop(.amount = 10) }
+implement#(.t: Type) Deinit#(Box#(.t: t)) (
+    .deinit = (.self: $&Box#(.t: t)) -> () {
+        record_drop(.amount = 1)
+        nested ::= Other(.value = 0)
+        deinit(.self = $&nested)
+    }
+)
+implement Deinit#(Other) (
+    .deinit = (.self: $&Other) -> () {
+        record_drop(.amount = 10)
+    }
+)
 exercise(.allocator: $&Allocator) -> () := {
     assume allocator
     first ::= Box#(.t: Int32)(.value = 4)

@@ -2,7 +2,11 @@ drops :: Int32 = 0
 
 Tracked: Type = (.id: Int32)
 
-Tracked deinit(.self: $&Tracked) -> () := { drops = drops + 1 }
+implement Deinit#(Tracked) (
+    .deinit = (.self: $&Tracked) -> () {
+        drops = drops + 1
+    }
+)
 
 Pair: Type = (.a: Tracked, .b: Tracked)
 

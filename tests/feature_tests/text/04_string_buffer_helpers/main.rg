@@ -13,14 +13,11 @@ implement#(.AllocatorProvider: Type: Allocator) Init#(DummyWriter, (.allocator :
     }
 )
 
-DummyWriter deinit(
-        .self      : $&DummyWriter,
-        .allocator : $&Allocator,
-    ) -> () := {
-    assume allocator
-
-    deinit(.self = $&self&.bytes)
-}
+implement Deinit#(DummyWriter) (
+    .deinit = (.self : $&DummyWriter) -> () {
+        deinit(.self = $&self&.bytes)
+    }
+)
 
 append_test_byte(
         .self      : $&DummyWriter,
@@ -92,6 +89,6 @@ main(.system: System) -> (.status_code: Int32) := {
     }
 
     deinit(.self = $&buffer)
-    deinit(.self = $&writer, .allocator = $&allocator_storage)
+    deinit(.self = $&writer)
     status_code = 0
 }

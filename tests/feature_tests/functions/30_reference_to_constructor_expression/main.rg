@@ -13,9 +13,11 @@ implement Init#(Box, (.counter: $&Int32, .created: $&Int32)) (
     }
 )
 
-Box deinit(.self: $&Box) -> () := {
-    self&.counter& = self&.counter& + 1
-}
+implement Deinit#(Box) (
+    .deinit = (.self: $&Box) -> () {
+        self&.counter& = self&.counter& + 1
+    }
+)
 
 positive(.box: $&Box) -> (.result: Bool) := {
     result = box&.counter& < 3

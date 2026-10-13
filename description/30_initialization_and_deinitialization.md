@@ -86,13 +86,16 @@ Explicit calls use `Deinit#(Point).deinit(.self = $&point)` or the unqualified
 cleanup selects the same conformance and operation, including generic
 specializations. The implementation must prove definite consumption of its
 receiver. Consuming an owner may empty its owned storage; it grants no permission
-to consume borrowed referents or retain new values in hidden storage.
+to consume borrowed referents or retain new values in hidden storage. Replacing
+references in borrowed storage is not authorized by consuming the owner. Such
+effects require a protocol that declares them, or an ordinary deferred action
+whose concrete effects are checked at its call site.
 
 Bundled owners retain their deallocation evidence, so their destructors do not
-require a separate allocator argument. Legacy `T deinit(...)` declarations remain
-supported for unmigrated families. Mixing both mechanisms for one family is an
-error; legacy declarations are a migration adapter rather than another lifecycle
-model.
+require a separate allocator argument. Cleanup declarations use only
+`implement Deinit#(T)`; the retired `T deinit(...)` syntax receives a migration
+diagnostic. Ordinary functions named `deinit` have ordinary call effects and
+create no automatic cleanup obligations.
 
 `deinit` ends a live value and releases the resources it is responsible for.
 A type may define this operation when cleanup is needed. Types without one do

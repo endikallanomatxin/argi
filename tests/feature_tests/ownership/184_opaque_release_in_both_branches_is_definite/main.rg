@@ -3,8 +3,11 @@ Borrowing : Type = (
     .reference: $&UInt8
 )
 
-Borrowing deinit(.self: $&Borrowing) -> () := {
-}
+implement Deinit#(Borrowing) (
+    .deinit = (.self: $&Borrowing) -> () {
+
+    }
+)
 
 release_both(.storage: $&Allocation, .first: Bool) -> () := {
     if first {

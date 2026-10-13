@@ -3,11 +3,6 @@ const module_sg = @import("graph.zig");
 const registry = @import("../primitives/registry.zig");
 const diagnostics_mod = @import("../../1_base/diagnostic.zig");
 
-pub const Stats = struct {
-    deinit_functions: u32 = 0,
-    generic_deinit_functions: u32 = 0,
-};
-
 /// Resolve privileged identities from trusted declarations only after their
 /// source signatures have passed the compiler/core contract. Safety and global
 /// semantizing consume the metadata and never re-identify a callee by name.
@@ -15,39 +10,25 @@ pub fn lower(
     graph: *module_sg.ModuleSemanticGraph,
     files: []const module_sg.FileInput,
     diagnostics: ?*diagnostics_mod.Diagnostics,
-) !Stats {
-    var stats: Stats = .{};
+) !void {
     try validateBundledPrimitives(graph, files, diagnostics);
 
     for (graph.semantic.function_semantics.items) |*semantic| {
         const function = graph.functions.items[@intFromEnum(semantic.function)];
         const declaration = graph.declarations.items[@intFromEnum(function.declaration)];
         const file = files[declaration.module_file_index];
-        const declaration_node = module_sg.declarationSyntaxNode(files, declaration) orelse continue;
         if (file.is_bundled_core) if (registry.findBundled(graph.text(declaration.name), file.path)) |spec| {
             semantic.safety_primitive = spec.primitive;
         };
-        if (isDeinit(file, declaration_node)) {
-            std.debug.assert(std.mem.eql(u8, graph.text(declaration.name), "deinit"));
-            semantic.flags.is_deinit = true;
-            stats.deinit_functions += 1;
-        }
     }
 
     for (graph.semantic.parameterized_storage.parameterized_functions.items) |*parameterized| {
         const declaration = graph.declarations.items[@intFromEnum(parameterized.declaration)];
         const file = files[declaration.module_file_index];
-        const declaration_node = module_sg.declarationSyntaxNode(files, declaration) orelse continue;
         if (file.is_bundled_core) if (registry.findBundled(graph.text(declaration.name), file.path)) |spec| {
             parameterized.safety_primitive = spec.primitive;
         };
-        if (isDeinit(file, declaration_node)) {
-            std.debug.assert(std.mem.eql(u8, graph.text(declaration.name), "deinit"));
-            parameterized.is_deinit = true;
-            stats.generic_deinit_functions += 1;
-        }
     }
-    return stats;
 }
 
 pub fn validateOrdinaryIdentities(graph: *const module_sg.ModuleSemanticGraph, files: []const module_sg.FileInput, diagnostics: ?*diagnostics_mod.Diagnostics) !void {
@@ -126,18 +107,4 @@ fn validatePrimitiveDeclaration(
             );
     }
     return error.PrimitiveContractMismatch;
-}
-
-fn isDeinit(file: module_sg.FileInput, node: @import("../../3_syntax/syntax_tree.zig").NodeIndex) bool {
-    if (file.tree.functionDeclaration(node)) |function| if (function.contract_member) return false;
-    const name = file.tree.functionNameFromSource(file.source, node) orelse return false;
-    return switch (name) {
-        .operator => false,
-        .identifier => |token| std.mem.eql(u8, file.tree.tokenTextFromSource(file.source, token), "deinit"),
-    };
-}
-
-test "function identity lowering keeps deinit as semantic metadata" {
-    const flags: @import("../primitives/schema.zig").FunctionFlags = .{ .is_deinit = true };
-    try std.testing.expect(flags.is_deinit);
 }

@@ -738,105 +738,7 @@ pub const Resolver = struct {
             }
         }
 
-        var receiver_names = std.StringHashMap(void).init(self.allocator);
-        defer receiver_names.deinit();
-        try self.collectDestructorReceiverNames(module_index, target_ty, &receiver_names);
-
-        const previous_owner = self.core.destructor_owner;
-        self.core.destructor_owner = switch (self.graph.semanticType(target_ty)) {
-            .declared => |id| id,
-            .generic => |identity| identity.base,
-            else => null,
-        };
-        defer self.core.destructor_owner = previous_owner;
-        var selected: ?ResolvedDestructor = null;
-        var names = receiver_names.keyIterator();
-        while (names.next()) |name_ptr| {
-            const input = try self.singleNamedInput(name_ptr.*, address, source);
-            if (context == .global) self.graph.nodes.items[@intFromEnum(input)].content.struct_value_literal.assumed_fields = context.global.assumed_fields;
-            const dispatch_result = dispatch.resolveImplicitFunction(
-                module_index,
-                "deinit",
-                input,
-                context,
-            );
-            const call = dispatch_result catch |err| switch (err) {
-                error.DeferredImplicitFunction => continue,
-                error.AmbiguousImplicitFunction => return err,
-                else => return err,
-            } orelse continue;
-            const self_index = self.findReceiverIndex(call.function, call.input, target) orelse continue;
-            const candidate = ResolvedDestructor{
-                .function = call.function,
-                .input = call.input,
-                .self_field_index = self_index,
-            };
-            if (selected) |previous| {
-                if (previous.function != candidate.function or previous.self_field_index != candidate.self_field_index)
-                    return error.AmbiguousImplicitDestructor;
-            } else {
-                selected = candidate;
-            }
-        }
-        succeeded = selected != null;
-        if (selected) |call| try self.core.trackReachedCall(call.function, call.input, context, false);
-        return selected;
-    }
-
-    fn collectDestructorReceiverNames(
-        self: *Resolver,
-        module_index: usize,
-        target_ty: global_sg.GlobalTypeId,
-        names: *std.StringHashMap(void),
-    ) !void {
-        // Cleanup consults the nominal family before testing input compatibility.
-        // Receiver names are signature-local; the association does not invent self.
-        const owner = switch (self.graph.semanticType(target_ty)) {
-            .declared => |id| id,
-            .generic => |identity| identity.base,
-            else => return,
-        };
-        for (try self.graph.destructorsFor(self.allocator, owner)) |function_id| {
-            const function = self.graph.functions.items[@intFromEnum(function_id)];
-            if (!function.flags.is_deinit) continue;
-            if (!self.core.declarationVisible(module_index, function.declaration, null)) continue;
-            for (self.graph.fields.items[function.input.start..][0..function.input.len]) |field| {
-                const pointer = switch (self.graph.semanticType(field.ty)) {
-                    .pointer => |value| value,
-                    else => continue,
-                };
-                if (pointer.mutability != .read_write) continue;
-                try names.put(self.graph.text(field.name), {});
-            }
-        }
-
-        for (try self.graph.parameterizedDestructorsFor(self.allocator, self.modules, owner)) |candidate| {
-            const candidate_index: usize = @intCast(candidate.module_index);
-            const candidate_module = &self.modules[candidate_index];
-            const storage = &candidate_module.semantic.parameterized_storage;
-            const function = storage.parameterized_functions.items[@as(usize, @intCast(candidate.function_index))];
-            if (!function.is_deinit) continue;
-            const declaration = globalizer.globalDecl(self.offsets[candidate_index], function.declaration);
-            if (!self.core.declarationVisible(module_index, declaration, null)) continue;
-            const shape = switch (storage.ir.types.items[@intFromEnum(function.input)]) {
-                .resolved => |ty| switch (ty) {
-                    .structural => |value| value,
-                    else => continue,
-                },
-                else => continue,
-            };
-            for (storage.ir.fields.items[shape.fields.start..][0..shape.fields.len]) |field| {
-                const pointer = switch (storage.ir.types.items[@intFromEnum(field.ty)]) {
-                    .resolved => |ty| switch (ty) {
-                        .pointer => |value| value,
-                        else => continue,
-                    },
-                    else => continue,
-                };
-                if (pointer.mutability != .read_write) continue;
-                try names.put(candidate_module.text(field.name), {});
-            }
-        }
+        return null;
     }
 
     fn singleNamedInput(
@@ -853,26 +755,6 @@ pub const Resolver = struct {
         return self.appendNode(source, null, .{ .struct_value_literal = .{
             .fields = .{ .start = field_start, .len = 1 },
         } });
-    }
-
-    fn findReceiverIndex(
-        self: *const Resolver,
-        function_id: global_sg.GlobalFunctionId,
-        input: global_sg.GlobalNodeId,
-        target: global_sg.GlobalNodeId,
-    ) ?u32 {
-        const function = self.graph.functions.items[@intFromEnum(function_id)];
-        const literal = switch (self.graph.nodes.items[@intFromEnum(input)].content) {
-            .struct_value_literal => |value| value,
-            else => return null,
-        };
-        if (literal.fields.len != function.input.len) return null;
-        for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len], 0..) |field, index| {
-            const node = self.graph.nodes.items[@intFromEnum(field.value)];
-            if (node.content != .address_of or node.content.address_of != target) continue;
-            return @intCast(index);
-        }
-        return null;
     }
 
     fn appendNode(

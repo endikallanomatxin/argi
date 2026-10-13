@@ -2,9 +2,11 @@ Tracked : Type = (
     .allocation: Allocation
 )
 
-Tracked deinit(.self: $&Tracked) -> () := {
-    deinit(.self = $&self&.allocation)
-}
+implement Deinit#(Tracked) (
+    .deinit = (.self: $&Tracked) -> () {
+        deinit(.self = $&self&.allocation)
+    }
+)
 
 main(.system: System) -> (.status_code: Int32 = 0) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)

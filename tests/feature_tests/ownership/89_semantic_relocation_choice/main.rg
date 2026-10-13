@@ -3,8 +3,11 @@ OwningChoice : Type = (
     ..none
 )
 
-OwningChoice deinit(.self: $&OwningChoice) -> () := {
-}
+implement Deinit#(OwningChoice) (
+    .deinit = (.self: $&OwningChoice) -> () {
+
+    }
+)
 
 main(.system: System) -> (.status_code: Int32) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)

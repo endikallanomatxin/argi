@@ -1,6 +1,10 @@
 Resource: Type = (.value: Int32)
 
-Resource deinit(.self: $&Resource) -> () := {}
+implement Deinit#(Resource) (
+    .deinit = (.self: $&Resource) -> () {
+
+    }
+)
 
 escape() -> (.result: (.owner: Resource, .reference: &Int32)) := {
     owner ::= Resource(7)

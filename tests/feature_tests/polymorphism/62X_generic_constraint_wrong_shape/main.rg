@@ -1,6 +1,10 @@
 Owned: Type = (.value: Int32)
 
-Owned deinit(.self: $&Owned) -> () := {}
+implement Deinit#(Owned) (
+    .deinit = (.self: $&Owned) -> () {
+
+    }
+)
 
 accept_owned#(.t: Type: ImplicitlyCopyable)(.value: &t, .flag: Bool = true) -> (.ok: Bool) := {
     ok = flag

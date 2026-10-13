@@ -6,9 +6,11 @@ initialize_container(.p: $&Container, .inner: Allocation) -> () := {
     p& = (.inner = ~inner)
 }
 
-Container deinit(.self: $&Container) -> () := {
-    deinit(.self = $&self&.inner)
-}
+implement Deinit#(Container) (
+    .deinit = (.self: $&Container) -> () {
+        deinit(.self = $&self&.inner)
+    }
+)
 
 main(.system: System) -> (.status_code: Int32) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)

@@ -26,8 +26,6 @@ pub const BuildStats = struct {
     generic_types: u32 = 0,
     generic_functions: u32 = 0,
     generic_operators: u32 = 0,
-    deinit_functions: u32 = 0,
-    generic_deinit_functions: u32 = 0,
     abstract_definitions: u32 = 0,
     abstract_relations: u32 = 0,
     generic_calls: u32 = 0,
@@ -97,7 +95,7 @@ pub fn finishLinked(
     // each contract body is materialized only after specialization.
     const bodies = try body_lowerer.lowerMissingFunctions(allocator, graph, files, diagnostics);
     const generic_operators = try generic_operator_lowerer.lower(graph, files);
-    const identity_stats = try function_identity_lowerer.lower(graph, files, diagnostics);
+    try function_identity_lowerer.lower(graph, files, diagnostics);
     const relation_stats = try abstract_relation_lowerer.lowerDiagnosed(allocator, graph, files, diagnostics);
     const generic_calls = try generic_call_args_lowerer.lower(allocator, graph, files);
 
@@ -113,8 +111,6 @@ pub fn finishLinked(
         .generic_types = parameterized_stats.generic_types,
         .generic_functions = parameterized_stats.generic_functions,
         .generic_operators = generic_operators,
-        .deinit_functions = identity_stats.deinit_functions,
-        .generic_deinit_functions = identity_stats.generic_deinit_functions,
         .abstract_definitions = parameterized_stats.abstract_definitions,
         .abstract_relations = relation_stats.implementations + relation_stats.implementation_parameterized_forms + relation_stats.defaults + relation_stats.default_parameterized_forms,
         .generic_calls = generic_calls.generic_calls,

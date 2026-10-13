@@ -4,9 +4,11 @@ Router : Type = (
     .route: $&Int32
 )
 
-Router deinit(.self: $&Router) -> () := {
-    deinit(.self = $&self&.allocation)
-}
+implement Deinit#(Router) (
+    .deinit = (.self: $&Router) -> () {
+        deinit(.self = $&self&.allocation)
+    }
+)
 
 store_pair(
     .first_slot: $&Allocation,

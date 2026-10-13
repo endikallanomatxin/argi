@@ -11,13 +11,17 @@ Second: Type = (.value: Int32)
 First implements Closable
 Second implements Closable
 
-First deinit(.self: $&First) -> () := {
-    drops = drops + 1
-}
+implement Deinit#(First) (
+    .deinit = (.self: $&First) -> () {
+        drops = drops + 1
+    }
+)
 
-Second deinit(.self: $&Second) -> () := {
-    drops = drops + 1
-}
+implement Deinit#(Second) (
+    .deinit = (.self: $&Second) -> () {
+        drops = drops + 1
+    }
+)
 
 close(.self: $&First) -> () := {
     deinit(.self = self)

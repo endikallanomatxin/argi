@@ -1,6 +1,10 @@
 Buffer: Type = (.bytes: [4]UInt8)
 
-Buffer deinit(.self: $&Buffer) -> () := {}
+implement Deinit#(Buffer) (
+    .deinit = (.self: $&Buffer) -> () {
+
+    }
+)
 
 main(.system: System) -> (.status_code: Int32 = 0) := {
     buffer ::= Buffer(.bytes = zeroed#(.t: [4]UInt8)())

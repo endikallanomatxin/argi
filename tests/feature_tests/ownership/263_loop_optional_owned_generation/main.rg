@@ -13,11 +13,11 @@ implement#(.AllocatorProvider: Type: Allocator) Init#(Holder, (.allocator: $&All
     }
 )
 
-Holder deinit(.self: $&Holder, .allocator: $&Allocator) -> () := {
-    assume allocator
-
-    deinit(.self = $&self&.buffer)
-}
+implement Deinit#(Holder) (
+    .deinit = (.self: $&Holder) -> () {
+        deinit(.self = $&self&.buffer)
+    }
+)
 
 append(.self: $&Holder, .allocator: $&Allocator) -> () := {
     assume allocator
@@ -40,5 +40,5 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         status_code = 1
         return
     }
-    deinit(.self = $&holder, .allocator = $&allocator_storage)
+    deinit(.self = $&holder)
 }

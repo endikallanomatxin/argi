@@ -1,67 +1,51 @@
-# Multiple Dispatch
+# Contract dispatch
 
-Functions are dispatched based on:
+Dispatch is scoped to an operation identity declared by a contract. Ordinary
+functions have one identity per module namespace and may be generic, but do
+not define overload families. See [contracts](135_contracts.md) for declaration
+and implementation syntax.
 
-- the name of the function,
+## Selecting an operation and an implementation
 
-- the types of the input-fields
+An unqualified call first identifies applicable operations from visible contracts.
+If operations from different contracts are applicable, the caller must qualify
+its intended identity. A more specific implementation in another contract never
+resolves that ambiguity.
 
-Note that:
+Once the operation identity is known, the compiler selects the most specific
+applicable implementation for the contract's complete participant tuple. Generic
+patterns can specialize closed types and nominal applications, including their
+compile-time type and integer arguments. Equivalent implementation patterns are
+rejected; incomparable maximal candidates are ambiguous.
 
-- Input field names are not considered for dispatching (as it is possible to
-omit them when calling functions).
+## Participants and outputs
 
-- Compile-time-parameters are not considered for dispatching.
+Participants are compile-time inputs to contract selection. They need not all
+appear in an operation's runtime inputs. For example, Convert's Source describes
+the value being converted, while Target describes the requested destination.
+Target can select an implementation even though it appears only in the operation's
+result. This is more general than dispatch based solely on runtime argument types.
 
-- return types are used to infer the resulting types, but not used for
-dispatching.
+Associated types and constants are determined by the selected implementation.
+An associated Result never ranks candidates or supplies missing participant
+bindings through arbitrary reverse inference. Input patterns and explicitly
+supplied participants establish selection before associated results are resolved.
 
-- Specific value checks cannot be used for dispatching.
+## Constructors and destruction
 
-Thus, you cannot redefine a function with the same name and input fields, but
-with different input-field names compile-time-parameters or return types.
+A call to `T(...)` supplies T and infers its Args record, then selects the most
+specific applicable `Init#(T, Args)` implementation. The associated Result is
+validated after selection. Structural construction remains available without Init.
 
-## Cross-module dispatch (open design)
+Explicit destruction and automatic cleanup use the same selected `Deinit#(T)`
+evidence. Ordinary functions named `deinit` retain ordinary call effects and do
+not establish cleanup obligations. Neither lifecycle operation has a separate
+nominal family registry or global overload fallback.
 
-> [!QUESTION]
-> Cross-module candidate visibility, external `implements`, and an orphan rule
-> remain undecided.
+## Migration status
 
-The rules above describe how candidates are compared, but the candidate set
-across modules is not yet specified. Before supporting external extensions,
-decide:
-
-- Which overloads are visible at a call site, including those from imported
-  modules and the implicit `core` prelude.
-- Whether a module may declare `implements` for a type and abstract defined
-  elsewhere, and where that relationship is visible.
-- Whether an orphan rule restricts such declarations to avoid type piracy.
-
-These questions remain open; this section does not define extension lookup.
-
-## Anti-pattern: adapter overloads
-
-Multiple dispatch should model genuinely different semantic operations, not
-hide routine representation adapters.
-
-Avoid overload sets that only accept adjacent representations of the same
-concept:
-
-```rg
-print(.value: String)
-print(.value: StringView)
-print(.value: &Char)
-```
-
-If all variants mean the same operation, pick one canonical input shape (for
-example `StringView` for read-only text) and make conversions explicit at the
-callsite. This keeps dispatch meaningful instead of turning it into adapter
-noise.
-
-## Constructors
-
-Construction uses the operation identity of Init. A call to `T(...)` provides
-T and infers its Args record, then selects the most specific applicable
-`Init#(T, Args)` implementation. Generic and specialized implementations follow
-contract specificity, without a separate constructor overload registry. The
-associated Result is validated after selection and never ranks candidates.
+Init and Deinit use contract dispatch throughout bundled core, official more and
+compiler fixtures. Their former declaration syntax is rejected. Older ordinary
+function and operator overload declarations still have compatibility routes
+while their consumers migrate. Standard Convert and operator contracts remain
+planned; their proposed behavior is described in [contracts](135_contracts.md).

@@ -558,14 +558,13 @@ pub const Syntaxer = struct {
                 continue;
             }
             var name = try self.parseName();
-            var lifecycle_type: ?syn.TokenIndex = null;
             if (self.currentContent() == .identifier and std.mem.eql(u8, self.tokenText(self.currentContent().identifier), "init")) {
                 try self.diags.add(self.tokenLocation(), .syntax, "legacy constructor declarations are unsupported; use implement Init", .{});
                 return SyntaxerError.ExpectedStructField;
             }
-            if (self.currentContent() == .identifier and std.mem.eql(u8, self.tokenText(self.currentContent().identifier), "deinit")) {
-                lifecycle_type = name.token;
-                name = try self.parseName();
+            if (self.currentIdentifierEquals("deinit")) {
+                try self.diags.add(self.tokenLocation(), .syntax, "legacy destructor declarations are unsupported; use implement Deinit", .{});
+                return SyntaxerError.ExpectedStructField;
             }
 
             if (std.mem.eql(u8, name.text, "operator")) {
@@ -1907,7 +1906,6 @@ pub const Syntaxer = struct {
         is_once: bool,
         generic_params: syn.NodeRange,
         generic_params_struct: ?syn.NodeIndex,
-        lifecycle_type: ?syn.TokenIndex,
         identity_definition: bool,
     ) SyntaxerError!syn.NodeIndex {
         const input = try self.parseStructTypeLiteral();
@@ -1949,7 +1947,6 @@ pub const Syntaxer = struct {
                     }
                     const extra = try self.addExtra(syn.FunctionExtra{
                         .name_token = name.token,
-                        .destructor_type = syn.OptionalTokenIndex.init(if (std.mem.eql(u8, name.text, "deinit")) lifecycle_type else null),
                         .generic_params_start = generic_params.start,
                         .generic_params_end = generic_params.end,
                         .generic_params_struct = .none,
@@ -1979,7 +1976,6 @@ pub const Syntaxer = struct {
                     } else .none;
                     const extra = try self.addExtra(syn.FunctionExtra{
                         .name_token = name.token,
-                        .destructor_type = syn.OptionalTokenIndex.init(if (std.mem.eql(u8, name.text, "deinit")) lifecycle_type else null),
                         .generic_params_start = generic_params.start,
                         .generic_params_end = generic_params.end,
                         .generic_params_struct = syn.OptionalNodeIndex.init(generic_params_struct),
@@ -2001,7 +1997,6 @@ pub const Syntaxer = struct {
 
         const extra = try self.addExtra(syn.FunctionExtra{
             .name_token = name.token,
-            .destructor_type = syn.OptionalTokenIndex.init(if (std.mem.eql(u8, name.text, "deinit")) lifecycle_type else null),
             .generic_params_start = generic_params.start,
             .generic_params_end = generic_params.end,
             .generic_params_struct = syn.OptionalNodeIndex.init(generic_params_struct),
@@ -2021,7 +2016,7 @@ pub const Syntaxer = struct {
         const name = try self.parseName();
         if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
 
-        const decl_node = try self.parseNamedFunctionLikeDeclaration(name, false, try self.addNodeRange(&.{}), null, null, false);
+        const decl_node = try self.parseNamedFunctionLikeDeclaration(name, false, try self.addNodeRange(&.{}), null, false);
         const function = self.file.functionDeclaration(decl_node).?;
 
         if (function.body == null) {
@@ -2152,18 +2147,13 @@ pub const Syntaxer = struct {
         const id_loc = self.tokenLocation();
         var name = try self.parseName();
 
-        var lifecycle_type: ?syn.TokenIndex = null;
         if (self.currentContent() == .identifier and std.mem.eql(u8, self.tokenText(self.currentContent().identifier), "init")) {
             try self.diags.add(self.tokenLocation(), .syntax, "legacy constructor declarations are unsupported; use implement Init", .{});
             return SyntaxerError.ExpectedStructField;
         }
-        if (self.currentContent() == .identifier and std.mem.eql(u8, self.tokenText(self.currentContent().identifier), "deinit")) {
-            lifecycle_type = name.token;
-            _ = try self.addNode(.type_name, name.token, .{ .token_and_optional_token = .{
-                .token = name.token,
-                .optional = .none,
-            } });
-            name = try self.parseName();
+        if (self.currentIdentifierEquals("deinit")) {
+            try self.diags.add(self.tokenLocation(), .syntax, "legacy destructor declarations are unsupported; use implement Deinit", .{});
+            return SyntaxerError.ExpectedStructField;
         }
 
         if (std.mem.eql(u8, name.text, "operator")) {
@@ -2227,7 +2217,7 @@ pub const Syntaxer = struct {
                 self.advanceOne();
                 self.advanceOne();
                 self.skipNewLinesAndComments();
-                return self.parseNamedFunctionLikeDeclaration(name, is_once, generic_params, generic_params_struct, lifecycle_type, true);
+                return self.parseNamedFunctionLikeDeclaration(name, is_once, generic_params, generic_params_struct, true);
             }
         }
 
@@ -2267,7 +2257,6 @@ pub const Syntaxer = struct {
                     is_once,
                     generic_params,
                     generic_params_struct,
-                    lifecycle_type,
                     false,
                 );
                 return declaration;

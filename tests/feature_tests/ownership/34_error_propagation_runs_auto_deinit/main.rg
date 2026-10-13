@@ -10,9 +10,11 @@ implement Init#(Resource, ()) (
     }
 )
 
-Resource deinit(.res: $&Resource) -> () := {
-    dummy_counter = dummy_counter + 1
-}
+implement Deinit#(Resource) (
+    .deinit = (.self: $&Resource) -> () {
+        dummy_counter = dummy_counter + 1
+    }
+)
 
 fail() -> (.result: Errable#(.t: Int32, .reasons: (..test_error))) := {
     result = ..error(.reason = ..test_error)

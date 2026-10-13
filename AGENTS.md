@@ -191,13 +191,19 @@ feature first.
   symbolic consumption identities/state; preserve copies, joins and loop equality
   without changing their shared borrow root or inventing concrete pointee places.
   Symbolic consumption targets only whole unknown pointers, never aggregate
-  envelopes or opaque domains. Reject uninitialized/repeated destruction
-  and mixed Deinit/legacy families. Erased receiver consumption stays unsupported
-  until runtime cleanup identities exist. Remaining `TypeName deinit#(...)(...)`
-  declarations retain their nominal association and indexes until migration;
-  legacy automatic cleanup collects receiver names from those indexed families.
-  Imported nominal construction selects visible Init evidence. Automatic cleanup falls back to that module when caller
-  lookup finds no destructor; reached arguments retain the caller's context.
+  envelopes or opaque domains. Reject uninitialized/repeated destruction.
+  Erased receiver consumption stays unsupported until runtime cleanup identities
+  exist. Destructor declarations use only Deinit; `TypeName deinit(...)` is
+  rejected with a migration diagnostic. Cleanup has no nominal destructor
+  associations, legacy family indexes or ordinary-function fallback. Ordinary
+  function names never confer destruction semantics. Selected evidence identifies
+  receivers and cleanup obligations, including scalar-only owners. Deinit
+  preserves borrowed storage: receiver consumption does not authorize replacing
+  external references. Auxiliary cleanup counters should mutate stable record
+  fields rather than replace a whole borrowed capability.
+  Imported nominal construction selects visible Init evidence. Automatic cleanup
+  falls back to the defining module when caller lookup finds no destructor; reached
+  arguments retain the caller's context.
   Bundled core is already visible, so it needs no second cleanup lookup.
   CFunctionPointer declarations are nominal types backed by signature FunctionIds,
   not runtime symbols or direct callees. Their logical ffi dependency remains

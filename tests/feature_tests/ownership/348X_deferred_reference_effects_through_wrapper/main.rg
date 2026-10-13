@@ -1,16 +1,11 @@
 unsafe_allocation := import("../../_support/unsafe_allocation")
 Holder : Type = (.reference: $&UInt8)
-Observer : Type = (
-    .target: $&Holder
-    .new_reference: $&UInt8
-)
-
-Observer deinit(.self: $&Observer) -> () := {
-    self&.target&.reference = self&.new_reference
+replace_reference := (.holder: $&Holder, .new_reference: $&UInt8) -> () {
+    holder&.reference = new_reference
 }
 
-replace_on_exit(.holder: $&Holder, .new_reference: $&UInt8) -> () := {
-    observer ::= Observer(.target = holder, .new_reference = new_reference)
+replace_on_exit := (.holder: $&Holder, .new_reference: $&UInt8) -> () {
+    #defer replace_reference(.holder = holder, .new_reference = new_reference)
 }
 
 main(.system: System) -> (.status_code: Int32) := {

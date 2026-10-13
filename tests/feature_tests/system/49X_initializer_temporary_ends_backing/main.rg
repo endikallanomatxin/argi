@@ -2,7 +2,11 @@ BackingAllocator: Type = (
     .page : $&PageAllocator
 )
 
-BackingAllocator deinit(.self: $&BackingAllocator) -> () := {}
+implement Deinit#(BackingAllocator) (
+    .deinit = (.self: $&BackingAllocator) -> () {
+
+    }
+)
 
 EndBacking: Type = (
     .marker : Bool

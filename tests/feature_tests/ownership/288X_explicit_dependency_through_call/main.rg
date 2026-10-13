@@ -2,8 +2,11 @@ Owner : Type = (
     .number: Int32
 )
 
-Owner deinit(.self: $&Owner) -> () := {
-}
+implement Deinit#(Owner) (
+    .deinit = (.self: $&Owner) -> () {
+
+    }
+)
 
 identity(.value: Int32) -> (.result: Int32) := {
     result = value

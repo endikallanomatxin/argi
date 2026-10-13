@@ -1,6 +1,10 @@
 drops :: Int32 = 0
 Owner: Type = (.value: Int32)
-Owner deinit(.self: $&Owner) -> () := { drops = drops + 1 }
+implement Deinit#(Owner) (
+    .deinit = (.self: $&Owner) -> () {
+        drops = drops + 1
+    }
+)
 implement Init#(Owner, (.value: Int32)) (
     .Result: Type = Owner
     .init = (.args: (.value: Int32)) -> (.result: Result) { result = (.value = args.value) }

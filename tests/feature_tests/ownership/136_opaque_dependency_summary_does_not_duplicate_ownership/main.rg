@@ -7,9 +7,11 @@ TrackedBorrowing : Type = (
 external :: UInt8 = 9
 drops :: Int32 = 0
 
-TrackedBorrowing deinit(.self: $&TrackedBorrowing) -> () := {
-    drops = drops + 1
-}
+implement Deinit#(TrackedBorrowing) (
+    .deinit = (.self: $&TrackedBorrowing) -> () {
+        drops = drops + 1
+    }
+)
 
 store_local(
     .storage: $&Allocation,

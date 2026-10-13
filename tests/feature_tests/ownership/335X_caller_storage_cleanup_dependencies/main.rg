@@ -1,16 +1,20 @@
 Counter: Type = (.external: $&Int32, .alive: Bool)
 
-Counter deinit(.self: $&Counter) -> () := {
-    self&.alive = false
-    self&.external&= self&.external&+ 100
-}
+implement Deinit#(Counter) (
+    .deinit = (.self: $&Counter) -> () {
+        self&.alive = false
+        self&.external&= self&.external&+ 100
+    }
+)
 
 Resource: Type = (.counter: $&Counter)
 
-Resource deinit(.self: $&Resource) -> () := {
-    if self&.counter&.alive == false { abort }
-    self&.counter&.external&= self&.counter&.external&+ 1
-}
+implement Deinit#(Resource) (
+    .deinit = (.self: $&Resource) -> () {
+        if self&.counter&.alive == false { abort }
+        self&.counter&.external&= self&.counter&.external&+ 1
+    }
+)
 
 make(.counter: $&Counter) -> (.result: &Resource) := {
     resource :: Resource = (.counter = counter)
