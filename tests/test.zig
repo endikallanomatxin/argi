@@ -12615,3 +12615,15 @@ test "feature_tests/logging/02_scoped_loggers" {
 test "feature_tests/logging/03X_logger_writer_lifetime" {
     try buildExpectFailWithoutParseNoise("tests/feature_tests/logging/03X_logger_writer_lifetime", "function output cannot depend on a local storage generation that ends before return");
 }
+
+test "feature_tests/contracts/225_fallible_copy_selected_evidence" {
+    const path = "tests/feature_tests/contracts/225_fallible_copy_selected_evidence";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/contracts/226_ordinary_copy_name_does_not_change_ownership" {
+    const path = "tests/feature_tests/contracts/226_ordinary_copy_name_does_not_change_ownership";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}

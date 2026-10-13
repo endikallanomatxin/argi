@@ -95,18 +95,22 @@ implement Deinit#(Path) (
     }
 )
 
-copy(
-        .self      : &Path,
-        .allocator : $&Allocator,
-    ) -> (
-        .result : Errable#(Path, (..out_of_memory))
-    ) := {
-    assume allocator
+implement#(.Provider: Type: Allocator) FalliblyCopyable#(Path, Provider) (
+    .reasons: Type = (..out_of_memory)
+    .copy = (
+            .self      : &Path,
+            .allocator : $&Provider,
+        ) -> (
+            .result : Errable#(Path, (..out_of_memory))
+        ) {
+        assume allocator
 
-    text ::= copy(&self&.text, .allocator = allocator)!
+        text ::= copy(&self&.text, .allocator = allocator)!
 
-    result = ..ok(.text = ~text)
-}
+        result = ..ok(.text = ~text)
+    }
+
+)
 
 as_view(
         .self : &Path,

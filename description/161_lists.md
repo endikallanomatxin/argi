@@ -136,10 +136,10 @@ module. Code in other modules reads the logical length and capacity through
 those fields or fill them with a struct literal; `init` maintains their shared
 invariant.
 
-`DynamicArray` provides explicit `copy()` for infallibly copyable elements and
-for elements implementing `FalliblyCopyable`. The latter obtains the element's
-associated error reasons from its abstract implementation and combines them
-with `..out_of_memory`. Each element is copied independently; a fallible copy
+`DynamicArray` implements `FalliblyCopyable#(DynamicArray#(T), Provider)` when
+its elements satisfy `FalliblyCopyable#(T, Provider)`. Its single copy algorithm
+obtains the element's associated reasons from that tuple and combines them with
+`..out_of_memory`. Infallibly copyable elements use the standard infallible adapter. Each element is copied independently; a fallible copy
 rolls back the completed prefix before releasing the new backing allocation.
 
 `DynamicArray` access uses named core operations:

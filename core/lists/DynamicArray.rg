@@ -108,91 +108,20 @@ implement#(
     }
 )
 
-copy#(
-        .t : Type: InfalliblyCopyable
-    )(
-        .self      : &DynamicArray#(.t: t),
-        .allocator : $&Allocator,
-    ) -> (
-        .result : Errable#(DynamicArray#(.t: t), (..out_of_memory))
-    ) := {
-    assume allocator
-
-    -- Copying an owning element still requires an explicit element copy
-    -- operation; a plain slot read is insufficient for owning `t`.
-    out :: DynamicArray#(.t: t)
-    initialized ::= DynamicArray#(.t: t)(.allocator = allocator, .capacity = self&._length)
-
-    match initialized {
-        ..ok ~constructed_value { out = ~constructed_value }
-        ..error _ {
-            result = ..error(.reason = ..out_of_memory)
-            return
+implement#(.Provider: Type: Allocator, .t: Type: FalliblyCopyable#(.Value: t, .Provider: Provider)) FalliblyCopyable#(DynamicArray#(t), Provider) (
+    .reasons: Type = choice_union#(.a: FalliblyCopyable#(t, Provider).reasons, .b: (..out_of_memory))
+    .copy = (.self: &DynamicArray#(t), .allocator: $&Provider) -> (.result: Errable#(DynamicArray#(t), reasons)) {
+        assume allocator
+        out ::= DynamicArray#(t)(.allocator = allocator, .capacity = self&._length)!
+        i :: UIntNative = 0
+        while i < self&._length {
+            ptr ::= _trusted_dynamic_array_element_ro_pointer#(t)(.array = self, .offset = i).pointer
+            copied ::= FalliblyCopyable#(t, Provider).copy(ptr, .allocator = allocator)!
+            push_assume_capacity#(t)($&out, .value = ~copied)
+            i = i + 1
         }
+        result = ..ok ~out
     }
-
-    i :: UIntNative = 0
-
-    while i < self&._length {
-        ptr ::= _trusted_dynamic_array_element_ro_pointer#(.t: t)(.array = self, .offset = i).pointer
-        element ::= copy(ptr)
-        pushed ::= push(.allocator = allocator, .self = $&out, .value = ~element)
-        if is(.value = pushed, .variant = ..error) {
-            deinit( .self = $&out)
-            result = ..error(.reason = ..out_of_memory)
-            return
-        }
-        i = i + 1
-    }
-
-    result = ..ok ~out
-}
-
-DynamicArray#(.t: Type: InfalliblyCopyable) satisfies FalliblyCopyable#(
-    .reasons : (..out_of_memory)
-)
-
-copy#(
-        .t               : Type: FalliblyCopyable#(.reasons: element_reasons),
-        .element_reasons : Type,
-    )(
-        .self      : &DynamicArray#(.t: t),
-        .allocator : $&Allocator,
-    ) -> (
-        .result : Errable#(
-            DynamicArray#(.t: t),
-            choice_union#(.a: element_reasons, .b: (..out_of_memory))
-        )
-    ) := {
-    assume allocator
-
-    out :: DynamicArray#(.t: t)
-    initialized ::= DynamicArray#(.t: t)(.allocator = allocator, .capacity = self&._length)
-
-    match initialized {
-        ..ok ~constructed_value { out = ~constructed_value }
-        ..error _ {
-            result = ..error(.reason = ..out_of_memory)
-            return
-        }
-    }
-
-    i :: UIntNative = 0
-
-    while i < self&._length {
-        ptr ::= _trusted_dynamic_array_element_ro_pointer#(.t: t)(.array = self, .offset = i).pointer
-        -- Propagation widens the reason choice and retains its tracer. The
-        -- lexical array owner cleans the successfully copied prefix on error.
-        copied ::= copy(ptr)!
-        push_assume_capacity#(.t: t)($&out, .value = ~copied)
-        i = i + 1
-    }
-
-    result = ..ok ~out
-}
-
-DynamicArray#(.t: Type: FalliblyCopyable#(.reasons: element_reasons)) satisfies FalliblyCopyable#(
-    .reasons : choice_union#(.a: element_reasons, .b: (..out_of_memory)),
 )
 
 -- Only the occupied prefix may cross from a slot handle to a normal reference.

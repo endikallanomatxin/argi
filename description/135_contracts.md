@@ -266,7 +266,10 @@ The former grants duplication permission; the latter owns the explicit copy
 operation. Implicitly copyable types receive a generic infallible implementation.
 Ownership recognizes declared copy capabilities independently of global function
 names, so an explicit owning copy operation never grants implicit duplication.
-FalliblyCopyable and its remaining callers are still pending migration.
+FalliblyCopyable now selects the value and allocator provider jointly. String,
+Path and DynamicArray provide scoped operations; array copying has one generic
+implementation and preserves the element's associated reasons and tracer.
+Ownership queries these conformances rather than functions named copy.
 
 The standard Init contract now owns canonical construction for migrated types.
 Type calls select Init evidence, complete its Args record and invoke its init
@@ -299,8 +302,8 @@ The first bundled Deinit migrations include allocation receipts and backing
 allocations, arena owners/domains, collection shape markers, fixed tracers, native
 process/network/directory owners, terminal endpoints, atomic cells and cancellation
 sources. The old declarations of those families are removed. Mixed legacy/scoped
-cleanup is rejected; generic collection destructors with allocator inputs remain
-for a subsequent migration.
+cleanup is rejected. Bundled generic collection destructors now use the stored
+deallocation evidence without separate allocator inputs.
 
 Even an empty destructor requires an initialized owner. Unknown pointer inputs
 keep symbolic consumption identities separately from their conservative shared

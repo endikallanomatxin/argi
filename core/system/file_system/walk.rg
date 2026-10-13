@@ -92,7 +92,7 @@ next(
                         .self     = $&self&._frames
                         .capacity = count + 1
                     )!
-                    owned ::= copy(&path)!
+                    owned ::= copy(&path, .allocator = allocator)!
                     directory ::= Directory(.self = self&._filesystem, .path = text)!
                     push_assume_capacity(
                         $&self&._frames

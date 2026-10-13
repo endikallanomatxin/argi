@@ -4,19 +4,23 @@ FallibleValue : Type = (
     .value: Int32
 )
 
-copy(.self: &FallibleValue, .allocator: $&Allocator) -> (.result: Errable#(
+implement#(.Provider: Type: Allocator) FalliblyCopyable#(FallibleValue, Provider) (
+    .reasons: Type = (..copy_failed)
+.copy = (.self: &FallibleValue, .allocator: $&Provider) -> (.result: Errable#(
     .t: FallibleValue,
     .reasons: (..copy_failed),
-)) := {
+)) {
     assume allocator
 
     result = ..ok(.value = self&.value)
 }
 
-FallibleValue implements FalliblyCopyable#(.reasons: (..copy_failed))
+)
+
+
 
 require_array_reasons#(
-    .t: Type: FalliblyCopyable#(.reasons: (..copy_failed, ..out_of_memory)),
+    .t: Type: FalliblyCopyable#(.Value: t, .Provider: GeneralPurposeAllocator, .reasons: (..copy_failed, ..out_of_memory)),
 )(.value: &t) -> () := {}
 
 main(.system: System) -> (.status_code: Int32 = 0) := {

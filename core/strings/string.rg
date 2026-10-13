@@ -151,37 +151,41 @@ implement Deinit#(String) (
     }
 )
 
-copy(
-        .self      : &String,
-        .allocator : $&Allocator,
-    ) -> (
-        .result : Errable#(String, (..out_of_memory))
-    ) := {
-    assume allocator
+implement#(.Provider: Type: Allocator) FalliblyCopyable#(String, Provider) (
+    .reasons: Type = (..out_of_memory)
+    .copy = (
+            .self      : &String,
+            .allocator : $&Provider,
+        ) -> (
+            .result : Errable#(String, (..out_of_memory))
+        ) {
+        assume allocator
 
-    if self&.length > _string_max_result_length().length {
-        result = ..error(.reason = ..out_of_memory)
-        return
+        if self&.length > _string_max_result_length().length {
+            result = ..error(.reason = ..out_of_memory)
+            return
+        }
+
+        allocation_size ::= self&.length + 1
+        allocation ::= allocate_bytes(allocator, .size = allocation_size)!
+        out :: String = (.allocation = ~allocation, .length = self&.length)
+
+        if allocation_size > 0 {
+            dst_view ::= _trusted_array_view#(.t: UInt8)(
+                .data   = _trusted_allocation_byte_rw(.allocation = $&out.allocation, .offset = 0).reference
+                .length = allocation_size
+            )
+            src_view ::= _trusted_array_view_ro#(.t: UInt8)(
+                .data   = _trusted_allocation_byte_ro(.allocation = &self&.allocation, .offset = 0).reference
+                .length = allocation_size
+            )
+            memcpy_bytes(.dst = dst_view, .src = src_view)
+        }
+
+        result = ..ok ~out
     }
 
-    allocation_size ::= self&.length + 1
-    allocation ::= allocate_bytes(allocator, .size = allocation_size)!
-    out :: String = (.allocation = ~allocation, .length = self&.length)
-
-    if allocation_size > 0 {
-        dst_view ::= _trusted_array_view#(.t: UInt8)(
-            .data   = _trusted_allocation_byte_rw(.allocation = $&out.allocation, .offset = 0).reference
-            .length = allocation_size
-        )
-        src_view ::= _trusted_array_view_ro#(.t: UInt8)(
-            .data   = _trusted_allocation_byte_ro(.allocation = &self&.allocation, .offset = 0).reference
-            .length = allocation_size
-        )
-        memcpy_bytes(.dst = dst_view, .src = src_view)
-    }
-
-    result = ..ok ~out
-}
+)
 
 string_byte_reference(
         .string : &String,
@@ -672,7 +676,7 @@ operator + (
     result = concat_views(.left = left, .right = right)
 }
 
-String satisfies FalliblyCopyable#(.reasons: (..out_of_memory))
+
 
 operator + (
         .left      : &StringView,

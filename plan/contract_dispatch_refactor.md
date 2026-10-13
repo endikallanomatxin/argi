@@ -225,10 +225,31 @@ legacy ordinary resolution.
   partial-prefix destruction to the lexical array owner. The allocation-failure
   regression checks cleanup order and invokes the returned tracer to verify its
   identity survived propagation.
-- Migration blocker: the legacy fallible-copy family cannot infer associated
-  reasons for a custom owning element with a Deinit implementation. The scoped
-  replacement must cover this executable case, including a reason distinct from
-  out_of_memory, nested arrays and partial-copy cleanup; do not preserve the
-  legacy overload inference as a second copy mechanism.
+- The legacy fallible-copy family could not infer associated reasons for a
+  custom owning element with a Deinit implementation. The scoped replacement
+  below covers this executable case, including a reason distinct from
+  out_of_memory, nested arrays and partial-copy cleanup, without retaining its
+  overload inference as a second copy mechanism.
 - Validation: 165 collection and related ownership program cases passed, with
   no failures or leaks.
+
+- FalliblyCopyable now declares Value and allocator Provider participants, with
+  associated reasons selected jointly. String, Path and DynamicArray use scoped
+  operations. One array implementation recursively copies elements through that
+  selected protocol; infallible elements use a non-allocating adapter whose
+  conservative reason choice includes out_of_memory.
+- Ownership no longer scans ordinary functions named copy. It checks infallible
+  conformance and conservatively queries fallible implementation patterns with a
+  known value and unknown provider. Unknown participants can restrict implicit
+  copying but cannot grant conformance or select operations. Bound constraints
+  are checked; constraints depending on unknown participants remain possible.
+- Executable regressions cover ordinary copy names without ownership effects,
+  generic fallible copy rejection for plain scalar values, nested array copying,
+  and partial cleanup after a user-defined element-copy error. This replaces the
+  previously blocked legacy inference case rather than extending its overload
+  mechanism.
+- Validation: the full program run passed 1844 cases (11 skipped), with one
+  outdated String-copy call missing its provider argument. After migrating that
+  call, its complete 69-case worker passed. This covers all 1845 positive program
+  cases with no leaks. All 376 compiler tests passed (1 skipped). The nested and
+  user-error copy regression also executed directly; LLVM 21 assembled its IR.

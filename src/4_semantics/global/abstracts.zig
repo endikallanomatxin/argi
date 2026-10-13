@@ -1649,6 +1649,49 @@ pub const Resolver = struct {
         return null;
     }
 
+    /// This conservative query only restricts implicit copying. An unknown
+    /// provider never establishes conformance or selects an operation.
+    pub fn mayImplementFirstParticipant(self: *Resolver, name: []const u8, concrete: global_sg.GlobalTypeId) anyerror!bool {
+        for (self.graph.contract_conformances.items) |conformance| {
+            if (!std.mem.eql(u8, self.graph.text(self.graph.declarations.items[@intFromEnum(conformance.declaration)].name), name)) continue;
+            if (conformance.participants.len == 0) continue;
+            const first = self.graph.generic_arguments.items[conformance.participants.start].value;
+            if (first == .type and global_types.equal(self.graph, first.type, concrete)) return true;
+        }
+        for (self.modules, 0..) |*module, module_index| {
+            const storage = &module.semantic.parameterized_storage;
+            for (storage.contract_conformances.items) |template| {
+                if (template.participants.len == 0) continue;
+                const declaration = try self.resolveDeclarationRef(module_index, template.contract_ref, .abstract_type);
+                if (!std.mem.eql(u8, self.graph.text(self.graph.declarations.items[@intFromEnum(declaration)].name), name)) continue;
+                var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
+                defer bindings.deinit(self.allocator);
+                const first = storage.ir.generic_arguments.items[template.participants.start].value;
+                if (first != .type or !try self.inferConstraintTypePattern(module_index, first.type, concrete, &bindings)) continue;
+                var matches = true;
+                for (template.parameters.start..template.parameters.start + template.parameters.len) |raw| {
+                    const parameter = storage.comptime_parameters.items[raw];
+                    const constraint_id = parameter.constraint orelse continue;
+                    const bound = bindings.types[raw] orelse continue;
+                    const constraint = storage.abstract_constraints.items[@intFromEnum(constraint_id)];
+                    // Constraints mentioning unknown participants remain possible.
+                    if (constraint.arguments.len != 0) {
+                        _ = self.generics.instantiateParameterizedArguments(module_index, constraint.arguments, &bindings) catch |err| switch (err) {
+                            error.UnboundGenericTypeParameter, error.UnboundComptimeParameter => continue,
+                            else => return err,
+                        };
+                    }
+                    if (!try self.inferConstraintBindings(module_index, constraint_id, bound, &bindings)) {
+                        matches = false;
+                        break;
+                    }
+                }
+                if (matches) return true;
+            }
+        }
+        return false;
+    }
+
     fn selectGenericParticipantConformance(self: *Resolver, declaration: global_sg.GlobalDeclId, participants: []const global_sg.GlobalTypeId, target: ?*generic_mod.Resolver.Bindings) anyerror!?ConformanceSelection {
         const located = self.findAbstractDefinition(declaration) orelse return null;
         const Candidate = struct { module: usize, template: parameterized_storage.ContractConformance, bindings: generic_mod.Resolver.Bindings };

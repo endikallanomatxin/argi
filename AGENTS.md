@@ -256,6 +256,14 @@ feature first.
   with destructors produce cleanup obligations even for scalar-only owners,
   including inside nested payloads; those obligations grant no fresh storage.
 
+- Copy permission comes from contracts, never ordinary functions named `copy`.
+  FalliblyCopyable selects Value and allocator Provider jointly. Its associated
+  reasons feed the single recursive DynamicArray copy algorithm; ordinary `!`
+  propagation preserves the original tracer and lexical owners clean partial
+  copies. Infallible elements use a non-allocating fallible-protocol adapter.
+  Queries with an unknown provider can conservatively forbid implicit copying,
+  but cannot establish conformance or select an operation.
+
 - Owning collection operations move generic input values into lexical owners
   before fallible branches. Extract replaced or discarded structural elements
   into lexical owners as well, so their fields receive recursive cleanup.

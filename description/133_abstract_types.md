@@ -63,8 +63,10 @@ parameter to discover a possible `Self`. Relations that genuinely need several
 independently selected types belong in multiple dispatch, with `where(...)`
 reserved as a possible future constraint mechanism.
 
-For example, resolving `FalliblyCopyable` for a type determines its unique
-`.reasons` choice, while resolving `Iterator` determines its unique `.t`.
+The current contract model selects every explicit participant before resolving
+associated elements. For example, `FalliblyCopyable#(Value, Provider)` determines
+its `.reasons` choice for that tuple. See [Contracts](135_contracts.md) for the
+replacement of this legacy implicit-Self model.
 
 ## Composition and shared concrete types
 

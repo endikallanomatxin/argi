@@ -252,11 +252,9 @@ pub const Resolver = struct {
     }
 
     fn hasExplicitCopyCapability(self: *Resolver, ty: global_sg.GlobalTypeId) bool {
-        if (self.implementsNamedAbstract(ty, "InfalliblyCopyable") or
-            self.implementsNamedAbstract(ty, "FalliblyCopyable")) return true;
-        // TODO: remove this legacy check after all ordinary copy families and
-        // fallible copy conformances have migrated to scoped operations.
-        return self.findCopyFunction(ty) != null;
+        if (self.implementsNamedAbstract(ty, "InfalliblyCopyable")) return true;
+        const dispatch = self.dispatch orelse return false;
+        return dispatch.abstracts.mayImplementFirstParticipant("FalliblyCopyable", ty) catch true;
     }
 
     fn implementsNamedAbstract(self: *Resolver, concrete: global_sg.GlobalTypeId, name: []const u8) bool {
@@ -886,24 +884,6 @@ pub const Resolver = struct {
         const id: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.graph.nodes.items.len)));
         try self.graph.nodes.append(self.allocator, .{ .source = source, .ty = ty, .content = content });
         return id;
-    }
-
-    fn findCopyFunction(self: *Resolver, ty: global_sg.GlobalTypeId) ?global_sg.GlobalFunctionId {
-        // Explicit copy contracts can require resources such as an allocator.
-        // Those extra inputs do not grant permission for an implicit copy.
-        for (self.graph.functions.items, 0..) |function, raw| {
-            const declaration = self.graph.declarations.items[@intFromEnum(function.declaration)];
-            if (!std.mem.eql(u8, self.graph.text(declaration.name), "copy")) continue;
-            for (self.graph.fields.items[function.input.start..][0..function.input.len]) |field| {
-                if (!std.mem.eql(u8, self.graph.text(field.name), "self")) continue;
-                const receiver = switch (self.graph.semanticType(field.ty)) {
-                    .pointer => |pointer| pointer.child,
-                    else => field.ty,
-                };
-                if (global_types.equal(self.graph, receiver, ty)) return @enumFromInt(@as(u32, @intCast(raw)));
-            }
-        }
-        return null;
     }
 
     fn triviallyCopyable(self: *Resolver, ty: global_sg.GlobalTypeId) bool {

@@ -8,7 +8,7 @@ main(.system: System) -> (.status_code: Int32) := {
     push(.self = $&arr, .value = 10, .allocator = $&allocator_storage)
     push(.self = $&arr, .value = 20, .allocator = $&allocator_storage)
 
-    copied_result ::= copy#(.t: Int32)(.self = &arr)
+    copied_result ::= FalliblyCopyable#(DynamicArray#(Int32), GeneralPurposeAllocator).copy(.self = &arr, .allocator = allocator)
     if is(.value = copied_result, .variant = ..error) {
         status_code = 5
         return
