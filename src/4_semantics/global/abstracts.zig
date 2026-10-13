@@ -1878,6 +1878,16 @@ pub const Resolver = struct {
             if (left.resolved.pointer.mutability != right.resolved.pointer.mutability) return false;
             return self.symbolicTypesEqual(.{ .module = a.module, .ty = left.resolved.pointer.child }, .{ .module = b.module, .ty = right.resolved.pointer.child });
         }
+        if (left == .resolved and right == .resolved and left.resolved == .structural and right.resolved == .structural) {
+            const l = left.resolved.structural.fields;
+            const r = right.resolved.structural.fields;
+            if (l.len != r.len) return false;
+            for (self.modules[a.module].semantic.parameterized_storage.ir.fields.items[l.start..][0..l.len], self.modules[b.module].semantic.parameterized_storage.ir.fields.items[r.start..][0..r.len]) |lf, rf| {
+                if (!std.mem.eql(u8, self.modules[a.module].text(lf.name), self.modules[b.module].text(rf.name))) return false;
+                if (!try self.symbolicTypesEqual(.{ .module = a.module, .ty = lf.ty }, .{ .module = b.module, .ty = rf.ty })) return false;
+            }
+            return true;
+        }
         if (left == .resolved and right == .resolved and left.resolved == .generic and right.resolved == .generic)
             return self.nominalPatternsCover(a, b, null);
         var left_bindings = try generic_mod.Resolver.Bindings.init(self.allocator, self.modules[a.module].semantic.parameterized_storage.comptime_parameters.items.len);
@@ -1910,6 +1920,18 @@ pub const Resolver = struct {
         if (ty == .resolved and ty.resolved == .pointer and other == .resolved and other.resolved == .pointer) {
             if (ty.resolved.pointer.mutability != other.resolved.pointer.mutability) return false;
             return self.patternTypeCovers(.{ .module = general.module, .ty = ty.resolved.pointer.child }, .{ .module = specific.module, .ty = other.resolved.pointer.child }, substitutions);
+        }
+        if (ty == .resolved and other == .resolved and ty.resolved == .structural and other.resolved == .structural) {
+            const a = ty.resolved.structural.fields;
+            const b = other.resolved.structural.fields;
+            if (a.len != b.len) return false;
+            const general_fields = self.modules[general.module].semantic.parameterized_storage.ir.fields.items[a.start..][0..a.len];
+            const specific_fields = self.modules[specific.module].semantic.parameterized_storage.ir.fields.items[b.start..][0..b.len];
+            for (general_fields, specific_fields) |wanted, given| {
+                if (!std.mem.eql(u8, self.modules[general.module].text(wanted.name), self.modules[specific.module].text(given.name))) return false;
+                if (!try self.patternTypeCovers(.{ .module = general.module, .ty = wanted.ty }, .{ .module = specific.module, .ty = given.ty }, substitutions)) return false;
+            }
+            return true;
         }
         if (ty == .resolved and other == .resolved and ty.resolved == .generic and other.resolved == .generic)
             return self.nominalPatternsCover(general, specific, substitutions);
@@ -3410,6 +3432,18 @@ pub const Resolver = struct {
                     };
                     if (pointer.mutability != actual_pointer.mutability) return false;
                     return self.inferConstraintTypePattern(module_index, pointer.child, actual_pointer.child, bindings);
+                },
+                .structural => |record| {
+                    const actual_record = switch (self.graph.types.items[@intFromEnum(actual)]) {
+                        .structural => |value| value,
+                        else => return false,
+                    };
+                    if (record.fields.len != actual_record.fields.len) return false;
+                    for (ir_storage.fields.items[record.fields.start..][0..record.fields.len], self.graph.fields.items[actual_record.fields.start..][0..actual_record.fields.len]) |wanted, given| {
+                        if (!std.mem.eql(u8, self.modules[module_index].text(wanted.name), self.graph.text(given.name))) return false;
+                        if (!try self.inferConstraintTypePattern(module_index, wanted.ty, given.ty, bindings)) return false;
+                    }
+                    return true;
                 },
                 .generic => |nominal| {
                     const concrete = switch (self.graph.types.items[@intFromEnum(actual)]) {

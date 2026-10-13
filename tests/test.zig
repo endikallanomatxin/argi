@@ -12627,3 +12627,23 @@ test "feature_tests/contracts/226_ordinary_copy_name_does_not_change_ownership" 
     try expectSuccessfulBuild(path);
     try runExpect(path, 0);
 }
+
+test "feature_tests/contracts/227_structural_args_allocator_inference" {
+    const path = "tests/feature_tests/contracts/227_structural_args_allocator_inference";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/contracts/228_structural_args_specialization" {
+    const path = "tests/feature_tests/contracts/228_structural_args_specialization";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/contracts/229X_structural_args_repeated_type" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/229X_structural_args_repeated_type", "no conformance");
+}
+
+test "feature_tests/contracts/230X_structural_args_ambiguous" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/230X_structural_args_ambiguous", "ambiguous maximal patterns");
+}

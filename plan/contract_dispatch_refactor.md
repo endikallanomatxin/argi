@@ -253,3 +253,39 @@ legacy ordinary resolution.
   call, its complete 69-case worker passed. This covers all 1845 positive program
   cases with no leaks. All 376 compiler tests passed (1 skipped). The nested and
   user-error copy regression also executed directly; LLVM 21 assembled its IR.
+
+## Argument-type participant exploration
+
+Construction can keep its allocator generic without making it part of the
+constructed owner type. Model the argument record as a participant alongside
+the target: `Init#(Target, Args)`. An implementation pattern such as
+`(.allocator: $&A, .length: UIntNative)` determines A from a known input field;
+Result remains uniquely determined by the complete participant tuple.
+
+The exploration uses a local Construct contract to exercise the same ordinary
+contract resolution, without changing the standard Init while its call syntax
+is being designed. Both nominal generic argument records and anonymous records
+work. Anonymous record inference and specificity compare ordered field names,
+field types, reference mutability and repeated generic bindings. Closed generic
+patterns specialize open records; incomparable patterns remain ambiguous.
+
+Remaining work before migrating standard Init:
+- Infer Args from supplied arguments after contextualizing literals. Defaults and
+  reached capabilities need candidate input shapes, not inverse inference from
+  Result. Reject competing shapes by contract specificity, not arbitrary scoring.
+- Make the target explicit for constructor syntax; ordinary operation inference
+  cannot infer a participant appearing only in Result.
+- Preserve defaults as call-completion metadata rather than participant identity.
+- Change lifecycle evidence to retain Target as the first participant while
+  accepting the Args participant; preserve rollback and cleanup obligations.
+- Migrate existing Init implementations and construction tests together. Do not
+  add a second constructor registry or retain a parallel permanent protocol.
+
+This exploration affects semantizing only: record types and runtime operation
+calls already have syntax and codegen support. It introduces no erased allocator
+representation, implicit allocation, generic associated families or Context.
+
+Validation: all 230 contract program cases passed without leaks; 376 compiler
+unit tests passed (1 skipped). The allocator-record executable passed directly,
+and LLVM 21 assembled its emitted IR. Its constructor calls the selected
+PageAllocator allocate implementation directly.
