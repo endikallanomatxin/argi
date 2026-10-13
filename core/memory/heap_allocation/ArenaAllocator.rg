@@ -10,7 +10,10 @@ ArenaDomain: Type = (.marker: Bool)
 
 ArenaDomain init() -> (.result: ArenaDomain) := { result = (.marker = false) }
 
-ArenaDomain deinit(.self: $&ArenaDomain) -> () := {}
+implement Deinit#(ArenaDomain) (
+    .deinit = (.self: $&ArenaDomain) -> () {
+    }
+)
 
 -- Backing receipts live in block headers. No metadata or storage is acquired
 -- until the first allocation; all blocks come from the chosen backing policy.
@@ -76,10 +79,12 @@ reset(.self: $&ArenaAllocator) -> () := {
     self&.domain = ArenaDomain()
 }
 
-ArenaAllocator deinit(.self: $&ArenaAllocator) -> () := {
-    arena_free_blocks(self)
-    deinit(.self = $&self&.domain)
-}
+implement Deinit#(ArenaAllocator) (
+    .deinit = (.self: $&ArenaAllocator) -> () {
+        arena_free_blocks(self)
+        deinit(.self = $&self&.domain)
+    }
+)
 
 implement Allocator#(ArenaAllocator)(
     .allocate = (

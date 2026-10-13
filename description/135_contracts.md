@@ -287,3 +287,27 @@ The first bundled Init migrations cover CAllocator, PageAllocator, ByteReader,
 ByteWriter and FixedSizeErrorTracer. Their legacy declarations have been removed;
 existing type-call syntax now invokes selected Init operations while preserving
 their capability and backing-storage dependencies.
+
+The standard Deinit contract now selects static cleanup through the same scoped
+evidence as explicit deinit calls. Its self input is consuming. Generic and
+specialized conformances, ordinary operation aliases, imported owners and nested
+structural cleanup share that route. A lifecycle wrapper gives the selected
+operation destruction semantics without changing a reused ordinary function.
+Optional/reached capability inputs still propagate through tracked calls.
+
+The first bundled Deinit migrations include allocation receipts and backing
+allocations, arena owners/domains, collection shape markers, fixed tracers, native
+process/network/directory owners, terminal endpoints, atomic cells and cancellation
+sources. The old declarations of those families are removed. Mixed legacy/scoped
+cleanup is rejected; generic collection destructors with allocator inputs remain
+for a subsequent migration.
+
+Even an empty destructor requires an initialized owner. Unknown pointer inputs
+keep symbolic consumption identities separately from their conservative shared
+borrow dependency. Copies retain identity, joins preserve possible consumption and
+loop convergence compares both state and identity. This creates neither concrete
+pointee storage nor ownership; actual caller overlap checks remain unchanged. Whole-receiver
+destruction removes obsolete post-values of owned fields; it does not authorize
+destruction of storage reached through borrowed reference fields. Virtual Deinit
+remains rejected because consuming an erased receiver needs runtime cleanup
+identities, which the current evidence representation does not provide.

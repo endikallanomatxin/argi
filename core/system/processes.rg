@@ -275,20 +275,24 @@ implement Reader#(ProcessStream)(
     }
 )
 
-ProcessStream deinit(.self: $&ProcessStream) -> () := {
-    assume ffi := self&._ffi
-    _process_stream_close(.handle = self&._handle)
-    self&._handle = 0
-}
+implement Deinit#(ProcessStream) (
+    .deinit = (.self: $&ProcessStream) -> () {
+        assume ffi := self&._ffi
+        _process_stream_close(.handle = self&._handle)
+        self&._handle = 0
+    }
+)
 
-Process deinit(.self: $&Process) -> () := {
-    assume ffi := self&._ffi
-    deinit(.self = $&self&.stdin)
-    deinit(.self = $&self&.stdout)
-    deinit(.self = $&self&.stderr)
-    _process_free(.handle = self&._handle)
-    self&._handle = 0
-}
+implement Deinit#(Process) (
+    .deinit = (.self: $&Process) -> () {
+        assume ffi := self&._ffi
+        deinit(.self = $&self&.stdin)
+        deinit(.self = $&self&.stdout)
+        deinit(.self = $&self&.stderr)
+        _process_free(.handle = self&._handle)
+        self&._handle = 0
+    }
+)
 
 implement Writer#(ProcessStream)(
     .write_byte = (

@@ -45,10 +45,12 @@ AtomicUInt32 init(
     result = ..ok(._handle = handle, ._ffi = ffi)
 }
 
-AtomicUInt32 deinit(.self: $&AtomicUInt32) -> () := {
-    assume ffi := self&._ffi
-    _atomic_destroy(.handle = self&._handle)
-}
+implement Deinit#(AtomicUInt32) (
+    .deinit = (.self: $&AtomicUInt32) -> () {
+        assume ffi := self&._ffi
+        _atomic_destroy(.handle = self&._handle)
+    }
+)
 
 load(.self: &AtomicUInt32) -> (.value: UInt32) := {
     assume ffi := self&._ffi

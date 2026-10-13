@@ -56,7 +56,10 @@ _OwnedHashTable: Type = (._entries: Allocation, ._slots: DynamicArray#(.t: _Owne
 
 _OwnedHashShape: Type = (.marker: UInt8 = 0)
 
-_OwnedHashShape deinit(.self: $&_OwnedHashShape) -> () := {}
+implement Deinit#(_OwnedHashShape) (
+    .deinit = (.self: $&_OwnedHashShape) -> () {
+    }
+)
 
 -- Metadata is always initialized: 0 empty, 1 occupied, 2 deleted. Only occupied
 -- indices contain owning entries in the separate allocation. Vacant entry slots

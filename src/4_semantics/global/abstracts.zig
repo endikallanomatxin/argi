@@ -2596,6 +2596,15 @@ pub const Resolver = struct {
     }
 
     fn resolveOperationBinding(self: *Resolver, conformance: global_sg.ContractConformance, index: usize) !global_sg.GlobalFunctionId {
+        if (index < conformance.operations.len)
+            return self.graph.function_refs.items[conformance.operations.start + index];
+        const method = try self.resolveOperationBody(conformance, index);
+        if (lifecycle_contracts.standardDeclaration(self.graph, "Deinit") == conformance.declaration)
+            return self.makeDestructorOperation(method, try self.core.functionOutputType(method), conformance.source);
+        return method;
+    }
+
+    fn resolveOperationBody(self: *Resolver, conformance: global_sg.ContractConformance, index: usize) !global_sg.GlobalFunctionId {
         const binding = self.graph.contract_operation_bindings.items[conformance.operation_bindings.start + index];
         if (self.graph.declaration(binding.declaration).function_id) |function| {
             if (!self.graph.function(function).flags.is_abstract_dispatch) return function;
@@ -2773,6 +2782,22 @@ pub const Resolver = struct {
                         return;
                     }
                 }
+                if (lifecycle_contracts.standardDeclaration(self.graph, "Deinit") == conformance.declaration) {
+                    const owner = switch (self.graph.semanticType(first)) {
+                        .declared => |id| id,
+                        .generic => |identity| identity.base,
+                        else => null,
+                    };
+                    if (owner) |family| {
+                        if ((try self.graph.destructorsFor(self.allocator, family)).len != 0 or
+                            (try self.graph.parameterizedDestructorsFor(self.allocator, self.modules, family)).len != 0)
+                        {
+                            failure.reason = "type declares both Deinit and legacy destructors; migrate its cleanup to Deinit";
+                            self.participant_conformance_failure = failure;
+                            return;
+                        }
+                    }
+                }
                 try self.recordStaticSafetyContract(located, requirement, &bindings, first, selected.function, output, failure.source);
                 try operations.append(self.allocator, selected.function);
             }
@@ -2780,6 +2805,64 @@ pub const Resolver = struct {
             try self.graph.function_refs.appendSlice(self.allocator, operations.items);
             self.graph.contract_conformances.items[index].operations = .{ .start = operation_start, .len = @intCast(operations.items.len) };
         }
+    }
+
+    fn makeDestructorOperation(self: *Resolver, body: global_sg.GlobalFunctionId, output: global_sg.GlobalTypeId, source: primitives.SourceRef) !global_sg.GlobalFunctionId {
+        // Reusing an ordinary function must not change its safety effects.
+        // The wrapper is selected before publishing any static operation call.
+        for (self.graph.functions.items, 0..) |candidate, raw| {
+            if (!candidate.flags.is_deinit or candidate.declaration != self.graph.function(body).declaration) continue;
+            const block = self.graph.blocks.items[@intFromEnum(candidate.body orelse continue)];
+            if (block.nodes.len != 1) continue;
+            const node = self.graph.node(self.graph.node_refs.items[block.nodes.start]);
+            if (node.content == .function_call and node.content.function_call.callee == body)
+                return @enumFromInt(@as(u32, @intCast(raw)));
+        }
+        const function = self.graph.function(body);
+        // Optional/reached capabilities remain logical inputs of the operation.
+        // Invalid signatures are rejected by ordinary conformance validation.
+        if (function.input.len == 0 or function.output.len != 0) return body;
+        const binding_start: u32 = @intCast(self.graph.binding_refs.items.len);
+        var visible: std.ArrayList(global_sg.GlobalBindingId) = .empty;
+        defer visible.deinit(self.allocator);
+        var values: std.ArrayList(global_sg.ValueField) = .empty;
+        defer values.deinit(self.allocator);
+        const fields = try self.allocator.dupe(global_sg.Field, self.graph.fields.items[function.input.start..][0..function.input.len]);
+        defer self.allocator.free(fields);
+        for (fields) |field| {
+            const binding: global_sg.GlobalBindingId = @enumFromInt(@as(u32, @intCast(self.graph.bindings.items.len)));
+            try self.graph.bindings.append(self.allocator, .{ .name = field.name, .source = source, .ty = field.ty, .mutability = .constant });
+            try self.graph.binding_refs.append(self.allocator, binding);
+            try visible.append(self.allocator, binding);
+            const value: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.graph.nodes.items.len)));
+            try self.graph.nodes.append(self.allocator, .{ .source = source, .ty = field.ty, .content = .{ .binding_use = binding } });
+            try values.append(self.allocator, .{ .name = field.name, .value = value });
+        }
+        const value_start: u32 = @intCast(self.graph.value_fields.items.len);
+        try self.graph.value_fields.appendSlice(self.allocator, values.items);
+        const input_type = try self.generics.internType(.{ .structural = .{ .fields = function.input } });
+        const input: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.graph.nodes.items.len)));
+        try self.graph.nodes.append(self.allocator, .{ .source = source, .ty = input_type, .content = .{ .struct_value_literal = .{ .fields = .{ .start = value_start, .len = function.input.len } } } });
+        const call: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.graph.nodes.items.len)));
+        try self.graph.nodes.append(self.allocator, .{ .source = source, .ty = output, .content = .{ .function_call = .{ .callee = body, .input = input } } });
+        const node_start: u32 = @intCast(self.graph.node_refs.items.len);
+        try self.graph.node_refs.append(self.allocator, call);
+        const block: global_sg.GlobalBlockId = @enumFromInt(@as(u32, @intCast(self.graph.blocks.items.len)));
+        try self.graph.blocks.append(self.allocator, .{ .nodes = .{ .start = node_start, .len = 1 } });
+        const id: global_sg.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(self.graph.functions.items.len)));
+        try self.graph.functions.append(self.allocator, .{
+            .declaration = function.declaration,
+            .input = function.input,
+            .output = function.output,
+            .body = block,
+            .input_bindings = .{ .start = binding_start, .len = function.input.len },
+            .flags = .{ .is_deinit = true, .has_declared_body = true, .is_generic_instantiation = true },
+        });
+        // Function/operator metadata shares FunctionId indexing, including
+        // synthetic lifecycle bodies that do not represent an operator.
+        try self.graph.function_operators.append(self.allocator, null);
+        try self.core.trackReachedCall(body, input, reach_context.Context.fromGlobal(visible.items, id), false);
+        return id;
     }
 
     pub fn resolveAssociatedType(context: *anyopaque, base: global_sg.GlobalTypeId, member: []const u8, source: primitives.SourceRef) anyerror!global_sg.GlobalTypeId {

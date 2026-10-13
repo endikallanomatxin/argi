@@ -14,7 +14,11 @@ CancellationSource init(
     result = ..ok(._state = ~state)
 }
 
-CancellationSource deinit(.self: $&CancellationSource) -> () := { deinit(.self = $&self&._state) }
+implement Deinit#(CancellationSource) (
+    .deinit = (.self: $&CancellationSource) -> () {
+        deinit(.self = $&self&._state)
+    }
+)
 
 CancellationToken: Type = (._source: &CancellationSource)
 

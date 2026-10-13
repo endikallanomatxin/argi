@@ -38,7 +38,10 @@ implement Init#(FixedSizeErrorTracer) (
 )
 
 -- Ending the tracer invalidates its handles without releasing caller storage.
-FixedSizeErrorTracer deinit(.self: $&FixedSizeErrorTracer) -> () := {}
+implement Deinit#(FixedSizeErrorTracer) (
+    .deinit = (.self: $&FixedSizeErrorTracer) -> () {
+    }
+)
 
 _error_trace_header(
         .self  : $&FixedSizeErrorTracer,

@@ -1,4 +1,5 @@
 const std = @import("std");
+const lifecycle_contracts = @import("lifecycle_contracts.zig");
 const graph_mod = @import("graph.zig");
 const primitives = @import("../primitives/schema.zig");
 
@@ -175,6 +176,10 @@ pub fn deinitFunction(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod
     if (graph.semanticType(ty) == .pointer) return null;
     for (graph.functions.items, 0..) |function, raw| {
         if (!function.flags.is_deinit or function.input.len == 0) continue;
+        if (lifecycle_contracts.deinitializedType(graph, @enumFromInt(@as(u32, @intCast(raw))))) |participant| {
+            if (equal(graph, participant, ty)) return @enumFromInt(@as(u32, @intCast(raw)));
+            continue;
+        }
         if (graph.declaration(function.declaration).destructor_type) |owner| {
             if (nominalFamily(graph, ty) != owner) continue;
         }
@@ -192,6 +197,15 @@ pub fn deinitFunction(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod
     return null;
 }
 
+/// A cleanup obligation is independent of storage acquisition. Legacy nominal
+/// declarations remain visible until their families migrate to scoped Deinit.
+pub fn hasDestructor(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) bool {
+    if (deinitFunction(graph, ty) != null) return true;
+    const owner = nominalFamily(graph, ty) orelse return false;
+    for (graph.declarations.items) |declaration| if (declaration.destructor_type == owner) return true;
+    return false;
+}
+
 /// Opaque drops need the destructor for the concrete allocator supplied with
 /// the slot. The value type alone can have several valid destructor instances.
 pub fn deinitFunctionForInput(graph: *const graph_mod.GlobalSemanticGraph, value_type: graph_mod.GlobalTypeId, supplied: graph_mod.FieldRange) error{AmbiguousOpaqueDestructor}!?graph_mod.GlobalFunctionId {
@@ -201,11 +215,13 @@ pub fn deinitFunctionForInput(graph: *const graph_mod.GlobalSemanticGraph, value
         if (graph.declaration(function.declaration).destructor_type) |owner| {
             if (nominalFamily(graph, value_type) != owner) continue;
         }
+        const participant = lifecycle_contracts.deinitializedType(graph, @enumFromInt(@as(u32, @intCast(raw))));
+        if (participant) |selected| if (!equal(graph, selected, value_type)) continue;
         var self_matches = false;
         var arguments_match = true;
-        for (graph.fields.items[function.input.start..][0..function.input.len]) |expected| {
+        for (graph.fields.items[function.input.start..][0..function.input.len], 0..) |expected, index| {
             const name = graph.text(expected.name);
-            const is_receiver = switch (graph.semanticType(expected.ty)) {
+            const is_receiver = if (participant != null) index == 0 else switch (graph.semanticType(expected.ty)) {
                 .pointer => |pointer| pointer.mutability == .read_write and equal(graph, pointer.child, value_type),
                 else => false,
             };

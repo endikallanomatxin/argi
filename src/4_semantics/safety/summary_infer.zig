@@ -822,6 +822,21 @@ pub const Infer = struct {
                 };
                 if (!mutable_pointer) continue;
                 const target = facts.InputPath{ .input_index = @intCast(index) };
+                // The final whole-receiver destruction supersedes post-values
+                // of its owned fields. Keep effects through borrowed references:
+                // those address other storage, which this destructor cannot end.
+                var post_index: usize = 0;
+                while (post_index < post_states.items.len) {
+                    const path = post_states.items[post_index].target;
+                    const owned_field = path.input_index == index and path.storage_domain == null and
+                        path.projections.len != 0 and for (path.projections) |projection|
+                    {
+                        if (projection == .dereference) break false;
+                    } else true;
+                    if (owned_field) {
+                        _ = post_states.orderedRemove(post_index);
+                    } else post_index += 1;
+                }
                 try self.recordInputPostState(
                     &post_states,
                     &.{target},
@@ -4259,17 +4274,8 @@ pub const Infer = struct {
         // A destructor creates a cleanup obligation, not necessarily a fresh
         // storage lifetime. Shape anchors and scalar owners must not introduce
         // extra roots that couple independently replaced backing allocations.
-        const nominal: ?graph_mod.GlobalDeclId = switch (self.graph.semanticType(self.graph.node(node_id).ty.?)) {
-            .declared => |declaration| declaration,
-            .generic => |identity| identity.base,
-            else => null,
-        };
-        if (nominal) |owner| for (self.graph.declarations.items) |declaration| {
-            if (declaration.destructor_type == owner) {
-                result.fresh_cleanup_obligation = true;
-                break;
-            }
-        };
+        if (types.hasDestructor(self.graph, self.graph.node(node_id).ty.?))
+            result.fresh_cleanup_obligation = true;
         return result;
     }
 

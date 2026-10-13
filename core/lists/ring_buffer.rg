@@ -1,6 +1,9 @@
 _RingBufferShape: Type = (.marker: UInt8)
 
-_RingBufferShape deinit(.self: $&_RingBufferShape) -> () := {}
+implement Deinit#(_RingBufferShape) (
+    .deinit = (.self: $&_RingBufferShape) -> () {
+    }
+)
 
 -- The live interval has _length slots starting at _head, modulo _capacity.
 -- All other slots are vacant. Only this owner changes occupancy; raw slot

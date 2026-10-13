@@ -1,0 +1,21 @@
+drops :: Int32 = 0
+Owner: Type = (.value: Int32)
+implement Deinit#(Owner) (.deinit = (.self: $&Owner) -> () { drops = drops + 1 })
+implement Init#(Owner) (
+    .Args: Type = (.value: Int32)
+    .Result: Type = Owner
+    .init = (.args: Args) -> (.result: Result) { result = (.value = args.value) }
+)
+Pair: Type = (.first: Owner, .second: Owner)
+Choice: Type = (..none, ..some(.pair: Pair))
+create := () -> () {
+    value :: Choice = ..some (.pair = (.first = Owner(1), .second = Owner(2)))
+    match value {
+        ..none {}
+        ..some ~payload { moved ::= ~payload.pair }
+    }
+}
+main := () -> (.status_code: Int32 = 0) {
+    create()
+    if drops != 2 { abort }
+}

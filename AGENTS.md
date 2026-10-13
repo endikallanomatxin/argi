@@ -161,11 +161,20 @@ feature first.
   declaration ID, persisted in ModuleSG and relocated into GlobalSG. Keep
   constructor lookup indexed by that family, independently of output types;
   speculative specializations must roll back their index entries.
-  Destructors use `TypeName deinit#(...)(...)`, receive a mutable reference to
-  their associated nominal family, and return no values. Their declaration ID
-  and lookup indexes follow the same persistence and rollback rules as init.
-  Explicit deinit calls retain ordinary input dispatch; automatic cleanup
-  collects receiver names only from the target family's indexed destructors.
+  Migrated cleanup uses `implement Deinit#(T)` and its consuming self operation.
+  Automatic and explicit cleanup select the same evidence. Lifecycle wrappers
+  preserve ordinary alias-function behavior and forward optional/reached
+  capabilities through tracked calls. They create no second destructor registry.
+  Whole-receiver destruction supersedes owned field post-values while retaining
+  effects through borrowed references. Unknown pointer referents keep separate
+  symbolic consumption identities/state; preserve copies, joins and loop equality
+  without changing their shared borrow root or inventing concrete pointee places.
+  Symbolic consumption targets only whole unknown pointers, never aggregate
+  envelopes or opaque domains. Reject uninitialized/repeated destruction
+  and mixed Deinit/legacy families. Erased receiver consumption stays unsupported
+  until runtime cleanup identities exist. Remaining `TypeName deinit#(...)(...)`
+  declarations retain their nominal association and indexes until migration;
+  legacy automatic cleanup collects receiver names from those indexed families.
   Imported nominal constructors consult public initializers in the type's
   defining module. Automatic cleanup falls back to that module when caller
   lookup finds no destructor; reached arguments retain the caller's context.

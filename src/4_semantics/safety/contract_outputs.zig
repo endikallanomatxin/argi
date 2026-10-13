@@ -52,7 +52,7 @@ const Builder = struct {
             result.variants = variants;
             return result;
         }
-        if (allowed.fresh_owner and self.hasDestructor(ty)) {
+        if (allowed.fresh_owner and types.hasDestructor(self.graph, ty)) {
             result.fresh_cleanup_obligation = true;
             const source = self.next_source;
             self.next_source +%= 1;
@@ -80,15 +80,5 @@ const Builder = struct {
             result.fields = fields;
         }
         return result;
-    }
-
-    fn hasDestructor(self: *Builder, ty: graph_mod.GlobalTypeId) bool {
-        const nominal = switch (self.graph.semanticType(ty)) {
-            .declared => |declaration| declaration,
-            .generic => |identity| identity.base,
-            else => return false,
-        };
-        for (self.graph.declarations.items) |declaration| if (declaration.destructor_type == nominal) return true;
-        return false;
     }
 };

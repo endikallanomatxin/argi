@@ -103,11 +103,13 @@ once Network init(.ffi: $&ForeignFunctionInterface = reach ffi) -> (.result: Net
     result = (._ffi = ffi, ._ready = _network_init().status == 0)
 }
 
-Network deinit(.self: $&Network) -> () := {
-    assume ffi := self&._ffi
+implement Deinit#(Network) (
+    .deinit = (.self: $&Network) -> () {
+        assume ffi := self&._ffi
 
-    if self&._ready { _network_deinit() }
-}
+        if self&._ready { _network_deinit() }
+    }
+)
 
 ..invalid_network_argument
 ..address_resolution_failed
@@ -122,10 +124,12 @@ Network deinit(.self: $&Network) -> () := {
 
 ResolvedAddresses: Type = (._network: &Network, ._handle: UIntNative, ._datagram: Bool)
 
-ResolvedAddresses deinit(.self: $&ResolvedAddresses) -> () := {
-    assume ffi := self&._network&._ffi
-    _network_free(.handle = self&._handle)
-}
+implement Deinit#(ResolvedAddresses) (
+    .deinit = (.self: $&ResolvedAddresses) -> () {
+        assume ffi := self&._network&._ffi
+        _network_free(.handle = self&._handle)
+    }
+)
 
 _network_any() -> (.value: NetworkFamily) := { value = ..any }
 
@@ -269,7 +273,11 @@ close(.self: $&TcpConnection) -> (.result: Errable#(Void, (..socket_close_failed
     result = ..ok Void()
 }
 
-TcpConnection deinit(.self: $&TcpConnection) -> () := { _ = close(self) }
+implement Deinit#(TcpConnection) (
+    .deinit = (.self: $&TcpConnection) -> () {
+        _ = close(self)
+    }
+)
 
 is_open(.self: &TcpConnection) -> (.value: Bool) := { value = self&._handle != 0 }
 
@@ -341,7 +349,11 @@ close(.self: $&TcpListener) -> (.result: Errable#(Void, (..socket_close_failed))
     result = ..ok Void()
 }
 
-TcpListener deinit(.self: $&TcpListener) -> () := { _ = close(self) }
+implement Deinit#(TcpListener) (
+    .deinit = (.self: $&TcpListener) -> () {
+        _ = close(self)
+    }
+)
 
 is_open(.self: &TcpListener) -> (.value: Bool) := { value = self&._handle != 0 }
 
@@ -413,7 +425,11 @@ close(.self: $&UdpSocket) -> (.result: Errable#(Void, (..socket_close_failed))) 
     result = ..ok Void()
 }
 
-UdpSocket deinit(.self: $&UdpSocket) -> () := { _ = close(self) }
+implement Deinit#(UdpSocket) (
+    .deinit = (.self: $&UdpSocket) -> () {
+        _ = close(self)
+    }
+)
 
 is_open(.self: &UdpSocket) -> (.value: Bool) := { value = self&._handle != 0 }
 

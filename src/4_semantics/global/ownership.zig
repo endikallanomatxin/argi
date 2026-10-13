@@ -8,6 +8,7 @@ const core_mod = @import("core.zig");
 const dispatch_mod = @import("dispatch.zig");
 const reach_context = @import("reach_context.zig");
 const global_types = @import("types.zig");
+const lifecycle_contracts = @import("lifecycle_contracts.zig");
 const primitives = @import("../primitives/schema.zig");
 
 pub const Stats = struct {
@@ -724,6 +725,20 @@ pub const Resolver = struct {
         const pointer_ty = try self.core.pointerType(target_ty, .read_write);
         const source = self.graph.nodes.items[@intFromEnum(target)].source;
         const address = try self.appendNode(source, pointer_ty, .{ .address_of = target });
+
+        if (lifecycle_contracts.standardDeclaration(self.graph, "Deinit")) |declaration| {
+            if (try dispatch.abstracts.implements(target_ty, declaration)) {
+                const input = try self.singleNamedInput("self", address, source);
+                var participants = [_]global_sg.GlobalTypeId{target_ty};
+                const node = try dispatch.abstracts.callOperationCandidate(module_index, .{
+                    .declaration = declaration,
+                    .participants = &participants,
+                }, "deinit", input, context, source) orelse return error.DeferredImplicitFunction;
+                const call = node.content.function_call;
+                succeeded = true;
+                return .{ .function = call.callee, .input = call.input, .self_field_index = 0 };
+            }
+        }
 
         var receiver_names = std.StringHashMap(void).init(self.allocator);
         defer receiver_names.deinit();

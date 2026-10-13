@@ -75,7 +75,12 @@ incomparable maximal candidates are errors; source/import ordering has no priori
    Migrate bundled constructors one family at a time, removing all old initializers
    of that family. Mixed Init/legacy families are rejected. Initializer safety and
    projected output dependencies use selected evidence directly. Continue with
-   standard Convert, Deinit and operator contracts. Replace the
+   standard Convert and operator contracts. Deinit now selects scoped consuming
+   operations for automatic/explicit cleanup, including generic specialization,
+   imported owners and ordinary function aliases. Lifecycle wrappers preserve
+   alias behavior and forward reached capability inputs. Migrated native owners
+   and shape markers no longer use legacy destructor declarations. Continue with
+   the generic collection/allocator-bearing destructor families. Replace the
    old constructor/destructor/operator indexes with explicit operation identities,
    preserving resource initialization, cleanup and capability dependencies.
 5. Extend unary selected virtual evidence to associated parameters and storage
@@ -131,3 +136,33 @@ legacy ordinary resolution.
 - TODO: report missing fields in specialized implementation bodies at their
   source location; UnknownParameterizedField currently escapes as an internal
   semantizing failure when the selected body is invalid.
+
+- Ruling: lifecycle destruction belongs to the selected Deinit operation, not an
+  aliased ordinary function. A tracked wrapper carries the same capability
+  dependencies as that body; it neither erases them nor adds another dispatch
+  registry. If incorrect, the operation representation must change without
+  changing the ordinary function's identity or weakening capability checks.
+- Whole-receiver destruction supersedes owned field post-values, while effects
+  through reference-field dereferences remain visible for conformance checking.
+  Consumption requires initialized caller storage. Unknown pointer parameters
+  carry separate symbolic consumption identities, preserving shared borrow roots
+  and the pointer-slot/pointee distinction. Copies, joins and loop equality retain
+  those identities; only whole unknown pointer inputs use that proof. Keep these obligations in summaries and caller proofs.
+- Validation: the Init checkpoint passed 1809 programs (11 skipped, no failures)
+  and 374 compiler tests (1 skipped). This predates the Deinit changes.
+
+- Review found that loop equality must include symbolic initializedness and alias
+  identities. The loop-carried alias fixture reproduced an accepted double
+  consumption before that fix. Aggregate envelopes and opaque domain selectors
+  are excluded from whole-pointer symbolic consumption.
+- Symbolic unknown-input reinitialization remains conservative and cannot revive
+  an earlier alias. Extend its outcome/generation precision only with explicit
+  guards; concrete caller-place proofs keep their existing behavior.
+
+- Synthetic lifecycle functions retain the FunctionId alignment of the function
+  and operator metadata arrays. Comparison specialization fixtures caught a
+  missing empty operator entry after a destructor wrapper was appended.
+
+- Validation: the Deinit checkpoint passed 1831 programs (11 skipped, no
+  failures or leaks) and 374 compiler tests (1 skipped). Read-only review found
+  no further issues after the loop and FunctionId metadata fixes.

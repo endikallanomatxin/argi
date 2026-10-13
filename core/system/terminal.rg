@@ -12,12 +12,14 @@ once Terminal init(.ffi: $&ForeignFunctionInterface = reach ffi) -> (.result: Te
     init_stderr(.p = $&result.stderr)
 }
 
-Terminal deinit(.self: $&Terminal) -> () := {
-    assume error_tracer ::= $&noop_error_tracer
-    close($&self&.stdin)
-    close($&self&.stdout)
-    close($&self&.stderr)
-}
+implement Deinit#(Terminal) (
+    .deinit = (.self: $&Terminal) -> () {
+        assume error_tracer ::= $&noop_error_tracer
+        close($&self&.stdin)
+        close($&self&.stdout)
+        close($&self&.stderr)
+    }
+)
 
 read_line_into_buffer(
         .buffer    : $&String,

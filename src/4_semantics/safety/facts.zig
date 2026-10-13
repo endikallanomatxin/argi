@@ -109,6 +109,9 @@ pub const ValueFacts = struct {
     foreign_storage: bool = false,
     storage_capabilities: []const StorageCapabilityId = &.{},
     referenced_place: ?Place = null,
+    /// Unknown parameter referents have consumption identities, not concrete
+    /// places or owned roots. Copies retain them without granting validity.
+    symbolic_pointees: []const graph.GlobalBindingId = &.{},
     opaque_provenance: []const OpaqueProvenance = &.{},
     /// Concrete vtable method identities carried by a `Virtual` value. Keeping
     /// this in transient safety facts lets exact dispatch survive bindings and
@@ -128,6 +131,7 @@ pub const ValueFacts = struct {
             .foreign_storage = self.foreign_storage,
             .storage_capabilities = self.storage_capabilities,
             .referenced_place = self.referenced_place,
+            .symbolic_pointees = self.symbolic_pointees,
             .opaque_provenance = self.opaque_provenance,
             .virtual_methods = self.virtual_methods,
             .domains = self.domains,

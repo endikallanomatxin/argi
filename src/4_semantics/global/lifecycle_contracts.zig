@@ -14,7 +14,15 @@ pub fn standardDeclaration(graph: *const graph_mod.GlobalSemanticGraph, name: []
 }
 
 pub fn initializedType(graph: *const graph_mod.GlobalSemanticGraph, function: graph_mod.GlobalFunctionId) ?graph_mod.GlobalTypeId {
-    const declaration = standardDeclaration(graph, "Init") orelse return null;
+    return participantOfOperation(graph, function, "Init");
+}
+
+pub fn deinitializedType(graph: *const graph_mod.GlobalSemanticGraph, function: graph_mod.GlobalFunctionId) ?graph_mod.GlobalTypeId {
+    return participantOfOperation(graph, function, "Deinit");
+}
+
+fn participantOfOperation(graph: *const graph_mod.GlobalSemanticGraph, function: graph_mod.GlobalFunctionId, name: []const u8) ?graph_mod.GlobalTypeId {
+    const declaration = standardDeclaration(graph, name) orelse return null;
     for (graph.contract_conformances.items) |conformance| {
         if (conformance.declaration != declaration or conformance.participants.len != 1) continue;
         for (graph.function_refs.items[conformance.operations.start..][0..conformance.operations.len]) |operation| {

@@ -243,10 +243,12 @@ next(
     result = ..ok ..some(.value = (.name = ~name))
 }
 
-Directory deinit(.self: $&Directory) -> () := {
-    assume ffi := self&._filesystem&._ffi
-    _fs_directory_close(.handle = self&._handle)
-}
+implement Deinit#(Directory) (
+    .deinit = (.self: $&Directory) -> () {
+        assume ffi := self&._filesystem&._ffi
+        _fs_directory_close(.handle = self&._handle)
+    }
+)
 
 SeekOrigin: Type = (..start, ..current, ..end)
 

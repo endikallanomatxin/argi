@@ -64,9 +64,12 @@ pub const SafetyChecker = struct {
     const ChoiceRejected = struct { storage: facts.Place, variant_index: u32 };
     const ChoiceTemporaryActive = struct { expression: graph_mod.GlobalNodeId, variant_index: u32 };
 
+    const SymbolicPointeeState = struct { identity: graph_mod.GlobalBindingId, initializedness: value_state.Initializedness };
+
     const FunctionState = struct {
         tracker: facts.Tracker,
         places: std.array_list.Managed(facts.PlaceFacts),
+        symbolic_pointees: std.array_list.Managed(SymbolicPointeeState),
         storage_capabilities: std.array_list.Managed(StorageCapabilityState),
         ownership_edges: std.array_list.Managed(OwnershipEdge),
         storage_generations: std.array_list.Managed(StorageGeneration),
@@ -81,6 +84,7 @@ pub const SafetyChecker = struct {
             return .{
                 .tracker = facts.Tracker.init(allocator),
                 .places = std.array_list.Managed(facts.PlaceFacts).init(allocator),
+                .symbolic_pointees = std.array_list.Managed(SymbolicPointeeState).init(allocator),
                 .storage_capabilities = std.array_list.Managed(StorageCapabilityState).init(allocator),
                 .ownership_edges = std.array_list.Managed(OwnershipEdge).init(allocator),
                 .storage_generations = std.array_list.Managed(StorageGeneration).init(allocator),
@@ -95,6 +99,7 @@ pub const SafetyChecker = struct {
         fn deinit(self: *FunctionState) void {
             self.tracker.deinit();
             self.places.deinit();
+            self.symbolic_pointees.deinit();
             self.storage_capabilities.deinit();
             self.ownership_edges.deinit();
             self.storage_generations.deinit();
@@ -113,6 +118,7 @@ pub const SafetyChecker = struct {
             errdefer out.deinit();
             try out.tracker.roots.appendSlice(self.tracker.roots.items);
             try out.places.appendSlice(self.places.items);
+            try out.symbolic_pointees.appendSlice(self.symbolic_pointees.items);
             try out.storage_capabilities.appendSlice(self.storage_capabilities.items);
             try out.ownership_edges.appendSlice(self.ownership_edges.items);
             try out.storage_generations.appendSlice(self.storage_generations.items);
@@ -124,7 +130,7 @@ pub const SafetyChecker = struct {
             out.reachable = self.reachable;
             if (stats) |s| {
                 s.state_clones += 1;
-                s.state_elements_copied += @intCast(self.tracker.roots.items.len + self.places.items.len + self.storage_capabilities.items.len + self.ownership_edges.items.len + self.storage_generations.items.len + self.lexical_storage_generations.items.len + self.opaque_storages.items.len + self.choice_active.items.len + self.choice_rejected.items.len + self.choice_temporary_active.items.len);
+                s.state_elements_copied += @intCast(self.tracker.roots.items.len + self.places.items.len + self.symbolic_pointees.items.len + self.storage_capabilities.items.len + self.ownership_edges.items.len + self.storage_generations.items.len + self.lexical_storage_generations.items.len + self.opaque_storages.items.len + self.choice_active.items.len + self.choice_rejected.items.len + self.choice_temporary_active.items.len);
             }
             return out;
         }
@@ -597,7 +603,8 @@ pub const SafetyChecker = struct {
                     shared_pointer_root = created;
                     break :root_blk created;
                 };
-                break :blk .{ .dependencies = try self.oneDependency(root) };
+                try state.symbolic_pointees.append(.{ .identity = binding, .initializedness = .initialized });
+                break :blk .{ .dependencies = try self.oneDependency(root), .symbolic_pointees = try self.allocator.dupe(graph_mod.GlobalBindingId, &.{binding}) };
             } else .{};
             const ty = if (isPointer(self.graph, record.ty)) self.graph.semanticType(record.ty).pointer.child else record.ty;
             if (self.graph.semanticType(ty) == .virtual) {
@@ -1578,12 +1585,48 @@ pub const SafetyChecker = struct {
             ((post.initializedness == .deinitialized or post.initializedness == .maybe_initialized) and post.ends_previous_roots);
     }
 
+    fn symbolicConsumptionInputs(self: *SafetyChecker, path: facts.InputPath, ids: []const graph_mod.GlobalValueFieldId, arguments: []const facts.ValueFacts) []const graph_mod.GlobalBindingId {
+        if (path.projections.len != 0 or path.storage_domain != null or path.input_index >= arguments.len or path.input_index >= ids.len) return &.{};
+        const argument = arguments[path.input_index];
+        if (argument.referenced_place != null) return &.{};
+        const node = self.graph.value_fields.items[@intFromEnum(ids[path.input_index])].value;
+        const ty = self.graph.node(node).ty orelse return &.{};
+        // Aggregate envelopes may carry borrowed child identities. Consuming
+        // that value or an opaque domain does not consume those referents.
+        if (!isPointer(self.graph, ty)) return &.{};
+        return argument.symbolic_pointees;
+    }
+
     fn validateConsumedInputAliasing(self: *SafetyChecker, source: primitives.SourceRef, summary: facts.SafetySummary, ids: []const graph_mod.GlobalValueFieldId, arguments: []const facts.ValueFacts, state: *FunctionState) !bool {
         for (summary.input_post_states, 0..) |post, index| {
             if (!cleanupTransition(summary, post)) continue;
-            const target = try self.resolveSummaryInputPath(post.target, ids, arguments, state) orelse continue;
-            if (mayMoveInput(summary, post) and self.initializednessAtPlace(state, target) != .initialized) {
-                try self.report(source, "relocation requires an initialized source; initialize it before transferring its owner", .{});
+            const target = try self.resolveSummaryInputPath(post.target, ids, arguments, state) orelse {
+                if (post.target.input_index >= arguments.len or post.target.projections.len != 0 or post.requires_available_destination) continue;
+                const identities = self.symbolicConsumptionInputs(post.target, ids, arguments);
+                for (identities) |identity| {
+                    for (state.symbolic_pointees.items) |pointee| {
+                        if (pointee.identity != identity or pointee.initializedness == .initialized) continue;
+                        try self.report(source, "consumption requires an initialized owner; this parameter's referent may already have been consumed", .{});
+                        return false;
+                    }
+                }
+                for (summary.input_post_states[0..index]) |previous| {
+                    if (!cleanupTransition(summary, previous) or previous.requires_available_destination or
+                        previous.target.input_index == post.target.input_index or previous.target.input_index >= arguments.len or previous.target.projections.len != 0) continue;
+                    for (self.symbolicConsumptionInputs(previous.target, ids, arguments)) |other| {
+                        if (std.mem.indexOfScalar(graph_mod.GlobalBindingId, identities, other) == null) continue;
+                        try self.report(source, "consumed inputs alias the same storage; provide distinct owners for consumption or relocation", .{});
+                        return false;
+                    }
+                }
+                continue;
+            };
+            if (!post.requires_available_destination and self.initializednessAtPlace(state, target) != .initialized) {
+                if (mayMoveInput(summary, post)) {
+                    try self.report(source, "relocation requires an initialized source; initialize it before transferring its owner", .{});
+                } else {
+                    try self.report(source, "consumption requires an initialized owner; initialize it before destroying its value", .{});
+                }
                 return false;
             }
             for (summary.input_post_states[0..index]) |previous| {
@@ -2786,6 +2829,14 @@ pub const SafetyChecker = struct {
         for (summary.input_post_states, 0..) |post_state, post_index| {
             if (post_state.target.input_index >= arguments.len) continue;
             const index: usize = @intCast(post_state.target.input_index);
+            if (post_state.target.projections.len == 0 and cleanupTransition(summary, post_state)) {
+                for (self.symbolicConsumptionInputs(post_state.target, argument_ids, arguments)) |identity| {
+                    for (state.symbolic_pointees.items) |*pointee| if (pointee.identity == identity) {
+                        // Unknown input reinitialization cannot revive old aliases.
+                        pointee.initializedness = if (post_state.requires_available_destination) .maybe_initialized else post_state.initializedness;
+                    };
+                }
+            }
 
             if (post_state.opaque_ownership == .none and post_state.initializedness == .initialized and
                 post_state.may_repopulate_opaque_storage)
@@ -3521,7 +3572,16 @@ pub const SafetyChecker = struct {
             if (!found) try variants.append(right_variant);
         }
 
+        var symbolic_pointees: std.ArrayList(graph_mod.GlobalBindingId) = .empty;
+        defer symbolic_pointees.deinit(self.allocator);
+        for (left.symbolic_pointees) |identity| try symbolic_pointees.append(self.allocator, identity);
+        for (right.symbolic_pointees) |identity| {
+            if (std.mem.indexOfScalar(graph_mod.GlobalBindingId, symbolic_pointees.items, identity) == null)
+                try symbolic_pointees.append(self.allocator, identity);
+        }
+        const symbolic = try self.allocator.dupe(graph_mod.GlobalBindingId, symbolic_pointees.items);
         return .{
+            .symbolic_pointees = symbolic,
             .explicit_dependency = left.explicit_dependency or right.explicit_dependency,
             .dependencies = try dependencies.toOwnedSlice(),
             .owned_roots = try owned.toOwnedSlice(),
@@ -5169,6 +5229,23 @@ pub const SafetyChecker = struct {
         var joined = FunctionState.init(self.allocator);
         errdefer joined.deinit();
 
+        for (left.symbolic_pointees.items) |pointee| {
+            var result = pointee;
+            for (right.symbolic_pointees.items) |other| {
+                if (other.identity == pointee.identity and other.initializedness != pointee.initializedness)
+                    result.initializedness = .maybe_initialized;
+            }
+            try joined.symbolic_pointees.append(result);
+        }
+        for (right.symbolic_pointees.items) |pointee| {
+            var found = false;
+            for (left.symbolic_pointees.items) |other| if (other.identity == pointee.identity) {
+                found = true;
+                break;
+            };
+            if (!found) try joined.symbolic_pointees.append(pointee);
+        }
+
         const root_count = @max(left.tracker.roots.items.len, right.tracker.roots.items.len);
         for (0..root_count) |index| {
             const id: facts.ValidityRootId = @enumFromInt(index);
@@ -6329,6 +6406,7 @@ fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChe
         left.storage_capabilities.items.len != right.storage_capabilities.items.len or
         left.lexical_storage_generations.items.len != right.lexical_storage_generations.items.len or
         left.places.items.len != right.places.items.len or
+        left.symbolic_pointees.items.len != right.symbolic_pointees.items.len or
         left.ownership_edges.items.len != right.ownership_edges.items.len or
         left.storage_generations.items.len != right.storage_generations.items.len or
         left.opaque_storages.items.len != right.opaque_storages.items.len or
@@ -6336,6 +6414,15 @@ fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChe
         left.choice_rejected.items.len != right.choice_rejected.items.len or
         left.choice_temporary_active.items.len != right.choice_temporary_active.items.len) return false;
 
+    for (left.symbolic_pointees.items) |pointee| {
+        var found = false;
+        for (right.symbolic_pointees.items) |other| if (other.identity == pointee.identity) {
+            if (other.initializedness != pointee.initializedness) return false;
+            found = true;
+            break;
+        };
+        if (!found) return false;
+    }
     for (left.tracker.roots.items, right.tracker.roots.items) |a, b|
         if (a.state != b.state or a.owned_resource != b.owned_resource or a.outcome_guard != b.outcome_guard) return false;
     for (left.storage_capabilities.items, right.storage_capabilities.items) |a, b|
@@ -6406,6 +6493,9 @@ fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChe
 }
 
 fn valueFactsEqual(left: facts.ValueFacts, right: facts.ValueFacts) bool {
+    if (left.symbolic_pointees.len != right.symbolic_pointees.len) return false;
+    for (left.symbolic_pointees) |identity|
+        if (std.mem.indexOfScalar(graph_mod.GlobalBindingId, right.symbolic_pointees, identity) == null) return false;
     if (left.domains.len != right.domains.len) return false;
     for (left.domains, right.domains) |a, b| {
         if (a.domain_index != b.domain_index or a.storages.len != b.storages.len) return false;

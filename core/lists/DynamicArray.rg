@@ -3,7 +3,10 @@
 -- replacing an element's value without changing shape does not.
 _DynamicArrayShape: Type = (.marker: UInt8)
 
-_DynamicArrayShape deinit(.self: $&_DynamicArrayShape) -> () := {}
+implement Deinit#(_DynamicArrayShape) (
+    .deinit = (.self: $&_DynamicArrayShape) -> () {
+    }
+)
 
 DynamicArray#(.t: Type): Type = (
     --

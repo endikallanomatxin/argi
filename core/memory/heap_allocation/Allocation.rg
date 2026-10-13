@@ -94,16 +94,16 @@ establish_allocation(
     allocation._storage_alignment = storage._alignment
 }
 
-Allocation deinit(
-        .self : $&Allocation,
-    ) -> () := {
-    -- Cleanup may touch backing metadata; an ended region cannot be released.
-    live ::= self&.anchor&
-    data ::= raw_pointer#(.t: UInt8)(.address = self&._storage_address).raw
-    Deallocator#().deallocate(
-        $&self&.deallocator
-        .data      = data
-        .size      = self&._release_size
-        .alignment = self&._storage_alignment
-    )
-}
+implement Deinit#(Allocation) (
+    .deinit = (.self: $&Allocation) -> () {
+        -- Cleanup may touch backing metadata; an ended region cannot be released.
+        live ::= self&.anchor&
+        data ::= raw_pointer#(.t: UInt8)(.address = self&._storage_address).raw
+        Deallocator#().deallocate(
+            $&self&.deallocator
+            .data      = data
+            .size      = self&._release_size
+            .alignment = self&._storage_alignment
+        )
+    }
+)

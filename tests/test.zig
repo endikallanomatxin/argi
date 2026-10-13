@@ -12462,3 +12462,101 @@ test "feature_tests/contracts/196_init_generic_defaults" {
     try expectSuccessfulBuild("tests/feature_tests/contracts/196_init_generic_defaults");
     try run("tests/feature_tests/contracts/196_init_generic_defaults");
 }
+
+test "feature_tests/contracts/197_deinit_automatic" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/197_deinit_automatic");
+    try run("tests/feature_tests/contracts/197_deinit_automatic");
+}
+
+test "feature_tests/contracts/198_deinit_explicit" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/198_deinit_explicit");
+    try run("tests/feature_tests/contracts/198_deinit_explicit");
+}
+
+test "feature_tests/contracts/199_deinit_ordinary_alias" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/199_deinit_ordinary_alias");
+    try run("tests/feature_tests/contracts/199_deinit_ordinary_alias");
+}
+
+test "feature_tests/contracts/200_deinit_generic" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/200_deinit_generic");
+    try run("tests/feature_tests/contracts/200_deinit_generic");
+}
+
+test "feature_tests/contracts/201_deinit_nested_choice_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/201_deinit_nested_choice_cleanup");
+    try run("tests/feature_tests/contracts/201_deinit_nested_choice_cleanup");
+}
+
+test "feature_tests/contracts/202_deinit_specialized" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/202_deinit_specialized");
+    try run("tests/feature_tests/contracts/202_deinit_specialized");
+}
+
+test "feature_tests/contracts/203_deinit_imported" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/203_deinit_imported");
+    try run("tests/feature_tests/contracts/203_deinit_imported");
+}
+
+test "feature_tests/contracts/204X_deinit_double_destruction" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/204X_deinit_double_destruction", "consumption requires an initialized owner");
+}
+
+test "feature_tests/contracts/205X_deinit_uninitialized" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/205X_deinit_uninitialized", "consumption requires an initialized owner");
+}
+
+test "feature_tests/contracts/206X_deinit_legacy_collision" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/206X_deinit_legacy_collision", "type declares both Deinit and legacy destructors");
+}
+
+test "feature_tests/contracts/207X_deinit_result" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/207X_deinit_result", "operation returns an incompatible associated result");
+}
+
+test "feature_tests/contracts/208X_deinit_implicit_copy" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/208X_deinit_implicit_copy", "cannot be copied implicitly");
+}
+
+test "feature_tests/contracts/209X_deinit_virtual_receiver" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/209X_deinit_virtual_receiver", "consumes on erased Self requires receiver cleanup identities");
+}
+
+test "feature_tests/contracts/210_deinit_owned_field_post_states" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/210_deinit_owned_field_post_states");
+    try run("tests/feature_tests/contracts/210_deinit_owned_field_post_states");
+}
+
+test "feature_tests/contracts/211X_deinit_borrowed_owner" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/211X_deinit_borrowed_owner", "a storage transition is not permitted by this preservation contract");
+}
+
+test "feature_tests/contracts/212_deinit_independent_parameters" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/212_deinit_independent_parameters");
+    try run("tests/feature_tests/contracts/212_deinit_independent_parameters");
+}
+
+test "feature_tests/contracts/213X_deinit_repeated_parameter" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/213X_deinit_repeated_parameter", "consumption requires an initialized owner");
+}
+
+test "feature_tests/contracts/214X_deinit_parameter_alias" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/214X_deinit_parameter_alias", "consumption requires an initialized owner");
+}
+
+test "feature_tests/contracts/215X_deinit_parameter_branch" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/215X_deinit_parameter_branch", "consumption requires an initialized owner");
+}
+
+test "feature_tests/contracts/216X_deinit_parameter_overwrite" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/216X_deinit_parameter_overwrite", "consumption requires an initialized owner");
+}
+
+test "feature_tests/contracts/217_deinit_reached_alias" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/217_deinit_reached_alias");
+    try run("tests/feature_tests/contracts/217_deinit_reached_alias");
+}
+
+test "feature_tests/contracts/218X_deinit_loop_carried_aliases" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/218X_deinit_loop_carried_aliases", "consumption requires an initialized owner");
+}
