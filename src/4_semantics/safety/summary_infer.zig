@@ -1,3 +1,4 @@
+const lifecycle_contracts = @import("../global/lifecycle_contracts.zig");
 const std = @import("std");
 const profile = @import("../../1_base/profile.zig");
 const graph_mod = @import("../global/graph.zig");
@@ -4132,7 +4133,7 @@ pub const Infer = struct {
                     // TODO: Unify ordinary projected output writes with the
                     // existing input post-state flow before broadening this
                     // path. Replaying their RHS can duplicate opaque effects.
-                    if (self.graph.declaration(self.graph.function(function).declaration).constructor_type == null) return;
+                    if (self.graph.declaration(self.graph.function(function).declaration).constructor_type == null and lifecycle_contracts.initializedType(self.graph, function) == null) return;
                     outputs[index] = try self.storeEffectProjection(outputs[index], path, try self.inferExpression(function, value));
                 }
             },

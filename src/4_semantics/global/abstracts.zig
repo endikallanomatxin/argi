@@ -1,3 +1,5 @@
+const lifecycle_contracts = @import("lifecycle_contracts.zig");
+const initializer_contract = @import("initializer_contract.zig");
 const type_arguments = @import("../module/type_arguments.zig");
 const std = @import("std");
 const module_views = @import("../module/views.zig");
@@ -2753,6 +2755,23 @@ pub const Resolver = struct {
                     };
                     self.participant_conformance_failure = failure;
                     return;
+                }
+                if (lifecycle_contracts.standardDeclaration(self.graph, "Init") == conformance.declaration) {
+                    const required_inputs = global_types.fields(self.graph, input).?;
+                    const required_outputs = global_types.fields(self.graph, output).?;
+                    const arguments = self.graph.fields.items[required_inputs.start].ty;
+                    _ = try self.generics.ensureGenericInstance(arguments);
+                    if (global_types.fields(self.graph, arguments) == null) {
+                        failure.reason = "Init.Args must be a record type describing construction arguments";
+                        self.participant_conformance_failure = failure;
+                        return;
+                    }
+                    const result = self.graph.fields.items[required_outputs.start].ty;
+                    if (!self.graph.isTypeUnresolved(result) and !initializer_contract.resultMatchesTarget(self.graph, result, first)) {
+                        failure.reason = "Init.Result must be its participant type or one Errable containing that type";
+                        self.participant_conformance_failure = failure;
+                        return;
+                    }
                 }
                 try self.recordStaticSafetyContract(located, requirement, &bindings, first, selected.function, output, failure.source);
                 try operations.append(self.allocator, selected.function);

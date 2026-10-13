@@ -12417,3 +12417,48 @@ test "feature_tests/contracts/186_contextual_associated_operation_input" {
     try expectSuccessfulBuild("tests/feature_tests/contracts/186_contextual_associated_operation_input");
     try run("tests/feature_tests/contracts/186_contextual_associated_operation_input");
 }
+
+test "feature_tests/contracts/187_init_record_arguments" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/187_init_record_arguments");
+    try run("tests/feature_tests/contracts/187_init_record_arguments");
+}
+
+test "feature_tests/contracts/188_init_generic" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/188_init_generic");
+    try run("tests/feature_tests/contracts/188_init_generic");
+}
+
+test "feature_tests/contracts/189_init_fallible" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/189_init_fallible");
+    try run("tests/feature_tests/contracts/189_init_fallible");
+}
+
+test "feature_tests/contracts/190X_init_result_type" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/190X_init_result_type", "Init.Result must be its participant type or one Errable containing that type");
+}
+
+test "feature_tests/contracts/191_init_owner_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/191_init_owner_cleanup");
+    try run("tests/feature_tests/contracts/191_init_owner_cleanup");
+}
+
+test "feature_tests/contracts/192X_init_reference_escape" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/192X_init_reference_escape", "function output cannot depend on a local storage generation");
+}
+
+test "feature_tests/contracts/193X_init_legacy_collision" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/193X_init_legacy_collision", "type declares both Init and legacy initializers");
+}
+
+test "feature_tests/contracts/194X_init_scalar_arguments" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/194X_init_scalar_arguments", "Init.Args must be a record type");
+}
+
+test "feature_tests/contracts/195X_init_generic_default_type" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/195X_init_generic_default_type", "default value is incompatible with its selected Init.Args field type");
+}
+
+test "feature_tests/contracts/196_init_generic_defaults" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/196_init_generic_defaults");
+    try run("tests/feature_tests/contracts/196_init_generic_defaults");
+}

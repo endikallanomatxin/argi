@@ -151,8 +151,13 @@ feature first.
   CIncomplete declarations keep nominal identities without runtime fields or
   layout. Only RawPointer handles may carry them across C boundaries; never
   synthesize an empty-record layout or construct safe references to them.
-  Constructors use `TypeName init#(...)(...)` and return the constructed value
-  or an Errable containing it. Their explicit association is a nominal
+  Canonical construction for migrated types uses `implement Init#(T)`, with an
+  Args record and a Result of T or Errable containing T. Type calls complete Args
+  and invoke the selected scoped init operation. Selected evidence supplies
+  initializer safety and projected output dependencies; never add a second
+  constructor registry. Reject mixed Init/legacy initializer families and preserve
+  speculative rollback. Legacy `TypeName init#(...)(...)` declarations remain
+  only while their families migrate. Their explicit association is a nominal
   declaration ID, persisted in ModuleSG and relocated into GlobalSG. Keep
   constructor lookup indexed by that family, independently of output types;
   speculative specializations must roll back their index entries.

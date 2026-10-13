@@ -8,6 +8,7 @@ const parameterized_storage = @import("parameterized/storage.zig");
 const ir = @import("parameterized/ir.zig");
 const writer_mod = @import("writer.zig");
 const type_lowerer = @import("type_lowerer.zig");
+const initializer_lowerer = @import("initializer_lowerer.zig");
 const primitives = @import("../primitives/schema.zig");
 
 pub const Stats = struct {
@@ -586,7 +587,9 @@ const Context = struct {
             .tree = self.tree,
             .source = self.source,
         };
-        return lowerer.lower(node);
+        const ty = try lowerer.lower(node);
+        try initializer_lowerer.lowerAnonymousFieldDefaults(self.allocator, self.graph, self.files, self.file_index, node, ty, self.diagnostics);
+        return ty;
     }
 
     fn moduleTypeFromName(self: *Context, node: syn.NodeIndex, name: []const u8, qualifier: ?[]const u8) !entities.ModuleTypeId {

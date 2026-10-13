@@ -69,7 +69,13 @@ incomparable maximal candidates are errors; source/import ordering has no priori
    Preserve extension ownership and composition operation identities. Give editor
    references and rename actions operation targets distinct from implementation
    bodies; current navigation follows bodies and rename is disabled for them.
-4. Introduce standard Init, Convert, Deinit and operator contracts. Replace the
+4. Init now selects canonical construction from Args/Result evidence, including
+   explicit generic and nested calls. Closed anonymous argument defaults use the
+   ordinary default lowerer; parameterized shapes preserve scalar/reach defaults.
+   Migrate bundled constructors one family at a time, removing all old initializers
+   of that family. Mixed Init/legacy families are rejected. Initializer safety and
+   projected output dependencies use selected evidence directly. Continue with
+   standard Convert, Deinit and operator contracts. Replace the
    old constructor/destructor/operator indexes with explicit operation identities,
    preserving resource initialization, cleanup and capability dependencies.
 5. Extend unary selected virtual evidence to associated parameters and storage
@@ -112,3 +118,16 @@ legacy ordinary resolution.
 - Selected evidence validation joins the ordinary resolution/cleanup fixed point;
   newly selected dependencies are validated in the same pass. Negative spatial
   fixtures exposed previously unvalidated operation tables during this migration.
+
+- Ruling: recognize standard lifecycle identities only from bundled core; a
+  same-named user contract cannot redirect compiler construction. A canonical Init
+  blocks structural fallback on argument mismatch and rejects legacy initializers
+  of the same family. If incorrect, customization requires an explicit protocol
+  extension; it never silently changes construction or ownership.
+- TODO: extend generic record defaults beyond scalar literals and reach directives
+  through a caller-aware expression instantiation path. Do not execute effectful
+  defaults while materializing types.
+
+- TODO: report missing fields in specialized implementation bodies at their
+  source location; UnknownParameterizedField currently escapes as an internal
+  semantizing failure when the selected body is invalid.

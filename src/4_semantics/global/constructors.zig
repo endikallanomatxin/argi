@@ -13,6 +13,7 @@ const types = @import("types.zig");
 const abstract_mod = @import("abstracts.zig");
 const call_compatibility = @import("call_compatibility.zig");
 const initializer_contract = @import("initializer_contract.zig");
+const lifecycle_contracts = @import("lifecycle_contracts.zig");
 const c_abi = @import("c_abi.zig");
 const module_linker = @import("module_linker.zig");
 const diagnostics_mod = @import("../../1_base/diagnostic.zig");
@@ -81,6 +82,8 @@ pub const Resolver = struct {
             if (arguments.len != 0) return null;
             break :blk declaration.type_id orelse return null;
         };
+
+        if (try self.contractInitializer(module_index, ty, input, reach, source)) |call| return call;
 
         if (parameterized) {
             const initializer = try self.findGenericInitializer(
@@ -246,6 +249,73 @@ pub const Resolver = struct {
         return .resolved;
     }
 
+    fn contractInitializer(self: *Resolver, module_index: usize, ty: global_sg.GlobalTypeId, input: global_sg.GlobalNodeId, reach: reach_context.Context, source: primitives.SourceRef) !?global_sg.Node {
+        const checkpoint = self.graph.checkpoint();
+        const generic_functions = self.generic_functions.?;
+        const side_effects = generic_functions.checkpointSideEffects();
+        const original_input = self.graph.node(input);
+        var committed = false;
+        defer if (!committed) {
+            self.graph.nodes.items[@intFromEnum(input)] = original_input;
+            self.graph.rollback(checkpoint);
+            generic_functions.rollbackSideEffects(side_effects);
+        };
+        const declaration = lifecycle_contracts.standardDeclaration(self.graph, "Init") orelse return null;
+        const abstracts = self.abstracts orelse return null;
+        if (!try abstracts.implements(ty, declaration)) return null;
+        if (nominalDeclaration(self.graph, ty)) |owner| {
+            if ((try self.graph.constructorsFor(self.core.allocator, owner)).len != 0 or
+                (try self.graph.parameterizedConstructorsFor(self.core.allocator, self.modules, owner)).len != 0)
+            {
+                try self.reportConstructorError(source, "type declares both Init and legacy initializers; migrate its canonical construction to Init");
+                return error.MixedInitializerMechanisms;
+            }
+        }
+        const generics = self.generics.?;
+        const start: u32 = @intCast(self.graph.generic_arguments.items.len);
+        try self.graph.generic_arguments.append(self.core.allocator, .{ .name = .{ .start = 0, .len = 0 }, .value = .{ .type = ty } });
+        const contract_type = try generics.internType(.{ .generic = .{ .base = declaration, .arguments = .{ .start = start, .len = 1 } } });
+        const arguments_type = try abstract_mod.Resolver.resolveAssociatedType(abstracts, contract_type, "Args", source);
+        _ = try generics.ensureGenericInstance(arguments_type);
+        const fields = types.fields(self.graph, arguments_type) orelse {
+            try self.reportConstructorError(source, "Init.Args must be a record type describing construction arguments");
+            return error.InvalidInitializerArguments;
+        };
+        const literal = self.graph.node(input).content.struct_value_literal;
+        for (self.graph.fields.items[fields.start..][0..fields.len], 0..) |field, position| {
+            if (self.core.callArgumentNamed(literal, position, self.graph.text(field.name)) != null) continue;
+            const default = field.default_value orelse continue;
+            const default_type = self.graph.node(default).ty orelse continue;
+            if (!self.core.callTypesCompatible(default_type, field.ty) and !self.core.contextualLiteralFits(default, field.ty)) {
+                try self.reportConstructorError(source, "default value is incompatible with its selected Init.Args field type");
+                return error.InvalidInitializerArguments;
+            }
+        }
+        switch (self.core.matchCallInput(fields, input)) {
+            .score => {},
+            .deferred => return error.DeferredContractInitializer,
+            .no_match => {
+                try self.reportConstructorError(source, "construction arguments do not match the selected Init.Args");
+                return error.InvalidInitializerArguments;
+            },
+        }
+        if (!try self.core.completeCallInputFieldsWithReach(fields, input, reach)) return error.DeferredContractInitializer;
+        self.graph.nodes.items[@intFromEnum(input)].ty = arguments_type;
+        const value_start: u32 = @intCast(self.graph.value_fields.items.len);
+        try self.graph.value_fields.append(self.core.allocator, .{ .name = try self.graph.addString(self.core.allocator, "args"), .value = input });
+        const wrapped: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.graph.nodes.items.len)));
+        try self.graph.nodes.append(self.core.allocator, .{ .source = source, .ty = null, .content = .{ .struct_value_literal = .{ .fields = .{ .start = value_start, .len = 1 } } } });
+        const call = try abstracts.makeScopedOperationCall(module_index, contract_type, "init", wrapped, reach, source) orelse return error.DeferredContractInitializer;
+        const result_type = call.ty orelse return error.DeferredContractInitializer;
+        if (self.graph.isTypeUnresolved(result_type)) return error.DeferredContractInitializer;
+        if (!initializer_contract.resultMatchesTarget(self.graph, result_type, ty)) {
+            try self.reportConstructorError(source, "Init.Result must be its participant type or one Errable containing that type");
+            return error.InvalidInitializerResult;
+        }
+        committed = true;
+        return call;
+    }
+
     fn resolveCall(
         self: *Resolver,
         module_index: usize,
@@ -270,6 +340,15 @@ pub const Resolver = struct {
         const ty = declaration.type_id orelse return .deferred;
         if (declaration.struct_layout == .c_function_pointer)
             return self.resolveCallbackConstructor(module_index, module, o, value, declaration, ty, input);
+
+        if (self.contractInitializer(module_index, ty, input, reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function), self.graph.node(input).source) catch |err| {
+            if (err == error.DeferredContractInitializer) return .deferred;
+            return err;
+        }) |call| {
+            self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = call;
+            self.core.stats.calls += 1;
+            return .resolved;
+        }
 
         const initializer = try self.findInitializer(
             module_index,
@@ -437,6 +516,16 @@ pub const Resolver = struct {
         };
 
         const input = globalizer.globalNode(o, value.input);
+        if (self.contractInitializer(module_index, ty, input, reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function), self.graph.node(input).source) catch |err| {
+            if (err == error.DeferredContractInitializer) return .deferred;
+            return err;
+        }) |call| {
+            self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = call;
+            self.core.stats.calls += 1;
+            committed = true;
+            return .resolved;
+        }
+
         const initializer = try self.findGenericInitializer(
             generics,
             generic_functions,

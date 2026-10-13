@@ -2,9 +2,15 @@ CAllocator: Type = (
     .ffi : $&ForeignFunctionInterface
 )
 
-CAllocator init(.ffi: $&ForeignFunctionInterface) -> (.result: CAllocator) := {
-    result.ffi = ffi
-}
+implement Init#(CAllocator) (
+    .Args: Type = (.ffi: $&ForeignFunctionInterface)
+    .Result: Type = CAllocator
+
+    .init = (.args: Args) -> (.result: Result) {
+        ffi ::= args.ffi
+        result.ffi = ffi
+    }
+)
 
 implement Allocator#(CAllocator)(
     .allocate = (

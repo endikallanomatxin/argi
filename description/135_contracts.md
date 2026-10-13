@@ -267,3 +267,23 @@ operation. Implicitly copyable types receive a generic infallible implementation
 Ownership recognizes declared copy capabilities independently of global function
 names, so an explicit owning copy operation never grants implicit duplication.
 FalliblyCopyable and its remaining callers are still pending migration.
+
+The standard Init contract now owns canonical construction for migrated types.
+Type calls select Init evidence, complete its Args record and invoke its init
+operation; Result must be the participant itself or one bundled Errable containing
+it. Concrete and explicit generic calls, including parameterized bodies, share
+this route. Closed anonymous Args records retain ordinary field defaults; generic
+argument shapes retain scalar and lexical reach defaults. Failed construction
+probes roll back evidence and generic side effects.
+
+Initializer safety and projected output dependencies recognize selected Init
+operation bodies without a second constructor registry. Owning results still
+receive automatic cleanup and borrowed results retain their input dependencies.
+A type cannot combine Init with a legacy initializer. Legacy family indexes remain
+only for types whose declarations have not migrated yet; removing them remains a
+required part of the lifecycle refactor.
+
+The first bundled Init migrations cover CAllocator, PageAllocator, ByteReader,
+ByteWriter and FixedSizeErrorTracer. Their legacy declarations have been removed;
+existing type-call syntax now invokes selected Init operations while preserving
+their capability and backing-storage dependencies.

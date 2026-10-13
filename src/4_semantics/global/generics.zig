@@ -543,6 +543,31 @@ pub const Resolver = struct {
         return global;
     }
 
+    // Record argument shapes retain scalar defaults without executing runtime
+    // expressions during type construction. Function interfaces materialize
+    // their complete defaults separately in their concrete binding context.
+    fn instantiateScalarFieldDefault(self: *Resolver, module_index: usize, id: ir.ParameterizedNodeId, ty: global_sg.GlobalTypeId, bindings: *Bindings) !?global_sg.GlobalNodeId {
+        if (try self.instantiateReachDefault(module_index, id)) |node| return node;
+        const module = &self.modules[module_index];
+        const node = module.semantic.parameterized_storage.ir.nodes.items[@intFromEnum(id)];
+        const resolved = switch (node) {
+            .resolved => |value| value,
+            else => return null,
+        };
+        const content: global_sg.Node.Content = switch (resolved.content) {
+            .int_literal => |value| .{ .int_literal = value },
+            .float_literal => |value| .{ .float_literal = value },
+            .bool_literal => |value| .{ .bool_literal = value },
+            .char_literal => |value| .{ .char_literal = value },
+            .string_literal => |value| .{ .string_literal = try self.graph.addString(self.allocator, module.text(value)) },
+            else => return null,
+        };
+        const global: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.graph.nodes.items.len)));
+        const literal_type = if (resolved.ty) |source_type| try self.instantiateParameterizedType(module_index, source_type, bindings) else ty;
+        try self.graph.nodes.append(self.allocator, .{ .source = self.globalSource(module_index, resolved.source), .ty = literal_type, .content = content });
+        return global;
+    }
+
     fn instantiateFields(
         self: *Resolver,
         module_index: usize,
@@ -555,12 +580,13 @@ pub const Resolver = struct {
         defer items.deinit(self.allocator);
         for (0..range.len) |offset| {
             const field = storage.fields.items[range.start + @as(u32, @intCast(offset))];
+            const ty = try self.instantiateParameterizedType(module_index, field.ty, bindings);
             try items.append(self.allocator, .{
                 .name = try self.graph.addString(self.allocator, module.text(field.name)),
-                .ty = try self.instantiateParameterizedType(module_index, field.ty, bindings),
+                .ty = ty,
                 .storage_type = if (field.storage_type) |value| try self.instantiateParameterizedType(module_index, value, bindings) else null,
                 .source = self.globalSource(module_index, field.source),
-                .default_value = if (field.default_value) |value| try self.instantiateReachDefault(module_index, value) else null,
+                .default_value = if (field.default_value) |value| try self.instantiateScalarFieldDefault(module_index, value, ty, bindings) else null,
             });
         }
         const start: u32 = @intCast(self.graph.fields.items.len);

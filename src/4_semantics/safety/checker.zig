@@ -1,3 +1,4 @@
+const lifecycle_contracts = @import("../global/lifecycle_contracts.zig");
 const std = @import("std");
 const profile = @import("../../1_base/profile.zig");
 const diagnostics = @import("../../1_base/diagnostic.zig");
@@ -491,8 +492,8 @@ pub const SafetyChecker = struct {
                 if (!has_receiver or function.output.len != 0)
                     try self.report(declaration.source, "destructor must receive a mutable reference to its associated type and return no values", .{});
             }
-            if (declaration.constructor_type == null) continue;
             const id: graph_mod.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
+            if (declaration.constructor_type == null and lifecycle_contracts.initializedType(self.graph, id) == null) continue;
             if (initializer_contract.classify(self.graph, id) == .invalid)
                 try self.report(declaration.source, "initializer must return its constructed type or one Errable of that type", .{});
         }
