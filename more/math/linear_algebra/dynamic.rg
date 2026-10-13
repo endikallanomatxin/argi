@@ -146,49 +146,48 @@ add#(
     result = ..ok(._rows = left&._rows, ._cols = left&._cols, ._values = ~storage)
 }
 
-multiply#(
-        .t : Type: Scalar
-    )(
-        .left      : &DynamicMatrix#(.t: t),
-        .right     : &DynamicMatrix#(.t: t),
-        .allocator : $&Allocator
-    ) -> (
-        .result : Errable#(DynamicMatrix#(.t: t), (..dimension_mismatch, ..out_of_memory))
-    ) := {
-    if left&._cols != right&._rows {
-        result = ..error(.reason = ..dimension_mismatch)
-        return
-    }
+implement#(.t: Type: Scalar, .Provider: Type: Allocator) Multiply#(DynamicMatrix#(.t: t), DynamicMatrix#(.t: t), (.left: &DynamicMatrix#(.t: t), .right: &DynamicMatrix#(.t: t), .allocator: $&Provider = reach allocator)) (
+    .Result: Type = Errable#(DynamicMatrix#(.t: t), (..dimension_mismatch, ..out_of_memory))
+    .multiply = (.args: (.left: &DynamicMatrix#(.t: t), .right: &DynamicMatrix#(.t: t), .allocator: $&Provider = reach allocator)) -> (.result: Result) {
+        left ::= args.left
+        right ::= args.right
+        assume allocator ::= args.allocator
 
-    count ::= _extent(.rows = left&._rows, .cols = right&._cols)!
-    storage ::= DynamicArray#(.t: t)(.allocator = allocator, .capacity = count)!
-
-    if count == 0 {
-        result = ..ok(._rows = left&._rows, ._cols = right&._cols, ._values = ~storage)
-        return
-    }
-
-    row :: UIntNative = 0
-
-    while row < left&._rows {
-        col :: UIntNative = 0
-        while col < right&._cols {
-            sum ::= zeroed#(.t: t)().value
-            k :: UIntNative = 0
-            while k < left&._cols {
-                a ::= unwrap_or_abort(.value = get(.self = left, .row = row, .col = k)).result
-                b ::= unwrap_or_abort(.value = get(.self = right, .row = k, .col = col)).result
-                sum = sum + a * b
-                k = k + 1
-            }
-            push(.self = $&storage, .value = sum, .allocator = allocator)!
-            col = col + 1
+        if left&._cols != right&._rows {
+            result = ..error(.reason = ..dimension_mismatch)
+            return
         }
-        row = row + 1
-    }
 
-    result = ..ok(._rows = left&._rows, ._cols = right&._cols, ._values = ~storage)
-}
+        count ::= _extent(.rows = left&._rows, .cols = right&._cols)!
+        storage ::= DynamicArray#(.t: t)(.allocator = allocator, .capacity = count)!
+
+        if count == 0 {
+            result = ..ok(._rows = left&._rows, ._cols = right&._cols, ._values = ~storage)
+            return
+        }
+
+        row :: UIntNative = 0
+
+        while row < left&._rows {
+            col :: UIntNative = 0
+            while col < right&._cols {
+                sum ::= zeroed#(.t: t)().value
+                k :: UIntNative = 0
+                while k < left&._cols {
+                    a ::= unwrap_or_abort(.value = get(.self = left, .row = row, .col = k)).result
+                    b ::= unwrap_or_abort(.value = get(.self = right, .row = k, .col = col)).result
+                    sum = sum + a * b
+                    k = k + 1
+                }
+                push(.self = $&storage, .value = sum, .allocator = allocator)!
+                col = col + 1
+            }
+            row = row + 1
+        }
+
+        result = ..ok(._rows = left&._rows, ._cols = right&._cols, ._values = ~storage)
+    }
+)
 
 transpose#(
         .t : Type: Scalar

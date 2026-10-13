@@ -144,19 +144,53 @@ pub const Resolver = struct {
 
     /// Operator sugar selects scoped evidence from an operand record. Reached
     /// capability fields participate in inference before materializing the call.
-    pub fn resolveContractAddition(
+    pub fn resolveContractArithmetic(
         self: *Resolver,
         module_index: usize,
         module: *const module_sg.ModuleSemanticGraph,
         o: globalizer.Offsets,
         value: anytype,
     ) !resolution.Result {
-        if (value.operator != .addition) return .not_applicable;
+        const identity = standard_contracts.arithmeticOperation(value.operator);
         const reach = ReachInferenceContext.fromModule(module, o, value.visible_bindings, value.owner_function);
         const assumed = if (value.assumed_arguments) |local| globalizer.globalNode(o, local) else null;
-        const call = try self.makeContractOperator(module_index, "Add", "add", &.{ globalizer.globalNode(o, value.left), globalizer.globalNode(o, value.right) }, reach, assumed) orelse return .deferred;
-        self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = call;
+        const operands = [_]global_sg.GlobalNodeId{ globalizer.globalNode(o, value.left), globalizer.globalNode(o, value.right) };
+        self.core.contextualizeArithmeticPair(&operands);
+        const call = try self.makeContractOperator(module_index, identity.contract, identity.operation, &operands, reach, assumed) orelse return .deferred;
+        self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = self.lowerSelectedScalarArithmetic(call, value.operator, &operands);
         return .resolved;
+    }
+
+    /// Trusted scalar implementations preserve constant-expression lowering,
+    /// after scoped evidence has selected the operation. Other implementations
+    /// remain ordinary calls, even when their participants are scalar types.
+    fn lowerSelectedScalarArithmetic(self: *Resolver, call: global_sg.Node, operator: primitives.BinaryOperator, operands: []const global_sg.GlobalNodeId) global_sg.Node {
+        if (call.content != .function_call or call.content.function_call.contract_operation == null) return call;
+        const declaration = self.graph.declaration(self.graph.function(call.content.function_call.callee).declaration);
+        const function = self.graph.function(call.content.function_call.callee);
+        const file = self.graph.files.items[declaration.source.file_index];
+        const module = self.graph.modules.items[@intFromEnum(file.module)];
+        if (!module.is_bundled_core or !std.mem.eql(u8, std.fs.path.basename(self.graph.text(file.path)), "scalar_arithmetic.rg")) return call;
+        // Prove the exact primitive body before eliding the call. Adding checks,
+        // capabilities or other effects in core must retain the ordinary call.
+        if (function.input.len != 1 or function.output.len != 1 or function.input_bindings.len != 1 or function.output_bindings.len != 1) return call;
+        const body = self.graph.blocks.items[@intFromEnum(function.body orelse return call)];
+        if (body.nodes.len != 1) return call;
+        const statement = self.graph.node(self.graph.node_refs.items[body.nodes.start]);
+        if (statement.content != .assignment or statement.content.assignment.binding != self.graph.binding_refs.items[function.output_bindings.start]) return call;
+        const expression = self.graph.node(statement.content.assignment.value);
+        if (expression.content != .binary_operation or expression.content.binary_operation.operator != operator) return call;
+        const primitive_operands = [_]global_sg.GlobalNodeId{ expression.content.binary_operation.left, expression.content.binary_operation.right };
+        for (primitive_operands, 0..) |operand, position| {
+            const projection = self.graph.node(operand).content;
+            if (projection != .struct_field_access or projection.struct_field_access.field_index != position) return call;
+            const record = self.graph.node(projection.struct_field_access.value).content;
+            if (record != .binding_use or record.binding_use != self.graph.binding_refs.items[function.input_bindings.start]) return call;
+        }
+        const left = self.graph.node(operands[0]).ty orelse return call;
+        const right = self.graph.node(operands[1]).ty orelse return call;
+        if (!self.core.isScalarArithmeticRepresentation(left, right) or !global_types.equal(self.graph, call.ty.?, left)) return call;
+        return .{ .source = call.source, .ty = call.ty, .content = .{ .binary_operation = .{ .operator = operator, .left = operands[0], .right = operands[1] } } };
     }
 
     fn makeContractOperator(self: *Resolver, module_index: usize, contract_name: []const u8, operation_name: []const u8, operands: []const global_sg.GlobalNodeId, reach: ReachInferenceContext, assumed: ?global_sg.GlobalNodeId) anyerror!?global_sg.Node {
@@ -185,11 +219,11 @@ pub const Resolver = struct {
         const selected = switch (try resolver.infer(declaration, &.{ .inferred, .inferred }, input, reach)) {
             .selected => |selection| selection,
             .ambiguous => {
-                failure = .{ .source = self.graph.node(operands[0]).source, .contract_name = contract_name, .operation = operation_name, .reason = if (std.mem.eql(u8, contract_name, "Add")) "ambiguous Add argument shapes; qualify the contract with an explicit Args type" else "ambiguous Equal argument shapes; qualify the contract with an explicit Args type" };
+                failure = .{ .source = self.graph.node(operands[0]).source, .contract_name = contract_name, .operation = operation_name, .reason = standard_contracts.operatorMessage(contract_name, "ambiguous ", " argument shapes; qualify the contract with an explicit Args type") };
                 return error.InvalidContractOperator;
             },
             .missing_reach => {
-                failure = .{ .source = self.graph.node(operands[0]).source, .contract_name = contract_name, .operation = operation_name, .reason = if (std.mem.eql(u8, contract_name, "Add")) "Add.Args requires a reachable capability or an explicitly qualified operation call" else "Equal.Args requires a reachable capability or an explicitly qualified operation call" };
+                failure = .{ .source = self.graph.node(operands[0]).source, .contract_name = contract_name, .operation = operation_name, .reason = standard_contracts.operatorMessage(contract_name, "", ".Args requires a reachable capability or an explicitly qualified operation call") };
                 return error.InvalidContractOperator;
             },
             else => return null,
@@ -2766,6 +2800,19 @@ pub const Resolver = struct {
         ) !global_sg.Node {
             const module = &self.resolver.modules[self.module_index];
             const name = module.text(name_range);
+            if (module_path == null) if (standard_contracts.scalarArithmeticPrimitive(name)) |operator| {
+                const declaration = self.resolver.graph.declaration(globalizer.globalDecl(self.resolver.offsets[self.module_index], self.parameterized.declaration));
+                const path = self.resolver.graph.text(self.resolver.graph.files.items[declaration.source.file_index].path);
+                if (!module.is_bundled_core or !std.mem.eql(u8, std.fs.path.basename(path), "scalar_arithmetic.rg")) return error.NoMatchingGenericFunction;
+                const literal = self.resolver.graph.node(input).content.struct_value_literal;
+                if (literal.fields.len != 2) return error.InvalidScalarArithmeticPrimitive;
+                const left = self.resolver.core.callArgumentNamed(literal, 0, "left") orelse return error.InvalidScalarArithmeticPrimitive;
+                const right = self.resolver.core.callArgumentNamed(literal, 1, "right") orelse return error.InvalidScalarArithmeticPrimitive;
+                const left_type = self.resolver.graph.node(left).ty orelse return error.InvalidScalarArithmeticPrimitive;
+                const right_type = self.resolver.graph.node(right).ty orelse return error.InvalidScalarArithmeticPrimitive;
+                if (!self.resolver.core.isScalarArithmeticRepresentation(left_type, right_type)) return error.InvalidScalarArithmeticPrimitive;
+                return .{ .source = self.resolver.sourceFor(self.module_index, source), .ty = left_type, .content = .{ .binary_operation = .{ .operator = operator, .left = left, .right = right } } };
+            };
             if (module_path == null and (std.mem.eql(u8, name, "__integer_conversion") or
                 std.mem.eql(u8, name, "__integer_conversion_lower_bound") or
                 std.mem.eql(u8, name, "__integer_conversion_upper_bound")))
@@ -2953,26 +3000,18 @@ pub const Resolver = struct {
             };
         }
 
-        fn resolveBinary(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef, detail: ir.PendingExpressionDetail, assumed: ?ir.ParameterizedNodeId) !global_sg.Node {
+        fn resolveBinary(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, _: primitives.SourceRef, detail: ir.PendingExpressionDetail, assumed: ?ir.ParameterizedNodeId) !global_sg.Node {
             if (operands.len != 2) return error.InvalidParameterizedBinary;
             const operator: primitives.BinaryOperator = switch (detail) {
                 .binary => |value| value,
                 else => return error.InvalidParameterizedBinary,
             };
-            const ty = self.resolver.graph.nodes.items[@intFromEnum(operands[0])].ty;
-            const right_ty = self.resolver.graph.node(operands[1]).ty;
-            if (operator == .addition and ty != null and right_ty != null and
-                (self.resolver.graph.semanticType(ty.?) != .builtin or self.resolver.graph.semanticType(right_ty.?) != .builtin))
-            {
-                const reach = try self.operatorContext(assumed);
-                defer self.resolver.allocator.free(reach.global.visible_bindings);
-                if (try self.resolver.makeContractOperator(self.module_index, "Add", "add", operands, reach, null)) |call| return call;
-            }
-            return .{
-                .source = self.resolver.sourceFor(self.module_index, source),
-                .ty = ty,
-                .content = .{ .binary_operation = .{ .operator = operator, .left = operands[0], .right = operands[1] } },
-            };
+            self.resolver.core.contextualizeArithmeticPair(operands);
+            const identity = standard_contracts.arithmeticOperation(operator);
+            const reach = try self.operatorContext(assumed);
+            defer self.resolver.allocator.free(reach.global.visible_bindings);
+            const call = try self.resolver.makeContractOperator(self.module_index, identity.contract, identity.operation, operands, reach, null) orelse return error.UnresolvedContractArithmetic;
+            return self.resolver.lowerSelectedScalarArithmetic(call, operator, operands);
         }
 
         fn resolveComparison(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef, detail: ir.PendingExpressionDetail, assumed: ?ir.ParameterizedNodeId) !global_sg.Node {

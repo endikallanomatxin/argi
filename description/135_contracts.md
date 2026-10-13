@@ -141,9 +141,12 @@ Bundled StringView, time values, Path and semver comparisons use Equal; auxiliar
 capabilities can be fields with reach defaults, including in generic bodies.
 Both addition and equality require explicit references for borrowed operands;
 there is no implicit receiver address. Legacy operator declarations and their
-metadata registries are removed. Scalar arithmetic and direct comparisons still
-use representation primitives; moving those behind conformance selection remains
-migration work.
+metadata registries are removed. Arithmetic symbols select Add, Subtract,
+Multiply, Divide or Remainder. Bundled scalar conformances use private
+representation hooks; primitive lowering happens after evidence selection and
+preserves constant expressions. It never replaces a custom implementation.
+Direct scalar/pointer comparisons still use representation primitives; moving
+those behind conformance selection remains migration work.
 
 ## Virtual evidence and safety
 

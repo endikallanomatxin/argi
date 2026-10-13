@@ -1064,7 +1064,18 @@ fn diagnoseUnresolvedArithmetic(
             const left_ty = graph.node(left).ty orelse continue;
             const right_ty = graph.node(right).ty orelse continue;
             if (graph.isTypeUnresolved(left_ty) or graph.isTypeUnresolved(right_ty)) continue;
-            if (graph.semanticType(left_ty) == .pointer or graph.semanticType(right_ty) == .pointer) {
+            const left_representation_pointer = graph.semanticType(left_ty) == .pointer and switch (graph.semanticType(graph.semanticType(left_ty).pointer.child)) {
+                .builtin, .array, .pointer, .nullable => true,
+                else => false,
+            };
+            const right_representation_pointer = graph.semanticType(right_ty) == .pointer and switch (graph.semanticType(graph.semanticType(right_ty).pointer.child)) {
+                .builtin, .array, .pointer, .nullable => true,
+                else => false,
+            };
+            // References to nominal participants are legitimate contract
+            // operands. Report their concrete types and dimensions when no
+            // conforming operation exists, rather than calling them addresses.
+            if (left_representation_pointer or right_representation_pointer) {
                 try diagnostics.add(
                     diagnosticLocation(graph, diagnostics, graph.node(left).source),
                     .semantic,
@@ -1808,8 +1819,8 @@ fn resolvePendingOperation(
         },
         .core => blk: {
             if (operation == .resolve_binary) {
-                const contract_result = try dispatch.generic_functions.resolveContractAddition(module_index, module, o, operation.resolve_binary);
-                if (contract_result == .resolved) break :blk contract_result;
+                const contract_result = try dispatch.generic_functions.resolveContractArithmetic(module_index, module, o, operation.resolve_binary);
+                break :blk ownedResult(contract_result);
             }
             const core_result = try core.tryResolve(module_index, module, o, operation);
             if (core_result != .resolved and operation == .resolve_comparison) {

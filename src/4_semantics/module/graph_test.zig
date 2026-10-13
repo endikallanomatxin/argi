@@ -534,7 +534,9 @@ test "local abstract inputs specialize one body per concrete implementer" {
     try std.testing.expectEqual(@as(u32, 1), template.parameters.len);
     const parameter = module.graph.semantic.parameterized_storage.comptime_parameters.items[template.parameters.start];
     try std.testing.expect(parameter.constraint != null);
-    var result = try @import("../global/semantizer.zig").semantize(allocator, &.{module.graph});
+    var arithmetic_core = try buildArithmeticTestCore(allocator);
+    defer arithmetic_core.graph.deinit(allocator);
+    var result = try @import("../global/semantizer.zig").semantize(allocator, &.{ module.graph, arithmetic_core.graph });
     defer result.graph.deinit(allocator);
     var instances: usize = 0;
     for (result.graph.generic_function_instances.items) |instance| {
@@ -794,7 +796,9 @@ test "callback invocation preserves binding and field editor targets" {
     defer tree.deinit(allocator);
     var module = try module_semantizer.build(allocator, "callback_editor", &.{.{ .path = "callback_editor/main.rg", .tree = &tree, .source = source }});
     defer module.graph.deinit(allocator);
-    var result = try @import("../global/semantizer.zig").semantize(allocator, &.{module.graph});
+    var arithmetic_core = try buildArithmeticTestCore(allocator);
+    defer arithmetic_core.graph.deinit(allocator);
+    var result = try @import("../global/semantizer.zig").semantize(allocator, &.{ module.graph, arithmetic_core.graph });
     defer result.graph.deinit(allocator);
     var index = try @import("../../0_commands/lsp_index.zig").Index.build(allocator, &result.graph);
     defer index.deinit(allocator);
@@ -926,10 +930,14 @@ test "unary and tuple conformances publish canonical static evidence" {
     defer tree.deinit(allocator);
     var module = try @import("semantizer.zig").build(allocator, "evidence", &.{.{ .path = "evidence/main.rg", .tree = &tree, .source = source }});
     defer module.graph.deinit(allocator);
-    var result = try @import("../global/semantizer.zig").semantize(allocator, &.{module.graph});
+    var arithmetic_core = try buildArithmeticTestCore(allocator);
+    defer arithmetic_core.graph.deinit(allocator);
+    var result = try @import("../global/semantizer.zig").semantize(allocator, &.{ module.graph, arithmetic_core.graph });
     defer result.graph.deinit(allocator);
-    try std.testing.expectEqual(@as(usize, 2), result.graph.contract_conformances.items.len);
+    var evidence: usize = 0;
     for (result.graph.contract_conformances.items) |conformance| {
+        if (result.graph.modules.items[@intFromEnum(result.graph.moduleForDeclaration(conformance.declaration).?)].is_bundled_core) continue;
+        evidence += 1;
         const name = result.graph.text(result.graph.declaration(conformance.declaration).name);
         const unary = std.mem.eql(u8, name, "Readable");
         try std.testing.expectEqual(@as(u32, if (unary) 1 else 2), conformance.participants.len);
@@ -944,6 +952,7 @@ test "unary and tuple conformances publish canonical static evidence" {
         const method = result.graph.function_refs.items[conformance.operations.start];
         try std.testing.expectEqualStrings(if (unary) "read" else "multiply", result.graph.text(result.graph.declaration(result.graph.function(method).declaration).name));
     }
+    try std.testing.expectEqual(@as(usize, 2), evidence);
 }
 
 test "qualified operation statements preserve contract identity" {
@@ -988,18 +997,25 @@ test "scoped implementation evidence retains call and source identities" {
             try std.testing.expect(storage.ir.types.items[@intFromEnum(argument.value.type)] == .concrete);
         }
     }
-    var result = try @import("../global/semantizer.zig").semantize(allocator, &.{module.graph});
+    var arithmetic_core = try buildArithmeticTestCore(allocator);
+    defer arithmetic_core.graph.deinit(allocator);
+    var result = try @import("../global/semantizer.zig").semantize(allocator, &.{ module.graph, arithmetic_core.graph });
     defer result.graph.deinit(allocator);
     try @import("../global/verify.zig").verifyGlobal(&result.graph);
-    try std.testing.expectEqual(@as(usize, 2), result.graph.contract_conformances.items.len);
-    try std.testing.expectEqual(@as(usize, 2), result.graph.contract_operation_bindings.items.len);
+    var evidence: usize = 0;
+    var operation_bindings: usize = 0;
     for (result.graph.contract_conformances.items) |conformance| {
+        if (result.graph.modules.items[@intFromEnum(result.graph.moduleForDeclaration(conformance.declaration).?)].is_bundled_core) continue;
+        evidence += 1;
+        operation_bindings += conformance.operation_bindings.len;
         try std.testing.expect(conformance.explicit_operations);
         try std.testing.expectEqual(@as(u32, 1), conformance.operations.len);
         try std.testing.expectEqual(@as(u32, 1), conformance.operation_bindings.len);
         const method = result.graph.function_refs.items[conformance.operations.start];
         try std.testing.expectEqualStrings("multiply", result.graph.text(result.graph.declarationSourceName(result.graph.function(method).declaration)));
     }
+    try std.testing.expectEqual(@as(usize, 2), evidence);
+    try std.testing.expectEqual(@as(usize, 2), operation_bindings);
     var calls: usize = 0;
     for (result.graph.nodes.items) |node| {
         if (node.content != .function_call) continue;
@@ -1009,10 +1025,11 @@ test "scoped implementation evidence retains call and source identities" {
         calls += 1;
     }
     try std.testing.expect(calls >= 3);
+    const saved_bindings = result.graph.contract_operation_bindings.items.len;
     const saved = result.graph.checkpoint();
     _ = try result.graph.contract_operation_bindings.addOne(allocator);
     result.graph.rollback(saved);
-    try std.testing.expectEqual(@as(usize, 2), result.graph.contract_operation_bindings.items.len);
+    try std.testing.expectEqual(saved_bindings, result.graph.contract_operation_bindings.items.len);
 }
 
 test "generic contract implementations preserve participant and associated binders" {
@@ -1127,4 +1144,13 @@ test "nested reference array specificity selects the element parameter" {
         try std.testing.expect(ty == .builtin);
         try std.testing.expectEqual(@import("../primitives/schema.zig").BuiltinType.Int32, ty.builtin);
     }
+}
+
+fn buildArithmeticTestCore(allocator: std.mem.Allocator) !module_semantizer.BuildResult {
+    const source = @import("../../test_support.zig").arithmetic_core_source;
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    var result = try module_semantizer.build(allocator, "arithmetic_core", &.{.{ .path = "arithmetic_core/scalar_arithmetic.rg", .tree = &tree, .source = source }});
+    result.graph.is_bundled_core = true;
+    return result;
 }

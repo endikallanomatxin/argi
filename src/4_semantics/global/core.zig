@@ -253,7 +253,7 @@ pub const Resolver = struct {
                 var left_ty = self.graph.nodes.items[@intFromEnum(operation.left)].ty orelse continue;
                 var right_ty = self.graph.nodes.items[@intFromEnum(operation.right)].ty orelse continue;
                 self.coerceIntegerPair(operation.left, &left_ty, operation.right, &right_ty);
-                if (!self.isBuiltinArithmetic(left_ty, right_ty)) continue;
+                if (!self.isScalarArithmeticRepresentation(left_ty, right_ty)) continue;
                 if (node.ty != null and (node.ty.? == left_ty or types.equal(self.graph, node.ty.?, left_ty))) continue;
                 node.ty = left_ty;
                 changed = true;
@@ -326,7 +326,6 @@ pub const Resolver = struct {
             .resolve_type => |value| try self.resolveTypeHole(module_index, module, o, value),
             .resolve_call => |value| try self.resolveCall(module_index, module, o, value),
             .resolve_field => |value| resolution.Result.fromBool(try self.resolveField(module, o, value)),
-            .resolve_binary => |value| resolution.Result.fromBool(try self.resolveBinary(module_index, o, value)),
             .resolve_comparison => |value| resolution.Result.fromBool(try self.resolveComparison(module_index, o, value)),
             .resolve_index => |value| try self.resolveIndex(o, value),
             .resolve_dereference => |value| try self.resolveDereference(o, value),
@@ -909,26 +908,6 @@ pub const Resolver = struct {
             .content = .{ .address_of = child_node },
         };
         return .resolved;
-    }
-
-    fn resolveBinary(self: *Resolver, module_index: usize, o: globalizer.Offsets, value: anytype) !bool {
-        const left = globalizer.globalNode(o, value.left);
-        const right = globalizer.globalNode(o, value.right);
-        var left_ty = self.graph.nodes.items[@intFromEnum(left)].ty orelse return false;
-        var right_ty = self.graph.nodes.items[@intFromEnum(right)].ty orelse return false;
-        self.coerceIntegerPair(left, &left_ty, right, &right_ty);
-        const target = globalizer.globalNode(o, value.node);
-        if (self.isBuiltinArithmetic(left_ty, right_ty)) {
-            self.graph.nodes.items[@intFromEnum(target)] = .{
-                .source = self.graph.nodes.items[@intFromEnum(left)].source,
-                .ty = left_ty,
-                .content = .{ .binary_operation = .{ .operator = value.operator, .left = left, .right = right } },
-            };
-            self.stats.operators += 1;
-            return true;
-        }
-        _ = module_index;
-        return false;
     }
 
     fn resolveComparison(self: *Resolver, module_index: usize, o: globalizer.Offsets, value: anytype) !bool {
@@ -1808,7 +1787,7 @@ pub const Resolver = struct {
         return id;
     }
 
-    fn isBuiltinArithmetic(self: *Resolver, a: global_sg.GlobalTypeId, b: global_sg.GlobalTypeId) bool {
+    pub fn isScalarArithmeticRepresentation(self: *Resolver, a: global_sg.GlobalTypeId, b: global_sg.GlobalTypeId) bool {
         if (!types.equal(self.graph, a, b)) return false;
         return switch (self.graph.types.items[@intFromEnum(a)]) {
             .builtin => |value| switch (value) {
@@ -1817,6 +1796,19 @@ pub const Resolver = struct {
             },
             else => false,
         };
+    }
+
+    pub fn contextualizeArithmeticPair(self: *Resolver, operands: []const global_sg.GlobalNodeId) void {
+        var left = self.graph.node(operands[0]).ty orelse return;
+        var right = self.graph.node(operands[1]).ty orelse return;
+        if (self.floatLiteralFits(operands[0], right)) {
+            self.graph.nodes.items[@intFromEnum(operands[0])].ty = right;
+            left = right;
+        } else if (self.floatLiteralFits(operands[1], left)) {
+            self.graph.nodes.items[@intFromEnum(operands[1])].ty = left;
+            right = left;
+        }
+        self.coerceIntegerPair(operands[0], &left, operands[1], &right);
     }
 
     pub fn coerceIntegerPair(

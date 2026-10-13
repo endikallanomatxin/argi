@@ -1,4 +1,4 @@
-# Dense vectors and matrices
+# Matrix shapes and products
 
 Import `math/linear_algebra`. Storage is dense and row-major. `Scalar` includes
 Argi's built-in signed/unsigned integers and Float16/32/64. Operands share an
@@ -13,7 +13,7 @@ copyable; constructors accept matching arrays. Dimensions belong to the type.
 
 - Vector `add`, `scale`, and `dot` preserve the scalar type.
 - Matrix `add` requires matching rows and columns.
-- `multiply` accepts R×K and K×C and returns R×C.
+- `&left * &right` accepts R×K and K×C and returns R×C through Multiply.
 - `transpose` returns C×R from R×C.
 
 Shared comptime parameters reject mismatched shapes during semantizing. Results
@@ -39,9 +39,10 @@ the source view's length. Overflow or incompatible dimensions return
 `dimension_mismatch`; allocation failures return `out_of_memory`.
 
 Vectors expose `length`, checked `get`/`set`, `dot`, `add`, and `scale`. Matrices
-expose `shape`, checked `get`/`set`, `add`, `multiply`, and `transpose`. Dynamic
-shape incompatibilities return `dimension_mismatch`. Operations returning new
-owners take `.allocator`; scalar reads, writes, and dot products do not allocate.
+expose `shape`, checked `get`/`set`, `add`, `*`, and `transpose`. Dynamic
+shape incompatibilities return `dimension_mismatch`. Multiplication carries a statically inferred allocator reference inside the
+Multiply Args record, with a reach default. Other operations returning owners
+take `.allocator`; scalar reads, writes, and dot products do not allocate.
 Index errors return `out_of_bounds` without writing. No operation resizes an
 existing owner or exposes mutable shape fields.
 
@@ -50,5 +51,34 @@ Inputs remain unchanged on shape or allocation failure. Zero-size dimensions
 are preserved; zero-element operations skip iteration over large empty shapes.
 Dynamic owners are not implicitly copyable and are cleaned up automatically.
 
-Sparse matrices, arbitrary strided views, decomposition algorithms, generic
-abstract representation dispatch, and BLAS integration remain separate work.
+## Representation-independent products
+
+`MatrixShape#(Value)` associates Element, Rows and Columns and a readonly `at`
+operation. Dense matrices and `Diagonal#(.n, .t)` implement it. Element reads
+validate indices. `MatrixProduct#(Left, Right, Args)` infers dimensions and the
+scalar type from selected shape evidence; its shared inner-dimension binding
+rejects incompatible products. Associated Result never supplies those bindings.
+
+The general product reads each representation through its shape operation and
+returns a dense matrix. A more specific diagonal/diagonal implementation returns
+a diagonal and multiplies only N values. Mixed dense/diagonal products use the
+general algorithm. Standard Multiply conformances for the library's nominal
+families delegate to that selected protocol, so `*` preserves the specialized
+result type. There is no separate ordinary multiply overload family.
+
+External representations can implement MatrixShape and use a qualified
+MatrixProduct operation. Their nominal type can also provide a Multiply adapter,
+following the same implementation ownership rules as other contracts.
+
+```rg
+math := import("math/linear_algebra")
+product#(.A: Type, .B: Type) := (.left: &A, .right: &B)
+    -> (.result: math.MatrixProduct#(A, B, (.left: &A, .right: &B)).Result) {
+    result = ~math.MatrixProduct#(A, B, (.left: &A, .right: &B)).multiply(
+        .args = (.left = left, .right = right)
+    )
+}
+```
+
+Sparse storage, arbitrary strided views, decomposition algorithms and BLAS
+integration remain separate work.

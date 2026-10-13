@@ -51,7 +51,13 @@ Args participant to retain static dispatch for auxiliary capabilities. The !=
 symbol negates the selected Equal operation, never selecting a second identity.
 Legacy operator declarations, their metadata and global selectors are removed.
 
-Scalar arithmetic and direct scalar/pointer comparisons still use compiler
-representation primitives. Moving those primitives behind standard conformance
-selection and migrating the remaining ordinary function overload families are
-pending; see [contracts](135_contracts.md).
+Arithmetic symbols select Add, Subtract, Multiply, Divide or Remainder evidence.
+Bundled scalar implementations then lower to representation primitives, preserving
+constant expressions without an ordinary-function fallback. Custom implementations
+retain ordinary selected calls and can provide different associated results.
+
+Direct scalar/pointer comparisons still use compiler representation primitives.
+Moving those comparisons behind conformance selection and migrating remaining
+ordinary function overload families are pending; see [contracts](135_contracts.md).
+The official matrix library uses shape evidence and MatrixProduct specialization
+through standard Multiply adapters, including a diagonal result representation.

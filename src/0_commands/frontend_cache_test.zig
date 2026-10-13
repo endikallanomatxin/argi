@@ -468,7 +468,8 @@ test "frontend module cache preserves associated constant dimensions" {
     defer tmp.cleanup();
     const root = try @import("../test_support.zig").tmpRootPath(&tmp);
     defer std.testing.allocator.free(root);
-    const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code =
+    const files = [_]sf.SourceFile{
+        .{ .path = "app/main.rg", .code =
         \\Shape#(.Input: Type): Contract = (
         \\    .Count: Int
         \\)
@@ -485,7 +486,9 @@ test "frontend module cache preserves associated constant dimensions" {
         \\    status_code = forward(Cell(), &box.values).value + take#(.n = Shape#(Cell).Count)(&box.values).value - 84
         \\}
         \\
-    }};
+        },
+        .{ .path = "arithmetic_core/scalar_arithmetic.rg", .origin = .bundled_core, .code = @import("../test_support.zig").arithmetic_core_source },
+    };
     {
         var cold = ModuleCache.init(std.testing.allocator, .{});
         defer cold.deinit();
@@ -501,7 +504,7 @@ test "frontend module cache preserves associated constant dimensions" {
     const result = try expectCleanEquivalent(&files, &warm);
     defer result.deinit();
     try std.testing.expectEqual(@as(?anyerror, null), result.failure);
-    try std.testing.expectEqual(@as(usize, 1), result.hits);
+    try std.testing.expectEqual(@as(usize, 2), result.hits);
     try std.testing.expectEqual(@as(usize, 0), result.misses);
     try std.testing.expectEqual(@as(usize, 0), warm.disk_rejections);
     var invalid = files;
@@ -608,7 +611,10 @@ test "frontend module cache preserves scoped implementation bodies" {
     defer std.testing.allocator.free(root);
     const source = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, "tests/feature_tests/contracts/115_inline_operation_bodies/main.rg", std.testing.allocator, .limited(64 * 1024));
     defer std.testing.allocator.free(source);
-    const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code = source }};
+    const files = [_]sf.SourceFile{
+        .{ .path = "app/main.rg", .code = source },
+        .{ .path = "arithmetic_core/scalar_arithmetic.rg", .origin = .bundled_core, .code = @import("../test_support.zig").arithmetic_core_source },
+    };
     {
         var cold = ModuleCache.init(std.testing.allocator, .{});
         defer cold.deinit();
@@ -624,7 +630,7 @@ test "frontend module cache preserves scoped implementation bodies" {
     const result = try expectCleanEquivalent(&files, &warm);
     defer result.deinit();
     try std.testing.expectEqual(@as(?anyerror, null), result.failure);
-    try std.testing.expectEqual(@as(usize, 1), result.hits);
+    try std.testing.expectEqual(@as(usize, 2), result.hits);
     try std.testing.expectEqual(@as(usize, 0), result.misses);
     try std.testing.expectEqual(@as(usize, 0), warm.disk_rejections);
     var invalid = files;

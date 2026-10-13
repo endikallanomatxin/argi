@@ -151,13 +151,24 @@ feature first.
   CIncomplete declarations keep nominal identities without runtime fields or
   layout. Only RawPointer handles may carry them across C boundaries; never
   synthesize an empty-record layout or construct safe references to them.
-  Custom addition and equality use `implement Add#(Left, Right, Args)` and
-  `implement Equal#(Left, Right, Args)` with scoped operations receiving the
-  completed argument record. Equal returns Bool; != negates that operation once. Infer participant bindings
-  from Args, including reached generic providers, never from Result. Concrete and
-  specialized generic expressions share this selected-evidence path; no receiver
-  is implicitly borrowed. Legacy operator declarations are rejected; there is no
-  global operator registry, addressed-receiver selector or operator metadata.
+  Arithmetic uses Add, Subtract, Multiply, Divide and Remainder with Left,
+  Right and Args participants. Custom equality uses Equal with the same tuple;
+  Equal returns (.ok: Bool), and != negates one selected operation call.
+  Infer participant bindings from Args, including reached generic providers,
+  never from Result. Concrete and specialized generic expressions share the
+  selected-evidence path; no receiver is implicitly borrowed. Trusted scalar
+  conformances lower to representation primitives only after selection, keeping
+  constants and contextual literal widths. Hooks are private to bundled core's
+  scalar_arithmetic.rg. Minimal semantic tests that omit installed core supply
+  explicit arithmetic evidence from test_support.arithmetic_core_source; never
+  restore a builtin dispatch fallback for tests. Reject conflicting repeated
+  bindings as losing patterns,
+  without aborting another applicable conformance. Legacy operator declarations
+  are rejected; there is no global operator registry or addressed selector.
+  The matrix library's MatrixShape associates dimensions and element types;
+  MatrixProduct shares the inner-dimension binding and can specialize Result.
+  Nominal Multiply adapters delegate to that protocol. Dynamic multiplication
+  stores its static provider in Args; no ordinary multiply overload is retained.
   Canonical construction for migrated types uses `implement Init#(T, Args)`, with
   an Args record participant and a Result of T or Errable containing T. Type calls
   infer Args from target/input patterns, complete defaults and reached capabilities

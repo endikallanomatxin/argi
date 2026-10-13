@@ -13,21 +13,21 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     if scaled.values[0] != factor { abort }
     left: math.Matrix#(.rows = 2, .cols = 3, .t: Int32) = (.values = ((1, 2, 3), (4, 5, 6)))
     right: math.Matrix#(.rows = 3, .cols = 2, .t: Int32) = (.values = ((7, 8), (9, 10), (11, 12)))
-    product ::= math.multiply(.left = &left, .right = &right)
+    product ::= &left * &right
     if product.values[0][0] != 58 or product.values[1][1] != 154 { abort }
     transposed ::= math.transpose(.self = &left)
     if transposed.values[2][1] != 6 { abort }
     values: [6]Float64 = (1.0, 2.0, 3.0, 4.0, 5.0, 6.0)
     dynamic ::= unwrap_or_abort(.value = math.DynamicMatrix(.rows = 2, .cols = 3,
             .values = view(.array = &values), .allocator = system.page_allocator)).result
+    assume allocator ::= system.page_allocator
     other ::= unwrap_or_abort(.value = math.transpose(.self = &dynamic,
             .allocator = system.page_allocator)).result
-    result ::= unwrap_or_abort(.value = math.multiply(.left = &dynamic, .right = &other,
-            .allocator = system.page_allocator)).result
+    result ::= unwrap_or_abort(.value = [&dynamic * &other]).result
     if unwrap_or_abort(.value = math.get(.self = &result, .row = 1, .col = 1)).result != expected_product {
         abort
     }
-    match math.multiply(.left = &dynamic, .right = &dynamic, .allocator = system.page_allocator) {
+    match [&dynamic * &dynamic] {
         ..error _ {} ..ok _ { abort }
     }
     match math.DynamicMatrix(.rows = 2, .cols = 2, .values = view(.array = &values),
@@ -37,9 +37,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
             .values = view(.array = &empty), .allocator = system.page_allocator)).result
     zero_transpose ::= unwrap_or_abort(.value = math.transpose(.self = &zeros,
             .allocator = system.page_allocator)).result
-    zero_product ::= unwrap_or_abort(.value = math.multiply(.left = &zeros, .right = &zero_transpose,
-
-            .allocator = system.page_allocator)).result
+    zero_product ::= unwrap_or_abort(.value = [&zeros * &zero_transpose]).result
     if unwrap_or_abort(.value = math.get(.self = &zero_product, .row = 1, .col = 1)).result != 0.0 {
         abort
     }
@@ -75,7 +73,8 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     match math.DynamicMatrix(.rows = 3, .cols = 3, .values = view(.array = &values),
         .allocator = $&refusing) { ..error _ {} ..ok _ { abort } }
     if refusing.attempts != 0 { abort }
-    match math.multiply(.left = &dynamic, .right = &other, .allocator = $&refusing) {
+    assume allocator ::= $&refusing
+    match [&dynamic * &other] {
         ..error item { if item.reason != ..out_of_memory { abort } } ..ok _ { abort }
     }
     if refusing.attempts != 1 { abort }

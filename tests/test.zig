@@ -9185,7 +9185,7 @@ test "feature_tests/more/02_linear_algebra" {
 }
 
 test "feature_tests/more/03X_matrix_dimensions" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/more/03X_matrix_dimensions", "repeated generic dimensions must agree", "failed without a diagnostic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/more/03X_matrix_dimensions", "operator '*' is not defined", "failed without a diagnostic");
 }
 
 test "feature_tests/functions/33X_generic_conflict_diagnostic" {
@@ -12831,4 +12831,31 @@ test "feature_tests/contracts/271X_equal_missing_reached_argument" {
 
 test "feature_tests/contracts/272X_equal_argument_shapes_ambiguous" {
     try buildExpectFail("tests/feature_tests/contracts/272X_equal_argument_shapes_ambiguous", "ambiguous Equal argument shapes");
+}
+
+test "feature_tests/contracts/273_scalar_arithmetic_evidence" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/273_scalar_arithmetic_evidence");
+    try runExpect("tests/feature_tests/contracts/273_scalar_arithmetic_evidence", 0);
+}
+
+test "feature_tests/contracts/274_arithmetic_custom_results" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/274_arithmetic_custom_results");
+    try runExpect("tests/feature_tests/contracts/274_arithmetic_custom_results", 0);
+}
+
+test "feature_tests/contracts/275X_scalar_arithmetic_external_override" {
+    try buildExpectFail("tests/feature_tests/contracts/275X_scalar_arithmetic_external_override", "an implementation must belong to the contract module or a nominal participant module");
+}
+
+test "feature_tests/contracts/276_matrix_shape_product_specialization" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/276_matrix_shape_product_specialization");
+    try runExpect("tests/feature_tests/contracts/276_matrix_shape_product_specialization", 0);
+}
+
+test "feature_tests/contracts/277X_matrix_product_element_mismatch" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/277X_matrix_product_element_mismatch", "operator '*' is not defined", "pointer arithmetic");
+}
+
+test "feature_tests/contracts/278X_diagonal_product_dimension_mismatch" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/278X_diagonal_product_dimension_mismatch", "operator '*' is not defined", "pointer arithmetic");
 }

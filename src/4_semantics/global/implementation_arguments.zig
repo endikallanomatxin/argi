@@ -122,8 +122,15 @@ pub const Resolver = struct {
                 };
                 has_prefix = true;
                 const args_pattern = patterns[prefix.len].value.type;
-                if (storage.ir.types.items[@intFromEnum(args_pattern)] != .concrete and
-                    !try self.functions.inferArgumentRecordBindings(module_index, args_pattern, input, reach, &bindings)) continue;
+                if (storage.ir.types.items[@intFromEnum(args_pattern)] != .concrete) {
+                    const matches = self.functions.inferArgumentRecordBindings(module_index, args_pattern, input, reach, &bindings) catch |err| switch (err) {
+                        // A repeated binding conflict rejects this pattern; it
+                        // cannot abort selection of another applicable tuple.
+                        error.ConflictingGenericArgument => false,
+                        else => return err,
+                    };
+                    if (!matches) continue;
+                }
                 if (!try self.abstracts.validateParameterizedImplementationConstraints(module_index, template.parameters, &bindings)) continue;
                 const participants = try allocator.alloc(graph_mod.GlobalTypeId, patterns.len);
                 var retained = false;

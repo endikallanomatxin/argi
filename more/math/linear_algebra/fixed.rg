@@ -141,45 +141,6 @@ add#(
     }
 }
 
-multiply#(
-        .rows  : UIntNative,
-        .inner : UIntNative,
-        .cols  : UIntNative,
-        .t     : Type: Scalar
-    )(
-        .left : &Matrix#(
-            .rows = rows,
-            .cols = inner,
-            .t    : t
-        ),
-        .right : &Matrix#(.rows = inner, .cols = cols, .t: t)
-    ) -> (
-        .result : Matrix#(
-            .rows = rows,
-            .cols = cols,
-            .t    : t
-        )
-    ) := {
-    result = (.values = zeroed#(.t: Array#(.n = rows, .t: Array#(.n = cols, .t: t)))())
-    row :: UIntNative = 0
-
-    while row < rows {
-        col :: UIntNative = 0
-        while col < cols {
-            k :: UIntNative = 0
-            while k < inner {
-                result.values[row][col] = [
-                    result.values[row][col]
-                    + left&.values[row][k] * right&.values[k][col]
-                ]
-                k = k + 1
-            }
-            col = col + 1
-        }
-        row = row + 1
-    }
-}
-
 transpose#(
         .rows : UIntNative,
         .cols : UIntNative,
