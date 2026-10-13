@@ -12412,3 +12412,8 @@ test "feature_tests/contracts/185_generic_alias_virtual_evidence" {
     try expectSuccessfulBuild("tests/feature_tests/contracts/185_generic_alias_virtual_evidence");
     try run("tests/feature_tests/contracts/185_generic_alias_virtual_evidence");
 }
+
+test "feature_tests/contracts/186_contextual_associated_operation_input" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/186_contextual_associated_operation_input");
+    try run("tests/feature_tests/contracts/186_contextual_associated_operation_input");
+}

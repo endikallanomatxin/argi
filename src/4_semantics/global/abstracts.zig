@@ -2145,6 +2145,7 @@ pub const Resolver = struct {
         defer bindings.deinit(self.allocator);
         const fields = storage.ir.types.items[@intFromEnum(requirement.input)].resolved.structural.fields;
         var virtual = false;
+        var unresolved_actual = false;
         for (storage.ir.fields.items[fields.start..][0..fields.len], 0..) |field, position| {
             var explicit = false;
             for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len], 0..) |actual, index| {
@@ -2152,12 +2153,15 @@ pub const Resolver = struct {
                 if (!((name.len == 0 and position == index) or std.mem.eql(u8, name, module.text(field.name)))) continue;
                 explicit = true;
                 const actual_ty = self.graph.node(actual.value).ty orelse {
-                    deferred.* = true;
-                    return null;
+                    // An associated input can be a contextual record/choice
+                    // literal. Other inputs select participants first; the
+                    // selected signature supplies its type below.
+                    unresolved_actual = true;
+                    continue;
                 };
                 if (!self.typeSelectionReady(actual_ty, 0)) {
-                    deferred.* = true;
-                    return null;
+                    unresolved_actual = true;
+                    continue;
                 }
                 const ty = self.graph.semanticType(actual_ty);
                 const pattern = storage.ir.types.items[@intFromEnum(field.ty)];
@@ -2201,6 +2205,7 @@ pub const Resolver = struct {
         errdefer self.allocator.free(participants);
         for (participants, 0..) |*participant, index| {
             participant.* = bindings.types[located.definition.participants.start + index] orelse {
+                if (unresolved_actual) deferred.* = true;
                 self.allocator.free(participants);
                 return null;
             };
