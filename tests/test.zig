@@ -12880,3 +12880,12 @@ test "feature_tests/contracts/283_writer_value_specialization" {
     try expectSuccessfulBuild("tests/feature_tests/contracts/283_writer_value_specialization");
     try runExpect("tests/feature_tests/contracts/283_writer_value_specialization", 0);
 }
+
+test "feature_tests/contracts/284X_operation_alias_dependency_diagnostic" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/284X_operation_alias_dependency_diagnostic", "invalid conformance for contract 'Required'", "the generic operation alias body could not be specialized");
+}
+
+test "feature_tests/contracts/285_write_owned_value_result" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/285_write_owned_value_result");
+    try runExpect("tests/feature_tests/contracts/285_write_owned_value_result", 0);
+}

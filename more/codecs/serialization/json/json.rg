@@ -538,7 +538,7 @@ write_string(
     while cursor < text.length {
         byte ::= _byte(.text = text, .position = cursor).value
         if byte < 32 {
-            write(.self = writer, .text = "\\u00")!
+            write(.self = writer, .value = "\\u00")!
             Writer#().write_byte(.self = writer, .byte = _hex_ascii(.value = byte / 16).byte)!
             Writer#().write_byte(.self = writer, .byte = _hex_ascii(.value = byte % 16).byte)!
         } else {

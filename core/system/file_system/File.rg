@@ -246,9 +246,9 @@ read(
     result = ..ok read_count
 }
 
-write(
+_file_write(
         .self   : $&File,
-        .buffer : ArrayView#(.t: UInt8),
+        .value  : ArrayView#(.t: UInt8),
     ) -> (
         .result : Errable#(UIntNative, (..stream_write_failed, ..stream_flush_failed))
     ) := {
@@ -260,9 +260,9 @@ write(
     }
 
     stream ::= file_stream_pointer(self).stream
-    wrote ::= fwrite_from(.buffer = buffer, .stream = stream).count
+    wrote ::= fwrite_from(.buffer = value, .stream = stream).count
 
-    if wrote < length(&buffer).count {
+    if wrote < length(&value).count {
         if ferror(.stream = stream).status != 0 {
             result = ..error(.reason = ..stream_write_failed)
             return
@@ -271,6 +271,11 @@ write(
 
     result = ..ok wrote
 }
+
+implement WriteValue#(File, ArrayView#(.t: UInt8)) (
+    .Result: Type = Errable#(UIntNative, (..stream_write_failed, ..stream_flush_failed))
+    .write_value = _file_write
+)
 
 implement BlockWriter#(File) (
     .write_block = (

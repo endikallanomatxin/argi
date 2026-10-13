@@ -123,9 +123,9 @@ print(
     ) -> (
         .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) := {
-    write(writer, .text = value)!
+    write(writer, .value = value)!
 
-    result = write(writer, .text = terminator)
+    result = write(writer, .value = terminator)
 }
 
 flush := (
@@ -202,7 +202,7 @@ print#(
     ) := {
     WriteValue#(Stream, t).write_value(.self = writer, .value = value)!
 
-    result = write(writer, .text = terminator)
+    result = write(writer, .value = terminator)
 }
 
 print#(
@@ -217,5 +217,5 @@ print#(
     ) := {
     WriteValue#(Stream, t).write_value(.self = writer, .value = value)!
 
-    result = write(writer, .text = terminator)
+    result = write(writer, .value = terminator)
 }

@@ -34,21 +34,21 @@ _write_record(
     ) -> (
         .result : Errable#(Void, LogReasons) = ..ok Void()
     ) := {
-    write(.self = writer, .text = _prefix(.level = level).text)!
-    write(.self = writer, .text = ": ")!
+    write(.self = writer, .value = _prefix(.level = level).text)!
+    write(.self = writer, .value = ": ")!
     index :: UIntNative = 0
 
     while index < message.length {
         byte ::= bytes_get(.view = &message, .index = index).byte
-        if byte == 10 { write(.self = writer, .text = "\\n")! } else {
-            if byte == 13 { write(.self = writer, .text = "\\r")! } else {
+        if byte == 10 { write(.self = writer, .value = "\\n")! } else {
+            if byte == 13 { write(.self = writer, .value = "\\r")! } else {
                 Writer#().write_byte(.self = writer, .byte = byte)!
             }
         }
         index = index + 1
     }
 
-    write(.self = writer, .text = "\n")!
+    write(.self = writer, .value = "\n")!
 }
 
 FileLogger#(.t: Type: Writer#(t)): Type = (._writer: $&t, .minimum: LogLevel)

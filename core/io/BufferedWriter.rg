@@ -50,7 +50,7 @@ buffered_writer_flush#(
         view ::= unwrap_or_abort(
             .value = slice(&self&.buffer, .start = i, .count = remaining)
         )
-        wrote ::= write(self&.base, .buffer = view)
+        wrote ::= write(self&.base, .value = view)
         if is(.value = wrote, .variant = ..error) {
             self&.length = 0
             result = ..error(.reason = wrote ..error.reason)

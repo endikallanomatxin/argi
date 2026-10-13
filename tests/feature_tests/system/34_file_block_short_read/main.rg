@@ -31,7 +31,7 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
-    write_result ::= write(.self = $&file, .buffer = write_buffer)
+    write_result ::= write(.self = $&file, .value = write_buffer)
 
     if is(.value = write_result, .variant = ..ok) {
     } else {

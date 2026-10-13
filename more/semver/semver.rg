@@ -352,5 +352,5 @@ format_into(
     ) -> (
         .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) := {
-    result = write(.self = out, .text = as_view(value).text)
+    result = write(.self = out, .value = as_view(value).text)
 }

@@ -91,7 +91,10 @@ allocate buffers.
 I/O helpers name their dependencies `reader` for reading and `writer` for
 writing. These names describe the operation rather than a process-specific
 stream. A writer may be a file, buffered writer, or another implementation of
-`Writer`. Error-reporting helpers also take a writer; route them explicitly to
+`Writer`. The unique `write(.self, .value)` entry selects `WriteValue` evidence;
+text writes return Void on success, while byte views return a count. File byte
+writes select native progress rather than the general byte-at-a-time algorithm.
+Error-reporting helpers also take a writer; route them explicitly to
 `system.terminal&.stderr` or select that writer in a nested lexical scope.
 
 ```rg

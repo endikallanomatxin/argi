@@ -571,17 +571,17 @@ read(
     result = ..ok received
 }
 
-write(
+_tcp_write(
         .self   : $&TcpConnection,
-        .buffer : ArrayViewRO#(.t: UInt8)
+        .value  : ArrayViewRO#(.t: UInt8)
     ) -> (
         .result : Errable#(UIntNative, (..socket_write_failed))
     ) := {
     assume ffi := self&._network&._ffi
-    size ::= length(&buffer).count
+    size ::= length(&value).count
     address :: UIntNative = 0
 
-    if size != 0 { address = data(&buffer).pointer | convert#(.to: UIntNative)(_) }
+    if size != 0 { address = data(&value).pointer | convert#(.to: UIntNative)(_) }
     sent :: UIntNative = 0
 
     if [
@@ -600,6 +600,11 @@ write(
 
     result = ..ok sent
 }
+
+implement WriteValue#(TcpConnection, ArrayViewRO#(.t: UInt8)) (
+    .Result: Type = Errable#(UIntNative, (..socket_write_failed))
+    .write_value = _tcp_write
+)
 
 shutdown_write(
         .self : $&TcpConnection
@@ -719,7 +724,7 @@ write_all(
                 ]
             )
         )
-        count ::= write(self, .buffer = remaining)!
+        count ::= write(self, .value = remaining)!
         if count == 0 {
             result = ..error(.reason = ..socket_write_failed)
             return
@@ -768,7 +773,7 @@ implement BlockWriter#(TcpConnection) (
         ) -> (
             .result : Errable#(UIntNative, (..stream_write_failed, ..stream_flush_failed))
         ) {
-        match write(self, .buffer = buffer) {
+        match write(self, .value = buffer) {
             ..ok count { result = ..ok count }
             ..error _ { result = ..error(.reason = ..stream_write_failed) }
         }

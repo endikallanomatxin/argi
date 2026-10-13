@@ -18,7 +18,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     owned := format("d") | unwrap_or_abort(_)
     unwrap_or_abort(print(&owned))
     unwrap_or_abort(print(&owned, .terminator = "="))
-    unwrap_or_abort(write(.self = writer, .text = ".!"))
+    unwrap_or_abort(write(.self = writer, .value = ".!"))
     if base.count != 14 or base.flush_calls != 0 { abort }
 
     -- A failure writing the value must not attempt its terminator.

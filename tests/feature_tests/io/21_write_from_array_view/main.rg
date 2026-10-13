@@ -22,7 +22,7 @@ main() -> (.status_code: Int32) := {
         .write_count = 0
     )
     assume writer ::= $&stdout_storage
-    write_result ::= write(.self = $&stdout_storage, .buffer = buffer)
+    write_result ::= write(.self = $&stdout_storage, .value = buffer)
 
     if is(.value = write_result, .variant = ..ok) {
     } else {

@@ -344,7 +344,7 @@ semantic claim that every pair has overlapping applicability.
 |---|---:|
 | `core/bytes` | 10 |
 | `core/errors` | 1 |
-| `core/io` | 2 |
+| `core/io` | 1 |
 | `core/libc` | 1 |
 | `core/lists` | 12 |
 | `core/maps` | 13 |
@@ -412,3 +412,29 @@ program cases passed, alongside 35 selected internal tests, with no failures
 or leaks. The full Float16 encoding roundtrip passes. Final LLVM calls the reused
 helper directly for concrete and virtual writers; the specialization executable
 returns zero.
+
+### Unified destination writes
+
+Add associated Result to WriteValue to preserve text Void results, buffer counts
+and native socket errors. Replace the three ordinary Writer write overloads and
+File/TcpConnection write variants with selected conformances. A unique generic
+write(self, value) entry delegates to scoped evidence and requires it explicitly.
+Migrate callers, retain partial native progress and saved FFI dependencies, and
+validate concrete/virtual streams, native files/networking and specialized outputs.
+This is a library migration; syntax and compiler dispatch remain unchanged.
+
+WriteValue.Result permits destination-specific results without return-driven
+selection. Native helpers are directly reused as members, preserving function
+identity and FFI dependencies. Alias diagnostics preserve a dependency's specific
+conformance failure and source-module-backed names across speculative rollback.
+The new negative fixture checks that the root protocol is reported.
+
+The unique write entry moves owning Value and Result explicitly. An identity
+conformance returning an owned value verifies exactly one destruction through
+the selected forwarding call. LLVM preserves the owned result type.
+
+Validation: 508 affected program cases passed (1 skipped), covering IO,
+text, contracts, system, official libraries, codecs, logging and semver. The full
+internal suite passed 374 tests (1 skipped) during the preceding full run, which
+was interrupted before program completion. The affected-category rerun completed
+without failures or leaks. Owned-result execution and selected LLVM were checked.

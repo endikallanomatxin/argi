@@ -33,9 +33,9 @@ child_main(.system: System) -> (.status: Int32 = 7) := {
         i = i + 1
     }
     check_bytes(.reader = $&system.terminal&.stdin, .expected = "hello\n")
-    unwrap_or_abort(.value = write(.self = $&system.terminal&.stdout, .text = "hello\n"))
+    unwrap_or_abort(.value = write(.self = $&system.terminal&.stdout, .value = "hello\n"))
     unwrap_or_abort(.value = Writer#().flush(.self = $&system.terminal&.stdout))
-    unwrap_or_abort(.value = write(.self = $&system.terminal&.stderr, .text = "problem"))
+    unwrap_or_abort(.value = write(.self = $&system.terminal&.stderr, .value = "problem"))
     unwrap_or_abort(.value = Writer#().flush(.self = $&system.terminal&.stderr))
 }
 
@@ -60,7 +60,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
             .stderr     = ..pipe
         )
     ).result
-    unwrap_or_abort(.value = write(.self = $&child.stdin, .text = "hello\n"))
+    unwrap_or_abort(.value = write(.self = $&child.stdin, .value = "hello\n"))
     unwrap_or_abort(.value = Writer#().flush(.self = $&child.stdin))
     unwrap_or_abort(.value = close(.self = $&child.stdin))
     unwrap_or_abort(.value = close(.self = $&child.stdin))

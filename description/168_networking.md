@@ -45,7 +45,7 @@ not borrow its listener, so listener cleanup does not close accepted connections
 
 `read(.self, .buffer)` fills an initialized mutable byte view and returns the
 number read. A nonempty read returning zero means EOF. Empty buffers perform no
-receive and return zero. `write(.self, .buffer)` accepts a readonly byte view and
+receive and return zero. `write(.self, .value)` selects WriteValue for a readonly byte view and
 may write only a prefix; `write_all` retries until every byte has been sent or
 an error occurs. A write error can follow successful prefix writes.
 `shutdown_write` ends the sending direction without closing the receiving side.

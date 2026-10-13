@@ -577,7 +577,7 @@ write_file(
         }
     }
 
-    wrote ::= write($&file, .text = text)
+    wrote ::= write($&file, .value = text)
 
     match wrote {
         ..ok _ {

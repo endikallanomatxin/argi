@@ -2,16 +2,6 @@ DummyOutput: Type = (
     .flush_count : Int32 = 0
 )
 
-write(
-        .self : $&DummyOutput,
-        .text : &String
-    ) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
-    ) := {
-    _ ::= text
-    result = ..ok(.value = Void())
-}
-
 flush_stdout(
         .writer : $&Writer = reach writer,
         terminal.writer,

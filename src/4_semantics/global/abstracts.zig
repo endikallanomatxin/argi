@@ -2696,10 +2696,13 @@ pub const Resolver = struct {
             const instantiate_alias = self.instantiate_alias orelse return error.MissingOperationInstantiator;
             return instantiate_alias(self.function_context.?, binding.declaration, input) catch |err| {
                 if (err == error.OutOfMemory) return err;
+                // Preserve a dependency's specific failure instead of masking
+                // it behind an alias-specialization error.
+                if (err == error.InvalidContractOperation and self.participant_conformance_failure != null) return err;
                 self.participant_conformance_failure = .{
                     .source = conformance.source,
-                    .contract_name = self.graph.text(self.graph.declaration(conformance.declaration).name),
-                    .operation = self.graph.text(binding.name),
+                    .contract_name = self.modules[located.module_index].text(self.modules[located.module_index].declarations.items[@intFromEnum(located.definition.declaration)].name),
+                    .operation = self.modules[located.module_index].text(requirement.name),
                     .reason = switch (err) {
                         error.OperationAliasMissingParameter => "generic operation alias parameters must be inferred from the selected input signature",
                         error.OperationAliasInputMismatch => "the selected input signature does not match the generic operation alias",

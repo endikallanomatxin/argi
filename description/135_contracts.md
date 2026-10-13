@@ -371,8 +371,17 @@ when another participant remains generic; foreign nominal participants do not.
 
 ## Numeric writer values
 
-`WriteValue#(Stream, Value).write_value(.self: $&Stream, .value: Value)`
-selects numeric stream formatting from both participants. Bundled numeric
+`WriteValue#(Stream, Value)` declares an associated Result and a scoped
+`write_value(.self: $&Stream, .value: Value)` operation. The unique ordinary
+`write(.self, .value)` function selects this evidence and returns its Result.
+Text returns Errable containing Void; buffers return counts. Native TCP writes
+preserve socket_write_failed and partial progress. File buffer writes specialize
+the general Writer byte algorithm without altering its error protocol.
+Participants are inferred from the inputs, never the associated result. The
+ordinary entry explicitly moves owning values and results, preserving cleanup
+obligations when a custom protocol transfers ownership.
+
+Numeric stream formatting uses the same identity. Bundled numeric
 conformances require Writer for the stream and reuse one integer or float
 encoding algorithm without allocation. A nominal stream may specialize a
 conformance for one concrete value type. Qualified callers provide Stream and
@@ -384,5 +393,5 @@ The result preserves stream_write_failed and stream_flush_failed. Formatting
 stops on the first failed byte, keeps the written prefix and never requests
 an implicit flush. Numeric print delegates to this operation before writing its
 terminator. The former numeric write and writer format_into ordinary families
-are removed; text/buffer write and string format_into are separate pending
-migrations.
+are removed. Text/buffer/file/TCP write overloads are also removed. String
+format_into and readonly/mutable view families remain separate pending migrations.

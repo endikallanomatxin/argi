@@ -174,5 +174,5 @@ write_record(
         index = index + 1
     }
 
-    write(.self = writer, .text = "\r\n")!
+    write(.self = writer, .value = "\r\n")!
 }

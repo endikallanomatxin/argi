@@ -20,7 +20,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     sent :: UIntNative = 0
     while sent < 4 {
         remaining ::= slice(.self = &input, .start = sent, .count = 4 - sent)!
-        count ::= write(.self = $&client, .buffer = remaining)!
+        count ::= write(.self = $&client, .value = remaining)!
         if count == 0 { abort }
         sent = sent + count
     }
