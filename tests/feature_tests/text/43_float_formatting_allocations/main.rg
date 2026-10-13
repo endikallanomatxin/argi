@@ -52,7 +52,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     value64 = trusted_reinterpret_reference#(.from: UInt64, .to: Float64)(.base = &nan_bits).reference&
     expect_formatted(.allocator = $&allocator, .value = value64, .expected = "nan")
 
-    output ::= unwrap_or_abort(.value = String(.capacity = 64, .allocator = $&allocator))
+    output ::= unwrap_or_abort(.value = string_with_capacity(.capacity = 64, .allocator = $&allocator))
     before ::= allocator.allocations
     allocator.fail = true
     value64 = 1.7976931348623157e308

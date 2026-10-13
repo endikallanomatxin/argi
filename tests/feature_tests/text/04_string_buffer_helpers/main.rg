@@ -9,7 +9,7 @@ DummyWriter init(
     ) := {
     assume allocator
 
-    result.bytes = unwrap_or_abort(.value = String(.allocator = allocator, .capacity = 16))
+    result.bytes = unwrap_or_abort(.value = string_with_capacity(.allocator = allocator, .capacity = 16))
 }
 
 DummyWriter deinit(
@@ -42,7 +42,7 @@ main(.system: System) -> (.status_code: Int32) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 
-    buffer ::= unwrap_or_abort(.value = String(.allocator = $&allocator_storage, .capacity = 16))
+    buffer ::= unwrap_or_abort(.value = string_with_capacity(.allocator = $&allocator_storage, .capacity = 16))
     match push_c_string(.self = $&buffer, .text = "OK") {
         ..ok _ {
         }

@@ -12647,3 +12647,23 @@ test "feature_tests/contracts/229X_structural_args_repeated_type" {
 test "feature_tests/contracts/230X_structural_args_ambiguous" {
     try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/230X_structural_args_ambiguous", "ambiguous maximal patterns");
 }
+
+test "feature_tests/contracts/231_init_generic_allocator_args" {
+    const path = "tests/feature_tests/contracts/231_init_generic_allocator_args";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/contracts/232X_init_allocator_args_escape" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/232X_init_allocator_args_escape", "local storage generation");
+}
+
+test "feature_tests/contracts/233_init_argument_specialization" {
+    const path = "tests/feature_tests/contracts/233_init_argument_specialization";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/contracts/234X_init_literal_shapes_ambiguous" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/234X_init_literal_shapes_ambiguous", "ambiguous Init argument shapes");
+}

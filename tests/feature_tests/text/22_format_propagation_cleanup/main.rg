@@ -10,7 +10,7 @@ FailFirstAllocator init(.ffi: $&ForeignFunctionInterface) -> (.result: FailFirst
 
 main(.system: System) -> (.status_code: Int32 = 0) := {
     backing ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    out ::= unwrap_or_abort(.value = String(.allocator = $&backing, .capacity = 1))
+    out ::= unwrap_or_abort(.value = string_with_capacity(.allocator = $&backing, .capacity = 1))
     failing ::= FailFirstAllocator(.ffi = system.ffi)
     formatted ::= format_into(.out = $&out, .value = -105, .allocator = $&failing)
     if is(.value = formatted, .variant = ..ok) { status_code = 1 }

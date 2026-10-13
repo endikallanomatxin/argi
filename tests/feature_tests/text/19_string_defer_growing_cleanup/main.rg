@@ -1,7 +1,7 @@
 helper(.allocator: $&Allocator) -> (.ok: Bool) := {
     assume allocator
 
-    text ::= unwrap_or_abort(.value = String(.allocator = allocator, .capacity = 1))
+    text ::= unwrap_or_abort(.value = string_with_capacity(.allocator = allocator, .capacity = 1))
     #defer deinit(.self = $&text)
 
     match push_byte(.self = $&text, .byte = 65, .allocator = allocator) {

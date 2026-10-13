@@ -1800,7 +1800,7 @@ pub const Resolver = struct {
         return self.symbolicIntsEqual(general, specific);
     }
 
-    fn patternTupleCovers(self: *Resolver, general_module: usize, general: parameterized_storage.ContractConformance, specific_module: usize, specific: parameterized_storage.ContractConformance) !bool {
+    pub fn patternTupleCovers(self: *Resolver, general_module: usize, general: parameterized_storage.ContractConformance, specific_module: usize, specific: parameterized_storage.ContractConformance) !bool {
         var substitutions = PatternSubstitutions{
             .types = std.AutoHashMap(ir.ComptimeParameterId, SymbolicPattern).init(self.allocator),
             .integers = std.AutoHashMap(ir.ComptimeParameterId, SymbolicIntPattern).init(self.allocator),
@@ -3408,7 +3408,7 @@ pub const Resolver = struct {
         return true;
     }
 
-    fn inferConstraintTypePattern(
+    pub fn inferConstraintTypePattern(
         self: *Resolver,
         module_index: usize,
         pattern: ir.ParameterizedTypeId,
@@ -3927,7 +3927,7 @@ pub const Resolver = struct {
         return self.validateParameterizedImplementationConstraints(module_index, parameterized.parameters, bindings);
     }
 
-    fn validateParameterizedImplementationConstraints(
+    pub fn validateParameterizedImplementationConstraints(
         self: *Resolver,
         module_index: usize,
         parameters: primitives.Range(ir.ComptimeParameterId),
@@ -3980,7 +3980,7 @@ pub const Resolver = struct {
         return self.core.resolveDeclaration(module_index, reference, &.{.abstract_type});
     }
 
-    fn resolveDeclarationRef(
+    pub fn resolveDeclarationRef(
         self: *Resolver,
         module_index: usize,
         reference: ir.DeclarationRef,

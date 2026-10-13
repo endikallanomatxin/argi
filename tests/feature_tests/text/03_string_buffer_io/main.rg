@@ -2,7 +2,7 @@ main(.system: System) -> (.status_code: Int32) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 
-    buffer ::= unwrap_or_abort(.value = String(.allocator = $&allocator_storage, .capacity = 8))
+    buffer ::= unwrap_or_abort(.value = string_with_capacity(.allocator = $&allocator_storage, .capacity = 8))
 
     match push_byte(.self = $&buffer, .byte = 79) {
         ..ok _ {

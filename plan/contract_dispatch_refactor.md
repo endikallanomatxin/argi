@@ -262,21 +262,20 @@ the target: `Init#(Target, Args)`. An implementation pattern such as
 `(.allocator: $&A, .length: UIntNative)` determines A from a known input field;
 Result remains uniquely determined by the complete participant tuple.
 
-The exploration uses a local Construct contract to exercise the same ordinary
-contract resolution, without changing the standard Init while its call syntax
-is being designed. Both nominal generic argument records and anonymous records
+The initial exploration used a local Construct contract to exercise ordinary
+contract resolution before changing standard Init. Both nominal generic argument records and anonymous records
 work. Anonymous record inference and specificity compare ordered field names,
 field types, reference mutability and repeated generic bindings. Closed generic
 patterns specialize open records; incomparable patterns remain ambiguous.
 
-Remaining work before migrating standard Init:
-- Infer Args from supplied arguments after contextualizing literals. Defaults and
+The standard Init migration below follows these rules:
+- Infer Args from supplied arguments while contextualizing literals. Defaults and
   reached capabilities need candidate input shapes, not inverse inference from
   Result. Reject competing shapes by contract specificity, not arbitrary scoring.
 - Make the target explicit for constructor syntax; ordinary operation inference
   cannot infer a participant appearing only in Result.
 - Preserve defaults as call-completion metadata rather than participant identity.
-- Change lifecycle evidence to retain Target as the first participant while
+- Lifecycle evidence retains Target as the first participant while
   accepting the Args participant; preserve rollback and cleanup obligations.
 - Migrate existing Init implementations and construction tests together. Do not
   add a second constructor registry or retain a parallel permanent protocol.
@@ -289,3 +288,20 @@ Validation: all 230 contract program cases passed without leaks; 376 compiler
 unit tests passed (1 skipped). The allocator-record executable passed directly,
 and LLVM 21 assembled its emitted IR. Its constructor calls the selected
 PageAllocator allocate implementation directly.
+
+- Standard Init now uses Target and Args participants; Result remains associated.
+  Existing bundled Init declarations and fixtures have migrated, without a unary
+  compatibility route. Construction infers generic leaves from the requested
+  target and argument fields, including lexical reach defaults, then completes
+  literals/defaults and selects by contract specificity rather than call scores.
+  Pending explicit and assumed inputs defer selection. Lifecycle evidence keeps
+  Target as its first participant for cleanup and output validation.
+- String and DynamicArray construction now use provider-generic argument records.
+  String's canonical form takes length; reserved empty buffers use the existing
+  string_with_capacity factory. The superseded initializer families are removed.
+  Executable coverage constructs one owner with two allocator types and with a
+  reached allocator; a rejection fixture checks escape from a local provider.
+- Validation: all 1853 program cases passed (11 skipped), with no failures or
+  leaks; 376 compiler tests passed (1 skipped). The focused migration run passed
+  873 programs. LLVM 21 assembled the two-provider constructor IR, which retains
+  direct calls to PageAllocator and GeneralPurposeAllocator implementations.

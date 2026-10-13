@@ -64,7 +64,7 @@ next(
             result = ..error(.reason = ..size_limit_exceeded)
             return
         }
-        field ::= String(.capacity = 16)!
+        field ::= string_with_capacity(.capacity = 16)!
         quoted ::= false
         if position < self&._text.length {
             if bytes_get(.view = &self&._text, .index = position).byte == 34 {

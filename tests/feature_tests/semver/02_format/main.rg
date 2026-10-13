@@ -23,7 +23,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     if as_view(.self = &output).view != "1.2.3-alpha+001" { abort }
     if allocator.allocations != 1 or allocator.last_size != 16 { abort }
     deinit(.self = $&output)
-    buffer ::= unwrap_or_abort(.value = String(.capacity = 64, .allocator = $&allocator)).result
+    buffer ::= unwrap_or_abort(.value = string_with_capacity(.capacity = 64, .allocator = $&allocator)).result
     allocator.fail = true
     unwrap_or_abort(.value = push_view(.self = $&buffer, .view = "v", .allocator = $&allocator))
     unwrap_or_abort(

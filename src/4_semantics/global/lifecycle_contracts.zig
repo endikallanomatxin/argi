@@ -24,7 +24,7 @@ pub fn deinitializedType(graph: *const graph_mod.GlobalSemanticGraph, function: 
 fn participantOfOperation(graph: *const graph_mod.GlobalSemanticGraph, function: graph_mod.GlobalFunctionId, name: []const u8) ?graph_mod.GlobalTypeId {
     const declaration = standardDeclaration(graph, name) orelse return null;
     for (graph.contract_conformances.items) |conformance| {
-        if (conformance.declaration != declaration or conformance.participants.len != 1) continue;
+        if (conformance.declaration != declaration or conformance.participants.len == 0) continue;
         for (graph.function_refs.items[conformance.operations.start..][0..conformance.operations.len]) |operation| {
             if (operation != function) continue;
             return graph.generic_arguments.items[conformance.participants.start].value.type;

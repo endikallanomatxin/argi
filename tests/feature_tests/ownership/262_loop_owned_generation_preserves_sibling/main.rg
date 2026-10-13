@@ -16,8 +16,8 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     assume allocator ::= $&allocator_storage
 
     pair ::= Pair(
-        .changing = unwrap_or_abort(.value = String(.allocator = $&allocator_storage, .capacity = 1)),
-        .stable = unwrap_or_abort(.value = String(.allocator = $&allocator_storage, .capacity = 1)),
+        .changing = unwrap_or_abort(.value = string_with_capacity(.allocator = $&allocator_storage, .capacity = 1)),
+        .stable = unwrap_or_abort(.value = string_with_capacity(.allocator = $&allocator_storage, .capacity = 1)),
     )
     stable_push ::= push_byte(.self = $&pair.stable, .byte = 42, .allocator = $&allocator_storage)
     if is(.value = stable_push, .variant = ..error) {

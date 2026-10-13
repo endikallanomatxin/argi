@@ -1,8 +1,7 @@
 Box#(.T: Type: Int): Type = (._value: T)
-implement#(.T: Type: Int) Init#(Box#(T)) (
-    .Args: Type = (.value: T = 7)
+implement#(.T: Type: Int) Init#(Box#(T), (.value: T = 7)) (
     .Result: Type = Box#(T)
-    .init = (.args: Args) -> (.result: Result) { result = (._value = args.value) }
+    .init = (.args: (.value: T = 7)) -> (.result: Result) { result = (._value = args.value) }
 )
 main := () -> (.status_code: Int32 = 0) {
     byte ::= Box#(UInt8)()

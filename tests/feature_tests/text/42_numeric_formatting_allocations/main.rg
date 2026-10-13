@@ -79,7 +79,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         .expected  = "18446744073709551615"
     )
     -- Reserved output must remain appendable even when allocations fail.
-    output ::= unwrap_or_abort(.value = String(.capacity = 64, .allocator = $&allocator))
+    output ::= unwrap_or_abort(.value = string_with_capacity(.capacity = 64, .allocator = $&allocator))
     before ::= allocator.allocations
     allocator.fail = true
     minimum: Int64 = -9223372036854775808

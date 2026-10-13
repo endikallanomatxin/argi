@@ -3,11 +3,10 @@ PageAllocator: Type = (
     .page_size : UIntNative
 )
 
-implement Init#(PageAllocator) (
-    .Args: Type = (.memory: $&Memory)
+implement Init#(PageAllocator, (.memory: $&Memory)) (
     .Result: Type = PageAllocator
 
-    .init = (.args: Args) -> (.result: Result) {
+    .init = (.args: (.memory: $&Memory)) -> (.result: Result) {
         memory ::= args.memory
         result = (.memory = memory, .page_size = memory&._page_size)
     }

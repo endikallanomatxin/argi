@@ -151,8 +151,9 @@ feature first.
   CIncomplete declarations keep nominal identities without runtime fields or
   layout. Only RawPointer handles may carry them across C boundaries; never
   synthesize an empty-record layout or construct safe references to them.
-  Canonical construction for migrated types uses `implement Init#(T)`, with an
-  Args record and a Result of T or Errable containing T. Type calls complete Args
+  Canonical construction for migrated types uses `implement Init#(T, Args)`, with
+  an Args record participant and a Result of T or Errable containing T. Type calls
+  infer Args from target/input patterns, complete defaults and reached capabilities
   and invoke the selected scoped init operation. Selected evidence supplies
   initializer safety and projected output dependencies; never add a second
   constructor registry. Reject mixed Init/legacy initializer families and preserve

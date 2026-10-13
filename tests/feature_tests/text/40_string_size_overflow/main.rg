@@ -16,7 +16,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         .variant = ..ok
     ) { abort }
     if is(.value = String(.allocator = $&failing, .length = maximum), .variant = ..ok) { abort }
-    if is(.value = String(.allocator = $&failing, .capacity = maximum), .variant = ..ok) { abort }
+    if is(.value = string_with_capacity(.allocator = $&failing, .capacity = maximum), .variant = ..ok) { abort }
     if failing.attempts != 0 { abort }
     -- The largest representable capacity still reaches the allocator. The
     -- failing allocator prevents enormous allocation and initialization.

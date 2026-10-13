@@ -40,49 +40,48 @@ _trusted_dynamic_array_mark_empty#(.t: Type)(.self: $&DynamicArray#(.t: t)) -> (
     trusted_opaque_mark_empty(.storage = $&self&._allocation)
 }
 
-DynamicArray init#(
-        .t : Type
-    )(
-        .allocator : $&Allocator,
-        .capacity  : UIntNative,
-    ) -> (
-        .result : Errable#(DynamicArray#(.t: t), (..out_of_memory))
-    ) := {
-    constructed :: DynamicArray#(.t: t)
+implement#(.t: Type, .A: Type: Allocator) Init#(DynamicArray#(t), (.allocator: $&A = reach allocator, .capacity: UIntNative = 0)) (
+    .Result: Type = Errable#(DynamicArray#(t), (..out_of_memory))
+    .init = (.args: (.allocator: $&A, .capacity: UIntNative)) -> (.result: Result) {
+        allocator ::= args.allocator
+        capacity ::= args.capacity
 
-    assume allocator
+        constructed :: DynamicArray#(.t: t)
 
-    element_size :: UIntNative = size_of(.type = t)
-    actual_capacity ::= capacity
+        assume allocator
 
-    if actual_capacity == 0 {
-        actual_capacity = 1
-    }
+        element_size :: UIntNative = size_of(.type = t)
+        actual_capacity ::= capacity
 
-    bytes ::= actual_capacity * element_size
-
-    if element_size != 0 and bytes / element_size != actual_capacity {
-        result = ..error(.reason = ..out_of_memory)
-        return
-    }
-
-    allocated ::= allocate#(.t: t)(allocator, .count = actual_capacity)
-
-    match allocated {
-        ..ok ~payload {
-            constructed = (
-                ._allocation = ~payload
-                ._length     = 0
-                ._capacity   = actual_capacity
-                ._shape      = (.marker = 0)
-            )
-            result = ..ok ~constructed
+        if actual_capacity == 0 {
+            actual_capacity = 1
         }
-        ..error _ {
+
+        bytes ::= actual_capacity * element_size
+
+        if element_size != 0 and bytes / element_size != actual_capacity {
             result = ..error(.reason = ..out_of_memory)
+            return
+        }
+
+        allocated ::= allocate#(.t: t)(allocator, .count = actual_capacity)
+
+        match allocated {
+            ..ok ~payload {
+                constructed = (
+                    ._allocation = ~payload
+                    ._length     = 0
+                    ._capacity   = actual_capacity
+                    ._shape      = (.marker = 0)
+                )
+                result = ..ok ~constructed
+            }
+            ..error _ {
+                result = ..error(.reason = ..out_of_memory)
+            }
         }
     }
-}
+)
 
 implement#(
         .t : Type

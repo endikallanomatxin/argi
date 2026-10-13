@@ -412,7 +412,7 @@ build(
         }
     }
 
-    output ::= String(.allocator = allocator, .capacity = 0)!
+    output ::= string_with_capacity(.allocator = allocator, .capacity = 0)!
 
     match value.scheme {
         ..none {}
@@ -498,7 +498,7 @@ encode_component(
     ) -> (
         .result : Errable#(String, (..out_of_memory))
     ) := {
-    output ::= String(.allocator = allocator, .capacity = 0)!
+    output ::= string_with_capacity(.allocator = allocator, .capacity = 0)!
     hex: StringView = "0123456789ABCDEF"
     i :: UIntNative = 0
 
@@ -531,7 +531,7 @@ decode_component(
     ) -> (
         .result : Errable#(String, (..invalid_input, ..out_of_memory))
     ) := {
-    output ::= String(.allocator = allocator, .capacity = 0)!
+    output ::= string_with_capacity(.allocator = allocator, .capacity = 0)!
     i :: UIntNative = 0
 
     while i < text.length {

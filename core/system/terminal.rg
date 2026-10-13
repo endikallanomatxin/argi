@@ -88,7 +88,7 @@ read_line(
 
     -- The result owns independent text. Lexical cleanup releases partial
     -- lines on failure; a successfully moved line belongs to the caller.
-    line ::= String(.capacity = 16)!
+    line ::= string_with_capacity(.capacity = 16)!
 
     while true {
         match Reader#().read_byte(reader)! {

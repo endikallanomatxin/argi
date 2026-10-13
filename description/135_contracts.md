@@ -96,7 +96,7 @@ not a general constraint-solving mechanism.
 
 ## Standard operations
 
-Construction uses `Init#(T)`, with associated `Args` and `Result` and an `init`
+Construction uses `Init#(T, Args)`, with an associated `Result` and an `init`
 operation. `T(...)` supplies fields of `Args`, including their defaults. `Result`
 is `T` or an `Errable` containing `T`; eligible types without a custom Init retain
 structural construction. Alternative construction uses explicitly named functions

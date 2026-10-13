@@ -85,65 +85,12 @@ string_with_capacity(
     result = ..ok ~out
 }
 
-String init(
-        .allocator : $&Allocator,
-        .length    : UIntNative,
-    ) -> (
-        .result : Errable#(String, (..out_of_memory))
-    ) := {
-    constructed :: String
-
-    assume allocator
-
-    if length > _string_max_result_length().length {
-        result = ..error(.reason = ..out_of_memory)
-        return
+implement#(.A: Type: Allocator) Init#(String, (.allocator: $&A = reach allocator, .length: UIntNative = 0)) (
+    .Result: Type = Errable#(String, (..out_of_memory))
+    .init = (.args: (.allocator: $&A, .length: UIntNative)) -> (.result: Result) {
+        result = string_with_length(.allocator = args.allocator, .length = args.length)
     }
-
-    allocation_size ::= length + 1
-    allocation ::= allocate_bytes(allocator, .size = allocation_size)!
-    constructed = (.allocation = ~allocation, .length = length)
-    i :: UIntNative = 0
-
-    while i < length {
-        bytes_set(.string = $&constructed, .index = i, .value = 0)
-        i = i + 1
-    }
-
-    bytes_set(.string = $&constructed, .index = length, .value = 0)
-
-    result = ..ok ~constructed
-}
-
-String init(
-        .allocator : $&Allocator,
-        .capacity  : UIntNative,
-    ) -> (
-        .result : Errable#(String, (..out_of_memory))
-    ) := {
-    constructed :: String
-
-    assume allocator
-
-    actual_capacity ::= capacity
-    one :: UIntNative = 1
-
-    if actual_capacity == 0 {
-        actual_capacity = one
-    }
-
-    if actual_capacity > _string_max_result_length().length {
-        result = ..error(.reason = ..out_of_memory)
-        return
-    }
-
-    allocation_size ::= actual_capacity + 1
-    allocation ::= allocate_bytes(allocator, .size = allocation_size)!
-    constructed = (.allocation = ~allocation, .length = 0)
-    bytes_set(.string = $&constructed, .index = 0, .value = 0)
-
-    result = ..ok ~constructed
-}
+)
 
 implement Deinit#(String) (
     .deinit = (.self: $&String) -> () {

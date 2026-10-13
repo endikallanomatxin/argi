@@ -5,8 +5,9 @@ contains a value, and raw allocated bytes do not yet contain a `T`. A value
 becomes live only after it has been fully initialized. Reading it beforehand
 is an error.
 
-Canonical construction uses the standard `Init` contract. Its selected
-conformance defines an argument record and a result of `T` or `Errable#(T, R)`.
+Canonical construction uses `Init#(T, Args)`. The target and argument record
+are participants; their selected conformance determines `T` or `Errable#(T, R)`
+as its associated Result.
 Calling `T(...)` completes that record and invokes the selected `init` operation.
 No uninitialized destination is passed into it: the successful value is returned
 directly or transferred into `..ok`. Ordinary ownership and automatic cleanup
@@ -14,10 +15,9 @@ apply to intermediate values on every exit.
 
 ```rg
 Point: Type = (.x: Int32, .y: Int32)
-implement Init#(Point) (
-    .Args: Type = (.x: Int32, .y: Int32 = 0)
+implement Init#(Point, (.x: Int32, .y: Int32 = 0)) (
     .Result: Type = Point
-    .init = (.args: Args) -> (.result: Result) {
+    .init = (.args: (.x: Int32, .y: Int32)) -> (.result: Result) {
         result = (.x = args.x, .y = args.y)
     }
 )
@@ -29,15 +29,19 @@ Generic implementations declare their compile-time parameters after `implement`:
 
 ```rg
 Box#(.T: Type): Type = (.value: T)
-implement#(.T: Type) Init#(Box#(T)) (
-    .Args: Type = (.value: T)
+implement#(.T: Type) Init#(Box#(T), (.value: T)) (
     .Result: Type = Box#(T)
-    .init = (.args: Args) -> (.result: Result) { result = (.value = args.value) }
+    .init = (.args: (.value: T)) -> (.result: Result) { result = (.value = args.value) }
 )
 ```
 
-The requested type, such as `Box#(Int32)`, selects the conformance. Argument or
-result mismatches do not select another conformance or bypass custom construction.
+The requested type, such as `Box#(Int32)`, and input argument types select the
+conformance together. Generic argument fields can retain a concrete allocator
+without adding it to the target type. Constructor syntax contextualizes literals
+and completes defaults against applicable argument patterns, then uses contract
+specificity. Incomparable applicable patterns are ambiguous. The result never
+selects a conformance, and an incompatible selected result cannot bypass custom
+construction.
 Record defaults retain scalar literals, payload-free choice variants and lexical
 reach directives without executing runtime expressions during type materialization.
 The selected operation preserves argument loans and projected output dependencies.

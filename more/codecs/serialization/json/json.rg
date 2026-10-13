@@ -443,7 +443,7 @@ decode_string(
     }
 
     end ::= _string_end(.text = text, .position = start)!
-    decoded ::= String(.capacity = end - start)!
+    decoded ::= string_with_capacity(.capacity = end - start)!
     cursor ::= start + 1
 
     while cursor < end - 1 {

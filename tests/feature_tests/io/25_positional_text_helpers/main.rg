@@ -80,7 +80,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         .index = 0
     )
     assume reader ::= $&stdin_storage
-    buffer ::= unwrap_or_abort(.value = String(.allocator = $&allocator_storage, .capacity = 4))
+    buffer ::= unwrap_or_abort(.value = string_with_capacity(.allocator = $&allocator_storage, .capacity = 4))
     into_buffer ::= read_line_into_buffer($&buffer)
     if is(.value = into_buffer, .variant = ..ok) {
     } else {
