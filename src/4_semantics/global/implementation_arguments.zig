@@ -39,6 +39,36 @@ pub const Resolver = struct {
     functions: *functions_mod.Resolver,
     abstracts: *abstracts_mod.Resolver,
 
+    pub const Completion = union(enum) {
+        completed,
+        deferred,
+        incompatible_arguments,
+        incompatible_default: graph_mod.Field,
+    };
+
+    /// Complete the selected record, checking ordinary defaults as values and
+    /// reach defaults as lexical lookup recipes. Constructors and operators
+    /// share this validation before wrapping Args in an operation call.
+    pub fn complete(self: *Resolver, args_type: graph_mod.GlobalTypeId, input: graph_mod.GlobalNodeId, reach: reach_context.Context) !Completion {
+        const fields = types.fields(self.graph, args_type) orelse return .incompatible_arguments;
+        const literal = self.graph.node(input).content.struct_value_literal;
+        for (self.graph.fields.items[fields.start..][0..fields.len], 0..) |field, position| {
+            if (self.core.callArgumentNamed(literal, position, self.graph.text(field.name)) != null) continue;
+            const fallback = field.default_value orelse continue;
+            if (self.graph.node(fallback).content == .reach_directive) continue;
+            const default_type = self.graph.node(fallback).ty orelse continue;
+            if (!types.equal(self.graph, default_type, field.ty) and !self.core.callTypesCompatible(default_type, field.ty) and !self.core.contextualLiteralFits(fallback, field.ty)) return .{ .incompatible_default = field };
+        }
+        switch (self.core.matchCallInput(fields, input)) {
+            .score => {},
+            .deferred => return .deferred,
+            .no_match => return .incompatible_arguments,
+        }
+        if (!try self.core.completeCallInputFieldsWithReach(fields, input, reach)) return .deferred;
+        self.graph.nodes.items[@intFromEnum(input)].ty = args_type;
+        return .completed;
+    }
+
     pub fn infer(self: *Resolver, declaration: graph_mod.GlobalDeclId, prefix: []const Participant, input: graph_mod.GlobalNodeId, reach: reach_context.Context) !Result {
         const allocator = self.core.allocator;
         const Candidate = struct { module: usize, template: storage_mod.ContractConformance, participants: []const graph_mod.GlobalTypeId };

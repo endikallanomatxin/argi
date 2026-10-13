@@ -1807,10 +1807,11 @@ fn resolvePendingOperation(
             break :blk if (result == .not_applicable) .deferred else result;
         },
         .core => blk: {
-            const core_result = try core.tryResolve(module_index, module, o, operation);
-            if (core_result == .resolved or operation != .resolve_binary) break :blk ownedResult(core_result);
-            const generic_result = try dispatch.generic_functions.resolveGenericAddition(module_index, module, o, operation.resolve_binary);
-            break :blk if (generic_result == .resolved) generic_result else ownedResult(core_result);
+            if (operation == .resolve_binary) {
+                const contract_result = try dispatch.generic_functions.resolveContractAddition(module_index, module, o, operation.resolve_binary);
+                if (contract_result == .resolved) break :blk contract_result;
+            }
+            break :blk ownedResult(try core.tryResolve(module_index, module, o, operation));
         },
         .expressions => ownedResult(try expressions.tryResolve(module_index, module, o, operation)),
         .control => ownedResult(try control.tryResolve(module_index, module, o, operation)),

@@ -151,6 +151,11 @@ feature first.
   CIncomplete declarations keep nominal identities without runtime fields or
   layout. Only RawPointer handles may carry them across C boundaries; never
   synthesize an empty-record layout or construct safe references to them.
+  Custom addition uses `implement Add#(Left, Right, Args)` with a scoped add
+  operation receiving the completed argument record. Infer participant bindings
+  from Args, including reached generic providers, never from Result. Concrete and
+  specialized generic expressions share this selected-evidence path; no receiver
+  is implicitly borrowed. Legacy `operator +` declarations are rejected.
   Canonical construction for migrated types uses `implement Init#(T, Args)`, with
   an Args record participant and a Result of T or Errable containing T. Type calls
   infer Args from target/input patterns, complete defaults and reached capabilities
@@ -362,6 +367,9 @@ feature first.
   lexical generations must never collide when independently created branches
   join. Initial identities of the same place can materialize on either branch;
   ended generations cannot be revived by later lexical-slot reuse.
+  Returned field addresses through by-value reference records retain explicit
+  dereference paths. Instantiate their storage dependencies from argument field
+  facts, even when the record envelope has no referenced place.
   Summary place paths distinguish a reference-valued field's slot from its
   pointee with explicit dereference
   projections; writing through the reference must preserve the field's facts.

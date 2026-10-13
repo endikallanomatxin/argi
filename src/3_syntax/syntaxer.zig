@@ -271,7 +271,10 @@ pub const Syntaxer = struct {
             },
             .binary_operator => |op| {
                 const name = switch (op) {
-                    .addition => "operator +",
+                    .addition => blk: {
+                        try self.diags.add(self.tokenLocation(), .syntax, "operator + declarations are unsupported; use implement Add#(Left, Right, Args)", .{});
+                        break :blk "";
+                    },
                     else => blk: {
                         try self.diags.add(self.tokenLocation(), .syntax, "unsupported binary operator after 'operator'", .{});
                         break :blk "";

@@ -133,7 +133,10 @@ or erasing the allocator. Operand participants and Args are inferred together
 from implementation input patterns; Result contributes no inference bindings.
 The selected Args record completes defaults and reached capabilities before
 invoking the scoped operation, following the same selection rules as Init.
-This operator lowering is the next migration step, not yet implemented.
+Addition now uses this lowering for concrete and specialized generic expressions.
+Bundled string concatenation implementations retain a statically selected allocator.
+Scalar arithmetic still uses representation primitives; the other operator
+contracts and the retirement of comparison overloads remain migration work.
 
 ## Virtual evidence and safety
 

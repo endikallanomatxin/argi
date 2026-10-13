@@ -12769,3 +12769,41 @@ test "feature_tests/contracts/256X_legacy_numeric_type_call" {
 test "feature_tests/contracts/257X_convert_fallible_wrong_target" {
     try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/257X_convert_fallible_wrong_target", "Convert.Result must be its target participant type");
 }
+
+test "feature_tests/contracts/258_add_args_specialized_result" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/258_add_args_specialized_result");
+    try runExpect("tests/feature_tests/contracts/258_add_args_specialized_result", 0);
+}
+test "feature_tests/contracts/259_string_add_static_allocator" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/259_string_add_static_allocator");
+    try runExpect("tests/feature_tests/contracts/259_string_add_static_allocator", 0);
+}
+test "feature_tests/contracts/260X_legacy_add_operator" {
+    try buildExpectFail("tests/feature_tests/contracts/260X_legacy_add_operator", "operator + declarations are unsupported; use implement Add");
+}
+
+test "feature_tests/contracts/261X_add_args_ambiguous" {
+    try buildExpectFail("tests/feature_tests/contracts/261X_add_args_ambiguous", "ambiguous Add argument shapes");
+}
+
+test "feature_tests/contracts/262_add_borrowed_result" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/262_add_borrowed_result");
+    try runExpect("tests/feature_tests/contracts/262_add_borrowed_result", 0);
+}
+
+test "feature_tests/contracts/263X_add_borrowed_result_escape" {
+    try buildExpectFail("tests/feature_tests/contracts/263X_add_borrowed_result_escape", "function output cannot depend on a local storage generation");
+}
+
+test "feature_tests/contracts/264X_argument_record_field_address_escape" {
+    try buildExpectFail("tests/feature_tests/contracts/264X_argument_record_field_address_escape", "function output cannot depend on a local storage generation");
+}
+
+test "feature_tests/contracts/265_add_qualified_argument_shape" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/265_add_qualified_argument_shape");
+    try runExpect("tests/feature_tests/contracts/265_add_qualified_argument_shape", 0);
+}
+
+test "feature_tests/contracts/266X_add_missing_reached_argument" {
+    try buildExpectFail("tests/feature_tests/contracts/266X_add_missing_reached_argument", "Add.Args requires a reachable capability");
+}

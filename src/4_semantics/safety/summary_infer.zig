@@ -4459,7 +4459,10 @@ pub const Infer = struct {
                 self.place_bindings.get(binding) orelse &.{},
             .address_of => |value| self.inferInputPaths(function_id, value),
             .move_value, .denied_implicit_copy => |value| self.inferInputPaths(function_id, value),
-            .dereference => |value| self.inferInputPaths(function_id, value.pointer),
+            // A reference stored in a by-value Args field denotes a caller
+            // referent only after an explicit dereference projection. Keeping
+            // the field-slot path here loses returned field-address provenance.
+            .dereference => |value| self.inferPointeePaths(function_id, value.pointer),
             .explicit_cast => |cast| if (self.graph.types.items[@intFromEnum(cast.target_type)] == .pointer)
                 self.inferInputPaths(function_id, cast.value)
             else

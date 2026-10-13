@@ -49,6 +49,7 @@ compiler fixtures. Their former declaration syntax is rejected. Older ordinary
 function and operator overload declarations still have compatibility routes
 while their consumers migrate. Convert now selects scoped contract evidence,
 including generic and specialized implementations; numeric type-call conversions
-are rejected in favor of explicit convert calls. Operator migration will use an
-Args participant to retain static dispatch for additional capabilities, as
+are rejected in favor of explicit convert calls. Addition uses an Args
+participant to retain static dispatch for additional capabilities; legacy
+`operator +` declarations are rejected. Other operator migration work is
 described in [contracts](135_contracts.md).

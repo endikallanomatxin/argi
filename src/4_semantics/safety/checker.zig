@@ -2952,35 +2952,30 @@ pub const SafetyChecker = struct {
         const index: usize = @intCast(path_value.input_index);
         var projections = path_value.projections;
         var target = arguments[index].referenced_place orelse blk: {
-            if (index >= argument_ids.len) return null;
-            const argument = self.graph.value_fields.items[@intFromEnum(argument_ids[index])].value;
-            const argument_type = self.graph.nodes.items[@intFromEnum(argument)].ty orelse return null;
-            // A by-value parameter owns its local slot. Its summary state must
-            // not overwrite the caller Place that supplied the value; explicit
-            // move/copy evaluation has already updated that Place. Pointer
-            // arguments may still expose their own storage when provenance is
-            // unavailable (for example an abstract pointer binding).
-            if (!isPointer(self.graph, argument_type)) {
-                // A copied argument record has its own fields, but references
-                // carried inside it still identify their caller referents.
-                var value = arguments[index];
-                for (projections, 0..) |projection, projection_index| {
-                    if (projection == .dereference) {
-                        const referent = value.referenced_place orelse return null;
-                        projections = projections[projection_index + 1 ..];
-                        break :blk referent;
-                    }
-                    value = try self.projectValueFacts(value, &.{projection});
+            if (index < argument_ids.len) {
+                const argument = self.graph.value_fields.items[@intFromEnum(argument_ids[index])].value;
+                const argument_type = self.graph.nodes.items[@intFromEnum(argument)].ty orelse return null;
+                if (isPointer(self.graph, argument_type)) {
+                    const storage = try self.resolvePlace(argument, state) orelse return null;
+                    // An unknown pointer binding stores the pointer, not a
+                    // concrete referent that summary effects may overwrite.
+                    if (isPointer(self.graph, self.graph.binding(storage.root).ty)) return null;
+                    break :blk storage;
                 }
-                return null;
             }
-            const storage = try self.resolvePlace(argument, state) orelse return null;
-            // An abstract pointer input has no concrete pointee Place. Its
-            // binding stores the pointer itself, so writing a pointee summary
-            // there would replace the pointer's own temporal dependencies.
-            if (isPointer(self.graph, self.graph.binding(storage.root).ty) and
-                arguments[index].referenced_place == null) return null;
-            break :blk storage;
+            // Copied records own their field slots, but explicit dereferences
+            // still reach caller storage. Output instantiation has facts alone;
+            // it does not need the argument syntax to follow those references.
+            var value = arguments[index];
+            for (projections, 0..) |projection, projection_index| {
+                if (projection == .dereference) {
+                    const referent = value.referenced_place orelse return null;
+                    projections = projections[projection_index + 1 ..];
+                    break :blk referent;
+                }
+                value = try self.projectValueFacts(value, &.{projection});
+            }
+            return null;
         };
         for (projections) |projection| {
             if (projection == .dereference) {
@@ -3086,15 +3081,11 @@ pub const SafetyChecker = struct {
         for (effect.fresh_dependencies) |fresh|
             try appendRootFact(hidden, try self.instantiateFreshRoot(fresh, state, fresh_roots));
         for (effect.input_places) |input_path| {
-            if (input_path.input_index >= arguments.len) continue;
-            var target = arguments[input_path.input_index].referenced_place orelse continue;
-            for (input_path.projections) |projection| target = try self.project(target, projection);
+            const target = try self.resolveSummaryInputPath(input_path, &.{}, arguments, state) orelse continue;
             try appendRootFact(hidden, try self.storageGeneration(state, target));
         }
         for (effect.input_generation_dependencies) |input_path| {
-            if (input_path.input_index >= arguments.len) continue;
-            var target = arguments[input_path.input_index].referenced_place orelse continue;
-            for (input_path.projections) |projection| target = try self.project(target, projection);
+            const target = try self.resolveSummaryInputPath(input_path, &.{}, arguments, state) orelse continue;
             try appendRootFact(hidden, try self.storageGeneration(state, target));
         }
         for (effect.input_dependencies) |dependency| {
@@ -3280,14 +3271,10 @@ pub const SafetyChecker = struct {
         var referenced_place: ?facts.Place = null;
         var has_referent = false;
         for (effect.input_places) |path| {
-            if (path.input_index >= arguments.len) continue;
-            if (arguments[path.input_index].referenced_place) |base| {
-                var target = base;
-                for (path.projections) |projection| target = try self.project(target, projection);
-                try appendDependencyFact(&dependencies, .{ .root = try self.storageGeneration(state, target) });
-                referenced_place = target;
-                has_referent = true;
-            }
+            const target = try self.resolveSummaryInputPath(path, &.{}, arguments, state) orelse continue;
+            try appendDependencyFact(&dependencies, .{ .root = try self.storageGeneration(state, target) });
+            referenced_place = target;
+            has_referent = true;
         }
         for (effect.input_captured_storages) |path| {
             if (path.input_index >= arguments.len) continue;
@@ -3299,9 +3286,7 @@ pub const SafetyChecker = struct {
             };
         }
         for (effect.input_generation_dependencies) |path| {
-            if (path.input_index >= arguments.len) continue;
-            var target = arguments[path.input_index].referenced_place orelse continue;
-            for (path.projections) |projection| target = try self.project(target, projection);
+            const target = try self.resolveSummaryInputPath(path, &.{}, arguments, state) orelse continue;
             try appendDependencyFact(&dependencies, .{ .root = try self.storageGeneration(state, target) });
         }
         for (effect.input_owned_roots) |path| {

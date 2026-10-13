@@ -16,6 +16,8 @@ const call_compatibility = @import("call_compatibility.zig");
 const global_types = @import("types.zig");
 const primitives = @import("../primitives/schema.zig");
 const callable = @import("../primitives/callable.zig");
+const implementation_arguments = @import("implementation_arguments.zig");
+const standard_contracts = @import("standard_contracts.zig");
 
 pub const Stats = struct {
     instances: u32 = 0,
@@ -149,7 +151,7 @@ pub const Resolver = struct {
     /// Binary syntax may target a statically specialized operator whose
     /// trailing capability inputs are supplied by `reach`. Infer from the
     /// written operands and caller context before materializing the call.
-    pub fn resolveGenericAddition(
+    pub fn resolveContractAddition(
         self: *Resolver,
         module_index: usize,
         module: *const module_sg.ModuleSemanticGraph,
@@ -157,59 +159,68 @@ pub const Resolver = struct {
         value: anytype,
     ) !resolution.Result {
         if (value.operator != .addition) return .not_applicable;
-        const left = globalizer.globalNode(o, value.left);
-        const right = globalizer.globalNode(o, value.right);
-        const left_ty = self.graph.node(left).ty orelse return .deferred;
-        const right_ty = self.graph.node(right).ty orelse return .deferred;
-        if (self.graph.isTypeUnresolved(left_ty) or self.graph.isTypeUnresolved(right_ty)) return .deferred;
-        const operands = [_]global_sg.GlobalNodeId{ left, right };
-        const operand_types = [_]global_sg.GlobalTypeId{ left_ty, right_ty };
         const reach = ReachInferenceContext.fromModule(module, o, value.visible_bindings, value.owner_function);
-        const input = try self.makePositionalInput(&operands);
-        if (value.assumed_arguments) |local| {
-            const assumed = self.graph.node(globalizer.globalNode(o, local)).content.struct_value_literal.assumed_fields;
-            self.graph.nodes.items[@intFromEnum(input)].content.struct_value_literal.assumed_fields = assumed;
-        }
-        var chosen: ?global_sg.GlobalFunctionId = null;
-        for (self.modules, 0..) |*candidate_module, candidate_module_index| {
-            for (candidate_module.semantic.parameterized_storage.parameterized_functions.items) |parameterized| {
-                if (parameterized.operator != .add) continue;
-                const declaration = globalizer.globalDecl(self.offsets[candidate_module_index], parameterized.declaration);
-                if (!self.core.declarationVisible(module_index, declaration, null)) continue;
-                var bindings = try generic_mod.Resolver.Bindings.init(
-                    self.allocator,
-                    candidate_module.semantic.parameterized_storage.comptime_parameters.items.len,
-                );
-                defer bindings.deinit(self.allocator);
-                if (!try self.inferOperatorCandidate(candidate_module_index, parameterized, &operands, &operand_types, input, reach, &bindings, false)) continue;
-                const arguments = self.appendBoundArguments(candidate_module_index, parameterized.parameters, &bindings) catch |err| switch (err) {
-                    error.MissingGenericArgument => continue,
-                    else => return err,
-                };
-                const instance = self.instantiate(declaration, arguments) catch continue;
-                if (chosen != null and chosen.? != instance) return .invalid;
-                chosen = instance;
-            }
-        }
-        const function_id = chosen orelse return .not_applicable;
-        const function = self.graph.function(function_id);
-        const compatibility = call_compatibility.Abstract{ .core = self.core, .abstracts = self.nested_call_context orelse return .deferred };
-        if (!try self.core.completeCallInputFieldsWithReachCompatibility(
-            function.input,
-            input,
-            reach,
-            compatibility.additionalTypeCompatibility(),
-        )) return .deferred;
-        // Operator sugar retains its scope just like a written call: callee
-        // dependencies can extend the input after overload selection.
-        try self.core.trackReachedCall(function_id, input, reach, false);
-        self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = .{
-            .source = self.graph.node(left).source,
-            .ty = try self.core.functionOutputType(function_id),
-            .content = .{ .function_call = .{ .callee = function_id, .input = input } },
-        };
-        self.stats.calls += 1;
+        const assumed = if (value.assumed_arguments) |local| globalizer.globalNode(o, local) else null;
+        const call = try self.makeContractAddition(module_index, &.{ globalizer.globalNode(o, value.left), globalizer.globalNode(o, value.right) }, reach, assumed) orelse return .deferred;
+        self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = call;
         return .resolved;
+    }
+
+    fn makeContractAddition(self: *Resolver, module_index: usize, operands: []const global_sg.GlobalNodeId, reach: ReachInferenceContext, assumed: ?global_sg.GlobalNodeId) anyerror!?global_sg.Node {
+        for (operands) |operand| {
+            const ty = self.graph.node(operand).ty orelse return null;
+            if (self.graph.isTypeUnresolved(ty)) return null;
+        }
+        const declaration = standard_contracts.standardDeclaration(self.graph, "Add") orelse return null;
+        const abstracts = self.nested_call_context orelse return null;
+        const checkpoint = self.graph.checkpoint();
+        const side_effects = self.checkpointSideEffects();
+        var committed = false;
+        var failure: ?abstract_mod.ParticipantConformanceFailure = null;
+        defer if (!committed) {
+            self.graph.rollback(checkpoint);
+            self.rollbackSideEffects(side_effects);
+            if (failure) |value| abstracts.participant_conformance_failure = value;
+        };
+        const input = try self.makePositionalInput(operands);
+        // Operand transfer is explicit. No distinguished receiver is borrowed
+        // automatically, and Args completion handles all auxiliary capabilities.
+        self.graph.nodes.items[@intFromEnum(input)].content.struct_value_literal.dispatch_prefix_positional_count = 0;
+        if (reach == .global) self.graph.nodes.items[@intFromEnum(input)].content.struct_value_literal.assumed_fields = reach.global.assumed_fields;
+        if (assumed) |node| self.graph.nodes.items[@intFromEnum(input)].content.struct_value_literal.assumed_fields = self.graph.node(node).content.struct_value_literal.assumed_fields;
+        var resolver: implementation_arguments.Resolver = .{ .graph = self.graph, .modules = self.modules, .core = self.core, .generics = self.generics, .functions = self, .abstracts = abstracts };
+        const selected = switch (try resolver.infer(declaration, &.{ .inferred, .inferred }, input, reach)) {
+            .selected => |selection| selection,
+            .ambiguous => {
+                failure = .{ .source = self.graph.node(operands[0]).source, .contract_name = "Add", .operation = "add", .reason = "ambiguous Add argument shapes; qualify the contract with an explicit Args type" };
+                return error.InvalidContractOperator;
+            },
+            .missing_reach => {
+                failure = .{ .source = self.graph.node(operands[0]).source, .contract_name = "Add", .operation = "add", .reason = "Add.Args requires a reachable capability or an explicitly qualified operation call" };
+                return error.InvalidContractOperator;
+            },
+            else => return null,
+        };
+        defer self.allocator.free(selected.participants);
+        const args_type = selected.participants[2];
+        _ = try self.generics.ensureGenericInstance(args_type);
+        switch (try resolver.complete(args_type, input, reach)) {
+            .completed => {},
+            .incompatible_default => {
+                failure = .{ .source = self.graph.node(operands[0]).source, .contract_name = "Add", .operation = "add", .reason = "default value is incompatible with its selected Add.Args field type" };
+                return error.InvalidContractOperator;
+            },
+            else => return null,
+        }
+        const arguments_start: u32 = @intCast(self.graph.generic_arguments.items.len);
+        for (selected.participants) |participant| try self.graph.generic_arguments.append(self.allocator, .{ .name = .{ .start = 0, .len = 0 }, .value = .{ .type = participant } });
+        const contract = try self.generics.internType(.{ .generic = .{ .base = declaration, .arguments = .{ .start = arguments_start, .len = 3 } } });
+        const wrapped = try self.makePositionalInput(&.{input});
+        const call = try abstracts.makeScopedOperationCall(module_index, contract, "add", wrapped, reach, self.graph.node(operands[0]).source) orelse return null;
+        if (call.ty == null or self.graph.isTypeUnresolved(call.ty.?)) return null;
+        committed = true;
+        self.stats.calls += 1;
+        return call;
     }
 
     fn makePositionalInput(
@@ -3180,7 +3191,7 @@ pub const Resolver = struct {
             {
                 const reach = try self.operatorContext(assumed);
                 defer self.resolver.allocator.free(reach.global.visible_bindings);
-                if (try self.resolver.resolveNestedAddressedOperatorCall(self.module_index, .add, operands, reach, self.resolver.sourceFor(self.module_index, source))) |call| return call;
+                if (try self.resolver.makeContractAddition(self.module_index, operands, reach, null)) |call| return call;
             }
             return .{
                 .source = self.resolver.sourceFor(self.module_index, source),

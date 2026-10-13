@@ -979,16 +979,8 @@ pub const Resolver = struct {
             self.stats.operators += 1;
             return true;
         }
-        if (value.operator != .addition) return false;
-        const function = self.resolveOperator(module_index, .add, &.{ left, right }, &.{ left_ty, right_ty }) catch return false;
-        const input = try self.makeCallInput(function, &.{ left, right });
-        self.graph.nodes.items[@intFromEnum(target)] = .{
-            .source = self.graph.nodes.items[@intFromEnum(left)].source,
-            .ty = try self.functionOutputType(function),
-            .content = .{ .function_call = .{ .callee = function, .input = input } },
-        };
-        self.stats.operators += 1;
-        return true;
+        _ = module_index;
+        return false;
     }
 
     fn resolveComparison(self: *Resolver, module_index: usize, o: globalizer.Offsets, value: anytype) !bool {

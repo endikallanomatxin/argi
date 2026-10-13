@@ -233,33 +233,19 @@ pub const Resolver = struct {
         try self.graph.generic_arguments.append(self.core.allocator, .{ .name = .{ .start = 0, .len = 0 }, .value = .{ .type = arguments_type } });
         const contract_type = try generics.internType(.{ .generic = .{ .base = declaration, .arguments = .{ .start = start, .len = 2 } } });
         _ = try generics.ensureGenericInstance(arguments_type);
-        const fields = types.fields(self.graph, arguments_type) orelse {
-            try self.reportConstructorError(source, "Init.Args must be a record type describing construction arguments");
-            return error.InvalidInitializerArguments;
-        };
-        const literal = self.graph.node(input).content.struct_value_literal;
-        for (self.graph.fields.items[fields.start..][0..fields.len], 0..) |field, position| {
-            if (self.core.callArgumentNamed(literal, position, self.graph.text(field.name)) != null) continue;
-            const default = field.default_value orelse continue;
-            // Reach is a lookup recipe, not a value of the field's type.
-            // Completion checks the selected lexical value against that type.
-            if (self.graph.node(default).content == .reach_directive) continue;
-            const default_type = self.graph.node(default).ty orelse continue;
-            if (!types.equal(self.graph, default_type, field.ty) and !self.core.callTypesCompatible(default_type, field.ty) and !self.core.contextualLiteralFits(default, field.ty)) {
-                try self.reportConstructorError(source, "default value is incompatible with its selected Init.Args field type");
-                return error.InvalidInitializerArguments;
-            }
-        }
-        switch (self.core.matchCallInput(fields, input)) {
-            .score => {},
+        var arguments_resolver: implementation_arguments.Resolver = .{ .graph = self.graph, .modules = self.modules, .core = self.core, .generics = generics, .functions = generic_functions, .abstracts = abstracts };
+        switch (try arguments_resolver.complete(arguments_type, input, reach)) {
+            .completed => {},
             .deferred => return error.DeferredContractInitializer,
-            .no_match => {
+            .incompatible_arguments => {
                 try self.reportConstructorError(source, "construction arguments do not match the selected Init.Args");
                 return error.InvalidInitializerArguments;
             },
+            .incompatible_default => {
+                try self.reportConstructorError(source, "default value is incompatible with its selected Init.Args field type");
+                return error.InvalidInitializerArguments;
+            },
         }
-        if (!try self.core.completeCallInputFieldsWithReach(fields, input, reach)) return error.DeferredContractInitializer;
-        self.graph.nodes.items[@intFromEnum(input)].ty = arguments_type;
         const value_start: u32 = @intCast(self.graph.value_fields.items.len);
         try self.graph.value_fields.append(self.core.allocator, .{ .name = try self.graph.addString(self.core.allocator, "args"), .value = input });
         const wrapped: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.graph.nodes.items.len)));
