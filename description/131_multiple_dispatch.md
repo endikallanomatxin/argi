@@ -44,12 +44,14 @@ nominal family registry or global overload fallback.
 
 ## Migration status
 
-Init and Deinit use contract dispatch throughout bundled core, official more and
-compiler fixtures. Their former declaration syntax is rejected. Older ordinary
-function and operator overload declarations still have compatibility routes
-while their consumers migrate. Convert now selects scoped contract evidence,
-including generic and specialized implementations; numeric type-call conversions
-are rejected in favor of explicit convert calls. Addition uses an Args
-participant to retain static dispatch for additional capabilities; legacy
-`operator +` declarations are rejected. Other operator migration work is
-described in [contracts](135_contracts.md).
+Init, Deinit and Convert use contract dispatch throughout bundled core, official
+more and compiler fixtures. Their former declaration syntax and numeric type-call
+conversions are rejected. Custom addition and equality use Add and Equal with an
+Args participant to retain static dispatch for auxiliary capabilities. The !=
+symbol negates the selected Equal operation, never selecting a second identity.
+Legacy operator declarations, their metadata and global selectors are removed.
+
+Scalar arithmetic and direct scalar/pointer comparisons still use compiler
+representation primitives. Moving those primitives behind standard conformance
+selection and migrating the remaining ordinary function overload families are
+pending; see [contracts](135_contracts.md).

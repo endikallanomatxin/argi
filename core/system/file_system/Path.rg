@@ -331,14 +331,11 @@ join(
     result = join_views(.left = &left_view, .right = &right_view, .allocator = allocator)
 }
 
-operator == (
-        .left  : &Path,
-        .right : &Path,
-    ) -> (
-        .ok : Bool
-    ) := {
-    ok = path_equals(.left = left, .right = right).ok
-}
+implement Equal#(Path, Path, (.left: &Path, .right: &Path)) (
+    .equal = (.args: (.left: &Path, .right: &Path)) -> (.ok: Bool) {
+        ok = path_equals(.left = args.left, .right = args.right).ok
+    }
+)
 
 path_equals(
         .left  : &Path,

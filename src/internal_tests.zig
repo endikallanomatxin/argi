@@ -12,7 +12,6 @@ const module_semantic_graph_test = @import("4_semantics/module/graph_test.zig");
 
 const semantic_primitives = @import("4_semantics/primitives/schema.zig");
 const semantic_type_shapes = @import("4_semantics/primitives/type_shapes.zig");
-const semantic_callable = @import("4_semantics/primitives/callable.zig");
 const module_semantic_entities = @import("4_semantics/module/entities.zig");
 const module_semantic_storage = @import("4_semantics/module/storage.zig");
 const module_semantic_parameterized_forms = @import("4_semantics/module/parameterized/storage.zig");
@@ -24,7 +23,6 @@ const module_body_lowerer = @import("4_semantics/module/body_lowerer.zig");
 const module_initializer_lowerer = @import("4_semantics/module/initializer_lowerer.zig");
 const module_global_roots_lowerer = @import("4_semantics/module/global_roots_lowerer.zig");
 const module_parameterized_lowerer = @import("4_semantics/module/parameterized/lowerer.zig");
-const module_generic_operator_lowerer = @import("4_semantics/module/generic_operator_lowerer.zig");
 const module_abstract_relation_lowerer = @import("4_semantics/module/abstract_relation_lowerer.zig");
 const module_generic_call_args_lowerer = @import("4_semantics/module/generic_call_args_lowerer.zig");
 const module_semantizer = @import("4_semantics/module/semantizer.zig");
@@ -81,7 +79,6 @@ test {
 
     _ = semantic_primitives;
     _ = semantic_type_shapes;
-    _ = semantic_callable;
     _ = module_semantic_entities;
     _ = module_semantic_storage;
     _ = module_semantic_parameterized_forms;
@@ -93,7 +90,6 @@ test {
     _ = module_initializer_lowerer;
     _ = module_global_roots_lowerer;
     _ = module_parameterized_lowerer;
-    _ = module_generic_operator_lowerer;
     _ = module_abstract_relation_lowerer;
     _ = module_generic_call_args_lowerer;
     _ = module_semantizer;

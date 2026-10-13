@@ -2841,7 +2841,7 @@ pub const Resolver = struct {
                     failure.reason = switch (selected) {
                         .missing => if (conformance.explicit_operations) "implementation operation has an incompatible input signature" else "missing operation",
                         .ambiguous => "ambiguous operation",
-                        .incompatible_output => "operation returns an incompatible associated result",
+                        .incompatible_output => if (standard_contracts.standardDeclaration(self.graph, "Equal") == conformance.declaration) "Equal.equal must return exactly (.ok: Bool)" else "operation returns an incompatible associated result",
                         .function => unreachable,
                     };
                     self.participant_conformance_failure = failure;
@@ -2938,7 +2938,6 @@ pub const Resolver = struct {
         });
         // Function/operator metadata shares FunctionId indexing, including
         // synthetic lifecycle bodies that do not represent an operator.
-        try self.graph.function_operators.append(self.allocator, null);
         try self.core.trackReachedCall(body, input, reach_context.Context.fromGlobal(visible.items, id), false);
         return id;
     }

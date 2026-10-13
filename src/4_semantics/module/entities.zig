@@ -1,6 +1,5 @@
 const std = @import("std");
 const primitives = @import("../primitives/schema.zig");
-const callable = @import("../primitives/callable.zig");
 
 pub const ModuleDeclId = enum(u32) { _ };
 pub const ModuleTypeId = enum(u32) { _ };
@@ -212,6 +211,10 @@ pub const PendingOperation = union(enum) {
         assumed_arguments: ?ModuleNodeId = null,
     },
     resolve_comparison: struct {
+        source: primitives.SourceRef,
+        visible_bindings: BindingRange = .{ .start = 0, .len = 0 },
+        owner_function: ?ModuleFunctionId = null,
+        assumed_arguments: ?ModuleNodeId = null,
         node: ModuleNodeId,
         operator: primitives.ComparisonOperator,
         left: ModuleNodeId,

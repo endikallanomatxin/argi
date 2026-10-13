@@ -15,7 +15,6 @@ const abstract_mod = @import("abstracts.zig");
 const call_compatibility = @import("call_compatibility.zig");
 const global_types = @import("types.zig");
 const primitives = @import("../primitives/schema.zig");
-const callable = @import("../primitives/callable.zig");
 const implementation_arguments = @import("implementation_arguments.zig");
 const standard_contracts = @import("standard_contracts.zig");
 
@@ -143,14 +142,8 @@ pub const Resolver = struct {
         };
     }
 
-    const ResolvedAddressedOperator = struct {
-        function: global_sg.GlobalFunctionId,
-        addressed_receiver_type: ?global_sg.GlobalTypeId = null,
-    };
-
-    /// Binary syntax may target a statically specialized operator whose
-    /// trailing capability inputs are supplied by `reach`. Infer from the
-    /// written operands and caller context before materializing the call.
+    /// Operator sugar selects scoped evidence from an operand record. Reached
+    /// capability fields participate in inference before materializing the call.
     pub fn resolveContractAddition(
         self: *Resolver,
         module_index: usize,
@@ -161,17 +154,17 @@ pub const Resolver = struct {
         if (value.operator != .addition) return .not_applicable;
         const reach = ReachInferenceContext.fromModule(module, o, value.visible_bindings, value.owner_function);
         const assumed = if (value.assumed_arguments) |local| globalizer.globalNode(o, local) else null;
-        const call = try self.makeContractAddition(module_index, &.{ globalizer.globalNode(o, value.left), globalizer.globalNode(o, value.right) }, reach, assumed) orelse return .deferred;
+        const call = try self.makeContractOperator(module_index, "Add", "add", &.{ globalizer.globalNode(o, value.left), globalizer.globalNode(o, value.right) }, reach, assumed) orelse return .deferred;
         self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = call;
         return .resolved;
     }
 
-    fn makeContractAddition(self: *Resolver, module_index: usize, operands: []const global_sg.GlobalNodeId, reach: ReachInferenceContext, assumed: ?global_sg.GlobalNodeId) anyerror!?global_sg.Node {
+    fn makeContractOperator(self: *Resolver, module_index: usize, contract_name: []const u8, operation_name: []const u8, operands: []const global_sg.GlobalNodeId, reach: ReachInferenceContext, assumed: ?global_sg.GlobalNodeId) anyerror!?global_sg.Node {
         for (operands) |operand| {
             const ty = self.graph.node(operand).ty orelse return null;
             if (self.graph.isTypeUnresolved(ty)) return null;
         }
-        const declaration = standard_contracts.standardDeclaration(self.graph, "Add") orelse return null;
+        const declaration = standard_contracts.standardDeclaration(self.graph, contract_name) orelse return null;
         const abstracts = self.nested_call_context orelse return null;
         const checkpoint = self.graph.checkpoint();
         const side_effects = self.checkpointSideEffects();
@@ -192,11 +185,11 @@ pub const Resolver = struct {
         const selected = switch (try resolver.infer(declaration, &.{ .inferred, .inferred }, input, reach)) {
             .selected => |selection| selection,
             .ambiguous => {
-                failure = .{ .source = self.graph.node(operands[0]).source, .contract_name = "Add", .operation = "add", .reason = "ambiguous Add argument shapes; qualify the contract with an explicit Args type" };
+                failure = .{ .source = self.graph.node(operands[0]).source, .contract_name = contract_name, .operation = operation_name, .reason = if (std.mem.eql(u8, contract_name, "Add")) "ambiguous Add argument shapes; qualify the contract with an explicit Args type" else "ambiguous Equal argument shapes; qualify the contract with an explicit Args type" };
                 return error.InvalidContractOperator;
             },
             .missing_reach => {
-                failure = .{ .source = self.graph.node(operands[0]).source, .contract_name = "Add", .operation = "add", .reason = "Add.Args requires a reachable capability or an explicitly qualified operation call" };
+                failure = .{ .source = self.graph.node(operands[0]).source, .contract_name = contract_name, .operation = operation_name, .reason = if (std.mem.eql(u8, contract_name, "Add")) "Add.Args requires a reachable capability or an explicitly qualified operation call" else "Equal.Args requires a reachable capability or an explicitly qualified operation call" };
                 return error.InvalidContractOperator;
             },
             else => return null,
@@ -207,7 +200,7 @@ pub const Resolver = struct {
         switch (try resolver.complete(args_type, input, reach)) {
             .completed => {},
             .incompatible_default => {
-                failure = .{ .source = self.graph.node(operands[0]).source, .contract_name = "Add", .operation = "add", .reason = "default value is incompatible with its selected Add.Args field type" };
+                failure = .{ .source = self.graph.node(operands[0]).source, .contract_name = contract_name, .operation = operation_name, .reason = "default value is incompatible with its selected operator Args field type" };
                 return error.InvalidContractOperator;
             },
             else => return null,
@@ -216,11 +209,30 @@ pub const Resolver = struct {
         for (selected.participants) |participant| try self.graph.generic_arguments.append(self.allocator, .{ .name = .{ .start = 0, .len = 0 }, .value = .{ .type = participant } });
         const contract = try self.generics.internType(.{ .generic = .{ .base = declaration, .arguments = .{ .start = arguments_start, .len = 3 } } });
         const wrapped = try self.makePositionalInput(&.{input});
-        const call = try abstracts.makeScopedOperationCall(module_index, contract, "add", wrapped, reach, self.graph.node(operands[0]).source) orelse return null;
+        const call = try abstracts.makeScopedOperationCall(module_index, contract, operation_name, wrapped, reach, self.graph.node(operands[0]).source) orelse return null;
         if (call.ty == null or self.graph.isTypeUnresolved(call.ty.?)) return null;
         committed = true;
         self.stats.calls += 1;
         return call;
+    }
+
+    pub fn resolveContractEquality(self: *Resolver, module_index: usize, module: *const module_sg.ModuleSemanticGraph, o: globalizer.Offsets, value: anytype) !resolution.Result {
+        if (value.operator != .equal and value.operator != .not_equal) return .not_applicable;
+        const reach = ReachInferenceContext.fromModule(module, o, value.visible_bindings, value.owner_function);
+        const assumed = if (value.assumed_arguments) |local| globalizer.globalNode(o, local) else null;
+        const call = try self.makeContractOperator(module_index, "Equal", "equal", &.{ globalizer.globalNode(o, value.left), globalizer.globalNode(o, value.right) }, reach, assumed) orelse return .deferred;
+        self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = try self.equalityResult(call, value.operator);
+        return .resolved;
+    }
+
+    fn equalityResult(self: *Resolver, call: global_sg.Node, operator: primitives.ComparisonOperator) !global_sg.Node {
+        if (operator == .equal) return call;
+        const value: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.graph.nodes.items.len)));
+        try self.graph.nodes.append(self.allocator, call);
+        const false_id: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.graph.nodes.items.len)));
+        const boolean = try self.generics.internType(.{ .builtin = .Bool });
+        try self.graph.nodes.append(self.allocator, .{ .source = call.source, .ty = boolean, .content = .{ .bool_literal = false } });
+        return .{ .source = call.source, .ty = boolean, .content = .{ .comparison = .{ .operator = .equal, .left = value, .right = false_id } } };
     }
 
     fn makePositionalInput(
@@ -247,242 +259,6 @@ pub const Resolver = struct {
             } },
         });
         return id;
-    }
-
-    fn inferOperatorCandidate(
-        self: *Resolver,
-        candidate_module_index: usize,
-        parameterized: parameterized_storage.ParameterizedFunction,
-        operands: []const global_sg.GlobalNodeId,
-        operand_types: []const global_sg.GlobalTypeId,
-        input: global_sg.GlobalNodeId,
-        reach: ReachInferenceContext,
-        bindings: *generic_mod.Resolver.Bindings,
-        allow_implicit_receiver_address: bool,
-    ) !bool {
-        const storage = &self.modules[candidate_module_index].semantic.parameterized_storage.ir;
-        const shape = switch (storage.types.items[@intFromEnum(parameterized.input)]) {
-            .resolved => |resolved| switch (resolved) {
-                .structural => |value| value,
-                else => return false,
-            },
-            else => return false,
-        };
-        if (shape.fields.len < operands.len) return false;
-
-        for (operands, 0..) |operand, offset| {
-            const field = storage.fields.items[shape.fields.start + @as(u32, @intCast(offset))];
-            const pattern = field.ty;
-
-            if (offset == 0 and allow_implicit_receiver_address) {
-                if (!try self.inferInputTypeWithImplicitAddress(
-                    candidate_module_index,
-                    pattern,
-                    operand_types[offset],
-                    bindings,
-                )) return false;
-                continue;
-            }
-
-            if (self.definiteNominalReferenceMismatch(candidate_module_index, pattern, operand_types[offset])) return false;
-            if (self.contextualParameterizedLiteralFits(candidate_module_index, pattern, bindings, operand)) continue;
-
-            if (!try self.inferInputType(
-                candidate_module_index,
-                pattern,
-                operand_types[offset],
-                bindings,
-            )) return false;
-        }
-
-        const literal = self.graph.node(input).content.struct_value_literal;
-        for (storage.fields.items[shape.fields.start + operands.len ..][0 .. shape.fields.len - operands.len], operands.len..) |field, position| {
-            const supplied = self.core.callArgumentNamed(literal, position, self.modules[candidate_module_index].text(field.name)) orelse continue;
-            const actual = self.staticInputType(supplied) orelse return false;
-            if (!try self.inferInputType(candidate_module_index, field.ty, actual, bindings)) return false;
-        }
-
-        if (!try self.inferBindingsFromReachDefaults(
-            candidate_module_index,
-            parameterized.input,
-            input,
-            bindings,
-            reach,
-        )) return false;
-
-        return self.inferAndValidateConstraints(
-            candidate_module_index,
-            parameterized.parameters,
-            bindings,
-        );
-    }
-
-    fn resolveInstantiatedAddressedOperator(
-        self: *Resolver,
-        module_index: usize,
-        operator: @import("../primitives/callable.zig").OperatorKind,
-        collection_ty: global_sg.GlobalTypeId,
-        operand_nodes: []const global_sg.GlobalNodeId,
-        operand_types: []const global_sg.GlobalTypeId,
-        input: global_sg.GlobalNodeId,
-    ) ?ResolvedAddressedOperator {
-        var chosen: ?ResolvedAddressedOperator = null;
-
-        for (self.graph.functions.items, 0..) |candidate, raw| {
-            if (raw >= self.graph.function_operators.items.len or
-                self.graph.function_operators.items[raw] != operator) continue;
-            if (!self.core.declarationVisible(module_index, candidate.declaration, null)) continue;
-            if (candidate.input.len < operand_types.len) continue;
-
-            var defaults_available = true;
-            for (operand_types.len..candidate.input.len) |offset| {
-                const field = self.graph.fields.items[candidate.input.start + @as(u32, @intCast(offset))];
-                const literal = self.graph.node(input).content.struct_value_literal;
-                if (self.core.callArgumentNamed(literal, offset, self.graph.text(field.name))) |supplied| {
-                    const actual = self.core.callArgumentType(supplied) orelse return null;
-                    if (!global_types.equal(self.graph, actual, field.ty) and !self.core.callTypesCompatible(actual, field.ty)) {
-                        defaults_available = false;
-                        break;
-                    }
-                } else if (field.default_value == null) {
-                    defaults_available = false;
-                    break;
-                }
-            }
-            if (!defaults_available) continue;
-
-            const expected_receiver = self.graph.fields.items[candidate.input.start].ty;
-            var addressed_receiver_type: ?global_sg.GlobalTypeId = null;
-            if (!global_types.equal(self.graph, expected_receiver, collection_ty) and
-                !self.core.callTypesCompatible(collection_ty, expected_receiver))
-            {
-                const pointer = switch (self.graph.types.items[@intFromEnum(expected_receiver)]) {
-                    .pointer => |value| value,
-                    else => continue,
-                };
-                if (!global_types.equal(self.graph, pointer.child, collection_ty) and
-                    !self.core.callTypesCompatible(collection_ty, pointer.child)) continue;
-                addressed_receiver_type = expected_receiver;
-            }
-
-            var matches = true;
-            for (1..operand_types.len) |offset| {
-                const expected = self.graph.fields.items[
-                    candidate.input.start + @as(u32, @intCast(offset))
-                ].ty;
-                if (!global_types.equal(self.graph, expected, operand_types[offset]) and
-                    !self.core.callTypesCompatible(operand_types[offset], expected) and
-                    !self.core.contextualLiteralFits(operand_nodes[offset], expected))
-                {
-                    matches = false;
-                    break;
-                }
-            }
-            if (!matches) continue;
-            if (chosen != null) return null;
-            chosen = .{
-                .function = @enumFromInt(@as(u32, @intCast(raw))),
-                .addressed_receiver_type = addressed_receiver_type,
-            };
-        }
-        return chosen;
-    }
-
-    fn resolveNestedAddressedOperatorCall(
-        self: *Resolver,
-        module_index: usize,
-        operator: @import("../primitives/callable.zig").OperatorKind,
-        operands: []const global_sg.GlobalNodeId,
-        reach: ReachInferenceContext,
-        source: primitives.SourceRef,
-    ) !?global_sg.Node {
-        if (operands.len < 2 or operands.len > 3) return null;
-
-        var operand_types: [3]global_sg.GlobalTypeId = undefined;
-        for (operands, 0..) |node, offset| {
-            const ty = self.graph.nodes.items[@intFromEnum(node)].ty orelse return null;
-            if (self.graph.isTypeUnresolved(ty)) return null;
-            operand_types[offset] = ty;
-        }
-
-        const input = try self.makePositionalInput(operands);
-        if (reach == .global) self.graph.nodes.items[@intFromEnum(input)].content.struct_value_literal.assumed_fields = reach.global.assumed_fields;
-        var instantiated = false;
-        for (self.modules, 0..) |*candidate_module, candidate_module_index| {
-            for (candidate_module.semantic.parameterized_storage.parameterized_functions.items) |parameterized| {
-                if (parameterized.dispatch_kind == .abstract_contract) continue;
-                if (parameterized.operator != operator) continue;
-                const declaration = globalizer.globalDecl(
-                    self.offsets[candidate_module_index],
-                    parameterized.declaration,
-                );
-                if (!self.core.declarationVisible(module_index, declaration, null)) continue;
-
-                var bindings = try generic_mod.Resolver.Bindings.init(
-                    self.allocator,
-                    candidate_module.semantic.parameterized_storage.comptime_parameters.items.len,
-                );
-                defer bindings.deinit(self.allocator);
-
-                if (!try self.inferOperatorCandidate(
-                    candidate_module_index,
-                    parameterized,
-                    operands,
-                    operand_types[0..operands.len],
-                    input,
-                    reach,
-                    &bindings,
-                    true,
-                )) continue;
-
-                const arguments = self.appendBoundArguments(
-                    candidate_module_index,
-                    parameterized.parameters,
-                    &bindings,
-                ) catch |err| switch (err) {
-                    error.MissingGenericArgument => continue,
-                    else => return err,
-                };
-                _ = self.instantiate(declaration, arguments) catch continue;
-                instantiated = true;
-            }
-        }
-        if (!instantiated) return null;
-
-        const selected = self.resolveInstantiatedAddressedOperator(
-            module_index,
-            operator,
-            operand_types[0],
-            operands,
-            operand_types[0..operands.len],
-            input,
-        ) orelse return null;
-
-        if (selected.addressed_receiver_type) |receiver_ty| {
-            const address: global_sg.GlobalNodeId = @enumFromInt(
-                @as(u32, @intCast(self.graph.nodes.items.len)),
-            );
-            try self.graph.nodes.append(self.allocator, .{
-                .source = self.graph.nodes.items[@intFromEnum(operands[0])].source,
-                .ty = receiver_ty,
-                .content = .{ .address_of = operands[0] },
-            });
-            const literal = self.graph.nodes.items[@intFromEnum(input)].content.struct_value_literal;
-            self.graph.value_fields.items[literal.fields.start].value = address;
-        }
-
-        const function = self.graph.functions.items[@intFromEnum(selected.function)];
-        if (!try self.core.completeCallInputFieldsWithReach(function.input, input, reach)) return null;
-        try self.core.trackReachedCall(selected.function, input, reach, false);
-        self.stats.calls += 1;
-        return .{
-            .source = source,
-            .ty = try self.core.functionOutputType(selected.function),
-            .content = .{ .function_call = .{
-                .callee = selected.function,
-                .input = input,
-            } },
-        };
     }
 
     fn resolveModuleGenericCall(
@@ -2131,7 +1907,6 @@ pub const Resolver = struct {
                 .is_abstract_dispatch = false,
             },
         });
-        try self.graph.function_operators.append(self.allocator, located.parameterized.operator);
         try self.graph.generic_function_instances.append(self.allocator, .{
             .function = function_id,
             .parameterized_declaration = declaration,
@@ -3191,7 +2966,7 @@ pub const Resolver = struct {
             {
                 const reach = try self.operatorContext(assumed);
                 defer self.resolver.allocator.free(reach.global.visible_bindings);
-                if (try self.resolver.makeContractAddition(self.module_index, operands, reach, null)) |call| return call;
+                if (try self.resolver.makeContractOperator(self.module_index, "Add", "add", operands, reach, null)) |call| return call;
             }
             return .{
                 .source = self.resolver.sourceFor(self.module_index, source),
@@ -3210,29 +2985,10 @@ pub const Resolver = struct {
             var right_ty = self.resolver.graph.node(operands[1]).ty orelse return error.UntypedParameterizedComparison;
             self.resolver.core.coerceIntegerPair(operands[0], &left_ty, operands[1], &right_ty);
             const bool_ty = try self.resolver.generics.internType(.{ .builtin = .Bool });
-            if (!self.resolver.core.isDirectComparison(operator, left_ty, right_ty)) resolve_operator: {
-                const callable_operator: callable.OperatorKind = switch (operator) {
-                    .equal => .equal,
-                    .not_equal => .not_equal,
-                    else => break :resolve_operator,
-                };
+            if (!self.resolver.core.isDirectComparison(operator, left_ty, right_ty) and (operator == .equal or operator == .not_equal)) {
                 const reach = try self.operatorContext(assumed);
                 defer self.resolver.allocator.free(reach.global.visible_bindings);
-                if (try self.resolver.resolveNestedAddressedOperatorCall(self.module_index, callable_operator, operands, reach, self.resolver.sourceFor(self.module_index, source))) |call| {
-                    try self.resolver.core.trackResolvedReachedCall(call, reach);
-                    return call;
-                }
-                const function = self.resolver.core.resolveOperator(self.module_index, callable_operator, operands, &.{ left_ty, right_ty }) catch |err| switch (err) {
-                    error.NoMatchingGlobalFunction => break :resolve_operator,
-                    else => return err,
-                };
-                const input = try self.resolver.core.makeCallInput(function, operands);
-                try self.resolver.core.trackReachedCall(function, input, reach, false);
-                return .{
-                    .source = self.resolver.sourceFor(self.module_index, source),
-                    .ty = bool_ty,
-                    .content = .{ .function_call = .{ .callee = function, .input = input } },
-                };
+                if (try self.resolver.makeContractOperator(self.module_index, "Equal", "equal", operands, reach, null)) |call| return self.resolver.equalityResult(call, operator);
             }
             // Tag tests retain comparison nodes. Unsupported aggregate nodes
             // remain typed for the final semantizing diagnostic, so speculative

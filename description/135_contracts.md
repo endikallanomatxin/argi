@@ -135,8 +135,15 @@ The selected Args record completes defaults and reached capabilities before
 invoking the scoped operation, following the same selection rules as Init.
 Addition now uses this lowering for concrete and specialized generic expressions.
 Bundled string concatenation implementations retain a statically selected allocator.
-Scalar arithmetic still uses representation primitives; the other operator
-contracts and the retirement of comparison overloads remain migration work.
+Equality uses `Equal#(Left, Right, Args)` with an `equal` operation returning
+Bool. The `!=` symbol negates the same selected operation and evaluates it once.
+Bundled StringView, time values, Path and semver comparisons use Equal; auxiliary
+capabilities can be fields with reach defaults, including in generic bodies.
+Both addition and equality require explicit references for borrowed operands;
+there is no implicit receiver address. Legacy operator declarations and their
+metadata registries are removed. Scalar arithmetic and direct comparisons still
+use representation primitives; moving those behind conformance selection remains
+migration work.
 
 ## Virtual evidence and safety
 

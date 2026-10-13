@@ -317,8 +317,6 @@ fn appendFunctions(allocator: std.mem.Allocator, result: *global_sg.GlobalSemant
             .safety_primitive = value.safety_primitive,
             .flags = value.flags,
         });
-        const operator = if (index < module.semantic.function_operators.items.len) module.semantic.function_operators.items[index] else null;
-        try result.function_operators.append(allocator, operator);
     }
 }
 

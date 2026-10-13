@@ -82,13 +82,11 @@ subtract(
     ).result
 }
 
-operator == (.left: Duration, .right: Duration) -> (.ok: Bool) := {
-    ok = left._nanoseconds == right._nanoseconds
-}
-
-operator != (.left: Duration, .right: Duration) -> (.ok: Bool) := {
-    ok = left._nanoseconds != right._nanoseconds
-}
+implement Equal#(Duration, Duration, (.left: Duration, .right: Duration)) (
+    .equal = (.args: (.left: Duration, .right: Duration)) -> (.ok: Bool) {
+        ok = args.left._nanoseconds == args.right._nanoseconds
+    }
+)
 
 compare(.left: Duration, .right: Duration) -> (.order: Int32 = 0) := {
     if left._nanoseconds < right._nanoseconds { order = -1 }

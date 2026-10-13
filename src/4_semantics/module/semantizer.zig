@@ -5,11 +5,9 @@ const initializer_lowerer = @import("initializer_lowerer.zig");
 const module_alias_lowerer = @import("module_alias_lowerer.zig");
 const global_roots_lowerer = @import("global_roots_lowerer.zig");
 const parameterized_lowerer = @import("parameterized/lowerer.zig");
-const generic_operator_lowerer = @import("generic_operator_lowerer.zig");
 const function_identity_lowerer = @import("function_identity_lowerer.zig");
 const abstract_relation_lowerer = @import("abstract_relation_lowerer.zig");
 const generic_call_args_lowerer = @import("generic_call_args_lowerer.zig");
-const callable = @import("../primitives/callable.zig");
 const canonicalize_storage = @import("canonicalize_storage.zig");
 const complete_verify = @import("complete_verify.zig");
 const diagnostic = @import("../../1_base/diagnostic.zig");
@@ -25,7 +23,6 @@ pub const BuildStats = struct {
     field_defaults: u32 = 0,
     generic_types: u32 = 0,
     generic_functions: u32 = 0,
-    generic_operators: u32 = 0,
     abstract_definitions: u32 = 0,
     abstract_relations: u32 = 0,
     generic_calls: u32 = 0,
@@ -87,14 +84,12 @@ pub fn finishLinked(
     try lowerNominalLayouts(allocator, graph, files);
     try canonicalize_storage.run(allocator, graph);
 
-    try lowerOperatorMetadata(allocator, graph, files);
     const global_roots = try global_roots_lowerer.lower(allocator, graph);
 
     const parameterized_stats = try parameterized_lowerer.lowerLinked(allocator, graph, files, abstract_types, diagnostics);
     // Templates claim abstract interfaces before ordinary body lowering, so
     // each contract body is materialized only after specialization.
     const bodies = try body_lowerer.lowerMissingFunctions(allocator, graph, files, diagnostics);
-    const generic_operators = try generic_operator_lowerer.lower(graph, files);
     try function_identity_lowerer.lower(graph, files, diagnostics);
     const relation_stats = try abstract_relation_lowerer.lowerDiagnosed(allocator, graph, files, diagnostics);
     const generic_calls = try generic_call_args_lowerer.lower(allocator, graph, files);
@@ -110,7 +105,6 @@ pub fn finishLinked(
         .field_defaults = initializers.field_defaults,
         .generic_types = parameterized_stats.generic_types,
         .generic_functions = parameterized_stats.generic_functions,
-        .generic_operators = generic_operators,
         .abstract_definitions = parameterized_stats.abstract_definitions,
         .abstract_relations = relation_stats.implementations + relation_stats.implementation_parameterized_forms + relation_stats.defaults + relation_stats.default_parameterized_forms,
         .generic_calls = generic_calls.generic_calls,
@@ -133,31 +127,6 @@ fn lowerNominalLayouts(allocator: std.mem.Allocator, graph: *module_sg.ModuleSem
             .choice_layout = if (tag == .c_enum_declaration) .c_enum else .regular,
             .struct_layout = if (tag == .c_function_pointer_declaration) .c_function_pointer else if (tag == .c_union_declaration) .c_union else if (tag == .c_struct_declaration) .c_struct else if (tag == .c_incomplete_declaration) .c_incomplete else .regular,
         });
-    }
-}
-
-fn lowerOperatorMetadata(
-    allocator: std.mem.Allocator,
-    graph: *module_sg.ModuleSemanticGraph,
-    files: []const module_sg.FileInput,
-) !void {
-    graph.semantic.function_operators.clearRetainingCapacity();
-    try graph.semantic.function_operators.ensureTotalCapacity(allocator, graph.functions.items.len);
-    for (graph.functions.items) |function| {
-        const declaration = graph.declarations.items[@intFromEnum(function.declaration)];
-        const file = files[declaration.module_file_index];
-        const declaration_node = module_sg.declarationSyntaxNode(files, declaration) orelse {
-            graph.semantic.function_operators.appendAssumeCapacity(null);
-            continue;
-        };
-        const operator: ?callable.OperatorKind = if (file.tree.functionNameFromSource(file.source, declaration_node)) |name|
-            switch (name) {
-                .operator => |value| module_sg.operatorKindFromSyntax(value),
-                .identifier => null,
-            }
-        else
-            null;
-        graph.semantic.function_operators.appendAssumeCapacity(operator);
     }
 }
 

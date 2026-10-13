@@ -1,7 +1,6 @@
 const std = @import("std");
 const primitives = @import("../primitives/schema.zig");
 const semantic_strings = @import("../primitives/strings.zig");
-const callable = @import("../primitives/callable.zig");
 const type_shapes = @import("../primitives/type_shapes.zig");
 const module_sg = @import("../module/graph.zig");
 
@@ -234,7 +233,6 @@ pub const GlobalSemanticGraph = struct {
     types: std.ArrayList(GlobalType) = .empty,
     generic_instances: std.ArrayList(GenericInstance) = .empty,
     functions: std.ArrayList(Function) = .empty,
-    function_operators: std.ArrayList(?callable.OperatorKind) = .empty,
     generic_function_instances: std.ArrayList(GenericFunctionInstance) = .empty,
     bindings: std.ArrayList(Binding) = .empty,
     nodes: std.ArrayList(Node) = .empty,
@@ -319,17 +317,17 @@ pub const GlobalSemanticGraph = struct {
         self.lookup.deinit(allocator);
         self.construction.deinit(allocator);
         inline for (.{
-            &self.modules,               &self.module_aliases,              &self.files,                      &self.declarations,
-            &self.symbols,               &self.symbol_declarations,         &self.types,                      &self.generic_instances,
-            &self.functions,             &self.function_operators,          &self.generic_function_instances, &self.bindings,
-            &self.nodes,                 &self.blocks,                      &self.fields,                     &self.variants,
-            &self.generic_arguments,     &self.value_fields,                &self.switch_cases,               &self.switches,
-            &self.auto_deinit_fields,    &self.auto_deinits,                &self.virtual_registries,         &self.virtualizes,
-            &self.virtual_calls,         &self.reach_segments,              &self.reach_alternatives,         &self.reaches,
-            &self.nullable_unwraps,      &self.testing_expect_errors,       &self.error_propagations,         &self.error_contexts,
-            &self.node_refs,             &self.type_refs,                   &self.binding_refs,               &self.function_refs,
-            &self.virtual_registry_refs, &self.strings,                     &self.roots,                      &self.abstract_safety_conformances,
-            &self.contract_conformances, &self.contract_operation_bindings,
+            &self.modules,                     &self.module_aliases,             &self.files,                        &self.declarations,
+            &self.symbols,                     &self.symbol_declarations,        &self.types,                        &self.generic_instances,
+            &self.functions,                   &self.generic_function_instances, &self.bindings,                     &self.nodes,
+            &self.blocks,                      &self.fields,                     &self.variants,                     &self.generic_arguments,
+            &self.value_fields,                &self.switch_cases,               &self.switches,                     &self.auto_deinit_fields,
+            &self.auto_deinits,                &self.virtual_registries,         &self.virtualizes,                  &self.virtual_calls,
+            &self.reach_segments,              &self.reach_alternatives,         &self.reaches,                      &self.nullable_unwraps,
+            &self.testing_expect_errors,       &self.error_propagations,         &self.error_contexts,               &self.node_refs,
+            &self.type_refs,                   &self.binding_refs,               &self.function_refs,                &self.virtual_registry_refs,
+            &self.strings,                     &self.roots,                      &self.abstract_safety_conformances, &self.contract_conformances,
+            &self.contract_operation_bindings,
         }) |list| list.deinit(allocator);
         self.* = .{};
     }
@@ -503,10 +501,6 @@ pub const GlobalSemanticGraph = struct {
         return self.functions.items[@intFromEnum(id)];
     }
 
-    pub fn functionOperator(self: *const GlobalSemanticGraph, id: GlobalFunctionId) ?callable.OperatorKind {
-        return self.function_operators.items[@intFromEnum(id)];
-    }
-
     pub fn binding(self: *const GlobalSemanticGraph, id: GlobalBindingId) Binding {
         return self.bindings.items[@intFromEnum(id)];
     }
@@ -602,7 +596,6 @@ pub const GlobalSemanticGraph = struct {
             self.construction.type_resolution.items.len * @sizeOf(TypeResolutionState) +
             self.generic_instances.items.len * @sizeOf(GenericInstance) +
             self.functions.items.len * @sizeOf(Function) +
-            self.function_operators.items.len * @sizeOf(?callable.OperatorKind) +
             self.generic_function_instances.items.len * @sizeOf(GenericFunctionInstance) +
             self.bindings.items.len * @sizeOf(Binding) +
             self.construction.binding_type_resolution.items.len * @sizeOf(TypeResolutionState) +
@@ -665,11 +658,9 @@ test "global semantic graph derives symbol module ownership from declarations" {
         .input = .{ .start = 0, .len = 0 },
         .output = .{ .start = 0, .len = 0 },
     });
-    try graph.function_operators.append(allocator, .add);
 
     try std.testing.expectEqual(@as(u32, 0), @intFromEnum(graph.moduleForSymbol(symbol).?));
     try std.testing.expectEqualStrings("Thing", graph.text(type_name));
-    try std.testing.expectEqual(callable.OperatorKind.add, graph.functionOperator(@enumFromInt(0)).?);
 }
 
 test "name indexes discard speculative functions before IDs are reused" {

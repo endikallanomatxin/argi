@@ -321,13 +321,11 @@ equals(.left: &VersionView, .right: &VersionView) -> (.ok: Bool) := {
     ok = left&._text == right&._text
 }
 
-operator == (.left: &VersionView, .right: &VersionView) -> (.ok: Bool) := {
-    ok = equals(.left = left, .right = right).ok
-}
-
-operator != (.left: &VersionView, .right: &VersionView) -> (.ok: Bool) := {
-    ok = equals(.left = left, .right = right).ok == false
-}
+implement Equal#(VersionView, VersionView, (.left: &VersionView, .right: &VersionView)) (
+    .equal = (.args: (.left: &VersionView, .right: &VersionView)) -> (.ok: Bool) {
+        ok = equals(.left = args.left, .right = args.right).ok
+    }
+)
 
 format(
         .value     : &VersionView,

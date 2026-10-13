@@ -1054,7 +1054,14 @@ const Context = struct {
             .compare_greater_equal => .greater_than_or_equal,
             else => unreachable,
         };
+        const assumed = try self.resolved(node, null, .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 0 } } });
+        try self.captureAssumedFields(node, assumed.node);
+        const visible_bindings = try self.captureVisibleBindings();
         return self.pending(node, .{ .resolve_comparison = .{
+            .source = self.sourceRef(node),
+            .visible_bindings = visible_bindings,
+            .assumed_arguments = assumed.node,
+            .owner_function = self.current_function,
             .node = self.nextNodeId(),
             .operator = operator,
             .left = lhs.node,

@@ -3,7 +3,6 @@ const std = @import("std");
 const syn = @import("../../3_syntax/syntax_tree.zig");
 const semantic_strings = @import("../primitives/strings.zig");
 const primitives = @import("../primitives/schema.zig");
-const callable = @import("../primitives/callable.zig");
 const module_entities = @import("entities.zig");
 const module_storage = @import("storage.zig");
 
@@ -196,14 +195,6 @@ pub fn declarationSyntaxNode(files: []const FileInput, declaration: Declaration)
     return null;
 }
 
-pub fn operatorKindFromSyntax(value: syn.OperatorName) callable.OperatorKind {
-    return switch (value) {
-        .add => .add,
-        .equal => .equal,
-        .not_equal => .not_equal,
-    };
-}
-
 pub fn pointerMutabilityFromSyntax(value: syn.PointerMutability) primitives.PointerMutability {
     return switch (value) {
         .read_only => .read_only,
@@ -352,7 +343,9 @@ fn buildFunctionInterfaces(allocator: std.mem.Allocator, graph: *ModuleSemanticG
             file_input.tree.testDeclaration(declaration_node).?.function
         else
             file_input.tree.functionDeclaration(declaration_node).?;
-        if (function.generic_params.len != 0 or function.generic_params_struct != null) continue;
+        // Inline members use parameterized IR even with no parameters. Their
+        // Args defaults must complete through the selected conformance path.
+        if (function.contract_member or function.generic_params.len != 0 or function.generic_params_struct != null) continue;
         const field_start = graph.fields.items.len;
         if (!try appendFields(allocator, graph, file_input, @intCast(declaration.module_file_index), function.input) or
             !try appendFields(allocator, graph, file_input, @intCast(declaration.module_file_index), function.output))

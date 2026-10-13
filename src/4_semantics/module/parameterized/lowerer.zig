@@ -308,7 +308,7 @@ pub const Context = struct {
                         .len = @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len - parameter_start),
                     };
                     const has_abstract_parameters = params.len > explicit_count;
-                    if (params.len == 0) continue;
+                    if (params.len == 0 and !function.contract_member) continue;
                     if (has_abstract_parameters) if (declaration.function_id) |function_id| {
                         // The source interface keeps declaration identity;
                         // only concrete instances own an executable body.

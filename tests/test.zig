@@ -12807,3 +12807,28 @@ test "feature_tests/contracts/265_add_qualified_argument_shape" {
 test "feature_tests/contracts/266X_add_missing_reached_argument" {
     try buildExpectFail("tests/feature_tests/contracts/266X_add_missing_reached_argument", "Add.Args requires a reachable capability");
 }
+
+test "feature_tests/contracts/267_equal_scoped_specialization" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/267_equal_scoped_specialization");
+    try runExpect("tests/feature_tests/contracts/267_equal_scoped_specialization", 0);
+}
+
+test "feature_tests/contracts/268X_legacy_equal_operator" {
+    try buildExpectFail("tests/feature_tests/contracts/268X_legacy_equal_operator", "comparison operator declarations are unsupported; use implement Equal");
+}
+
+test "feature_tests/contracts/269X_legacy_not_equal_operator" {
+    try buildExpectFail("tests/feature_tests/contracts/269X_legacy_not_equal_operator", "comparison operator declarations are unsupported; use implement Equal");
+}
+
+test "feature_tests/contracts/270X_equal_result_must_be_bool" {
+    try buildExpectFail("tests/feature_tests/contracts/270X_equal_result_must_be_bool", "Equal.equal must return exactly (.ok: Bool)");
+}
+
+test "feature_tests/contracts/271X_equal_missing_reached_argument" {
+    try buildExpectFail("tests/feature_tests/contracts/271X_equal_missing_reached_argument", "Equal.Args requires a reachable capability");
+}
+
+test "feature_tests/contracts/272X_equal_argument_shapes_ambiguous" {
+    try buildExpectFail("tests/feature_tests/contracts/272X_equal_argument_shapes_ambiguous", "ambiguous Equal argument shapes");
+}

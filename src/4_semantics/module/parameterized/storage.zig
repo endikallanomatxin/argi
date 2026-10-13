@@ -2,7 +2,6 @@ const std = @import("std");
 const entities = @import("../entities.zig");
 const ir = @import("ir.zig");
 const primitives = @import("../../primitives/schema.zig");
-const callable = @import("../../primitives/callable.zig");
 
 pub const ComptimeParameterId = ir.ComptimeParameterId;
 pub const AbstractConstraintId = enum(u32) { _ };
@@ -44,7 +43,6 @@ pub const ParameterizedFunction = struct {
     output_bindings: primitives.Range(ir.ParameterizedBindingId) = .{ .start = 0, .len = 0 },
     body: ?ir.ParameterizedBlockId,
     dispatch_kind: GenericDispatchKind = .regular,
-    operator: ?callable.OperatorKind = null,
     /// Destructor identity is resolved once while FileST is available. Global
     /// ownership consumes this bit and never infers temporal semantics by name.
     safety_primitive: primitives.SafetyPrimitive = .none,
@@ -209,8 +207,6 @@ test "module parameterized storage owns lowered parameterized IR" {
         .input_bindings = .{ .start = 0, .len = 1 },
         .output_bindings = .{ .start = 1, .len = 1 },
         .body = null,
-        .operator = .add,
     });
     try std.testing.expectEqual(@as(u32, 1), storage.parameterized_functions.items[0].input_bindings.len);
-    try std.testing.expectEqual(callable.OperatorKind.add, storage.parameterized_functions.items[0].operator.?);
 }

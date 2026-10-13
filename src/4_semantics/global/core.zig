@@ -8,7 +8,6 @@ const reach_context = @import("reach_context.zig");
 const module_linker = @import("module_linker.zig");
 const resolution = @import("resolution.zig");
 const types = @import("types.zig");
-const callable = @import("../primitives/callable.zig");
 const c_abi = @import("c_abi.zig");
 const primitives = @import("../primitives/schema.zig");
 
@@ -534,57 +533,6 @@ pub const Resolver = struct {
         };
     }
 
-    pub fn resolveOperator(
-        self: *Resolver,
-        current_module: usize,
-        operator: callable.OperatorKind,
-        operand_nodes: []const global_sg.GlobalNodeId,
-        operand_types: []const global_sg.GlobalTypeId,
-    ) !global_sg.GlobalFunctionId {
-        if (operand_nodes.len != operand_types.len) return error.InvalidCallInputArity;
-        var best: ?global_sg.GlobalFunctionId = null;
-        var best_score: u32 = 0;
-        var tied = false;
-        for (self.graph.functions.items, 0..) |function, raw| {
-            if (raw >= self.graph.function_operators.items.len or self.graph.function_operators.items[raw] != operator) continue;
-            if (function.input.len != operand_types.len) continue;
-            if (!self.declarationVisible(current_module, function.declaration, null)) continue;
-            var score: u32 = 0;
-            var compatible = true;
-            for (operand_types, 0..) |actual, index| {
-                const expected = self.graph.fields.items[function.input.start + @as(u32, @intCast(index))].ty;
-                if (types.equal(self.graph, expected, actual))
-                    score += 4
-                else if (self.callTypesCompatible(actual, expected) or self.contextualLiteralFits(operand_nodes[index], expected))
-                    score += 3
-                else if (types.isBuiltin(self.graph, expected, .Any))
-                    score += 1
-                else {
-                    compatible = false;
-                    break;
-                }
-            }
-            if (!compatible) continue;
-            if (@intFromEnum(self.graph.moduleForDeclaration(function.declaration).?) == current_module) score += 1;
-            if (best == null or score > best_score) {
-                best = @enumFromInt(@as(u32, @intCast(raw)));
-                best_score = score;
-                tied = false;
-            } else if (score == best_score) tied = true;
-        }
-        if (best == null) return error.NoMatchingGlobalFunction;
-        if (tied) return error.AmbiguousGlobalFunction;
-        const selected = self.graph.functions.items[@intFromEnum(best.?)];
-        for (operand_nodes, 0..) |node, index| {
-            const expected = self.graph.fields.items[selected.input.start + @as(u32, @intCast(index))].ty;
-            _ = self.coerceContextualValue(node, expected);
-        }
-        return best.?;
-    }
-
-    /// Global storage does not imply global visibility. Unqualified lookup sees
-    /// the current module and the implicit core; explicit imports select one
-    /// module and still respect private declaration names.
     pub fn declarationVisible(self: *const Resolver, current_module: usize, declaration: global_sg.GlobalDeclId, qualified_module: ?global_sg.GlobalModuleId) bool {
         const owner = self.graph.moduleForDeclaration(declaration) orelse return false;
         const own_module = @intFromEnum(owner) == current_module;
@@ -1032,20 +980,7 @@ pub const Resolver = struct {
             self.stats.operators += 1;
             return true;
         }
-        const operator: callable.OperatorKind = switch (value.operator) {
-            .equal => .equal,
-            .not_equal => .not_equal,
-            else => return false,
-        };
-        const function = self.resolveOperator(module_index, operator, &.{ left, right }, &.{ left_ty, right_ty }) catch return false;
-        const input = try self.makeCallInput(function, &.{ left, right });
-        self.graph.nodes.items[@intFromEnum(target)] = .{
-            .source = self.graph.nodes.items[@intFromEnum(left)].source,
-            .ty = bool_ty,
-            .content = .{ .function_call = .{ .callee = function, .input = input } },
-        };
-        self.stats.operators += 1;
-        return true;
+        return false;
     }
 
     fn patchChoiceTagComparison(

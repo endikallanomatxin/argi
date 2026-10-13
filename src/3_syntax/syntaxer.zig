@@ -256,18 +256,9 @@ pub const Syntaxer = struct {
                 try self.diags.add(self.tokenLocation(), .syntax, "unsupported operator '{s}'", .{ident});
                 return SyntaxerError.ExpectedIdentifier;
             },
-            .comparison_operator => |cmp| {
-                const name = switch (cmp) {
-                    .equal => "operator ==",
-                    .not_equal => "operator !=",
-                    else => blk: {
-                        try self.diags.add(self.tokenLocation(), .syntax, "unsupported comparison operator after 'operator'", .{});
-                        break :blk "";
-                    },
-                };
-                if (name.len == 0) return SyntaxerError.ExpectedIdentifier;
-                self.advanceOne();
-                return .{ .token = operator_token, .text = name };
+            .comparison_operator => {
+                try self.diags.add(self.tokenLocation(), .syntax, "comparison operator declarations are unsupported; use implement Equal#(Left, Right, Args)", .{});
+                return SyntaxerError.ExpectedIdentifier;
             },
             .binary_operator => |op| {
                 const name = switch (op) {

@@ -5372,7 +5372,6 @@ test "output summaries reach a fixed point through reverse call dependencies" {
         .input_bindings = .{ .start = 2, .len = 1 },
         .output_bindings = .{ .start = 3, .len = 1 },
     });
-    try graph.function_operators.appendSlice(allocator, &.{ null, null });
 
     // An unrelated extern population must not add inference work or prevent
     // convergence of callers whose summaries do carry effects.
@@ -5387,7 +5386,6 @@ test "output summaries reach a fixed point through reverse call dependencies" {
             .input_bindings = .{ .start = 0, .len = 0 },
             .output_bindings = .{ .start = 0, .len = 0 },
         });
-        try graph.function_operators.append(allocator, null);
     }
 
     var arena = std.heap.ArenaAllocator.init(allocator);

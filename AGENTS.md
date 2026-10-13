@@ -151,11 +151,13 @@ feature first.
   CIncomplete declarations keep nominal identities without runtime fields or
   layout. Only RawPointer handles may carry them across C boundaries; never
   synthesize an empty-record layout or construct safe references to them.
-  Custom addition uses `implement Add#(Left, Right, Args)` with a scoped add
-  operation receiving the completed argument record. Infer participant bindings
+  Custom addition and equality use `implement Add#(Left, Right, Args)` and
+  `implement Equal#(Left, Right, Args)` with scoped operations receiving the
+  completed argument record. Equal returns Bool; != negates that operation once. Infer participant bindings
   from Args, including reached generic providers, never from Result. Concrete and
   specialized generic expressions share this selected-evidence path; no receiver
-  is implicitly borrowed. Legacy `operator +` declarations are rejected.
+  is implicitly borrowed. Legacy operator declarations are rejected; there is no
+  global operator registry, addressed-receiver selector or operator metadata.
   Canonical construction for migrated types uses `implement Init#(T, Args)`, with
   an Args record participant and a Result of T or Errable containing T. Type calls
   infer Args from target/input patterns, complete defaults and reached capabilities

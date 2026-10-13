@@ -49,21 +49,17 @@ elapsed(
     result = ..ok Duration(.nanoseconds = end._nanoseconds - start._nanoseconds)
 }
 
-operator == (.left: MonotonicInstant, .right: MonotonicInstant) -> (.ok: Bool) := {
-    ok = left._nanoseconds == right._nanoseconds
-}
+implement Equal#(MonotonicInstant, MonotonicInstant, (.left: MonotonicInstant, .right: MonotonicInstant)) (
+    .equal = (.args: (.left: MonotonicInstant, .right: MonotonicInstant)) -> (.ok: Bool) {
+        ok = args.left._nanoseconds == args.right._nanoseconds
+    }
+)
 
-operator != (.left: MonotonicInstant, .right: MonotonicInstant) -> (.ok: Bool) := {
-    ok = left._nanoseconds != right._nanoseconds
-}
-
-operator == (.left: UnixTimestamp, .right: UnixTimestamp) -> (.ok: Bool) := {
-    ok = left._seconds == right._seconds and left._nanoseconds == right._nanoseconds
-}
-
-operator != (.left: UnixTimestamp, .right: UnixTimestamp) -> (.ok: Bool) := {
-    ok = left._seconds != right._seconds or left._nanoseconds != right._nanoseconds
-}
+implement Equal#(UnixTimestamp, UnixTimestamp, (.left: UnixTimestamp, .right: UnixTimestamp)) (
+    .equal = (.args: (.left: UnixTimestamp, .right: UnixTimestamp)) -> (.ok: Bool) {
+        ok = args.left._seconds == args.right._seconds and args.left._nanoseconds == args.right._nanoseconds
+    }
+)
 
 compare(.left: MonotonicInstant, .right: MonotonicInstant) -> (.order: Int32 = 0) := {
     if left._nanoseconds < right._nanoseconds { order = -1 }
