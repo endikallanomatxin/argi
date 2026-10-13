@@ -123,34 +123,45 @@ string_hash_map_prepare_buckets(
     }
 }
 
-StringHashMap init#(
-        .value : Type
-    )(
-        .allocator : $&Allocator,
-        .capacity  : UIntNative   = 8,
-    ) -> (
-        .result : StringHashMap#(.value: value)
-    ) := {
-    assume allocator
+implement#(
+    .value : Type,
+    .Provider: Type: Allocator
+) Init#(
+    StringHashMap#(.value: value),
+    (
+        .allocator : $&Provider = reach allocator,
+        .capacity : UIntNative = 8,
+    )
+) (
+    .Result: Type = StringHashMap#(.value: value)
+    .init = (.args: (
+        .allocator : $&Provider = reach allocator,
+        .capacity : UIntNative = 8,
+    )) -> (.result: Result) {
+        allocator ::= args.allocator
+        capacity ::= args.capacity
 
-    bucket_capacity ::= capacity
+        assume allocator
 
-    if bucket_capacity == 0 {
-        bucket_capacity = 1
-    }
+        bucket_capacity ::= capacity
 
-    result.entries = unwrap_or_abort(
-        .value = DynamicArray#(.t: StringHashMapEntry#(.value: value))(
+        if bucket_capacity == 0 {
+            bucket_capacity = 1
+        }
+
+        result.entries = unwrap_or_abort(
+            .value = DynamicArray#(.t: StringHashMapEntry#(.value: value))(
+                .allocator = allocator
+                .capacity  = bucket_capacity
+            )
+        )
+        string_hash_map_prepare_buckets(
             .allocator = allocator
+            .buckets   = $&result.buckets
             .capacity  = bucket_capacity
         )
-    )
-    string_hash_map_prepare_buckets(
-        .allocator = allocator
-        .buckets   = $&result.buckets
-        .capacity  = bucket_capacity
-    )
-}
+    }
+)
 
 implement#(
         .value : Type

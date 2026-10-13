@@ -45,27 +45,40 @@ _hash_map_slots#(
     result = ..ok ~slots
 }
 
-HashMap init#(
-        .key    : Type: ImplicitlyCopyable,
-        .value  : Type: ImplicitlyCopyable,
-        .policy : Type: HashPolicy#(policy, key)
-    )(
-        .policy    : policy,
-        .allocator : $&Allocator,
-        .capacity  : UIntNative   = 8
-    ) -> (
-        .result : Errable#(HashMap#(.key: key, .value: value, .policy: policy), (..out_of_memory))
-    ) := {
-    constructed :: HashMap#(.key: key, .value: value, .policy: policy)
+implement#(
+    .key : Type: ImplicitlyCopyable,
+    .value : Type: ImplicitlyCopyable,
+    .policy : Type: HashPolicy#(policy, key),
+    .Provider: Type: Allocator
+) Init#(
+    HashMap#(.key: key, .value: value, .policy: policy),
+    (
+        .policy : policy,
+        .allocator : $&Provider = reach allocator,
+        .capacity : UIntNative = 8,
+    )
+) (
+    .Result: Type = Errable#(HashMap#(.key: key, .value: value, .policy: policy), (..out_of_memory))
+    .init = (.args: (
+        .policy : policy,
+        .allocator : $&Provider = reach allocator,
+        .capacity : UIntNative = 8,
+    )) -> (.result: Result) {
+        policy ::= ~args.policy
+        allocator ::= args.allocator
+        capacity ::= args.capacity
 
-    count ::= capacity
+        constructed :: HashMap#(.key: key, .value: value, .policy: policy)
 
-    if count < 8 { count = 8 }
-    slots ::= _hash_map_slots#(.key: key, .value: value)(.capacity = count, .allocator = allocator)!
-    constructed = (._slots = ~slots, ._length = 0, ._policy = ~policy)
+        count ::= capacity
 
-    result = ..ok ~constructed
-}
+        if count < 8 { count = 8 }
+        slots ::= _hash_map_slots#(.key: key, .value: value)(.capacity = count, .allocator = allocator)!
+        constructed = (._slots = ~slots, ._length = 0, ._policy = ~policy)
+
+        result = ..ok ~constructed
+    }
+)
 
 length#(
         .key    : Type: ImplicitlyCopyable,

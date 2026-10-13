@@ -2,22 +2,33 @@
 -- logical order into new storage and moves every element exactly once.
 Deque#(.t: Type): Type = (._ring: RingBuffer#(.t: t))
 
-Deque init#(
-        .t : Type
-    )(
-        .capacity  : UIntNative  = 8,
-        .allocator : $&Allocator = reach allocator,
-    ) -> (
-        .result : Errable#(Deque#(.t: t), (..out_of_memory))
-    ) := {
-    actual :: UIntNative = capacity
+implement#(
+    .t : Type,
+    .Provider: Type: Allocator
+) Init#(
+    Deque#(.t: t),
+    (
+        .capacity : UIntNative = 8,
+        .allocator : $&Provider = reach allocator,
+    )
+) (
+    .Result: Type = Errable#(Deque#(.t: t), (..out_of_memory))
+    .init = (.args: (
+        .capacity : UIntNative = 8,
+        .allocator : $&Provider = reach allocator,
+    )) -> (.result: Result) {
+        capacity ::= args.capacity
+        allocator ::= args.allocator
 
-    if actual == 0 { actual = 1 }
-    match RingBuffer#(.t: t)(.capacity = actual, .allocator = allocator) {
-        ..ok ~ring { result = ..ok(._ring = ~ring) }
-        ..error _ { result = ..error(.reason = ..out_of_memory) }
+        actual :: UIntNative = capacity
+
+        if actual == 0 { actual = 1 }
+        match RingBuffer#(.t: t)(.capacity = actual, .allocator = allocator) {
+            ..ok ~ring { result = ..ok(._ring = ~ring) }
+            ..error _ { result = ..error(.reason = ..out_of_memory) }
+        }
     }
-}
+)
 
 capacity#(.t: Type)(.self: &Deque#(.t: t)) -> (.count: UIntNative) := {
     count = self&._ring._capacity

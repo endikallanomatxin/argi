@@ -7,27 +7,40 @@ HashSet#(.key: Type: ImplicitlyCopyable, .policy: Type: HashPolicy#(policy, key)
     ._map : HashMap#(.key: key, .value: _HashSetValue, .policy: policy)
 )
 
-HashSet init#(
-        .key    : Type: ImplicitlyCopyable,
-        .policy : Type: HashPolicy#(policy, key)
-    )(
-        .policy    : policy,
-        .allocator : $&Allocator,
-        .capacity  : UIntNative   = 8
-    ) -> (
-        .result : Errable#(HashSet#(.key: key, .policy: policy), (..out_of_memory))
-    ) := {
-    constructed :: HashSet#(.key: key, .policy: policy)
+implement#(
+    .key : Type: ImplicitlyCopyable,
+    .policy : Type: HashPolicy#(policy, key),
+    .Provider: Type: Allocator
+) Init#(
+    HashSet#(.key: key, .policy: policy),
+    (
+        .policy : policy,
+        .allocator : $&Provider = reach allocator,
+        .capacity : UIntNative = 8,
+    )
+) (
+    .Result: Type = Errable#(HashSet#(.key: key, .policy: policy), (..out_of_memory))
+    .init = (.args: (
+        .policy : policy,
+        .allocator : $&Provider = reach allocator,
+        .capacity : UIntNative = 8,
+    )) -> (.result: Result) {
+        policy ::= ~args.policy
+        allocator ::= args.allocator
+        capacity ::= args.capacity
 
-    map ::= HashMap#(.key: key, .value: _HashSetValue, .policy: policy)(
-        .policy    = ~policy
-        .allocator = allocator
-        .capacity  = capacity
-    )!
-    constructed = (._map = ~map)
+        constructed :: HashSet#(.key: key, .policy: policy)
 
-    result = ..ok ~constructed
-}
+        map ::= HashMap#(.key: key, .value: _HashSetValue, .policy: policy)(
+            .policy    = ~policy
+            .allocator = allocator
+            .capacity  = capacity
+        )!
+        constructed = (._map = ~map)
+
+        result = ..ok ~constructed
+    }
+)
 
 insert#(
         .key    : Type: ImplicitlyCopyable,

@@ -2,26 +2,38 @@
 -- dynamic array's storage and shape, and therefore cannot outlive cleanup.
 BitSet: Type = (._storage: DynamicArray#(.t: UInt8), ._count: UIntNative)
 
-BitSet init(
-        .count     : UIntNative,
-        .allocator : $&Allocator
-    ) -> (
-        .result : Errable#(BitSet, (..out_of_memory))
-    ) := {
-    assume allocator
-    needed ::= count / 8
+implement#(
+    .Provider: Type: Allocator
+) Init#(
+    BitSet,
+    (
+        .count : UIntNative,
+        .allocator : $&Provider = reach allocator,
+    )
+) (
+    .Result: Type = Errable#(BitSet, (..out_of_memory))
+    .init = (.args: (
+        .count : UIntNative,
+        .allocator : $&Provider = reach allocator,
+    )) -> (.result: Result) {
+        count ::= args.count
+        allocator ::= args.allocator
 
-    if count % 8 != 0 { needed = needed + 1 }
-    storage ::= DynamicArray#(.t: UInt8)(.allocator = allocator, .capacity = needed)!
-    index :: UIntNative = 0
+        assume allocator
+        needed ::= count / 8
 
-    while index < needed {
-        push_assume_capacity($&storage, .value = 0)
-        index = index + 1
+        if count % 8 != 0 { needed = needed + 1 }
+        storage ::= DynamicArray#(.t: UInt8)(.allocator = allocator, .capacity = needed)!
+        index :: UIntNative = 0
+
+        while index < needed {
+            push_assume_capacity($&storage, .value = 0)
+            index = index + 1
+        }
+
+        result = ..ok(._storage = ~storage, ._count = count)
     }
-
-    result = ..ok(._storage = ~storage, ._count = count)
-}
+)
 
 implement Deinit#(BitSet) (
     .deinit = (.self: $&BitSet) -> () {

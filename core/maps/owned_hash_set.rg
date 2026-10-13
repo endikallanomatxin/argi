@@ -2,27 +2,40 @@ OwnedHashSet#(.key: Type, .policy: Type: BorrowedHashPolicy#(policy, key)): Type
     ._map : OwnedHashMap#(.key: key, .value: _HashSetValue, .policy: policy)
 )
 
-OwnedHashSet init#(
-        .key    : Type,
-        .policy : Type: BorrowedHashPolicy#(policy, key)
-    )(
-        .policy    : policy,
-        .allocator : $&Allocator,
-        .capacity  : UIntNative   = 8
-    ) -> (
-        .result : Errable#(OwnedHashSet#(.key: key, .policy: policy), (..out_of_memory))
-    ) := {
-    assume allocator
-    constructed :: OwnedHashSet#(.key: key, .policy: policy)
-    map ::= OwnedHashMap#(.key: key, .value: _HashSetValue, .policy: policy)(
-        .policy    = ~policy
-        .allocator = allocator
-        .capacity  = capacity
-    )!
-    constructed = (._map = ~map)
+implement#(
+    .key : Type,
+    .policy : Type: BorrowedHashPolicy#(policy, key),
+    .Provider: Type: Allocator
+) Init#(
+    OwnedHashSet#(.key: key, .policy: policy),
+    (
+        .policy : policy,
+        .allocator : $&Provider = reach allocator,
+        .capacity : UIntNative = 8,
+    )
+) (
+    .Result: Type = Errable#(OwnedHashSet#(.key: key, .policy: policy), (..out_of_memory))
+    .init = (.args: (
+        .policy : policy,
+        .allocator : $&Provider = reach allocator,
+        .capacity : UIntNative = 8,
+    )) -> (.result: Result) {
+        policy ::= ~args.policy
+        allocator ::= args.allocator
+        capacity ::= args.capacity
 
-    result = ..ok ~constructed
-}
+        assume allocator
+        constructed :: OwnedHashSet#(.key: key, .policy: policy)
+        map ::= OwnedHashMap#(.key: key, .value: _HashSetValue, .policy: policy)(
+            .policy    = ~policy
+            .allocator = allocator
+            .capacity  = capacity
+        )!
+        constructed = (._map = ~map)
+
+        result = ..ok ~constructed
+    }
+)
 
 insert#(
         .key    : Type,

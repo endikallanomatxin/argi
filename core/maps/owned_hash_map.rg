@@ -88,40 +88,53 @@ _owned_hash_slots(
     result = ..ok ~slots
 }
 
-OwnedHashMap init#(
-        .key    : Type,
-        .value  : Type,
-        .policy : Type: BorrowedHashPolicy#(policy, key)
-    )(
-        .policy    : policy,
-        .allocator : $&Allocator,
-        .capacity  : UIntNative   = 8
-    ) -> (
-        .result : Errable#(
+implement#(
+    .key : Type,
+    .value : Type,
+    .policy : Type: BorrowedHashPolicy#(policy, key),
+    .Provider: Type: Allocator
+) Init#(
+    OwnedHashMap#(.key: key, .value: value, .policy: policy),
+    (
+        .policy : policy,
+        .allocator : $&Provider = reach allocator,
+        .capacity : UIntNative = 8,
+    )
+) (
+    .Result: Type = Errable#(
             OwnedHashMap#(.key: key, .value: value, .policy: policy),
             (..out_of_memory)
         )
-    ) := {
-    constructed :: OwnedHashMap#(.key: key, .value: value, .policy: policy)
-    assume allocator
-    owned_policy ::= ~policy
-    count ::= capacity
+    .init = (.args: (
+        .policy : policy,
+        .allocator : $&Provider = reach allocator,
+        .capacity : UIntNative = 8,
+    )) -> (.result: Result) {
+        policy ::= ~args.policy
+        allocator ::= args.allocator
+        capacity ::= args.capacity
 
-    if count < 8 { count = 8 }
-    slots ::= _owned_hash_slots(.capacity = count, .allocator = allocator)!
-    entries ::= allocate#(.t: OwnedHashMapEntry#(.key: key, .value: value))(
-        allocator
-        .count = count
-    )!
-    constructed = (
-        ._table  = (._entries = ~entries, ._slots = ~slots)
-        ._length = 0
-        ._policy = ~owned_policy
-        ._shape  = (.marker = 0)
-    )
+        constructed :: OwnedHashMap#(.key: key, .value: value, .policy: policy)
+        assume allocator
+        owned_policy ::= ~policy
+        count ::= capacity
 
-    result = ..ok ~constructed
-}
+        if count < 8 { count = 8 }
+        slots ::= _owned_hash_slots(.capacity = count, .allocator = allocator)!
+        entries ::= allocate#(.t: OwnedHashMapEntry#(.key: key, .value: value))(
+            allocator
+            .count = count
+        )!
+        constructed = (
+            ._table  = (._entries = ~entries, ._slots = ~slots)
+            ._length = 0
+            ._policy = ~owned_policy
+            ._shape  = (.marker = 0)
+        )
+
+        result = ..ok ~constructed
+    }
+)
 
 length#(
         .key    : Type,

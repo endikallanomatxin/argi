@@ -305,3 +305,22 @@ PageAllocator allocate implementation directly.
   leaks; 376 compiler tests passed (1 skipped). The focused migration run passed
   873 programs. LLVM 21 assembled the two-provider constructor IR, which retains
   direct calls to PageAllocator and GeneralPurposeAllocator implementations.
+
+- Nineteen more bundled constructor families now use Init: ArenaDomain,
+  GeneralPurposeAllocator, ArenaAllocator, buffered readers/writers, both limited
+  reader adapters, OwnedLineReader, RingBuffer, Deque, BitSet and BitSetView,
+  both priority queues, and all five map/set owners. Allocating argument records
+  keep the concrete provider generic; borrowed adapters retain source loans.
+- Ordinary and nested generic construction infer target parameters from Args
+  patterns when the type name supplies only its nominal family. Explicit target
+  annotations retain their normal contextual role. Result never supplies missing
+  generic parameters. Closed and generic patterns participate together; different
+  inferred target instances are not ranked merely by equal argument records.
+- Map policy fields move from Args into lexical owners before fallible branches.
+  A new executable checks exactly-once policy destruction on failed construction
+  and successful explicit cleanup. Regression coverage includes inferred target
+  construction in concrete/generic bodies and ambiguous/uninferable targets.
+- Validation: all 1858 program cases passed (11 skipped), without failures or
+  leaks; all 376 compiler tests passed (1 skipped). The focused foundation run
+  passed 883 cases (1 skipped), and the owned-policy regression executed directly.
+  LLVM 21 assembled its constructor/cleanup IR.

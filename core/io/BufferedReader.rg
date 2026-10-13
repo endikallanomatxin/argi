@@ -15,46 +15,59 @@ BufferedReader#(.base_type: Type: Reader#(base_type)): Type = (
     .end      : UIntNative
 )
 
-BufferedReader init#(
-        .base_type : Type: Reader#(base_type)
-    )(
-        .allocator : $&Allocator,
-        .base      : $&base_type,
-        .capacity  : UIntNative,
-    ) -> (
-        .result : Errable#(BufferedReader#(.base_type: base_type), (..out_of_memory))
-    ) := {
-    constructed :: BufferedReader#(.base_type: base_type)
-
-    assume allocator
-
-    actual_capacity ::= capacity
-    one :: UIntNative = 1
-
-    if actual_capacity == 0 {
-        actual_capacity = one
-    }
-
-    buffer ::= allocate_bytes(allocator, .size = actual_capacity)!
-    -- The refill view contains initialized bytes before any native read.
-    index :: UIntNative = 0
-
-    while index < actual_capacity {
-        byte ::= _trusted_allocation_byte_rw(.allocation = $&buffer, .offset = index).reference
-        byte&= 0
-        index = index + 1
-    }
-
-    constructed = (
-        .base     = base
-        .buffer   = ~buffer
-        .capacity = actual_capacity
-        .start    = 0
-        .end      = 0
+implement#(
+    .base_type : Type: Reader#(base_type),
+    .Provider: Type: Allocator
+) Init#(
+    BufferedReader#(.base_type: base_type),
+    (
+        .allocator : $&Provider = reach allocator,
+        .base : $&base_type,
+        .capacity : UIntNative,
     )
+) (
+    .Result: Type = Errable#(BufferedReader#(.base_type: base_type), (..out_of_memory))
+    .init = (.args: (
+        .allocator : $&Provider = reach allocator,
+        .base : $&base_type,
+        .capacity : UIntNative,
+    )) -> (.result: Result) {
+        allocator ::= args.allocator
+        base ::= args.base
+        capacity ::= args.capacity
 
-    result = ..ok ~constructed
-}
+        constructed :: BufferedReader#(.base_type: base_type)
+
+        assume allocator
+
+        actual_capacity ::= capacity
+        one :: UIntNative = 1
+
+        if actual_capacity == 0 {
+            actual_capacity = one
+        }
+
+        buffer ::= allocate_bytes(allocator, .size = actual_capacity)!
+        -- The refill view contains initialized bytes before any native read.
+        index :: UIntNative = 0
+
+        while index < actual_capacity {
+            byte ::= _trusted_allocation_byte_rw(.allocation = $&buffer, .offset = index).reference
+            byte&= 0
+            index = index + 1
+        }
+
+        constructed = (
+            .base     = base
+            .buffer   = ~buffer
+            .capacity = actual_capacity
+            .start    = 0
+            .end      = 0
+        )
+
+        result = ..ok ~constructed
+    }
+)
 
 implement#(
         .base_type : Type: Reader#(base_type)

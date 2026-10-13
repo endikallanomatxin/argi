@@ -156,7 +156,11 @@ feature first.
   infer Args from target/input patterns, complete defaults and reached capabilities
   and invoke the selected scoped init operation. Selected evidence supplies
   initializer safety and projected output dependencies; never add a second
-  constructor registry. Reject mixed Init/legacy initializer families and preserve
+  constructor registry. Generic type calls can infer their target parameters from
+  Args in concrete and specialized bodies; never infer those parameters from Result.
+  Closed/generic tuples remain ambiguous when they infer incomparable targets.
+  Move owning Args fields into lexical owners before fallible construction steps.
+  Reject mixed Init/legacy initializer families and preserve
   speculative rollback. Legacy `TypeName init#(...)(...)` declarations remain
   only while their families migrate. Their explicit association is a nominal
   declaration ID, persisted in ModuleSG and relocated into GlobalSG. Keep

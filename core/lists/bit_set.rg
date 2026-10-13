@@ -2,30 +2,40 @@
 -- byte zero. Construction clears only the bytes needed for the requested bits.
 BitSetView: Type = (._bytes: ArrayView#(.t: UInt8), ._count: UIntNative)
 
-BitSetView init(
+implement Init#(
+    BitSetView,
+    (
         .bytes : ArrayView#(.t: UInt8),
-        .count : UIntNative
-    ) -> (
-        .result : Errable#(BitSetView, (..out_of_bounds))
-    ) := {
-    needed ::= count / 8
+        .count : UIntNative,
+    )
+) (
+    .Result: Type = Errable#(BitSetView, (..out_of_bounds))
+    .init = (.args: (
+        .bytes : ArrayView#(.t: UInt8),
+        .count : UIntNative,
+    )) -> (.result: Result) {
+        bytes ::= args.bytes
+        count ::= args.count
 
-    if count % 8 != 0 { needed = needed + 1 }
-    if needed > length(&bytes).count {
-        result = ..error(.reason = ..out_of_bounds)
-        return
+        needed ::= count / 8
+
+        if count % 8 != 0 { needed = needed + 1 }
+        if needed > length(&bytes).count {
+            result = ..error(.reason = ..out_of_bounds)
+            return
+        }
+
+        index :: UIntNative = 0
+
+        while index < needed {
+            target ::= unwrap_or_abort(.value = get_rw_ref($&bytes, .index = index))
+            target&= 0
+            index = index + 1
+        }
+
+        result = ..ok(._bytes = bytes, ._count = count)
     }
-
-    index :: UIntNative = 0
-
-    while index < needed {
-        target ::= unwrap_or_abort(.value = get_rw_ref($&bytes, .index = index))
-        target&= 0
-        index = index + 1
-    }
-
-    result = ..ok(._bytes = bytes, ._count = count)
-}
+)
 
 length(.self: &BitSetView) -> (.count: UIntNative) := { count = self&._count }
 

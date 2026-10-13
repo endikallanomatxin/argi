@@ -32,14 +32,28 @@ GeneralPurposeAllocator: Type = (
     ._large_head        : UIntNative
 )
 
-GeneralPurposeAllocator init(.allocator: $&Allocator) -> (.result: GeneralPurposeAllocator) := {
-    result = (
-        ._backing_allocator = to_virtual#(.contract: Allocator)(.value = allocator)
-        ._bucket_size       = 4096
-        ._bucket_head       = 0
-        ._large_head        = 0
+implement#(
+    .Provider: Type: Allocator
+) Init#(
+    GeneralPurposeAllocator,
+    (
+        .allocator: $&Provider = reach allocator,
     )
-}
+) (
+    .Result: Type = GeneralPurposeAllocator
+    .init = (.args: (
+        .allocator: $&Provider = reach allocator,
+    )) -> (.result: Result) {
+        allocator ::= args.allocator
+
+        result = (
+            ._backing_allocator = to_virtual#(.contract: Allocator)(.value = allocator)
+            ._bucket_size       = 4096
+            ._bucket_head       = 0
+            ._large_head        = 0
+        )
+    }
+)
 
 -- Only bundled core may turn the allocator's live metadata address into a
 -- reference. The backing block stays live until its last slot is released.

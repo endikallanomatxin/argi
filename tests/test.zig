@@ -12667,3 +12667,29 @@ test "feature_tests/contracts/233_init_argument_specialization" {
 test "feature_tests/contracts/234X_init_literal_shapes_ambiguous" {
     try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/234X_init_literal_shapes_ambiguous", "ambiguous Init argument shapes");
 }
+
+test "feature_tests/contracts/235_init_target_inferred_from_args" {
+    const path = "tests/feature_tests/contracts/235_init_target_inferred_from_args";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/contracts/236X_init_target_not_inferred_from_result" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/236X_init_target_not_inferred_from_result", "construction arguments do not match");
+}
+
+test "feature_tests/contracts/237_init_owned_policy_failure_cleanup" {
+    const path = "tests/feature_tests/contracts/237_init_owned_policy_failure_cleanup";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/contracts/238_init_target_inferred_in_generic_body" {
+    const path = "tests/feature_tests/contracts/238_init_target_inferred_in_generic_body";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/contracts/239X_init_inferred_target_ambiguous" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/239X_init_inferred_target_ambiguous", "ambiguous Init argument shapes");
+}

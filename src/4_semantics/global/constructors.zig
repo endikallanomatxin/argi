@@ -71,7 +71,12 @@ pub const Resolver = struct {
 
         const parameterized = generics.isParameterizedTypeDeclaration(declaration_id);
         const ty = if (parameterized) blk: {
-            if (arguments.len == 0) return null;
+            if (arguments.len == 0) {
+                const identity = lifecycle_contracts.standardDeclaration(self.graph, "Init") orelse return null;
+                const selection = try self.inferContractArguments(identity, null, declaration_id, input, reach, source) orelse return null;
+                _ = try generics.ensureGenericInstance(selection.target);
+                return self.contractInitializer(module_index, selection.target, input, reach, source);
+            }
             const generic_ty = try generics.internType(.{ .generic = .{
                 .base = declaration_id,
                 .arguments = arguments,
@@ -251,9 +256,11 @@ pub const Resolver = struct {
 
     /// Argument shapes only infer input participants. Associated results never
     /// select a constructor, and matching scores do not rank conformances.
-    fn inferContractArguments(self: *Resolver, declaration: global_sg.GlobalDeclId, target: global_sg.GlobalTypeId, input: global_sg.GlobalNodeId, reach: reach_context.Context, source: primitives.SourceRef) anyerror!?global_sg.GlobalTypeId {
+    const ContractArguments = struct { target: global_sg.GlobalTypeId, args: global_sg.GlobalTypeId };
+
+    fn inferContractArguments(self: *Resolver, declaration: global_sg.GlobalDeclId, target: ?global_sg.GlobalTypeId, family: ?global_sg.GlobalDeclId, input: global_sg.GlobalNodeId, reach: reach_context.Context, source: primitives.SourceRef) anyerror!?ContractArguments {
         const storage_mod = @import("../module/parameterized/storage.zig");
-        const Candidate = struct { module: usize, template: storage_mod.ContractConformance, args: global_sg.GlobalTypeId };
+        const Candidate = struct { module: usize, template: storage_mod.ContractConformance, args: global_sg.GlobalTypeId, target: global_sg.GlobalTypeId };
         var candidates: std.ArrayList(Candidate) = .empty;
         defer candidates.deinit(self.core.allocator);
         const abstracts = self.abstracts.?;
@@ -282,7 +289,19 @@ pub const Resolver = struct {
                 if (patterns[0].value != .type or patterns[1].value != .type) continue;
                 var bindings = try generic_mod.Resolver.Bindings.init(self.core.allocator, storage.comptime_parameters.items.len);
                 defer bindings.deinit(self.core.allocator);
-                if (!try abstracts.inferConstraintTypePattern(index, patterns[0].value.type, target, &bindings)) continue;
+                if (target) |known| {
+                    if (!try abstracts.inferConstraintTypePattern(index, patterns[0].value.type, known, &bindings)) continue;
+                } else {
+                    // The type name supplies the nominal family. Its generic
+                    // leaves must come from inputs, never from Result.
+                    const pattern = storage.ir.types.items[@intFromEnum(patterns[0].value.type)];
+                    if (pattern == .resolved and pattern.resolved == .generic) {
+                        if (try self.generics.?.resolveParameterizedDeclaration(index, pattern.resolved.generic.base) != family.?) continue;
+                    } else if (pattern == .concrete) {
+                        const closed = try self.generics.?.instantiateParameterizedType(index, patterns[0].value.type, &bindings);
+                        if (nominalDeclaration(self.graph, closed) != family.?) continue;
+                    } else continue;
+                }
                 has_target = true;
                 if (storage.ir.types.items[@intFromEnum(patterns[1].value.type)] != .concrete and
                     !try self.generic_functions.?.inferInitializerInputBindings(index, patterns[1].value.type, input, reach, &bindings))
@@ -291,6 +310,10 @@ pub const Resolver = struct {
                 }
                 if (!try abstracts.validateParameterizedImplementationConstraints(index, template.parameters, &bindings)) continue;
                 const args = self.generics.?.instantiateParameterizedType(index, patterns[1].value.type, &bindings) catch |err| switch (err) {
+                    error.UnboundGenericTypeParameter, error.UnboundComptimeParameter => continue,
+                    else => return err,
+                };
+                const constructed = target orelse self.generics.?.instantiateParameterizedType(index, patterns[0].value.type, &bindings) catch |err| switch (err) {
                     error.UnboundGenericTypeParameter, error.UnboundComptimeParameter => continue,
                     else => return err,
                 };
@@ -303,7 +326,7 @@ pub const Resolver = struct {
                     },
                     .no_match => continue,
                 }
-                try candidates.append(self.core.allocator, .{ .module = index, .template = template, .args = args });
+                try candidates.append(self.core.allocator, .{ .module = index, .template = template, .args = args, .target = constructed });
             }
         }
         var selected: ?usize = null;
@@ -313,7 +336,7 @@ pub const Resolver = struct {
                 if (index == other_index) continue;
                 // A fully closed tuple is a specialization of every applicable
                 // generic pattern for that same completed argument type.
-                if (candidate.template.parameters.len != 0 and other.template.parameters.len == 0 and types.equal(self.graph, candidate.args, other.args)) {
+                if (candidate.template.parameters.len != 0 and other.template.parameters.len == 0 and types.equal(self.graph, candidate.target, other.target) and types.equal(self.graph, candidate.args, other.args)) {
                     dominated = true;
                     break;
                 }
@@ -331,7 +354,7 @@ pub const Resolver = struct {
             }
             selected = index;
         }
-        if (selected) |index| return candidates.items[index].args;
+        if (selected) |index| return .{ .target = candidates.items[index].target, .args = candidates.items[index].args };
         if (has_target) {
             if (deferred) return error.DeferredContractInitializer;
             try self.reportConstructorError(source, "construction arguments do not match the selected Init.Args");
@@ -353,7 +376,8 @@ pub const Resolver = struct {
         };
         const declaration = lifecycle_contracts.standardDeclaration(self.graph, "Init") orelse return null;
         const abstracts = self.abstracts orelse return null;
-        const arguments_type = try self.inferContractArguments(declaration, ty, input, reach, source) orelse return null;
+        const selected_arguments = try self.inferContractArguments(declaration, ty, null, input, reach, source) orelse return null;
+        const arguments_type = selected_arguments.args;
         if (nominalDeclaration(self.graph, ty)) |owner| {
             if ((try self.graph.constructorsFor(self.core.allocator, owner)).len != 0 or
                 (try self.graph.parameterizedConstructorsFor(self.core.allocator, self.modules, owner)).len != 0)
@@ -508,6 +532,15 @@ pub const Resolver = struct {
             if (!self.graph.isTypeUnresolved(expected)) switch (self.graph.types.items[@intFromEnum(expected)]) {
                 .generic => |identity| if (identity.base == declaration_id) {
                     _ = generics.ensureGenericInstance(expected) catch return .deferred;
+                    if (self.contractInitializer(module_index, expected, input, reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function), self.graph.node(input).source) catch |err| {
+                        if (err == error.DeferredContractInitializer) return .deferred;
+                        return err;
+                    }) |call| {
+                        self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = call;
+                        self.core.stats.calls += 1;
+                        committed = true;
+                        return .resolved;
+                    }
                     const initializer = try self.findGenericInitializer(
                         generics,
                         generic_functions,
@@ -531,6 +564,26 @@ pub const Resolver = struct {
                 },
                 else => {},
             };
+        }
+
+        if (lifecycle_contracts.standardDeclaration(self.graph, "Init")) |identity| {
+            const reach = reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function);
+            if (self.inferContractArguments(identity, null, declaration_id, input, reach, self.graph.node(input).source) catch |err| {
+                if (err == error.DeferredContractInitializer) return .deferred;
+                return err;
+            }) |selection| {
+                _ = try generics.ensureGenericInstance(selection.target);
+                const call = self.contractInitializer(module_index, selection.target, input, reach, self.graph.node(input).source) catch |err| {
+                    if (err == error.DeferredContractInitializer) return .deferred;
+                    return err;
+                };
+                if (call) |node| {
+                    self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = node;
+                    self.core.stats.calls += 1;
+                    committed = true;
+                    return .resolved;
+                }
+            }
         }
 
         const initializer = try self.findImplicitGenericInitializer(

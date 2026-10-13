@@ -5,21 +5,34 @@ OwnedPriorityQueue#(.t: Type, .order: Type: BorrowedOrderPolicy#(order, t)): Typ
     ._order : &order
 )
 
-OwnedPriorityQueue init#(
-        .t     : Type,
-        .order : Type: BorrowedOrderPolicy#(order, t)
-    )(
-        .order     : &order,
-        .allocator : $&Allocator,
-        .capacity  : UIntNative   = 8
-    ) -> (
-        .result : Errable#(OwnedPriorityQueue#(.t: t, .order: order), (..out_of_memory))
-    ) := {
-    assume allocator
-    items ::= DynamicArray#(.t: t)(.allocator = allocator, .capacity = capacity)!
+implement#(
+    .t : Type,
+    .order : Type: BorrowedOrderPolicy#(order, t),
+    .Provider: Type: Allocator
+) Init#(
+    OwnedPriorityQueue#(.t: t, .order: order),
+    (
+        .order : &order,
+        .allocator : $&Provider = reach allocator,
+        .capacity : UIntNative = 8,
+    )
+) (
+    .Result: Type = Errable#(OwnedPriorityQueue#(.t: t, .order: order), (..out_of_memory))
+    .init = (.args: (
+        .order : &order,
+        .allocator : $&Provider = reach allocator,
+        .capacity : UIntNative = 8,
+    )) -> (.result: Result) {
+        order ::= args.order
+        allocator ::= args.allocator
+        capacity ::= args.capacity
 
-    result = ..ok(._items = ~items, ._order = order)
-}
+        assume allocator
+        items ::= DynamicArray#(.t: t)(.allocator = allocator, .capacity = capacity)!
+
+        result = ..ok(._items = ~items, ._order = order)
+    }
+)
 
 implement#(
         .t     : Type,

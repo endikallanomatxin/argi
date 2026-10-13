@@ -46,6 +46,12 @@ Record defaults retain scalar literals, payload-free choice variants and lexical
 reach directives without executing runtime expressions during type materialization.
 The selected operation preserves argument loans and projected output dependencies.
 
+When Args determines every parameter of a nominal family, its application can
+be omitted: `Box(.value = byte)` infers the same target as `Box#(UInt8)` for a
+UInt8 input. This inference also applies inside generic bodies. If several
+conformances infer different targets and none dominates, specify the target
+explicitly; Result is never used to choose its missing parameters.
+
 Types without custom construction can use structural initialization. Legacy
 `T init(...)` declarations remain available while their families migrate; mixing
 legacy initializers with `Init` for one family is rejected. Alternative factories

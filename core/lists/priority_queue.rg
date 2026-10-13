@@ -5,21 +5,34 @@ PriorityQueue#(.t: Type: ImplicitlyCopyable, .order: Type: OrderPolicy#(order, t
     ._order : &order
 )
 
-PriorityQueue init#(
-        .t     : Type: ImplicitlyCopyable,
-        .order : Type: OrderPolicy#(order, t)
-    )(
-        .order     : &order,
-        .allocator : $&Allocator,
-        .capacity  : UIntNative   = 8
-    ) -> (
-        .result : Errable#(PriorityQueue#(.t: t, .order: order), (..out_of_memory))
-    ) := {
-    assume allocator
-    items ::= DynamicArray#(.t: t)(.allocator = allocator, .capacity = capacity)!
+implement#(
+    .t : Type: ImplicitlyCopyable,
+    .order : Type: OrderPolicy#(order, t),
+    .Provider: Type: Allocator
+) Init#(
+    PriorityQueue#(.t: t, .order: order),
+    (
+        .order : &order,
+        .allocator : $&Provider = reach allocator,
+        .capacity : UIntNative = 8,
+    )
+) (
+    .Result: Type = Errable#(PriorityQueue#(.t: t, .order: order), (..out_of_memory))
+    .init = (.args: (
+        .order : &order,
+        .allocator : $&Provider = reach allocator,
+        .capacity : UIntNative = 8,
+    )) -> (.result: Result) {
+        order ::= args.order
+        allocator ::= args.allocator
+        capacity ::= args.capacity
 
-    result = ..ok(._items = ~items, ._order = order)
-}
+        assume allocator
+        items ::= DynamicArray#(.t: t)(.allocator = allocator, .capacity = capacity)!
+
+        result = ..ok(._items = ~items, ._order = order)
+    }
+)
 
 implement#(
         .t     : Type: ImplicitlyCopyable,
