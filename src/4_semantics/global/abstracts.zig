@@ -2397,10 +2397,22 @@ pub const Resolver = struct {
         for (storage.generic_arguments.items[conformance.participants.start..][0..conformance.participants.len]) |argument| {
             if (argument.value != .type) continue;
             const ty = storage.types.items[@intFromEnum(argument.value.type)];
-            if (ty != .resolved) continue;
-            const declaration = switch (ty.resolved) {
-                .generic => |nominal| try self.generics.resolveParameterizedDeclaration(module_index, nominal.base),
-                .declared => |reference| try self.generics.resolveParameterizedDeclaration(module_index, reference),
+            const declaration = switch (ty) {
+                .concrete => |local| switch (self.graph.semanticType(globalizer.globalType(self.offsets[module_index], local))) {
+                    .declared => |nominal| nominal,
+                    .generic => |nominal| nominal.base,
+                    else => continue,
+                },
+                .external => |external| try self.core.resolveDeclaration(
+                    module_index,
+                    self.modules[module_index].semantic.external_refs.items[@intFromEnum(external)],
+                    &.{.type},
+                ),
+                .resolved => |resolved| switch (resolved) {
+                    .generic => |nominal| try self.generics.resolveParameterizedDeclaration(module_index, nominal.base),
+                    .declared => |reference| try self.generics.resolveParameterizedDeclaration(module_index, reference),
+                    else => continue,
+                },
                 else => continue,
             };
             if (self.graph.moduleForDeclaration(declaration)) |owner|

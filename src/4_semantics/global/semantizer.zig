@@ -2766,7 +2766,7 @@ fn diagnoseUnresolvedCall(
                 try diagnostics.add(
                     diagnosticLocation(graph, diagnostics, source),
                     .semantic,
-                    "type '{s}' does not satisfy abstract constraint '{s}' required by generic function parameter '.{s}' of '{s}'",
+                    "type '{s}' does not satisfy contract constraint '{s}' required by generic function parameter '.{s}' of '{s}'",
                     .{
                         constraint_actual_name.items,
                         graph.text(graph.declaration(failure.abstract_decl).name),

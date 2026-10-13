@@ -2228,7 +2228,7 @@ test "feature_tests/collections/12_iterator_abstract" {
 }
 
 test "feature_tests/collections/13X_iterator_abstract_missing_implements" {
-    try buildExpectFailWithoutParseNoise("tests/feature_tests/collections/13X_iterator_abstract_missing_implements", "does not satisfy abstract constraint 'Iterator'");
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/collections/13X_iterator_abstract_missing_implements", "does not satisfy contract constraint 'Iterator'");
 }
 
 test "feature_tests/control_flow/05X_for_requires_iterator_contract" {
@@ -2242,7 +2242,7 @@ test "feature_tests/collections/14_iterable_abstract" {
 }
 
 test "feature_tests/collections/15X_iterable_abstract_missing_implements" {
-    try buildExpectFailWithoutParseNoise("tests/feature_tests/collections/15X_iterable_abstract_missing_implements", "does not satisfy abstract constraint 'Iterable'");
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/collections/15X_iterable_abstract_missing_implements", "does not satisfy contract constraint 'Iterable'");
 }
 
 test "feature_tests/control_flow/06_range_for" {
@@ -4867,14 +4867,14 @@ test "feature_tests/types/255X_conflicting_abstract_associated_args" {
 test "feature_tests/types/256X_abstract_associated_arg_mismatch" {
     try buildExpectFail(
         "tests/feature_tests/types/256X_abstract_associated_arg_mismatch",
-        "abstract constraint 'Capability' required by generic function parameter '.t' of 'require_uint'",
+        "contract constraint 'Capability' required by generic function parameter '.t' of 'require_uint'",
     );
 }
 
 test "feature_tests/types/257X_abstract_impl_template_checks_associated_args" {
     try buildExpectFail(
         "tests/feature_tests/types/257X_abstract_impl_template_checks_associated_args",
-        "abstract constraint 'Other' required by generic function parameter '.t' of 'require_other'",
+        "contract constraint 'Other' required by generic function parameter '.t' of 'require_other'",
     );
 }
 
@@ -4887,7 +4887,7 @@ test "feature_tests/types/258_abstract_associated_comptime_values" {
 test "feature_tests/types/259X_abstract_associated_comptime_mismatch" {
     try buildExpectFail(
         "tests/feature_tests/types/259X_abstract_associated_comptime_mismatch",
-        "abstract constraint 'AbstractMatrix' required by generic function parameter '.t' of 'require_four_rows'",
+        "contract constraint 'AbstractMatrix' required by generic function parameter '.t' of 'require_four_rows'",
     );
 }
 
@@ -7299,11 +7299,11 @@ test "feature_tests/collections/80_collection_contracts" {
 }
 
 test "feature_tests/collections/81X_readonly_collection_mutation" {
-    try buildExpectFailWithoutParseNoise("tests/feature_tests/collections/81X_readonly_collection_mutation", "does not satisfy abstract constraint 'IndexableMutable'");
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/collections/81X_readonly_collection_mutation", "does not satisfy contract constraint 'IndexableMutable'");
 }
 
 test "feature_tests/collections/82X_owning_collection_value_read" {
-    try buildExpectFailWithoutParseNoise("tests/feature_tests/collections/82X_owning_collection_value_read", "does not satisfy abstract constraint 'IndexableValue'");
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/collections/82X_owning_collection_value_read", "does not satisfy contract constraint 'IndexableValue'");
 }
 
 test "feature_tests/text/24_string_view_search" {
@@ -7575,7 +7575,7 @@ test "feature_tests/collections/108_collection_reverse" {
 }
 
 test "feature_tests/collections/109X_collection_reverse_owning" {
-    try buildExpectFail("tests/feature_tests/collections/109X_collection_reverse_owning", "abstract constraint 'ImplicitlyCopyable' required by generic function parameter '.t' of 'reverse'");
+    try buildExpectFail("tests/feature_tests/collections/109X_collection_reverse_owning", "contract constraint 'ImplicitlyCopyable' required by generic function parameter '.t' of 'reverse'");
 }
 
 test "feature_tests/collections/110_order_policies" {
@@ -7645,11 +7645,11 @@ test "tests/feature_tests/basics/30_numeric_contextual_assignment" {
 }
 
 test "tests/feature_tests/polymorphism/59X_generic_constraint_implicit" {
-    try buildExpectFail("tests/feature_tests/polymorphism/59X_generic_constraint_implicit", "abstract constraint 'ImplicitlyCopyable' required by generic function parameter '.t' of 'accept'");
+    try buildExpectFail("tests/feature_tests/polymorphism/59X_generic_constraint_implicit", "contract constraint 'ImplicitlyCopyable' required by generic function parameter '.t' of 'accept'");
 }
 
 test "tests/feature_tests/polymorphism/60X_generic_constraint_explicit" {
-    try buildExpectFail("tests/feature_tests/polymorphism/60X_generic_constraint_explicit", "abstract constraint 'ImplicitlyCopyable' required by generic function parameter '.t' of 'accept'");
+    try buildExpectFail("tests/feature_tests/polymorphism/60X_generic_constraint_explicit", "contract constraint 'ImplicitlyCopyable' required by generic function parameter '.t' of 'accept'");
 }
 
 test "tests/feature_tests/polymorphism/61_generic_constraint_alternate" {
@@ -7663,7 +7663,7 @@ test "tests/feature_tests/polymorphism/62X_generic_constraint_wrong_shape" {
 }
 
 test "tests/feature_tests/polymorphism/63X_generic_constraint_qualified" {
-    try buildExpectFail("tests/feature_tests/polymorphism/63X_generic_constraint_qualified", "abstract constraint 'ImplicitlyCopyable' required by generic function parameter '.t' of 'accept'");
+    try buildExpectFail("tests/feature_tests/polymorphism/63X_generic_constraint_qualified", "contract constraint 'ImplicitlyCopyable' required by generic function parameter '.t' of 'accept'");
 }
 
 test "feature_tests/polymorphism/64_generic_constraint_fallback" {
@@ -9835,7 +9835,7 @@ test "feature_tests/numbers/07X_checked_arithmetic_mixed_types" {
     try buildExpectFail("tests/feature_tests/numbers/07X_checked_arithmetic_mixed_types", "conflicting inferred generic parameters");
 }
 test "feature_tests/numbers/08X_checked_arithmetic_float" {
-    try buildExpectFail("tests/feature_tests/numbers/08X_checked_arithmetic_float", "does not satisfy abstract constraint 'Int'");
+    try buildExpectFail("tests/feature_tests/numbers/08X_checked_arithmetic_float", "does not satisfy contract constraint 'Int'");
 }
 
 test "feature_tests/numbers/09_parse_uintnative" {
@@ -12361,7 +12361,7 @@ test "feature_tests/contracts/173_selected_associated_constraint" {
 }
 
 test "feature_tests/contracts/174X_selected_associated_constraint_mismatch" {
-    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/174X_selected_associated_constraint_mismatch", "does not satisfy abstract constraint 'Source'");
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/174X_selected_associated_constraint_mismatch", "does not satisfy contract constraint 'Source'");
 }
 
 test "feature_tests/contracts/175_contract_dependency_identity" {
@@ -12559,4 +12559,27 @@ test "feature_tests/contracts/217_deinit_reached_alias" {
 
 test "feature_tests/contracts/218X_deinit_loop_carried_aliases" {
     try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/218X_deinit_loop_carried_aliases", "consumption requires an initialized owner");
+}
+
+test "feature_tests/contracts/219_generic_local_nominal_participant" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/219_generic_local_nominal_participant");
+    try run("tests/feature_tests/contracts/219_generic_local_nominal_participant");
+}
+
+test "feature_tests/numbers/14_numeric_classification_contracts" {
+    try expectSuccessfulBuild("tests/feature_tests/numbers/14_numeric_classification_contracts");
+    try run("tests/feature_tests/numbers/14_numeric_classification_contracts");
+}
+
+test "feature_tests/numbers/15X_unsigned_classification_signed" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/numbers/15X_unsigned_classification_signed", "does not satisfy contract constraint 'UInt'");
+}
+
+test "feature_tests/numbers/16X_float_classification_integer" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/numbers/16X_float_classification_integer", "does not satisfy contract constraint 'Float'");
+}
+
+test "feature_tests/numbers/17_color_float_representation" {
+    try expectSuccessfulBuild("tests/feature_tests/numbers/17_color_float_representation");
+    try run("tests/feature_tests/numbers/17_color_float_representation");
 }

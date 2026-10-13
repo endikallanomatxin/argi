@@ -166,3 +166,21 @@ legacy ordinary resolution.
 - Validation: the Deinit checkpoint passed 1831 programs (11 skipped, no
   failures or leaks) and 374 compiler tests (1 skipped). Read-only review found
   no further issues after the loop and FunctionId metadata fixes.
+
+- Numeric classification now uses explicit Value participants and implement;
+  the 17 legacy numeric conforms and Float default representation are removed.
+  Color fields name Float32 explicitly. Generic constraint diagnostics use the
+  contract terminology.
+- Generic implementation ownership checks concrete nominal leaves and external
+  type references as well as nominal applications. A local nominal participant
+  with a generic peer is covered by an executable regression; foreign extensions
+  remain rejected.
+
+- TODO: fix manual generic error-reason repacking into a wider Error record.
+  Constructing `..error(.reason = err.reason)` from a one-variant reason choice
+  into a two-variant choice currently produces an LLVM insertvalue layout
+  mismatch. Ordinary `!` propagation already remaps reasons and preserves the
+  tracer correctly; use it for the upcoming unified array-copy algorithm.
+
+- Validation: numeric classification and nominal ownership passed 1836 programs
+  (11 skipped, no failures or leaks) and 374 compiler tests (1 skipped).

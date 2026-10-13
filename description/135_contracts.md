@@ -311,3 +311,13 @@ destruction removes obsolete post-values of owned fields; it does not authorize
 destruction of storage reached through borrowed reference fields. Virtual Deinit
 remains rejected because consuming an erased receiver needs runtime cleanup
 identities, which the current evidence representation does not provide.
+
+
+Numeric classification uses explicit `Int#(Value)`, `UInt#(Value)` and
+`Float#(Value)` conformances. These marker contracts do not provide arithmetic
+operations or a default runtime representation. Color records use `Float32`
+explicitly instead of the old `Float defaultsto Float32` mechanism.
+
+Generic implementation ownership recognizes closed nominal participants as well
+as nominal applications. A local concrete participant can establish ownership
+when another participant remains generic; foreign nominal participants do not.
