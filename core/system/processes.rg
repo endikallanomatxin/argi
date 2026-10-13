@@ -47,9 +47,16 @@ _process_stream_write(.handle: UIntNative, .byte: UInt8) -> (.status: Int32): CF
 
 ProcessManager: Type = (._ffi: $&ForeignFunctionInterface)
 
-once ProcessManager init(.ffi: $&ForeignFunctionInterface = reach ffi) -> (.result: ProcessManager) := {
+once _acquire_process_manager := (.args: (.ffi: $&ForeignFunctionInterface = reach ffi)) -> (.result: ProcessManager) {
+    ffi ::= args.ffi
+
     result = (._ffi = ffi)
 }
+
+implement Init#(ProcessManager, (.ffi: $&ForeignFunctionInterface = reach ffi)) (
+    .Result: Type = ProcessManager
+    .init = _acquire_process_manager
+)
 
 ProcessStreamMode: Type = (..inherit, ..pipe, ..discard)
 

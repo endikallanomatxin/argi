@@ -11,34 +11,47 @@ Matrix#(.rows: UIntNative, .cols: UIntNative, .t: Type: Scalar): Type = (
 implement#(.n: UIntNative, .t: Type: Scalar) ImplicitlyCopyable#(Vector#(.n = n, .t: t)) ()
 implement#(.rows: UIntNative, .cols: UIntNative, .t: Type: Scalar) ImplicitlyCopyable#(Matrix#(.rows = rows, .cols = cols, .t: t)) ()
 
-Vector init#(
-        .n : UIntNative,
-        .t : Type: Scalar
-    )(
-        .values : Array#(.n = n, .t: t)
-    ) -> (
-        .result : Vector#(
+implement#(
+    .n : UIntNative,
+    .t : Type: Scalar
+) Init#(
+    Vector#(.n = n, .t: t),
+    (
+        .values : Array#(.n = n, .t: t),
+    )
+) (
+    .Result: Type = Vector#(
             .n = n,
             .t : t
         )
-    ) := {
-    result = (.values = values)
-}
+    .init = (.args: (
+        .values : Array#(.n = n, .t: t),
+    )) -> (.result: Result) {
+        values ::= args.values
 
-Matrix init#(
-        .rows : UIntNative,
-        .cols : UIntNative,
-        .t    : Type: Scalar
-    )(
-        .values : Array#(
-            .n = rows,
-            .t : Array#(.n = cols, .t: t)
-        )
-    ) -> (
-        .result : Matrix#(.rows = rows, .cols = cols, .t: t)
-    ) := {
-    result = (.values = values)
-}
+        result = (.values = values)
+    }
+)
+
+implement#(
+    .rows : UIntNative,
+    .cols : UIntNative,
+    .t : Type: Scalar
+) Init#(
+    Matrix#(.rows = rows, .cols = cols, .t: t),
+    (
+        .values : Array#( .n = rows, .t : Array#(.n = cols, .t: t) ),
+    )
+) (
+    .Result: Type = Matrix#(.rows = rows, .cols = cols, .t: t)
+    .init = (.args: (
+        .values : Array#( .n = rows, .t : Array#(.n = cols, .t: t) ),
+    )) -> (.result: Result) {
+        values ::= args.values
+
+        result = (.values = values)
+    }
+)
 
 add#(
         .n : UIntNative,

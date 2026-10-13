@@ -2,7 +2,7 @@ main(.system: System) -> (.status_code: Int32) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 
-    full :: Path = unwrap_or_abort(.value = Path(
+    full :: Path = unwrap_or_abort(.value = path_with_view(
         .allocator = $&allocator_storage,
         .view = c_string_as_view(.text = "/tmp/demo/file.txt"),
     ))
@@ -53,11 +53,11 @@ main(.system: System) -> (.status_code: Int32) := {
         }
     }
 
-    base :: Path = unwrap_or_abort(.value = Path(
+    base :: Path = unwrap_or_abort(.value = path_with_view(
         .allocator = $&allocator_storage,
         .view = c_string_as_view(.text = "/tmp/demo"),
     ))
-    child :: Path = unwrap_or_abort(.value = Path(
+    child :: Path = unwrap_or_abort(.value = path_with_view(
         .allocator = $&allocator_storage,
         .view = c_string_as_view(.text = "child.txt"),
     ))

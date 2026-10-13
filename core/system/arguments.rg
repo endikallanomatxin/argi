@@ -13,13 +13,20 @@ ArgumentsIterator: Type = (
     .index : UIntNative
 )
 
-once Arguments init(.ffi: $&ForeignFunctionInterface = reach ffi) -> (.result: Arguments) := {
+once _acquire_arguments := (.args: (.ffi: $&ForeignFunctionInterface = reach ffi)) -> (.result: Arguments) {
+    assume ffi := args.ffi
+
     result = (
         ._ffi    = ffi
         .count   = argi_runtime_argc().count
         .address = argi_runtime_argv().address
     )
 }
+
+implement Init#(Arguments, (.ffi: $&ForeignFunctionInterface = reach ffi)) (
+    .Result: Type = Arguments
+    .init = _acquire_arguments
+)
 
 has_argument(
         .self  : &Arguments,

@@ -31,34 +31,49 @@ _extent(
     result = ..ok rows * cols
 }
 
-DynamicMatrix init#(
-        .t : Type: Scalar
-    )(
-        .rows      : UIntNative,
-        .cols      : UIntNative,
-        .values    : ArrayViewRO#(.t: t),
-        .allocator : $&Allocator
-    ) -> (
-        .result : Errable#(DynamicMatrix#(.t: t), (..dimension_mismatch, ..out_of_memory))
-    ) := {
-    count ::= _extent(.rows = rows, .cols = cols)!
+implement#(
+    .t : Type: Scalar,
+    .Provider: Type: Allocator
+) Init#(
+    DynamicMatrix#(.t: t),
+    (
+        .rows : UIntNative,
+        .cols : UIntNative,
+        .values : ArrayViewRO#(.t: t),
+        .allocator : $&Provider = reach allocator,
+    )
+) (
+    .Result: Type = Errable#(DynamicMatrix#(.t: t), (..dimension_mismatch, ..out_of_memory))
+    .init = (.args: (
+        .rows : UIntNative,
+        .cols : UIntNative,
+        .values : ArrayViewRO#(.t: t),
+        .allocator : $&Provider = reach allocator,
+    )) -> (.result: Result) {
+        rows ::= args.rows
+        cols ::= args.cols
+        values ::= args.values
+        allocator ::= args.allocator
 
-    if count != length(&values).count {
-        result = ..error(.reason = ..dimension_mismatch)
-        return
+        count ::= _extent(.rows = rows, .cols = cols)!
+
+        if count != length(&values).count {
+            result = ..error(.reason = ..dimension_mismatch)
+            return
+        }
+
+        storage ::= DynamicArray#(.t: t)(.allocator = allocator, .capacity = count)!
+        i :: UIntNative = 0
+
+        while i < count {
+            item ::= unwrap_or_abort(.value = get(.self = &values, .index = i)).result
+            push(.self = $&storage, .value = item, .allocator = allocator)!
+            i = i + 1
+        }
+
+        result = ..ok(._rows = rows, ._cols = cols, ._values = ~storage)
     }
-
-    storage ::= DynamicArray#(.t: t)(.allocator = allocator, .capacity = count)!
-    i :: UIntNative = 0
-
-    while i < count {
-        item ::= unwrap_or_abort(.value = get(.self = &values, .index = i)).result
-        push(.self = $&storage, .value = item, .allocator = allocator)!
-        i = i + 1
-    }
-
-    result = ..ok(._rows = rows, ._cols = cols, ._values = ~storage)
-}
+)
 
 shape#(.t: Type: Scalar)(.self: &DynamicMatrix#(.t: t)) -> (.rows: UIntNative, .cols: UIntNative) := {
     rows = self&._rows
@@ -208,26 +223,37 @@ transpose#(
 
 DynamicVector#(.t: Type: Scalar): Type = (._values: DynamicArray#(.t: t))
 
-DynamicVector init#(
-        .t : Type: Scalar
-    )(
-        .values    : ArrayViewRO#(.t: t),
-        .allocator : $&Allocator
-    ) -> (
-        .result : Errable#(DynamicVector#(.t: t), (..out_of_memory))
-    ) := {
-    count ::= length(&values).count
-    storage ::= DynamicArray#(.t: t)(.allocator = allocator, .capacity = count)!
-    i :: UIntNative = 0
+implement#(
+    .t : Type: Scalar,
+    .Provider: Type: Allocator
+) Init#(
+    DynamicVector#(.t: t),
+    (
+        .values : ArrayViewRO#(.t: t),
+        .allocator : $&Provider = reach allocator,
+    )
+) (
+    .Result: Type = Errable#(DynamicVector#(.t: t), (..out_of_memory))
+    .init = (.args: (
+        .values : ArrayViewRO#(.t: t),
+        .allocator : $&Provider = reach allocator,
+    )) -> (.result: Result) {
+        values ::= args.values
+        allocator ::= args.allocator
 
-    while i < count {
-        value ::= unwrap_or_abort(.value = get(.self = &values, .index = i)).result
-        push(.self = $&storage, .value = value, .allocator = allocator)!
-        i = i + 1
+        count ::= length(&values).count
+        storage ::= DynamicArray#(.t: t)(.allocator = allocator, .capacity = count)!
+        i :: UIntNative = 0
+
+        while i < count {
+            value ::= unwrap_or_abort(.value = get(.self = &values, .index = i)).result
+            push(.self = $&storage, .value = value, .allocator = allocator)!
+            i = i + 1
+        }
+
+        result = ..ok(._values = ~storage)
     }
-
-    result = ..ok(._values = ~storage)
-}
+)
 
 length#(.t: Type: Scalar)(.self: &DynamicVector#(.t: t)) -> (.count: UIntNative) := {
     count = length(&self&._values).count

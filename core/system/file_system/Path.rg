@@ -50,30 +50,16 @@ string_view_slice(
     out = _string_view_subrange(view&, .start = start, .count = length).view
 }
 
-Path init(
-        .text : String,
-    ) -> (
-        .result : Path
-    ) := {
-    result = (
-        .text = ~text
-    )
-}
+implement Init#(Path, (.text : String)) (
+    .Result: Type = Path
+    .init = (.args: (.text : String)) -> (.result: Result) {
+        text ::= ~args.text
 
-Path init(
-        .view      : StringView,
-        .allocator : $&Allocator,
-    ) -> (
-        .result : Errable#(Path, (..out_of_memory))
-    ) := {
-    constructed :: Path
-
-    assume allocator
-
-    constructed = path_with_view(.view = view, .allocator = allocator)!
-
-    result = ..ok ~constructed
-}
+        result = (
+            .text = ~text
+        )
+    }
+)
 
 path_with_view(
         .view      : StringView,

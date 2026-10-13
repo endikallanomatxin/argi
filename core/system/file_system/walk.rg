@@ -20,33 +20,49 @@ DirectoryWalker: Type = (
     ._ended         : Bool
 )
 
-DirectoryWalker init(
-        .self          : &FileSystem = reach file_system,
-        .path          : StringView,
-        .maximum_depth : UIntNative  = 64,
-        .allocator     : $&Allocator = reach allocator
-    ) -> (
-        .result : Errable#(DirectoryWalker, _FilesystemReasons)
-    ) := {
-    assume allocator
-    frames ::= DynamicArray#(.t: _WalkFrame)(.capacity = 1)!
+implement#(
+    .Provider: Type: Allocator
+) Init#(
+    DirectoryWalker,
+    (
+        .self : &FileSystem = reach file_system,
+        .path : StringView,
+        .maximum_depth : UIntNative = 64,
+        .allocator : $&Provider = reach allocator,
+    )
+) (
+    .Result: Type = Errable#(DirectoryWalker, _FilesystemReasons)
+    .init = (.args: (
+        .self : &FileSystem = reach file_system,
+        .path : StringView,
+        .maximum_depth : UIntNative = 64,
+        .allocator : $&Provider = reach allocator,
+    )) -> (.result: Result) {
+        self ::= args.self
+        path ::= args.path
+        maximum_depth ::= args.maximum_depth
+        allocator ::= args.allocator
 
-    if maximum_depth > 0 {
-        owned ::= path_with_view(.view = path)!
-        directory ::= Directory(.self = self, .path = path)!
-        push_assume_capacity(
-            $&frames
-            .value = _WalkFrame(~directory, ~owned, 0)
+        assume allocator
+        frames ::= DynamicArray#(.t: _WalkFrame)(.capacity = 1)!
+
+        if maximum_depth > 0 {
+            owned ::= path_with_view(.view = path)!
+            directory ::= Directory(.self = self, .path = path)!
+            push_assume_capacity(
+                $&frames
+                .value = _WalkFrame(~directory, ~owned, 0)
+            )
+        }
+
+        result = ..ok(
+            ._frames        = ~frames
+            ._filesystem    = self
+            ._maximum_depth = maximum_depth
+            ._ended         = false
         )
     }
-
-    result = ..ok(
-        ._frames        = ~frames
-        ._filesystem    = self
-        ._maximum_depth = maximum_depth
-        ._ended         = false
-    )
-}
+)
 
 implement Deinit#(DirectoryWalker) (
     .deinit = (.self: $&DirectoryWalker) -> () {

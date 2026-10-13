@@ -2,9 +2,15 @@
 -- Successful assertions do not construct diagnostics or require an allocator.
 _TestDiagnostic: Type = (._bytes: [128]UInt8, ._length: UIntNative)
 
-_TestDiagnostic init() -> (.result: _TestDiagnostic) := {
-    result = (._bytes = zeroed#(.t: [128]UInt8)(), ._length = 0)
-}
+implement Init#(
+    _TestDiagnostic,
+    ()
+) (
+    .Result: Type = _TestDiagnostic
+    .init = (.args: ()) -> (.result: Result) {
+        result = (._bytes = zeroed#(.t: [128]UInt8)(), ._length = 0)
+    }
+)
 
 _testing_append(.self: $&_TestDiagnostic, .text: StringView) -> () := {
     index :: UIntNative = 0

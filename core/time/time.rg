@@ -8,11 +8,16 @@ UnixTimestamp: Type = (._seconds: Int64, ._nanoseconds: UInt32)
 
 implement ImplicitlyCopyable#(UnixTimestamp) ()
 
-UnixTimestamp init(.seconds: Int64) -> (.result: UnixTimestamp) := {
-    result = (._seconds = seconds, ._nanoseconds = 0)
-}
+implement Init#(UnixTimestamp, (.seconds: Int64)) (
+    .Result: Type = UnixTimestamp
+    .init = (.args: (.seconds: Int64)) -> (.result: Result) {
+        seconds ::= args.seconds
 
-UnixTimestamp init(
+        result = (._seconds = seconds, ._nanoseconds = 0)
+    }
+)
+
+unix_timestamp_precise(
         .seconds     : Int64,
         .nanoseconds : UInt32
     ) -> (
@@ -84,9 +89,16 @@ compare(.left: UnixTimestamp, .right: UnixTimestamp) -> (.order: Int32 = 0) := {
 -- Clock carries permission to call the platform; pure time values carry none.
 Clock: Type = (._ffi: $&ForeignFunctionInterface)
 
-once Clock init(.ffi: $&ForeignFunctionInterface = reach ffi) -> (.result: Clock) := {
+once _acquire_clock := (.args: (.ffi: $&ForeignFunctionInterface = reach ffi)) -> (.result: Clock) {
+    ffi ::= args.ffi
+
     result = (._ffi = ffi)
 }
+
+implement Init#(Clock, (.ffi: $&ForeignFunctionInterface = reach ffi)) (
+    .Result: Type = Clock
+    .init = _acquire_clock
+)
 
 monotonic_now(
         .self : &Clock = reach clock

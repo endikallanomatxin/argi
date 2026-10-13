@@ -10,60 +10,12 @@ RangeIterator#(.t: Type): Type = (
     .step    : t
 )
 
-Range init#(
-        .t : Type
-    )(
-        .end : t,
-    ) -> (
-        .result : Range#(.t: t)
-    ) := {
-    zero: t = 0
-    one: t = 1
-
-    result = Range#(.t: t)(.start = zero, .end = end, .step = one)
-}
-
-Range init#(
-        .t : Type
-    )(
-        .end  : t,
-        .step : t,
-    ) -> (
-        .result : Range#(.t: t)
-    ) := {
-    zero: t = 0
-
-    result = Range#(.t: t)(.start = zero, .end = end, .step = step)
-}
-
-Range init#(
-        .t : Type
-    )(
-        .start : t,
-        .end   : t,
-    ) -> (
-        .result : Range#(.t: t)
-    ) := {
-    one: t = 1
-
-    result = Range#(.t: t)(.start = start, .end = end, .step = one)
-}
-
-Range init#(
-        .t : Type
-    )(
-        .start : t,
-        .end   : t,
-        .step  : t,
-    ) -> (
-        .result : Range#(.t: t)
-    ) := {
-    result = (
-        .start = start
-        .end   = end
-        .step  = step
-    )
-}
+implement#(.t: Type) Init#(Range#(.t: t), (.end: t, .start: t = 0, .step: t = 1)) (
+    .Result: Type = Range#(.t: t)
+    .init = (.args: (.end: t, .start: t = 0, .step: t = 1)) -> (.result: Result) {
+        result = (.start = args.start, .end = args.end, .step = args.step)
+    }
+)
 
 implement#(.t: Type) Iterable#(Range#(.t: t)) (
     .Item: Type = t

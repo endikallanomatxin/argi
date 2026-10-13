@@ -78,7 +78,7 @@ unix_timestamp(
         + Int64(.value = date.second)
     ]
 
-    result = UnixTimestamp(.seconds = seconds, .nanoseconds = date.nanoseconds)
+    result = unix_timestamp_precise(.seconds = seconds, .nanoseconds = date.nanoseconds)
 }
 
 utc_date(

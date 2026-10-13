@@ -52,6 +52,12 @@ UInt8 input. This inference also applies inside generic bodies. If several
 conformances infer different targets and none dominates, specify the target
 explicitly; Result is never used to choose its missing parameters.
 
+All bundled core and official more constructors use this contract. `Range`
+uses one Args record with default start and step. Scaled durations, relative
+deadlines, precise Unix timestamps, and paths copied from views use ordinary
+named factories. Single-use capabilities reuse named `once` functions as their
+`init` members, preserving entrypoint call-graph checks.
+
 Types without custom construction can use structural initialization. Legacy
 `T init(...)` declarations remain available while their families migrate; mixing
 legacy initializers with `Init` for one family is rejected. Alternative factories

@@ -7,7 +7,7 @@ main() -> (.status_code: Int32 = 0) := {
         ..ok _ { status_code = 1 }
         ..error ~err { if err.reason != ..out_of_memory { status_code = 4 } }
     }
-    path_result ::= Path(.allocator = $&failing, .view = c_string_as_view(.text = "path"))
+    path_result ::= path_with_view(.allocator = $&failing, .view = c_string_as_view(.text = "path"))
     match path_result {
         ..ok _ { status_code = 2 }
         ..error ~err { if err.reason != ..out_of_memory { status_code = 5 } }

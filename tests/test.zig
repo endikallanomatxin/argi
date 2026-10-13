@@ -3143,7 +3143,7 @@ test "feature_tests/system/20X_once_duplicate_init" {
 test "feature_tests/system/21X_terminal_duplicate_init" {
     try buildExpectFailWithoutParseNoise(
         "tests/feature_tests/system/21X_terminal_duplicate_init",
-        "once function 'init' is consumed more than once",
+        "once function '_acquire_terminal' is consumed more than once",
     );
 }
 
@@ -8926,7 +8926,7 @@ test "feature_tests/system/57X_clock_missing_capability" {
 }
 
 test "feature_tests/system/58X_clock_missing_ffi" {
-    try buildExpectFail("tests/feature_tests/system/58X_clock_missing_ffi", "failed to initialize type 'Clock'");
+    try buildExpectFail("tests/feature_tests/system/58X_clock_missing_ffi", "Init argument '.ffi' requires a reachable value or an explicit argument");
 }
 
 test "feature_tests/system/59X_clock_domains" {
@@ -8973,7 +8973,7 @@ test "feature_tests/system/67_posix_process_contract" {
 }
 
 test "feature_tests/system/68X_process_missing_ffi" {
-    try buildExpectFail("tests/feature_tests/system/68X_process_missing_ffi", "failed to initialize type 'ProcessManager'");
+    try buildExpectFail("tests/feature_tests/system/68X_process_missing_ffi", "Init argument '.ffi' requires a reachable value or an explicit argument");
 }
 
 test "feature_tests/system/69X_process_copy" {
@@ -12692,4 +12692,22 @@ test "feature_tests/contracts/238_init_target_inferred_in_generic_body" {
 
 test "feature_tests/contracts/239X_init_inferred_target_ambiguous" {
     try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/239X_init_inferred_target_ambiguous", "ambiguous Init argument shapes");
+}
+
+
+test "feature_tests/contracts/240_init_once_operation_alias" {
+    const path = "tests/feature_tests/contracts/240_init_once_operation_alias";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/contracts/241X_init_once_operation_repeated" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/241X_init_once_operation_repeated", "once function 'acquire' is consumed more than once");
+}
+
+
+test "feature_tests/contracts/242_init_explicit_native_capabilities" {
+    const path = "tests/feature_tests/contracts/242_init_explicit_native_capabilities";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
 }

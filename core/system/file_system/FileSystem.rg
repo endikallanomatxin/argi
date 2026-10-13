@@ -4,9 +4,16 @@ FileSystem: Type = (._ffi: $&ForeignFunctionInterface)
 ..path_remove_failed
 ..path_rename_failed
 
-once FileSystem init(.ffi: $&ForeignFunctionInterface = reach ffi) -> (.result: FileSystem) := {
+once _acquire_file_system := (.args: (.ffi: $&ForeignFunctionInterface = reach ffi)) -> (.result: FileSystem) {
+    ffi ::= args.ffi
+
     result._ffi = ffi
 }
+
+implement Init#(FileSystem, (.ffi: $&ForeignFunctionInterface = reach ffi)) (
+    .Result: Type = FileSystem
+    .init = _acquire_file_system
+)
 
 exists(
         .self : &FileSystem,

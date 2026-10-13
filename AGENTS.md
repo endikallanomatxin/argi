@@ -160,6 +160,12 @@ feature first.
   Args in concrete and specialized bodies; never infer those parameters from Result.
   Closed/generic tuples remain ambiguous when they infer incomparable targets.
   Move owning Args fields into lexical owners before fallible construction steps.
+  All bundled core and more constructor families now use Init. Single-use
+  capabilities reuse named once functions as their init operations; preserve
+  their function identity through lifecycle wrappers and entrypoint analysis.
+  Reach defaults describe lexical lookup, not values to type-check before lookup.
+  Scaled durations, relative deadlines, precise Unix timestamps and copied paths
+  use named factories rather than legacy constructor overloads.
   Reject mixed Init/legacy initializer families and preserve
   speculative rollback. Legacy `TypeName init#(...)(...)` declarations remain
   only while their families migrate. Their explicit association is a nominal

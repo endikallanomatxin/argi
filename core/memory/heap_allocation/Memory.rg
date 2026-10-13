@@ -10,12 +10,19 @@ _trusted_acquisition_subaddress(.base: UIntNative, .address: UIntNative) -> (.re
     result = address
 }
 
-once Memory init(.ffi: $&ForeignFunctionInterface = reach ffi) -> (.result: Memory) := {
+once _acquire_memory := (.args: (.ffi: $&ForeignFunctionInterface = reach ffi)) -> (.result: Memory) {
+    assume ffi := args.ffi
+
     result._ffi = ffi
     result._page_size = _memory_getpagesize().size
 
     if result._page_size == 0 { result._page_size = 4096 }
 }
+
+implement Init#(Memory, (.ffi: $&ForeignFunctionInterface = reach ffi)) (
+    .Result: Type = Memory
+    .init = _acquire_memory
+)
 
 _memory_map_aligned(
         .size      : UIntNative,

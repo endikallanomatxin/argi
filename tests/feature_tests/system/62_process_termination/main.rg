@@ -6,7 +6,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         assume clock ::= system.clock
         while true {
             unwrap_or_abort(
-                .value = sleep(.duration = unwrap_or_abort(.value = Duration(.seconds = 1)).result)
+                .value = sleep(.duration = unwrap_or_abort(.value = duration_from_seconds(.seconds = 1)).result)
             )
         }
         return

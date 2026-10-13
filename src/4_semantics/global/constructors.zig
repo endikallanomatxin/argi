@@ -266,6 +266,7 @@ pub const Resolver = struct {
         const abstracts = self.abstracts.?;
         var has_target = false;
         var deferred = false;
+        var missing_reach_field: ?global_sg.Field = null;
         for (0..reach.bindingCount()) |index| {
             if (self.graph.isBindingTypeUnresolved(reach.bindingAt(index))) deferred = true;
         }
@@ -324,7 +325,20 @@ pub const Resolver = struct {
                         deferred = true;
                         continue;
                     },
-                    .no_match => continue,
+                    .no_match => {
+                        if (self.core.matchCallInput(fields, input) == .score) {
+                            for (self.graph.fields.items[fields.start..][0..fields.len], 0..) |field, position| {
+                                if (self.core.callArgumentNamed(supplied, position, self.graph.text(field.name)) != null) continue;
+                                const fallback = field.default_value orelse continue;
+                                if (self.graph.node(fallback).content != .reach_directive) continue;
+                                if (try self.core.probeReachedDefaultWithCompatibility(reach, field, fallback, null) == .unavailable) {
+                                    missing_reach_field = field;
+                                    break;
+                                }
+                            }
+                        }
+                        continue;
+                    },
                 }
                 try candidates.append(self.core.allocator, .{ .module = index, .template = template, .args = args, .target = constructed });
             }
@@ -357,6 +371,12 @@ pub const Resolver = struct {
         if (selected) |index| return .{ .target = candidates.items[index].target, .args = candidates.items[index].args };
         if (has_target) {
             if (deferred) return error.DeferredContractInitializer;
+            if (missing_reach_field) |field| {
+                const message = try std.fmt.allocPrint(self.core.allocator, "Init argument '.{s}' requires a reachable value or an explicit argument", .{self.graph.text(field.name)});
+                defer self.core.allocator.free(message);
+                try self.reportConstructorError(source, message);
+                return error.InvalidInitializerArguments;
+            }
             try self.reportConstructorError(source, "construction arguments do not match the selected Init.Args");
             return error.InvalidInitializerArguments;
         }
@@ -400,6 +420,9 @@ pub const Resolver = struct {
         for (self.graph.fields.items[fields.start..][0..fields.len], 0..) |field, position| {
             if (self.core.callArgumentNamed(literal, position, self.graph.text(field.name)) != null) continue;
             const default = field.default_value orelse continue;
+            // Reach is a lookup recipe, not a value of the field's type.
+            // Completion checks the selected lexical value against that type.
+            if (self.graph.node(default).content == .reach_directive) continue;
             const default_type = self.graph.node(default).ty orelse continue;
             if (!types.equal(self.graph, default_type, field.ty) and !self.core.callTypesCompatible(default_type, field.ty) and !self.core.contextualLiteralFits(default, field.ty)) {
                 try self.reportConstructorError(source, "default value is incompatible with its selected Init.Args field type");

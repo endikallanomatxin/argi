@@ -286,10 +286,13 @@ A type cannot combine Init with a legacy initializer. Legacy family indexes rema
 only for types whose declarations have not migrated yet; removing them remains a
 required part of the lifecycle refactor.
 
-The first bundled Init migrations cover CAllocator, PageAllocator, ByteReader,
-ByteWriter and FixedSizeErrorTracer. Their legacy declarations have been removed;
-existing type-call syntax now invokes selected Init operations while preserving
-their capability and backing-storage dependencies.
+All declared constructors in bundled core and official more modules now use
+Init. This includes native capabilities, allocators, streams, collections, text,
+codecs, Python owners and matrix/vector owners. Single-use capabilities reuse
+ordinary once functions as their init members; their reachable-entrypoint
+restriction survives scoped operation wrappers. Alternative scaled or validated
+construction paths use named factories. Legacy declarations remain in compiler
+fixtures until their coverage is migrated and the adapter can be removed.
 
 The standard Deinit contract now selects static cleanup through the same scoped
 evidence as explicit deinit calls. Its self input is consuming. Generic and

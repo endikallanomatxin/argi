@@ -136,28 +136,40 @@ _tuple_set(
         .status : Int32
     ): CFunction(.symbol = "_argi_python_tuple_set")
 
-Python init(
-        .ffi          : $&ForeignFunctionInterface,
-        .program_name : StringView                  = "python3",
-        .home         : StringView                  = ""
-    ) -> (
-        .result : Errable#(Python, (..python_initialization_failed))
-    ) := {
-    assume ffi
-    handle ::= _start(
-        .program        = program_name.data
-        .program_length = program_name.length
-        .home           = home.data
-        .home_length    = home.length
-    ).handle
+implement Init#(
+    Python,
+    (
+        .ffi : $&ForeignFunctionInterface,
+        .program_name : StringView = "python3",
+        .home : StringView = "",
+    )
+) (
+    .Result: Type = Errable#(Python, (..python_initialization_failed))
+    .init = (.args: (
+        .ffi : $&ForeignFunctionInterface,
+        .program_name : StringView = "python3",
+        .home : StringView = "",
+    )) -> (.result: Result) {
+        ffi ::= args.ffi
+        program_name ::= args.program_name
+        home ::= args.home
 
-    if handle == 0 {
-        result = ..error(.reason = ..python_initialization_failed)
-        return
+        assume ffi
+        handle ::= _start(
+            .program        = program_name.data
+            .program_length = program_name.length
+            .home           = home.data
+            .home_length    = home.length
+        ).handle
+
+        if handle == 0 {
+            result = ..error(.reason = ..python_initialization_failed)
+            return
+        }
+
+        result = ..ok(._handle = handle, ._ffi = ffi)
     }
-
-    result = ..ok(._handle = handle, ._ffi = ffi)
-}
+)
 
 implement Deinit#(Python) (
     .deinit = (.self: $&Python) -> () {

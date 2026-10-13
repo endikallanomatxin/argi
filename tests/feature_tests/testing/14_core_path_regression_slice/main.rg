@@ -2,7 +2,7 @@ test core_path_regression_slice(.system: System) -> !() := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 
-    full :: Path = unwrap_or_abort(.value = Path(
+    full :: Path = unwrap_or_abort(.value = path_with_view(
         .allocator = $&allocator_storage,
         .view = c_string_as_view(.text = "/tmp/demo/file.txt"),
     ))

@@ -3,6 +3,11 @@
 `once` marks a named function as globally single-use from the perspective of
 the compiled entrypoint.
 
+An `Init` implementation may reuse a named `once` function as its `init`
+operation. Construction calls preserve that function identity, so repeated
+construction is checked by the same entrypoint analysis. The contract itself
+does not carry a separate single-use state.
+
 This is a compile-time restriction. It is not a runtime guard, hidden flag, or
 idempotence mechanism.
 

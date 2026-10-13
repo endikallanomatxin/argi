@@ -3,18 +3,26 @@ UnicodeScalar: Type = (._value: UInt32)
 
 implement ImplicitlyCopyable#(UnicodeScalar) ()
 
-UnicodeScalar init(
-        .value : UInt32
-    ) -> (
-        .result : Errable#(UnicodeScalar, (..invalid_codepoint))
-    ) := {
-    if value > 1114111 or [value >= 55296 and value <= 57343] {
-        result = ..error(.reason = ..invalid_codepoint)
-        return
-    }
+implement Init#(
+    UnicodeScalar,
+    (
+        .value : UInt32,
+    )
+) (
+    .Result: Type = Errable#(UnicodeScalar, (..invalid_codepoint))
+    .init = (.args: (
+        .value : UInt32,
+    )) -> (.result: Result) {
+        value ::= args.value
 
-    result = ..ok(._value = value)
-}
+        if value > 1114111 or [value >= 55296 and value <= 57343] {
+            result = ..error(.reason = ..invalid_codepoint)
+            return
+        }
+
+        result = ..ok(._value = value)
+    }
+)
 
 scalar_value(.self: UnicodeScalar) -> (.value: UInt32) := { value = self._value }
 
@@ -193,9 +201,21 @@ utf8_encode(
 
 Utf8Decoder: Type = (._text: StringView, ._offset: UIntNative)
 
-Utf8Decoder init(.text: StringView) -> (.result: Utf8Decoder) := {
-    result = (._text = text, ._offset = 0)
-}
+implement Init#(
+    Utf8Decoder,
+    (
+        .text: StringView,
+    )
+) (
+    .Result: Type = Utf8Decoder
+    .init = (.args: (
+        .text: StringView,
+    )) -> (.result: Result) {
+        text ::= args.text
+
+        result = (._text = text, ._offset = 0)
+    }
+)
 
 position(.self: &Utf8Decoder) -> (.count: UIntNative) := { count = self&._offset }
 
@@ -225,11 +245,23 @@ Utf8View: Type = (._text: StringView, ._count: UIntNative)
 
 implement ImplicitlyCopyable#(Utf8View) ()
 
-Utf8View init(.text: StringView) -> (.result: Errable#(Utf8View, (..invalid_utf8))) := {
-    count ::= validate_utf8(.text = text)!
+implement Init#(
+    Utf8View,
+    (
+        .text: StringView,
+    )
+) (
+    .Result: Type = Errable#(Utf8View, (..invalid_utf8))
+    .init = (.args: (
+        .text: StringView,
+    )) -> (.result: Result) {
+        text ::= args.text
 
-    result = ..ok(._text = text, ._count = count)
-}
+        count ::= validate_utf8(.text = text)!
+
+        result = ..ok(._text = text, ._count = count)
+    }
+)
 
 codepoints(.text: StringView) -> (.result: Errable#(Utf8View, (..invalid_utf8))) := {
     result = Utf8View(.text = text)

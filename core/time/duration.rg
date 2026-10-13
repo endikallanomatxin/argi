@@ -3,9 +3,14 @@ Duration: Type = (._nanoseconds: UInt64)
 
 implement ImplicitlyCopyable#(Duration) ()
 
-Duration init(.nanoseconds: UInt64) -> (.result: Duration) := {
-    result = (._nanoseconds = nanoseconds)
-}
+implement Init#(Duration, (.nanoseconds: UInt64)) (
+    .Result: Type = Duration
+    .init = (.args: (.nanoseconds: UInt64)) -> (.result: Result) {
+        nanoseconds ::= args.nanoseconds
+
+        result = (._nanoseconds = nanoseconds)
+    }
+)
 
 _duration_checked(
         .value : Errable#(UInt64, (..out_of_range))
@@ -27,7 +32,7 @@ _duration_scaled(
     result = _duration_checked(.value = checked_multiply(.left = value, .right = scale)).result
 }
 
-Duration init(
+duration_from_microseconds(
         .microseconds : UInt64
     ) -> (
         .result : Errable#(Duration, (..out_of_range))
@@ -35,7 +40,7 @@ Duration init(
     result = _duration_scaled(.value = microseconds, .scale = 1000).result
 }
 
-Duration init(
+duration_from_milliseconds(
         .milliseconds : UInt64
     ) -> (
         .result : Errable#(Duration, (..out_of_range))
@@ -43,7 +48,7 @@ Duration init(
     result = _duration_scaled(.value = milliseconds, .scale = 1000000).result
 }
 
-Duration init(.seconds: UInt64) -> (.result: Errable#(Duration, (..out_of_range))) := {
+duration_from_seconds(.seconds: UInt64) -> (.result: Errable#(Duration, (..out_of_range))) := {
     result = _duration_scaled(.value = seconds, .scale = 1000000000).result
 }
 

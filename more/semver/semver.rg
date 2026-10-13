@@ -139,13 +139,21 @@ parse(.text: StringView) -> (.result: Errable#(VersionView, (..invalid_input))) 
     )
 }
 
-VersionView init(
-        .text : StringView
-    ) -> (
-        .result : Errable#(VersionView, (..invalid_input))
-    ) := {
-    result = parse(.text = text)
-}
+implement Init#(
+    VersionView,
+    (
+        .text : StringView,
+    )
+) (
+    .Result: Type = Errable#(VersionView, (..invalid_input))
+    .init = (.args: (
+        .text : StringView,
+    )) -> (.result: Result) {
+        text ::= args.text
+
+        result = parse(.text = text)
+    }
+)
 
 as_view(.self: &VersionView) -> (.text: StringView) := { text = self&._text }
 

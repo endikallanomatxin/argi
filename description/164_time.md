@@ -10,7 +10,8 @@ need no allocator and do not grant access to unrelated system resources.
 representation is an unsigned nanosecond count, including zero and extending
 through the full `UInt64` range. Durations never represent negative intervals.
 
-The `.microseconds`, `.milliseconds`, and `.seconds` constructors return
+The named factories `duration_from_microseconds`,
+`duration_from_milliseconds`, and `duration_from_seconds` return
 `Errable<Duration, out_of_range>` because scaling to nanoseconds may overflow.
 The accessors `nanoseconds`, `microseconds`, `milliseconds`, and `seconds`
 receive `.self: &Duration` and return `.value: UInt64`; coarser units discard
@@ -34,7 +35,7 @@ clock domain can be compared with `==`, `!=`, and `compare`.
 plus a nonnegative nanosecond fraction below 1,000,000,000. For example, one
 nanosecond before the epoch is seconds -1 and fraction 999,999,999.
 `UnixTimestamp(.seconds: Int64)` returns a value directly with zero fraction;
-the additional `.nanoseconds: UInt32` input returns
+`unix_timestamp_precise(.seconds: Int64, .nanoseconds: UInt32)` returns
 `Errable<UnixTimestamp, out_of_range>` and rejects an unnormalized fraction.
 The fields are private. `unix_seconds(.self: &UnixTimestamp).value` returns
 `Int64`, and `nanoseconds(.self).value` returns `UInt32`. Equality and `compare`
@@ -71,7 +72,7 @@ Interrupted waits continue with their remaining interval; failures return
 main(.system: System) -> (.status_code: Int32 = 0) := {
     assume clock ::= system.clock
     start ::= unwrap_or_abort(.value = monotonic_now()).result
-    delay ::= unwrap_or_abort(.value = Duration(.milliseconds = 10)).result
+    delay ::= unwrap_or_abort(.value = duration_from_milliseconds(.milliseconds = 10)).result
     unwrap_or_abort(.value = sleep(.duration = delay))
     end ::= unwrap_or_abort(.value = monotonic_now()).result
     interval ::= unwrap_or_abort(.value = elapsed(.start = start, .end = end)).result

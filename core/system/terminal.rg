@@ -6,11 +6,18 @@ Terminal: Type = (
     .stderr : File
 )
 
-once Terminal init(.ffi: $&ForeignFunctionInterface = reach ffi) -> (.result: Terminal) := {
+once _acquire_terminal := (.args: (.ffi: $&ForeignFunctionInterface = reach ffi)) -> (.result: Terminal) {
+    assume ffi := args.ffi
+
     init_stdin(.p = $&result.stdin)
     init_stdout(.p = $&result.stdout)
     init_stderr(.p = $&result.stderr)
 }
+
+implement Init#(Terminal, (.ffi: $&ForeignFunctionInterface = reach ffi)) (
+    .Result: Type = Terminal
+    .init = _acquire_terminal
+)
 
 implement Deinit#(Terminal) (
     .deinit = (.self: $&Terminal) -> () {

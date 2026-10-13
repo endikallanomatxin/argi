@@ -3,7 +3,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     deadline ::= Deadline(.at = now)
     if expired(.self = deadline, .now = now).value == false { abort }
     if nanoseconds(.self = &remaining(.self = deadline, .now = now).value).value != 0 { abort }
-    future ::= Deadline(.after = Duration(.nanoseconds = 1000000), .now = now)!
+    future ::= deadline_after(.after = Duration(.nanoseconds = 1000000), .now = now)!
     if expired(.self = future, .now = now).value { abort }
     time_left ::= remaining(.self = future, .now = now).value
     if nanoseconds(.self = &time_left).value != 1000000 { abort }

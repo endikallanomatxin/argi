@@ -24,21 +24,33 @@ CsvReader: Type = (
     .maximum_fields      : UIntNative
 )
 
-CsvReader init(
-        .text                : StringView,
-        .maximum_field_bytes : UIntNative  = 1048576,
-        .maximum_fields      : UIntNative  = 1024
-    ) -> (
-        .result : CsvReader
-    ) := {
-    result = (
-        ._text               = text
-        ._position           = 0
-        ._ended              = false
-        .maximum_field_bytes = maximum_field_bytes
-        .maximum_fields      = maximum_fields
+implement Init#(
+    CsvReader,
+    (
+        .text : StringView,
+        .maximum_field_bytes : UIntNative = 1048576,
+        .maximum_fields : UIntNative = 1024,
     )
-}
+) (
+    .Result: Type = CsvReader
+    .init = (.args: (
+        .text : StringView,
+        .maximum_field_bytes : UIntNative = 1048576,
+        .maximum_fields : UIntNative = 1024,
+    )) -> (.result: Result) {
+        text ::= args.text
+        maximum_field_bytes ::= args.maximum_field_bytes
+        maximum_fields ::= args.maximum_fields
+
+        result = (
+            ._text               = text
+            ._position           = 0
+            ._ended              = false
+            .maximum_field_bytes = maximum_field_bytes
+            .maximum_fields      = maximum_fields
+        )
+    }
+)
 
 -- Errors are terminal, and no partially decoded record escapes.
 next(
