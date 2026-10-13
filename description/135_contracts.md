@@ -368,3 +368,21 @@ explicitly instead of the old `Float defaultsto Float32` mechanism.
 Generic implementation ownership recognizes closed nominal participants as well
 as nominal applications. A local concrete participant can establish ownership
 when another participant remains generic; foreign nominal participants do not.
+
+## Numeric writer values
+
+`WriteValue#(Stream, Value).write_value(.self: $&Stream, .value: Value)`
+selects numeric stream formatting from both participants. Bundled numeric
+conformances require Writer for the stream and reuse one integer or float
+encoding algorithm without allocation. A nominal stream may specialize a
+conformance for one concrete value type. Qualified callers provide Stream and
+Value explicitly, including in generic forwarding functions. Virtual Writer
+participants use the same selected formatting implementation and their saved
+writer evidence for byte operations.
+
+The result preserves stream_write_failed and stream_flush_failed. Formatting
+stops on the first failed byte, keeps the written prefix and never requests
+an implicit flush. Numeric print delegates to this operation before writing its
+terminator. The former numeric write and writer format_into ordinary families
+are removed; text/buffer write and string format_into are separate pending
+migrations.

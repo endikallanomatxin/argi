@@ -191,29 +191,31 @@ print(
 }
 
 print#(
-        .t : Type: Int
+        .t : Type: Int,
+        .Stream: Type: Writer#(Stream)
     )(
         .value      : t,
-        .writer     : $&Writer   = reach writer,
+        .writer     : $&Stream   = reach writer,
         .terminator : StringView = "\n",
     ) -> (
         .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) := {
-    format_into(.out = writer, .value = value)!
+    WriteValue#(Stream, t).write_value(.self = writer, .value = value)!
 
     result = write(writer, .text = terminator)
 }
 
 print#(
-        .t : Type: Float
+        .t : Type: Float,
+        .Stream: Type: Writer#(Stream)
     )(
         .value      : t,
-        .writer     : $&Writer   = reach writer,
+        .writer     : $&Stream   = reach writer,
         .terminator : StringView = "\n",
     ) -> (
         .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) := {
-    format_into(.out = writer, .value = value)!
+    WriteValue#(Stream, t).write_value(.self = writer, .value = value)!
 
     result = write(writer, .text = terminator)
 }

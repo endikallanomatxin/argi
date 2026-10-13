@@ -299,9 +299,11 @@ of the destination string can allocate. A failed reservation leaves the
 existing string unchanged. String formatting returns `out_of_memory` on an
 allocation failure.
 
-`format_into(.out: $&Writer, .value: T)` and
-`write(.self: $&Writer, .value: T)` send the same decimal bytes to a writer
-without an allocator or an intermediate owning string. `print(.value: T,
+`WriteValue#(Stream, T).write_value(.self: $&Stream, .value: T)` sends the same decimal bytes to a writer
+without an allocator or an intermediate owning string. Participants are explicit
+in qualified calls; generic callers retain their stream and value type parameters.
+The contract permits specialization for a concrete stream/value pair.
+`print(.value: T,
 .writer: $&Writer, .terminator: StringView = "\n")` adds the usual terminator;
 a locally assumed writer can satisfy its writer input. These operations
 preserve `stream_write_failed` and `stream_flush_failed`, stop at the first
@@ -311,7 +313,8 @@ flush; a writer may flush internally while accepting bytes.
 
 ## Floating-point formatting
 
-The same `format`, `format_into`, `write`, and `print` inputs accept `Float16`,
+The same string `format` / `format_into`, stream `WriteValue.write_value`, and
+`print` inputs accept `Float16`,
 `Float32`, and `Float64`. Each finite value uses the shortest decimal
 significand that reads back as exactly that value at its original width under
 round-to-nearest, ties-to-even. Among equally short candidates, formatting

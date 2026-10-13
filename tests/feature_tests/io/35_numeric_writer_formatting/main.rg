@@ -8,10 +8,10 @@ RecordingWriter: Type = (
 
 expect_written#(.t: Type: Int)(.value: t, .expected: StringView) -> () := {
     base ::= RecordingWriter(.expected = expected)
-    unwrap_or_abort(.value = format_into(.out = $&base, .value = value))
+    unwrap_or_abort(.value = WriteValue#(RecordingWriter, t).write_value(.self = $&base, .value = value))
     if base.count != expected.length { abort }
     base.count = 0
-    unwrap_or_abort(.value = write(.self = $&base, .value = value))
+    unwrap_or_abort(.value = WriteValue#(RecordingWriter, t).write_value(.self = $&base, .value = value))
     if base.count != expected.length { abort }
     base.count = 0
     unwrap_or_abort(.value = print(.value = value, .writer = $&base, .terminator = ""))
@@ -78,7 +78,7 @@ main() -> (.status_code: Int32 = 0) := {
     } else { abort }
     if partial.count != 2 or partial.flush_calls != 0 { abort }
     first ::= RecordingWriter(.expected = "", .fail_at = 0, .flush_failure = true)
-    first_failed ::= format_into(.out = $&first, .value = -1)
+    first_failed ::= WriteValue#(RecordingWriter, Int32).write_value(.self = $&first, .value = -1)
     if is(.value = first_failed, .variant = ..error) {
         if first_failed ..error.reason != ..stream_flush_failed { abort }
     } else { abort }

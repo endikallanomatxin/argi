@@ -344,7 +344,7 @@ semantic claim that every pair has overlapping applicability.
 |---|---:|
 | `core/bytes` | 10 |
 | `core/errors` | 1 |
-| `core/io` | 3 |
+| `core/io` | 2 |
 | `core/libc` | 1 |
 | `core/lists` | 12 |
 | `core/maps` | 13 |
@@ -387,3 +387,28 @@ runtime shape failures and refusing providers; remove the former ordinary names.
 Validation: all 287 contract and official-library program cases passed, with
 no failures or leaks. Selected matrix-add LLVM uses scalar additions and the
 executable returns zero. The compiler implementation is unchanged in this step.
+
+### Numeric stream formatting
+
+Replace the two numeric format_into overloads and two numeric write wrappers
+with WriteValue(Stream, Value).write_value. Stream and value select evidence
+jointly; closed numeric participants share one integer and one float algorithm.
+Members reuse the two unique generic helper functions directly, preserving their
+identities without forwarding bodies. Two identical participant patterns with
+different bounds are deliberately rejected;
+do not use constraint-only overloads for conformance specialization. Update numeric print
+and fixtures to qualified calls, keeping nonallocating encoders, byte failure
+propagation and no implicit flush. Syntax and codegen are unchanged. Validate
+all numeric widths, failure paths, custom specialization and virtual writers.
+The remaining text/buffer write family and string format_into remain pending.
+
+TODO: Empty participant inference for WriteValue#().write_value reports missing
+argument in concrete and parameterized calls. Use explicit Stream/Value participants
+for this protocol until the general scoped-operation inference issue is resolved.
+The virtual-writer fixture confirms the ordinary generic forwarding path works.
+
+Validation: 400 IO, text, contract, official-library, logging and semver
+program cases passed, alongside 35 selected internal tests, with no failures
+or leaks. The full Float16 encoding roundtrip passes. Final LLVM calls the reused
+helper directly for concrete and virtual writers; the specialization executable
+returns zero.

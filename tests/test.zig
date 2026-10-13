@@ -12875,3 +12875,8 @@ test "feature_tests/contracts/281X_vector_add_dimension_mismatch" {
 test "feature_tests/contracts/282X_matrix_add_shape_mismatch" {
     try buildExpectFailWithoutNoise("tests/feature_tests/contracts/282X_matrix_add_shape_mismatch", "operator '+' is not defined", "pointer arithmetic");
 }
+
+test "feature_tests/contracts/283_writer_value_specialization" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/283_writer_value_specialization");
+    try runExpect("tests/feature_tests/contracts/283_writer_value_specialization", 0);
+}
