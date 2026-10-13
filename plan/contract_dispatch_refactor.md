@@ -355,12 +355,12 @@ semantic claim that every pair has overlapping applicability.
 | `core/system/file_system` | 10 |
 | `core/testing` | 4 |
 | `core/time` | 2 |
-| `more/math/linear_algebra` | 6 |
+| `more/math/linear_algebra` | 5 |
 | `more/python` | 9 |
 | `more/semver` | 1 |
 
-Prioritize the four linear-algebra `add` declarations using existing Add evidence,
-then the foundational IO formatting/writing and collection view families. Preserve
+The four linear-algebra `add` declarations now use Add evidence. Prioritize
+the foundational IO formatting/writing and collection view families next. Preserve
 static allocator participants and explicit references. Private numeric families
 (`integer_limits`, `_float_encoding`, `_float_replace_bits`) should use one generic
 function or a scoped representation contract. Renaming unrelated operations is
@@ -373,3 +373,17 @@ have been migrated; the old ordinary overload selector remains pending removal.
 Scalar equality validation: 1,899 program cases passed (11 skipped), and 374
 internal tests passed (1 skipped), with no failures or leaks. The emitted LLVM
 retains ordered float equality and the executable NaN regression passes.
+
+### Linear-algebra addition migration
+
+Replace the four ordinary add families with scoped Add conformances. Fixed
+participants share dimensions and element type; dynamic Args retain the static
+allocator provider and Result preserves dimension/allocation errors. Update
+callers to explicit-reference operator syntax. This affects library declarations
+and semantic evidence selection only, with no tokenizer, syntax or codegen changes.
+Validate fixed/generic/qualified addition, dimension rejection, empty vectors,
+runtime shape failures and refusing providers; remove the former ordinary names.
+
+Validation: all 287 contract and official-library program cases passed, with
+no failures or leaks. Selected matrix-add LLVM uses scalar additions and the
+executable returns zero. The compiler implementation is unchanged in this step.

@@ -12864,3 +12864,14 @@ test "feature_tests/contracts/279_scalar_equality_evidence" {
     try expectSuccessfulBuild("tests/feature_tests/contracts/279_scalar_equality_evidence");
     try runExpect("tests/feature_tests/contracts/279_scalar_equality_evidence", 0);
 }
+
+test "feature_tests/contracts/280_linear_algebra_add_evidence" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/280_linear_algebra_add_evidence");
+    try runExpect("tests/feature_tests/contracts/280_linear_algebra_add_evidence", 0);
+}
+test "feature_tests/contracts/281X_vector_add_dimension_mismatch" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/281X_vector_add_dimension_mismatch", "operator '+' is not defined", "pointer arithmetic");
+}
+test "feature_tests/contracts/282X_matrix_add_shape_mismatch" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/282X_matrix_add_shape_mismatch", "operator '+' is not defined", "pointer arithmetic");
+}

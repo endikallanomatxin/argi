@@ -11,12 +11,14 @@ scalar semantics. No BLAS, NumPy, or other native dependency is required.
 nested array in `.values`, indexed by row then column. Both are implicitly
 copyable; constructors accept matching arrays. Dimensions belong to the type.
 
-- Vector `add`, `scale`, and `dot` preserve the scalar type.
-- Matrix `add` requires matching rows and columns.
+- Vector `+`, `scale`, and `dot` preserve the scalar type.
+- Matrix `+` requires matching rows and columns.
 - `&left * &right` accepts R×K and K×C and returns R×C through Multiply.
 - `transpose` returns C×R from R×C.
 
-Shared comptime parameters reject mismatched shapes during semantizing. Results
+Addition selects Add evidence with explicit readonly references in Args. There
+is no ordinary add overload family. Shared comptime parameters reject mismatched
+shapes during semantizing. Results
 own their storage and do not borrow inputs. Empty vectors have a zero dot
 product; multiplication across an empty inner dimension produces zeros.
 
@@ -38,10 +40,10 @@ A matrix additionally takes `.rows` and `.cols`; the checked product must equal
 the source view's length. Overflow or incompatible dimensions return
 `dimension_mismatch`; allocation failures return `out_of_memory`.
 
-Vectors expose `length`, checked `get`/`set`, `dot`, `add`, and `scale`. Matrices
-expose `shape`, checked `get`/`set`, `add`, `*`, and `transpose`. Dynamic
-shape incompatibilities return `dimension_mismatch`. Multiplication carries a statically inferred allocator reference inside the
-Multiply Args record, with a reach default. Other operations returning owners
+Vectors expose `length`, checked `get`/`set`, `dot`, `+`, and `scale`. Matrices
+expose `shape`, checked `get`/`set`, `+`, `*`, and `transpose`. Dynamic
+shape incompatibilities return `dimension_mismatch`. Addition and multiplication carry a statically inferred allocator reference
+inside their Add or Multiply Args record, with a reach default. Other operations returning owners
 take `.allocator`; scalar reads, writes, and dot products do not allocate.
 Index errors return `out_of_bounds` without writing. No operation resizes an
 existing owner or exposes mutable shape fields.

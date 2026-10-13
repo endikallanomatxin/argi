@@ -53,23 +53,29 @@ implement#(
     }
 )
 
-add#(
-        .n : UIntNative,
-        .t : Type: Scalar
-    )(
-        .left  : &Vector#(.n = n, .t: t),
-        .right : &Vector#(.n = n, .t: t)
-    ) -> (
-        .result : Vector#(.n = n, .t: t)
-    ) := {
-    result = (.values = zeroed#(.t: Array#(.n = n, .t: t))())
-    i :: UIntNative = 0
+implement#(.n: UIntNative, .t: Type: Scalar) Add#(
+    Vector#(.n = n, .t: t),
+    Vector#(.n = n, .t: t),
+    (.left: &Vector#(.n = n, .t: t), .right: &Vector#(.n = n, .t: t))
+) (
+        .Result : Type = Vector#(.n = n, .t: t)
+        .add    = (
+                .args : (.left: &Vector#(.n = n, .t: t), .right: &Vector#(.n = n, .t: t))
+            ) -> (
+                .result : Result
+            ) {
+            left ::= args.left
+            right ::= args.right
 
-    while i < n {
-        result.values[i] = left&.values[i] + right&.values[i]
-        i = i + 1
-    }
-}
+            result = (.values = zeroed#(.t: Array#(.n = n, .t: t))())
+            i :: UIntNative = 0
+
+            while i < n {
+                result.values[i] = left&.values[i] + right&.values[i]
+                i = i + 1
+            }
+        }
+    )
 
 dot#(
         .n : UIntNative,
@@ -110,36 +116,39 @@ scale#(
     }
 }
 
-add#(
-        .rows : UIntNative,
-        .cols : UIntNative,
-        .t    : Type: Scalar
-    )(
-        .left : &Matrix#(
-            .rows = rows,
-            .cols = cols,
-            .t    : t
-        ),
+implement#(.rows: UIntNative, .cols: UIntNative, .t: Type: Scalar) Add#(
+    Matrix#(.rows = rows, .cols = cols, .t: t),
+    Matrix#(.rows = rows, .cols = cols, .t: t),
+    (
+        .left  : &Matrix#(.rows = rows, .cols = cols, .t: t),
         .right : &Matrix#(.rows = rows, .cols = cols, .t: t)
-    ) -> (
-        .result : Matrix#(
-            .rows = rows,
-            .cols = cols,
-            .t    : t
-        )
-    ) := {
-    result = (.values = zeroed#(.t: Array#(.n = rows, .t: Array#(.n = cols, .t: t)))())
-    row :: UIntNative = 0
+    )
+) (
+        .Result : Type = Matrix#(.rows = rows, .cols = cols, .t: t)
+        .add    = (
+                .args : (
+                    .left  : &Matrix#(.rows = rows, .cols = cols, .t: t),
+                    .right : &Matrix#(.rows = rows, .cols = cols, .t: t)
+                )
+            ) -> (
+                .result : Result
+            ) {
+            left ::= args.left
+            right ::= args.right
 
-    while row < rows {
-        col :: UIntNative = 0
-        while col < cols {
-            result.values[row][col] = left&.values[row][col] + right&.values[row][col]
-            col = col + 1
+            result = (.values = zeroed#(.t: Array#(.n = rows, .t: Array#(.n = cols, .t: t)))())
+            row :: UIntNative = 0
+
+            while row < rows {
+                col :: UIntNative = 0
+                while col < cols {
+                    result.values[row][col] = left&.values[row][col] + right&.values[row][col]
+                    col = col + 1
+                }
+                row = row + 1
+            }
         }
-        row = row + 1
-    }
-}
+    )
 
 transpose#(
         .rows : UIntNative,
