@@ -1,3 +1,4 @@
+const implementation_arguments = @import("implementation_arguments.zig");
 const std = @import("std");
 const module_sg = @import("../module/graph.zig");
 const module_entities = @import("../module/entities.zig");
@@ -184,128 +185,31 @@ pub const Resolver = struct {
     const ContractArguments = struct { target: global_sg.GlobalTypeId, args: global_sg.GlobalTypeId };
 
     fn inferContractArguments(self: *Resolver, declaration: global_sg.GlobalDeclId, target: ?global_sg.GlobalTypeId, family: ?global_sg.GlobalDeclId, input: global_sg.GlobalNodeId, reach: reach_context.Context, source: primitives.SourceRef) anyerror!?ContractArguments {
-        const storage_mod = @import("../module/parameterized/storage.zig");
-        const Candidate = struct { module: usize, template: storage_mod.ContractConformance, args: global_sg.GlobalTypeId, target: global_sg.GlobalTypeId };
-        var candidates: std.ArrayList(Candidate) = .empty;
-        defer candidates.deinit(self.core.allocator);
-        const abstracts = self.abstracts.?;
-        var has_target = false;
-        var deferred = false;
-        var missing_reach_field: ?global_sg.Field = null;
-        for (0..reach.bindingCount()) |index| {
-            if (self.graph.isBindingTypeUnresolved(reach.bindingAt(index))) deferred = true;
-        }
-        const supplied = self.graph.node(input).content.struct_value_literal;
-        for (self.graph.value_fields.items[supplied.assumed_fields.start..][0..supplied.assumed_fields.len]) |field| {
-            if (self.graph.node(field.value).ty) |ty| {
-                if (self.graph.isTypeUnresolved(ty)) deferred = true;
-            } else deferred = true;
-        }
-        for (self.graph.value_fields.items[supplied.fields.start..][0..supplied.fields.len]) |field| {
-            if (self.graph.node(field.value).ty) |ty| {
-                if (self.graph.isTypeUnresolved(ty)) deferred = true;
-            } else deferred = true;
-        }
-        for (self.modules, 0..) |*module, index| {
-            const storage = &module.semantic.parameterized_storage;
-            for (storage.contract_conformances.items) |template| {
-                if (template.participants.len != 2) continue;
-                if (try abstracts.resolveDeclarationRef(index, template.contract_ref, .abstract_type) != declaration) continue;
-                const patterns = storage.ir.generic_arguments.items[template.participants.start..][0..2];
-                if (patterns[0].value != .type or patterns[1].value != .type) continue;
-                var bindings = try generic_mod.Resolver.Bindings.init(self.core.allocator, storage.comptime_parameters.items.len);
-                defer bindings.deinit(self.core.allocator);
-                if (target) |known| {
-                    if (!try abstracts.inferConstraintTypePattern(index, patterns[0].value.type, known, &bindings)) continue;
-                } else {
-                    // The type name supplies the nominal family. Its generic
-                    // leaves must come from inputs, never from Result.
-                    const pattern = storage.ir.types.items[@intFromEnum(patterns[0].value.type)];
-                    if (pattern == .resolved and pattern.resolved == .generic) {
-                        if (try self.generics.?.resolveParameterizedDeclaration(index, pattern.resolved.generic.base) != family.?) continue;
-                    } else if (pattern == .concrete) {
-                        const closed = try self.generics.?.instantiateParameterizedType(index, patterns[0].value.type, &bindings);
-                        if (nominalDeclaration(self.graph, closed) != family.?) continue;
-                    } else continue;
-                }
-                has_target = true;
-                if (storage.ir.types.items[@intFromEnum(patterns[1].value.type)] != .concrete and
-                    !try self.generic_functions.?.inferArgumentRecordBindings(index, patterns[1].value.type, input, reach, &bindings))
-                {
-                    continue;
-                }
-                if (!try abstracts.validateParameterizedImplementationConstraints(index, template.parameters, &bindings)) continue;
-                const args = self.generics.?.instantiateParameterizedType(index, patterns[1].value.type, &bindings) catch |err| switch (err) {
-                    error.UnboundGenericTypeParameter, error.UnboundComptimeParameter => continue,
-                    else => return err,
-                };
-                const constructed = target orelse self.generics.?.instantiateParameterizedType(index, patterns[0].value.type, &bindings) catch |err| switch (err) {
-                    error.UnboundGenericTypeParameter, error.UnboundComptimeParameter => continue,
-                    else => return err,
-                };
-                const fields = types.fields(self.graph, args) orelse continue;
-                switch (try self.core.matchCallInputWithReach(fields, input, reach)) {
-                    .score => {},
-                    .deferred => {
-                        deferred = true;
-                        continue;
-                    },
-                    .no_match => {
-                        if (self.core.matchCallInput(fields, input) == .score) {
-                            for (self.graph.fields.items[fields.start..][0..fields.len], 0..) |field, position| {
-                                if (self.core.callArgumentNamed(supplied, position, self.graph.text(field.name)) != null) continue;
-                                const fallback = field.default_value orelse continue;
-                                if (self.graph.node(fallback).content != .reach_directive) continue;
-                                if (try self.core.probeReachedDefaultWithCompatibility(reach, field, fallback, null) == .unavailable) {
-                                    missing_reach_field = field;
-                                    break;
-                                }
-                            }
-                        }
-                        continue;
-                    },
-                }
-                try candidates.append(self.core.allocator, .{ .module = index, .template = template, .args = args, .target = constructed });
-            }
-        }
-        var selected: ?usize = null;
-        for (candidates.items, 0..) |candidate, index| {
-            var dominated = false;
-            for (candidates.items, 0..) |other, other_index| {
-                if (index == other_index) continue;
-                // A fully closed tuple is a specialization of every applicable
-                // generic pattern for that same completed argument type.
-                if (candidate.template.parameters.len != 0 and other.template.parameters.len == 0 and types.equal(self.graph, candidate.target, other.target) and types.equal(self.graph, candidate.args, other.args)) {
-                    dominated = true;
-                    break;
-                }
-                if (try abstracts.patternTupleCovers(candidate.module, candidate.template, other.module, other.template) and
-                    !try abstracts.patternTupleCovers(other.module, other.template, candidate.module, candidate.template))
-                {
-                    dominated = true;
-                    break;
-                }
-            }
-            if (dominated) continue;
-            if (selected != null) {
-                try self.reportConstructorError(source, "ambiguous Init argument shapes; qualify the contract with an explicit Args type");
-                return error.InvalidInitializerArguments;
-            }
-            selected = index;
-        }
-        if (selected) |index| return .{ .target = candidates.items[index].target, .args = candidates.items[index].args };
-        if (has_target) {
-            if (deferred) return error.DeferredContractInitializer;
-            if (missing_reach_field) |field| {
+        var resolver: implementation_arguments.Resolver = .{
+            .graph = self.graph,
+            .modules = self.modules,
+            .core = self.core,
+            .generics = self.generics.?,
+            .functions = self.generic_functions.?,
+            .abstracts = self.abstracts.?,
+        };
+        const participant: implementation_arguments.Participant = if (target) |known| .{ .known = known } else .{ .family = family.? };
+        switch (try resolver.infer(declaration, &.{participant}, input, reach)) {
+            .selected => |selection| {
+                defer self.core.allocator.free(selection.participants);
+                return .{ .target = selection.participants[0], .args = selection.participants[1] };
+            },
+            .none => return null,
+            .deferred => return error.DeferredContractInitializer,
+            .ambiguous => try self.reportConstructorError(source, "ambiguous Init argument shapes; qualify the contract with an explicit Args type"),
+            .missing_reach => |field| {
                 const message = try std.fmt.allocPrint(self.core.allocator, "Init argument '.{s}' requires a reachable value or an explicit argument", .{self.graph.text(field.name)});
                 defer self.core.allocator.free(message);
                 try self.reportConstructorError(source, message);
-                return error.InvalidInitializerArguments;
-            }
-            try self.reportConstructorError(source, "construction arguments do not match the selected Init.Args");
-            return error.InvalidInitializerArguments;
+            },
+            .incompatible_arguments => try self.reportConstructorError(source, "construction arguments do not match the selected Init.Args"),
         }
-        return null;
+        return error.InvalidInitializerArguments;
     }
 
     fn contractInitializer(self: *Resolver, module_index: usize, ty: global_sg.GlobalTypeId, input: global_sg.GlobalNodeId, reach: reach_context.Context, source: primitives.SourceRef) !?global_sg.Node {
@@ -744,13 +648,5 @@ fn emptyOffsets() globalizer.Offsets {
         .virtual_registry_ref_base = 0,
         .symbol_declaration_base = 0,
         .string_base = 0,
-    };
-}
-
-fn nominalDeclaration(graph: *const global_sg.GlobalSemanticGraph, ty: global_sg.GlobalTypeId) ?global_sg.GlobalDeclId {
-    return switch (graph.resolvedSemanticType(ty) orelse return null) {
-        .declared => |id| id,
-        .generic => |identity| identity.base,
-        else => null,
     };
 }

@@ -116,6 +116,25 @@ Operators identify standard contracts such as Add, Multiply and Equal. Their
 conformances use the same participant dispatch and obey explicit copy, move and
 reference rules.
 
+Binary arithmetic contracts include an argument-record participant:
+
+```argi
+Add#(.Left: Type, .Right: Type, .Args: Type): Contract = (
+    .Result: Type
+    .add: (.args: Args) -> (.result: Result)
+)
+```
+
+The Args pattern contains the operands and any additional operation capabilities.
+For example, a string implementation can include a reference to a generic
+allocator with a reach default. Its provider is inferred from that field, so
+selection remains static without adding a provider to every arithmetic contract
+or erasing the allocator. Operand participants and Args are inferred together
+from implementation input patterns; Result contributes no inference bindings.
+The selected Args record completes defaults and reached capabilities before
+invoking the scoped operation, following the same selection rules as Init.
+This operator lowering is the next migration step, not yet implemented.
+
 ## Virtual evidence and safety
 
 Virtualization hides concrete participants while preserving values and selected

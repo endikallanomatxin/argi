@@ -47,5 +47,8 @@ nominal family registry or global overload fallback.
 Init and Deinit use contract dispatch throughout bundled core, official more and
 compiler fixtures. Their former declaration syntax is rejected. Older ordinary
 function and operator overload declarations still have compatibility routes
-while their consumers migrate. Standard Convert and operator contracts remain
-planned; their proposed behavior is described in [contracts](135_contracts.md).
+while their consumers migrate. Convert now selects scoped contract evidence,
+including generic and specialized implementations; numeric type-call conversions
+are rejected in favor of explicit convert calls. Operator migration will use an
+Args participant to retain static dispatch for additional capabilities, as
+described in [contracts](135_contracts.md).
