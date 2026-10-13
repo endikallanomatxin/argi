@@ -78,11 +78,5 @@ pub fn constructedType(
 
 fn matchesAssociation(graph: *const graph_mod.GlobalSemanticGraph, function: graph_mod.GlobalFunctionId, ty: graph_mod.GlobalTypeId) bool {
     if (lifecycle_contracts.initializedType(graph, function)) |target| return types.equal(graph, target, ty);
-    const declaration = graph.function(function).declaration;
-    const associated = graph.declaration(declaration).constructor_type orelse return false;
-    return switch (graph.resolvedSemanticType(ty) orelse return false) {
-        .declared => |id| id == associated,
-        .generic => |identity| identity.base == associated,
-        else => false,
-    };
+    return false;
 }

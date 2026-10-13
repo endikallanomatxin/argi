@@ -23,12 +23,17 @@ FailFourthAllocator: Type = (
     .backing_freed_after_elements : Bool
 )
 
-FailFourthAllocator init(.ffi: $&ForeignFunctionInterface) -> (.result: FailFourthAllocator) := {
-    result.ffi = ffi
-    result.allocation_attempts = 0
-    result.deallocations = 0
-    result.backing_freed_after_elements = false
-}
+implement Init#(FailFourthAllocator, (.ffi: $&ForeignFunctionInterface)) (
+    .Result: Type = FailFourthAllocator
+    .init = (.args: (.ffi: $&ForeignFunctionInterface)) -> (.result: Result) {
+        assume ffi := ~args.ffi
+
+        result.ffi = ffi
+        result.allocation_attempts = 0
+        result.deallocations = 0
+        result.backing_freed_after_elements = false
+    }
+)
 
 main(.system: System) -> (.status_code: Int32 = 0) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)

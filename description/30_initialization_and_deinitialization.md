@@ -45,6 +45,10 @@ construction.
 Record defaults retain scalar literals, payload-free choice variants and lexical
 reach directives without executing runtime expressions during type materialization.
 The selected operation preserves argument loans and projected output dependencies.
+References carried inside Args retain effects on their referents, including
+consumption and invalidation. Copying Args does not let its local field-slot
+updates overwrite caller slots. Repeated consumption and aliasing between
+consumed reference fields are checked across that boundary.
 
 When Args determines every parameter of a nominal family, its application can
 be omitted: `Box(.value = byte)` infers the same target as `Box#(UInt8)` for a
@@ -58,10 +62,11 @@ deadlines, precise Unix timestamps, and paths copied from views use ordinary
 named factories. Single-use capabilities reuse named `once` functions as their
 `init` members, preserving entrypoint call-graph checks.
 
-Types without custom construction can use structural initialization. Legacy
-`T init(...)` declarations remain available while their families migrate; mixing
-legacy initializers with `Init` for one family is rejected. Alternative factories
-use ordinary functions with distinct names.
+Types without custom construction can use structural initialization. The old
+`T init(...)` declaration syntax is rejected with a migration diagnostic. Init
+evidence owns construction; there is no separate nominal constructor registry
+or inference from constructor return types. Alternative factories use ordinary
+functions with distinct names.
 
 Custom destruction uses the standard `Deinit` contract. Its consuming operation
 receives a mutable reference and returns no values:

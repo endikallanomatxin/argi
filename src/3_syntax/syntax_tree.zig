@@ -195,7 +195,6 @@ pub const FunctionExtra = struct {
     identity_definition: u32 = 0,
     contract_member: u32 = 0,
     name_token: TokenIndex,
-    constructor_type: OptionalTokenIndex = .none,
     destructor_type: OptionalTokenIndex = .none,
     generic_params_start: ExtraIndex,
     generic_params_end: ExtraIndex,
@@ -248,7 +247,6 @@ pub const FunctionDeclaration = struct {
     identity_definition: bool = false,
     contract_member: bool = false,
     name_token: TokenIndex,
-    constructor_type: ?TokenIndex = null,
     destructor_type: ?TokenIndex = null,
     generic_params: []const NodeIndex,
     generic_params_struct: ?NodeIndex,
@@ -522,7 +520,6 @@ pub const FileSyntaxTree = struct {
             .identity_definition = extra.identity_definition != 0,
             .contract_member = extra.contract_member != 0,
             .name_token = extra.name_token,
-            .constructor_type = extra.constructor_type.unwrap(),
             .destructor_type = extra.destructor_type.unwrap(),
             .generic_params = tree.nodeRange(.{ .start = extra.generic_params_start, .end = extra.generic_params_end }),
             .generic_params_struct = extra.generic_params_struct.unwrap(),
@@ -541,7 +538,6 @@ pub const FileSyntaxTree = struct {
         const extra = tree.extraData(FunctionExtra, tree.data(node).extra);
         return .{ .function = .{
             .name_token = extra.name_token,
-            .constructor_type = extra.constructor_type.unwrap(),
             .destructor_type = extra.destructor_type.unwrap(),
             .generic_params = tree.nodeRange(.{ .start = extra.generic_params_start, .end = extra.generic_params_end }),
             .generic_params_struct = extra.generic_params_struct.unwrap(),

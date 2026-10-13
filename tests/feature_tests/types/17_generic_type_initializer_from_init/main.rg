@@ -2,12 +2,17 @@ Token#(.t: Type) : Type = (
     .tag: Int32
 )
 
-Token init#(.t: Type)(.sample: t) -> (.result: Token#(.t: t)) := {
-    _ ::= sample
-    result = (
-        .tag = 1
-    )
-}
+implement#(.t: Type) Init#(Token#(.t: t), (.sample: t)) (
+    .Result: Type = Token#(.t: t)
+    .init = (.args: (.sample: t)) -> (.result: Result) {
+        sample ::= ~args.sample
+
+        _ ::= sample
+        result = (
+            .tag = 1
+        )
+    }
+)
 
 main () -> (.status_code: Int32) := {
     int_token ::= Token(.sample = 5)

@@ -1,6 +1,7 @@
 const std = @import("std");
 const source_db = @import("../1_base/source_db.zig");
 const graph_mod = @import("../4_semantics/global/graph.zig");
+const lifecycle_contracts = @import("../4_semantics/global/lifecycle_contracts.zig");
 const types = @import("../4_semantics/global/types.zig");
 const primitives = @import("../4_semantics/primitives/schema.zig");
 
@@ -14,12 +15,12 @@ pub const Target = union(enum) {
 
 pub const Occurrence = struct {
     source: primitives.SourceRef,
+    constructor_call: bool = false,
     len: u32,
     target: Target,
     declaration: bool = false,
     // Constructor calls spell their nominal family, while navigation targets
     // the selected init declaration. These are distinct source identities.
-    constructor_call: bool = false,
     operation_name_start: u32 = std.math.maxInt(u32),
 };
 
@@ -82,15 +83,18 @@ pub const Index = struct {
         for (graph.nodes.items) |node| switch (node.content) {
             .function_call => |call| {
                 if (call.callee_value != null) continue;
-                const function = graph.functions.items[@intFromEnum(call.callee)];
-                const declaration = graph.declarations.items[@intFromEnum(function.declaration)];
-                const name = graph.callSourceName(call);
+                const initialized = if (lifecycle_contracts.initializedType(graph, call.callee)) |ty| switch (graph.resolvedSemanticType(ty) orelse continue) {
+                    .declared => |owner| owner,
+                    .generic => |identity| identity.base,
+                    else => null,
+                } else null;
+                const name = if (initialized) |owner| graph.declaration(owner).name else graph.callSourceName(call);
                 try result.add(allocator, .{
                     .source = node.source,
                     .len = @intCast(graph.text(name).len),
                     .target = .{ .function = call.callee },
-                    .constructor_call = declaration.constructor_type != null,
-                    .operation_name_start = if (call.contract_operation != null) name.start else std.math.maxInt(u32),
+                    .constructor_call = initialized != null,
+                    .operation_name_start = if (initialized == null and call.contract_operation != null) name.start else std.math.maxInt(u32),
                 });
             },
             .struct_value_literal => {
@@ -254,8 +258,12 @@ pub fn occurrence_matches_source(graph: *const graph_mod.GlobalSemanticGraph, db
     const source = db.get(file).source;
     const name = blk: {
         if (occurrence.constructor_call) {
-            const function = graph.functions.items[@intFromEnum(occurrence.target.function)];
-            const owner = graph.declaration(function.declaration).constructor_type.?;
+            const ty = lifecycle_contracts.initializedType(graph, occurrence.target.function) orelse return false;
+            const owner = switch (graph.resolvedSemanticType(ty) orelse return false) {
+                .declared => |id| id,
+                .generic => |identity| identity.base,
+                else => return false,
+            };
             break :blk graph.text(graph.declaration(owner).name);
         }
         if (occurrence.operation_name_start != std.math.maxInt(u32))

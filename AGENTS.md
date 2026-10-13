@@ -166,12 +166,17 @@ feature first.
   Reach defaults describe lexical lookup, not values to type-check before lookup.
   Scaled durations, relative deadlines, precise Unix timestamps and copied paths
   use named factories rather than legacy constructor overloads.
-  Reject mixed Init/legacy initializer families and preserve
-  speculative rollback. Legacy `TypeName init#(...)(...)` declarations remain
-  only while their families migrate. Their explicit association is a nominal
-  declaration ID, persisted in ModuleSG and relocated into GlobalSG. Keep
-  constructor lookup indexed by that family, independently of output types;
-  speculative specializations must roll back their index entries.
+  Constructor declarations use only Init; `TypeName init(...)` is rejected with
+  a migration diagnostic. Construction has no nominal initializer association,
+  legacy constructor index or output-based generic inference. Preserve speculative
+  rollback of selected evidence and generic side effects. Editor constructor
+  navigation uses the selected Init operation and the written type name.
+  By-value Args records preserve effects through their reference fields. Follow
+  explicit dereference projections to caller referents; changes to copied field
+  slots stay local. Summary substitution and concrete calls share that distinction.
+  Whole unknown pointers retain their consumption identities inside record fields,
+  without assigning those identities to aggregate envelopes or opaque domains.
+  Distinct consumed reference fields can alias even when they share one input index.
   Migrated cleanup uses `implement Deinit#(T)` and its consuming self operation.
   All bundled core and more destructor families use this mechanism, including
   generic collections and optional Python owners. Cleanup of allocated owners
@@ -191,8 +196,7 @@ feature first.
   until runtime cleanup identities exist. Remaining `TypeName deinit#(...)(...)`
   declarations retain their nominal association and indexes until migration;
   legacy automatic cleanup collects receiver names from those indexed families.
-  Imported nominal constructors consult public initializers in the type's
-  defining module. Automatic cleanup falls back to that module when caller
+  Imported nominal construction selects visible Init evidence. Automatic cleanup falls back to that module when caller
   lookup finds no destructor; reached arguments retain the caller's context.
   Bundled core is already visible, so it needs no second cleanup lookup.
   CFunctionPointer declarations are nominal types backed by signature FunctionIds,

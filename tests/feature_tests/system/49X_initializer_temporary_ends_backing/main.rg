@@ -8,10 +8,15 @@ EndBacking: Type = (
     .marker : Bool
 )
 
-EndBacking init(.backing: $&BackingAllocator) -> (.result: EndBacking) := {
-    result = (.marker = false)
-    deinit(.self = backing)
-}
+implement Init#(EndBacking, (.backing: $&BackingAllocator)) (
+    .Result: Type = EndBacking
+    .init = (.args: (.backing: $&BackingAllocator)) -> (.result: Result) {
+        backing ::= ~args.backing
+
+        result = (.marker = false)
+        deinit(.self = backing)
+    }
+)
 
 consume(.value: EndBacking) -> () := {}
 

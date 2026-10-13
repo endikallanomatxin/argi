@@ -2,11 +2,16 @@ Holder : Type = (
     .buffer: String
 )
 
-Holder init(.allocator: $&Allocator) -> (.result: Holder) := {
-    assume allocator
+implement#(.AllocatorProvider: Type: Allocator) Init#(Holder, (.allocator: $&AllocatorProvider)) (
+    .Result: Type = Holder
+    .init = (.args: (.allocator: $&AllocatorProvider)) -> (.result: Result) {
+        allocator ::= ~args.allocator
 
-    result.buffer = unwrap_or_abort(.value = string_with_capacity(.allocator = allocator, .capacity = 1))
-}
+        assume allocator
+
+        result.buffer = unwrap_or_abort(.value = string_with_capacity(.allocator = allocator, .capacity = 1))
+    }
+)
 
 Holder deinit(.self: $&Holder, .allocator: $&Allocator) -> () := {
     assume allocator

@@ -2,9 +2,12 @@ Payload : Type = (
     .value: Int32,
 )
 
-Payload init() -> (.result: Payload) := {
-    result = ()
-}
+implement Init#(Payload, (.value: Int32)) (
+    .Result: Type = Payload
+    .init = (.args: (.value: Int32)) -> (.result: Result) {
+        result = (.value = args.value)
+    }
+)
 
 Payload deinit(.payload: $&Payload) -> () := {}
 

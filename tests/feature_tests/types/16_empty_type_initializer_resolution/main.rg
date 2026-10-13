@@ -4,15 +4,19 @@ Beta : Type = ()
 implement ImplicitlyCopyable#(Alpha) ()
 implement ImplicitlyCopyable#(Beta) ()
 
-Alpha init() -> (.result: Alpha) := {
-    result = ()
+implement Init#(Alpha, ()) (
+    .Result: Type = Alpha
+    .init = (.args: ()) -> (.result: Result) {
+        result = ()
+    }
+)
 
-}
-
-Beta init() -> (.result: Beta) := {
-    result = ()
-
-}
+implement Init#(Beta, ()) (
+    .Result: Type = Beta
+    .init = (.args: ()) -> (.result: Result) {
+        result = ()
+    }
+)
 
 main() -> (.status_code: Int32) := {
     alpha ::= Alpha()

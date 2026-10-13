@@ -2,15 +2,16 @@ DummyWriter: Type = (
     .bytes : String
 )
 
-DummyWriter init(
-        .allocator : $&Allocator,
-    ) -> (
-        .result : DummyWriter
-    ) := {
-    assume allocator
+implement#(.AllocatorProvider: Type: Allocator) Init#(DummyWriter, (.allocator : $&AllocatorProvider)) (
+    .Result: Type = DummyWriter
+    .init = (.args: (.allocator : $&AllocatorProvider)) -> (.result: Result) {
+        allocator ::= ~args.allocator
 
-    result.bytes = unwrap_or_abort(.value = string_with_capacity(.allocator = allocator, .capacity = 16))
-}
+        assume allocator
+
+        result.bytes = unwrap_or_abort(.value = string_with_capacity(.allocator = allocator, .capacity = 16))
+    }
+)
 
 DummyWriter deinit(
         .self      : $&DummyWriter,

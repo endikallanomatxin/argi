@@ -3845,39 +3845,67 @@ pub const Infer = struct {
         return self.substituteInputPath(function_id, path, arguments, override, .validity);
     }
 
+    const InputPathPurpose = enum { validity, place };
+
+    fn pathReachesReferent(self: *Infer, initial: graph_mod.GlobalTypeId, projections: []const facts.Projection) bool {
+        var ty = initial;
+        if (self.graph.semanticType(ty) == .pointer) return true;
+        for (projections) |projection| {
+            ty = switch (projection) {
+                .field => |index| blk: {
+                    const fields = types.fields(self.graph, ty) orelse return false;
+                    if (index >= fields.len) return false;
+                    break :blk types.effectiveFieldType(self.graph.fields.items[fields.start + index]);
+                },
+                .variant => |index| blk: {
+                    const variants = types.variants(self.graph, ty) orelse return false;
+                    if (index >= variants.len) return false;
+                    break :blk self.graph.variants.items[variants.start + index].payload_type orelse return false;
+                },
+                .static_index, .dynamic_index => types.arrayElement(self.graph, ty) orelse return false,
+                .dereference => return self.graph.semanticType(ty) == .pointer,
+            };
+        }
+        return false;
+    }
+
+    fn projectEffectInputPaths(self: *Infer, function_id: graph_mod.GlobalFunctionId, initial: facts.ValueEffect, projections: []const facts.Projection, purpose: InputPathPurpose) ![]const facts.InputPath {
+        var effect = initial;
+        for (projections, 0..) |projection, projection_index| {
+            if (purpose == .place and projection == .dereference) {
+                // A symbolic receiver field can already name a caller's
+                // pointer input referent. Only references stored inside
+                // that referent need another dereference coordinate.
+                var sources = try self.opaqueGenerationSourcePaths(effect);
+                var referents = std.array_list.Managed(facts.InputPath).init(self.allocator);
+                for (sources) |source| {
+                    const ty = self.inputPathType(function_id, source) orelse continue;
+                    try appendInputPath(&referents, if (self.graph.semanticType(ty) == .pointer)
+                        .{ .input_index = source.input_index, .projections = try self.appendProjection(source.projections, .dereference) }
+                    else
+                        source);
+                }
+                sources = try referents.toOwnedSlice();
+                for (projections[projection_index + 1 ..]) |remaining| sources = try self.projectInputPaths(sources, remaining);
+                return sources;
+            }
+            effect = try self.projectValueEffect(effect, projection);
+        }
+        return self.opaqueGenerationSourcePaths(effect);
+    }
+
     fn substituteInputPath(
         self: *Infer,
         function_id: graph_mod.GlobalFunctionId,
         path: facts.InputPath,
         arguments: []const graph_mod.ValueField,
         override: ?SymbolicInputOverride,
-        purpose: enum { validity, place },
+        purpose: InputPathPurpose,
     ) ![]const facts.InputPath {
         if (path.input_index >= arguments.len) return &.{};
         if (override) |symbolic| if (symbolic.input_index == path.input_index) {
             if (path.projections.len == 0) return &.{};
-            var effect = symbolic.effect;
-            for (path.projections, 0..) |projection, projection_index| {
-                if (purpose == .place and projection == .dereference) {
-                    // A symbolic receiver field can already name a caller's
-                    // pointer input referent. Only references stored inside
-                    // that referent need another dereference coordinate.
-                    var sources = try self.opaqueGenerationSourcePaths(effect);
-                    var referents = std.array_list.Managed(facts.InputPath).init(self.allocator);
-                    for (sources) |source| {
-                        const ty = self.inputPathType(function_id, source) orelse continue;
-                        try appendInputPath(&referents, if (self.graph.semanticType(ty) == .pointer)
-                            .{ .input_index = source.input_index, .projections = try self.appendProjection(source.projections, .dereference) }
-                        else
-                            source);
-                    }
-                    sources = try referents.toOwnedSlice();
-                    for (path.projections[projection_index + 1 ..]) |remaining| sources = try self.projectInputPaths(sources, remaining);
-                    return sources;
-                }
-                effect = try self.projectValueEffect(effect, projection);
-            }
-            return self.opaqueGenerationSourcePaths(effect);
+            return self.projectEffectInputPaths(function_id, symbolic.effect, path.projections, purpose);
         };
 
         const argument = arguments[path.input_index].value;
@@ -3896,12 +3924,11 @@ pub const Infer = struct {
         // arguments may still carry the provenance of a caller's place.
         if (purpose == .place) {
             const ty = self.graph.node(argument).ty orelse return &.{};
-            if (self.graph.semanticType(ty) != .pointer) return &.{};
+            if (!self.pathReachesReferent(ty, path.projections)) return &.{};
         }
 
-        var effect = try self.inferExpression(function_id, argument);
-        for (path.projections) |projection| effect = try self.projectValueEffect(effect, projection);
-        return self.opaqueGenerationSourcePaths(effect);
+        const effect = try self.inferExpression(function_id, argument);
+        return self.projectEffectInputPaths(function_id, effect, path.projections, purpose);
     }
 
     fn inferAutoDeinitRequiredLiveInputs(
@@ -4153,7 +4180,7 @@ pub const Infer = struct {
                     // TODO: Unify ordinary projected output writes with the
                     // existing input post-state flow before broadening this
                     // path. Replaying their RHS can duplicate opaque effects.
-                    if (self.graph.declaration(self.graph.function(function).declaration).constructor_type == null and lifecycle_contracts.initializedType(self.graph, function) == null) return;
+                    if (lifecycle_contracts.initializedType(self.graph, function) == null) return;
                     outputs[index] = try self.storeEffectProjection(outputs[index], path, try self.inferExpression(function, value));
                 }
             },

@@ -58,7 +58,7 @@ are constructed and changed outside that module.
 
 ## Construction
 
-A type may associate `init` constructors with its nominal declaration:
+A type can provide construction through the standard Init contract:
 
 ```rg
 Point : Type = (
@@ -66,18 +66,20 @@ Point : Type = (
     .y: Int32
 )
 
-Point init(.x: Int32, .y: Int32) -> (.result: Point) := {
-    result = (.x = x, .y = y)
-}
+implement Init#(Point, (.x: Int32, .y: Int32)) (
+    .Result: Type = Point
+    .init = (.args: (.x: Int32, .y: Int32)) -> (.result: Result) {
+        result = (.x = args.x, .y = args.y)
+    }
+)
 
 point := Point(.x = 20, .y = 22)
 ```
 
-`Point(...)` selects a visible constructor associated with `Point`, based on
-input types. The result must be `Point`, or `Errable#(Point, R)`
-when construction can fail. The return type does not select the overload.
-When visible constructors exist, callers use them rather than bypassing the
-operation through automatic field-wise construction. See
+`Point(...)` selects Init evidence using Point and its argument record. The
+associated Result must be Point or `Errable#(Point, R)` when construction can
+fail. Result never selects the implementation. When Init applies, callers
+cannot bypass its requirements through automatic field-wise construction. See
 [Initialization and deinitialization](30_initialization_and_deinitialization.md)
 for generic constructors and cleanup on failure.
 

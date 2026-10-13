@@ -282,17 +282,18 @@ probes roll back evidence and generic side effects.
 Initializer safety and projected output dependencies recognize selected Init
 operation bodies without a second constructor registry. Owning results still
 receive automatic cleanup and borrowed results retain their input dependencies.
-A type cannot combine Init with a legacy initializer. Legacy family indexes remain
-only for types whose declarations have not migrated yet; removing them remains a
-required part of the lifecycle refactor.
+The legacy initializer syntax and family indexes have been removed. Constructor
+selection uses contract participants, including Args, and never infers nominal
+parameters from Result. Structural construction remains available for types
+without Init.
 
 All declared constructors in bundled core and official more modules now use
 Init. This includes native capabilities, allocators, streams, collections, text,
 codecs, Python owners and matrix/vector owners. Single-use capabilities reuse
 ordinary once functions as their init members; their reachable-entrypoint
 restriction survives scoped operation wrappers. Alternative scaled or validated
-construction paths use named factories. Legacy declarations remain in compiler
-fixtures until their coverage is migrated and the adapter can be removed.
+construction paths use named factories. Compiler fixtures also use Init; one negative fixture explicitly checks the
+migration diagnostic for the retired declaration syntax.
 
 The standard Deinit contract now selects static cleanup through the same scoped
 evidence as explicit deinit calls. Its self input is consuming. Generic and

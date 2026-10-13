@@ -1,4 +1,7 @@
-Missing init() -> (.result: Int32) := {
-    result = 0
-}
+implement Init#(Missing, ()) (
+    .Result: Type = Int32
+    .init = (.args: ()) -> (.result: Result) {
+        result = 0
+    }
+)
 main() -> (.status_code: Int32 = 0) := {}

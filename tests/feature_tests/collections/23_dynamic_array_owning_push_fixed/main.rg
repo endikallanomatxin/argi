@@ -39,9 +39,14 @@ BackingAllocator: Type = (
 backing_deallocations :: Int32 = 0
 backing_freed_after_elements :: Bool = false
 
-BackingAllocator init(.ffi: $&ForeignFunctionInterface) -> (.result: BackingAllocator) := {
-    result.ffi = ffi
-}
+implement Init#(BackingAllocator, (.ffi: $&ForeignFunctionInterface)) (
+    .Result: Type = BackingAllocator
+    .init = (.args: (.ffi: $&ForeignFunctionInterface)) -> (.result: Result) {
+        assume ffi := ~args.ffi
+
+        result.ffi = ffi
+    }
+)
 
 main(.system: System) -> (.status_code: Int32) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)

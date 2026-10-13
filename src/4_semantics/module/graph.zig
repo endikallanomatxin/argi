@@ -71,7 +71,6 @@ pub const Declaration = struct {
     struct_fields: ?FieldRange = null,
     choice_variants: ?FieldRange = null,
     generic_parameter_count: ?u32 = null,
-    constructor_type: ?ModuleDeclId = null,
     destructor_type: ?ModuleDeclId = null,
 };
 
@@ -343,23 +342,19 @@ fn associateLifecycleFunctions(graph: *ModuleSemanticGraph, files: []const FileI
         const node = declarationSyntaxNode(files, declaration.*) orelse continue;
         const file = files[declaration.module_file_index];
         const function = file.tree.functionDeclaration(node) orelse continue;
-        const token = function.constructor_type orelse function.destructor_type orelse continue;
-        const is_destructor = function.destructor_type != null;
+        const token = function.destructor_type orelse continue;
         const name = file.tree.tokenTextFromSource(file.source, token);
         for (graph.declarations.items, 0..) |candidate, raw| {
             if (candidate.kind != .type or !std.mem.eql(u8, graph.text(candidate.name), name)) continue;
-            if (is_destructor)
-                declaration.destructor_type = @enumFromInt(@as(u32, @intCast(raw)))
-            else
-                declaration.constructor_type = @enumFromInt(@as(u32, @intCast(raw)));
+            declaration.destructor_type = @enumFromInt(@as(u32, @intCast(raw)));
             break;
         }
-        if (declaration.constructor_type == null and declaration.destructor_type == null) {
+        if (declaration.destructor_type == null) {
             if (file.diagnostics) |diagnostics| {
-                try diagnostics.add(file.tree.tokenLocation(token), .semantic, "{s} type '{s}' must name a type declared in this module", .{ if (is_destructor) "destructor" else "constructor", name });
+                try diagnostics.add(file.tree.tokenLocation(token), .semantic, "{s} type '{s}' must name a type declared in this module", .{ "destructor", name });
                 return error.Reported;
             }
-            return error.UnknownConstructorType;
+            return error.UnknownDestructorType;
         }
     }
 }

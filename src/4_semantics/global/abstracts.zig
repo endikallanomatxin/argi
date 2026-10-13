@@ -534,7 +534,6 @@ pub const Resolver = struct {
             if (module_index) |context| {
                 // Cached generic instances are implementations, not new overloads.
                 if (function.flags.is_generic_instantiation or function.flags.is_c_function_pointer or function.flags.is_abstract_dispatch) continue;
-                if (self.graph.declaration(function.declaration).constructor_type != null) continue;
                 if (!self.core.declarationVisible(context, function.declaration, null)) continue;
             }
             const declaration = self.graph.declarations.items[@intFromEnum(function.declaration)];
@@ -2757,6 +2756,13 @@ pub const Resolver = struct {
                         };
                 }
                 if (!owns_participant) {
+                    for (self.graph.generic_arguments.items[conformance.participants.start..][0..conformance.participants.len]) |argument| {
+                        if (self.graph.isTypeUnresolved(argument.value.type)) {
+                            failure.reason = "an implementation participant type is unknown or unresolved";
+                            self.participant_conformance_failure = failure;
+                            return;
+                        }
+                    }
                     failure.reason = "an implementation must belong to the contract module or a nominal participant module";
                     self.participant_conformance_failure = failure;
                     return;

@@ -4,9 +4,14 @@ FailFirstAllocator: Type = (
     .deallocations : Int32
 )
 
-FailFirstAllocator init(.ffi: $&ForeignFunctionInterface) -> (.result: FailFirstAllocator) := {
-    result = (.ffi = ffi, .allocations = 0, .deallocations = 0)
-}
+implement Init#(FailFirstAllocator, (.ffi: $&ForeignFunctionInterface)) (
+    .Result: Type = FailFirstAllocator
+    .init = (.args: (.ffi: $&ForeignFunctionInterface)) -> (.result: Result) {
+        assume ffi := ~args.ffi
+
+        result = (.ffi = ffi, .allocations = 0, .deallocations = 0)
+    }
+)
 
 main(.system: System) -> (.status_code: Int32 = 0) := {
     backing ::= GeneralPurposeAllocator(.allocator = system.page_allocator)

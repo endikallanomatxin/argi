@@ -60,10 +60,8 @@ noise.
 
 ## Constructors
 
-`T init#(...)(...)` associates a constructor with the nominal type family `T`.
-A call to `T(...)` considers only constructors associated with that family;
-ordinary input-type dispatch then selects the overload. The association is
-part of constructor identity, not a predicate over compile-time values.
-Compile-time parameters and return types still do not distinguish overloads
-within one family. Constructors do not participate in ordinary `init(...)`
-function calls.
+Construction uses the operation identity of Init. A call to `T(...)` provides
+T and infers its Args record, then selects the most specific applicable
+`Init#(T, Args)` implementation. Generic and specialized implementations follow
+contract specificity, without a separate constructor overload registry. The
+associated Result is validated after selection and never ranks candidates.

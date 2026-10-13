@@ -477,7 +477,7 @@ fn firstToken(tree: *const syn.FileSyntaxTree, node: syn.NodeIndex) usize {
         else => {},
     };
     if (tree.functionDeclaration(node)) |function| {
-        if (function.constructor_type orelse function.destructor_type) |receiver| first = @intFromEnum(receiver);
+        if (function.destructor_type) |receiver| first = @intFromEnum(receiver);
         if (function.is_once and first != 0) first -= 1;
         return first;
     }
@@ -810,8 +810,8 @@ test "formatter preserves prefixes and grouping at statement boundaries" {
 
 test "formatter separates associated lifecycle declarations before their prefixes" {
     try expectFormat(
-        "Point:Type=(.value:Int32)\nonce Point init(.value:Int32)->(.result:Point):={result=(.value=value)}\nPoint deinit(.self:$&Point)->():={}\n",
-        "Point: Type = (.value: Int32)\n\nonce Point init(.value: Int32) -> (.result: Point) := { result = (.value = value) }\n\nPoint deinit(.self: $&Point) -> () := {}\n",
+        "Point:Type=(.value:Int32)\nonce acquire(.value:Int32)->(.result:Point):={result=(.value=value)}\nPoint deinit(.self:$&Point)->():={}\n",
+        "Point: Type = (.value: Int32)\n\nonce acquire(.value: Int32) -> (.result: Point) := { result = (.value = value) }\n\nPoint deinit(.self: $&Point) -> () := {}\n",
     );
 }
 

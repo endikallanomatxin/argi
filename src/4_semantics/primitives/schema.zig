@@ -262,7 +262,6 @@ pub fn Declaration(comptime Ids: type) type {
         struct_fields: ?Range(Ids.FieldId) = null,
         choice_variants: ?Range(Ids.VariantId) = null,
         generic_parameter_count: ?u32 = null,
-        constructor_type: ?Ids.DeclId = null,
         destructor_type: ?Ids.DeclId = null,
         struct_layout: StructLayout = .regular,
         choice_layout: ChoiceLayout = .regular,

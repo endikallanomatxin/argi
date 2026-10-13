@@ -6,6 +6,7 @@ const diag = @import("../1_base/diagnostic.zig");
 const token = @import("../2_tokens/token.zig");
 const st = @import("../3_syntax/syntax_tree.zig");
 const graph_mod = @import("../4_semantics/global/graph.zig");
+const lifecycle_contracts = @import("../4_semantics/global/lifecycle_contracts.zig");
 const global_types = @import("../4_semantics/global/types.zig");
 const editor_index = @import("lsp_index.zig");
 const completion = @import("lsp_completion.zig");
@@ -521,10 +522,8 @@ pub const LanguageService = struct {
             if (reference.operation_name_start != std.math.maxInt(u32) and editor_index.targetsEqual(reference.target, occurrence.target)) return null;
         }
         if (occurrence.target == .function) {
-            const function = analysis.graph.functions.items[@intFromEnum(occurrence.target.function)];
-            // init is a reserved declaration name; renaming its calls would
-            // instead change the nominal family written at those positions.
-            if (analysis.graph.declaration(function.declaration).constructor_type != null) return null;
+            // Init operation wrappers retain their contract identity.
+            if (lifecycle_contracts.initializedType(&analysis.graph, occurrence.target.function) != null) return null;
         }
         return .{
             .range = sourceRange(&analysis, occurrence.source, occurrence.len) orelse return null,
@@ -1267,10 +1266,10 @@ fn expectSemanticToken(data: []const u32, source: []const u8, needle: []const u8
 test "LSP semantic tokens distinguish resolved names without synthetic recoloring" {
     const code =
         \\Point : Type = (.x: Int32)
-        \\Point init(.x: Int32) -> (.result: Point) := { result = (.x = x) }
+        \\implement Init#(Point, (.x: Int32)) (.Result: Type = Point, .init = (.args: (.x: Int32)) -> (.result: Result) { result = (.x = args.x) })
         \\Point deinit(.self: $&Point) -> () := {}
         \\Box#(.t: Type) : Type = (.value: t)
-        \\Box init#(.t: Type)(.value: t) -> (.result: Box#(.t: t)) := { result = (.value = value) }
+        \\implement#(.t: Type) Init#(Box#(.t: t), (.value: t)) (.Result: Type = Box#(.t: t), .init = (.args: (.value: t)) -> (.result: Result) { result = (.value = args.value) })
         \\Box deinit#(.t: Type)(.self: $&Box#(.t: t)) -> () := {}
         \\identity(.value: Int32) -> (.result: Int32) := { result = value }
         \\main(.system: System) -> (.status_code: Int32 = 0) := {
@@ -1292,11 +1291,11 @@ test "LSP semantic tokens distinguish resolved names without synthetic recolorin
     var data = try service.semanticTokensFull("file:///colors.rg");
     defer data.deinit();
     try expectSemanticToken(data.items, code, "Point :", TOKEN_INDEX.type_, 1);
-    try expectSemanticToken(data.items, code, "Point init", TOKEN_INDEX.type_, 0);
+    try expectSemanticToken(data.items, code, "Point, (.x:", TOKEN_INDEX.type_, 0);
     try expectSemanticToken(data.items, code, "Point deinit", TOKEN_INDEX.type_, 0);
-    try expectSemanticToken(data.items, code, "Box init", TOKEN_INDEX.type_, 0);
+    try expectSemanticToken(data.items, code, "Box#(.t: t),", TOKEN_INDEX.type_, 0);
     try expectSemanticToken(data.items, code, "Box deinit", TOKEN_INDEX.type_, 0);
-    try expectSemanticToken(data.items, code, "init(.x:", TOKEN_INDEX.function, 1);
+    try expectSemanticToken(data.items, code, "init =", TOKEN_INDEX.function, 1);
     try expectSemanticToken(data.items, code, "deinit(.self:", TOKEN_INDEX.function, 1);
     try expectSemanticToken(data.items, code, "identity(.value:", TOKEN_INDEX.function, 1);
     try expectSemanticToken(data.items, code, "value: Int32", TOKEN_INDEX.parameter, 3);
@@ -1368,10 +1367,10 @@ test "LSP navigation and hovers use written symbols and source declarations" {
 test "LSP constructor navigation finds selected init bodies and default record declarations" {
     const code =
         \\MyType : Type = (.value: Int32)
-        \\MyType init() -> (.result: MyType) := { result = (.value = 0) }
-        \\MyType init(.value: Int32) -> (.result: MyType) := { result = (.value = value) }
+        \\implement Init#(MyType, ()) (.Result: Type = MyType, .init = (.args: ()) -> (.result: Result) { result = (.value = 0) })
+        \\implement Init#(MyType, (.value: Int32)) (.Result: Type = MyType, .init = (.args: (.value: Int32)) -> (.result: Result) { result = (.value = args.value) })
         \\Box#(.t: Type) : Type = (.value: t)
-        \\Box init#(.t: Type)(.value: t) -> (.result: Box#(.t: t)) := { result = (.value = value) }
+        \\implement#(.t: Type) Init#(Box#(.t: t), (.value: t)) (.Result: Type = Box#(.t: t), .init = (.args: (.value: t)) -> (.result: Result) { result = (.value = args.value) })
         \\main() -> (.status_code: Int32 = 0) := {
         \\    first ::= MyType()
         \\    second ::= MyType(2)
@@ -1386,7 +1385,7 @@ test "LSP constructor navigation finds selected init bodies and default record d
     try tmp.dir.createDir(std.testing.io, "library", .default_dir);
     try tmp.dir.writeFile(std.testing.io, .{
         .sub_path = "library/thing.rg",
-        .data = "Thing : Type = (.value: Int32)\nThing init(.value: Int32) -> (.result: Thing) := { result = (.value = value) }\n",
+        .data = "Thing : Type = (.value: Int32)\nimplement Init#(Thing, (.value: Int32)) (.Result: Type = Thing, .init = (.args: (.value: Int32)) -> (.result: Result) { result = (.value = args.value) })\n",
     });
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.rg", .data = code });
     const path = try @import("../test_support.zig").tmpFilePath(&tmp, "main.rg");

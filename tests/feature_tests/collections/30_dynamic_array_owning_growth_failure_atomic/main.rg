@@ -36,11 +36,16 @@ FailSecondAllocator: Type = (
     .deallocations : Int32
 )
 
-FailSecondAllocator init(.ffi: $&ForeignFunctionInterface) -> (.result: FailSecondAllocator) := {
-    result.ffi = ffi
-    result.allocations = 0
-    result.deallocations = 0
-}
+implement Init#(FailSecondAllocator, (.ffi: $&ForeignFunctionInterface)) (
+    .Result: Type = FailSecondAllocator
+    .init = (.args: (.ffi: $&ForeignFunctionInterface)) -> (.result: Result) {
+        assume ffi := ~args.ffi
+
+        result.ffi = ffi
+        result.allocations = 0
+        result.deallocations = 0
+    }
+)
 
 main(.system: System) -> (.status_code: Int32 = 0) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)

@@ -4,6 +4,11 @@ identity#(.t: Type)(.value: t) -> (.result: t) := {
 
 Box#(.t: Type) : Type = (.value: t)
 
-Box init#(.t: Type)(.value: t) -> (.result: Box#(.t: t)) := {
-    result = (.value = value)
-}
+implement#(.t: Type) Init#(Box#(.t: t), (.value: t)) (
+    .Result: Type = Box#(.t: t)
+    .init = (.args: (.value: t)) -> (.result: Result) {
+        value ::= ~args.value
+
+        result = (.value = value)
+    }
+)

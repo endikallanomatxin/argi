@@ -463,7 +463,6 @@ pub const Resolver = struct {
             // Specializations are cached implementations, not new overloads.
             // Reconsider the generic declaration so lookup is call-order independent.
             if (function.flags.is_generic_instantiation) continue;
-            if (self.graph.declaration(function.declaration).constructor_type != null) continue;
             if (!self.declarationVisible(current_module, function.declaration, module_filter)) continue;
             const score = switch (try self.matchCallInputWithReach(function.input, input_node, context)) {
                 .no_match => continue,
@@ -508,7 +507,6 @@ pub const Resolver = struct {
             // Specializations are cached implementations, not new overloads.
             // Reconsider the generic declaration so lookup is call-order independent.
             if (function.flags.is_generic_instantiation) continue;
-            if (self.graph.declaration(function.declaration).constructor_type != null) continue;
             if (!self.declarationVisible(current_module, function.declaration, module_filter)) continue;
             const score = switch (self.matchCallInput(function.input, input_node)) {
                 .no_match => continue,

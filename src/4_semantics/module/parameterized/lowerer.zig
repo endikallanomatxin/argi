@@ -1516,11 +1516,19 @@ pub const Context = struct {
         }
         if (self.tree.assignment(node)) |assignment| {
             const name = self.tree.tokenTextFromSource(self.source, assignment.name_token);
-            const binding = self.parameterizedBinding(name) orelse return error.UnknownParameterizedAssignment;
+            const binding = self.parameterizedBinding(name) orelse {
+                const target = try self.addPending(node, .unknown_identifier, &.{}, try self.writer.addString(name), null, .none);
+                const address = try self.addPending(node, .address_of, &.{target}, null, null, .{ .pointer_mutability = .read_write });
+                return self.addPending(node, .pointer_store, &.{ address, try self.lowerBodyNode(assignment.value) }, null, null, .none);
+            };
             return self.addResolvedNode(node, try self.parameterizedBuiltin(.Void), .{ .assignment = .{
                 .binding = binding,
                 .value = try self.lowerBodyNode(assignment.value),
             } });
+        }
+        if (self.tree.listLiteral(node)) |literal| {
+            if (literal.elements.len == 0)
+                return self.addResolvedNode(node, null, .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 0 } } });
         }
         if (self.tree.structValueLiteral(node)) |literal| {
             var fields: std.ArrayList(ir.ValueField) = .empty;

@@ -6,13 +6,14 @@ Holder: Type = (
     .writer : $&Writer
 )
 
-Holder init(
-        .writer : $&DummyWriter,
-    ) -> (
-        .result : Holder
-    ) := {
-    result.writer = writer
-}
+implement Init#(Holder, (.writer : $&DummyWriter)) (
+    .Result: Type = Holder
+    .init = (.args: (.writer : $&DummyWriter)) -> (.result: Result) {
+        writer ::= ~args.writer
+
+        result.writer = writer
+    }
+)
 
 main() -> (.status_code: Int32) := {
     writer :: DummyWriter = (

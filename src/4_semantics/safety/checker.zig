@@ -499,7 +499,7 @@ pub const SafetyChecker = struct {
                     try self.report(declaration.source, "destructor must receive a mutable reference to its associated type and return no values", .{});
             }
             const id: graph_mod.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
-            if (declaration.constructor_type == null and lifecycle_contracts.initializedType(self.graph, id) == null) continue;
+            if (lifecycle_contracts.initializedType(self.graph, id) == null) continue;
             if (initializer_contract.classify(self.graph, id) == .invalid)
                 try self.report(declaration.source, "initializer must return its constructed type or one Errable of that type", .{});
         }
@@ -1585,15 +1585,34 @@ pub const SafetyChecker = struct {
             ((post.initializedness == .deinitialized or post.initializedness == .maybe_initialized) and post.ends_previous_roots);
     }
 
-    fn symbolicConsumptionInputs(self: *SafetyChecker, path: facts.InputPath, ids: []const graph_mod.GlobalValueFieldId, arguments: []const facts.ValueFacts) []const graph_mod.GlobalBindingId {
-        if (path.projections.len != 0 or path.storage_domain != null or path.input_index >= arguments.len or path.input_index >= ids.len) return &.{};
-        const argument = arguments[path.input_index];
-        if (argument.referenced_place != null) return &.{};
+    fn symbolicConsumptionInputs(self: *SafetyChecker, path: facts.InputPath, ids: []const graph_mod.GlobalValueFieldId, arguments: []const facts.ValueFacts) ![]const graph_mod.GlobalBindingId {
+        if (path.storage_domain != null or path.input_index >= arguments.len or path.input_index >= ids.len) return &.{};
+        var argument = arguments[path.input_index];
         const node = self.graph.value_fields.items[@intFromEnum(ids[path.input_index])].value;
-        const ty = self.graph.node(node).ty orelse return &.{};
-        // Aggregate envelopes may carry borrowed child identities. Consuming
-        // that value or an opaque domain does not consume those referents.
-        if (!isPointer(self.graph, ty)) return &.{};
+        var ty = self.graph.node(node).ty orelse return &.{};
+        if (path.projections.len != 0) {
+            if (path.projections[path.projections.len - 1] != .dereference or isPointer(self.graph, ty)) return &.{};
+            for (path.projections[0 .. path.projections.len - 1]) |projection| {
+                ty = switch (projection) {
+                    .field => |index| blk: {
+                        const fields = types.fields(self.graph, ty) orelse return &.{};
+                        if (index >= fields.len) return &.{};
+                        break :blk types.effectiveFieldType(self.graph.fields.items[fields.start + index]);
+                    },
+                    .variant => |index| blk: {
+                        const variants = types.variants(self.graph, ty) orelse return &.{};
+                        if (index >= variants.len) return &.{};
+                        break :blk self.graph.variants.items[variants.start + index].payload_type orelse return &.{};
+                    },
+                    .static_index, .dynamic_index => types.arrayElement(self.graph, ty) orelse return &.{},
+                    .dereference => return &.{},
+                };
+                argument = try self.projectValueFacts(argument, &.{projection});
+            }
+        }
+        // Only a whole unknown pointer carries a consumption identity. The
+        // surrounding copied record and borrowed dependency envelopes do not.
+        if (!isPointer(self.graph, ty) or argument.referenced_place != null) return &.{};
         return argument.symbolic_pointees;
     }
 
@@ -1601,8 +1620,8 @@ pub const SafetyChecker = struct {
         for (summary.input_post_states, 0..) |post, index| {
             if (!cleanupTransition(summary, post)) continue;
             const target = try self.resolveSummaryInputPath(post.target, ids, arguments, state) orelse {
-                if (post.target.input_index >= arguments.len or post.target.projections.len != 0 or post.requires_available_destination) continue;
-                const identities = self.symbolicConsumptionInputs(post.target, ids, arguments);
+                if (post.target.input_index >= arguments.len or post.requires_available_destination) continue;
+                const identities = try self.symbolicConsumptionInputs(post.target, ids, arguments);
                 for (identities) |identity| {
                     for (state.symbolic_pointees.items) |pointee| {
                         if (pointee.identity != identity or pointee.initializedness == .initialized) continue;
@@ -1612,8 +1631,8 @@ pub const SafetyChecker = struct {
                 }
                 for (summary.input_post_states[0..index]) |previous| {
                     if (!cleanupTransition(summary, previous) or previous.requires_available_destination or
-                        previous.target.input_index == post.target.input_index or previous.target.input_index >= arguments.len or previous.target.projections.len != 0) continue;
-                    for (self.symbolicConsumptionInputs(previous.target, ids, arguments)) |other| {
+                        sameInputPath(previous.target, post.target) or previous.target.input_index >= arguments.len) continue;
+                    for (try self.symbolicConsumptionInputs(previous.target, ids, arguments)) |other| {
                         if (std.mem.indexOfScalar(graph_mod.GlobalBindingId, identities, other) == null) continue;
                         try self.report(source, "consumed inputs alias the same storage; provide distinct owners for consumption or relocation", .{});
                         return false;
@@ -1630,7 +1649,12 @@ pub const SafetyChecker = struct {
                 return false;
             }
             for (summary.input_post_states[0..index]) |previous| {
-                if (!cleanupTransition(summary, previous) or previous.target.input_index == post.target.input_index) continue;
+                if (!cleanupTransition(summary, previous)) continue;
+                if (previous.target.input_index == post.target.input_index and
+                    !(previous.target.projections.len != 0 and post.target.projections.len != 0 and
+                        previous.target.projections[previous.target.projections.len - 1] == .dereference and
+                        post.target.projections[post.target.projections.len - 1] == .dereference and
+                        !sameInputPath(previous.target, post.target))) continue;
                 const other = try self.resolveSummaryInputPath(previous.target, ids, arguments, state) orelse continue;
                 if (target.isPrefixOf(other) or other.isPrefixOf(target)) {
                     try self.report(source, "consumed inputs alias the same storage; provide distinct owners for consumption or relocation", .{});
@@ -2829,8 +2853,8 @@ pub const SafetyChecker = struct {
         for (summary.input_post_states, 0..) |post_state, post_index| {
             if (post_state.target.input_index >= arguments.len) continue;
             const index: usize = @intCast(post_state.target.input_index);
-            if (post_state.target.projections.len == 0 and cleanupTransition(summary, post_state)) {
-                for (self.symbolicConsumptionInputs(post_state.target, argument_ids, arguments)) |identity| {
+            if (cleanupTransition(summary, post_state)) {
+                for (try self.symbolicConsumptionInputs(post_state.target, argument_ids, arguments)) |identity| {
                     for (state.symbolic_pointees.items) |*pointee| if (pointee.identity == identity) {
                         // Unknown input reinitialization cannot revive old aliases.
                         pointee.initializedness = if (post_state.requires_available_destination) .maybe_initialized else post_state.initializedness;
@@ -2937,6 +2961,7 @@ pub const SafetyChecker = struct {
     ) !?facts.Place {
         if (path_value.input_index >= arguments.len) return null;
         const index: usize = @intCast(path_value.input_index);
+        var projections = path_value.projections;
         var target = arguments[index].referenced_place orelse blk: {
             if (index >= argument_ids.len) return null;
             const argument = self.graph.value_fields.items[@intFromEnum(argument_ids[index])].value;
@@ -2946,7 +2971,20 @@ pub const SafetyChecker = struct {
             // move/copy evaluation has already updated that Place. Pointer
             // arguments may still expose their own storage when provenance is
             // unavailable (for example an abstract pointer binding).
-            if (!isPointer(self.graph, argument_type)) return null;
+            if (!isPointer(self.graph, argument_type)) {
+                // A copied argument record has its own fields, but references
+                // carried inside it still identify their caller referents.
+                var value = arguments[index];
+                for (projections, 0..) |projection, projection_index| {
+                    if (projection == .dereference) {
+                        const referent = value.referenced_place orelse return null;
+                        projections = projections[projection_index + 1 ..];
+                        break :blk referent;
+                    }
+                    value = try self.projectValueFacts(value, &.{projection});
+                }
+                return null;
+            }
             const storage = try self.resolvePlace(argument, state) orelse return null;
             // An abstract pointer input has no concrete pointee Place. Its
             // binding stores the pointer itself, so writing a pointee summary
@@ -2955,7 +2993,7 @@ pub const SafetyChecker = struct {
                 arguments[index].referenced_place == null) return null;
             break :blk storage;
         };
-        for (path_value.projections) |projection| {
+        for (projections) |projection| {
             if (projection == .dereference) {
                 if (self.valueAtPlace(state, target)) |stored| {
                     if (stored.referenced_place) |referent| {

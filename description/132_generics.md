@@ -186,12 +186,12 @@ In short:
 
 ## Constructor parameters
 
-`Box init#(.t: Type)(.value: t) -> (.result: Box#(.t: t))` declares `t` on
-`init`, not on `Box`. All names used by that constructor must be explicitly
-declared in its own scope. The associated type name narrows constructor
-lookup without adding equality predicates or value-based dispatch. The
-requested type's arguments can supply bindings; inputs infer remaining
-parameters and the ordinary constraints validate those bindings.
+`implement#(.t: Type) Init#(Box#(.t: t), (.value: t))` declares t in the
+implementation scope. The target pattern and Args record select its bindings;
+the requested target supplies known parameters and inputs infer remaining ones.
+Implementation constraints validate those bindings. A bare `Box(.value = value)`
+can infer its target parameters from Args, while Result never supplies missing
+parameters or selects an implementation.
 
 ## Interaction with Virtual types
 

@@ -37,11 +37,14 @@ run(.system: System) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory)
 -- conversion, independently of the infallible fixed-buffer tracer.
 FailTracer: Type = (.marker: UInt8)
 
-FailTracer init() -> (.result: Errable#(.t: FailTracer, .reasons: (..out_of_memory))) := {
-    constructed :: FailTracer
+implement Init#(FailTracer, ()) (
+    .Result: Type = Errable#(.t: FailTracer, .reasons: (..out_of_memory))
+    .init = (.args: ()) -> (.result: Result) {
+        constructed :: FailTracer
 
-    result = ..error(.reason = ..out_of_memory)
-}
+        result = ..error(.reason = ..out_of_memory)
+    }
+)
 
 failed_init() -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
     assume error_tracer: $&Virtual#(.abstract: ErrorTracer) = FailTracer()! | to_virtual($&_) | $&_

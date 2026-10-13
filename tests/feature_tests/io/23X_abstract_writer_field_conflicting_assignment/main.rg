@@ -1,14 +1,20 @@
 FirstWriter: Type = ()
 
-FirstWriter init() -> (.result: FirstWriter) := {
-    result = ()
-}
+implement Init#(FirstWriter, ()) (
+    .Result: Type = FirstWriter
+    .init = (.args: ()) -> (.result: Result) {
+        result = ()
+    }
+)
 
 SecondWriter: Type = ()
 
-SecondWriter init() -> (.result: SecondWriter) := {
-    result = ()
-}
+implement Init#(SecondWriter, ()) (
+    .Result: Type = SecondWriter
+    .init = (.args: ()) -> (.result: Result) {
+        result = ()
+    }
+)
 
 Holder: Type = (
     .writer : $&Writer

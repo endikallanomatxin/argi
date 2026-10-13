@@ -1,23 +1,33 @@
 Widget : Type = (.value: Int32)
 Wrapper : Type = (.widget: Widget)
 
-Widget init(.fail: Bool) -> (.result: Errable#(.t: Widget, .reasons: (..rejected))) := {
-    constructed :: Widget
+implement Init#(Widget, (.fail: Bool)) (
+    .Result: Type = Errable#(.t: Widget, .reasons: (..rejected))
+    .init = (.args: (.fail: Bool)) -> (.result: Result) {
+        fail ::= ~args.fail
 
-    if fail {
-        result = ..error(.reason = ..rejected)
-        return
+        constructed :: Widget
+
+        if fail {
+            result = ..error(.reason = ..rejected)
+            return
+        }
+        constructed = (.value = 42)
+        result = ..ok ~constructed
     }
-    constructed = (.value = 42)
-    result = ..ok ~constructed
-}
+)
 
-Wrapper init(.fail: Bool) -> (.result: Errable#(.t: Wrapper, .reasons: (..rejected))) := {
-    constructed :: Wrapper
+implement Init#(Wrapper, (.fail: Bool)) (
+    .Result: Type = Errable#(.t: Wrapper, .reasons: (..rejected))
+    .init = (.args: (.fail: Bool)) -> (.result: Result) {
+        fail ::= ~args.fail
 
-    constructed = (.widget = Widget(.fail = fail)!)
-    result = ..ok ~constructed
-}
+        constructed :: Wrapper
+
+        constructed = (.widget = Widget(.fail = fail)!)
+        result = ..ok ~constructed
+    }
+)
 
 main() -> (.status_code: Int32 = 0) := {
     failed ::= Wrapper(.fail = true)
