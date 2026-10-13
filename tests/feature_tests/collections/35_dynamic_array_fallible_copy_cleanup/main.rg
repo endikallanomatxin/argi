@@ -1,3 +1,21 @@
+Counter: Type = (.count: UIntNative = 0)
+
+implement ErrorTracer#(Counter)(
+    .add_context = (.self: $&Counter, .location: SourceLocationId, .context: StringView) -> () {
+        self&.count = self&.count + 1
+    }
+    .reset_context = (.self: $&Counter) -> () { self&.count = 0 }
+    .report        = (
+            .self   : $&Counter,
+            .writer : $&Virtual#(.contract: Writer)
+        ) -> (
+            .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+        ) {
+        result = ..ok Void()
+    }
+)
+
+
 FailFourthAllocator: Type = (
     .ffi                          : $&ForeignFunctionInterface
     .allocation_attempts          : Int32
@@ -26,10 +44,21 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     push_assume_capacity#(.t: String)(.self = $&source, .value = ~second)
     push_assume_capacity#(.t: String)(.self = $&source, .value = ~third)
 
+    tracer ::= Counter(.count = 7)
+    erased ::= to_virtual#(.contract: ErrorTracer)(.value = $&tracer)
+    assume error_tracer ::= $&erased
     failing ::= FailFourthAllocator(.ffi = system.ffi)
     copied ::= copy(.self = &source, .allocator = $&failing)
     if is(.value = copied, .variant = ..ok) {
         status_code = 1
+        return
+    }
+    match copied {
+        ..ok ~value { abort }
+        ..error error { ErrorTracer#().reset_context(.self = error.tracer) }
+    }
+    if tracer.count != 0 {
+        status_code = 4
         return
     }
     if failing.allocation_attempts != 4 or failing.deallocations != 3 {

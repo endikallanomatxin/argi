@@ -181,17 +181,10 @@ copy#(
 
     while i < self&._length {
         ptr ::= _trusted_dynamic_array_element_ro_pointer#(.t: t)(.array = self, .offset = i).pointer
-        copied ::= copy(ptr)
-        match copied {
-            ..ok ~payload {
-                push_assume_capacity#(.t: t)($&out, .value = ~payload)
-            }
-            ..error ~err {
-                deinit( .self = $&out)
-                result = ..error(.reason = err.reason)
-                return
-            }
-        }
+        -- Propagation widens the reason choice and retains its tracer. The
+        -- lexical array owner cleans the successfully copied prefix on error.
+        copied ::= copy(ptr)!
+        push_assume_capacity#(.t: t)($&out, .value = ~copied)
         i = i + 1
     }
 

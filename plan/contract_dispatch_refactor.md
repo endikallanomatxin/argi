@@ -219,3 +219,16 @@ legacy ordinary resolution.
 - Validation: 230 contract/logging/more cases and 850 ownership,
   polymorphism, collection and loop cases passed, with no failures or leaks.
   All 376 compiler tests passed (1 skipped).
+
+- Fallible array-copy failures now use ordinary propagation instead of manually
+  rebuilding Error records. This retains the selected tracer and delegates
+  partial-prefix destruction to the lexical array owner. The allocation-failure
+  regression checks cleanup order and invokes the returned tracer to verify its
+  identity survived propagation.
+- Migration blocker: the legacy fallible-copy family cannot infer associated
+  reasons for a custom owning element with a Deinit implementation. The scoped
+  replacement must cover this executable case, including a reason distinct from
+  out_of_memory, nested arrays and partial-copy cleanup; do not preserve the
+  legacy overload inference as a second copy mechanism.
+- Validation: 165 collection and related ownership program cases passed, with
+  no failures or leaks.
