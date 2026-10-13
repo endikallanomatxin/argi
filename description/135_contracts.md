@@ -145,8 +145,9 @@ metadata registries are removed. Arithmetic symbols select Add, Subtract,
 Multiply, Divide or Remainder. Bundled scalar conformances use private
 representation hooks; primitive lowering happens after evidence selection and
 preserves constant expressions. It never replaces a custom implementation.
-Direct scalar/pointer comparisons still use representation primitives; moving
-those behind conformance selection remains migration work.
+Scalar equality also selects Equal evidence before primitive lowering, preserving
+IEEE NaN behavior and evaluating != once. Ordered comparisons and C enum/function
+pointer equality still use representation primitives and remain migration work.
 
 ## Virtual evidence and safety
 

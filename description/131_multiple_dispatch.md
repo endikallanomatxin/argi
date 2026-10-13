@@ -56,8 +56,9 @@ Bundled scalar implementations then lower to representation primitives, preservi
 constant expressions without an ordinary-function fallback. Custom implementations
 retain ordinary selected calls and can provide different associated results.
 
-Direct scalar/pointer comparisons still use compiler representation primitives.
-Moving those comparisons behind conformance selection and migrating remaining
-ordinary function overload families are pending; see [contracts](135_contracts.md).
+Scalar equality, including Bool, Char and RawPointer, selects Equal evidence.
+Ordered comparisons and C enum/function-pointer equality still use representation
+primitives. Their migration and remaining ordinary function overload families are
+pending; see [contracts](135_contracts.md).
 The official matrix library uses shape evidence and MatrixProduct specialization
 through standard Multiply adapters, including a diagonal result representation.

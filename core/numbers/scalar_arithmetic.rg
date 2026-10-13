@@ -48,3 +48,26 @@ implement#(.Value: Type: _BuiltinArithmetic) Remainder#(Value, Value, (.left: Va
         result = __scalar_remainder(.left = args.left, .right = args.right)
     }
 )
+
+_BuiltinEquality#(.Value: Type): Contract = ()
+implement _BuiltinEquality#(Int8) ()
+implement _BuiltinEquality#(Int16) ()
+implement _BuiltinEquality#(Int32) ()
+implement _BuiltinEquality#(Int64) ()
+implement _BuiltinEquality#(UInt8) ()
+implement _BuiltinEquality#(UInt16) ()
+implement _BuiltinEquality#(UInt32) ()
+implement _BuiltinEquality#(UInt64) ()
+implement _BuiltinEquality#(UIntNative) ()
+implement _BuiltinEquality#(Float16) ()
+implement _BuiltinEquality#(Float32) ()
+implement _BuiltinEquality#(Float64) ()
+implement _BuiltinEquality#(Bool) ()
+implement _BuiltinEquality#(Char) ()
+implement _BuiltinEquality#(RawPointer) ()
+
+implement#(.Value: Type: _BuiltinEquality) Equal#(Value, Value, (.left: Value, .right: Value)) (
+    .equal = (.args: (.left: Value, .right: Value)) -> (.ok: Bool) {
+        ok = __scalar_equal(.left = args.left, .right = args.right)
+    }
+)

@@ -12859,3 +12859,8 @@ test "feature_tests/contracts/277X_matrix_product_element_mismatch" {
 test "feature_tests/contracts/278X_diagonal_product_dimension_mismatch" {
     try buildExpectFailWithoutNoise("tests/feature_tests/contracts/278X_diagonal_product_dimension_mismatch", "operator '*' is not defined", "pointer arithmetic");
 }
+
+test "feature_tests/contracts/279_scalar_equality_evidence" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/279_scalar_equality_evidence");
+    try runExpect("tests/feature_tests/contracts/279_scalar_equality_evidence", 0);
+}

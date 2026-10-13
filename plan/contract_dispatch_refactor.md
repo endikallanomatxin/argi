@@ -324,3 +324,52 @@ PageAllocator allocate implementation directly.
   leaks; all 376 compiler tests passed (1 skipped). The focused foundation run
   passed 883 cases (1 skipped), and the owned-policy regression executed directly.
   LLVM 21 assembled its constructor/cleanup IR.
+
+### Scalar equality evidence
+
+Route concrete and parameterized scalar equality through Equal. Extend the private
+bundled representation marker to Bool, Char and RawPointer. Lower a selected pure
+primitive body only after proving its exact argument projections and output
+assignment, sharing that proof with arithmetic. No syntax or codegen schema changes
+are required. Validate generic/qualified calls, literals and NaN; preserve tag and
+C-boundary comparison lowering. Ordered comparison migration remains separate.
+
+### Ordinary overload inventory after scalar equality
+
+The source inventory groups declarations by their folder module and function name.
+It excludes scoped implementation members. This is a migration inventory, not a
+semantic claim that every pair has overlapping applicability.
+
+| Module | Names with multiple ordinary declarations |
+|---|---:|
+| `core/bytes` | 10 |
+| `core/errors` | 1 |
+| `core/io` | 3 |
+| `core/libc` | 1 |
+| `core/lists` | 12 |
+| `core/maps` | 13 |
+| `core/memory` | 2 |
+| `core/numbers` | 3 |
+| `core/strings` | 7 |
+| `core/system` | 6 |
+| `core/system/file_system` | 10 |
+| `core/testing` | 4 |
+| `core/time` | 2 |
+| `more/math/linear_algebra` | 6 |
+| `more/python` | 9 |
+| `more/semver` | 1 |
+
+Prioritize the four linear-algebra `add` declarations using existing Add evidence,
+then the foundational IO formatting/writing and collection view families. Preserve
+static allocator participants and explicit references. Private numeric families
+(`integer_limits`, `_float_encoding`, `_float_replace_bits`) should use one generic
+function or a scoped representation contract. Renaming unrelated operations is
+appropriate when they do not represent one shared protocol. Optional Python APIs
+need a separate migration without introducing a mandatory runtime dependency.
+
+Do not reject every duplicate ordinary name until these callers and declarations
+have been migrated; the old ordinary overload selector remains pending removal.
+
+Scalar equality validation: 1,899 program cases passed (11 skipped), and 374
+internal tests passed (1 skipped), with no failures or leaks. The emitted LLVM
+retains ordered float equality and the executable NaN regression passes.

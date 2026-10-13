@@ -950,7 +950,7 @@ pub const Resolver = struct {
         const bool_ty = try self.builtin(.Bool);
         const target = globalizer.globalNode(o, value.node);
         const directly_comparable = self.isDirectComparison(value.operator, left_ty, right_ty);
-        if (directly_comparable) {
+        if (directly_comparable and ((value.operator != .equal and value.operator != .not_equal) or self.isForeignEqualityRepresentation(left_ty, right_ty))) {
             self.graph.nodes.items[@intFromEnum(target)] = .{
                 .source = self.graph.nodes.items[@intFromEnum(left)].source,
                 .ty = bool_ty,
@@ -2067,12 +2067,16 @@ pub const Resolver = struct {
                     (types.equal(self.graph, left, right) and c_abi.isFunctionPointer(self.graph, left))));
     }
 
-    fn isBuiltinComparable(self: *Resolver, a: global_sg.GlobalTypeId, b: global_sg.GlobalTypeId) bool {
+    pub fn isBuiltinComparable(self: *Resolver, a: global_sg.GlobalTypeId, b: global_sg.GlobalTypeId) bool {
         if (!types.equal(self.graph, a, b)) return false;
         return switch (self.graph.types.items[@intFromEnum(a)]) {
             .builtin => |value| value != .Void and value != .Type and value != .Any,
             else => false,
         };
+    }
+
+    pub fn isForeignEqualityRepresentation(self: *const Resolver, left: global_sg.GlobalTypeId, right: global_sg.GlobalTypeId) bool {
+        return self.isCEnumPair(left, right) or (types.equal(self.graph, left, right) and c_abi.isFunctionPointer(self.graph, left));
     }
 
     fn isCEnumPair(self: *const Resolver, a: global_sg.GlobalTypeId, b: global_sg.GlobalTypeId) bool {

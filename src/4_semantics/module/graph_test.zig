@@ -1081,11 +1081,18 @@ test "generic implementation selection binds associated results and operation bo
     defer tree.deinit(allocator);
     var module = try @import("semantizer.zig").build(allocator, "generic", &.{.{ .path = "generic/main.rg", .tree = &tree, .source = source }});
     defer module.graph.deinit(allocator);
-    var result = try @import("../global/semantizer.zig").semantize(allocator, &.{module.graph});
+    var arithmetic_core = try buildArithmeticTestCore(allocator);
+    defer arithmetic_core.graph.deinit(allocator);
+    var result = try @import("../global/semantizer.zig").semantize(allocator, &.{ module.graph, arithmetic_core.graph });
     defer result.graph.deinit(allocator);
     try @import("../global/verify.zig").verifyGlobal(&result.graph);
-    try std.testing.expectEqual(@as(usize, 2), result.graph.contract_conformances.items.len);
+    var subject_count: usize = 0;
     for (result.graph.contract_conformances.items) |conformance| {
+        if (@intFromEnum(result.graph.moduleForDeclaration(conformance.declaration).?) == 0) subject_count += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 2), subject_count);
+    for (result.graph.contract_conformances.items) |conformance| {
+        if (@intFromEnum(result.graph.moduleForDeclaration(conformance.declaration).?) != 0) continue;
         try std.testing.expectEqual(@as(u32, 1), conformance.implementation_arguments.len);
         try std.testing.expectEqual(@as(u32, 1), conformance.operations.len);
     }
@@ -1105,11 +1112,18 @@ test "repeated participant specificity is independent of declaration order" {
         defer tree.deinit(allocator);
         var module = try @import("semantizer.zig").build(allocator, "specificity", &.{.{ .path = "specificity/main.rg", .tree = &tree, .source = source }});
         defer module.graph.deinit(allocator);
-        var result = try @import("../global/semantizer.zig").semantize(allocator, &.{module.graph});
+        var arithmetic_core = try buildArithmeticTestCore(allocator);
+        defer arithmetic_core.graph.deinit(allocator);
+        var result = try @import("../global/semantizer.zig").semantize(allocator, &.{ module.graph, arithmetic_core.graph });
         defer result.graph.deinit(allocator);
-        try std.testing.expectEqual(@as(usize, 2), result.graph.contract_conformances.items.len);
+        var subject_count: usize = 0;
+        for (result.graph.contract_conformances.items) |conformance| {
+            if (@intFromEnum(result.graph.moduleForDeclaration(conformance.declaration).?) == 0) subject_count += 1;
+        }
+        try std.testing.expectEqual(@as(usize, 2), subject_count);
         var specialized: usize = 0;
         for (result.graph.contract_conformances.items) |conformance| {
+            if (@intFromEnum(result.graph.moduleForDeclaration(conformance.declaration).?) != 0) continue;
             const arguments = result.graph.generic_arguments.items[conformance.participants.start..][0..conformance.participants.len];
             if (@import("../global/types.zig").equal(&result.graph, arguments[0].value.type, arguments[1].value.type)) {
                 try std.testing.expectEqual(@as(u32, 1), conformance.implementation_arguments.len);
@@ -1135,10 +1149,17 @@ test "nested reference array specificity selects the element parameter" {
         defer tree.deinit(allocator);
         var module = try @import("semantizer.zig").build(allocator, "nested", &.{.{ .path = "nested/main.rg", .tree = &tree, .source = source }});
         defer module.graph.deinit(allocator);
-        var result = try @import("../global/semantizer.zig").semantize(allocator, &.{module.graph});
+        var arithmetic_core = try buildArithmeticTestCore(allocator);
+        defer arithmetic_core.graph.deinit(allocator);
+        var result = try @import("../global/semantizer.zig").semantize(allocator, &.{ module.graph, arithmetic_core.graph });
         defer result.graph.deinit(allocator);
-        try std.testing.expectEqual(@as(usize, 1), result.graph.contract_conformances.items.len);
-        const conformance = result.graph.contract_conformances.items[0];
+        var subject: ?@TypeOf(result.graph.contract_conformances.items[0]) = null;
+        for (result.graph.contract_conformances.items) |conformance| {
+            if (@intFromEnum(result.graph.moduleForDeclaration(conformance.declaration).?) != 0) continue;
+            try std.testing.expect(subject == null);
+            subject = conformance;
+        }
+        const conformance = subject.?;
         const element = result.graph.generic_arguments.items[conformance.implementation_arguments.start].value.type;
         const ty = result.graph.types.items[@intFromEnum(element)];
         try std.testing.expect(ty == .builtin);
