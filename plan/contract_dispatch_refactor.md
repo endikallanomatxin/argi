@@ -438,3 +438,16 @@ text, contracts, system, official libraries, codecs, logging and semver. The ful
 internal suite passed 374 tests (1 skipped) during the preceding full run, which
 was interrupted before program completion. The affected-category rerun completed
 without failures or leaks. Owned-result execution and selected LLVM were checked.
+
+### Fixed array view evidence
+
+Replace the mutable/readonly ordinary view overloads with one ViewOf(Source)
+entry. Source includes reference mutability; associated Result preserves the
+corresponding view representation. Existing checked array_view algorithms retain
+storage provenance. No syntax or codegen changes. Validate generic calls, zero
+length arrays, mutable writes and negative borrowed-view escapes. The remaining
+array_view/array_view_ro construction families remain pending.
+
+Validation: 490 collection, contract, IO and official-library program cases
+passed with no failures or leaks. Generic mutability selection, empty arrays and
+local-storage escape rejection pass; emitted LLVM and executable were checked.

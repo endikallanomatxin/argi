@@ -337,3 +337,16 @@ logical front-to-back order, including wrapped storage. Iterators borrow the
 owner and its shape generation; insertion, extraction, growth, and cleanup
 invalidate them. Returned references retain the same shape dependency. Calling
 `next` without `has_next` is a contract violation and aborts.
+
+## Fixed-array view evidence
+
+The unique ordinary `view(.array)` function selects `ViewOf#(Source)` evidence.
+Source is the complete reference type, including mutability. For `$&[N]T`,
+Result is ArrayView(T); for `&[N]T`, Result is ArrayViewRO(T). Result does not
+participate in selection. Generic callers can require ViewOf(Source) and retain
+the associated result projection until specialization.
+
+Both conformances reuse the checked fixed-array view algorithms, preserve backing
+storage dependencies and return independent empty views for zero-size arrays.
+A returned nonempty view cannot outlive its backing array. This replaces the two
+ordinary view overloads; array_view and array_view_ro families remain pending.

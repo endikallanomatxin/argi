@@ -12889,3 +12889,11 @@ test "feature_tests/contracts/285_write_owned_value_result" {
     try expectSuccessfulBuild("tests/feature_tests/contracts/285_write_owned_value_result");
     try runExpect("tests/feature_tests/contracts/285_write_owned_value_result", 0);
 }
+
+test "feature_tests/contracts/286_view_reference_evidence" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/286_view_reference_evidence");
+    try runExpect("tests/feature_tests/contracts/286_view_reference_evidence", 0);
+}
+test "feature_tests/contracts/287X_view_reference_escape" {
+    try buildExpectFail("tests/feature_tests/contracts/287X_view_reference_escape", "local");
+}
