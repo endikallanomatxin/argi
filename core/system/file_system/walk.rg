@@ -75,12 +75,12 @@ implement Deinit#(DirectoryWalker) (
 )
 
 -- EOF is sticky. Errors are terminal and preserve all owners for cleanup.
-next(
+_next_directory_walker#(.Provider: Type: Allocator#(Provider)) := (
         .self      : $&DirectoryWalker,
-        .allocator : $&Allocator        = reach allocator
+        .allocator : $&Provider        = reach allocator
     ) -> (
         .result : Errable#(?WalkEntry, _FilesystemReasons)
-    ) := {
+    ) {
     assume allocator
 
     if self&._ended {

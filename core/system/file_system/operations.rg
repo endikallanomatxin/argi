@@ -208,12 +208,12 @@ implement Init#(
     }
 )
 
-next(
+_next_directory#(.Provider: Type: Allocator#(Provider)) := (
         .self      : $&Directory,
-        .allocator : $&Allocator  = reach allocator
+        .allocator : $&Provider  = reach allocator
     ) -> (
         .result : Errable#(Nullable#(.t: DirectoryEntry), _FilesystemReasons)
-    ) := {
+    ) {
     assume ffi := self&._filesystem&._ffi
     assume allocator
 

@@ -12955,3 +12955,8 @@ test "feature_tests/contracts/300_ordinary_choice_argument_context" {
 test "feature_tests/contracts/301X_generic_choice_payload_out_of_range" {
     try buildExpectFailWithoutNoise("tests/feature_tests/contracts/301X_generic_choice_payload_out_of_range", "integer literal 256 does not fit in 'UInt8'", "failed without a diagnostic");
 }
+
+test "feature_tests/contracts/302_directory_enumeration_evidence" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/302_directory_enumeration_evidence");
+    try runExpect("tests/feature_tests/contracts/302_directory_enumeration_evidence", 0);
+}

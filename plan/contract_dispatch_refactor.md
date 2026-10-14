@@ -347,7 +347,7 @@ semantic claim that every pair has overlapping applicability.
 | `core/maps` | 8 |
 | `core/memory` | 0 |
 | `core/system` | 1 |
-| `core/system/file_system` | 5 |
+| `core/system/file_system` | 4 |
 | `more/math/linear_algebra` | 5 |
 | `more/semver` | 0 |
 
@@ -750,3 +750,24 @@ passed 17 cases without skips. The complete internal suite passed 375 tests
 calls for temporary C-string preparation. Nineteen repeated ordinary names
 remain; global overload ranking and legacy Abstract compatibility are not yet
 removed.
+
+
+### Directory enumeration migration
+
+Replace the ordinary next overloads for Directory and DirectoryWalker with
+DirectoryEnumeration#(State, Provider). Associate Item and retain filesystem
+errors and optional end-of-stream results. Reuse the native algorithms as unique
+generic aliases, preserving reached allocator selection, native name copying,
+walker frame cleanup and depth limits. No syntax or codegen changes are planned.
+The remaining ordinary overload inventory contains eighteen names.
+
+DirectoryEnumeration associates Result as well as Item to preserve the existing
+nominal Nullable result for Directory and structural optional result for the
+walker. The generic regression projects both elements, exercises explicit and
+reached providers, copies an entry name, checks allocation rejection with a
+concrete RefusingAllocator, and confirms sticky EOF for a depth-zero walker.
+Final validation passed 308 contract/directory/word-count program cases, without
+skips, failures, leaks or error logs. Emitted LLVM specializes enumeration for
+PageAllocator and RefusingAllocator and selects the walker operation statically.
+No compiler code was changed in this batch. Global ordinary ranking and legacy
+Abstract compatibility remain pending removal.
