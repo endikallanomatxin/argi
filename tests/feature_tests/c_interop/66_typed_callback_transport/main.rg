@@ -15,7 +15,7 @@ _difference(.left: CInt, .right: CInt) -> (.result: CInt) : CFunction := {
     result = left - right
 }
 
-_difference(.left: CFloat, .right: CFloat) -> (.result: CFloat) : CFunction := {
+_float_sum(.left: CFloat, .right: CFloat) -> (.result: CFloat) : CFunction := {
     result = left + right
 }
 

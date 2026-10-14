@@ -1,5 +1,5 @@
-Releaser: Abstract = (
-    release(.self: &Self, .resource: $&Resource, .consume: Bool) -> (
+Releaser#(.Participant: Type): Contract = (
+    .release: (.self: &Participant, .resource: $&Resource, .consume: Bool) -> (
         .count  : Int32,
         .result : ?Large
     ) where {
@@ -14,7 +14,7 @@ Large: Type = (.values: [128]Int32)
 
 Manager: Type = (.unused: Int32)
 
-Manager implements Releaser
+implement Releaser#(Manager) (.release = _impl_release_Manager)
 
 implement Deinit#(Resource) (
     .deinit = (.self: $&Resource) -> () {
@@ -24,7 +24,7 @@ implement Deinit#(Resource) (
 
 drops :: Int32 = 0
 
-release(.self: &Manager, .resource: $&Resource, .consume: Bool) -> (.count: Int32, .result: ?Large) := {
+_impl_release_Manager := (.self: &Manager, .resource: $&Resource, .consume: Bool) -> (.count: Int32, .result: ?Large)  {
     count = 42
     if consume {
         deinit(resource)

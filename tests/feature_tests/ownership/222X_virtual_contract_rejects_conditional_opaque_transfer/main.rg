@@ -1,8 +1,8 @@
 unsafe_allocation := import ("../../_support/unsafe_allocation")
 
-OpaqueStorer: Abstract = (
-    store(
-        .self    : $&Self,
+OpaqueStorer#(.Participant: Type): Contract = (
+    .store: (
+        .self    : $&Participant,
         .storage : $&Container,
         .slot    : $&Borrowing,
         .source  : $&Borrowing,
@@ -17,8 +17,8 @@ Keeping: Type = (.marker: UInt8)
 
 Consuming: Type = (.marker: UInt8)
 
-Keeping implements OpaqueStorer
-Consuming implements OpaqueStorer
+implement OpaqueStorer#(Keeping) (.store = _impl_store_Keeping)
+implement OpaqueStorer#(Consuming) (.store = _impl_store_Consuming)
 
 implement Deinit#(Borrowing) (
     .deinit = (.self: $&Borrowing) -> () {
@@ -26,19 +26,19 @@ implement Deinit#(Borrowing) (
     }
 )
 
-store(
+_impl_store_Keeping := (
         .self    : $&Keeping,
         .storage : $&Container,
         .slot    : $&Borrowing,
         .source  : $&Borrowing,
-    ) -> () := {}
+    ) -> ()  {}
 
-store(
+_impl_store_Consuming := (
         .self    : $&Consuming,
         .storage : $&Container,
         .slot    : $&Borrowing,
         .source  : $&Borrowing,
-    ) -> () := {
+    ) -> ()  {
     trusted_opaque_move_in#(.t: Borrowing, .storage_type: Container)(
         .storage     = storage
         .destination = slot

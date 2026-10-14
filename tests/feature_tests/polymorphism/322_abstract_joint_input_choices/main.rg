@@ -2,8 +2,8 @@ Selection: Type = (..left, ..right)
 
 Permission: Type = (..allow, ..deny)
 
-Selector: Abstract = (
-    choose(.self: &Self, .mode: Selection, .permission: Permission, .left: &Int32, .right: &Int32) -> (
+Selector#(.Participant: Type): Contract = (
+    .choose: (.self: &Participant, .mode: Selection, .permission: Permission, .left: &Int32, .right: &Int32) -> (
         .result : &Int32
     ) where {
         on mode ..left {
@@ -16,9 +16,9 @@ Selector: Abstract = (
 
 Manager: Type = (.unused: Int32)
 
-Manager implements Selector
+implement Selector#(Manager) (.choose = _impl_choose_Manager)
 
-choose(
+_impl_choose_Manager := (
         .self       : &Manager,
         .mode       : Selection,
         .permission : Permission,
@@ -26,7 +26,7 @@ choose(
         .right      : &Int32
     ) -> (
         .result : &Int32
-    ) := {
+    )  {
     match mode {
         ..left {
             match permission {

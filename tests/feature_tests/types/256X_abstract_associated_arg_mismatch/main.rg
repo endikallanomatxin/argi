@@ -1,7 +1,7 @@
-Capability#(.item: Type) : Abstract = ()
+Capability#(.Participant: Type): Contract = (.item: Type)
 Thing : Type = (.value: Int32)
 
-Thing implements Capability#(.item: Int32)
+implement Capability#(Thing) (.item: Type = Int32)
 
 require_uint#(.t: Type: Capability#(.item: UInt32))(.value: &t) -> () := {}
 

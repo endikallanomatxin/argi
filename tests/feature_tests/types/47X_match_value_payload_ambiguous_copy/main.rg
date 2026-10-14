@@ -18,11 +18,11 @@ implement Deinit#(Payload) (
 )
 
 
-copy(.self: &Payload, .tag: Int32 = 1) -> (.value: Payload) := {
+_ordinary_copy_0(.self: &Payload, .tag: Int32 = 1) -> (.value: Payload) := {
     value = Payload(.value = self&.value)
 }
 
-copy(.self: &Payload, .flag: Bool = true) -> (.value: Payload) := {
+_ordinary_copy_1(.self: &Payload, .flag: Bool = true) -> (.value: Payload) := {
     value = Payload(.value = self&.value)
 }
 

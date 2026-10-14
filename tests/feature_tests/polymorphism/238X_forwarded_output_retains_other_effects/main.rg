@@ -1,5 +1,5 @@
-Editor: Abstract = (
-    edit(.self: &Self, .target: $&Int32, .other: $&Int32, .change: Bool, .change_other: Bool) -> (
+Editor#(.Participant: Type): Contract = (
+    .edit: (.self: &Participant, .target: $&Int32, .other: $&Int32, .change: Bool, .change_other: Bool) -> (
         .auxiliary : ?Int32,
         .result    : ?Int32
     ) where {
@@ -12,9 +12,9 @@ Editor: Abstract = (
 
 Cell: Type = (.unused: Int32)
 
-Cell implements Editor
+implement Editor#(Cell) (.edit = _impl_edit_Cell)
 
-edit(
+_impl_edit_Cell := (
         .self         : &Cell,
         .target       : $&Int32,
         .other        : $&Int32,
@@ -23,7 +23,7 @@ edit(
     ) -> (
         .auxiliary : ?Int32,
         .result    : ?Int32
-    ) := {
+    )  {
     if change_other {
         other&= 55
         auxiliary = ..some(.value = 55)

@@ -897,3 +897,24 @@ Focused migration cases passed. Broad contract, polymorphism and module validati
 passed 678 program cases without skips, failures, leaks or error logs. The full
 internal run passed 375 tests with one skip. Legacy compatibility removal remains
 pending the remaining complex fixtures and embedded compiler tests.
+
+
+### Multiline safety and remaining ordinary fixture families
+
+Migrate 38 multiline unary fixtures to explicit participants and bound operation
+aliases while retaining conditional consumption, relocation and output guards.
+Shared concrete/generic unary associated evidence now uses one conformance per
+pattern; identical patterns are rejected even when associated bindings agree.
+Contextual choice tests select associated Tag through an input Number participant;
+ambiguity between two operation identities remains independent of specialization.
+
+Migrate association projection cycles/dependencies, matrix dimension evidence and
+array summation families. Ordinary copy helper names are distinct and still grant
+no implicit copy permission. Native callback bodies also retain unique identities.
+Concrete/generic defaulted selection uses conformance specificity, with separate
+identity ambiguity in the negative case.
+
+Validation passed 338 polymorphism/shared-association/virtual ownership cases and
+19 focused projection, dimension, copy, default and native callback cases, without
+skips, failures, leaks or error logs. These are fixture migrations; global ordinary
+ranking and remaining legacy adapters are still pending removal.

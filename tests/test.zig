@@ -4477,14 +4477,7 @@ test "feature_tests/polymorphism/24_abstract_dispatch_beats_regular_generic_with
 }
 
 test "feature_tests/polymorphism/25X_abstract_overloads_with_defaults_ambiguous" {
-    try buildExpectFailExact("tests/feature_tests/polymorphism/25X_abstract_overloads_with_defaults_ambiguous",
-        \\tests/feature_tests/polymorphism/25X_abstract_overloads_with_defaults_ambiguous/main.rg:14:19: error: ambiguous call to 'pick' for arguments (.value: Int32). Possible overloads:
-        \\  - pick (.value: A, .left: Int32) -> (.status_code: Int32)
-        \\  - pick (.value: A, .right: Int32) -> (.status_code: Int32)
-        \\      status_code = pick(.value = 7).status_code
-        \\                    ^
-        \\
-    );
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/25X_abstract_overloads_with_defaults_ambiguous", "multiple applicable operation identities", "panic");
 }
 
 test "feature_tests/polymorphism/26_virtual_abstract_dispatch" {
@@ -4811,7 +4804,7 @@ test "feature_tests/types/254_choice_union" {
 test "feature_tests/types/255X_conflicting_abstract_associated_args" {
     try buildExpectFail(
         "tests/feature_tests/types/255X_conflicting_abstract_associated_args",
-        "conflicting implementations of abstract 'Capability' for type 'Thing' produce different associated arguments",
+        "ambiguous conformances for the same participant tuple",
     );
 }
 
@@ -8790,7 +8783,7 @@ test "feature_tests/polymorphism/65_contextual_choice_arguments" {
 }
 
 test "feature_tests/polymorphism/66X_contextual_choice_ambiguous" {
-    try buildExpectFail("tests/feature_tests/polymorphism/66X_contextual_choice_ambiguous", "ambiguous call to 'select'");
+    try buildExpectFail("tests/feature_tests/polymorphism/66X_contextual_choice_ambiguous", "multiple applicable operation identities");
 }
 
 test "feature_tests/basics/68_contextual_array_stores" {
@@ -12025,7 +12018,7 @@ test "feature_tests/contracts/108X_shared_generic_associated_mismatch" {
 }
 
 test "feature_tests/contracts/109X_shared_direct_associated_conflict" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/109X_shared_direct_associated_conflict", "conflicting", "panic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/109X_shared_direct_associated_conflict", "ambiguous conformances for the same participant tuple", "panic");
 }
 
 test "program test shard assignment preserves fixture isolation" {

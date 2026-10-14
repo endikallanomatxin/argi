@@ -1,7 +1,7 @@
 Product#(.Left: Type, .Right: Type): Contract = (
     .Result: Type
 
-    multiply(.left: &Left, .right: &Right) -> (.value: Result) where {}
+    .multiply: (.left: &Left, .right: &Right) -> (.value: Result) where {}
 )
 
 Row: Type = (.value: Int32)
@@ -10,13 +10,13 @@ Column: Type = (.value: Int32)
 Other#(.Left: Type, .Right: Type): Contract = (
     .Result: Type
 
-    other(.left: &Left, .right: &Right) -> (.value: Result) where {}
+    .other: (.left: &Left, .right: &Right) -> (.value: Result) where {}
 )
-satisfies Product#(Row, Column) = (.Result: Other#(Row, Column).Result)
-satisfies Other#(Row, Column) = (.Result: Int32)
-other(.left: &Row, .right: &Column) -> (.value: Int32) := { value = 0 }
+implement Product#(Row, Column) (.Result: Type = Other#(Row, Column).Result, .multiply = _multiply)
+implement Other#(Row, Column) (.Result: Type = Int32, .other = _other)
+_other(.left: &Row, .right: &Column) -> (.value: Int32) := { value = 0 }
 
-multiply(.left: &Row, .right: &Column) -> (.value: Product#(Row, Column).Result) := {
+_multiply(.left: &Row, .right: &Column) -> (.value: Product#(Row, Column).Result) := {
     value = left&.value * right&.value
 }
 

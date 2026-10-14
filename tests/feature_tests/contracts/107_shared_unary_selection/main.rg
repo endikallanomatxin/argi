@@ -1,17 +1,16 @@
-Readable: Contract = (
+Readable#(.Participant: Type): Contract = (
     .Other: Type
     .item: Type
     .Count: Int
-    read(.other: &Other, .source: &Self) -> (.value: &item)
+    .read: (.other: &Other, .source: &Participant) -> (.value: &item)
         where depends_on(value, source)
 )
 Direct: Type = (.value: Int32)
 Cell#(.item: Type): Type = (.value: item)
-Direct satisfies Readable#(.Count = 2, .item: Int32, .Other: Direct)
-Direct satisfies Readable#(.Other: Direct, .item: Int32, .Count = 2)
-Cell#(.item: Type) satisfies Readable#(.item: item, .Other: Cell#(item), .Count = 2)
-read(.other: &Direct, .source: &Direct) -> (.value: &Int32) := { value = &source&.value }
-read#(.item: Type)(.other: &Cell#(item), .source: &Cell#(item)) -> (.value: &item) := { value = &source&.value }
+implement Readable#(Direct) (.Count: Int = 2, .item: Type = Int32, .Other: Type = Direct, .read = _direct_read)
+implement#(.item: Type) Readable#(Cell#(item)) (.item: Type = item, .Other: Type = Cell#(item), .Count: Int = 2, .read = _cell_read)
+_direct_read(.other: &Direct, .source: &Direct) -> (.value: &Int32) := { value = &source&.value }
+_cell_read#(.item: Type)(.other: &Cell#(item), .source: &Cell#(item)) -> (.value: &item) := { value = &source&.value }
 consume#(.item: Type, .n: Int, .T: Type: Readable#(.Other: T, .Count = n, .item: item))(
     .other: &T, .source: &T
 ) -> (.value: &item) := { value = read(other, source).value }

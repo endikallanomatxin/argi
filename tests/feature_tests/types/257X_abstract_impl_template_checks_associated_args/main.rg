@@ -1,11 +1,11 @@
-Capability#(.item: Type) : Abstract = ()
-Other : Abstract = ()
+Capability#(.Participant: Type): Contract = (.item: Type)
+Other#(.Participant: Type): Contract = ()
 
 Thing : Type = (.value: Int32)
-Thing implements Capability#(.item: Int32)
+implement Capability#(Thing) (.item: Type = Int32)
 
 Wrapper#(.t: Type) : Type = (.marker: Int32)
-Wrapper#(.t: Type: Capability#(.item: UInt32)) implements Other
+implement#(.t: Type: Capability#(.item: UInt32)) Other#(Wrapper#(.t: t)) ()
 
 require_other#(.t: Type: Other)(.value: &t) -> () := {}
 
