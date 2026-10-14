@@ -347,7 +347,7 @@ semantic claim that every pair has overlapping applicability.
 | `core/maps` | 8 |
 | `core/memory` | 0 |
 | `core/system` | 0 |
-| `core/system/file_system` | 4 |
+| `core/system/file_system` | 0 |
 | `more/math/linear_algebra` | 0 |
 | `more/semver` | 0 |
 
@@ -807,3 +807,21 @@ more and modules groups. The full internal run passed 374 tests and skipped one,
 with the cache-reuse test failing while core source edits were in progress. Its
 focused stable-workspace rerun passed both selected internal tests. The four
 filesystem consumer cases also passed with the new capability prototypes.
+
+
+### Remaining filesystem operations
+
+Move exists/remove/rename/write_file into path capability modules, reusing unique
+algorithms. Borrowed terminated paths select provider-free capabilities; view
+paths select allocating counterparts with a static Provider and reached defaults.
+Keep the existing call syntax, output labels, errors and temporary ownership.
+Remove redundant allocator arguments from borrowed Path operations. The four
+original overload families are gone; eight repeated ordinary names remain, all
+in core/maps. Regression coverage exercises generic borrowed paths, String/Path
+projection, reached provider selection and allocation failure before side effects.
+
+Filesystem validation passed seven selected path/stream cases without skips,
+failures or leaks. View rename/write adapters now use ordinary error propagation
+instead of assigning incompatible Errable reason sets; this preserves tracing
+and promotes failures through the established conversion. Borrowed path variants
+continue to allocate no temporary text.
