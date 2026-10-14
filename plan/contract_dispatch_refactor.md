@@ -877,3 +877,23 @@ with the interface's associated bindings, not just its erased participant. Gener
 associated and storage-virtual regressions pass. Remaining complex legacy forms
 and ordinary dispatch fixtures are separate pending migration work; compiler
 compatibility adapters are not yet removed.
+
+
+### Imported identities and non-leading unary receivers
+
+Migrate imported capability fixtures, concrete/generic selection, nominal policy
+lookup, composition and tuple association order to scoped operation identities.
+Missing operation and repeated conformance negatives now exercise explicit
+implementation validation rather than global ordinary lookup.
+
+A generic unary constraint with named associated bindings describes an interface,
+not a participant tuple. Infer its participant from the requirement's actual
+receiver, select its evidence, and check the requested associated bindings. Apply
+the same binding check to virtual receivers. Preserve non-leading receiver safety
+proofs when another argument has the same concrete type. Static and virtual
+negative regressions reject contradictory interface bindings.
+
+Focused migration cases passed. Broad contract, polymorphism and module validation
+passed 678 program cases without skips, failures, leaks or error logs. The full
+internal run passed 375 tests with one skip. Legacy compatibility removal remains
+pending the remaining complex fixtures and embedded compiler tests.

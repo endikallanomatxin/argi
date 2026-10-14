@@ -1,17 +1,14 @@
-Base: Abstract = (
-    read(.source: &Self) -> (.value: Int32) where {}
+Base#(.Value: Type): Contract = (
+    .read: (.source: &Value) -> (.value: Int32)
 )
-
-Combined: Contract = (Base)
-
+Combined#(.Value: Type): Contract = (Base#(Value))
 Cell: Type = (.value: Int32)
-
-Cell satisfies Combined
-
-read(.source: &Cell) -> (.value: Int32) := { value = source&.value }
-
-consume(.source: Combined) -> (.value: Int32) := { value = read(&source) }
-
-main() -> (.status_code: Int32 = 0) := {
+_cell_read := (.source: &Cell) -> (.value: Int32) { value = source&.value }
+implement Base#(Cell) (.read = _cell_read)
+implement Combined#(Cell) ()
+consume#(.Value: Type: Combined) := (.source: Value) -> (.value: Int32) {
+    value = read(&source)
+}
+main := () -> (.status_code: Int32 = 0) {
     if consume(Cell(42)).value != 42 { abort }
 }

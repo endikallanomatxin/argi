@@ -1,5 +1,5 @@
-Backend : Abstract = (
-    perform(.self: &Self) -> (.value: Int32)
+Backend#(.Participant: Type): Contract = (
+    .perform: (.self: &Participant) -> (.value: Int32)
 )
 
 BackendA : Type = (.value: Int32)
@@ -8,16 +8,16 @@ BackendB : Type = (.value: Int32, .extra: Int32)
 implement ImplicitlyCopyable#(BackendA) ()
 implement ImplicitlyCopyable#(BackendB) ()
 
-perform(.self: &BackendA) -> (.value: Int32) := {
+_impl_perform_BackendA := (.self: &BackendA) -> (.value: Int32)  {
     value = self&.value + 10
 }
 
-perform(.self: &BackendB) -> (.value: Int32) := {
+_impl_perform_BackendB := (.self: &BackendB) -> (.value: Int32)  {
     value = self&.value + self&.extra + 20
 }
 
-BackendA implements Backend
-BackendB implements Backend
+implement Backend#(BackendA) (.perform = _impl_perform_BackendA)
+implement Backend#(BackendB) (.perform = _impl_perform_BackendB)
 
 Wrapper #(.backend_type: Type: Backend) : Type = (
     .backend: $&backend_type

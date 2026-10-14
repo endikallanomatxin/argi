@@ -1061,7 +1061,7 @@ pub const Resolver = struct {
         reach: reach_context.Context,
     ) !?global_sg.Node {
         if (reference.module_path != null or reference.generic_arguments != null) return null;
-        return self.makeVirtualOperationCall(self.modules[module_index].text(reference.name), null, input, source, reach);
+        return self.makeVirtualOperationCall(self.modules[module_index].text(reference.name), null, input, source, reach, null);
     }
 
     fn makeVirtualOperationCall(
@@ -1071,6 +1071,7 @@ pub const Resolver = struct {
         input: global_sg.GlobalNodeId,
         source: primitives.SourceRef,
         reach: reach_context.Context,
+        expected_associations: ?primitives.Range(global_sg.GlobalGenericArgId),
     ) !?global_sg.Node {
         const literal = switch (self.graph.nodes.items[@intFromEnum(input)].content) {
             .struct_value_literal => |item| item,
@@ -1089,6 +1090,19 @@ pub const Resolver = struct {
             const abstract_use = self.abstractUse(abstract_ty) orelse continue;
             if (contract) |declaration| if (declaration != abstract_use.declaration) continue;
             const located = self.findAbstractDefinition(abstract_use.declaration) orelse continue;
+            if (expected_associations) |expected| {
+                var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, self.modules[located.module_index].semantic.parameterized_storage.comptime_parameters.items.len);
+                defer bindings.deinit(self.allocator);
+                if (!self.bindAbstractUseArguments(abstract_use, located, &bindings) or !try self.associatedArgumentsMatch(located, &bindings, expected)) {
+                    self.participant_conformance_failure = .{
+                        .source = source,
+                        .contract_name = self.modules[located.module_index].text(self.modules[located.module_index].declarations.items[@intFromEnum(located.definition.declaration)].name),
+                        .operation = method_name,
+                        .reason = "virtual receiver has incompatible associated elements for the operation interface",
+                    };
+                    return null;
+                }
+            }
             if (!try self.validateVirtualContract(abstract_ty, located, source, null)) return null;
             const parameterized_forms_storage = &self.modules[located.module_index].semantic.parameterized_storage;
             for (parameterized_forms_storage.abstract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len], 0..) |requirement, method_index| {
@@ -2331,18 +2345,35 @@ pub const Resolver = struct {
             self.participant_conformance_failure = failure;
             return null;
         }
-        if (located.definition.participants.len == 1 and use.arguments.len == 0) {
-            if (try self.makeVirtualOperationCall(name, use.declaration, input, source, context)) |node| return node;
+        const storage = &self.modules[located.module_index].semantic.parameterized_storage;
+        const interface_arguments = blk: {
+            if (located.definition.participants.len != 1) break :blk false;
+            if (use.arguments.len == 0) break :blk true;
+            for (self.graph.generic_arguments.items[use.arguments.start..][0..use.arguments.len]) |argument| {
+                const label = self.graph.text(argument.name);
+                if (label.len == 0) break :blk false;
+                for (storage.comptime_parameters.items[located.definition.parameters.start..][0..located.definition.parameters.len]) |parameter| {
+                    if (std.mem.eql(u8, label, self.modules[located.module_index].text(parameter.name))) break;
+                } else break :blk false;
+            }
+            break :blk true;
+        };
+        if (interface_arguments and use.arguments.len == 0) {
+            if (try self.makeVirtualOperationCall(name, use.declaration, input, source, context, if (use.arguments.len == 0) null else use.arguments)) |node| return node;
             const participant = try self.inferUnaryOperationParticipant(located, name, input) orelse return null;
             const start: u32 = @intCast(self.graph.generic_arguments.items.len);
             try self.graph.generic_arguments.append(self.allocator, .{ .name = .{ .start = 0, .len = 0 }, .value = .{ .type = participant } });
             const bound = try self.generics.internType(.{ .generic = .{ .base = use.declaration, .arguments = .{ .start = start, .len = 1 } } });
             return self.makeScopedOperationCall(module_index, bound, name, input, context, source);
         }
-        const storage = &self.modules[located.module_index].semantic.parameterized_storage;
         var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
         defer bindings.deinit(self.allocator);
-        self.generics.bindGlobalArguments(located.module_index, located.definition.participants, use.arguments, &bindings) catch |err| {
+        if (interface_arguments) {
+            // Associated bindings constrain the selected evidence; they do not
+            // select the participant. Recover it from the declared receiver.
+            if (try self.makeVirtualOperationCall(name, use.declaration, input, source, context, if (use.arguments.len == 0) null else use.arguments)) |node| return node;
+            bindings.types[located.definition.participants.start] = try self.inferUnaryOperationParticipant(located, name, input) orelse return null;
+        } else self.generics.bindGlobalArguments(located.module_index, located.definition.participants, use.arguments, &bindings) catch |err| {
             failure.reason = conformanceArgumentFailure(err) orelse return err;
             self.participant_conformance_failure = failure;
             return null;
@@ -2358,6 +2389,11 @@ pub const Resolver = struct {
             self.participant_conformance_failure = failure;
             return null;
         };
+        if (interface_arguments and !try self.associatedArgumentsMatch(located, &bindings, use.arguments)) {
+            failure.reason = "selected conformance has incompatible associated elements for the operation interface";
+            self.participant_conformance_failure = failure;
+            return null;
+        }
         const conformance = self.graph.contract_conformances.items[selected.tuple];
         const method_index = for (storage.abstract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len], 0..) |requirement, index| {
             if (std.mem.eql(u8, name, self.modules[located.module_index].text(requirement.name))) break index;

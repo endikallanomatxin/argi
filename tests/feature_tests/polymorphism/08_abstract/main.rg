@@ -1,7 +1,8 @@
+Marker#(.Value: Type): Contract = ()
 -- Abstract composed + function requirement
-Animal : Abstract = (
-    speak(.who: Self) -> (.s: &Char),
-    Addable
+Animal#(.Participant: Type): Contract = (
+    .speak: (.who: Participant) -> (.s: &Char),
+    Marker#(Participant)
 )
 
 Dog : Type = (
@@ -9,12 +10,12 @@ Dog : Type = (
 )
 
 -- Provide the required function implementation for Dog
-speak (.self: Dog) -> (.s: &Char) := {
+_impl_speak_Dog := (.who: Dog) -> (.s: &Char)  {
     s = "Woof"
 }
 
-Dog implements Animal
-Animal defaultsto Dog
+implement Marker#(Dog) ()
+implement Animal#(Dog) (.speak = _impl_speak_Dog)
 
 main () -> (.status_code: Int32) := {
     status_code = 0

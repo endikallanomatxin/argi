@@ -1,16 +1,21 @@
+Kind#(.Value: Type): Contract = (
+    .kind: (.value: &Value) -> (.result: Int32)
+)
 Alpha : Type = (.value: Int32)
 Beta : Type = (.value: Int32)
 
-kind(.value: &Alpha) -> (.result: Int32) := {
+_kind_alpha := (.value: &Alpha) -> (.result: Int32) {
     value
     result = 1
 }
 
-kind(.value: &Beta) -> (.result: Int32) := {
+_kind_beta := (.value: &Beta) -> (.result: Int32) {
     value
     result = 2
 }
 
+implement Kind#(Alpha) (.kind = _kind_alpha)
+implement Kind#(Beta) (.kind = _kind_beta)
 kind_for#(.t: Type)(.value: &t) -> (.result: Int32) := {
     result = kind(.value = value).result
 }

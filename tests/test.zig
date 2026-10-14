@@ -1622,15 +1622,7 @@ test "feature_tests/polymorphism/01_multiple_dispatch" {
 }
 
 test "feature_tests/polymorphism/02X_multiple_dispatch_ambiguous" {
-    try buildExpectFailExact(
-        "tests/feature_tests/polymorphism/02X_multiple_dispatch_ambiguous",
-        \\tests/feature_tests/polymorphism/02X_multiple_dispatch_ambiguous/main.rg:12:19: error: ambiguous call to 'choose2' for arguments (.a: &Int32, .b: &Int32). Possible overloads:
-        \\  - choose2 (.a: &Any, .b: &Int32) -> (.r: Int32)
-        \\  - choose2 (.a: &Int32, .b: &Any) -> (.r: Int32)
-        \\      status_code = choose2(.a = &i, .b = &i).r
-        \\                    ^
-        ++ "\n",
-    );
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/02X_multiple_dispatch_ambiguous", "ambiguous maximal patterns", "failed without a diagnostic");
 }
 
 test "feature_tests/basics/12_named_struct_types" {
@@ -1773,16 +1765,7 @@ test "feature_tests/polymorphism/09X_abstract_missing_requirement" {
 }
 
 test "feature_tests/polymorphism/10X_abstract_wrong_signature" {
-    try buildExpectFailExact("tests/feature_tests/polymorphism/10X_abstract_wrong_signature",
-        \\tests/feature_tests/polymorphism/10X_abstract_wrong_signature/main.rg:9:1: error: type does not implement abstract 'Animal':
-        \\  missing function: speak (.who: Dog)
-        \\  possible overloads:
-        \\  - speak (.who: Dog) -> (.s: Int32)
-        \\      file: tests/feature_tests/polymorphism/10X_abstract_wrong_signature/main.rg:13:1
-        \\  Dog implements Animal
-        \\  ^
-        \\
-    );
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/10X_abstract_wrong_signature", "incompatible associated result", "failed without a diagnostic");
 }
 
 test "feature_tests/polymorphism/11_abstract_instantiation" {
@@ -1807,16 +1790,7 @@ test "feature_tests/polymorphism/15_abstract_self_output" {
 }
 
 test "feature_tests/polymorphism/16X_abstract_self_output_wrong" {
-    try buildExpectFailExact("tests/feature_tests/polymorphism/16X_abstract_self_output_wrong",
-        \\tests/feature_tests/polymorphism/16X_abstract_self_output_wrong/main.rg:13:1: error: type does not implement abstract 'Animal':
-        \\  missing function: clone (.who: Dog)
-        \\  possible overloads:
-        \\  - clone (.who: Dog) -> (.copy: Int32)
-        \\      file: tests/feature_tests/polymorphism/16X_abstract_self_output_wrong/main.rg:9:1
-        \\  Dog implements Animal
-        \\  ^
-        \\
-    );
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/16X_abstract_self_output_wrong", "incompatible associated result", "failed without a diagnostic");
 }
 
 test "feature_tests/polymorphism/17_abstract_function_input_monomorphization" {
@@ -11555,7 +11529,7 @@ test "feature_tests/contracts/03_virtual_associated" {
 }
 
 test "feature_tests/contracts/04X_missing_operation" {
-    try buildExpectFail("tests/feature_tests/contracts/04X_missing_operation", "missing function: read");
+    try buildExpectFail("tests/feature_tests/contracts/04X_missing_operation", "missing implementation operation");
 }
 
 test "feature_tests/contracts/05X_virtual_borrow_escape" {
@@ -11575,7 +11549,7 @@ test "feature_tests/contracts/07_imported_identity" {
 }
 
 test "feature_tests/contracts/08X_ambiguous_operation" {
-    try buildExpectFail("tests/feature_tests/contracts/08X_ambiguous_operation", "ambiguous function: read");
+    try buildExpectFail("tests/feature_tests/contracts/08X_ambiguous_operation", "ambiguous conformances for the same participant tuple");
 }
 
 test "feature_tests/contracts/09X_incompatible_output" {
@@ -13001,4 +12975,12 @@ test "feature_tests/contracts/310X_virtual_scoped_association_mismatch" {
 test "feature_tests/contracts/311_generic_implement_storage_domains" {
     try expectSuccessfulBuild("tests/feature_tests/contracts/311_generic_implement_storage_domains");
     try runExpect("tests/feature_tests/contracts/311_generic_implement_storage_domains", 0);
+}
+
+test "feature_tests/contracts/312X_scoped_static_association_mismatch" {
+    try buildExpectFail("tests/feature_tests/contracts/312X_scoped_static_association_mismatch", "incompatible associated elements for the operation interface");
+}
+
+test "feature_tests/contracts/313X_scoped_virtual_association_mismatch" {
+    try buildExpectFail("tests/feature_tests/contracts/313X_scoped_virtual_association_mismatch", "incompatible associated elements for the operation interface");
 }

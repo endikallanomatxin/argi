@@ -1,5 +1,5 @@
-Animal : Abstract = (
-    clone(.who: Self) -> (.copy: Self)
+Animal#(.Participant: Type): Contract = (
+    .clone: (.who: Participant) -> (.copy: Participant)
 )
 
 Dog : Type = (
@@ -8,12 +8,11 @@ Dog : Type = (
 
 implement ImplicitlyCopyable#(Dog) ()
 
-clone(.who: Dog) -> (.copy: Dog) := {
+_impl_clone_Dog := (.who: Dog) -> (.copy: Dog)  {
     copy = who
 }
 
-Dog implements Animal
-Animal defaultsto Dog
+implement Animal#(Dog) (.clone = _impl_clone_Dog)
 
 main () -> (.status_code: Int32) := {
     status_code = 0
