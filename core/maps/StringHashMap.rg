@@ -110,8 +110,8 @@ string_hash_map_bucket_index(
     index = hash % bucket_count
 }
 
-string_hash_map_prepare_buckets(
-        .allocator : $&Allocator,
+string_hash_map_prepare_buckets#(.AllocatorType: Type: Allocator#(AllocatorType))(
+        .allocator : $&AllocatorType,
         .buckets   : $&DynamicArray#(.t: UIntNative),
         .capacity  : UIntNative,
     ) -> () := {
@@ -179,9 +179,8 @@ implement#(
 )
 
 string_hash_map_rehash#(
-        .value : Type
-    )(
-        .allocator    : $&Allocator,
+        .value : Type, .AllocatorType: Type: Allocator#(AllocatorType))(
+        .allocator    : $&AllocatorType,
         .self         : $&StringHashMap#(.value: value),
         .bucket_count : UIntNative,
     ) -> () := {

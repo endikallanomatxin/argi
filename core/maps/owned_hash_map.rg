@@ -1,6 +1,6 @@
 -- Consume rejected inputs through ordinary lexical cleanup, which also handles
 -- aggregate owners without a nominal destructor.
-_owned_hash_discard#(.t: Type)(.value: t, .allocator: $&Allocator) -> () := {
+_owned_hash_discard#(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType))(.value: t, .allocator: $&AllocatorType) -> () := {
     assume allocator
     discarded ::= ~value
 }
@@ -71,9 +71,9 @@ OwnedHashMap#(.key: Type, .value: Type, .policy: Type: BorrowedHashPolicy#(polic
     ._shape  : _OwnedHashShape
 )
 
-_owned_hash_slots(
+_owned_hash_slots#(.AllocatorType: Type: Allocator#(AllocatorType))(
         .capacity  : UIntNative,
-        .allocator : $&Allocator
+        .allocator : $&AllocatorType
     ) -> (
         .result : Errable#(DynamicArray#(.t: _OwnedHashSlot), (..out_of_memory))
     ) := {

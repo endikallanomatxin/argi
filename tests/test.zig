@@ -1755,13 +1755,7 @@ test "feature_tests/polymorphism/08_abstract" {
 }
 
 test "feature_tests/polymorphism/09X_abstract_missing_requirement" {
-    try buildExpectFailExact("tests/feature_tests/polymorphism/09X_abstract_missing_requirement",
-        \\tests/feature_tests/polymorphism/09X_abstract_missing_requirement/main.rg:9:1: error: type does not implement abstract 'Animal':
-        \\  missing function: speak (.who: Dog)
-        \\  Dog implements Animal
-        \\  ^
-        \\
-    );
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/09X_abstract_missing_requirement", "missing implementation operation", "panic");
 }
 
 test "feature_tests/polymorphism/10X_abstract_wrong_signature" {
@@ -7187,7 +7181,7 @@ test "feature_tests/polymorphism/47X_virtual_missing_receiver" {
 }
 
 test "feature_tests/polymorphism/48X_virtual_associated_parameters" {
-    try buildExpectFail("tests/feature_tests/polymorphism/48X_virtual_associated_parameters", "does not implement the selected abstract");
+    try buildExpectFail("tests/feature_tests/polymorphism/48X_virtual_associated_parameters", "incompatible associated elements for the virtual interface");
 }
 
 test "feature_tests/polymorphism/49_virtual_explicit_peer_handle" {

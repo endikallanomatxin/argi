@@ -61,9 +61,9 @@ implement Init#(Path, (.text : String)) (
     }
 )
 
-path_with_view(
+path_with_view#(.AllocatorType: Type: Allocator#(AllocatorType))(
         .view      : StringView,
-        .allocator : $&Allocator,
+        .allocator : $&AllocatorType,
     ) -> (
         .result : Errable#(Path, (..out_of_memory))
     ) := {
@@ -245,10 +245,10 @@ extension(
     }
 }
 
-join_views(
+join_views#(.AllocatorType: Type: Allocator#(AllocatorType))(
         .left      : &StringView,
         .right     : &StringView,
-        .allocator : $&Allocator,
+        .allocator : $&AllocatorType,
     ) -> (
         .result : Errable#(Path, (..out_of_memory))
     ) := {
@@ -316,10 +316,10 @@ join_views(
     }
 }
 
-join(
+join#(.AllocatorType: Type: Allocator#(AllocatorType))(
         .left      : &Path,
         .right     : &Path,
-        .allocator : $&Allocator,
+        .allocator : $&AllocatorType,
     ) -> (
         .result : Errable#(Path, (..out_of_memory))
     ) := {

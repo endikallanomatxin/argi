@@ -12,40 +12,40 @@ decimal_digit_byte_i32(.digit: Int32) -> (.byte: UInt8) := {
     byte = _decimal_digit#(.t: Int32)(.digit = digit).byte
 }
 
-format_unsigned_decimal_into_u64(
+format_unsigned_decimal_into_u64#(.AllocatorType: Type: Allocator#(AllocatorType))(
         .out       : $&String,
         .value     : UInt64,
-        .allocator : $&Allocator
+        .allocator : $&AllocatorType
     ) -> (
         .result : Errable#(Void, (..out_of_memory))
     ) := {
     result = format_into(.out = out, .value = value, .allocator = allocator)
 }
 
-format_unsigned_decimal_into_u32(
+format_unsigned_decimal_into_u32#(.AllocatorType: Type: Allocator#(AllocatorType))(
         .out       : $&String,
         .value     : UInt32,
-        .allocator : $&Allocator
+        .allocator : $&AllocatorType
     ) -> (
         .result : Errable#(Void, (..out_of_memory))
     ) := {
     result = format_into(.out = out, .value = value, .allocator = allocator)
 }
 
-format_signed_decimal_into_i64(
+format_signed_decimal_into_i64#(.AllocatorType: Type: Allocator#(AllocatorType))(
         .out       : $&String,
         .value     : Int64,
-        .allocator : $&Allocator
+        .allocator : $&AllocatorType
     ) -> (
         .result : Errable#(Void, (..out_of_memory))
     ) := {
     result = format_into(.out = out, .value = value, .allocator = allocator)
 }
 
-format_signed_decimal_into_i32(
+format_signed_decimal_into_i32#(.AllocatorType: Type: Allocator#(AllocatorType))(
         .out       : $&String,
         .value     : Int32,
-        .allocator : $&Allocator
+        .allocator : $&AllocatorType
     ) -> (
         .result : Errable#(Void, (..out_of_memory))
     ) := {

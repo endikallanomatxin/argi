@@ -434,9 +434,9 @@ next(.self: $&JsonCursor) -> (.result: Errable#(?JsonToken, JsonReasons)) := {
 }
 
 -- Decode exactly one JSON string into independent UTF-8 storage.
-decode_string(
+decode_string#(.AllocatorType: Type: Allocator#(AllocatorType))(
         .text      : StringView,
-        .allocator : $&Allocator = reach allocator
+        .allocator : $&AllocatorType = reach allocator
     ) -> (
         .result : Errable#(
             String,
@@ -525,8 +525,8 @@ _hex_ascii(.value: UInt8) -> (.byte: UInt8) := {
 }
 
 -- Validate input before writing; native writer failures can leave a prefix.
-write_string(
-        .writer : $&Writer,
+write_string#(.WriterType: Type: Writer#(WriterType))(
+        .writer : $&WriterType,
         .text   : StringView
     ) -> (
         .result : Errable#(Void, (..invalid_utf8, ..stream_write_failed, ..stream_flush_failed)) = ..ok Void()

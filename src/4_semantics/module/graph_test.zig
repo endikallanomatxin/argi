@@ -516,13 +516,13 @@ test "failed generic bodies do not publish reusable instances" {
     }
 }
 
-test "local abstract inputs specialize one body per concrete implementer" {
+test "explicit contract bounds specialize one body per concrete participant" {
     const allocator = std.testing.allocator;
     const source =
-        "Contract : Abstract = ()\n" ++
-        "Int32 implements Contract\n" ++
-        "Char implements Contract\n" ++
-        "use(.value: Contract) -> (.result: Int32) := { result = 1 }\n" ++
+        "Capability#(.Value: Type): Contract = ()\n" ++
+        "implement Capability#(Int32) ()\n" ++
+        "implement Capability#(Char) ()\n" ++
+        "use#(.Value: Type: Capability)(.value: Value) -> (.result: Int32) := { result = 1 }\n" ++
         "main() -> (.result: Int32) := { result = use(.value = 7).result + use(.value = 'A').result }\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
@@ -530,7 +530,7 @@ test "local abstract inputs specialize one body per concrete implementer" {
     var module = try @import("semantizer.zig").build(allocator, "contract", &inputs);
     defer module.graph.deinit(allocator);
     const template = module.graph.semantic.parameterized_storage.parameterized_functions.items[0];
-    try std.testing.expectEqual(@as(@import("parameterized/storage.zig").GenericDispatchKind, .abstract_contract), template.dispatch_kind);
+    try std.testing.expectEqual(@as(@import("parameterized/storage.zig").GenericDispatchKind, .regular), template.dispatch_kind);
     try std.testing.expectEqual(@as(u32, 1), template.parameters.len);
     const parameter = module.graph.semantic.parameterized_storage.comptime_parameters.items[template.parameters.start];
     try std.testing.expect(parameter.constraint != null);
@@ -546,12 +546,12 @@ test "local abstract inputs specialize one body per concrete implementer" {
     try std.testing.expectEqual(@as(usize, 2), instances);
 }
 
-test "abstract contract nested in a generic type argument becomes a parameter" {
+test "explicit contract bound participates in a nested generic input" {
     const allocator = std.testing.allocator;
     const source =
-        "Contract : Abstract = ()\n" ++
+        "Capability#(.Value: Type): Contract = ()\n" ++
         "Box#(.t: Type) : Type = (.value: t)\n" ++
-        "read(.box: Box#(.t: Contract)) -> () := {}\n";
+        "read#(.Value: Type: Capability)(.box: Box#(.t: Value)) -> () := {}\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
     const files = [_]module_graph.FileInput{.{ .path = "nested_contract/main.rg", .tree = &tree, .source = source }};
@@ -568,8 +568,8 @@ test "abstract contract nested in a generic type argument becomes a parameter" {
 test "virtual type arguments remain runtime contracts in parameterized IR" {
     const allocator = std.testing.allocator;
     const source =
-        "Contract : Abstract = ()\n" ++
-        "take#(.t: Type)(.value: Virtual#(.abstract: Contract)) -> () := {}\n";
+        "Capability#(.Value: Type): Contract = ()\n" ++
+        "take#(.t: Type)(.value: Virtual#(.contract: Capability)) -> () := {}\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
     const files = [_]module_graph.FileInput{.{ .path = "runtime_contract/main.rg", .tree = &tree, .source = source }};
@@ -609,9 +609,9 @@ test "parameterized call defaults preserve reach alternatives" {
     try std.testing.expect(input_binding.initialization != null);
 }
 
-test "imported abstract inputs become constrained templates" {
+test "explicit imported contract bounds become constrained templates" {
     const allocator = std.testing.allocator;
-    const source = "dep := import(\"../dep\")\nwrite#(.t: Type)(.value: t, .writer: $&dep.Writer) -> () := {}\n";
+    const source = "dep := import(\"../dep\")\nwrite#(.t: Type, .Provider: Type: dep.Writer)(.value: t, .writer: $&Provider) -> () := {}\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
     var module = try @import("semantizer.zig").buildLinked(allocator, "consumer", &.{.{
@@ -623,7 +623,7 @@ test "imported abstract inputs become constrained templates" {
 
     const templates = module.graph.semantic.parameterized_storage.parameterized_functions.items;
     try std.testing.expectEqual(@as(usize, 1), templates.len);
-    try std.testing.expectEqual(@import("parameterized/storage.zig").GenericDispatchKind.abstract_contract, templates[0].dispatch_kind);
+    try std.testing.expectEqual(@import("parameterized/storage.zig").GenericDispatchKind.regular, templates[0].dispatch_kind);
     try std.testing.expectEqual(@as(u32, 2), templates[0].parameters.len);
     const parameter = module.graph.semantic.parameterized_storage.comptime_parameters.items[templates[0].parameters.start + 1];
     try std.testing.expect(parameter.constraint != null);
@@ -922,12 +922,11 @@ test "contract participants require ordinary bindings in generic evaluation" {
 test "unary and tuple conformances publish canonical static evidence" {
     const allocator = std.testing.allocator;
     const source =
-        "Readable: Contract = (\n.Result: Type\n.Count: Int\nread(.source: &Self) -> (.value: Result)\n)\n" ++
-        "Product#(.Left: Type, .Right: Type): Contract = (\n.Result: Type\nmultiply(.left: &Left, .right: &Right) -> (.value: Result)\n)\n" ++
+        "Readable#(.Value: Type): Contract = (\n.Result: Type\n.Count: Int\n.read: (.source: &Value) -> (.value: Result)\n)\n" ++
+        "Product#(.Left: Type, .Right: Type): Contract = (\n.Result: Type\n.multiply: (.left: &Left, .right: &Right) -> (.value: Result)\n)\n" ++
         "Cell: Type = (.value: Int32)\n" ++
-        "Cell satisfies Readable#(.Count = 2, .Result: Int32)\n" ++
-        "Cell satisfies Readable#(.Result: Int32, .Count = 2)\n" ++
-        "satisfies Product#(Cell, Cell) = (.Result: Int32)\n" ++
+        "implement Readable#(Cell) (.Count: Int = 2, .Result: Type = Int32, .read = read)\n" ++
+        "implement Product#(Cell, Cell) (.Result: Type = Int32, .multiply = multiply)\n" ++
         "read(.source: &Cell) -> (.value: Int32) := { value = source&.value }\n" ++
         "multiply(.left: &Cell, .right: &Cell) -> (.value: Int32) := { value = left&.value * right&.value }\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));

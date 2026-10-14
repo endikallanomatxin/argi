@@ -678,10 +678,10 @@ set_item(
     result = ..ok Void()
 }
 
-_copy_text(
+_copy_text#(.AllocatorType: Type: Allocator#(AllocatorType))(
         .self      : &Object,
         .kind      : Int32,
-        .allocator : $&Allocator
+        .allocator : $&AllocatorType
     ) -> (
         .result : Errable#(String, (..python_error, ..out_of_memory))
     ) := {
@@ -720,27 +720,27 @@ _copy_text(
     result = ..ok ~text
 }
 
-to_string(
+to_string#(.AllocatorType: Type: Allocator#(AllocatorType))(
         .self      : &Object,
-        .allocator : $&Allocator
+        .allocator : $&AllocatorType
     ) -> (
         .result : Errable#(String, (..python_error, ..out_of_memory))
     ) := {
     result = _copy_text(.self = self, .kind = 0, .allocator = allocator)
 }
 
-to_bytes(
+to_bytes#(.AllocatorType: Type: Allocator#(AllocatorType))(
         .self      : &Object,
-        .allocator : $&Allocator
+        .allocator : $&AllocatorType
     ) -> (
         .result : Errable#(String, (..python_error, ..out_of_memory))
     ) := {
     result = _copy_text(.self = self, .kind = 1, .allocator = allocator)
 }
 
-error_text(
+error_text#(.AllocatorType: Type: Allocator#(AllocatorType))(
         .self      : &Python,
-        .allocator : $&Allocator
+        .allocator : $&AllocatorType
     ) -> (
         .result : Errable#(String, (..python_error, ..out_of_memory))
     ) := {

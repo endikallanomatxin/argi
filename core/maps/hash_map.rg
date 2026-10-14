@@ -20,10 +20,9 @@ HashMap#(
 
 _hash_map_slots#(
         .key   : Type: ImplicitlyCopyable,
-        .value : Type: ImplicitlyCopyable
-    )(
+        .value : Type: ImplicitlyCopyable, .AllocatorType: Type: Allocator#(AllocatorType))(
         .capacity  : UIntNative,
-        .allocator : $&Allocator,
+        .allocator : $&AllocatorType,
     ) -> (
         .result : Errable#(
             DynamicArray#(.t: _HashMapSlot#(.key: key, .value: value)),
@@ -196,10 +195,9 @@ _hash_map_insert_slot#(
 _hash_map_grow#(
         .key    : Type: ImplicitlyCopyable,
         .value  : Type: ImplicitlyCopyable,
-        .policy : Type: HashPolicy#(policy, key)
-    )(
+        .policy : Type: HashPolicy#(policy, key), .AllocatorType: Type: Allocator#(AllocatorType))(
         .self      : $&HashMap#(.key: key, .value: value, .policy: policy),
-        .allocator : $&Allocator
+        .allocator : $&AllocatorType
     ) -> (
         .result : Errable#(Void, (..out_of_memory))
     ) := {

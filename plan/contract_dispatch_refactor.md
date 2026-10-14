@@ -951,3 +951,20 @@ skips, failures, leaks or error logs; the full internal suite passed 375 tests
 with one skip. Final focused checks passed native network/file reads, identity
 guards, virtual static adapters, LSP navigation and input identity matching. Legacy Abstract/satisfies/Self compatibility remains a separate pending
 removal gate; it must not be described as complete.
+
+
+### Explicit capability parameter migration
+
+Replace abbreviated capability inputs in 28 bundled/official library files with
+ordinary compile-time type parameters and explicit contract bounds. Preserve
+runtime signatures, reached defaults, operation evidence and ownership algorithms.
+No Reader/Writer/BlockReader/BlockWriter/Allocator/Deallocator/ErrorTracer input
+uses the implicit abstract-parameter lowerer in these libraries anymore.
+
+Migrate remaining straightforward unary positive/negative fixtures and embedded
+module tests to explicit participants, including imported bounds, nested input
+types and canonical associated evidence. Preserve meaningful virtual receiver
+and safety declaration failures. Focused internal checks passed five tests and
+two imported-bound tests. Broad library/fixture validation passed 529 cases with 0 skips and no
+failures, leaks or error logs. Do not remove the legacy normalization path until
+the remaining fixtures are migrated.

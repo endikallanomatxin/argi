@@ -28,10 +28,10 @@ implement Deinit#(Terminal) (
     }
 )
 
-read_line_into_buffer(
+read_line_into_buffer#(.AllocatorType: Type: Allocator#(AllocatorType), .ReaderType: Type: Reader#(ReaderType))(
         .buffer    : $&String,
-        .allocator : $&Allocator,
-        .reader    : $&Reader,
+        .allocator : $&AllocatorType,
+        .reader    : $&ReaderType,
     ) -> (
         .result : Errable#(Void, (..stream_read_failed))
     ) := {
@@ -84,9 +84,9 @@ read_line_into_buffer(
     result = ..ok Void()
 }
 
-read_line(
-        .allocator : $&Allocator,
-        .reader    : $&Reader,
+read_line#(.AllocatorType: Type: Allocator#(AllocatorType), .ReaderType: Type: Reader#(ReaderType))(
+        .allocator : $&AllocatorType,
+        .reader    : $&ReaderType,
     ) -> (
         .result : Errable#(ReadLine, (..stream_read_failed, ..out_of_memory))
     ) := {
@@ -118,8 +118,8 @@ read_line(
 
 
 
-flush := (
-        .writer : $&Writer,
+flush#(.WriterType: Type: Writer#(WriterType)) := (
+        .writer : $&WriterType,
     ) -> (
         .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) {
@@ -128,9 +128,9 @@ flush := (
     result = Writer#().flush(.self = writer)
 }
 
-print_error(
+print_error#(.WriterType: Type: Writer#(WriterType))(
         .value  : StringView,
-        .writer : $&Writer,
+        .writer : $&WriterType,
     ) -> (
         .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) := {
@@ -158,8 +158,8 @@ print_error(
     result = ..ok Void()
 }
 
-flush_error(
-        .writer : $&Writer,
+flush_error#(.WriterType: Type: Writer#(WriterType))(
+        .writer : $&WriterType,
     ) -> (
         .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) := {

@@ -40,12 +40,11 @@ CliReasons: Type = (
 -- and schema until matches are destroyed. Every option uses a canonical long
 -- name; aliases and defaults are resolved without copying argument bytes.
 parse_cli#(
-        .t : Type: ArgumentSource#(t)
-    )(
+        .t : Type: ArgumentSource#(t), .AllocatorType: Type: Allocator#(AllocatorType))(
         .source    : &t,
         .specs     : ArrayViewRO#(.t: CliSpec),
         .start     : UIntNative                 = 0,
-        .allocator : $&Allocator                = reach allocator
+        .allocator : $&AllocatorType                = reach allocator
     ) -> (
         .result : Errable#(CliMatches, CliReasons)
     ) := {
@@ -184,8 +183,8 @@ parse_cli#(
     result = ..ok(.options = ~options, .positionals = ~positionals)
 }
 
-write_cli_help(
-        .writer  : $&Writer,
+write_cli_help#(.WriterType: Type: Writer#(WriterType))(
+        .writer  : $&WriterType,
         .program : StringView,
         .about   : StringView,
         .specs   : ArrayViewRO#(.t: CliSpec)

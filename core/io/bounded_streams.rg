@@ -22,9 +22,9 @@ implement ImplicitlyCopyable#(StreamCopyResult) ()
 
 -- A limit is a stopping point, not an assertion that the source ended. No
 -- lookahead byte is consumed, including when the limit is zero or exactly met.
-copy_stream_limited(
-        .reader : $&BlockReader,
-        .writer : $&BlockWriter,
+copy_stream_limited#(.ReaderType: Type: BlockReader#(ReaderType), .WriterType: Type: BlockWriter#(WriterType))(
+        .reader : $&ReaderType,
+        .writer : $&WriterType,
         .buffer : ArrayView#(.t: UInt8),
         .limit  : UIntNative
     ) -> (
@@ -74,11 +74,11 @@ copy_stream_limited(
 
 -- Return complete binary data or release the partial owner on every error.
 -- Capacity growth is capped independently of the caller's scratch extent.
-read_all_limited(
-        .self      : $&BlockReader,
+read_all_limited#(.SelfType: Type: BlockReader#(SelfType), .AllocatorType: Type: Allocator#(AllocatorType))(
+        .self      : $&SelfType,
         .buffer    : ArrayView#(.t: UInt8),
         .limit     : UIntNative,
-        .allocator : $&Allocator
+        .allocator : $&AllocatorType
     ) -> (
         .result : Errable#(
             String,

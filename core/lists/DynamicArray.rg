@@ -284,9 +284,8 @@ push_assume_capacity#(
 }
 
 insert_growing#(
-        .t : Type
-    )(
-        .allocator : $&Allocator,
+        .t : Type, .AllocatorType: Type: Allocator#(AllocatorType))(
+        .allocator : $&AllocatorType,
         .self      : $&DynamicArray#(.t: t),
         .i         : UIntNative,
         .value     : t,
@@ -360,18 +359,17 @@ insert_growing#(
 
 -- A lexical owner recursively destroys fields, including structural values
 -- with no nominal destructor of their own.
-_destroy_array_element#(.t: Type)(.value: t, .allocator: $&Allocator) -> () := {
+_destroy_array_element#(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType))(.value: t, .allocator: $&AllocatorType) -> () := {
     assume allocator
     discarded ::= ~value
 }
 
 replace#(
-        .t : Type
-    )(
+        .t : Type, .AllocatorType: Type: Allocator#(AllocatorType))(
         .self      : $&DynamicArray#(.t: t),
         .index     : UIntNative,
         .value     : t,
-        .allocator : $&Allocator,
+        .allocator : $&AllocatorType,
     ) -> (
         .result : Errable#(Void, (..out_of_bounds))
     ) := {

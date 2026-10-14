@@ -11,10 +11,10 @@ _string_copy_view_into(.output: $&String, .offset: UIntNative, .source: StringVi
     }
 }
 
-join(
+join#(.AllocatorType: Type: Allocator#(AllocatorType))(
         .parts     : ArrayViewRO#(.t: StringView),
         .separator : StringView,
-        .allocator : $&Allocator,
+        .allocator : $&AllocatorType,
     ) -> (
         .result : Errable#(String, (..out_of_memory, ..size_overflow))
     ) := {

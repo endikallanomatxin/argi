@@ -27,8 +27,8 @@ _prefix(.level: LogLevel) -> (.text: StringView) := {
 -- Records borrow text and require no allocation. Escape line breaks to keep
 -- each record on one line. Writes can fail after a prefix; callers decide
 -- whether logging failures should affect their application. Flush is explicit.
-_write_record(
-        .writer  : $&Writer,
+_write_record#(.WriterType: Type: Writer#(WriterType))(
+        .writer  : $&WriterType,
         .level   : LogLevel,
         .message : StringView
     ) -> (

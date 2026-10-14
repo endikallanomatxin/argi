@@ -53,9 +53,9 @@ implement Init#(
 )
 
 -- Errors are terminal, and no partially decoded record escapes.
-next(
+next#(.AllocatorType: Type: Allocator#(AllocatorType))(
         .self      : $&CsvReader,
-        .allocator : $&Allocator  = reach allocator
+        .allocator : $&AllocatorType  = reach allocator
     ) -> (
         .result : Errable#(?CsvRecord, CsvReasons)
     ) := {
@@ -151,8 +151,8 @@ next(
 }
 
 -- Quote every field for unambiguous output. Writes may make partial progress.
-write_record(
-        .writer : $&Writer,
+write_record#(.WriterType: Type: Writer#(WriterType))(
+        .writer : $&WriterType,
         .fields : ArrayViewRO#(.t: StringView)
     ) -> (
         .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()

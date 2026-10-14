@@ -4,10 +4,10 @@ OwnedByteLine: Type = (.bytes: DynamicArray#(.t: UInt8), .terminated: Bool)
 -- LF is removed. The raw payload limit includes CR. An exact fit may consume
 -- one lookahead byte; callers must stop after any error. Capacity is reserved
 -- before reading each payload byte, so allocation failure does not consume it.
-read_line_owned(
-        .self      : $&Reader,
+read_line_owned#(.SelfType: Type: Reader#(SelfType), .AllocatorType: Type: Allocator#(AllocatorType))(
+        .self      : $&SelfType,
         .maximum   : UIntNative,
-        .allocator : $&Allocator = reach allocator
+        .allocator : $&AllocatorType = reach allocator
     ) -> (
         .result : Errable#(?OwnedByteLine, (..stream_read_failed, ..line_too_long, ..out_of_memory))
     ) := {
@@ -83,10 +83,9 @@ implement#(
 )
 
 next#(
-        .t : Type: Reader#(t)
-    )(
+        .t : Type: Reader#(t), .AllocatorType: Type: Allocator#(AllocatorType))(
         .self      : $&OwnedLineReader#(.t: t),
-        .allocator : $&Allocator                = reach allocator
+        .allocator : $&AllocatorType                = reach allocator
     ) -> (
         .result : Errable#(?OwnedByteLine, (..stream_read_failed, ..line_too_long, ..out_of_memory))
     ) := {

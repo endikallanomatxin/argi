@@ -1,8 +1,7 @@
-ExampleAbstract : Abstract = ()
+ExampleAbstract#(.Participant: Type): Contract = ()
 
-Int32 implements ExampleAbstract
-
-use_value (.value: ExampleAbstract) -> (.status_code: Int32) := {
+implement ExampleAbstract#(Int32) ()
+use_value#(.Value: Type: ExampleAbstract)(.value: Value) -> (.status_code: Int32) := {
     status_code = value
 }
 

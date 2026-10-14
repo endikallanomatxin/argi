@@ -72,10 +72,10 @@ capture#(
     }
 }
 
-_exception_text(
+_exception_text#(.AllocatorType: Type: Allocator#(AllocatorType))(
         .self      : &Exception,
         .part      : Int32,
-        .allocator : $&Allocator
+        .allocator : $&AllocatorType
     ) -> (
         .result : Errable#(String, (..out_of_memory))
     ) := {
@@ -96,27 +96,27 @@ _exception_text(
     result = ..ok ~text
 }
 
-exception_type(
+exception_type#(.AllocatorType: Type: Allocator#(AllocatorType))(
         .self      : &Exception,
-        .allocator : $&Allocator
+        .allocator : $&AllocatorType
     ) -> (
         .result : Errable#(String, (..out_of_memory))
     ) := {
     result = _exception_text(.self = self, .part = 0, .allocator = allocator)
 }
 
-exception_message(
+exception_message#(.AllocatorType: Type: Allocator#(AllocatorType))(
         .self      : &Exception,
-        .allocator : $&Allocator
+        .allocator : $&AllocatorType
     ) -> (
         .result : Errable#(String, (..out_of_memory))
     ) := {
     result = _exception_text(.self = self, .part = 1, .allocator = allocator)
 }
 
-exception_traceback(
+exception_traceback#(.AllocatorType: Type: Allocator#(AllocatorType))(
         .self      : &Exception,
-        .allocator : $&Allocator
+        .allocator : $&AllocatorType
     ) -> (
         .result : Errable#(String, (..out_of_memory))
     ) := {

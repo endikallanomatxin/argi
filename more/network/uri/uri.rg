@@ -387,9 +387,9 @@ _authority_valid(.text: StringView) -> (.ok: Bool = false) := {
 
 -- Recompose already encoded components. Validation rejects delimiter injection
 -- and ambiguous relative paths rather than silently changing their meaning.
-build(
+build#(.AllocatorType: Type: Allocator#(AllocatorType))(
         .value     : UriView,
-        .allocator : $&Allocator
+        .allocator : $&AllocatorType
     ) -> (
         .result : Errable#(String, (..invalid_input, ..out_of_memory))
     ) := {
@@ -492,9 +492,9 @@ build(
     result = ..ok ~output
 }
 
-encode_component(
+encode_component#(.AllocatorType: Type: Allocator#(AllocatorType))(
         .text      : StringView,
-        .allocator : $&Allocator
+        .allocator : $&AllocatorType
     ) -> (
         .result : Errable#(String, (..out_of_memory))
     ) := {
@@ -525,9 +525,9 @@ encode_component(
     result = ..ok ~output
 }
 
-decode_component(
+decode_component#(.AllocatorType: Type: Allocator#(AllocatorType))(
         .text      : StringView,
-        .allocator : $&Allocator
+        .allocator : $&AllocatorType
     ) -> (
         .result : Errable#(String, (..invalid_input, ..out_of_memory))
     ) := {

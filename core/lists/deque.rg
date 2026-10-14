@@ -39,11 +39,10 @@ implement#(.t: Type) CollectionCapacity#(Deque#(.t: t)) (
 )
 
 reserve#(
-        .t : Type
-    )(
+        .t : Type, .AllocatorType: Type: Allocator#(AllocatorType))(
         .self      : $&Deque#(.t: t),
         .capacity  : UIntNative,
-        .allocator : $&Allocator      = reach allocator,
+        .allocator : $&AllocatorType      = reach allocator,
     ) -> (
         .result : Errable#(Void, (..out_of_memory))
     ) := {
@@ -93,10 +92,9 @@ reserve#(
 }
 
 _deque_ensure_room#(
-        .t : Type
-    )(
+        .t : Type, .AllocatorType: Type: Allocator#(AllocatorType))(
         .self      : $&Deque#(.t: t),
-        .allocator : $&Allocator
+        .allocator : $&AllocatorType
     ) -> (
         .result : Errable#(Void, (..out_of_memory))
     ) := {
@@ -118,11 +116,10 @@ _deque_ensure_room#(
 }
 
 push_back#(
-        .t : Type
-    )(
+        .t : Type, .AllocatorType: Type: Allocator#(AllocatorType))(
         .self      : $&Deque#(.t: t),
         .value     : t,
-        .allocator : $&Allocator      = reach allocator,
+        .allocator : $&AllocatorType      = reach allocator,
     ) -> (
         .result : Errable#(Void, (..out_of_memory))
     ) := {
@@ -143,11 +140,10 @@ push_back#(
 }
 
 push_front#(
-        .t : Type
-    )(
+        .t : Type, .AllocatorType: Type: Allocator#(AllocatorType))(
         .self      : $&Deque#(.t: t),
         .value     : t,
-        .allocator : $&Allocator      = reach allocator,
+        .allocator : $&AllocatorType      = reach allocator,
     ) -> (
         .result : Errable#(Void, (..out_of_memory))
     ) := {

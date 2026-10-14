@@ -29,8 +29,8 @@ String: Type = (
     .length     : UIntNative
 )
 
-string_with_length(
-        .allocator : $&Allocator,
+string_with_length#(.AllocatorType: Type: Allocator#(AllocatorType))(
+        .allocator : $&AllocatorType,
         .length    : UIntNative,
     ) -> (
         .result : Errable#(String, (..out_of_memory))
@@ -57,8 +57,8 @@ string_with_length(
     result = ..ok ~out
 }
 
-string_with_capacity(
-        .allocator : $&Allocator,
+string_with_capacity#(.AllocatorType: Type: Allocator#(AllocatorType))(
+        .allocator : $&AllocatorType,
         .capacity  : UIntNative,
     ) -> (
         .result : Errable#(String, (..out_of_memory))
@@ -229,10 +229,10 @@ string_growth_capacity(
     }
 }
 
-ensure_capacity(
+ensure_capacity#(.AllocatorType: Type: Allocator#(AllocatorType))(
         .self      : $&String,
         .capacity  : UIntNative,
-        .allocator : $&Allocator,
+        .allocator : $&AllocatorType,
     ) -> (
         .result : Errable#(Void, (..out_of_memory))
     ) := {
@@ -245,10 +245,10 @@ ensure_capacity(
     )
 }
 
-ensure_capacity_growing(
+ensure_capacity_growing#(.AllocatorType: Type: Allocator#(AllocatorType))(
         .self            : $&String,
         .target_capacity : UIntNative,
-        .allocator       : $&Allocator,
+        .allocator       : $&AllocatorType,
     ) -> (
         .result : Errable#(Void, (..out_of_memory))
     ) := {
@@ -344,10 +344,10 @@ string_append_bytes(
     bytes_set(.string = self, .index = self&.length, .value = 0)
 }
 
-push_byte(
+push_byte#(.AllocatorType: Type: Allocator#(AllocatorType))(
         .self      : $&String,
         .byte      : UInt8,
-        .allocator : $&Allocator,
+        .allocator : $&AllocatorType,
     ) -> (
         .result : Errable#(Void, (..out_of_memory))
     ) := {
@@ -381,10 +381,10 @@ push_byte(
     result = ..ok Void()
 }
 
-push_c_string(
+push_c_string#(.AllocatorType: Type: Allocator#(AllocatorType))(
         .self      : $&String,
         .text      : &Char,
-        .allocator : $&Allocator,
+        .allocator : $&AllocatorType,
     ) -> (
         .result : Errable#(Void, (..out_of_memory))
     ) := {
@@ -428,10 +428,10 @@ push_c_string(
     result = ..ok Void()
 }
 
-push_view(
+push_view#(.AllocatorType: Type: Allocator#(AllocatorType))(
         .self      : $&String,
         .view      : StringView,
-        .allocator : $&Allocator,
+        .allocator : $&AllocatorType,
     ) -> (
         .result : Errable#(Void, (..out_of_memory))
     ) := {
@@ -505,10 +505,10 @@ c_string_as_view(
     )
 }
 
-concat_views(
+concat_views#(.AllocatorType: Type: Allocator#(AllocatorType))(
         .left      : &StringView,
         .right     : &StringView,
-        .allocator : $&Allocator,
+        .allocator : $&AllocatorType,
     ) -> (
         .result : Errable#(String, (..out_of_memory))
     ) := {

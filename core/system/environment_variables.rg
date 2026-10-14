@@ -52,10 +52,10 @@ lookup_environment#(.Provider: Type: Allocator#(Provider)) := (
     }
 }
 
-has(
+has#(.AllocatorType: Type: Allocator#(AllocatorType))(
         .self      : &EnvironmentVariables,
         .key       : StringView,
-        .allocator : $&Allocator,
+        .allocator : $&AllocatorType,
     ) -> (
         .result : Errable#(Bool, (..out_of_memory))
     ) := {
