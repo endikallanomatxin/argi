@@ -239,41 +239,36 @@ wrapper can participate in a static adapter conformance; the adapter invokes the
 handle's frozen Reader operations. TCP writes reuse the common BlockWriter
 write_all algorithm instead of a competing ordinary specialization.
 
-> [!IMPLEMENTATION]
-> Bundled Reader uses scoped implementations for files, process streams, TCP,
-> memory cursors and buffered/limited adapters. Its former global read_byte
-> family is removed. Bundled Writer likewise uses scoped write_byte/flush
-> implementations for files, process streams, TCP, memory cursors and buffered
-> adapters. Formatting, terminal output and error tracing call those identities.
-> Terminal and logging flush helpers remain unique ordinary functions.
+Bundled Reader uses scoped implementations for files, process streams, TCP,
+memory cursors and buffered/limited adapters. Its former global read_byte
+family is removed. Bundled Writer likewise uses scoped write_byte/flush
+implementations for files, process streams, TCP, memory cursors and buffered
+adapters. Formatting, terminal output and error tracing call those identities.
+Terminal and logging flush helpers remain unique ordinary functions.
 
-> [!IMPLEMENTATION]
-> Bundled ErrorTracer uses explicit tracer participants and scoped add_context,
-> reset_context and report operations. Noop, fixed-buffer and custom fixture
-> policies supply selected evidence. Context convenience functions have unique
-> names for views and text; the former global operation family is removed.
+Bundled ErrorTracer uses explicit tracer participants and scoped add_context,
+reset_context and report operations. Noop, fixed-buffer and custom fixture
+policies supply selected evidence. Context convenience functions have unique
+names for views and text; the former global operation family is removed.
 
-> [!IMPLEMENTATION]
-> Allocator and Deallocator use explicit provider participants and scoped
-> implementations, including physical allocation cleanup. Allocation retains
-> selected virtual Deallocator evidence and authenticated acquisition bounds.
-> Byte requests use the unique allocate_bytes helper; typed allocate#(T) requests
-> use an optional count defaulting to one.
+Allocator and Deallocator use explicit provider participants and scoped
+implementations, including physical allocation cleanup. Allocation retains
+selected virtual Deallocator evidence and authenticated acquisition bounds.
+Byte requests use the unique allocate_bytes helper; typed allocate#(T) requests
+use an optional count defaulting to one.
 
-> [!IMPLEMENTATION]
-> Unqualified scoped operations infer participants from inputs and check the
-> selected associated signature. Applicable contract identities and applicable
-> ordinary functions compete by identity, never by cross-contract specificity.
-> Multiple applicable identities require explicit qualification. Static and
-> generic bodies share this lookup; unary virtual inputs retain their identity.
+Unqualified scoped operations infer participants from inputs and check the
+selected associated signature. Applicable contract identities and applicable
+ordinary functions compete by identity, never by cross-contract specificity.
+Multiple applicable identities require explicit qualification. Static and
+generic bodies share this lookup; unary virtual inputs retain their identity.
 
-> [!IMPLEMENTATION]
-> Scoped requirement inputs retain lexical reach defaults. Unqualified operation
-> selection can infer direct participants from visible capability bindings and
-> field paths, including unary virtual evidence. A missing capability does not
-> supply an inferred type. Selected calls materialize the requirement defaults
-> through the ordinary reached-argument path. Conformance ambiguities remain
-> diagnostics after speculative selection rolls back.
+Scoped requirement inputs retain lexical reach defaults. Unqualified operation
+selection can infer direct participants from visible capability bindings and
+field paths, including unary virtual evidence. A missing capability does not
+supply an inferred type. Selected calls materialize the requirement defaults
+through the ordinary reached-argument path. Conformance ambiguities remain
+diagnostics after speculative selection rolls back.
 
 Bundled iteration protocols now use explicit collection/state participants and
 associated `Item`/`IteratorType` elements. `for` calls the selected conversion,
