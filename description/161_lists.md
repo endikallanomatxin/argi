@@ -47,10 +47,10 @@ Views are library abstractions. The language has no native slice type.
 contiguous storage. A safe constructor derives the extent from its source;
 pointer-and-length construction belongs to trusted code.
 
-The pointer and length fields are private. `array_view#(.t: T)(.data = $&element)`
-creates a one-element view; `array_view#(.n = N, .t: T)(.array = $&array)`
+The pointer and length fields are private. `single_array_view#(.t: T)(.data = $&element)`
+creates a one-element view; `view(.array = $&array)`
 derives the length from a fixed `[N]T`. The read-only constructors use
-`array_view_ro` and read-only references in the same way. Zero-length fixed
+`single_array_view_ro` and `view(.array = &array)` in the same way. Zero-length fixed
 arrays produce empty views without establishing an element reference. An
 empty view has length zero, rejects every index, and has no element pointer;
 `data` requires a nonempty view and aborts otherwise. Zero-length bulk-copy
@@ -68,7 +68,7 @@ subrange, preserving its access mode and backing lifetime. It rejects
 indices. An empty subrange at the end is valid and carries no element
 reference. A nested slice cannot enlarge its source's extent.
 
-`array_view#(.t: T)(.array = $&collection)` and its read-only counterpart
+`view(.array = $&collection)` and its read-only counterpart
 borrow the initialized prefix of a `DynamicArray`. Spare capacity is excluded.
 The private allocation receipt is maintained by the collection using the
 allocator contract; the backing allocator must provide live storage of the
@@ -349,4 +349,7 @@ the associated result projection until specialization.
 Both conformances reuse the checked fixed-array view algorithms, preserve backing
 storage dependencies and return independent empty views for zero-size arrays.
 A returned nonempty view cannot outlive its backing array. This replaces the two
-ordinary view overloads; array_view and array_view_ro families remain pending.
+ordinary view overloads. DynamicArray uses the same evidence model, preserving
+its shape dependencies. The former array_view and array_view_ro families are
+removed; empty_array_view_ro and single_array_view/single_array_view_ro are
+uniquely named factories.

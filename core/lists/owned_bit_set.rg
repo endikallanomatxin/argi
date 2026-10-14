@@ -44,7 +44,7 @@ implement Deinit#(BitSet) (
 length(.self: &BitSet) -> (.count: UIntNative) := { count = self&._count }
 
 as_view(.self: $&BitSet) -> (.view: BitSetView) := {
-    view = (._bytes = array_view(.array = $&self&._storage).view, ._count = self&._count)
+    view = (._bytes = ViewOf#($&DynamicArray#(.t: UInt8)).make_view(.array = $&self&._storage), ._count = self&._count)
 }
 
 contains(
@@ -71,14 +71,14 @@ set(
     ) -> (
         .result : Errable#(Void, (..out_of_bounds))
     ) := {
-    view ::= as_view(self).view
+    borrowed_view ::= as_view(self).view
 
-    result = set($&view, .index = index, .value = value)
+    result = set($&borrowed_view, .index = index, .value = value)
 }
 
 count_set(.self: &BitSet) -> (.count: UIntNative) := {
     count = _bit_set_count(
-        .bytes  = array_view_ro(.array = &self&._storage).view
+        .bytes  = view(.array = &self&._storage)
         .extent = self&._count
     ).count
 }

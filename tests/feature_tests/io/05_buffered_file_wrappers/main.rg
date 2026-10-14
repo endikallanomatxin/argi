@@ -18,7 +18,7 @@ main(.system: System) -> (.status_code: Int32) := {
     init_stdout(.p = $&output_file)
     output_writer ::= BufferedWriter#(.base_type: File)(
         .base   = $&output_file
-        .buffer = array_view(.array = $&zeroed#(.t: [4]UInt8)())
+        .buffer = view(.array = $&zeroed#(.t: [4]UInt8)())
     )
 
     if is_open(.self = &input_file).ok {

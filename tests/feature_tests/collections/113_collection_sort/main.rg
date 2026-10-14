@@ -37,14 +37,14 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     push_assume_capacity(.self = $&array, .value = -10)
     push_assume_capacity(.self = $&array, .value = 9)
     borrowed ::= unwrap_or_abort(.value = get_ro_ref(.self = &array, .index = 0))
-    view ::= array_view(.array = $&array).view
+    borrowed_view ::= view(.array = $&array)
     sort(.self = $&array, .order = &order)
-    check_sorted(.self = &view, .order = &order)
+    check_sorted(.self = &borrowed_view, .order = &order)
     if borrowed&!= -10 or length(.self = &array).count != 8 { abort }
     if unwrap_or_abort(.value = get(.self = &array, .index = 1)) != -10 { abort }
     if unwrap_or_abort(.value = get(.self = &array, .index = 6)) != 42 { abort }
     if unwrap_or_abort(.value = get(.self = &array, .index = 7)) != 42 { abort }
-    sort(.self = $&view, .order = &descending)
+    sort(.self = $&borrowed_view, .order = &descending)
     check_sorted(.self = &array, .order = &descending)
     if borrowed&!= 42 { abort }
     match binary_search(.self = &array, .value = 42, .order = &descending).index {
@@ -53,13 +53,13 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     }
     deinit(.self = $&array)
     fixed: [5]Int32 = (99, 3, 1, 2, -99)
-    fixed_view ::= array_view(.array = $&fixed).view
+    fixed_view ::= view(.array = $&fixed)
     middle ::= unwrap_or_abort(.value = slice(.self = &fixed_view, .start = 1, .count = 3))
     sort(.self = $&middle, .order = &order)
     if fixed[0] != 99 or fixed[1] != 1 or fixed[2] != 2 or fixed[3] != 3 or fixed[4] != -99 {
         abort
     }
     empty: [0]Int32 = ()
-    empty_view ::= array_view(.array = $&empty).view
+    empty_view ::= view(.array = $&empty)
     sort(.self = $&empty_view, .order = &order)
 }

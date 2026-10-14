@@ -102,7 +102,7 @@ _process_mode(.value: ProcessStreamMode) -> (.mode: Int32) := {
 }
 
 _process_no_arguments() -> (.value: ArrayViewRO#(.t: StringView)) := {
-    value = array_view_ro#(.t: StringView)()
+    value = empty_array_view_ro#(.t: StringView)()
 }
 
 _process_inherit() -> (.value: ProcessStreamMode) := { value = ..inherit }

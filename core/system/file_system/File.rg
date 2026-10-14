@@ -194,7 +194,7 @@ implement Reader#(File)(
             }
 
             byte :: UInt8 = 0
-            byte_view ::= array_view#(.t: UInt8)(.data = $&byte)
+            byte_view ::= single_array_view#(.t: UInt8)(.data = $&byte)
             read_count ::= fread_into(
                 .buffer = byte_view
                 .stream = file_stream_pointer(self).stream
@@ -340,7 +340,7 @@ implement Writer#(File)(
             }
 
             single_byte :: UInt8 = byte
-            byte_view ::= array_view#(.t: UInt8)(.data = $&single_byte)
+            byte_view ::= single_array_view#(.t: UInt8)(.data = $&single_byte)
             wrote ::= fwrite_from(
                 .buffer = byte_view
                 .stream = file_stream_pointer(self).stream

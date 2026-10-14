@@ -32,7 +32,7 @@ main() -> (.status_code: Int32 = 0) := {
         != 2
     ] { abort }
     if position(.self = &partial).count != 2 { abort }
-    empty ::= array_view_ro#(.t: UInt8)()
+    empty ::= empty_array_view_ro#(.t: UInt8)()
     if unwrap_or_abort(.value = BlockWriter#().write_block(.self = $&partial, .buffer = empty)) != 0 { abort }
     match BlockWriter#().write_block(.self = $&partial, .buffer = view(.array = &source)) {
         ..ok _ { abort } ..error _ {}

@@ -54,7 +54,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     if send_to(.self = $&sender, .peer = peer, .buffer = input)! != 4 { abort }
     datagram ::= receive_from(.self = $&receiver, .buffer = destination)!
     if datagram.count != 4 or output[0] != 65 or output[2] != 66 { abort }
-    empty ::= array_view_ro#(.t: UInt8)()
+    empty ::= empty_array_view_ro#(.t: UInt8)()
     if send_to(.self = $&sender, .peer = peer, .buffer = empty)! != 0 { abort }
     if receive_from(.self = $&receiver, .buffer = destination)!.count != 0 { abort }
     _ = send_to(.self = $&sender, .peer = peer, .buffer = input)!

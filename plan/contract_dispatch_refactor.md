@@ -451,3 +451,20 @@ array_view/array_view_ro construction families remain pending.
 Validation: 490 collection, contract, IO and official-library program cases
 passed with no failures or leaks. Generic mutability selection, empty arrays and
 local-storage escape rejection pass; emitted LLVM and executable were checked.
+
+### Collection views and single-element factories
+
+Move DynamicArray collection views to ViewOf, retaining shape dependency and
+backing allocation provenance in the unchanged private algorithms. Fixed-array
+algorithms are also private; all collection callers use the unique view entry.
+Empty readonly views and single-element views use uniquely named factories.
+Remove ordinary array_view/array_view_ro overload families rather than retain
+compatibility wrappers. Validate structural invalidation, empty independence,
+mutability and element liveness with the existing spatial fixtures.
+
+Validation: 683 affected program cases passed (1 skipped), plus 35
+selected internal tests, without failures or leaks. Spatial invalidation diagnostics
+remain intact across growth, insertion, removal, pop and release. Generic dynamic
+reference selection and independent empty views also passed direct execution and
+LLVM inspection. Callers with local view bindings use borrowed_view or qualified
+ViewOf operations to preserve ordinary lexical name resolution.

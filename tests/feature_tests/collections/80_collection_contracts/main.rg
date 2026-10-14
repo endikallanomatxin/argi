@@ -26,11 +26,11 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     if read(.items = &dynamic, .index = 0).value != 9 { abort }
     if borrow(.items = &dynamic).value != 9 { abort }
     values : [2]Int32 = (5, 6)
-    view ::= array_view(.array = $&values)
-    write(.items = $&view)
-    if read(.items = &view, .index = 0).value != 9 { abort }
-    if borrow(.items = &view).value != 9 { abort }
-    readonly ::= array_view_ro(.array = &values)
+    borrowed_view ::= view(.array = $&values)
+    write(.items = $&borrowed_view)
+    if read(.items = &borrowed_view, .index = 0).value != 9 { abort }
+    if borrow(.items = &borrowed_view).value != 9 { abort }
+    readonly ::= view(.array = &values)
     if read(.items = &readonly, .index = 1).value != 6 { abort }
     if borrow(.items = &readonly).value != 9 { abort }
     if is(.value = get(.self = &readonly, .index = 2).result, .variant = ..ok) { abort }

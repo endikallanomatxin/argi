@@ -1,13 +1,13 @@
 main() -> (.status_code: Int32) := {
     values :: [3]Int32 = (4, 5, 6)
-    view ::= array_view#(.n = 3, .t: Int32)(.array = $&values)
-    ro ::= array_view_ro#(.n = 3, .t: Int32)(.array = &values)
+    borrowed_view ::= view(.array = $&values)
+    ro ::= view(.array = &values)
 
-    if length(.self = &view).count != 3 or length(.self = &ro).count != 3 {
+    if length(.self = &borrowed_view).count != 3 or length(.self = &ro).count != 3 {
         status_code = 1
         return
     }
-    changed ::= set#(.t: Int32)(.self = $&view, .index = 1, .value = 9).result
+    changed ::= set#(.t: Int32)(.self = $&borrowed_view, .index = 1, .value = 9).result
     if is(.value = changed, .variant = ..error) {
         status_code = 2
         return

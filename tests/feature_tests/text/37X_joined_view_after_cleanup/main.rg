@@ -2,12 +2,12 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     parts: [1]StringView = ("a")
     text ::= unwrap_or_abort(
         .value = join(
-            .parts     = array_view_ro(.array = &parts).view
+            .parts     = view(.array = &parts)
             .separator = ""
             .allocator = system.page_allocator
         )
     )
-    view ::= as_view(.self = &text).view
+    borrowed_view ::= as_view(.self = &text).view
     deinit(.self = $&text)
-    observed ::= view.data&
+    observed ::= borrowed_view.data&
 }

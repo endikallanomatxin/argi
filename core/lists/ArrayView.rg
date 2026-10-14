@@ -34,19 +34,19 @@ data#(.t: Type)(.self: &ArrayViewRO#(.t: t)) -> (.pointer: &t) := {
 }
 
 -- Empty views need no backing reference and remain independent of storage.
-array_view_ro#(.t: Type)() -> (.array: ArrayViewRO#(.t: t)) := {
+empty_array_view_ro#(.t: Type)() -> (.array: ArrayViewRO#(.t: t)) := {
     array = (._data = ..none, ._length = 0)
 }
 
-array_view_ro#(.t: Type)(.data: &t) -> (.array: ArrayViewRO#(.t: t)) := {
+single_array_view_ro#(.t: Type)(.data: &t) -> (.array: ArrayViewRO#(.t: t)) := {
     array = (._data = ..some(.value = data), ._length = 1)
 }
 
-array_view#(.t: Type)(.data: $&t) -> (.array: ArrayView#(.t: t)) := {
+single_array_view#(.t: Type)(.data: $&t) -> (.array: ArrayView#(.t: t)) := {
     array = (._data = ..some(.value = data), ._length = 1)
 }
 
-array_view_ro#(
+_fixed_array_view_ro#(
         .n : UIntNative,
         .t : Type
     )(
@@ -63,7 +63,7 @@ array_view_ro#(
     view = (._data = ..some(.value = first), ._length = n)
 }
 
-array_view#(
+_fixed_array_view#(
         .n : UIntNative,
         .t : Type
     )(
@@ -139,7 +139,7 @@ set#(
 
 as_readonly#(.t: Type)(.self: &ArrayView#(.t: t)) -> (.view: ArrayViewRO#(.t: t)) := {
     if self&._length == 0 {
-        view = array_view_ro#(.t: t)().array
+        view = empty_array_view_ro#(.t: t)().array
         return
     }
 

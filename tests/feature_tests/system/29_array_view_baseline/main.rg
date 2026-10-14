@@ -1,6 +1,6 @@
 main() -> (.status_code: Int32) := {
     data : Array#(.n = 4, .t: Int32) = (0, 0, 0, 0)
-    values ::= array_view(.array = $&data)
+    values ::= view(.array = $&data)
 
     set0 ::= set#(.t: Int32)(.self = $&values, .index = 0, .value = 3).result
     set1 ::= set#(.t: Int32)(.self = $&values, .index = 1, .value = 5).result

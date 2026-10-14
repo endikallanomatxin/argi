@@ -4,7 +4,7 @@ DummyOutput: Type = (
 
 main() -> (.status_code: Int32) := {
     bytes: Array#(.n = 3, .t: UInt8) = (0, 0, 0)
-    buffer ::= array_view(.array = $&bytes)
+    buffer ::= view(.array = $&bytes)
     first_set ::= set#(.t: UInt8)(.self = $&buffer, .index = 0, .value = 2).result
     second_set ::= set#(.t: UInt8)(.self = $&buffer, .index = 1, .value = 3).result
     third_set ::= set#(.t: UInt8)(.self = $&buffer, .index = 2, .value = 5).result

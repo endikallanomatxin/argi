@@ -66,13 +66,13 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     expect_index(.result = found, .expected = 5)
     descending ::= Descending()
     fixed: [5]Int32 = (9, 5, 5, 3, 1)
-    view ::= array_view_ro(.array = &fixed).view
+    borrowed_view ::= view(.array = &fixed)
     expect_index(
-        .result   = binary_search(.self = &view, .value = 5, .order = &descending).index
+        .result   = binary_search(.self = &borrowed_view, .value = 5, .order = &descending).index
         .expected = 1
     )
     records: [3]Record = ((.key = 1, .tag = 10), (.key = 1, .tag = 20), (.key = 2, .tag = 30))
-    records_view ::= array_view_ro(.array = &records).view
+    records_view ::= view(.array = &records)
     by_key ::= ByKey()
     target :: Record = (.key = 1, .tag = 999)
     expect_index(
@@ -80,7 +80,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         .expected = 0
     )
     text: [3]StringView = ("", "a", "ab")
-    text_view ::= array_view_ro(.array = &text).view
+    text_view ::= view(.array = &text)
     text_order ::= StringViewOrderPolicy()
     bytes: [1]UInt8 = (97)
     needle :: StringView = (.data = &bytes[0], .length = 1)

@@ -12,7 +12,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     bytes ::= zeroed#(.t: [4]UInt8)()
     buffered ::= BufferedWriter#(.base_type: RecordingWriter)(
         .base   = $&base
-        .buffer = array_view(.array = $&bytes)
+        .buffer = view(.array = $&bytes)
     )
     assume writer ::= $&buffered
     unwrap_or_abort(.value = Writer#().write_byte(.self = writer, .byte = 65))
@@ -85,7 +85,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     bytes[0] = 0
     unbuffered ::= BufferedWriter#(.base_type: RecordingWriter)(
         .base   = $&base
-        .buffer = array_view(.array = $&zeroed#(.t: [0]UInt8)())
+        .buffer = view(.array = $&zeroed#(.t: [0]UInt8)())
     )
     unwrap_or_abort(.value = Writer#().write_byte(.self = $&unbuffered, .byte = 72))
     if base.received != 7 or base.last_byte != 72 or unbuffered.length != 0 { status_code = 12 }

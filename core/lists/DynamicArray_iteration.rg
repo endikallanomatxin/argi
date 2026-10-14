@@ -27,7 +27,7 @@ implement#(
             .iterator : DynamicArrayIterator#(.t: t)
         ) {
         iterator = (
-            ._view  = array_view_ro#(.t: t)(.array = value).view
+            ._view  = view(.array = value)
             ._index = 0
         )
     }
@@ -45,7 +45,7 @@ implement#(
             .iterator : DynamicArrayROPointerIterator#(.t: t)
         ) {
         iterator = (
-            ._view  = array_view_ro#(.t: t)(.array = value).view
+            ._view  = view(.array = value)
             ._index = 0
         )
     }
@@ -63,7 +63,7 @@ implement#(
             .iterator : DynamicArrayRWPointerIterator#(.t: t)
         ) {
         iterator = (
-            ._view  = array_view#(.t: t)(.array = value).view
+            ._view  = view(.array = value)
             ._index = 0
         )
     }

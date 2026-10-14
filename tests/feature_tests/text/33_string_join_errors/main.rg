@@ -4,7 +4,7 @@ main() -> (.status_code: Int32 = 0) := {
     allocator :: FailingAllocator = (.attempts = 0)
     parts: [2]StringView = ("a", "b")
     match join(
-        .parts     = array_view_ro(.array = &parts).view
+        .parts     = view(.array = &parts)
         .separator = ","
         .allocator = $&allocator
     ) {
@@ -24,7 +24,7 @@ main() -> (.status_code: Int32 = 0) := {
     huge :: StringView = (.data = &byte, .length = maximum)
     single: [1]StringView = (huge)
     match join(
-        .parts     = array_view_ro(.array = &single).view
+        .parts     = view(.array = &single)
         .separator = ""
         .allocator = $&allocator
     ) {
@@ -32,7 +32,7 @@ main() -> (.status_code: Int32 = 0) := {
         ..error ~err { if err.reason != ..size_overflow { abort } }
     }
     match join(
-        .parts     = array_view_ro(.array = &parts).view
+        .parts     = view(.array = &parts)
         .separator = huge
         .allocator = $&allocator
     ) {
@@ -42,7 +42,7 @@ main() -> (.status_code: Int32 = 0) := {
     almost :: StringView = (.data = &byte, .length = maximum - 1)
     overflowing_sum: [2]StringView = (almost, "a")
     match join(
-        .parts     = array_view_ro(.array = &overflowing_sum).view
+        .parts     = view(.array = &overflowing_sum)
         .separator = ""
         .allocator = $&allocator
     ) {

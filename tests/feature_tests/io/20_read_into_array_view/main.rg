@@ -26,7 +26,7 @@ implement Reader#(DummyInput)(
 
 main() -> (.status_code: Int32) := {
     bytes: Array#(.n = 4, .t: UInt8) = (0, 0, 0, 0)
-    buffer ::= array_view(.array = $&bytes)
+    buffer ::= view(.array = $&bytes)
     stdin_storage :: DummyInput = DummyInput()
     assume reader ::= $&stdin_storage
     read_result ::= read(.self = $&stdin_storage, .buffer = buffer)

@@ -82,9 +82,9 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     clear(.self = $&text)
     string_append_byte(.self = $&text, .byte = 120)
     tail: [2]UInt8 = (121, 122)
-    string_append_bytes(.self = $&text, .source = array_view_ro(.array = &tail).view)
+    string_append_bytes(.self = $&text, .source = view(.array = &tail))
     empty: [0]UInt8 = ()
-    string_append_bytes(.self = $&text, .source = array_view_ro(.array = &empty).view)
+    string_append_bytes(.self = $&text, .source = view(.array = &empty))
     if as_view(.self = &text).view != "xyz" { abort }
     if bytes_get(.string = &text, .index = 3).byte != 0 { abort }
     deinit(.self = $&text)

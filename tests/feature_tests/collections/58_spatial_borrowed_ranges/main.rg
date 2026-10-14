@@ -1,11 +1,11 @@
 window(.array: $&DynamicArray#(.t: UIntNative), .start: UIntNative, .count: UIntNative) -> (.result: Errable#(.t: ArrayView#(.t: UIntNative), .reasons: (..out_of_bounds))) := {
-    view ::= array_view#(.t: UIntNative)(.array = array).view
-    result = slice#(.t: UIntNative)(.self = &view, .start = start, .count = count).result
+    borrowed_view ::= view(.array = array)
+    result = slice#(.t: UIntNative)(.self = &borrowed_view, .start = start, .count = count).result
 }
 
 exercise(.allocator: $&Allocator) -> (.status: Int32 = 0) := {
     array ::= unwrap_or_abort(.value = DynamicArray#(.t: UIntNative)(.allocator = allocator, .capacity = 8))
-    empty ::= array_view#(.t: UIntNative)(.array = $&array).view
+    empty ::= view(.array = $&array)
     if length(.self = &empty).count != 0 { status = 1 }
     absent ::= get_ro_ref(.self = &empty, .index = 0).result
     if is(.value = absent, .variant = ..error) == false { status = 2 }
@@ -14,13 +14,13 @@ exercise(.allocator: $&Allocator) -> (.status: Int32 = 0) := {
         push_assume_capacity#(.t: UIntNative)(.self = $&array, .value = i + 10)
         i = i + 1
     }
-    view ::= unwrap_or_abort(.value = window(.array = $&array, .start = 1, .count = 2))
-    if length(.self = &view).count != 2 { status = 3 }
-    unwrap_or_abort(.value = set#(.t: UIntNative)(.self = $&view, .index = 1, .value = 99).result)
-    nested ::= unwrap_or_abort(.value = slice#(.t: UIntNative)(.self = &view, .start = 1, .count = 1).result)
+    borrowed_view ::= unwrap_or_abort(.value = window(.array = $&array, .start = 1, .count = 2))
+    if length(.self = &borrowed_view).count != 2 { status = 3 }
+    unwrap_or_abort(.value = set#(.t: UIntNative)(.self = $&borrowed_view, .index = 1, .value = 99).result)
+    nested ::= unwrap_or_abort(.value = slice#(.t: UIntNative)(.self = &borrowed_view, .start = 1, .count = 1).result)
     observed ::= unwrap_or_abort(.value = get(.self = &nested, .index = 0).result)
     if observed != 99 { status = 4 }
-    readonly ::= array_view_ro#(.t: UIntNative)(.array = &array).view
+    readonly ::= view(.array = &array)
     ro_window ::= unwrap_or_abort(.value = slice#(.t: UIntNative)(.self = &readonly, .start = 2, .count = 1).result)
     ro_element ::= unwrap_or_abort(.value = get_ro_ref(.self = &ro_window, .index = 0).result)
     if ro_element& != 99 { status = 5 }
@@ -34,10 +34,10 @@ exercise(.allocator: $&Allocator) -> (.status: Int32 = 0) := {
     huge = huge - 1
     invalid_count ::= slice#(.t: UIntNative)(.self = &readonly, .start = 1, .count = huge).result
     if is(.value = invalid_count, .variant = ..error) == false { status = 9 }
-    invalid_huge_start ::= slice#(.t: UIntNative)(.self = &view, .start = huge, .count = 1).result
+    invalid_huge_start ::= slice#(.t: UIntNative)(.self = &borrowed_view, .start = huge, .count = 1).result
     if is(.value = invalid_huge_start, .variant = ..error) == false { status = 10 }
     removed ::= unwrap_or_abort(.value = pop(.self = $&array).result)
-    fresh ::= array_view#(.t: UIntNative)(.array = $&array).view
+    fresh ::= view(.array = $&array)
     if length(.self = &fresh).count != 3 { status = 11 }
     if unwrap_or_abort(.value = get(.self = &fresh, .index = 2).result) != 99 { status = 12 }
     deinit( .self = $&array)

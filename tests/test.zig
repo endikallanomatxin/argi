@@ -2520,7 +2520,7 @@ test "feature_tests/collections/48_array_view_fixed_storage" {
 test "feature_tests/collections/49X_array_view_unproven_length" {
     try buildExpectFail(
         "tests/feature_tests/collections/49X_array_view_unproven_length",
-        "of 'array_view' accepts arguments",
+        "of 'single_array_view' accepts arguments",
     );
 }
 
@@ -12896,4 +12896,9 @@ test "feature_tests/contracts/286_view_reference_evidence" {
 }
 test "feature_tests/contracts/287X_view_reference_escape" {
     try buildExpectFail("tests/feature_tests/contracts/287X_view_reference_escape", "local");
+}
+
+test "feature_tests/contracts/288_dynamic_view_reference_evidence" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/288_dynamic_view_reference_evidence");
+    try runExpect("tests/feature_tests/contracts/288_dynamic_view_reference_evidence", 0);
 }

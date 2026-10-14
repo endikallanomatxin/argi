@@ -341,7 +341,7 @@ to_float64(.self: &Object) -> (.result: Errable#(Float64, (..python_error))) := 
     result = ..ok value
 }
 
-_no_arguments() -> (.value: ArrayViewRO#(.t: &Object)) := { value = array_view_ro#(.t: &Object)() }
+_no_arguments() -> (.value: ArrayViewRO#(.t: &Object)) := { value = empty_array_view_ro#(.t: &Object)() }
 
 _no_keywords() -> (.value: ?&Object) := { value = ..none }
 

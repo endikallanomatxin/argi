@@ -172,7 +172,7 @@ to_object#(
     ) -> (
         .result : Errable#(Object, (..python_error))
     ) := {
-    result = to_object(.self = self, .value = array_view_ro(.array = value).view)
+    result = to_object(.self = self, .value = view(.array = value))
 }
 
 keyword_arguments(

@@ -3,7 +3,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     bytes ::= DynamicArray#(.t: UInt8)(.capacity = 2)!
     push(.self = $&bytes, .value = 1)!
     push(.self = $&bytes, .value = 2)!
-    reader ::= ByteReader(.bytes = array_view_ro(.array = &bytes).view)
+    reader ::= ByteReader(.bytes = view(.array = &bytes))
     deinit(.self = $&bytes)
     _ ::= read_uint16(.self = $&reader, .order = ..big)!
 }

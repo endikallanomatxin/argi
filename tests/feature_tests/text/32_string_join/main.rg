@@ -2,7 +2,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     parts: [3]StringView = ("a", "", "b")
     joined ::= unwrap_or_abort(
         .value = join(
-            .parts     = array_view_ro(.array = &parts).view
+            .parts     = view(.array = &parts)
             .separator = "--"
             .allocator = system.page_allocator
         )
@@ -11,7 +11,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     deinit(.self = $&joined)
     joined_empty_separator ::= unwrap_or_abort(
         .value = join(
-            .parts     = array_view_ro(.array = &parts).view
+            .parts     = view(.array = &parts)
             .separator = ""
             .allocator = system.page_allocator
         )
@@ -21,7 +21,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     empty_parts: [0]StringView = ()
     empty ::= unwrap_or_abort(
         .value = join(
-            .parts     = array_view_ro(.array = &empty_parts).view
+            .parts     = view(.array = &empty_parts)
             .separator = ","
             .allocator = system.page_allocator
         )
@@ -32,12 +32,12 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     bytes_set(.string = $&source, .index = 0, .value = 97)
     bytes_set(.string = $&source, .index = 1, .value = 0)
     bytes_set(.string = $&source, .index = 2, .value = 98)
-    view ::= as_view(.self = &source).view
-    aliased: [2]StringView = (view, view)
+    borrowed_view ::= as_view(.self = &source).view
+    aliased: [2]StringView = (borrowed_view, borrowed_view)
     independent ::= unwrap_or_abort(
         .value = join(
-            .parts     = array_view_ro(.array = &aliased).view
-            .separator = view
+            .parts     = view(.array = &aliased)
+            .separator = borrowed_view
             .allocator = system.page_allocator
         )
     )

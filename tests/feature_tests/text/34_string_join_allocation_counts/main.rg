@@ -10,7 +10,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     parts: [3]StringView = ("ab", "", "c")
     output ::= unwrap_or_abort(
         .value = join(
-            .parts     = array_view_ro(.array = &parts).view
+            .parts     = view(.array = &parts)
             .separator = "-"
             .allocator = $&allocator
         )
@@ -22,7 +22,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     empty: [0]StringView = ()
     output_empty ::= unwrap_or_abort(
         .value = join(
-            .parts     = array_view_ro(.array = &empty).view
+            .parts     = view(.array = &empty)
             .separator = ","
             .allocator = $&allocator
         )
