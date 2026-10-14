@@ -813,6 +813,12 @@ fn findEquivalentType(
     candidates_examined: ?*u64,
     candidates_by_tag: ?*[Stats.tag_count]u64,
 ) ?global_sg.GlobalTypeId {
+    // These shapes retain their own field/variant storage identities. The
+    // shallow equivalence predicate cannot reuse them, so scanning is futile.
+    switch (value) {
+        .inferred_choice, .structural, .structural_choice => return null,
+        else => {},
+    }
     for (graph.types.items, 0..) |candidate, raw| {
         if (candidates_examined) |count| count.* += 1;
         if (candidates_by_tag) |counts| counts[@intFromEnum(std.meta.activeTag(candidate))] += 1;

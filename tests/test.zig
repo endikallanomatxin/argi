@@ -2473,7 +2473,7 @@ test "feature_tests/collections/48_array_view_fixed_storage" {
 test "feature_tests/collections/49X_array_view_unproven_length" {
     try buildExpectFail(
         "tests/feature_tests/collections/49X_array_view_unproven_length",
-        "of 'single_array_view' accepts arguments",
+        "no function named 'single_array_view' accepts arguments",
     );
 }
 

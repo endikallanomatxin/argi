@@ -259,14 +259,10 @@ pub const Resolver = struct {
 
     fn implementsNamedContract(self: *Resolver, concrete: global_sg.GlobalTypeId, name: []const u8) bool {
         const dispatch = self.dispatch orelse return false;
-        for (self.graph.declarations.items, 0..) |declaration, raw| {
-            if (declaration.kind != .contract_type or !std.mem.eql(u8, self.graph.text(declaration.name), name)) continue;
-            const contract_decl: global_sg.GlobalDeclId = @enumFromInt(@as(u32, @intCast(raw)));
-            for (self.graph.types.items, 0..) |candidate, type_raw| {
-                if (candidate != .declared or candidate.declared != contract_decl) continue;
-                const contract_type: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(type_raw)));
-                if (dispatch.contracts.concreteImplements(concrete, contract_type)) return true;
-            }
+        const declarations = self.graph.declarationsNamed(self.allocator, name) catch return false;
+        for (declarations) |contract_decl| {
+            if (self.graph.declaration(contract_decl).kind != .contract_type) continue;
+            if (dispatch.contracts.implements(concrete, contract_decl) catch false) return true;
         }
         return false;
     }

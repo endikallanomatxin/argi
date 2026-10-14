@@ -106,6 +106,8 @@ pub const ContractOperationBinding = struct {
     instantiate_associated: bool = false,
 };
 pub const ContractConformance = struct {
+    // Declaration/signature validation is separate from the later safety proof.
+    declaration_validated: bool = false,
     implementation_arguments: primitives.Range(GlobalGenericArgId) = .{ .start = 0, .len = 0 },
     operation_bindings: primitives.Range(ContractOperationBindingId) = .{ .start = 0, .len = 0 },
     context: GlobalModuleId = @enumFromInt(0),

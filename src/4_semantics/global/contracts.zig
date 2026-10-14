@@ -69,6 +69,8 @@ pub const Resolver = struct {
         external: module_entities.ExternalRefId,
         kind: primitives.DeclarationKind,
     };
+    const TemplateGroup = struct { declaration: global_sg.GlobalDeclId, arity: usize };
+    const ImplementationTemplate = struct { module: usize, index: usize };
 
     allocator: std.mem.Allocator,
     function_context: ?*anyopaque = null,
@@ -88,9 +90,13 @@ pub const Resolver = struct {
     profile_io: ?std.Io = null,
     constraint_declarations: std.AutoHashMapUnmanaged(ConstraintKey, global_sg.GlobalDeclId) = .empty,
     resolved_contract_refs: std.AutoHashMapUnmanaged(ContractRefKey, global_sg.GlobalDeclId) = .empty,
+    implementation_templates: std.AutoHashMapUnmanaged(TemplateGroup, std.ArrayList(ImplementationTemplate)) = .empty,
     pub fn deinit(self: *Resolver) void {
         self.constraint_declarations.deinit(self.allocator);
         self.resolved_contract_refs.deinit(self.allocator);
+        var templates = self.implementation_templates.valueIterator();
+        while (templates.next()) |group| group.deinit(self.allocator);
+        self.implementation_templates.deinit(self.allocator);
     }
 
     pub fn checkpointResolution(self: *const Resolver) ResolutionCheckpoint {
@@ -743,6 +749,24 @@ pub const Resolver = struct {
 
     pub const ConformanceSelection = struct { tuple: usize };
 
+    /// Index immutable source templates, never speculative selected evidence.
+    /// Successful reference lookup is stable across GlobalSG rollback.
+    fn implementationTemplates(self: *Resolver, declaration: global_sg.GlobalDeclId, arity: usize) ![]const ImplementationTemplate {
+        const key: TemplateGroup = .{ .declaration = declaration, .arity = arity };
+        if (self.implementation_templates.get(key)) |group| return group.items;
+        var group: std.ArrayList(ImplementationTemplate) = .empty;
+        errdefer group.deinit(self.allocator);
+        for (self.modules, 0..) |module, owner| {
+            for (module.semantic.parameterized_storage.contract_conformances.items, 0..) |template, index| {
+                if (template.parameters.len == 0 or template.participants.len != arity) continue;
+                if (try self.resolveDeclarationRef(owner, template.contract_ref, .contract_type) != declaration) continue;
+                try group.append(self.allocator, .{ .module = owner, .index = index });
+            }
+        }
+        try self.implementation_templates.put(self.allocator, key, group);
+        return group.items;
+    }
+
     /// Source forms differ only while matching candidates. A selected conformance
     /// binds every participant and associated element as ordinary parameters.
     pub fn selectConformance(self: *Resolver, declaration: global_sg.GlobalDeclId, participants: []const global_sg.GlobalTypeId, bindings: ?*generic_mod.Resolver.Bindings, depth: u8, deferred: ?*bool) anyerror!?ConformanceSelection {
@@ -795,10 +819,11 @@ pub const Resolver = struct {
                 if (template.participants.len == 0) continue;
                 const declaration = try self.resolveDeclarationRef(module_index, template.contract_ref, .contract_type);
                 if (!std.mem.eql(u8, self.graph.text(self.graph.declarations.items[@intFromEnum(declaration)].name), name)) continue;
+                const first = storage.ir.generic_arguments.items[template.participants.start].value;
+                if (first != .type or !try self.typePatternMayMatch(module_index, first.type, concrete)) continue;
                 var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
                 defer bindings.deinit(self.allocator);
-                const first = storage.ir.generic_arguments.items[template.participants.start].value;
-                if (first != .type or !try self.inferConstraintTypePattern(module_index, first.type, concrete, &bindings)) continue;
+                if (!try self.inferConstraintTypePattern(module_index, first.type, concrete, &bindings)) continue;
                 var matches = true;
                 for (template.parameters.start..template.parameters.start + template.parameters.len) |raw| {
                     const parameter = storage.comptime_parameters.items[raw];
@@ -831,24 +856,32 @@ pub const Resolver = struct {
             for (candidates.items) |*candidate| candidate.bindings.deinit(self.allocator);
             candidates.deinit(self.allocator);
         }
-        for (self.modules, 0..) |*module, module_index| {
-            for (module.semantic.parameterized_storage.contract_conformances.items) |template| {
-                if (template.parameters.len == 0 or template.participants.len != participants.len) continue;
-                if (try self.resolveDeclarationRef(module_index, template.contract_ref, .contract_type) != declaration) continue;
-                var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, module.semantic.parameterized_storage.comptime_parameters.items.len);
-                var keep = false;
-                defer if (!keep) bindings.deinit(self.allocator);
-                var matches = true;
-                for (module.semantic.parameterized_storage.ir.generic_arguments.items[template.participants.start..][0..template.participants.len], participants) |pattern, actual| {
-                    if (pattern.value != .type or !try self.inferConstraintTypePattern(module_index, pattern.value.type, actual, &bindings)) {
-                        matches = false;
-                        break;
-                    }
+        for (try self.implementationTemplates(declaration, participants.len)) |reference| {
+            const module_index = reference.module;
+            const module = &self.modules[module_index];
+            const template = module.semantic.parameterized_storage.contract_conformances.items[reference.index];
+            const patterns = module.semantic.parameterized_storage.ir.generic_arguments.items[template.participants.start..][0..template.participants.len];
+            var possible = true;
+            for (patterns, participants) |pattern, actual| {
+                if (pattern.value != .type or !try self.typePatternMayMatch(module_index, pattern.value.type, actual)) {
+                    possible = false;
+                    break;
                 }
-                if (!matches or !try self.validateParameterizedImplementationConstraints(module_index, template.parameters, &bindings)) continue;
-                try candidates.append(self.allocator, .{ .module = module_index, .template = template, .bindings = bindings });
-                keep = true;
             }
+            if (!possible) continue;
+            var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, module.semantic.parameterized_storage.comptime_parameters.items.len);
+            var keep = false;
+            defer if (!keep) bindings.deinit(self.allocator);
+            var matches = true;
+            for (patterns, participants) |pattern, actual| {
+                if (pattern.value != .type or !try self.inferConstraintTypePattern(module_index, pattern.value.type, actual, &bindings)) {
+                    matches = false;
+                    break;
+                }
+            }
+            if (!matches or !try self.validateParameterizedImplementationConstraints(module_index, template.parameters, &bindings)) continue;
+            try candidates.append(self.allocator, .{ .module = module_index, .template = template, .bindings = bindings });
+            keep = true;
         }
         var selected: ?usize = null;
         for (candidates.items, 0..) |candidate, index| {
@@ -1788,7 +1821,7 @@ pub const Resolver = struct {
         // whose selected conformance has never been checked.
         while (index < self.graph.contract_conformances.items.len) : (index += 1) {
             const conformance = self.graph.contract_conformances.items[index];
-            if (conformance.operations.len != 0) continue;
+            if (conformance.declaration_validated) continue;
             const module_index: usize = @intFromEnum(conformance.context);
             const located = self.findContractDefinition(conformance.declaration) orelse return error.InvalidContractDeclaration;
             if (!located.definition.hasExplicitParticipants()) continue;
@@ -1941,7 +1974,20 @@ pub const Resolver = struct {
             const operation_start: u32 = @intCast(self.graph.function_refs.items.len);
             try self.graph.function_refs.appendSlice(self.allocator, operations.items);
             self.graph.contract_conformances.items[index].operations = .{ .start = operation_start, .len = @intCast(operations.items.len) };
+            // Empty marker contracts are validated too. Keep retrying markers
+            // with unresolved arguments so projection/alias resolution cannot
+            // hide a later bound failure or duplicate participant tuple.
+            self.graph.contract_conformances.items[index].declaration_validated = operations.items.len != 0 or self.conformanceArgumentsReady(conformance);
         }
+    }
+
+    fn conformanceArgumentsReady(self: *const Resolver, conformance: global_sg.ContractConformance) bool {
+        inline for (.{ conformance.participants, conformance.associated_arguments }) |arguments| {
+            for (self.graph.generic_arguments.items[arguments.start..][0..arguments.len]) |argument| {
+                if (argument.value == .type and !contract_projections.typeSelectionReady(self, argument.value.type, 0)) return false;
+            }
+        }
+        return true;
     }
 
     fn makeDestructorOperation(self: *Resolver, body: global_sg.GlobalFunctionId, output: global_sg.GlobalTypeId, source: primitives.SourceRef) !global_sg.GlobalFunctionId {
@@ -2112,6 +2158,29 @@ pub const Resolver = struct {
             }
         }
         return true;
+    }
+
+    /// Reject only shapes rejected directly by inference, before reserving
+    /// bindings. Aliases, projections and parameters still need full matching.
+    fn typePatternMayMatch(self: *Resolver, module_index: usize, pattern: ir.ParameterizedTypeId, actual: global_sg.GlobalTypeId) !bool {
+        const expected = self.modules[module_index].semantic.parameterized_storage.ir.types.items[@intFromEnum(pattern)];
+        const supplied = self.graph.types.items[@intFromEnum(actual)];
+        return switch (expected) {
+            .array => supplied == .array,
+            .resolved => |resolved| switch (resolved) {
+                .pointer => |pointer| supplied == .pointer and pointer.mutability == supplied.pointer.mutability,
+                .structural => |record| supplied == .structural and record.fields.len == supplied.structural.fields.len,
+                .generic => |nominal| blk: {
+                    if (supplied != .generic) break :blk false;
+                    // Full matching owns diagnostics and ordered inference;
+                    // this filter must not report a losing candidate's error.
+                    const declaration = self.generics.resolveParameterizedDeclaration(module_index, nominal.base) catch break :blk true;
+                    break :blk declaration == supplied.generic.base;
+                },
+                else => true,
+            },
+            else => true,
+        };
     }
 
     pub fn inferConstraintTypePattern(
