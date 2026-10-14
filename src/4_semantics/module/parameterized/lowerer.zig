@@ -237,7 +237,7 @@ pub const Context = struct {
                         const text = self.tree.tokenTextFromSource(self.source, self.tree.mainToken(domain));
                         for (domains.items) |previous| {
                             if (std.mem.eql(u8, self.graph.text(previous), text)) {
-                                try self.contractError(domain, "duplicate Abstract storage domain");
+                                try self.contractError(domain, "duplicate Contract storage domain");
                                 unreachable;
                             }
                         }
@@ -256,6 +256,7 @@ pub const Context = struct {
                         const output = try self.lowerType(requirement.output, true);
                         const safety_contract = try self.lowerMethodSafetyContract(requirement, domains.items);
                         try self.graph.semantic.parameterized_storage.contract_requirements.append(self.allocator, .{
+                            .source = .{ .file_index = self.sourceRef(requirement_node).file_index, .offset = self.tree.tokenLocation(requirement.name_token).offset },
                             .name = name,
                             .input = input,
                             .output = output,
@@ -567,7 +568,7 @@ pub const Context = struct {
     fn contractStorageInput(self: *Context, requirement: syn.ContractFunctionRequirement, node: syn.NodeIndex, domains: []const primitives.StringRange) !primitives.MethodSafetyContract.StorageInput {
         if (try self.contractDomainInput(requirement, node, domains)) |domain| return .{ .input_index = domain.input_index, .domain_index = domain.domain_index };
         const index = (try self.contractFieldIndex(requirement.input, node)) orelse {
-            try self.contractError(node, "opaque storage clauses must name a storage input or a Self domain");
+            try self.contractError(node, "opaque storage clauses must name a storage input or a participant domain");
             unreachable;
         };
         return .{ .input_index = index };
@@ -580,7 +581,7 @@ pub const Context = struct {
         for (domains, 0..) |domain, index| {
             if (std.mem.eql(u8, self.graph.text(domain), name)) return .{ .input_index = input, .domain_index = @intCast(index) };
         }
-        return self.contractDomainError(node, "unknown Abstract storage domain");
+        return self.contractDomainError(node, "unknown Contract storage domain");
     }
 
     fn contractDomainError(self: *Context, node: syn.NodeIndex, message: []const u8) !?primitives.MethodSafetyContract.DomainInput {

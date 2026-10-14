@@ -154,7 +154,7 @@ fn verifyGenericInstances(graph: *const graph_mod.GlobalSemanticGraph) !void {
             try require(verify.idFits(generic.base, graph.declarations.items.len));
             switch (graph.declaration(generic.base).kind) {
                 .type => materialized_generic_count += 1,
-                // Parameterized abstract identities are semantic contracts, not
+                // Parameterized contract identities are semantic contracts, not
                 // runtime layouts. They intentionally have no GenericInstance.
                 .contract_type => {},
                 else => return error.InvalidGlobalSemanticGraph,
@@ -182,7 +182,7 @@ fn verifyGenericInstances(graph: *const graph_mod.GlobalSemanticGraph) !void {
     }
 }
 
-test "parameterized abstract identities do not require runtime generic instances" {
+test "parameterized contract identities do not require runtime generic instances" {
     const allocator = std.testing.allocator;
     var graph: graph_mod.GlobalSemanticGraph = .{};
     defer graph.deinit(allocator);

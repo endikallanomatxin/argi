@@ -90,7 +90,7 @@ pub const Resolver = struct {
         ownership: ?[2]usize = null,
         reached_calls: usize = 0,
         reached_signatures: usize = 0,
-        contracts: ?contract_mod.Resolver.CacheCheckpoint = null,
+        contracts: ?contract_mod.Resolver.ResolutionCheckpoint = null,
         comptime_failure: ?generic_mod.ComptimeFailure = null,
     };
 
@@ -101,7 +101,7 @@ pub const Resolver = struct {
                 saved.ownership = checkpoint(context);
         }
         if (self.nested_call_context) |contracts|
-            saved.contracts = contracts.checkpointImplementationCaches();
+            saved.contracts = contracts.checkpointResolution();
         return saved;
     }
 
@@ -111,7 +111,7 @@ pub const Resolver = struct {
         self.core.rollback_reached_signatures(saved.reached_signatures);
         if (saved.contracts) |checkpoint|
             if (self.nested_call_context) |contracts|
-                contracts.rollbackImplementationCaches(checkpoint);
+                contracts.rollbackResolution(checkpoint);
         if (saved.ownership) |checkpoint| {
             const context = self.ownership_context orelse return;
             const rollback = self.rollback_ownership orelse return;
@@ -560,21 +560,15 @@ pub const Resolver = struct {
             const value = self.core.callArgumentNamed(literal, expected_position, module.text(field.name)) orelse continue;
             // Reject unrelated nominal references before instantiating their
             // constraints; an inapplicable identity must not emit type diagnostics.
-            if (self.staticInputType(value)) |actual|
+            if (self.graph.node(value).ty) |actual|
                 if (self.definiteNominalReferenceMismatch(module_index, field.ty, actual)) return false;
             if (allow_contextual_concrete) {
                 if (self.contextualParameterizedLiteralFits(module_index, field.ty, bindings, value)) continue;
             }
-            const actual = self.staticInputType(value) orelse return false;
+            const actual = self.graph.node(value).ty orelse return false;
             if (!try self.inferInputType(module_index, field.ty, actual, bindings)) return false;
         }
         return true;
-    }
-
-    /// An abstract-typed reached binding retains its selected implementer for
-    /// monomorphization without widening ordinary member lookup.
-    fn staticInputType(self: *Resolver, node_id: global_sg.GlobalNodeId) ?global_sg.GlobalTypeId {
-        return self.graph.node(node_id).ty;
     }
 
     fn inferBindingsFromReachDefaults(
@@ -760,12 +754,8 @@ pub const Resolver = struct {
                 const constraint_ok = try contracts.inferConstraintBindings(module_index, constraint_id, concrete, bindings);
 
                 if (!constraint_ok) {
-                    // Direct abstract inputs are lowered to synthetic bounded
-                    // parameters. Their existing argument diagnostic names the
-                    // source input, so do not expose compiler parameter names.
                     if (self.constraint_diagnostics != null and
-                        try contracts.constraintArgumentsKnown(module_index, constraint_id, bindings) and
-                        !std.mem.startsWith(u8, self.modules[module_index].text(parameter.name), "__abstract_")) self.failed_constraint = .{
+                        try contracts.constraintArgumentsKnown(module_index, constraint_id, bindings)) self.failed_constraint = .{
                         .contract_decl = try contracts.constraintDeclaration(module_index, constraint_id),
                         .actual = concrete,
                         .parameter_name = self.modules[module_index].text(parameter.name),
@@ -1011,7 +1001,7 @@ pub const Resolver = struct {
             var candidate_deferred = false;
             for (storage.fields.items[shape.fields.start..][0..shape.fields.len], 0..) |field, position| {
                 if (self.core.callArgumentNamed(literal, position, candidate_module.text(field.name))) |supplied| {
-                    if (self.staticInputType(supplied)) |actual| {
+                    if (self.graph.node(supplied).ty) |actual| {
                         if (self.definiteNominalReferenceMismatch(candidate_index, field.ty, actual)) {
                             matches = false;
                             break;
@@ -1021,7 +1011,7 @@ pub const Resolver = struct {
                     // A literal then supplies context-compatible data, rather
                     // than conflicting evidence from its default numeric type.
                     if (self.contextualParameterizedLiteralFits(candidate_index, field.ty, &bindings, supplied)) continue;
-                    const actual = self.staticInputType(supplied) orelse {
+                    const actual = self.graph.node(supplied).ty orelse {
                         candidate_deferred = true;
                         matches = false;
                         break;
@@ -1176,7 +1166,7 @@ pub const Resolver = struct {
         };
         const expected_base = self.generics.resolveParameterizedDeclaration(module_index, expected_ref) catch return false;
         // A different concrete nominal base cannot be supplied by reach or
-        // pointer compatibility. Abstract receivers keep the full matcher.
+        // pointer compatibility. Contract participants keep the full matcher.
         return self.graph.declarations.items[@intFromEnum(expected_base)].kind == .type and actual_base != expected_base;
     }
 
@@ -1796,7 +1786,7 @@ pub const Resolver = struct {
                 .is_generic_instantiation = true,
                 .uses_inferred_error_reasons = inferred_errors,
                 // A contract template has no runtime ABI; its inferred
-                // instance does, once every abstract parameter is concrete.
+                // instance does, once every generic parameter is concrete.
             },
         });
         try self.graph.generic_function_instances.append(self.allocator, .{
@@ -2107,7 +2097,7 @@ pub const Resolver = struct {
         fn instantiateResolvedNode(self: *InstanceContext, node: ir.ResolvedNode) anyerror!global_sg.Node {
             if (node.content == .struct_value_literal) return self.instantiateStructValue(node);
             // TODO: Support reporting value_sequence arguments to concrete
-            // callees during abstract-dispatch specialization. Even bare !!!
+            // callees during contract-operation specialization. Even bare !!!
             // can currently make that enclosing specialization fail.
             if (node.content == .code_block or node.content == .value_sequence) {
                 const is_sequence = node.content == .value_sequence;

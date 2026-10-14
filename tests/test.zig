@@ -1663,7 +1663,7 @@ test "feature_tests/pointers/04X_read-write_pointer_to_constant" {
 
 test "feature_tests/pointers/05X_pass_readonly_pointer_to_mutable_param" {
     try buildExpectFailExact("tests/feature_tests/pointers/05X_pass_readonly_pointer_to_mutable_param",
-        \\tests/feature_tests/pointers/05X_pass_readonly_pointer_to_mutable_param/main.rg:9:14: error: no overload of 'increment' accepts arguments (.ptr: &Int32). Available signatures:
+        \\tests/feature_tests/pointers/05X_pass_readonly_pointer_to_mutable_param/main.rg:9:14: error: no function named 'increment' accepts arguments (.ptr: &Int32). Available signatures:
         \\  - increment (.ptr: $&Int32) -> ()
         \\      increment(.ptr=reader)
         \\               ^
@@ -1701,7 +1701,7 @@ test "feature_tests/basics/13_core_and_libc" {
 
 test "feature_tests/basics/17X_extern_call_requires_exact_argument_types" {
     try buildExpectFailExact("tests/feature_tests/basics/17X_extern_call_requires_exact_argument_types",
-        \\tests/feature_tests/basics/17X_extern_call_requires_exact_argument_types/main.rg:4:12: error: no overload of 'putchar' accepts arguments (.character: UInt16). Available signatures:
+        \\tests/feature_tests/basics/17X_extern_call_requires_exact_argument_types/main.rg:4:12: error: no function named 'putchar' accepts arguments (.character: UInt16). Available signatures:
         \\  - putchar (.character: UInt8, .ffi: $&ForeignFunctionInterface) -> ()
         \\      putchar(.character = value)
         \\             ^
@@ -2783,7 +2783,7 @@ test "feature_tests/io/25_positional_text_helpers" {
 }
 
 test "feature_tests/io/26X_print_without_system" {
-    try buildExpectFail("tests/feature_tests/io/26X_print_without_system", "no matching generic overload of 'print'");
+    try buildExpectFail("tests/feature_tests/io/26X_print_without_system", "no generic function named 'print'");
 }
 
 test "feature_tests/text/03_string_buffer_io" {
@@ -5068,14 +5068,14 @@ test "feature_tests/polymorphism/32_static_abstract_generic_fields" {
 test "feature_tests/polymorphism/33X_static_abstract_generic_field_requires_implementation" {
     try buildExpectFail(
         "tests/feature_tests/polymorphism/33X_static_abstract_generic_field_requires_implementation",
-        "does not implement abstract 'Backend' required by generic type parameter '.backend_type' of 'Wrapper'",
+        "does not implement contract 'Backend' required by generic type parameter '.backend_type' of 'Wrapper'",
     );
 }
 
 test "feature_tests/polymorphism/34X_static_abstract_generic_field_identity" {
     try buildExpectFail(
         "tests/feature_tests/polymorphism/34X_static_abstract_generic_field_identity",
-        "no overload of 'accept_b' accepts arguments (.value: Wrapper#(.backend_type: BackendA))",
+        "no function named 'accept_b' accepts arguments (.value: Wrapper#(.backend_type: BackendA))",
     );
 }
 
@@ -6188,11 +6188,11 @@ test "feature_tests/functions/20_assume_arguments" {
 }
 
 test "feature_tests/functions/21X_assume_no_propagation" {
-    try buildExpectFail("tests/feature_tests/functions/21X_assume_no_propagation", "no overload of 'take' accepts arguments");
+    try buildExpectFail("tests/feature_tests/functions/21X_assume_no_propagation", "no function named 'take' accepts arguments");
 }
 
 test "feature_tests/functions/22X_assume_incompatible_default" {
-    try buildExpectFail("tests/feature_tests/functions/22X_assume_incompatible_default", "no overload of 'take' accepts arguments");
+    try buildExpectFail("tests/feature_tests/functions/22X_assume_incompatible_default", "no function named 'take' accepts arguments");
 }
 
 test "feature_tests/functions/23X_assume_unknown_variable" {
@@ -6208,7 +6208,7 @@ test "feature_tests/functions/25X_assume_stale_reference" {
 }
 
 test "feature_tests/functions/26X_assume_scope_does_not_escape" {
-    try buildExpectFail("tests/feature_tests/functions/26X_assume_scope_does_not_escape", "no overload of 'take' accepts arguments");
+    try buildExpectFail("tests/feature_tests/functions/26X_assume_scope_does_not_escape", "no function named 'take' accepts arguments");
 }
 
 test "feature_tests/functions/27_assume_automatic_cleanup" {
@@ -7146,23 +7146,23 @@ test "feature_tests/polymorphism/42_virtual_nonleading_receiver" {
 }
 
 test "feature_tests/polymorphism/43X_virtual_multiple_self_receivers" {
-    try buildExpectFail("tests/feature_tests/polymorphism/43X_virtual_multiple_self_receivers", "exactly one borrowed Self receiver");
+    try buildExpectFail("tests/feature_tests/polymorphism/43X_virtual_multiple_self_receivers", "exactly one borrowed participant receiver");
 }
 
 test "feature_tests/polymorphism/44X_virtual_self_result" {
-    try buildExpectFail("tests/feature_tests/polymorphism/44X_virtual_self_result", "Self cannot appear in a virtual method result");
+    try buildExpectFail("tests/feature_tests/polymorphism/44X_virtual_self_result", "the hidden participant cannot appear in a virtual operation result");
 }
 
 test "feature_tests/polymorphism/45X_virtual_self_by_value" {
-    try buildExpectFail("tests/feature_tests/polymorphism/45X_virtual_self_by_value", "Self is only allowed as a direct borrowed receiver");
+    try buildExpectFail("tests/feature_tests/polymorphism/45X_virtual_self_by_value", "the hidden participant is only allowed as a direct borrowed receiver");
 }
 
 test "feature_tests/polymorphism/46X_virtual_nested_self_input" {
-    try buildExpectFail("tests/feature_tests/polymorphism/46X_virtual_nested_self_input", "Self is only allowed as a direct borrowed receiver");
+    try buildExpectFail("tests/feature_tests/polymorphism/46X_virtual_nested_self_input", "the hidden participant is only allowed as a direct borrowed receiver");
 }
 
 test "feature_tests/polymorphism/47X_virtual_missing_receiver" {
-    try buildExpectFail("tests/feature_tests/polymorphism/47X_virtual_missing_receiver", "exactly one borrowed Self receiver");
+    try buildExpectFail("tests/feature_tests/polymorphism/47X_virtual_missing_receiver", "exactly one borrowed participant receiver");
 }
 
 test "feature_tests/polymorphism/48X_virtual_associated_parameters" {
@@ -7179,11 +7179,11 @@ test "feature_tests/types/270X_acquired_storage_inspected_alias_consumed" {
 }
 
 test "feature_tests/polymorphism/50X_virtual_readonly_mutable_contract" {
-    try buildExpectFail("tests/feature_tests/polymorphism/50X_virtual_readonly_mutable_contract", "a mutable Self receiver requires a mutable concrete reference");
+    try buildExpectFail("tests/feature_tests/polymorphism/50X_virtual_readonly_mutable_contract", "a mutable participant receiver requires a mutable concrete reference");
 }
 
 test "feature_tests/polymorphism/51X_virtual_readonly_generic_conversion" {
-    try buildExpectFail("tests/feature_tests/polymorphism/51X_virtual_readonly_generic_conversion", "a mutable Self receiver requires a mutable concrete reference");
+    try buildExpectFail("tests/feature_tests/polymorphism/51X_virtual_readonly_generic_conversion", "a mutable participant receiver requires a mutable concrete reference");
 }
 
 test "feature_tests/polymorphism/52X_virtual_receiver_identity_same_type_argument" {
@@ -7519,7 +7519,7 @@ test "feature_tests/collections/115_collection_sort_records" {
 }
 
 test "feature_tests/collections/116X_collection_sort_readonly" {
-    try buildExpectFail("tests/feature_tests/collections/116X_collection_sort_readonly", "no matching generic overload of 'sort' accepts arguments");
+    try buildExpectFail("tests/feature_tests/collections/116X_collection_sort_readonly", "no generic function named 'sort' accepts arguments");
 }
 
 test "tests/feature_tests/basics/25X_numeric_binding_type" {
@@ -7563,7 +7563,7 @@ test "tests/feature_tests/polymorphism/61_generic_constraint_alternate" {
 }
 
 test "tests/feature_tests/polymorphism/62X_generic_constraint_wrong_shape" {
-    try buildExpectFail("tests/feature_tests/polymorphism/62X_generic_constraint_wrong_shape", "no matching generic overload of 'accept_owned' accepts arguments");
+    try buildExpectFail("tests/feature_tests/polymorphism/62X_generic_constraint_wrong_shape", "no generic function named 'accept_owned' accepts arguments");
 }
 
 test "tests/feature_tests/polymorphism/63X_generic_constraint_qualified" {
@@ -8185,7 +8185,7 @@ test "C interop rejects incomplete values construction layout and definitions" {
 }
 
 test "C interop rejects incompatible incomplete handles and safe references" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/48X_incomplete_handle_identity", "no overload of '_read' accepts arguments", "failed without a diagnostic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/48X_incomplete_handle_identity", "no function named '_read' accepts arguments", "failed without a diagnostic");
     try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/49X_incomplete_safe_reference", "cannot form a safe reference", "failed without a diagnostic");
     try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/50X_incomplete_alignment", "has no size or alignment", "failed without a diagnostic");
     try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/51X_incomplete_value_storage", "has no value representation", "failed without a diagnostic");
@@ -8282,7 +8282,7 @@ test "C interop rejects 71X_callback_declared_body" {
 }
 
 test "C interop rejects 72X_callback_nominal_identity" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/72X_callback_nominal_identity", "no overload of", "failed without a diagnostic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/72X_callback_nominal_identity", "no function named", "failed without a diagnostic");
 }
 
 test "C interop rejects 73X_callback_missing_capability" {
@@ -8834,7 +8834,7 @@ test "feature_tests/system/58X_clock_missing_ffi" {
 }
 
 test "feature_tests/system/59X_clock_domains" {
-    try buildExpectFail("tests/feature_tests/system/59X_clock_domains", "no overload of 'elapsed' accepts arguments (.start: UnixTimestamp, .end: MonotonicInstant)");
+    try buildExpectFail("tests/feature_tests/system/59X_clock_domains", "no function named 'elapsed' accepts arguments (.start: UnixTimestamp, .end: MonotonicInstant)");
 }
 
 test "feature_tests/system/60_processes" {
@@ -9073,7 +9073,7 @@ test "feature_tests/python/11_numeric_buffers" {
     try checkPythonFixture("tests/feature_tests/python/11_numeric_buffers");
 }
 test "feature_tests/python/12X_numeric_readonly" {
-    try buildExpectFail("tests/feature_tests/python/12X_numeric_readonly", "no matching generic overload of 'copy_numeric'");
+    try buildExpectFail("tests/feature_tests/python/12X_numeric_readonly", "no generic function named 'copy_numeric'");
 }
 
 test "feature_tests/functions/32_generic_view_dispatch_order" {
@@ -9089,7 +9089,7 @@ test "feature_tests/system/71_system_entropy" {
 }
 
 test "feature_tests/system/72X_entropy_readonly" {
-    try buildExpectFail("tests/feature_tests/system/72X_entropy_readonly", "no overload of 'fill_random_bytes' accepts arguments");
+    try buildExpectFail("tests/feature_tests/system/72X_entropy_readonly", "no function named 'fill_random_bytes' accepts arguments");
 }
 
 test "feature_tests/more/01_uri" {
@@ -10337,7 +10337,7 @@ test "feature_tests/polymorphism/89X_virtual_safety_contract_domain_overlap" {
 }
 
 test "feature_tests/polymorphism/90X_virtual_safety_contract_domain_missing" {
-    try buildExpectFail("tests/feature_tests/polymorphism/90X_virtual_safety_contract_domain_missing", "every Abstract storage domain requires exactly one implementation mapping");
+    try buildExpectFail("tests/feature_tests/polymorphism/90X_virtual_safety_contract_domain_missing", "every Contract storage domain requires exactly one implementation mapping");
 }
 
 test "feature_tests/polymorphism/91_virtual_safety_contract_domain_local_conversion" {
@@ -10678,7 +10678,7 @@ test "feature_tests/polymorphism/168_virtual_consumes_guarded" {
 }
 
 test "feature_tests/polymorphism/169X_virtual_consumes_erased_self" {
-    try buildExpectFail("tests/feature_tests/polymorphism/169X_virtual_consumes_erased_self", "consumes on erased Self requires receiver cleanup identities");
+    try buildExpectFail("tests/feature_tests/polymorphism/169X_virtual_consumes_erased_self", "consumes on an erased participant requires receiver cleanup identities");
 }
 
 test "feature_tests/polymorphism/166_virtual_consumes_multiple" {
@@ -11028,7 +11028,7 @@ test "feature_tests/polymorphism/248X_opaque_storage_conditional" {
 }
 
 test "feature_tests/polymorphism/249X_opaque_storage_erased_receiver" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/249X_opaque_storage_erased_receiver", "opaque storage clauses on erased Self require mapped hidden storage identities", "failed without a diagnostic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/249X_opaque_storage_erased_receiver", "opaque storage clauses on an erased participant require mapped hidden storage identities", "failed without a diagnostic");
 }
 
 test "feature_tests/polymorphism/250X_opaque_storage_wrong_input" {
@@ -12162,7 +12162,7 @@ test "feature_tests/contracts/148X_incomparable_nominal_patterns" {
 }
 
 test "feature_tests/contracts/149X_scoped_virtual_mutability" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/149X_scoped_virtual_mutability", "a mutable Self receiver requires a mutable concrete reference", "panic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/149X_scoped_virtual_mutability", "a mutable participant receiver requires a mutable concrete reference", "panic");
 }
 
 test "feature_tests/contracts/150_scoped_virtual_writer" {
@@ -12423,7 +12423,7 @@ test "feature_tests/contracts/208X_deinit_implicit_copy" {
 }
 
 test "feature_tests/contracts/209X_deinit_virtual_receiver" {
-    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/209X_deinit_virtual_receiver", "consumes on erased Self requires receiver cleanup identities");
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/209X_deinit_virtual_receiver", "consumes on an erased participant requires receiver cleanup identities");
 }
 
 test "feature_tests/contracts/210_deinit_owned_field_post_states" {
@@ -12833,7 +12833,7 @@ test "feature_tests/contracts/290_known_default_participant_inference" {
     try runExpect("tests/feature_tests/contracts/290_known_default_participant_inference", 0);
 }
 test "feature_tests/contracts/291X_generic_default_no_cached_inference" {
-    try buildExpectFail("tests/feature_tests/contracts/291X_generic_default_no_cached_inference", "no matching generic overload of 'identity'");
+    try buildExpectFail("tests/feature_tests/contracts/291X_generic_default_no_cached_inference", "no generic function named 'identity'");
 }
 
 test "feature_tests/contracts/292_test_equality_specialization" {

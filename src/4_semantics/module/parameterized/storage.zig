@@ -47,10 +47,10 @@ pub const ParameterizedType = struct {
 };
 
 pub const ContractRequirement = struct {
+    source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 },
     name: primitives.StringRange,
     input: ir.ParameterizedTypeId,
     output: ir.ParameterizedTypeId,
-    parameters: primitives.Range(ComptimeParameterId) = .{ .start = 0, .len = 0 },
     safety_contract: ?primitives.MethodSafetyContract = null,
 };
 

@@ -204,10 +204,7 @@ fn printStats(
     });
     std.debug.print("  post-resolution:             {d:.3} ms\n", .{milliseconds(semantic_timings.post_resolution_ns)});
     std.debug.print("  verify:                      {d:.3} ms\n", .{milliseconds(semantic_timings.verify_ns)});
-    std.debug.print("  abstract implementation cache hits: {d} positive, {d} negative\n", .{
-        semantic.cached_implementation_hits, semantic.cached_nonimplementation_hits,
-    });
-    std.debug.print("  abstract implementation scans: {d:.3} ms, {d} over {d} candidates\n", .{
+    std.debug.print("  contract implementation scans: {d:.3} ms, {d} over {d} candidates\n", .{
         milliseconds(semantic.contracts.implementation_scan_ns), semantic.contracts.implementation_scans,
         semantic.contracts.implementation_candidates,
     });

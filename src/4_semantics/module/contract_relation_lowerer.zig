@@ -127,7 +127,7 @@ const Context = struct {
                         .instantiate_associated = true,
                         .name = try self.writer.addString(member_name),
                         .function = .{ .module = declaration },
-                        .source = self.sourceRef(member_node),
+                        .source = .{ .file_index = self.sourceRef(member_node).file_index, .offset = self.tree.tokenLocation(member.name_token).offset },
                     });
                     continue;
                 }
@@ -152,12 +152,12 @@ const Context = struct {
                     .kind = .function,
                     .name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, function_token)),
                     .module_path = if (qualifier) |token| try self.writer.addString(self.tree.tokenTextFromSource(self.source, token)) else null,
-                    .source = self.sourceRef(member_node),
+                    .source = .{ .file_index = self.sourceRef(member_node).file_index, .offset = self.tree.tokenLocation(function_token).offset },
                 });
                 try storage.contract_operations.append(self.allocator, .{
                     .name = try self.writer.addString(member_name),
                     .function = .{ .external = function_ref },
-                    .source = self.sourceRef(member_node),
+                    .source = .{ .file_index = self.sourceRef(member_node).file_index, .offset = self.tree.tokenLocation(member.name_token).offset },
                 });
             }
             operations = .{ .start = operation_start, .len = @intCast(self.graph.semantic.parameterized_storage.contract_operations.items.len - operation_start) };

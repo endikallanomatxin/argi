@@ -393,8 +393,8 @@ pub const Resolver = struct {
         return self.matchFunctionNamed(current_module, self.modules[current_module].text(reference.name), module_filter, input_node);
     }
 
-    /// Resolve a compiler-synthesized, unqualified call using the same ordinary
-    /// overload rules as a source call. Semantic sugar must not manufacture a
+    /// Resolve a compiler-synthesized, unqualified call using the same visible-function
+    /// resolution rules as a source call. Semantic sugar must not manufacture a
     /// module-local ExternalRef merely to enter dispatch.
     pub fn matchUnqualifiedFunctionByName(
         self: *Resolver,
@@ -998,7 +998,7 @@ pub const Resolver = struct {
     }
 
     /// A structural constructor has one declared field contract, unlike an
-    /// overload probe. Supply that contract to still-pending choice literals
+    /// call applicability probe. Supply that contract to still-pending choice literals
     /// before matching; otherwise unrelated choices with the same variant and
     /// payload can make global choice inference ambiguous.
     pub fn contextualizeConstructorChoices(
@@ -1100,10 +1100,8 @@ pub const Resolver = struct {
         score: u32,
     };
 
-    /// Optional language-level compatibility layered above Core. Reach lookup
-    /// owns lexical traversal and value adaptation; higher semantic layers may
-    /// contribute relations such as concrete-to-abstract compatibility without
-    /// introducing an Abstract dependency into Core.
+    /// A reached default is available, pending resolution, or absent from
+    /// the caller's lexical context.
     pub const ReachedDefaultProbe = enum { unavailable, deferred, available };
     const ReachedAdaptation = enum { direct, address };
 
@@ -1302,7 +1300,7 @@ pub const Resolver = struct {
 
         // Completion may propagate a missing reach parameter into a non-main
         // caller. Ranking can acknowledge that possibility without mutating
-        // the caller while probing overloads.
+        // the caller while probing candidates.
         return .available;
     }
 
@@ -1488,10 +1486,8 @@ pub const Resolver = struct {
         return true;
     }
 
-    /// A local `reach` declaration uses the same lexical alternatives and
-    /// concrete-to-abstract adaptation as an omitted reached call argument.
-    /// Its declared binding type remains the visible interface; the returned
-    /// expression retains the selected value's concrete type.
+    /// A local `reach` declaration uses the same lexical lookup and reference
+    /// adaptation as an omitted reached call argument.
     pub fn resolveReachedBinding(
         self: *Resolver,
         context: reach_context.Context,
@@ -2192,8 +2188,6 @@ test "address type materializes after its child resolves" {
 }
 
 test "global core resolver is graph-only" {
-    try std.testing.expect(!@hasField(Resolver, "abstract_context"));
-    try std.testing.expect(!@hasField(Resolver, "abstract_compatible"));
     try std.testing.expect(@sizeOf(Resolver) <= 192);
 }
 

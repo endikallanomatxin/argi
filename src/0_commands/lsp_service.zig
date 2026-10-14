@@ -411,7 +411,7 @@ pub const LanguageService = struct {
         var analysis = (try self.collectAnalysis(&work, doc)) orelse return null;
 
         const occurrence = analysis.index.occurrenceAt(&analysis.graph, &analysis.source_db, doc.path, position.line, position.character) orelse return null;
-        const contents = try formatHover(self.allocator, &analysis.graph, occurrence.target);
+        const contents = try formatHover(self.allocator, &analysis.graph, occurrence.target, if (occurrence.operation_name_start != std.math.maxInt(u32)) analysis.graph.text(.{ .start = occurrence.operation_name_start, .len = occurrence.len }) else null);
         return .{
             .range = sourceRange(&analysis, occurrence.source, occurrence.len) orelse return null,
             .contents = contents,
@@ -426,6 +426,14 @@ pub const LanguageService = struct {
         var analysis = (try self.collectAnalysis(&work, doc)) orelse return try self.syntax_definition(work, doc, position);
 
         const occurrence = analysis.index.occurrenceAt(&analysis.graph, &analysis.source_db, doc.path, position.line, position.character) orelse return null;
+        if (occurrence.operation != null and occurrence.target == .declaration and
+            occurrence.target.declaration == occurrence.operation.?.contract)
+        {
+            for (analysis.index.occurrences.items) |candidate| {
+                if (candidate.declaration and editor_index.referencesEqual(candidate, occurrence))
+                    return try self.definitionForOccurrence(&analysis, candidate);
+            }
+        }
         // Specialized functions retain their source declaration but have a distinct
         // function ID. Navigation follows that declaration, not the instance ID.
         const target = analysis.index.declarationOccurrence(occurrence.target) orelse switch (occurrence.target) {
@@ -481,7 +489,7 @@ pub const LanguageService = struct {
             output.deinit();
         }
         for (analysis.index.occurrences.items) |occurrence| {
-            if (!editor_index.targetsEqual(occurrence.target, selected.target)) continue;
+            if (!editor_index.referencesEqual(occurrence, selected)) continue;
             if (!include_declaration and occurrence.declaration) continue;
             const file = editor_index.sourceFileId(&analysis.graph, &analysis.source_db, occurrence.source) orelse continue;
             const range = sourceRange(&analysis, occurrence.source, occurrence.len) orelse continue;
@@ -516,18 +524,13 @@ pub const LanguageService = struct {
         var work = arena.allocator();
         var analysis = (try self.collectAnalysis(&work, doc)) orelse return null;
         const occurrence = analysis.index.occurrenceAt(&analysis.graph, &analysis.source_db, doc.path, position.line, position.character) orelse return null;
-        // Operation aliases retain the implementation as their navigation target.
-        // Renaming that target must not rename the distinct contract identity.
-        for (analysis.index.occurrences.items) |reference| {
-            if (reference.operation_name_start != std.math.maxInt(u32) and editor_index.targetsEqual(reference.target, occurrence.target)) return null;
-        }
         if (occurrence.target == .function) {
             // Init operation wrappers retain their contract identity.
             if (standard_contracts.initializedType(&analysis.graph, occurrence.target.function) != null) return null;
         }
         return .{
             .range = sourceRange(&analysis, occurrence.source, occurrence.len) orelse return null,
-            .placeholder = try self.allocator.dupe(u8, editor_index.Index.targetName(&analysis.graph, occurrence.target)),
+            .placeholder = try self.allocator.dupe(u8, if (occurrence.operation_name_start != std.math.maxInt(u32)) analysis.graph.text(.{ .start = occurrence.operation_name_start, .len = occurrence.len }) else editor_index.Index.targetName(&analysis.graph, occurrence.target)),
         };
     }
 
@@ -726,6 +729,24 @@ fn augmentTypeOccurrences(
         const current_module = graph.files.items[global_file].module;
         for (0..tree.nodes.len) |raw| {
             const node: st.NodeIndex = @enumFromInt(@as(u32, @intCast(raw)));
+            if (tree.contractDeclaration(node)) |contract| {
+                const owner = findTypeDeclaration(graph, current_module, tree.tokenText(db, contract.name_token)) orelse continue;
+                for (contract.requires_functions, 0..) |requirement_node, operation_index| {
+                    const requirement = tree.contractFunctionRequirement(requirement_node) orelse continue;
+                    const spelling = tree.tokenText(db, requirement.name_token);
+                    // Requirement names are retained in relocated module strings.
+                    const name_start = std.mem.indexOf(u8, graph.strings.items, spelling) orelse continue;
+                    try index.add(allocator, .{
+                        .source = .{ .file_index = global_file, .offset = tree.tokenLocation(requirement.name_token).offset },
+                        .len = @intCast(spelling.len),
+                        .target = .{ .declaration = owner },
+                        .declaration = true,
+                        .operation = .{ .contract = owner, .index = @intCast(operation_index) },
+                        .operation_name_start = @intCast(name_start),
+                    });
+                }
+                continue;
+            }
             const ty = tree.syntaxType(node) orelse continue;
             const name = switch (ty) {
                 .name => |value| value,
@@ -797,7 +818,7 @@ const HoverWriter = struct {
     }
 };
 
-fn formatHover(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSemanticGraph, target: editor_index.Target) ![]u8 {
+fn formatHover(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSemanticGraph, target: editor_index.Target, operation_name: ?[]const u8) ![]u8 {
     var output = std.array_list.Managed(u8).init(allocator);
     errdefer output.deinit();
     const writer = HoverWriter{ .allocator = allocator, .buffer = &output };
@@ -806,7 +827,7 @@ fn formatHover(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSeman
         .function => |id| {
             const function = graph.functions.items[@intFromEnum(id)];
             if (function.flags.is_once) try writer.writeAll("once ");
-            try writer.print("{s}(", .{graph.text(graph.declarationSourceName(function.declaration))});
+            try writer.print("{s}(", .{operation_name orelse graph.text(graph.declarationSourceName(function.declaration))});
             try writeFieldRange(writer, graph, function.input);
             try writer.writeAll(") -> (");
             try writeFieldRange(writer, graph, function.output);
@@ -822,8 +843,10 @@ fn formatHover(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSeman
             const name = graph.text(graph.declarationSourceName(id));
             switch (declaration.kind) {
                 .type, .contract_type => {
-                    try writer.print("{s} : {s}", .{ name, if (declaration.kind == .type) "Type" else "Contract" });
-                    if (declaration.type_id) |ty| {
+                    if (operation_name) |operation| {
+                        try writer.print("{s} (operation of {s})", .{ operation, name });
+                    } else try writer.print("{s} : {s}", .{ name, if (declaration.kind == .type) "Type" else "Contract" });
+                    if (if (operation_name == null) declaration.type_id else null) |ty| {
                         const self_reference = switch (graph.types.items[@intFromEnum(ty)]) {
                             .declared => |target_decl| target_decl == id,
                             else => false,
@@ -1897,5 +1920,51 @@ test "LSP scoped implementation navigation retains written operation names" {
     defer std.testing.allocator.free(hover.contents);
     try std.testing.expect(std.mem.startsWith(u8, hover.contents, "```argi\nread("));
     try std.testing.expect(std.mem.indexOf(u8, hover.contents, "_implement") == null);
-    try std.testing.expectEqual(@as(?PrepareRename, null), try service.prepareRename(uri, position));
+    const prepared = (try service.prepareRename(uri, position)).?;
+    defer prepared.deinit(std.testing.allocator);
+    try std.testing.expectEqualStrings("read", prepared.placeholder);
+    const edits = try service.rename(uri, position, "fetch");
+    defer edits.deinit();
+    try std.testing.expectEqual(@as(usize, 3), edits.items.len);
+}
+
+test "LSP renames scoped operations independently of shared aliases" {
+    const code =
+        \\First#(.T: Type): Contract = (.read: (.value: &T) -> (.result: Int32) where {})
+        \\Second#(.T: Type): Contract = (.read: (.value: &T) -> (.result: Int32) where {})
+        \\Cell: Type = (.value: Int32)
+        \\shared := (.value: &Cell) -> (.result: Int32) { result = value&.value }
+        \\implement First#(Cell) (.read = shared)
+        \\implement Second#(Cell) (.read = shared)
+        \\_read_virtual := (.value: &Virtual#(.contract: First)) -> (.result: Int32) { result = read(value).result }
+        \\main := () -> (.status_code: Int32 = 0) {
+        \\    cell ::= Cell(42)
+        \\    first ::= First#(Cell).read(&cell).result
+        \\    second ::= Second#(Cell).read(&cell).result
+        \\    virtual ::= to_virtual#(.contract: First)(&cell)
+        \\    answer ::= _read_virtual(&virtual).result
+        \\}
+    ;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.rg", .data = code });
+    const path = try @import("../test_support.zig").tmpFilePath(&tmp, "main.rg");
+    defer std.testing.allocator.free(path);
+    var service = LanguageService.init(std.testing.allocator, std.testing.io);
+    defer service.deinit();
+    const uri = "file:///shared-operations.rg";
+    const diagnostics = try service.openDocument(uri, path, 1, code);
+    defer diagnostics.deinit();
+    try std.testing.expectEqual(@as(usize, 0), diagnostics.items.len);
+    const hover = (try service.hover(uri, .{ .line = 9, .character = 27 })).?;
+    defer std.testing.allocator.free(hover.contents);
+    try std.testing.expect(std.mem.startsWith(u8, hover.contents, "```argi\nread("));
+    const edits = try service.rename(uri, .{ .line = 9, .character = 27 }, "fetch");
+    defer edits.deinit();
+    try std.testing.expectEqual(@as(usize, 4), edits.items.len);
+    for (edits.items) |edit| try std.testing.expect(edit.range.start.line == 0 or edit.range.start.line == 4 or edit.range.start.line == 6 or edit.range.start.line == 9);
+    const alias_edits = try service.rename(uri, .{ .line = 3, .character = 2 }, "read_cell");
+    defer alias_edits.deinit();
+    try std.testing.expectEqual(@as(usize, 3), alias_edits.items.len);
+    for (alias_edits.items) |edit| try std.testing.expect(edit.range.start.line == 3 or edit.range.start.line == 4 or edit.range.start.line == 5);
 }

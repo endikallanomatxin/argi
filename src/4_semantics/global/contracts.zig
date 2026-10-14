@@ -145,18 +145,7 @@ pub const VirtualSignatureFailure = struct {
 };
 
 pub const Resolver = struct {
-    const ImplementationKey = struct {
-        concrete: global_sg.GlobalTypeId,
-        contract_decl: global_sg.GlobalDeclId,
-    };
-    const GraphGeneration = struct {
-        types: usize,
-        generic_instances: usize,
-        functions: usize,
-    };
-    pub const CacheCheckpoint = struct {
-        positive_len: usize,
-        negative_len: usize,
+    pub const ResolutionCheckpoint = struct {
         participant_failure: ?ParticipantConformanceFailure,
     };
     const ConstraintKey = struct {
@@ -185,76 +174,19 @@ pub const Resolver = struct {
     stats: Stats = .{},
     profile_implementation_scans: bool = false,
     profile_io: ?std.Io = null,
-    // Automatic cleanup repeatedly probes generic deinit candidates for the
-    // same concrete/abstract pairs. Both caches log insertions so speculative
-    // GlobalSG rollback can discard keys that reference reused tail IDs.
-    // Negative matches are also scoped to a round and graph generation.
-    known_implementations: std.AutoHashMapUnmanaged(ImplementationKey, void) = .empty,
-    known_nonimplementations: std.AutoHashMapUnmanaged(ImplementationKey, GraphGeneration) = .empty,
-    known_implementation_order: std.ArrayList(ImplementationKey) = .empty,
-    known_nonimplementation_order: std.ArrayList(ImplementationKey) = .empty,
     constraint_declarations: std.AutoHashMapUnmanaged(ConstraintKey, global_sg.GlobalDeclId) = .empty,
     resolved_contract_refs: std.AutoHashMapUnmanaged(ContractRefKey, global_sg.GlobalDeclId) = .empty,
-    cached_implementation_hits: u64 = 0,
-    cached_nonimplementation_hits: u64 = 0,
     pub fn deinit(self: *Resolver) void {
-        self.known_implementations.deinit(self.allocator);
-        self.known_nonimplementations.deinit(self.allocator);
-        self.known_implementation_order.deinit(self.allocator);
-        self.known_nonimplementation_order.deinit(self.allocator);
         self.constraint_declarations.deinit(self.allocator);
         self.resolved_contract_refs.deinit(self.allocator);
     }
 
-    pub fn invalidate_negative_implementation_cache(self: *Resolver) void {
-        self.known_nonimplementations.clearRetainingCapacity();
-        self.known_nonimplementation_order.clearRetainingCapacity();
+    pub fn checkpointResolution(self: *const Resolver) ResolutionCheckpoint {
+        return .{ .participant_failure = self.participant_conformance_failure };
     }
 
-    pub fn checkpointImplementationCaches(self: *const Resolver) CacheCheckpoint {
-        return .{
-            .positive_len = self.known_implementation_order.items.len,
-            .negative_len = self.known_nonimplementation_order.items.len,
-            .participant_failure = self.participant_conformance_failure,
-        };
-    }
-
-    pub fn rollbackImplementationCaches(self: *Resolver, saved: CacheCheckpoint) void {
+    pub fn rollbackResolution(self: *Resolver, saved: ResolutionCheckpoint) void {
         self.participant_conformance_failure = saved.participant_failure;
-        while (self.known_implementation_order.items.len > saved.positive_len) {
-            const index = self.known_implementation_order.items.len - 1;
-            const key = self.known_implementation_order.items[index];
-            self.known_implementation_order.items.len = index;
-            _ = self.known_implementations.remove(key);
-        }
-        while (self.known_nonimplementation_order.items.len > saved.negative_len) {
-            const index = self.known_nonimplementation_order.items.len - 1;
-            const key = self.known_nonimplementation_order.items[index];
-            self.known_nonimplementation_order.items.len = index;
-            _ = self.known_nonimplementations.remove(key);
-        }
-    }
-
-    fn cacheImplementation(self: *Resolver, key: ImplementationKey) !void {
-        if (self.known_implementations.contains(key)) return;
-        try self.known_implementations.put(self.allocator, key, {});
-        self.known_implementation_order.append(self.allocator, key) catch |err| {
-            _ = self.known_implementations.remove(key);
-            return err;
-        };
-    }
-
-    fn cacheNonImplementation(self: *Resolver, key: ImplementationKey, generation: GraphGeneration) !void {
-        // Negative entries are invalidated between fixed-point rounds. If the
-        // same key survives while the graph grows within a round, keep the old
-        // generation instead of overwriting it: a later rollback can then
-        // never leave a generation stamp produced by discarded graph tails.
-        if (self.known_nonimplementations.contains(key)) return;
-        try self.known_nonimplementations.put(self.allocator, key, generation);
-        self.known_nonimplementation_order.append(self.allocator, key) catch |err| {
-            _ = self.known_nonimplementations.remove(key);
-            return err;
-        };
     }
 
     pub fn tryResolve(
@@ -379,7 +311,7 @@ pub const Resolver = struct {
         }
         // Virtual conversion has an output-only comptime argument. Infer it
         // from a contextual result type, never from names or implementation
-        // enumeration: a concrete type can implement several abstracts.
+        // enumeration: a concrete type can implement several contracts.
         if (contract_type == null) if (expected) |ty| {
             contract_type = switch (self.graph.types.items[@intFromEnum(ty)]) {
                 .virtual => |contract| contract,
@@ -497,7 +429,7 @@ pub const Resolver = struct {
             }
         }
         if (located.definition.domains.len == 0) return &.{};
-        return self.domainFailure(source, "storage domains require an explicit implementation mapping for this abstract");
+        return self.domainFailure(source, "storage domains require an explicit implementation mapping for this contract");
     }
 
     fn domainFailure(self: *Resolver, source: primitives.SourceRef, message: []const u8) ?[]const primitives.StorageDomainMapping {
@@ -506,7 +438,7 @@ pub const Resolver = struct {
     }
 
     fn resolveDomainPaths(self: *Resolver, module_index: usize, mappings: []const parameterized_storage.DomainMapping, concrete: global_sg.GlobalTypeId, located: LocatedContractDefinition, source: primitives.SourceRef) !?[]const primitives.StorageDomainMapping {
-        if (mappings.len != located.definition.domains.len) return self.domainFailure(source, "every Abstract storage domain requires exactly one implementation mapping");
+        if (mappings.len != located.definition.domains.len) return self.domainFailure(source, "every Contract storage domain requires exactly one implementation mapping");
         var result: std.ArrayList(primitives.StorageDomainMapping) = .empty;
         defer result.deinit(self.allocator);
         for (mappings) |mapping| {
@@ -514,7 +446,7 @@ pub const Resolver = struct {
             for (located.definition.domains, 0..) |domain, index| {
                 if (std.mem.eql(u8, self.modules[module_index].text(mapping.name), self.modules[located.module_index].text(domain))) domain_index = @intCast(index);
             }
-            const index = domain_index orelse return self.domainFailure(source, "implementation mapping names an unknown Abstract storage domain");
+            const index = domain_index orelse return self.domainFailure(source, "implementation mapping names an unknown Contract storage domain");
             for (result.items) |existing| if (existing.domain_index == index) return self.domainFailure(source, "duplicate implementation storage domain mapping");
             var paths: std.ArrayList(primitives.StorageDomainMapping.Path) = .empty;
             defer paths.deinit(self.allocator);
@@ -578,7 +510,7 @@ pub const Resolver = struct {
             if (!global_types.equal(self.graph, expected.ty, actual.ty)) return false;
         }
         // Implementations may expose additional optional/reached parameters:
-        // callers satisfying the abstract contract must still be able to invoke
+        // callers satisfying the contract must still be able to invoke
         // the function using only the requirement's inputs.
         for (required.len..implementation.len) |index| {
             const extra = self.graph.fields.items[implementation.start + @as(u32, @intCast(index))];
@@ -811,7 +743,7 @@ pub const Resolver = struct {
         located: LocatedContractDefinition,
         bindings: *generic_mod.Resolver.Bindings,
     ) bool {
-        if (located.definition.hasExplicitParticipants() and located.definition.participants.len != 1) return false;
+        if (located.definition.participants.len != 1) return false;
         if (contract_use.arguments.len != located.definition.parameters.len) return false;
         self.generics.bindGlobalArguments(located.module_index, located.definition.parameters, contract_use.arguments, bindings) catch return false;
         return true;
@@ -823,40 +755,34 @@ pub const Resolver = struct {
         for (storage.contract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len], 0..) |requirement, index| {
             const name = module.text(requirement.name);
             var reason: ?[]const u8 = null;
-            if (requirement.parameters.len != 0) {
-                reason = "the virtual slot requires fixed signature types; method-local generic parameters are not supported";
-            } else {
-                // Associated arguments belong to the handle's identity. Bind
-                // them before erasure; method-local specialization still cannot
-                // define one fixed callable slot.
-                const contract_use = self.contractUse(contract_ty) orelse return false;
-                const instance = (try self.requirementInstanceForContractUse(contract_use, contract_ty, located, requirement, @intCast(index))) orelse {
-                    self.virtual_signature_failure = .{ .source = source, .method_name = name, .reason = "virtual associated parameters must be fully bound" };
-                    return false;
-                };
-                const inputs = global_types.fields(self.graph, instance.input) orelse return error.InvalidContractRequirementInput;
-                const outputs = global_types.fields(self.graph, instance.output) orelse return error.InvalidContractRequirementOutput;
-                var receivers: usize = 0;
-                for (self.graph.fields.items[inputs.start..][0..inputs.len]) |field| {
-                    const ty = self.graph.semanticType(field.ty);
-                    if (ty == .pointer and global_types.equal(self.graph, ty.pointer.child, contract_ty)) {
-                        receivers += 1;
-                        if (conversion_permission == .read_only and ty.pointer.mutability == .read_write)
-                            reason = "a mutable Self receiver requires a mutable concrete reference ($&T) at conversion";
-                    } else if (try self.containsErasedSelf(field.ty, contract_ty)) {
-                        reason = "Self is only allowed as a direct borrowed receiver (&Self or $&Self)";
-                    }
+            // Bind the handle's associated arguments before erasing its participant.
+            const contract_use = self.contractUse(contract_ty) orelse return false;
+            const instance = (try self.requirementInstanceForContractUse(contract_use, contract_ty, located, requirement, @intCast(index))) orelse {
+                self.virtual_signature_failure = .{ .source = source, .method_name = name, .reason = "virtual associated parameters must be fully bound" };
+                return false;
+            };
+            const inputs = global_types.fields(self.graph, instance.input) orelse return error.InvalidContractRequirementInput;
+            const outputs = global_types.fields(self.graph, instance.output) orelse return error.InvalidContractRequirementOutput;
+            var receivers: usize = 0;
+            for (self.graph.fields.items[inputs.start..][0..inputs.len]) |field| {
+                const ty = self.graph.semanticType(field.ty);
+                if (ty == .pointer and global_types.equal(self.graph, ty.pointer.child, contract_ty)) {
+                    receivers += 1;
+                    if (conversion_permission == .read_only and ty.pointer.mutability == .read_write)
+                        reason = "a mutable participant receiver requires a mutable concrete reference ($&T) at conversion";
+                } else if (try self.containsErasedParticipant(field.ty, contract_ty)) {
+                    reason = "the hidden participant is only allowed as a direct borrowed receiver (&T or $&T)";
                 }
-                if (reason == null and receivers != 1)
-                    reason = "a virtual method requires exactly one borrowed Self receiver; runtime multiple dispatch is not supported";
-                for (self.graph.fields.items[outputs.start..][0..outputs.len]) |field| {
-                    if (try self.containsErasedSelf(field.ty, contract_ty))
-                        reason = "Self cannot appear in a virtual method result; return a known type or an explicit virtual handle";
-                }
-                if (reason == null) if (requirement.safety_contract) |contract| {
-                    reason = try self.methodSafetyContractFailure(inputs, outputs, instance.output, contract_ty, located, contract, true);
-                };
             }
+            if (reason == null and receivers != 1)
+                reason = "a virtual operation requires exactly one borrowed participant receiver; runtime multiple dispatch is not supported";
+            for (self.graph.fields.items[outputs.start..][0..outputs.len]) |field| {
+                if (try self.containsErasedParticipant(field.ty, contract_ty))
+                    reason = "the hidden participant cannot appear in a virtual operation result; return a known type or an explicit virtual handle";
+            }
+            if (reason == null) if (requirement.safety_contract) |contract| {
+                reason = try self.methodSafetyContractFailure(inputs, outputs, instance.output, contract_ty, located, contract, true);
+            };
             if (reason == null and requirement.safety_contract == null)
                 reason = "virtual methods require a declared safety contract; use where {} for preservation or declare output dependencies and storage effects";
             if (reason) |message| {
@@ -867,7 +793,7 @@ pub const Resolver = struct {
         return true;
     }
 
-    fn outcomeSafetyContractFailure(self: *Resolver, inputs: global_sg.FieldRange, choice_ty: global_sg.GlobalTypeId, output_type: global_sg.GlobalTypeId, contract_ty: global_sg.GlobalTypeId, located: LocatedContractDefinition, outcome: primitives.MethodSafetyContract.Outcome, erased_self: bool) anyerror!?[]const u8 {
+    fn outcomeSafetyContractFailure(self: *Resolver, inputs: global_sg.FieldRange, choice_ty: global_sg.GlobalTypeId, output_type: global_sg.GlobalTypeId, contract_ty: global_sg.GlobalTypeId, located: LocatedContractDefinition, outcome: primitives.MethodSafetyContract.Outcome, erased_participant: bool) anyerror!?[]const u8 {
         if (global_types.variants(self.graph, choice_ty) == null) return "on requires a choice-valued output payload";
         const name = self.modules[located.module_index].text(outcome.variant);
         const hit = global_types.findVariant(self.graph, choice_ty, name) orelse return "outcome contract names an unknown output variant";
@@ -882,17 +808,17 @@ pub const Resolver = struct {
             .invalidates = outcome.invalidates,
             .invalidated_domains = outcome.invalidated_domains,
             .source = outcome.source,
-        }, erased_self)) |message| return message;
+        }, erased_participant)) |message| return message;
         for (outcome.outcomes, 0..) |child, index| {
             if (child.output_index != outcome.output_index) return "nested on must follow the selected output payload";
             const payload = hit.variant.payload_type orelse return "nested on requires a choice-valued output payload";
-            if (try self.outcomeSafetyContractFailure(inputs, payload, output_type, contract_ty, located, child, erased_self)) |message| return message;
+            if (try self.outcomeSafetyContractFailure(inputs, payload, output_type, contract_ty, located, child, erased_participant)) |message| return message;
             for (outcome.outcomes[0..index]) |previous| if (std.mem.eql(u8, self.modules[located.module_index].text(previous.variant), self.modules[located.module_index].text(child.variant))) return "duplicate outcome contract";
         }
         return null;
     }
 
-    fn generalOutcomeClauseFailure(self: *Resolver, inputs: global_sg.FieldRange, outputs: global_sg.FieldRange, output_type: global_sg.GlobalTypeId, contract_ty: global_sg.GlobalTypeId, located: LocatedContractDefinition, outcome: primitives.MethodSafetyContract.Outcome, erased_self: bool) anyerror!?[]const u8 {
+    fn generalOutcomeClauseFailure(self: *Resolver, inputs: global_sg.FieldRange, outputs: global_sg.FieldRange, output_type: global_sg.GlobalTypeId, contract_ty: global_sg.GlobalTypeId, located: LocatedContractDefinition, outcome: primitives.MethodSafetyContract.Outcome, erased_participant: bool) anyerror!?[]const u8 {
         // Cleanup transitions need exact caller owner identities, beyond a
         // conjunction of payload provenance permissions.
         if (outcome.consumed_inputs.len != 0 or outcome.relocations.len != 0)
@@ -912,31 +838,31 @@ pub const Resolver = struct {
             .invalidates = outcome.invalidates,
             .invalidated_domains = outcome.invalidated_domains,
             .source = outcome.source,
-        }, erased_self)) |message| return message;
-        for (outcome.outcomes) |child| if (try self.generalOutcomeClauseFailure(inputs, outputs, output_type, contract_ty, located, child, erased_self)) |message| return message;
+        }, erased_participant)) |message| return message;
+        for (outcome.outcomes) |child| if (try self.generalOutcomeClauseFailure(inputs, outputs, output_type, contract_ty, located, child, erased_participant)) |message| return message;
         return null;
     }
 
-    fn opaqueStorageInputFailure(self: *Resolver, inputs: global_sg.FieldRange, contract_ty: global_sg.GlobalTypeId, storage: primitives.MethodSafetyContract.StorageInput, mutable: bool, erased_self: bool, domain_count: usize) ?[]const u8 {
+    fn opaqueStorageInputFailure(self: *Resolver, inputs: global_sg.FieldRange, contract_ty: global_sg.GlobalTypeId, storage: primitives.MethodSafetyContract.StorageInput, mutable: bool, erased_participant: bool, domain_count: usize) ?[]const u8 {
         const ty = self.graph.semanticType(self.graph.fields.items[inputs.start + storage.input_index].ty);
         if (ty != .pointer) return "opaque storage clauses require a reference to a known storage input";
         if (mutable and ty.pointer.mutability != .read_write) return "retains and empties require mutable storage references";
         if (storage.domain_index) |domain| {
-            if (domain >= domain_count) return "unknown Abstract storage domain";
-            if (!global_types.equal(self.graph, ty.pointer.child, contract_ty)) return "opaque storage domains must be rooted at the Self receiver";
+            if (domain >= domain_count) return "unknown Contract storage domain";
+            if (!global_types.equal(self.graph, ty.pointer.child, contract_ty)) return "opaque storage domains must be rooted at the participant receiver";
             return null;
         }
-        if (erased_self and global_types.equal(self.graph, ty.pointer.child, contract_ty)) return "opaque storage clauses on erased Self require mapped hidden storage identities; select a Self domain or use a known storage input";
+        if (erased_participant and global_types.equal(self.graph, ty.pointer.child, contract_ty)) return "opaque storage clauses on an erased participant require mapped hidden storage identities; select a participant domain or use a known storage input";
         return null;
     }
 
-    fn methodSafetyContractFailure(self: *Resolver, inputs: global_sg.FieldRange, outputs: global_sg.FieldRange, output_type: global_sg.GlobalTypeId, contract_ty: global_sg.GlobalTypeId, located: LocatedContractDefinition, contract: primitives.MethodSafetyContract, erased_self: bool) !?[]const u8 {
+    fn methodSafetyContractFailure(self: *Resolver, inputs: global_sg.FieldRange, outputs: global_sg.FieldRange, output_type: global_sg.GlobalTypeId, contract_ty: global_sg.GlobalTypeId, located: LocatedContractDefinition, contract: primitives.MethodSafetyContract, erased_participant: bool) !?[]const u8 {
         if (relocationInheritanceFailure(contract)) |message| return message;
         for (contract.transfers) |transfer| if (outcomeHasStorageSource(contract.outcomes, transfer.output_index)) return "from_storage cannot be combined with exact transfers for the same output";
         for (contract.referents) |referent| if (outcomeHasStorageSource(contract.outcomes, referent.output_index)) return "from_storage cannot be combined with exact refers_to for the same output";
         if (conditionalOpaqueEmptyConflict(contract, contract.outcomes)) return "opaque storage clauses cannot overlap generation replacement, consumption or relocation";
         for (contract.retained_inputs, 0..) |retained, retained_index| {
-            if (self.opaqueStorageInputFailure(inputs, contract_ty, retained.storage, true, erased_self, located.definition.domains.len)) |message| return message;
+            if (self.opaqueStorageInputFailure(inputs, contract_ty, retained.storage, true, erased_participant, located.definition.domains.len)) |message| return message;
             if (self.graph.semanticType(self.graph.fields.items[inputs.start + retained.input].ty) == .pointer) return "retains currently requires a value input; wrap borrowed references in a value instead of moving through a reference input";
             for (contract.retained_inputs[0..retained_index]) |other| if (other.input == retained.input) return "a retained value input requires one storage identity";
             for (contract.transfers) |transfer| if (transfer.input_index == retained.input) return "retains cannot also promise an exact output transfer of the same input";
@@ -944,23 +870,23 @@ pub const Resolver = struct {
             if (opaqueStorageTransitionConflict(contract, retained.storage)) return "opaque storage clauses cannot overlap generation replacement, consumption or relocation";
         }
         for (contract.emptied_inputs) |empty| {
-            if (self.opaqueStorageInputFailure(inputs, contract_ty, empty, true, erased_self, located.definition.domains.len)) |message| return message;
+            if (self.opaqueStorageInputFailure(inputs, contract_ty, empty, true, erased_participant, located.definition.domains.len)) |message| return message;
             if (opaqueStorageTransitionConflict(contract, empty)) return "opaque storage clauses cannot overlap generation replacement, consumption or relocation";
         }
         for (contract.storage_sources) |source| {
-            if (self.opaqueStorageInputFailure(inputs, contract_ty, source.storage, false, erased_self, located.definition.domains.len)) |message| return message;
+            if (self.opaqueStorageInputFailure(inputs, contract_ty, source.storage, false, erased_participant, located.definition.domains.len)) |message| return message;
             for (contract.transfers) |transfer| if (transfer.output_index == source.output_index) return "from_storage cannot be combined with exact transfers for the same output";
             for (contract.referents) |referent| if (referent.output_index == source.output_index) return "from_storage cannot be combined with exact refers_to for the same output";
         }
         var reason: ?[]const u8 = null;
         for (contract.outcomes, 0..) |outcome, outcome_index| {
             if (contract.general_conditions) {
-                if (try self.generalOutcomeClauseFailure(inputs, outputs, output_type, contract_ty, located, outcome, erased_self)) |message| return message;
+                if (try self.generalOutcomeClauseFailure(inputs, outputs, output_type, contract_ty, located, outcome, erased_participant)) |message| return message;
                 continue;
             }
             if (outcome.output_index >= outputs.len) return "outcome contract names an unknown output";
             const output_ty = self.graph.fields.items[outputs.start + outcome.output_index].ty;
-            if (try self.outcomeSafetyContractFailure(inputs, output_ty, output_type, contract_ty, located, outcome, erased_self)) |message| return message;
+            if (try self.outcomeSafetyContractFailure(inputs, output_ty, output_type, contract_ty, located, outcome, erased_participant)) |message| return message;
             const outcome_name = self.modules[located.module_index].text(outcome.variant);
             for (contract.outcomes[0..outcome_index]) |previous| {
                 if (previous.output_index == outcome.output_index and std.mem.eql(u8, self.modules[located.module_index].text(previous.variant), outcome_name)) return "duplicate outcome contract";
@@ -968,7 +894,7 @@ pub const Resolver = struct {
         }
         for (contract.dependencies) |dependency| {
             if (dependency.input_index >= inputs.len and !(dependency.input_index == inputs.len and self.fallibleOutput(output_type))) {
-                reason = "error_tracer is only implicit for fallible Abstract methods";
+                reason = "error_tracer is only implicit for fallible contract operations";
                 break;
             }
         }
@@ -990,23 +916,23 @@ pub const Resolver = struct {
 
         for (contract.domain_dependencies) |dependency| {
             if (dependency.input.domain_index >= located.definition.domains.len) {
-                reason = "unknown Abstract storage domain";
+                reason = "unknown Contract storage domain";
                 break;
             }
             const input_ty = self.graph.semanticType(self.graph.fields.items[inputs.start + dependency.input.input_index].ty);
             if (input_ty != .pointer or !global_types.equal(self.graph, input_ty.pointer.child, contract_ty)) {
-                reason = "Abstract storage domains must be rooted at the Self receiver";
+                reason = "Contract storage domains must be rooted at the participant receiver";
                 break;
             }
         }
         for (contract.invalidated_domains) |domain| {
             if (domain.domain_index >= located.definition.domains.len) {
-                reason = "unknown Abstract storage domain";
+                reason = "unknown Contract storage domain";
                 break;
             }
             const input_ty = self.graph.semanticType(self.graph.fields.items[inputs.start + domain.input_index].ty);
             if (input_ty != .pointer or !global_types.equal(self.graph, input_ty.pointer.child, contract_ty) or input_ty.pointer.mutability != .read_write) {
-                reason = "invalidating an Abstract storage domain requires a mutable Self receiver";
+                reason = "invalidating a Contract storage domain requires a mutable participant receiver";
                 break;
             }
         }
@@ -1015,7 +941,7 @@ pub const Resolver = struct {
             const source = self.graph.semanticType(self.graph.fields.items[inputs.start + relocation.source].ty);
             if (destination != .pointer or source != .pointer or destination.pointer.mutability != .read_write or source.pointer.mutability != .read_write) return "relocates requires mutable reference source and destination inputs";
             if (!global_types.equal(self.graph, destination.pointer.child, source.pointer.child)) return "relocates requires matching source and destination value types";
-            if (erased_self and global_types.equal(self.graph, destination.pointer.child, contract_ty)) return "relocates on erased Self requires receiver cleanup identities; use known resource inputs";
+            if (erased_participant and global_types.equal(self.graph, destination.pointer.child, contract_ty)) return "relocates on an erased participant requires receiver cleanup identities; use known resource inputs";
             for (contract.consumed_inputs) |consumed| if (consumed == relocation.destination or consumed == relocation.source) return "relocates and consumes cannot target the same input";
             for (contract.invalidates) |invalidated| if (invalidated == relocation.destination or invalidated == relocation.source) return "relocates already defines its source and destination generations";
         }
@@ -1025,8 +951,8 @@ pub const Resolver = struct {
                 reason = "consumes requires a mutable reference input; by-value inputs already transfer their local ownership";
                 break;
             }
-            if (erased_self and global_types.equal(self.graph, input_ty.pointer.child, contract_ty)) {
-                reason = "consumes on erased Self requires receiver cleanup identities; name a known resource input instead";
+            if (erased_participant and global_types.equal(self.graph, input_ty.pointer.child, contract_ty)) {
+                reason = "consumes on an erased participant requires receiver cleanup identities; name a known resource input instead";
                 break;
             }
         }
@@ -1040,7 +966,7 @@ pub const Resolver = struct {
                 reason = "invalidates requires a mutable reference input";
                 break;
             }
-            if (erased_self and global_types.equal(self.graph, input_ty.pointer.child, contract_ty)) {
+            if (erased_participant and global_types.equal(self.graph, input_ty.pointer.child, contract_ty)) {
                 reason = "invalidating an erased receiver requires a mapped storage domain; name a known reference input instead";
                 break;
             }
@@ -1064,8 +990,8 @@ pub const Resolver = struct {
                 reason = "refers_to requires a reference output and a reference input";
                 break;
             }
-            if (erased_self and global_types.equal(self.graph, input_ty.pointer.child, contract_ty)) {
-                reason = "refers_to cannot expose erased Self storage; name a known reference input instead";
+            if (erased_participant and global_types.equal(self.graph, input_ty.pointer.child, contract_ty)) {
+                reason = "refers_to cannot expose erased participant storage; name a known reference input instead";
                 break;
             }
             if (!global_types.equal(self.graph, input_ty.pointer.child, output_ty.pointer.child)) {
@@ -1127,23 +1053,23 @@ pub const Resolver = struct {
         return false;
     }
 
-    fn containsErasedSelf(self: *Resolver, ty: global_sg.GlobalTypeId, erased: global_sg.GlobalTypeId) !bool {
+    fn containsErasedParticipant(self: *Resolver, ty: global_sg.GlobalTypeId, erased: global_sg.GlobalTypeId) !bool {
         var visited = std.AutoHashMap(global_sg.GlobalTypeId, void).init(self.allocator);
         defer visited.deinit();
-        return self.containsErasedSelfVisited(ty, erased, &visited);
+        return self.containsErasedParticipantVisited(ty, erased, &visited);
     }
 
-    fn containsErasedSelfVisited(self: *Resolver, ty: global_sg.GlobalTypeId, erased: global_sg.GlobalTypeId, visited: *std.AutoHashMap(global_sg.GlobalTypeId, void)) !bool {
+    fn containsErasedParticipantVisited(self: *Resolver, ty: global_sg.GlobalTypeId, erased: global_sg.GlobalTypeId, visited: *std.AutoHashMap(global_sg.GlobalTypeId, void)) !bool {
         if (global_types.equal(self.graph, ty, erased)) return true;
         if (visited.contains(ty)) return false;
         try visited.put(ty, {});
         switch (self.graph.semanticType(ty)) {
-            .pointer => |pointer| return self.containsErasedSelfVisited(pointer.child, erased, visited),
-            .nullable, .inferred_errable => |child| return self.containsErasedSelfVisited(child, erased, visited),
-            .array => |array| return self.containsErasedSelfVisited(array.element, erased, visited),
+            .pointer => |pointer| return self.containsErasedParticipantVisited(pointer.child, erased, visited),
+            .nullable, .inferred_errable => |child| return self.containsErasedParticipantVisited(child, erased, visited),
+            .array => |array| return self.containsErasedParticipantVisited(array.element, erased, visited),
             .generic => |generic| {
                 for (self.graph.generic_arguments.items[generic.arguments.start..][0..generic.arguments.len]) |argument| {
-                    if (argument.value == .type and try self.containsErasedSelfVisited(argument.value.type, erased, visited)) return true;
+                    if (argument.value == .type and try self.containsErasedParticipantVisited(argument.value.type, erased, visited)) return true;
                 }
             },
             // An explicit virtual handle has a fixed representation regardless
@@ -1153,11 +1079,11 @@ pub const Resolver = struct {
         }
         if (global_types.fields(self.graph, ty)) |fields| {
             for (self.graph.fields.items[fields.start..][0..fields.len]) |field|
-                if (try self.containsErasedSelfVisited(field.ty, erased, visited)) return true;
+                if (try self.containsErasedParticipantVisited(field.ty, erased, visited)) return true;
         }
         if (global_types.variants(self.graph, ty)) |variants| {
             for (self.graph.variants.items[variants.start..][0..variants.len]) |variant|
-                if (variant.payload_type) |payload| if (try self.containsErasedSelfVisited(payload, erased, visited)) return true;
+                if (variant.payload_type) |payload| if (try self.containsErasedParticipantVisited(payload, erased, visited)) return true;
         }
         return false;
     }
@@ -1203,11 +1129,17 @@ pub const Resolver = struct {
     /// Source forms differ only while matching candidates. A selected conformance
     /// binds every participant and associated element as ordinary parameters.
     fn selectConformance(self: *Resolver, declaration: global_sg.GlobalDeclId, participants: []const global_sg.GlobalTypeId, bindings: ?*generic_mod.Resolver.Bindings, depth: u8, deferred: ?*bool) anyerror!?ConformanceSelection {
+        const scan_start = if (self.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
+        defer if (self.profile_io) |io| {
+            self.stats.implementation_scan_ns += @intCast(std.Io.Timestamp.now(io, .boot).nanoseconds - scan_start);
+        };
+        if (self.profile_implementation_scans) self.stats.implementation_scans += 1;
         if (depth >= 64) return null;
         const located = self.findContractDefinition(declaration) orelse return null;
         if (participants.len != located.definition.participants.len) return null;
         for (self.graph.contract_conformances.items, 0..) |conformance, index| {
             if (conformance.declaration != declaration) continue;
+            if (self.profile_implementation_scans) self.stats.implementation_candidates += 1;
             var equal = true;
             for (participants, 0..) |actual, position| {
                 const expected = self.graph.generic_arguments.items[conformance.participants.start + position].value.type;
@@ -1518,46 +1450,13 @@ pub const Resolver = struct {
         depth: u8,
     ) !bool {
         if (depth >= 64) return false;
-        if (self.findContractDefinition(contract_decl)) |located| {
-            if (located.definition.hasExplicitParticipants()) {
-                if (located.definition.participants.len != 1) return false;
-                if (self.graph.semanticType(concrete) == .virtual) {
-                    const evidence = self.contractUse(self.graph.semanticType(concrete).virtual) orelse return false;
-                    return evidence.declaration == contract_decl and evidence.arguments.len == 0 and located.definition.parameters.len == 0;
-                }
-                return try self.selectConformance(contract_decl, &.{concrete}, null, depth, null) != null;
-            }
+        const located = self.findContractDefinition(contract_decl) orelse return false;
+        if (located.definition.participants.len != 1) return false;
+        if (self.graph.semanticType(concrete) == .virtual) {
+            const evidence = self.contractUse(self.graph.semanticType(concrete).virtual) orelse return false;
+            return evidence.declaration == contract_decl and evidence.arguments.len == 0 and located.definition.parameters.len == 0;
         }
-        const key = ImplementationKey{ .concrete = concrete, .contract_decl = contract_decl };
-        if (self.known_implementations.contains(key)) {
-            self.cached_implementation_hits += 1;
-            return true;
-        }
-        const generation = GraphGeneration{
-            .types = self.graph.types.items.len,
-            .generic_instances = self.graph.generic_instances.items.len,
-            .functions = self.graph.functions.items.len,
-        };
-        const concrete_resolved = !self.graph.isTypeUnresolved(concrete);
-        if (concrete_resolved) if (self.known_nonimplementations.get(key)) |cached| {
-            if (std.meta.eql(cached, generation)) {
-                self.cached_nonimplementation_hits += 1;
-                return false;
-            }
-        };
-        const scan_start = if (self.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
-        defer if (self.profile_io) |io| {
-            self.stats.implementation_scan_ns += @intCast(std.Io.Timestamp.now(io, .boot).nanoseconds - scan_start);
-        };
-        if (self.profile_implementation_scans) self.stats.implementation_scans += 1;
-        if (try self.selectConformance(contract_decl, &.{concrete}, null, depth, null) != null) {
-            try self.cacheImplementation(key);
-            return true;
-        }
-        // A failed match can become valid when a generic type is materialized.
-        // Reuse it only while the relevant graph pools remain at this generation.
-        if (concrete_resolved) try self.cacheNonImplementation(key, generation);
-        return false;
+        return try self.selectConformance(contract_decl, &.{concrete}, null, depth, null) != null;
     }
 
     pub fn findGenericTypeConstraintFailure(self: *Resolver) !?GenericTypeConstraintFailure {
@@ -1707,12 +1606,12 @@ pub const Resolver = struct {
             else => return null,
         };
         const checkpoint = self.graph.checkpoint();
-        const caches = self.checkpointImplementationCaches();
+        const caches = self.checkpointResolution();
         const comptime_failure = self.generics.comptime_failure;
         const argument_failure = self.generics.argument_failure;
         defer {
             self.graph.rollback(checkpoint);
-            self.rollbackImplementationCaches(caches);
+            self.rollbackResolution(caches);
             self.generics.comptime_failure = comptime_failure;
             self.generics.argument_failure = argument_failure;
         }
@@ -2171,7 +2070,7 @@ pub const Resolver = struct {
         }
         var functions: std.ArrayList(global_sg.ContractOperationBinding) = .empty;
         defer functions.deinit(self.allocator);
-        for (requirements) |requirement| {
+        for (requirements, 0..) |requirement, requirement_index| {
             const name = self.modules[located.module_index].text(requirement.name);
             const operation = for (supplied) |operation| {
                 if (std.mem.eql(u8, name, self.modules[module_index].text(operation.name))) break operation;
@@ -2190,7 +2089,19 @@ pub const Resolver = struct {
                 };
                 return error.InvalidContractConformance;
             };
-            try functions.append(self.allocator, .{ .name = try self.graph.addString(self.allocator, name), .declaration = declaration, .instantiate_associated = operation.instantiate_associated });
+            try functions.append(self.allocator, .{
+                .contract_declaration = globalizer.globalDecl(self.offsets[located.module_index], located.definition.declaration),
+                .requirement_index = @intCast(requirement_index),
+                .requirement_source = self.sourceFor(located.module_index, requirement.source),
+                .implementation_source = self.sourceFor(module_index, operation.source),
+                .alias_source = switch (operation.function) {
+                    .external => |external| self.sourceFor(module_index, self.modules[module_index].semantic.external_refs.items[@intFromEnum(external)].source),
+                    .module => null,
+                },
+                .name = try self.graph.addString(self.allocator, name),
+                .declaration = declaration,
+                .instantiate_associated = operation.instantiate_associated,
+            });
         }
         const start: u32 = @intCast(self.graph.contract_operation_bindings.items.len);
         try self.graph.contract_operation_bindings.appendSlice(self.allocator, functions.items);
@@ -2633,7 +2544,7 @@ pub const Resolver = struct {
     pub fn constraintArgumentsKnown(self: *Resolver, module_index: usize, constraint_id: parameterized_storage.ContractConstraintId, bindings: *generic_mod.Resolver.Bindings) !bool {
         const constraint = self.modules[module_index].semantic.parameterized_storage.contract_constraints.items[@intFromEnum(constraint_id)];
         const definition = self.findContractDefinition(try self.constraintDeclaration(module_index, constraint_id)) orelse return false;
-        if (!definition.definition.hasExplicitParticipants()) return true;
+        if (!definition.definition.hasExplicitParticipants()) return false;
         _ = self.generics.instantiateParameterizedArguments(module_index, constraint.arguments, bindings) catch |err| {
             if (err == error.OutOfMemory) return err;
             return false;
@@ -2653,36 +2564,10 @@ pub const Resolver = struct {
         const constraint = storage.contract_constraints.items[@intFromEnum(constraint_id)];
         const contract_decl = try self.constraintDeclaration(module_index, constraint_id);
         const definition = self.findContractDefinition(contract_decl) orelse return false;
-        if (definition.definition.hasExplicitParticipants()) {
-            if (constraint.arguments.len == 0 and definition.definition.participants.len == 1)
-                return self.implementsDepth(concrete, contract_decl, 0);
-            return self.inferParticipantConstraint(module_index, constraint, concrete, definition, contract_decl, bindings);
-        }
-        if (!try self.implementsDepth(concrete, contract_decl, 0)) return false;
-        if (constraint.arguments.len == 0) return true;
-        const located = self.findContractDefinition(contract_decl) orelse return false;
-        var selected = try generic_mod.Resolver.Bindings.init(self.allocator, self.modules[located.module_index].semantic.parameterized_storage.comptime_parameters.items.len);
-        defer selected.deinit(self.allocator);
-        if (try self.selectConformance(contract_decl, &.{concrete}, &selected, 0, null) == null) return false;
-        const target_module = &self.modules[located.module_index];
-        const target_storage = &target_module.semantic.parameterized_storage;
-        for (storage.ir.generic_arguments.items[constraint.arguments.start..][0..constraint.arguments.len], 0..) |requested, position| {
-            const name = module.text(requested.name);
-            var target_raw: ?u32 = null;
-            for (0..located.definition.parameters.len) |offset| {
-                const raw = located.definition.parameters.start + @as(u32, @intCast(offset));
-                if ((name.len == 0 and position == offset) or std.mem.eql(u8, name, target_module.text(target_storage.comptime_parameters.items[raw].name))) {
-                    target_raw = raw;
-                    break;
-                }
-            }
-            const raw = target_raw orelse return false;
-            switch (requested.value) {
-                .type => |pattern| if (!try self.inferConstraintTypePattern(module_index, pattern, selected.types[raw] orelse return false, bindings)) return false,
-                .comptime_int => |pattern| if (!try self.inferConstraintIntPattern(module_index, pattern, selected.ints[raw] orelse return false, bindings)) return false,
-            }
-        }
-        return true;
+        if (!definition.definition.hasExplicitParticipants()) return false;
+        if (constraint.arguments.len == 0 and definition.definition.participants.len == 1)
+            return self.implementsDepth(concrete, contract_decl, 0);
+        return self.inferParticipantConstraint(module_index, constraint, concrete, definition, contract_decl, bindings);
     }
 
     // Participants select evidence first. Named associated restrictions compare
@@ -2852,23 +2737,8 @@ pub const Resolver = struct {
     }
 
     pub fn runtimeBindingContract(self: *const Resolver, binding_id: global_sg.GlobalBindingId) ?ContractUse {
-        return self.runtimeBindingContractWithInterfaceMask(binding_id, null);
-    }
-
-    fn runtimeBindingContractWithInterfaceMask(
-        self: *const Resolver,
-        binding_id: global_sg.GlobalBindingId,
-        interface_mask: ?[]const bool,
-    ) ?ContractUse {
-        if (if (interface_mask) |mask| mask[@intFromEnum(binding_id)] else self.isFunctionInterfaceBinding(binding_id)) return null;
+        if (self.isFunctionInterfaceBinding(binding_id)) return null;
         const binding = self.graph.bindings.items[@intFromEnum(binding_id)];
-        if (binding.initialization) |initialization| switch (self.graph.node(initialization).content) {
-            // A virtual call carries a runtime implementation identity. Its
-            // inferred result may therefore remain abstract without selecting
-            // a static default concrete type.
-            .virtual_call => return null,
-            else => {},
-        };
         if (self.graph.isBindingTypeUnresolved(binding_id) or self.graph.isTypeUnresolved(binding.ty)) return null;
         return self.contractUse(binding.ty);
     }
@@ -3262,48 +3132,7 @@ pub const Resolver = struct {
     }
 };
 
-test "abstract resolver keeps compile-time relation metadata outside GlobalSG" {
+test "contract resolver keeps compile-time relation metadata outside GlobalSG" {
     try std.testing.expect(@sizeOf(Stats) <= 40);
     try std.testing.expect(@sizeOf(global_sg.GlobalDeclId) == 4);
-}
-
-test "abstract implementation caches rollback speculative keys" {
-    const allocator = std.testing.allocator;
-    var graph: global_sg.GlobalSemanticGraph = .{};
-    defer graph.deinit(allocator);
-
-    var resolver = Resolver{
-        .allocator = allocator,
-        .graph = &graph,
-        .modules = &.{},
-        .offsets = &.{},
-        .core = undefined,
-        .generics = undefined,
-    };
-    defer resolver.deinit();
-
-    const stable = Resolver.ImplementationKey{ .concrete = @enumFromInt(1), .contract_decl = @enumFromInt(2) };
-    const speculative_positive = Resolver.ImplementationKey{ .concrete = @enumFromInt(3), .contract_decl = @enumFromInt(4) };
-    const speculative_negative = Resolver.ImplementationKey{ .concrete = @enumFromInt(5), .contract_decl = @enumFromInt(6) };
-
-    try resolver.cacheImplementation(stable);
-    const saved = resolver.checkpointImplementationCaches();
-    try resolver.cacheImplementation(speculative_positive);
-    try resolver.cacheNonImplementation(speculative_negative, .{
-        .types = 9,
-        .generic_instances = 3,
-        .functions = 7,
-    });
-
-    try std.testing.expect(resolver.known_implementations.contains(stable));
-    try std.testing.expect(resolver.known_implementations.contains(speculative_positive));
-    try std.testing.expect(resolver.known_nonimplementations.contains(speculative_negative));
-
-    resolver.rollbackImplementationCaches(saved);
-
-    try std.testing.expect(resolver.known_implementations.contains(stable));
-    try std.testing.expect(!resolver.known_implementations.contains(speculative_positive));
-    try std.testing.expect(!resolver.known_nonimplementations.contains(speculative_negative));
-    try std.testing.expectEqual(saved.positive_len, resolver.known_implementation_order.items.len);
-    try std.testing.expectEqual(saved.negative_len, resolver.known_nonimplementation_order.items.len);
 }

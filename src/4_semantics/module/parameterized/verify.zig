@@ -83,7 +83,7 @@ pub fn verifyParameterizedForms(graph: *const graph_mod.ModuleSemanticGraph) !vo
         try require(verify.stringFits(requirement.name, graph.strings.items));
         try require(verify.idFits(requirement.input, storage.ir.types.items.len));
         try require(verify.idFits(requirement.output, storage.ir.types.items.len));
-        try require(verify.rangeFits(requirement.parameters, storage.comptime_parameters.items.len));
+        try require(verify.sourceFits(requirement.source, graph.file_offsets.items.len));
         if (requirement.safety_contract) |contract| {
             try require(verify.sourceFits(contract.source, graph.file_offsets.items.len));
             const input = storage.ir.types.items[@intFromEnum(requirement.input)];

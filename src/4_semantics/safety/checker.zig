@@ -972,7 +972,7 @@ pub const SafetyChecker = struct {
                         try captured.append(self.allocator, .{ .domain = @enumFromInt(mapping.domain_index), .generations = roots });
                         try domains.append(self.allocator, .{ .domain_index = mapping.domain_index, .storages = try storages.toOwnedSlice(self.allocator) });
                     }
-                    if (@import("domains.zig").validateCaptured(captured.items)) |_| try self.report(virtualize.source, "Abstract storage domains share a storage generation and cannot be invalidated independently", .{});
+                    if (@import("domains.zig").validateCaptured(captured.items)) |_| try self.report(virtualize.source, "Contract storage domains share a storage generation and cannot be invalidated independently", .{});
                     value.domains = try domains.toOwnedSlice(self.allocator);
                 };
                 if (value.referenced_place) |receiver_place| if (virtualize.domains.len == 0) {

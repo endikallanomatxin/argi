@@ -82,7 +82,7 @@ pub const AutoDeinit = primitives.AutoDeinit(Ids);
 pub const VirtualMethodRegistry = primitives.VirtualMethodRegistry(Ids);
 pub const Virtualize = primitives.Virtualize(Ids);
 pub const VirtualCall = primitives.VirtualCall(Ids);
-/// Static abstract selection checks the declaration without creating runtime
+/// Static contract selection checks the declaration without creating runtime
 /// erasure. This metadata is recorded transactionally with selected functions
 /// and consumed after their safety summaries converge.
 pub const ContractSafetyConformance = struct {
@@ -96,6 +96,11 @@ pub const ContractSafetyConformance = struct {
 // erased receiver and participates in the ordinary append-only checkpoints.
 pub const ContractOperationBindingId = enum(u32) { _ };
 pub const ContractOperationBinding = struct {
+    contract_declaration: GlobalDeclId,
+    requirement_index: u32,
+    requirement_source: primitives.SourceRef,
+    implementation_source: primitives.SourceRef,
+    alias_source: ?primitives.SourceRef = null,
     name: StringRange,
     declaration: GlobalDeclId,
     instantiate_associated: bool = false,

@@ -96,8 +96,6 @@ pub const Stats = struct {
     rounds: u32 = 0,
     cleanup_attempts: u32 = 0,
     destructor_lookups: u32 = 0,
-    cached_implementation_hits: u64 = 0,
-    cached_nonimplementation_hits: u64 = 0,
     generic_instantiation_calls: u64 = 0,
     generic_existing_instances: u64 = 0,
     generic_bodies_built: u64 = 0,
@@ -498,9 +496,6 @@ pub fn semantizeWithOptions(
     while (true) {
         while (changed) {
             profile_rounds += 1;
-            // Pending resolution can fill existing type slots without growing
-            // a pool, so failed conformance checks cannot cross rounds.
-            contracts.invalidate_negative_implementation_cache();
             changed = false;
             const pending_start = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
             for (pending_phases) |phase| {
@@ -589,7 +584,6 @@ pub fn semantizeWithOptions(
                 if (try reachability_mod.expand(allocator, &relocation.graph, set)) changed = true;
             }
         }
-        contracts.invalidate_negative_implementation_cache();
         var finalized_any = false;
         const finalization_count = relocation.graph.functions.items.len;
         var raw: usize = 0;
@@ -691,7 +685,7 @@ pub fn semantizeWithOptions(
             // A denied copy may already be represented in the graph so Safety
             // can prefer a preceding move error. If another operation remains
             // unresolved, report that definite copy failure before unrelated
-            // overload diagnostics prevent Safety from running.
+            // call-resolution diagnostics prevent Safety from running.
             if (ownership.denied_copy) |denied| {
                 var type_name = std.array_list.Managed(u8).init(allocator);
                 defer type_name.deinit();
@@ -753,7 +747,7 @@ pub fn semantizeWithOptions(
             try diagnostics.add(
                 diagnosticLocation(&relocation.graph, diagnostics, failure.source),
                 .semantic,
-                "type '{s}' does not implement abstract '{s}' required by generic type parameter '.{s}' of '{s}'",
+                "type '{s}' does not implement contract '{s}' required by generic type parameter '.{s}' of '{s}'",
                 .{
                     actual_name.items,
                     relocation.graph.text(relocation.graph.declaration(failure.contract_decl).name),
@@ -815,8 +809,6 @@ pub fn semantizeWithOptions(
         .rounds = @intCast(profile_rounds),
         .cleanup_attempts = @intCast(profile_finalize_count),
         .destructor_lookups = @intCast(ownership.profile_destructor_calls),
-        .cached_implementation_hits = contracts.cached_implementation_hits,
-        .cached_nonimplementation_hits = contracts.cached_nonimplementation_hits,
         .generic_instantiation_calls = generic_functions.profile_instantiate_calls,
         .generic_existing_instances = generic_functions.profile_instantiate_existing,
         .generic_bodies_built = generic_bodies_built,
@@ -2550,7 +2542,7 @@ fn diagnoseUnresolvedCall(
 
             // Incomplete identities deliberately cannot participate in value
             // construction or layout queries. Explain that boundary before
-            // the generic missing-overload diagnostic hides the actual cause.
+            // the generic call-mismatch diagnostic hides the actual cause.
             if (reference.module_path == null and (std.mem.eql(u8, name, "size_of") or std.mem.eql(u8, name, "alignment_of"))) {
                 const input_node = graph.node(globalizer.globalNode(offsets[module_index], call.input));
                 if (input_node.content == .struct_value_literal) {
@@ -2573,7 +2565,7 @@ fn diagnoseUnresolvedCall(
             }
 
             if (reference.module_path == null and reference.generic_arguments == null and reference.computed_arguments == null and std.mem.eql(u8, name, "to_virtual") and call.expected_type == null) {
-                try diagnostics.add(diagnosticLocation(graph, diagnostics, source), .semantic, "cannot infer the abstract parameter of 'to_virtual'; provide a Virtual result type or '#(AbstractName)'", .{});
+                try diagnostics.add(diagnosticLocation(graph, diagnostics, source), .semantic, "cannot infer the contract parameter of 'to_virtual'; provide a Virtual result type or '#(.contract: ContractName)'", .{});
                 return true;
             }
 
@@ -2708,7 +2700,7 @@ fn diagnoseUnresolvedCall(
 
                     var mismatch = std.array_list.Managed(u8).init(allocator);
                     defer mismatch.deinit();
-                    try mismatch.appendSlice("no matching generic overload of '");
+                    try mismatch.appendSlice("no generic function named '");
                     try mismatch.appendSlice(name);
                     try mismatch.appendSlice("' accepts arguments ");
                     try appendValueShape(&mismatch, graph, input);
@@ -2880,7 +2872,7 @@ fn diagnoseUnresolvedCall(
                     try appendFormatted(
                         &message,
                         allocator,
-                        "type '{s}' does not implement abstract '{s}' required by parameter '.{s}' of '{s}'",
+                        "type '{s}' does not implement contract '{s}' required by parameter '.{s}' of '{s}'",
                         .{
                             actual_name.items,
                             graph.text(graph.declaration(missing.declaration).name),
@@ -2915,7 +2907,7 @@ fn diagnoseUnresolvedCall(
             if (reach_candidate_count != 0) {
                 var message = std.array_list.Managed(u8).init(allocator);
                 defer message.deinit();
-                try message.print("function '{s}' exists, but no overload matches the provided arguments.\nOverloads with omitted reach defaults:\n", .{name});
+                try message.print("function '{s}' exists, but its arguments do not match.\nCandidates with omitted reach defaults:\n", .{name});
                 try message.appendSlice(reach_details.items);
                 if (std.mem.indexOf(u8, reach_details.items, ".ffi uses reach") != null)
                     try message.appendSlice("\n\nForeign calls require a live ForeignFunctionInterface capability. Bind 'assume ffi := system.ffi' in the caller or pass '.ffi' explicitly; this dependency is not part of the C signature.");
@@ -2926,7 +2918,7 @@ fn diagnoseUnresolvedCall(
 
             var message = std.array_list.Managed(u8).init(allocator);
             defer message.deinit();
-            try message.appendSlice("no overload of '");
+            try message.appendSlice("no function named '");
             try message.appendSlice(name);
             try message.appendSlice("' accepts arguments ");
             try appendValueShape(&message, graph, input);
