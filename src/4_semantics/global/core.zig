@@ -1080,7 +1080,7 @@ pub const Resolver = struct {
         const collection_ty = self.graph.nodes.items[@intFromEnum(collection)].ty orelse return .deferred;
         if (types.arrayElement(self.graph, collection_ty)) |element_ty| {
             if (value.store_value) |local_store|
-                self.contextualizeArrayStore(globalizer.globalNode(o, local_store), element_ty);
+                self.contextualizeStoredValue(globalizer.globalNode(o, local_store), element_ty);
             const target = globalizer.globalNode(o, value.node);
             self.graph.nodes.items[@intFromEnum(target)] = if (value.store_value) |local_store| .{
                 .source = self.graph.nodes.items[@intFromEnum(collection)].source,
@@ -1927,7 +1927,7 @@ pub const Resolver = struct {
         return true;
     }
 
-    pub fn contextualizeArrayStore(self: *Resolver, value: global_sg.GlobalNodeId, element: global_sg.GlobalTypeId) void {
+    pub fn contextualizeStoredValue(self: *Resolver, value: global_sg.GlobalNodeId, element: global_sg.GlobalTypeId) void {
         _ = self.coerceContextualValue(value, element);
         // Even an out-of-range integer literal carries its destination type
         // into Safety, which diagnoses the range before codegen can emit it.

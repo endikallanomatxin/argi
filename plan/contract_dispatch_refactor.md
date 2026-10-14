@@ -347,15 +347,15 @@ semantic claim that every pair has overlapping applicability.
 | `core/maps` | 8 |
 | `core/memory` | 0 |
 | `core/system` | 1 |
-| `core/system/file_system` | 9 |
+| `core/system/file_system` | 5 |
 | `more/math/linear_algebra` | 5 |
 | `more/semver` | 0 |
 
 Remaining consumers are map queries/mutations, filesystem operations, one system
 query family and five linear-algebra families. Preserve static allocator selection,
 explicit references, literal context and recursive cleanup while migrating them.
-File opening can reuse Init with Args selecting the path representation and any
-allocation provider, rather than adding an opener registry. Coordinated map
+File opening now uses Init with Args selecting the path representation and any
+allocation provider. Coordinated map
 migration must cover the full namespace before unique ordinary identities can be
 introduced. Functions with distinct actions can use meaningful separate names.
 
@@ -704,3 +704,49 @@ declaration-order nominal identity and direct PageAllocator growth calls. No
 ordinary push/pop declaration remains in core/lists. The global ordinary selector
 and legacy contract adapters remain required removals after the 23 remaining
 ordinary families and legacy fixtures migrate.
+
+
+### File opening migration
+
+Replace the twelve FileSystem open_read/open_write/open_append factories with
+four Init#(File, Args) conformances. Args carries the path, FileSystem and explicit
+mode (read by default). Char, String and Path references borrow existing terminated
+text without a provider. StringView carries a static Allocator provider in Args,
+including reached defaults; its temporary OwnedCString retains normal cleanup.
+Remove the three in-place mode wrappers and retain the unique open operation
+with an explicit mode. Migrate all callers and examples rather than retaining
+compatibility facades. Generic copy_c_string selects Allocator evidence directly
+and checks terminator-size overflow before allocation. No compiler phase changes
+are needed. The ordinary overload inventory falls from 23 to 19 repeated names after migrating whole-file reading.
+
+Validation exposed legacy erased-Allocator signature selection in read_file after
+the opening migration. Move all four read_file overloads to FileReading with
+PathValue and Provider participants. Reuse the private algorithms as generic
+operation aliases, keeping the allocator static through path conversion and
+whole-file reading. This removes another ordinary family rather than extending
+the legacy erased overload path. Keep conversion, stream errors and cleanup.
+
+Generic operation alias validation then isolated a missing choice-literal argument
+context: input instantiation encountered ..read before the ordinary callee's
+known signature could supply FileOpenMode. Supply choice argument context from a
+single visible concrete ordinary function, before instantiating its input record.
+Do not rank overloads, inspect cached generic instances or infer from outputs.
+Named/positional and narrow optional payload regressions cover the behavior.
+
+A range probe found that contextual generic choice payload records accepted 256
+for UInt8 when failed coercion left the literal at Int32. Reuse the stored-value
+contextualizer for generic typed literals, retaining their destination width for
+the existing safety range diagnostic. Rename the array-specific helper to reflect
+its shared role; do not introduce a second range checker. Whole-file reading still
+uses the existing String capacity/growth helpers internally; replacing their
+erased allocation interfaces remains separate follow-up work.
+
+Final validation: four focused file/choice cases passed, including rejection of
+an out-of-range UInt8 choice payload. The broad contract/system/I/O/string and
+cat/word-count run passed 453 program cases (1 optional skip), without failures,
+leaks or error logs. Optional native Python coverage and the CSV report example
+passed 17 cases without skips. The complete internal suite passed 375 tests
+(1 skipped). Emitted LLVM contains direct PageAllocator and RefusingAllocator
+calls for temporary C-string preparation. Nineteen repeated ordinary names
+remain; global overload ranking and legacy Abstract compatibility are not yet
+removed.

@@ -70,14 +70,14 @@ file_stream_pointer(.self: &File) -> (.stream: &Any) := {
     stream = read_reference#(.t: Any)(.base = mutable_stream)
 }
 
-open(
+open := (
         .p    : $&File,
         .ffi  : $&ForeignFunctionInterface = reach ffi,
         .path : &Char,
         .mode : FileOpenMode,
     ) -> (
         .result : Errable#(Bool, (..file_open_failed))
-    ) := {
+    ) {
     mode_text ::= file_open_mode_c_string(.mode = mode)
     opened: &Any = fopen(.path = path, .mode = mode_text)
     p&= (
@@ -92,36 +92,6 @@ open(
     }
 
     result = ..ok 1 == 1
-}
-
-open_read(
-        .p    : $&File,
-        .ffi  : $&ForeignFunctionInterface = reach ffi,
-        .path : &Char,
-    ) -> (
-        .result : Errable#(Bool, (..file_open_failed))
-    ) := {
-    result = open(.p = p, .path = path, .mode = ..read)
-}
-
-open_write(
-        .p    : $&File,
-        .ffi  : $&ForeignFunctionInterface = reach ffi,
-        .path : &Char,
-    ) -> (
-        .result : Errable#(Bool, (..file_open_failed))
-    ) := {
-    result = open(.p = p, .path = path, .mode = ..write)
-}
-
-open_append(
-        .p    : $&File,
-        .ffi  : $&ForeignFunctionInterface = reach ffi,
-        .path : &Char,
-    ) -> (
-        .result : Errable#(Bool, (..file_open_failed))
-    ) := {
-    result = open(.p = p, .path = path, .mode = ..append)
 }
 
 init_stdin(.p: $&File, .ffi: $&ForeignFunctionInterface = reach ffi) -> () := {

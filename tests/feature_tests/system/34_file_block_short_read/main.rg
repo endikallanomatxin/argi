@@ -13,7 +13,7 @@ main(.system: System) -> (.status_code: Int32) := {
         }
     }
 
-    create_result ::= open_write(.self = system.file_system, .path = path)
+    create_result ::= File(.file_system = system.file_system, .path = path, .mode = ..write)
     if is(.value = create_result, .variant = ..ok) {
     } else {
         status_code = 2
@@ -48,7 +48,7 @@ main(.system: System) -> (.status_code: Int32) := {
 
     close(.self = $&file)
 
-    open_result ::= open_read(.self = system.file_system, .path = path)
+    open_result ::= File(.file_system = system.file_system, .path = path, .mode = ..read)
     if is(.value = open_result, .variant = ..ok) {
     } else {
         status_code = 6

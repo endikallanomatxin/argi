@@ -9,7 +9,7 @@ main(.system: System) -> (.status_code: Int32) := {
         .data = "tests/feature_tests/system/26_file_system_error_reasons/build/renamed.txt"
     )
 
-    open_result ::= open_read(.self = system.file_system, .path = missing_path)
+    open_result ::= File(.file_system = system.file_system, .path = missing_path, .mode = ..read)
     if is(.value = open_result, .variant = ..error) {
     } else {
         status_code = 1

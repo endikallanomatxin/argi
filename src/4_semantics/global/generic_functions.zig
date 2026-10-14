@@ -2275,7 +2275,7 @@ pub const Resolver = struct {
                 const global = try self.instantiateNode(id);
                 const current = self.resolver.graph.nodes.items[@intFromEnum(global)].ty;
                 if (current == null or !global_types.equal(self.resolver.graph, current.?, expected))
-                    _ = self.resolver.core.coerceContextualValue(global, expected);
+                    self.resolver.core.contextualizeStoredValue(global, expected);
                 return global;
             }
             return self.instantiateNode(id);
@@ -2520,12 +2520,52 @@ pub const Resolver = struct {
         }
 
         fn resolveCall(self: *InstanceContext, value: anytype) !global_sg.Node {
+            try self.contextualizeOrdinaryChoiceArguments(value.name, value.input);
             const input = try self.instantiateNode(value.input);
             return self.makeNamedCall(value.name, null, .{ .start = 0, .len = 0 }, input, value.source, null);
         }
 
+        // A unique concrete ordinary identity supplies argument context before
+        // input instantiation. Never use overload ranking or cached generic
+        // specializations to decide the type of an untyped choice literal.
+        fn contextualizeOrdinaryChoiceArguments(self: *InstanceContext, name_id: primitives.StringRange, input_id: ir.ParameterizedNodeId) !void {
+            const name = self.resolver.modules[self.module_index].text(name_id);
+            var selected: ?global_sg.GlobalFunctionId = null;
+            for (try self.resolver.graph.functionsNamed(self.resolver.allocator, name)) |function_id| {
+                const function = self.resolver.graph.function(function_id);
+                if (function.flags.is_generic_instantiation or function.flags.is_abstract_dispatch or function.flags.is_c_function_pointer) continue;
+                if (!self.resolver.core.declarationVisible(self.module_index, function.declaration, null)) continue;
+                if (selected != null) return;
+                selected = function_id;
+            }
+            const function_id = selected orelse return;
+            if (self.resolver.hasVisibleParameterizedFunctionName(self.module_index, name, null)) return;
+            const input_fields = self.resolver.graph.function(function_id).input;
+            const storage = &self.resolver.modules[self.module_index].semantic.parameterized_storage.ir;
+            const input = storage.nodes.items[@intFromEnum(input_id)];
+            if (input != .resolved or input.resolved.content != .struct_value_literal) return;
+            const fields = input.resolved.content.struct_value_literal.fields;
+            for (storage.value_fields.items[fields.start..][0..fields.len], 0..) |field, position| {
+                const local = storage.nodes.items[@intFromEnum(field.value)];
+                if (local != .pending) continue;
+                const pending = storage.pending.items[@intFromEnum(local.pending)];
+                if (pending != .resolve_expression or pending.resolve_expression.kind != .choice_literal) continue;
+                const field_name = self.resolver.modules[self.module_index].text(field.name);
+                for (self.resolver.graph.fields.items[input_fields.start..][0..input_fields.len], 0..) |expected, offset| {
+                    const matches = if (field_name.len == 0) position == offset else std.mem.eql(u8, field_name, self.resolver.graph.text(expected.name));
+                    if (!matches) continue;
+                    if (!self.resolver.graph.isTypeUnresolved(expected.ty))
+                        _ = try self.instantiateNodeWithExpected(field.value, expected.ty);
+                    break;
+                }
+            }
+        }
+
         fn resolveExpression(self: *InstanceContext, value: ir.PendingExpression) anyerror!global_sg.Node {
             const storage = &self.resolver.modules[self.module_index].semantic.parameterized_storage.ir;
+            if (value.kind == .generic_call and value.module_path == null and value.contract_type == null and value.generic_arguments.len == 0 and value.operands.len == 1)
+                if (value.name) |name|
+                    try self.contextualizeOrdinaryChoiceArguments(name, storage.node_refs.items[value.operands.start]);
             var operands = std.array_list.Managed(global_sg.GlobalNodeId).init(self.resolver.allocator);
             defer operands.deinit();
             for (storage.node_refs.items[value.operands.start..][0..value.operands.len]) |operand|
@@ -3207,7 +3247,7 @@ pub const Resolver = struct {
                 // Store operands take the array element's context before
                 // codegen, so a narrow element never receives a default-width
                 // literal store that overwrites adjacent elements.
-                if (store) self.resolver.core.contextualizeArrayStore(operands[2], element);
+                if (store) self.resolver.core.contextualizeStoredValue(operands[2], element);
                 return if (store) .{
                     .source = self.resolver.sourceFor(self.module_index, source),
                     .ty = element,

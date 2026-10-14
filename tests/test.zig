@@ -12941,3 +12941,17 @@ test "feature_tests/contracts/298_generic_input_argument_order" {
     try expectSuccessfulBuild("tests/feature_tests/contracts/298_generic_input_argument_order");
     try runExpect("tests/feature_tests/contracts/298_generic_input_argument_order", 0);
 }
+
+test "feature_tests/contracts/299_file_init_path_evidence" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/299_file_init_path_evidence");
+    try runExpect("tests/feature_tests/contracts/299_file_init_path_evidence", 0);
+}
+
+test "feature_tests/contracts/300_ordinary_choice_argument_context" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/300_ordinary_choice_argument_context");
+    try runExpect("tests/feature_tests/contracts/300_ordinary_choice_argument_context", 0);
+}
+
+test "feature_tests/contracts/301X_generic_choice_payload_out_of_range" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/301X_generic_choice_payload_out_of_range", "integer literal 256 does not fit in 'UInt8'", "failed without a diagnostic");
+}

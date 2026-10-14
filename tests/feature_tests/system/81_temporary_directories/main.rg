@@ -16,7 +16,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         .right = "/child",
         .allocator = allocator
     )!
-    child ::= open_write(.self = file_system, .path = as_view(.self = &child_path).view, .allocator = allocator)!
+    child ::= File(.file_system = file_system, .path = as_view(.self = &child_path).view, .allocator = allocator, .mode = ..write)!
     close(.self = $&child)!
     match close(.self = $&first) {
         ..ok _ { abort }

@@ -8,7 +8,7 @@ main(.system: System) -> (.status_code: Int32) := {
         path ::= from_literal(.data = "/dev/null")
     }
 
-    read_file_result ::= open_read(.self = system.file_system, .path = path)
+    read_file_result ::= File(.file_system = system.file_system, .path = path, .mode = ..read)
     if is(.value = read_file_result, .variant = ..ok) {
     } else {
         status_code = 1
@@ -17,7 +17,7 @@ main(.system: System) -> (.status_code: Int32) := {
     read_file ::= ~read_file_result ..ok
     close(.self = $&read_file)
 
-    write_file_result ::= open_write(.self = system.file_system, .path = path)
+    write_file_result ::= File(.file_system = system.file_system, .path = path, .mode = ..write)
     if is(.value = write_file_result, .variant = ..ok) {
     } else {
         status_code = 2
@@ -26,7 +26,7 @@ main(.system: System) -> (.status_code: Int32) := {
     write_file ::= ~write_file_result ..ok
     close(.self = $&write_file)
 
-    append_file_result ::= open_append(.self = system.file_system, .path = path)
+    append_file_result ::= File(.file_system = system.file_system, .path = path, .mode = ..append)
     if is(.value = append_file_result, .variant = ..ok) {
     } else {
         status_code = 3

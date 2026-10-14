@@ -47,16 +47,20 @@ string_view_has_c_string_layout(
     ok = terminator_ptr&== 0
 }
 
-copy_c_string(
+copy_c_string#(.Provider: Type: Allocator#(Provider)) := (
         .self      : StringView,
-        .allocator : $&Allocator,
+        .allocator : $&Provider,
     ) -> (
         .result : Errable#(OwnedCString, (..out_of_memory))
-    ) := {
+    ) {
     assume allocator
 
+    if self.length == integer_limits(.value = self.length).maximum {
+        result = ..error(.reason = ..out_of_memory)
+        return
+    }
     size :: UIntNative = self.length + 1
-    allocated ::= allocate_bytes(allocator, .size = size)
+    allocated ::= Allocator#(Provider).allocate(.self = allocator, .size = size, .alignment = 1)
 
     match allocated {
         ..error _ {

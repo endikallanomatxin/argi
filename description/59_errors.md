@@ -156,7 +156,7 @@ stream failures:
 ..stream_close_failed
 ..out_of_memory
 
-open_read(.p: $&File, .path: &Char)
+open(.p: $&File, .path: &Char, .mode: FileOpenMode)
     -> (.result: Errable#(Bool, (..file_open_failed)))
 
 read_file(.self: &FileSystem, .path: StringView)
