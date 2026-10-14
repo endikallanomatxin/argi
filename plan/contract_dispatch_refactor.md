@@ -15,6 +15,11 @@ registries or implicit participant/representation adapters.
 
 ## Independent diagnostic follow-up
 
+Signature probes currently collapse some instantiation failures into pending
+resolution. Distinguish definite errors from missing bindings without exposing
+errors from losing candidates. Explicit and inferred calls now share argument
+publication, but their initial inference rules remain distinct.
+
 Verify contextual fixed-array initialization in parameterized ordinary bodies:
 `[1]UInt8 = (0)` previously produced an incorrect generic-input mismatch. Keep
 this issue independent of contract evidence and virtual representation.

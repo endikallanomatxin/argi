@@ -94,6 +94,34 @@ pub const Resolver = struct {
         comptime_failure: ?generic_mod.ComptimeFailure = null,
     };
 
+    /// A speculative resolution owns graph tails and the effects they refer to.
+    /// Destroying the scope rolls both back unless selection commits them.
+    pub const Speculation = struct {
+        resolver: *Resolver,
+        graph: global_sg.GlobalSemanticGraph.Checkpoint,
+        effects: SideEffectCheckpoint,
+        active: bool = true,
+
+        pub fn commit(self: *Speculation) void {
+            self.active = false;
+        }
+
+        pub fn rollback(self: *Speculation) void {
+            if (!self.active) return;
+            self.resolver.graph.rollback(self.graph);
+            self.resolver.rollbackSideEffects(self.effects);
+            self.active = false;
+        }
+
+        pub fn deinit(self: *Speculation) void {
+            self.rollback();
+        }
+    };
+
+    pub fn beginSpeculation(self: *Resolver) Speculation {
+        return .{ .resolver = self, .graph = self.graph.checkpoint(), .effects = self.checkpointSideEffects() };
+    }
+
     pub fn checkpointSideEffects(self: *const Resolver) SideEffectCheckpoint {
         var saved: SideEffectCheckpoint = .{ .comptime_failure = self.generics.comptime_failure, .reached_calls = self.core.reached_calls.items.len, .reached_signatures = self.core.reached_signature_changes.items.len };
         if (self.ownership_context) |context| {
@@ -222,13 +250,10 @@ pub const Resolver = struct {
         }
         const declaration = standard_contracts.standardDeclaration(self.graph, contract_name) orelse return null;
         const contracts = self.nested_call_context orelse return null;
-        const checkpoint = self.graph.checkpoint();
-        const side_effects = self.checkpointSideEffects();
-        var committed = false;
+        var speculation = self.beginSpeculation();
         var failure: ?contract_mod.ParticipantConformanceFailure = null;
-        defer if (!committed) {
-            self.graph.rollback(checkpoint);
-            self.rollbackSideEffects(side_effects);
+        defer if (speculation.active) {
+            speculation.deinit();
             if (failure) |value| contracts.participant_conformance_failure = value;
         };
         const input = try self.makePositionalInput(operands);
@@ -267,7 +292,7 @@ pub const Resolver = struct {
         const wrapped = try self.makePositionalInput(&.{input});
         const call = try contracts.makeScopedOperationCall(module_index, contract, operation_name, wrapped, reach, self.graph.node(operands[0]).source) orelse return null;
         if (call.ty == null or self.graph.isTypeUnresolved(call.ty.?)) return null;
-        committed = true;
+        speculation.commit();
         self.stats.calls += 1;
         return call;
     }
@@ -701,7 +726,7 @@ pub const Resolver = struct {
                 for (try self.graph.functionsNamed(self.allocator, name)) |function_id| {
                     const function = self.graph.function(function_id);
                     if (@intFromEnum(self.graph.moduleForDeclaration(function.declaration).?) != module_index) continue;
-                    if (selected != null or function.flags.is_generic_instantiation or function.flags.is_once or function.input.len != 0 or function.output.len != 1) return null;
+                    if (selected != null or function.flags.is_once or function.input.len != 0 or function.output.len != 1) return null;
                     const ty = self.graph.fields.items[function.output.start].ty;
                     if (self.graph.isTypeUnresolved(ty)) return null;
                     selected = ty;
@@ -788,12 +813,31 @@ pub const Resolver = struct {
         return true;
     }
 
+    fn parametersBound(
+        self: *const Resolver,
+        module_index: usize,
+        parameters: primitives.Range(ir.ComptimeParameterId),
+        bindings: *const generic_mod.Resolver.Bindings,
+    ) bool {
+        const storage = &self.modules[module_index].semantic.parameterized_storage;
+        for (parameters.start..parameters.start + parameters.len) |raw| {
+            const parameter = storage.comptime_parameters.items[raw];
+            if (switch (parameter.kind) {
+                .type => bindings.types[raw] == null,
+                .comptime_int => bindings.ints[raw] == null,
+            }) return false;
+        }
+        return true;
+    }
+
     pub fn appendBoundArguments(
         self: *Resolver,
         module_index: usize,
         parameters: primitives.Range(ir.ComptimeParameterId),
         bindings: *const generic_mod.Resolver.Bindings,
     ) !primitives.Range(global_sg.GlobalGenericArgId) {
+        // An incomplete candidate must not publish a partial argument tail.
+        if (!self.parametersBound(module_index, parameters, bindings)) return error.MissingGenericArgument;
         const start: u32 = @intCast(self.graph.generic_arguments.items.len);
         const storage = &self.modules[module_index].semantic.parameterized_storage;
         for (parameters.start..parameters.start + parameters.len) |raw| {
@@ -916,13 +960,11 @@ pub const Resolver = struct {
     }
 
     fn implicitOrdinaryApplicableFiltered(self: *Resolver, module_index: usize, name: []const u8, input: global_sg.GlobalNodeId, reach: ReachInferenceContext, module_filter: ?global_sg.GlobalModuleId) !OrdinaryApplicability {
-        const checkpoint = self.graph.checkpoint();
-        const side_effects = self.checkpointSideEffects();
+        var speculation = self.beginSpeculation();
         const failed = self.failed_constraint;
         const argument_failure = self.generics.argument_failure;
         defer {
-            self.graph.rollback(checkpoint);
-            self.rollbackSideEffects(side_effects);
+            speculation.deinit();
             self.failed_constraint = failed;
             self.generics.argument_failure = argument_failure;
         }
@@ -1048,18 +1090,7 @@ pub const Resolver = struct {
                 try self.recordConstraintFailure(candidate_index, declaration, parameterized.input, &bindings, input);
                 continue;
             }
-            var arguments_complete = true;
-            for (parameterized.parameters.start..parameterized.parameters.start + parameterized.parameters.len) |raw| {
-                const parameter = candidate_module.semantic.parameterized_storage.comptime_parameters.items[raw];
-                if (switch (parameter.kind) {
-                    .type => bindings.types[raw] == null,
-                    .comptime_int => bindings.ints[raw] == null,
-                }) {
-                    arguments_complete = false;
-                    break;
-                }
-            }
-            if (!arguments_complete) continue;
+            if (!self.parametersBound(candidate_index, parameterized.parameters, &bindings)) continue;
             phase_start = self.profileTimestamp();
             applicability_start = phase_start;
             applicability_active = true;
@@ -1077,18 +1108,7 @@ pub const Resolver = struct {
                 phase_start = self.profileTimestamp();
                 // Only one applicable identity needs durable arguments.
                 // Failed and deferred probes leave no argument tail.
-                var arguments: std.ArrayList(global_sg.GenericArgument) = .empty;
-                defer arguments.deinit(self.allocator);
-                for (parameterized.parameters.start..parameterized.parameters.start + parameterized.parameters.len) |raw| {
-                    const parameter = candidate_module.semantic.parameterized_storage.comptime_parameters.items[raw];
-                    const argument: global_sg.GenericArgument.Value = switch (parameter.kind) {
-                        .type => .{ .type = bindings.types[raw].? },
-                        .comptime_int => .{ .comptime_int = bindings.ints[raw].? },
-                    };
-                    try arguments.append(self.allocator, .{ .name = try self.graph.addString(self.allocator, candidate_module.text(parameter.name)), .value = argument });
-                }
-                const range: primitives.Range(global_sg.GlobalGenericArgId) = .{ .start = @intCast(self.graph.generic_arguments.items.len), .len = @intCast(arguments.items.len) };
-                try self.graph.generic_arguments.appendSlice(self.allocator, arguments.items);
+                const range = try self.appendBoundArguments(candidate_index, parameterized.parameters, &bindings);
                 self.addProfileTime(phase_start, &self.selection_profile.implicit_argument_materialization_ns);
                 selected = declaration;
                 selected_arguments = range;
@@ -1118,12 +1138,10 @@ pub const Resolver = struct {
         // Context probes can materialize constrained nominal types even before
         // the actual argument is resolved. Keep those types speculative: the
         // final constraint pass must see only selected or source-written types.
-        const checkpoint = self.graph.checkpoint();
-        const side_effect_checkpoint = self.checkpointSideEffects();
+        var speculation = self.beginSpeculation();
         const saved_stats = self.generics.stats;
         defer {
-            self.graph.rollback(checkpoint);
-            self.rollbackSideEffects(side_effect_checkpoint);
+            speculation.deinit();
             self.generics.stats = saved_stats;
         }
         const expected = self.generics.instantiateParameterizedType(module_index, pattern, bindings) catch return false;
@@ -1209,16 +1227,14 @@ pub const Resolver = struct {
         actual_name: *std.array_list.Managed(u8),
         append_type_name: *const fn (*std.array_list.Managed(u8), *const global_sg.GlobalSemanticGraph, global_sg.GlobalTypeId) anyerror!void,
     ) !void {
-        const checkpoint = self.graph.checkpoint();
-        const side_effect_checkpoint = self.checkpointSideEffects();
+        var speculation = self.beginSpeculation();
         const saved_stats = self.stats;
         const saved_generic_stats = self.generics.stats;
         const saved_core_stats = self.core.stats;
         const saved_diagnostics = self.constraint_diagnostics;
         const saved_failure = self.failed_constraint;
         defer {
-            self.graph.rollback(checkpoint);
-            self.rollbackSideEffects(side_effect_checkpoint);
+            speculation.deinit();
             self.stats = saved_stats;
             self.generics.stats = saved_generic_stats;
             self.core.stats = saved_core_stats;
@@ -1260,14 +1276,12 @@ pub const Resolver = struct {
         input: global_sg.GlobalNodeId,
         candidates: *std.ArrayList(global_sg.GlobalDeclId),
     ) !bool {
-        const checkpoint = self.graph.checkpoint();
-        const side_effect_checkpoint = self.checkpointSideEffects();
+        var speculation = self.beginSpeculation();
         const saved_stats = self.stats;
         const saved_generic_stats = self.generics.stats;
         const saved_core_stats = self.core.stats;
         defer {
-            self.graph.rollback(checkpoint);
-            self.rollbackSideEffects(side_effect_checkpoint);
+            speculation.deinit();
             self.stats = saved_stats;
             self.generics.stats = saved_generic_stats;
             self.core.stats = saved_core_stats;
@@ -1293,14 +1307,14 @@ pub const Resolver = struct {
     }
 
     fn matchParameterizedInput(self: *Resolver, module_index: usize, pattern: ir.ParameterizedTypeId, bindings: *generic_mod.Resolver.Bindings, input: global_sg.GlobalNodeId) core_mod.Resolver.CallInputMatch {
-        const checkpoint = self.graph.checkpoint();
-        const side_effect_checkpoint = self.checkpointSideEffects();
+        var speculation = self.beginSpeculation();
         const saved_stats = self.generics.stats;
         defer {
-            self.graph.rollback(checkpoint);
-            self.rollbackSideEffects(side_effect_checkpoint);
+            speculation.deinit();
             self.generics.stats = saved_stats;
         }
+        // TODO: Classify definite instantiation errors separately from missing
+        // bindings without publishing diagnostics from losing identities.
         const ty = self.generics.instantiateParameterizedType(module_index, pattern, bindings) catch return .deferred;
         const fields = self.interfaceFields(ty) catch return .deferred;
         const matching_fields = self.materializeDefaultPresenceForMatch(module_index, pattern, fields) catch return .deferred;
@@ -1726,15 +1740,13 @@ pub const Resolver = struct {
             if (self.profile_io != null) self.profile_instantiate_existing += 1;
             return id;
         }
-        const checkpoint = self.graph.checkpoint();
-        const side_effect_checkpoint = self.checkpointSideEffects();
+        var speculation = self.beginSpeculation();
         const saved_stats = self.stats;
         const saved_generic_stats = self.generics.stats;
         errdefer {
             const comptime_failure = self.generics.comptime_failure;
             const projection_failure = if (self.nested_call_context) |contracts| contracts.participant_conformance_failure else null;
-            self.graph.rollback(checkpoint);
-            self.rollbackSideEffects(side_effect_checkpoint);
+            speculation.deinit();
             self.generics.comptime_failure = comptime_failure;
             // A selected instantiation must keep its projection diagnostic;
             // speculative signature probes restore theirs through checkpoints.
@@ -1803,6 +1815,7 @@ pub const Resolver = struct {
             self.graph.functions.items[@intFromEnum(function_id)].body = instantiated_body;
         }
         self.stats.instances += 1;
+        speculation.commit();
         return function_id;
     }
 
@@ -2308,7 +2321,6 @@ pub const Resolver = struct {
             var selected: ?global_sg.GlobalFunctionId = null;
             for (try self.resolver.graph.functionsNamed(self.resolver.allocator, name)) |function_id| {
                 const function = self.resolver.graph.function(function_id);
-                if (function.flags.is_generic_instantiation or function.flags.is_c_function_pointer) continue;
                 if (!self.resolver.core.declarationVisible(self.module_index, function.declaration, null)) continue;
                 if (selected != null) return;
                 selected = function_id;
