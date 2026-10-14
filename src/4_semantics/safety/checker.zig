@@ -549,7 +549,6 @@ pub const SafetyChecker = struct {
             }
         }
         for (self.graph.functions.items) |function| {
-            if (function.flags.is_abstract_dispatch) continue;
             if (!function.flags.is_c_abi and (function.body != null or function.flags.has_declared_body)) continue;
             const declaration = self.graph.declaration(function.declaration);
             const name = self.graph.text(declaration.name);
@@ -1131,7 +1130,7 @@ pub const SafetyChecker = struct {
         const fields = try self.allocator.alloc(facts.FieldFacts, range.len);
         for (self.graph.fields.items[range.start..][0..range.len], 0..) |field, index| {
             const child = try self.allocator.create(facts.ValueFacts);
-            child.* = try self.initializedValueAtPlace(state, try self.project(storage, .{ .field = @intCast(index) }), types.effectiveFieldType(field));
+            child.* = try self.initializedValueAtPlace(state, try self.project(storage, .{ .field = @intCast(index) }), field.ty);
             fields[index] = .{ .index = @intCast(index), .value = child };
             result = try self.mergeValueFacts(result, child.*);
         }
@@ -1586,7 +1585,7 @@ pub const SafetyChecker = struct {
                     .field => |index| blk: {
                         const fields = types.fields(self.graph, ty) orelse return &.{};
                         if (index >= fields.len) return &.{};
-                        break :blk types.effectiveFieldType(self.graph.fields.items[fields.start + index]);
+                        break :blk (self.graph.fields.items[fields.start + index]).ty;
                     },
                     .variant => |index| blk: {
                         const variants = types.variants(self.graph, ty) orelse return &.{};

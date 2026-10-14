@@ -2,8 +2,8 @@ DummyOutput: Type = (
     .flush_count : Int32 = 0
 )
 
-flush_stdout(
-        .writer : $&Writer = reach writer,
+flush_stdout#(.WriterType: Type: Writer#(WriterType))(
+        .writer : $&WriterType = reach writer,
         terminal.writer,
         system.terminal.writer,
     ) -> (

@@ -1,6 +1,6 @@
-Reader: Contract = ()
+Reader#(.Participant: Type): Contract = ()
 Cell: Type = ()
-Cell satisfies Reader
+implement Reader#(Cell) ()
 Product#(.Left: Type, .Right: Type): Contract = (
     .Result: Type
 

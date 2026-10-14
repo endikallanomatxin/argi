@@ -54,9 +54,6 @@ pub fn verifyParameterizedForms(graph: *const graph_mod.ModuleSemanticGraph) !vo
     try ir_verify.verifyIR(graph);
 
     for (storage.comptime_parameters.items) |parameter| {
-        if (parameter.implicit_participant) {
-            try require(parameter.kind == .type and parameter.value_type == null and parameter.constraint == null);
-        }
         try require(verify.stringFits(parameter.name, graph.strings.items));
         try require(verify.optionalIdFits(parameter.value_type, storage.ir.types.items.len));
         try require(verify.optionalIdFits(parameter.constraint, storage.abstract_constraints.items.len));
@@ -133,10 +130,6 @@ pub fn verifyParameterizedForms(graph: *const graph_mod.ModuleSemanticGraph) !vo
         try require(verify.idFits(definition.declaration, graph.declarations.items.len));
         try require(verify.rangeFits(definition.parameters, storage.comptime_parameters.items.len));
         try require(verify.rangeFits(definition.participants, storage.comptime_parameters.items.len));
-        if (definition.implicit_participant) |participant| {
-            try require(definition.participants.len == 1 and definition.participants.start == @intFromEnum(participant));
-            try require(storage.comptime_parameters.items[@intFromEnum(participant)].implicit_participant);
-        }
         try require(verify.rangeFits(definition.composition, storage.abstract_constraints.items.len));
         for (storage.comptime_parameters.items[definition.participants.start..][0..definition.participants.len]) |parameter| try require(parameter.kind == .type);
         if (definition.participants.len != 0 and definition.parameters.len != 0) {
@@ -150,31 +143,6 @@ pub fn verifyParameterizedForms(graph: *const graph_mod.ModuleSemanticGraph) !vo
             for (contract.invalidated_domains) |domain| try require(domain.domain_index < definition.domains.len);
             for (contract.outcomes) |outcome| try verifyOutcomeDomains(outcome, definition.domains.len);
         };
-    }
-
-    try require(storage.abstract_argument_names.items.len == storage.abstract_arguments.items.len);
-    for (storage.abstract_argument_names.items) |name| try require(verify.stringFits(name, graph.strings.items));
-    for (storage.abstract_arguments.items) |argument| switch (argument) {
-        .none, .comptime_int => {},
-        .type => |ty| try require(verify.idFits(ty, views.typeCount(graph))),
-    };
-
-    for (storage.abstract_implementations.items) |implementation| {
-        try declarationRef(graph, implementation.abstract_ref);
-        try require(verify.idFits(implementation.ty, views.typeCount(graph)));
-        try require(verify.rangeFits(implementation.arguments, storage.abstract_arguments.items.len));
-        try require(verify.sourceFits(implementation.source, graph.file_offsets.items.len));
-        try verifyDomainMappings(graph, implementation.domains);
-    }
-
-    for (storage.parameterized_abstract_implementations.items) |parameterized| {
-        try declarationRef(graph, parameterized.abstract_ref);
-        try require(verify.rangeFits(parameterized.parameters, storage.comptime_parameters.items.len));
-        try require(verify.optionalIdFits(parameterized.concrete_type_pattern, storage.ir.types.items.len));
-        if (parameterized.concrete_name) |name| try require(verify.stringFits(name, graph.strings.items));
-        try require(verify.rangeFits(parameterized.arguments, storage.ir.generic_arguments.items.len));
-        try require(verify.sourceFits(parameterized.source, graph.file_offsets.items.len));
-        try verifyDomainMappings(graph, parameterized.domains);
     }
 
     for (storage.contract_conformances.items) |conformance| {
@@ -191,19 +159,6 @@ pub fn verifyParameterizedForms(graph: *const graph_mod.ModuleSemanticGraph) !vo
         try require(verify.stringFits(operation.name, graph.strings.items));
         try declarationRef(graph, operation.function);
         try require(verify.sourceFits(operation.source, graph.file_offsets.items.len));
-    }
-
-    for (storage.abstract_defaults.items) |default| {
-        try declarationRef(graph, default.abstract_ref);
-        try require(verify.idFits(default.ty, views.typeCount(graph)));
-        try require(verify.sourceFits(default.source, graph.file_offsets.items.len));
-    }
-
-    for (storage.parameterized_abstract_defaults.items) |default| {
-        try declarationRef(graph, default.abstract_ref);
-        try require(verify.rangeFits(default.parameters, storage.comptime_parameters.items.len));
-        try require(verify.idFits(default.ty, storage.ir.types.items.len));
-        try require(verify.sourceFits(default.source, graph.file_offsets.items.len));
     }
 }
 
@@ -250,10 +205,11 @@ test "parameterized verifier accepts self contained semantic IR" {
         .output = @enumFromInt(0),
         .body = null,
     });
-    try graph.semantic.parameterized_storage.parameterized_abstract_defaults.append(allocator, .{
-        .abstract_ref = .{ .module = @enumFromInt(0) },
+    try graph.semantic.parameterized_storage.contract_conformances.append(allocator, .{
+        .contract_ref = .{ .module = @enumFromInt(0) },
+        .participants = .{ .start = 0, .len = 0 },
+        .associated_arguments = .{ .start = 0, .len = 0 },
         .parameters = .{ .start = 0, .len = 1 },
-        .ty = @enumFromInt(0),
         .source = .{ .file_index = 0, .offset = 0 },
     });
 

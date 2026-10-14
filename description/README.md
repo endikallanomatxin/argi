@@ -28,7 +28,7 @@ For a first pass, read [Syntax overview](00_syntax_overview.md),
 - **Polymorphism:** [Overview](130_polymorphism.md),
   [Multiple dispatch](131_multiple_dispatch.md),
   [Compile-time parameters](132_generics.md),
-  [Abstract types](133_abstract_types.md),
+  [Contract capabilities](133_abstract_types.md),
   [Virtual types](134_virtual_types.md), and
   [Contracts and conformance](135_contracts.md).
 - **Collections:** [Lists](161_lists.md), [Strings](162_strings.md), and

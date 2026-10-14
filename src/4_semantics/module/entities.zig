@@ -133,7 +133,6 @@ pub const FunctionSemantic = struct {
 
 pub const FieldSemantic = struct {
     field: ModuleFieldId,
-    storage_type: ?ModuleTypeId = null,
     default_value: ?ModuleNodeId = null,
 };
 

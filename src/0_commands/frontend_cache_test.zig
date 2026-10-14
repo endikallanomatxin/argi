@@ -9,7 +9,6 @@ const ModuleCache = frontend.cache.ModuleCache;
 const Result = struct {
     hits: usize,
     misses: usize,
-    derivatives: usize,
     failure: ?anyerror,
     diagnostics: []u8,
     ir: []u8,
@@ -63,7 +62,6 @@ fn compileForTarget(files: []const sf.SourceFile, session: ?*ModuleCache, option
     return .{
         .hits = pipeline.module_cache_hits,
         .misses = pipeline.module_cache_misses,
-        .derivatives = pipeline.linked_module_count,
         .failure = failure,
         .diagnostics = try std.testing.allocator.dupe(u8, messages.items),
         .ir = try std.testing.allocator.dupe(u8, ir),
@@ -183,28 +181,26 @@ test "frontend module cache does not store invalid syntax" {
     try std.testing.expectEqual(@as(usize, 1), recovered.misses);
 }
 
-test "frontend module cache retains qualified abstract derivatives as transient work" {
+test "frontend module cache reuses explicit qualified contract bounds without derivatives" {
     var session = ModuleCache.init(std.testing.allocator, .{});
     defer session.deinit();
     const files = [_]sf.SourceFile{
         .{ .path = "app/main.rg", .code = "dep := import(\"../dep\")\n" ++
-            "use(.value: dep.Contract) -> (.result: Int32) := { result = 3 }\n" ++
+            "use#(.Value: Type: dep.Contract)(.value: Value) -> (.result: Int32) := { result = 3 }\n" ++
             "main() -> (.status_code: Int32) := { status_code = use(.value = 1).result }\n" },
-        .{ .path = "dep/contract.rg", .code = "Contract : Abstract = ()\nInt32 implements Contract\n" },
+        .{ .path = "dep/contract.rg", .code = "Contract#(.Participant: Type): Contract = ()\nimplement Contract#(Int32) ()\n" },
     };
     const cold = try expectCleanEquivalent(&files, &session);
     defer cold.deinit();
     const warm = try expectCleanEquivalent(&files, &session);
     defer warm.deinit();
     try std.testing.expectEqual(@as(usize, 2), warm.hits);
-    try std.testing.expectEqual(@as(usize, 1), warm.derivatives);
     var changed = files;
-    changed[1].code = "Contract : Abstract = ()\nChar implements Contract\n";
+    changed[1].code = "Contract#(.Participant: Type): Contract = ()\nimplement Contract#(Char) ()\n";
     const invalid = try expectCleanEquivalent(&changed, &session);
     defer invalid.deinit();
     try std.testing.expect(invalid.failure != null);
     try std.testing.expectEqual(@as(usize, 1), invalid.hits);
-    try std.testing.expectEqual(@as(usize, 1), invalid.derivatives);
 }
 
 test "frontend module cache bounds memory and preserves leased snapshots" {
@@ -419,12 +415,12 @@ test "frontend module cache preserves associated projections and participant tup
     defer std.testing.allocator.free(root);
     const files = [_]sf.SourceFile{.{ .path = "app/main.rg", .code =
         \\Product#(.Left: Type, .Right: Type): Contract = (
-        \\    multiply(.left: Left, .right: Right) -> (.value: Result) where {}
+        \\    .multiply: (.left: Left, .right: Right) -> (.value: Result) where {}
         \\    .Result: Type
         \\    .Count: Int
         \\)
-        \\satisfies Product#(Int32, Int64) = (.Count = 2, .Result: Int32)
-        \\multiply(.left: Int32, .right: Int64) -> (.value: Int32) := { value = 0 }
+        \\implement Product#(Int32, Int64) (.Count: Int = 2, .Result: Type = Int32, .multiply = _multiply)
+        \\_multiply(.left: Int32, .right: Int64) -> (.value: Int32) := { value = 0 }
         \\projected() -> (.value: Product#(Int32, Int64).Result) := { value = 0 }
         \\Box#(.T: Type): Type = (.value: Product#(T, Int64).Result)
         \\read_box(.box: &Box#(Int32)) -> (.value: Int32) := { value = box&.value }
@@ -455,7 +451,7 @@ test "frontend module cache preserves associated projections and participant tup
     try std.testing.expectEqual(@as(usize, 0), warm.disk_rejections);
 
     var invalid = files;
-    invalid[0].code = try std.mem.replaceOwned(u8, std.testing.allocator, files[0].code, ".Result: Int32)", ".Result: Int64)");
+    invalid[0].code = try std.mem.replaceOwned(u8, std.testing.allocator, files[0].code, ".Result: Type = Int32", ".Result: Type = Int64");
     defer std.testing.allocator.free(invalid[0].code);
     const rejected = try expectCleanEquivalent(&invalid, &warm);
     defer rejected.deinit();
@@ -475,7 +471,7 @@ test "frontend module cache preserves associated constant dimensions" {
         \\)
         \\Cell: Type = ()
         \\Buffer#(.n: Int): Type = (.values: Array#(.n = n, .t: Int32))
-        \\satisfies Shape#(Cell) = (.Count = 2)
+        \\implement Shape#(Cell) (.Count: Int = 2)
         \\Box#(.T: Type): Type = (.values: Array#(.n = Shape#(T).Count, .t: Int32))
         \\read(.values: &Array#(.n = Shape#(Cell).Count, .t: Int32)) -> (.value: Int32) := { value = values&[0] + values&[1] }
         \\take#(.n: Int)(.values: &Array#(.n = n, .t: Int32)) -> (.value: Int32) := { value = values&[0] + values&[1] }
@@ -508,7 +504,7 @@ test "frontend module cache preserves associated constant dimensions" {
     try std.testing.expectEqual(@as(usize, 0), result.misses);
     try std.testing.expectEqual(@as(usize, 0), warm.disk_rejections);
     var invalid = files;
-    invalid[0].code = try std.mem.replaceOwned(u8, std.testing.allocator, files[0].code, ".Count = 2", ".Count = -1");
+    invalid[0].code = try std.mem.replaceOwned(u8, std.testing.allocator, files[0].code, ".Count: Int = 2", ".Count: Int = -1");
     defer std.testing.allocator.free(invalid[0].code);
     const rejected = try expectCleanEquivalent(&invalid, &warm);
     defer rejected.deinit();
@@ -516,22 +512,22 @@ test "frontend module cache preserves associated constant dimensions" {
     try std.testing.expect(std.mem.indexOf(u8, rejected.diagnostics, "array length must be non-negative") != null);
 }
 
-test "frontend module cache preserves unary contract participant normalization" {
+test "frontend module cache preserves explicit unary contract participants" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     const root = try @import("../test_support.zig").tmpRootPath(&tmp);
     defer std.testing.allocator.free(root);
     const files = [_]sf.SourceFile{
         .{ .path = "app/main.rg", .code =
-        \\Readable: Contract = (
+        \\Readable#(.Participant: Type): Contract = (
         \\    .Other: Type
         \\
-        \\    read(.other: &Other, .source: &Self) -> (.value: &Int32)
+        \\    .read: (.other: &Other, .source: &Participant) -> (.value: &Int32)
         \\        where depends_on(value, source)
         \\)
         \\Cell: Type = (.value: Int32)
-        \\Cell satisfies Readable#(.Other: Cell)
-        \\read(.other: &Cell, .source: &Cell) -> (.value: &Int32) := { value = &source&.value }
+        \\implement Readable#(Cell) (.Other: Type = Cell, .read = _read)
+        \\_read(.other: &Cell, .source: &Cell) -> (.value: &Int32) := { value = &source&.value }
         \\consume#(.T: Type: Readable#(.Other: Cell))(.other: &Cell, .source: &T) -> (.value: &Int32) := { value = read(other, source).value }
         \\main() -> (.status_code: Int32 = 0) := {
         \\    other ::= Cell(7)

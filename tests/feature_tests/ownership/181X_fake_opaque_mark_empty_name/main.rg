@@ -1,3 +1,4 @@
+fake := import("./fake")
 unsafe_allocation := import("../../_support/unsafe_allocation")
 Borrowing : Type = (
     .reference: $&UInt8
@@ -8,11 +9,6 @@ implement Deinit#(Borrowing) (
 
     }
 )
-
--- Only the bundled-core declaration is trusted. This similarly named user
--- function must not discharge opaque dependencies.
-trusted_opaque_mark_empty(.storage: $&Allocation) -> () := {
-}
 
 main(.system: System) -> (.status_code: Int32) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
@@ -30,7 +26,7 @@ main(.system: System) -> (.status_code: Int32) := {
                     value :: Borrowing = (.reference = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&target, .offset = 0).reference)
                     trusted_opaque_move_in#(.t: Borrowing, .storage_type: Allocation)(.storage = $&storage, .destination = slot, .source = ~value)
                     trusted_opaque_drop(.slot = slot)
-                    trusted_opaque_mark_empty(.storage = $&storage)
+                    fake.trusted_opaque_mark_empty(.storage = $&storage)
                     deinit(.self = $&target)
                     status_code = 0
                 }

@@ -53,7 +53,7 @@ forward_drain(.slot: $&Virtual#(SlotProtocol), .empty: Bool) -> (.result: Nested
     result = saved
 }
 
-static_drain(.slot: $&SlotProtocol, .empty: Bool) -> (.result: NestedResult) := {
+static_drain#(.SlotType: Type: SlotProtocol#(SlotType))(.slot: $&SlotType, .empty: Bool) -> (.result: NestedResult) := {
     result = drain(slot, empty)
 }
 

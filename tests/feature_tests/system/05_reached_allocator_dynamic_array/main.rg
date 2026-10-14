@@ -4,8 +4,8 @@ CountingAllocator: Type = (
     .dealloc_count : Int32                      = 0
 )
 
-exercise(
-        .allocator : $&Allocator = reach allocator,
+exercise#(.AllocatorType: Type: Allocator#(AllocatorType))(
+        .allocator : $&AllocatorType = reach allocator,
     ) -> () := {
     assume allocator
 

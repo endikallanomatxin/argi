@@ -11,12 +11,10 @@ const control_mod = @import("control.zig");
 const generic_functions_mod = @import("generic_functions.zig");
 const abstract_mod = @import("abstracts.zig");
 const error_mod = @import("errors.zig");
-const call_compatibility = @import("call_compatibility.zig");
 
 pub const PendingCallStage = enum {
     errors,
     ordinary,
-    abstract_ordinary,
     generic,
     constructor,
     abstract,
@@ -66,17 +64,11 @@ pub const Resolver = struct {
         const binding = globalizer.globalBinding(o, value.binding);
         if (self.core.graph.isBindingTypeUnresolved(binding)) return .deferred;
         const reach = reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function);
-        const compatibility = call_compatibility.Abstract{ .core = self.core, .abstracts = self.abstracts };
-        const selected = try self.core.resolveReachedBindingWithCompatibility(
+        const selected = try self.core.resolveReachedBinding(
             reach,
             globalizer.globalNode(o, value.reach),
             binding,
-            compatibility.additionalTypeCompatibility(),
         ) orelse return .deferred;
-        const selected_type = self.core.graph.node(selected).ty orelse return .deferred;
-        const stored = &self.core.graph.bindings.items[@intFromEnum(binding)];
-        if (stored.mutability == .constant and compatibility.compatible(selected_type, stored.ty))
-            stored.static_implementer = selected_type;
         self.core.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] =
             self.core.graph.nodes.items[@intFromEnum(selected)];
         return .resolved;
@@ -120,23 +112,7 @@ pub const Resolver = struct {
         self.profilePendingStage(.ordinary, stage_start, core_result);
         if (core_result == .resolved or core_result == .invalid) return core_result;
 
-        // Abstract compatibility is not a competing callable family: it is a
-        // richer matching policy for the same ordinary candidates. A Core
-        // "deferred" result must therefore not hide a candidate that becomes
-        // decidable once concrete-to-abstract compatibility is considered.
-        stage_start = self.profileTimestamp();
-        const abstract_ordinary_result = try call_compatibility.tryResolveOrdinaryCall(
-            .{ .core = self.core, .abstracts = self.abstracts },
-            module_index,
-            module,
-            o,
-            operation,
-        );
-        self.profilePendingStage(.abstract_ordinary, stage_start, abstract_ordinary_result);
-        if (abstract_ordinary_result == .resolved or abstract_ordinary_result == .invalid)
-            return abstract_ordinary_result;
-        if (core_result == .deferred or abstract_ordinary_result == .deferred)
-            return .deferred;
+        if (core_result == .deferred) return .deferred;
 
         stage_start = self.profileTimestamp();
         const generic_result = try self.generic_functions.tryResolve(module_index, module, o, operation);

@@ -103,7 +103,6 @@ pub const ContractOperationBinding = struct {
 pub const ContractConformance = struct {
     implementation_arguments: primitives.Range(GlobalGenericArgId) = .{ .start = 0, .len = 0 },
     operation_bindings: primitives.Range(ContractOperationBindingId) = .{ .start = 0, .len = 0 },
-    explicit_operations: bool = false,
     context: GlobalModuleId = @enumFromInt(0),
     declaration: GlobalDeclId,
     participants: primitives.Range(GlobalGenericArgId),
@@ -353,8 +352,7 @@ pub const GlobalSemanticGraph = struct {
     pub fn callSourceName(self: *const GlobalSemanticGraph, call: anytype) StringRange {
         if (call.contract_operation) |identity| {
             const conformance = self.contract_conformances.items[identity.conformance];
-            if (conformance.explicit_operations)
-                return self.contract_operation_bindings.items[conformance.operation_bindings.start + identity.index].name;
+            return self.contract_operation_bindings.items[conformance.operation_bindings.start + identity.index].name;
         }
         return self.declarationSourceName(self.function(call.callee).declaration);
     }

@@ -1,4 +1,4 @@
-escape(.allocator: $&Allocator) -> (.result: DynamicArray#(&Int32)) := {
+escape#(.AllocatorType: Type: Allocator#(AllocatorType))(.allocator: $&AllocatorType) -> (.result: DynamicArray#(&Int32)) := {
     assume allocator
     array ::= unwrap_or_abort(DynamicArray#(&Int32)(.capacity = 1))
     local :: Int32 = 7

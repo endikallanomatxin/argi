@@ -34,10 +34,10 @@ floating-point values.
 
 ## Conversion
 
-Conversions are explicit. A call cannot select an overload solely from its
-desired output type: [multiple dispatch](131_multiple_dispatch.md) uses the
-function name and input types. Arithmetic does not silently convert values
-between unrelated types.
+Conversions are explicit. [Contract dispatch](131_multiple_dispatch.md) selects
+from known participant types, including an explicitly requested destination. An
+expected associated result cannot infer missing participants or rank implementations.
+Arithmetic does not silently convert values between unrelated types.
 
 Conversion selects `Convert#(Source, Target)` with an explicit destination. For example,
 `reference | convert#(.to: UIntNative)(_)` observes a reference's numeric address.

@@ -1,6 +1,6 @@
 Buffer : Type = (.allocation: Allocation)
 
-release(.self: $&Buffer, .allocator: $&Allocator) -> () := {
+release#(.AllocatorType: Type: Allocator#(AllocatorType))(.self: $&Buffer, .allocator: $&AllocatorType) -> () := {
     assume allocator
 
     deinit(.self = $&self&.allocation)

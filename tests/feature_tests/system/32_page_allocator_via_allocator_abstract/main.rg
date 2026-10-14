@@ -1,5 +1,5 @@
-alloc_one(
-    .allocator: $&Allocator,
+alloc_one#(.AllocatorType: Type: Allocator#(AllocatorType))(
+    .allocator: $&AllocatorType,
 ) -> (.result: Errable#(.t: UIntNative, .reasons: (..out_of_memory))) := {
     assume allocator
 

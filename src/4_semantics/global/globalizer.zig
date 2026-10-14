@@ -210,7 +210,7 @@ fn appendFields(allocator: std.mem.Allocator, result: *global_sg.GlobalSemanticG
         try result.fields.append(allocator, .{
             .name = try relocateString(module, value.name, o.string_base),
             .ty = globalType(o, value.ty),
-            .storage_type = if (value.storage_type) |id| globalType(o, id) else null,
+
             .source = globalSource(o, value.source),
             .default_value = if (value.default_value) |id| globalNode(o, id) else null,
         });
@@ -350,7 +350,6 @@ fn appendBodyTables(allocator: std.mem.Allocator, result: *global_sg.GlobalSeman
             .initialization = if (value.initialization) |id| globalNode(o, id) else null,
             .deferred_initialization = value.deferred_initialization,
             .cleanup_arguments = if (value.cleanup_arguments) |id| globalNode(o, id) else null,
-            .static_implementer = if (value.static_implementer) |id| globalType(o, id) else null,
             .mutability = value.mutability,
         });
         if (unresolved) try result.markBindingTypeUnresolved(allocator, global_id);

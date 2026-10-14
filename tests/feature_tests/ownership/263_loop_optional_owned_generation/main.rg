@@ -19,7 +19,7 @@ implement Deinit#(Holder) (
     }
 )
 
-append(.self: $&Holder, .allocator: $&Allocator) -> () := {
+append#(.AllocatorType: Type: Allocator#(AllocatorType))(.self: $&Holder, .allocator: $&AllocatorType) -> () := {
     assume allocator
 
     _ ::= push_byte(.self = $&self&.buffer, .byte = 65, .allocator = allocator)

@@ -1,3 +1,3 @@
 Cell: Type = ()
-satisfies Unknown#(Cell)
+implement Unknown#(Cell) ()
 main() -> () := {}

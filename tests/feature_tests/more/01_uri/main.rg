@@ -1,5 +1,5 @@
 uri := import ("network/uri")
-roundtrip(.text: StringView, .allocator: $&Allocator) -> () := {
+roundtrip#(.AllocatorType: Type: Allocator#(AllocatorType))(.text: StringView, .allocator: $&AllocatorType) -> () := {
     parsed ::= unwrap_or_abort(.value = uri.parse(.text = text)).result
     rendered ::= unwrap_or_abort(.value = uri.build(.value = parsed, .allocator = allocator)).result
     if as_view(.self = &rendered).view != text { abort }

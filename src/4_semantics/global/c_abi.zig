@@ -55,7 +55,7 @@ pub fn prepareForeignCapabilities(allocator: std.mem.Allocator, graph: *graph_mo
     try graph.types.append(allocator, .{ .pointer = .{ .child = child, .mutability = .read_write } });
     const name = try graph.addString(allocator, "ffi");
     for (graph.functions.items) |*function| {
-        if (!function.flags.is_c_abi or function.flags.has_declared_body or function.flags.is_abstract_dispatch) continue;
+        if (!function.flags.is_c_abi or function.flags.has_declared_body) continue;
         const source = graph.declaration(function.declaration).source;
         const segment_start: u32 = @intCast(graph.reach_segments.items.len);
         try graph.reach_segments.append(allocator, name);

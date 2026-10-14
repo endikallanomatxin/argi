@@ -45,8 +45,6 @@ pub const FrontendPipeline = struct {
     module_entries: std.ArrayList(*cache.ModuleCache.Entry) = .empty,
     module_cache_hits: usize = 0,
     module_cache_misses: usize = 0,
-    linked_module_count: usize = 0,
-    linked_module_ns: u64 = 0,
     tokenizing_ns: u64 = 0,
     syntaxing_ns: u64 = 0,
     /// Authoritative whole-program semantic artifact. No pointer SemanticGraph
@@ -359,8 +357,6 @@ pub const FrontendPipeline = struct {
         self.module_lowered_functions = 0;
         self.module_cache_hits = 0;
         self.module_cache_misses = 0;
-        self.linked_module_count = 0;
-        self.linked_module_ns = 0;
 
         const ModuleInputs = struct {
             dir: []const u8,
@@ -435,44 +431,18 @@ pub const FrontendPipeline = struct {
             }
         }
 
-        // Bundled core is compiler semantic configuration: its abstracts are
-        // available as unqualified prelude names. Include this configuration in
-        // the durable ModuleSG build/cache key rather than discovering it by
-        // relowering modules after the fact.
-        var prelude_abstracts: std.ArrayList(module_semantizer.QualifiedAbstract) = .empty;
-        defer {
-            for (prelude_abstracts.items) |candidate| self.allocator.free(candidate.name);
-            prelude_abstracts.deinit(self.allocator);
-        }
-        for (self.module_graphs.items) |*candidate_module| {
-            if (!candidate_module.is_bundled_core) continue;
-            for (candidate_module.declarations.items) |declaration| {
-                if (declaration.kind != .abstract_type) continue;
-                // The source graph is not semantically finished yet; finishing
-                // can grow/reallocate its string pool. Keep the prelude catalog
-                // independent from those mutable buffers.
-                const name = try self.allocator.dupe(u8, candidate_module.text(declaration.name));
-                errdefer self.allocator.free(name);
-                try prelude_abstracts.append(self.allocator, .{
-                    .qualifier = null,
-                    .name = name,
-                });
-            }
-        }
-
-        // Finish each durable module exactly once with the prelude already
-        // known. Cross-user-module declaration kinds remain unresolved here.
+        // Finish each durable module once. Contract bounds are explicit and
+        // imported identities resolve during global semantics.
         for (self.module_graphs.items, 0..) |*module, module_index| {
             if (module.semantic.local_semantics_complete) continue;
             const module_allocator = if (self.options.module_cache != null)
                 self.module_entries.items[module_index].allocator()
             else
                 self.allocator;
-            const stats = try module_semantizer.finishLinked(
+            const stats = try module_semantizer.finish(
                 module_allocator,
                 module,
                 groups.items[module_index].files.items,
-                prelude_abstracts.items,
                 self.diagnostics,
             );
             self.module_lowered_functions += stats.lowered_functions;
@@ -480,79 +450,15 @@ pub const FrontendPipeline = struct {
                 self.module_entries.items[module_index].graph = module.*;
         }
 
-        // Cached graphs are immutable module-local artifacts. Qualified imported
-        // abstracts still produce a fresh derivative below for each compilation.
+        // Cached graphs are immutable module-local artifacts.
         if (!self.diagnostics.hasErrors()) if (self.options.module_cache) |session| {
             for (self.module_entries.items) |entry| try session.publish(entry);
         };
 
-        var module_dirs: std.ArrayList([]const u8) = .empty;
-        defer module_dirs.deinit(self.allocator);
-        for (self.module_graphs.items) |*module| try module_dirs.append(self.allocator, module.module_dir);
-        var linked_graphs: std.ArrayList(module_sg.ModuleSemanticGraph) = .empty;
-        defer {
-            for (linked_graphs.items) |*graph| graph.deinit(self.allocator);
-            linked_graphs.deinit(self.allocator);
-        }
-        var selected_graphs: std.ArrayList(module_sg.ModuleSemanticGraph) = .empty;
-        defer selected_graphs.deinit(self.allocator);
-
-        for (self.module_graphs.items, 0..) |*module, module_index| {
-            // Only imported user/module-qualified abstracts can require a
-            // derivative now; unqualified prelude abstracts were already part
-            // of the one durable finishing pass above.
-            var imported_abstracts: std.ArrayList(module_semantizer.QualifiedAbstract) = .empty;
-            defer imported_abstracts.deinit(self.allocator);
-            for (module.semantic.module_aliases.items) |alias| {
-                const target_index = try module_linker.resolveImportPathFromDirs(
-                    self.allocator,
-                    module_dirs.items,
-                    module_index,
-                    module.text(alias.path),
-                );
-                const qualifier = module.text(module.declaration(alias.declaration).name);
-                const target = &self.module_graphs.items[target_index];
-                for (target.declarations.items) |declaration| {
-                    if (declaration.kind != .abstract_type) continue;
-                    try imported_abstracts.append(self.allocator, .{
-                        .qualifier = qualifier,
-                        .name = target.text(declaration.name),
-                    });
-                }
-            }
-
-            const needs_linked_graph = module_semantizer.needsLinkedLowering(
-                module,
-                groups.items[module_index].files.items,
-                imported_abstracts.items,
-            );
-            if (needs_linked_graph) {
-                var linked_abstracts: std.ArrayList(module_semantizer.QualifiedAbstract) = .empty;
-                defer linked_abstracts.deinit(self.allocator);
-                try linked_abstracts.appendSlice(self.allocator, prelude_abstracts.items);
-                try linked_abstracts.appendSlice(self.allocator, imported_abstracts.items);
-
-                const linked_start = std.Io.Timestamp.now(self.io, .boot).nanoseconds;
-                const linked = try module_semantizer.buildLinkedForTarget(
-                    self.allocator,
-                    groups.items[module_index].dir,
-                    groups.items[module_index].files.items,
-                    linked_abstracts.items,
-                    self.options.target,
-                );
-                self.linked_module_ns += @intCast(std.Io.Timestamp.now(self.io, .boot).nanoseconds - linked_start);
-                self.linked_module_count += 1;
-                try linked_graphs.append(self.allocator, linked.graph);
-                try selected_graphs.append(self.allocator, linked_graphs.items[linked_graphs.items.len - 1]);
-                self.module_lowered_functions += linked.stats.lowered_functions;
-            } else {
-                try selected_graphs.append(self.allocator, module.*);
-            }
-        }
         self.module_semantizing_ns = @intCast(std.Io.Timestamp.now(self.io, .boot).nanoseconds - module_start);
 
         const global_start = std.Io.Timestamp.now(self.io, .boot).nanoseconds;
-        const result = try global_semantizer.semantizeWithOptions(self.allocator, selected_graphs.items, .{
+        const result = try global_semantizer.semantizeWithOptions(self.allocator, self.module_graphs.items, .{
             .target = self.options.target,
             .selected_test_name = self.options.semantizing.selected_test_name,
             .exhaustive_function_bodies = self.options.semantizing.exhaustive_function_bodies,

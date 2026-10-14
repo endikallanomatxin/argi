@@ -51,11 +51,11 @@ forward_take(
     value = take(slots, storage, slot)
 }
 
-static_put(.slots: &SlotProtocol, .storage: $&Allocation, .slot: $&Tracked, .value: Tracked) -> () := {
+static_put#(.SlotsType: Type: SlotProtocol#(SlotsType))(.slots: &SlotsType, .storage: $&Allocation, .slot: $&Tracked, .value: Tracked) -> () := {
     put(slots, storage, slot, ~value)
 }
 
-static_take(.slots: &SlotProtocol, .storage: $&Allocation, .slot: $&Tracked) -> (.value: Tracked) := {
+static_take#(.SlotsType: Type: SlotProtocol#(SlotsType))(.slots: &SlotsType, .storage: $&Allocation, .slot: $&Tracked) -> (.value: Tracked) := {
     value = take(slots, storage, slot)
 }
 

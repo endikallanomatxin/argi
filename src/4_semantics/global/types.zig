@@ -241,10 +241,6 @@ pub fn typeForDeclaration(graph: *const graph_mod.GlobalSemanticGraph, decl: gra
     return graph.declarations.items[@intFromEnum(decl)].type_id;
 }
 
-pub fn effectiveFieldType(field: graph_mod.Field) graph_mod.GlobalTypeId {
-    return field.storage_type orelse field.ty;
-}
-
 pub fn isBuiltin(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId, builtin: primitives.BuiltinType) bool {
     const semantic = graph.resolvedSemanticType(ty) orelse return false;
     return switch (semantic) {
@@ -382,7 +378,7 @@ fn structLayout(graph: *const graph_mod.GlobalSemanticGraph, range: graph_mod.Fi
         var size: u64 = 0;
         var alignment: u64 = 1;
         for (graph.fields.items[range.start..][0..range.len]) |field| {
-            const layout = try layoutOf(graph, effectiveFieldType(field));
+            const layout = try layoutOf(graph, field.ty);
             size = @max(size, layout.size);
             alignment = @max(alignment, layout.alignment);
         }
@@ -392,7 +388,7 @@ fn structLayout(graph: *const graph_mod.GlobalSemanticGraph, range: graph_mod.Fi
     var offset: u64 = 0;
     var alignment: u64 = 1;
     for (graph.fields.items[range.start..][0..range.len]) |field| {
-        const layout = try layoutOf(graph, effectiveFieldType(field));
+        const layout = try layoutOf(graph, field.ty);
         offset = alignForward(offset, layout.alignment);
         offset += layout.size;
         alignment = @max(alignment, layout.alignment);

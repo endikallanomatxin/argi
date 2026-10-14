@@ -17,7 +17,7 @@ Argi combines several mechanisms for code that works with different types:
 
 - Run-time polymorphism:
 
-  - [Virtual types](134_virtual_types.md) request runtime dispatch through an
+  - [Virtual types](134_virtual_types.md) request runtime dispatch through a
     contract while preserving selected operations and conformance evidence.
 
   - [Choice types](12_choice.md) hold one of a known set of alternatives.
@@ -31,8 +31,8 @@ heterogeneous values behind one interface, at the cost of indirect calls.
 > [!IMPLEMENTATION]
 > Contracts support concrete and generic participant tuples, specialization,
 > associated types/constants, checked operations and static safety proofs.
-> Construction and destruction use Init and Deinit. Legacy
-> [abstract types](133_abstract_types.md) retain some generic and virtual behavior
-> during migration. Associated type projections use `Contract#(A, B).Result`.
-> Standard conversion/operator migration, dependency composition and joint
-> virtual evidence remain pending.
+> Construction, destruction, conversions and arithmetic/equality operators use
+> selected contract evidence. Associated projections use `Contract#(A, B).Result`.
+> Dependency composition preserves operation identities. Ordinary functions have
+> one identity per module; legacy abstract syntax and global overload families
+> have been removed. Joint virtual evidence remains pending.

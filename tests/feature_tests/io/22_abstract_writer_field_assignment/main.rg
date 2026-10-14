@@ -2,13 +2,13 @@ DummyWriter: Type = (
     .flush_count : Int32 = 0
 )
 
-Holder: Type = (
-    .writer : $&Writer
+Holder#(.WriterType: Type: Writer#(WriterType)): Type = (
+    .writer : $&WriterType
 )
 
-implement Init#(Holder, (.writer : $&DummyWriter)) (
-    .Result: Type = Holder
-    .init = (.args: (.writer : $&DummyWriter)) -> (.result: Result) {
+implement#(.WriterType: Type: Writer#(WriterType)) Init#(Holder#(WriterType), (.writer : $&WriterType)) (
+    .Result: Type = Holder#(WriterType)
+    .init = (.args: (.writer : $&WriterType)) -> (.result: Result) {
         writer ::= ~args.writer
 
         result.writer = writer
@@ -19,9 +19,9 @@ main() -> (.status_code: Int32) := {
     writer :: DummyWriter = (
         .flush_count = 0
     )
-    holder :: Holder
+    holder :: Holder#(DummyWriter)
 
-    holder = Holder(.writer = $&writer)
+    holder = Holder#(DummyWriter)(.writer = $&writer)
 
     writer_address :: UIntNative = $&writer | convert#(.to: UIntNative)(_)
     stored_address :: UIntNative = holder.writer | convert#(.to: UIntNative)(_)

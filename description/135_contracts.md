@@ -218,9 +218,16 @@ Ordinary declarations enforce one identity per module, regardless of declaration
 spelling or compile-time arity. Ordinary lookup checks applicability without
 specificity ranking; multiple applicable identities require qualification.
 Generic probes retain declaration identities so the same declaration is counted
-once. Earlier conformance syntax remains for unmigrated fixtures and compiler
-tests. Removal obligations are tracked in `plan/contract_dispatch_refactor.md`;
-existing `Abstract`/`satisfies` adapters are not part of the intended final language.
+once. Legacy Abstract declarations, satisfies/implements relations, defaultsto,
+implicit Self and unscoped operation signatures are rejected with migration
+diagnostics. Conformances use explicit operation bindings exclusively; static
+calls and virtual tables select the same evidence. Functions declare their own
+compile-time parameters and contract bounds. Module lowering creates no hidden
+contract parameters or imported normalization derivatives. Earlier conformance
+and default tables have been removed. Runtime values require concrete types or
+explicit virtual handles; conformance never changes a field's representation.
+Final validation and remaining cleanup are tracked in
+`plan/contract_dispatch_refactor.md`.
 
 BufferReading scopes complete input-buffer reads. Its generic Reader fallback
 copies bytes through read_byte, while File and TcpConnection select native block

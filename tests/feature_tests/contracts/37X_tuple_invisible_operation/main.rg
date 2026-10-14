@@ -2,7 +2,7 @@ dep := import("./dep")
 Product#(.Left: Type, .Right: Type): Contract = (
     .Result: Type
 
-    multiply(.left: Left, .right: Right) -> (.value: Result) where {}
+    .multiply: (.left: Left, .right: Right) -> (.value: Result) where {}
 )
-satisfies Product#(dep.Row, dep.Column) = (.Result: Int32)
+implement Product#(dep.Row, dep.Column) (.Result: Type = Int32)
 main() -> () := {}

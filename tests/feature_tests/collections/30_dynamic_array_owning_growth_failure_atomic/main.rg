@@ -14,8 +14,8 @@ implement Deinit#(Tracked) (
     }
 )
 
-make_tracked(
-        .allocator : $&Allocator,
+make_tracked#(.AllocatorType: Type: Allocator#(AllocatorType))(
+        .allocator : $&AllocatorType,
         .id        : Int32
     ) -> (
         .result : Errable#(.t: Tracked, .reasons: (..out_of_memory))

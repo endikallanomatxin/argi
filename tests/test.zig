@@ -1769,12 +1769,7 @@ test "feature_tests/polymorphism/11_abstract_instantiation" {
 }
 
 test "feature_tests/polymorphism/12X_abstract_instantiation_missing_default" {
-    try buildExpectFailExact("tests/feature_tests/polymorphism/12X_abstract_instantiation_missing_default",
-        \\tests/feature_tests/polymorphism/12X_abstract_instantiation_missing_default/main.rg:4:5: error: cannot use abstract 'ExampleAbstract' as a type for a symbol. Use a concrete type or add a default concrete type to the abstract type ('ExampleAbstract defaultsto <Type>')
-        \\      x : ExampleAbstract
-        \\      ^
-        \\
-    );
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/12X_abstract_instantiation_missing_default", "contract 'ExampleAbstract' has no runtime representation", "panic");
 }
 
 test "feature_tests/polymorphism/15_abstract_self_output" {
@@ -1810,12 +1805,7 @@ test "feature_tests/polymorphism/13X_abstract_function_input_requires_implementa
 }
 
 test "feature_tests/polymorphism/14X_abstract_function_output_requires_default" {
-    try buildExpectFailExact("tests/feature_tests/polymorphism/14X_abstract_function_output_requires_default",
-        \\tests/feature_tests/polymorphism/14X_abstract_function_output_requires_default/main.rg:3:1: error: error generating function make_value: InvalidType
-        \\  make_value () -> (.value: ExampleAbstract) := {
-        \\  ^
-        \\
-    );
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/14X_abstract_function_output_requires_default", "cannot return contract 'ExampleAbstract' as a runtime value", "panic");
 }
 
 test "feature_tests/ownership/01_init" {
@@ -2777,12 +2767,7 @@ test "feature_tests/io/22_abstract_writer_field_assignment" {
 }
 
 test "feature_tests/io/23X_abstract_writer_field_conflicting_assignment" {
-    try buildExpectFailExact("tests/feature_tests/io/23X_abstract_writer_field_conflicting_assignment",
-        \\tests/feature_tests/io/23X_abstract_writer_field_conflicting_assignment/main.rg:34:17: error: field '.writer' already stores '$&FirstWriter' for abstract type '$&Writer', so it cannot also store '$&SecondWriter'
-        \\      p&.writer = writer
-        \\                  ^
-        \\
-    );
+    try buildExpectFail("tests/feature_tests/io/23X_abstract_writer_field_conflicting_assignment", "cannot assign reference of type");
 }
 
 test "feature_tests/io/24_terminal_files" {
@@ -6587,9 +6572,9 @@ fn expectSafetyWrapperParity(case_path: []const u8, diagnostic: ?[]const u8) !vo
     defer allocator.free(constructor_calls);
     const constructor_wrapper: []const u8 = if (std.mem.indexOf(u8, relocated, "Owned : Type") != null)
         if (std.mem.indexOf(u8, relocated, ".fail: Bool") != null)
-            "parity_owned(.allocator: $&Allocator, .fail: Bool) -> (.result: Errable#(.t: Owned, .reasons: (..out_of_memory))) := { result = Owned(.allocator = allocator, .fail = fail) }\n"
+            "parity_owned#(.AllocatorType: Type: Allocator#(AllocatorType))(.allocator: $&AllocatorType, .fail: Bool) -> (.result: Errable#(.t: Owned, .reasons: (..out_of_memory))) := { result = Owned(.allocator = allocator, .fail = fail) }\n"
         else
-            "parity_owned(.allocator: $&Allocator) -> (.result: Errable#(.t: Owned, .reasons: (..out_of_memory))) := { result = Owned(.allocator = allocator) }\n"
+            "parity_owned#(.AllocatorType: Type: Allocator#(AllocatorType))(.allocator: $&AllocatorType) -> (.result: Errable#(.t: Owned, .reasons: (..out_of_memory))) := { result = Owned(.allocator = allocator) }\n"
     else
         "";
     const arguments = if (std.mem.startsWith(u8, source[entry..], "main(.system: System")) ".system = system" else "";
@@ -9467,7 +9452,7 @@ test "feature_tests/polymorphism/52_virtual_bound_values" {
 }
 
 test "feature_tests/polymorphism/53X_virtual_bound_value_mismatch" {
-    try buildExpectFail("tests/feature_tests/polymorphism/53X_virtual_bound_value_mismatch", "does not implement the selected abstract");
+    try buildExpectFail("tests/feature_tests/polymorphism/53X_virtual_bound_value_mismatch", "incompatible associated elements for the virtual interface");
 }
 
 test "feature_tests/polymorphism/54X_virtual_bound_borrow_after_cleanup" {
@@ -11529,7 +11514,7 @@ test "feature_tests/contracts/10X_static_safety_dependency" {
 }
 
 test "feature_tests/contracts/11X_missing_conformance_type" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/11X_missing_conformance_type", "expected a contract type after the conformance relation", "panic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/11X_missing_conformance_type", "legacy conformance declarations are unsupported", "panic");
 }
 
 test "feature_tests/contracts/12_contextual_words" {
@@ -11555,7 +11540,7 @@ test "feature_tests/contracts/15X_tuple_wrong_result" {
 }
 
 test "feature_tests/contracts/16X_tuple_missing_operation" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/16X_tuple_missing_operation", "missing operation", "panic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/16X_tuple_missing_operation", "missing implementation operation", "panic");
 }
 
 test "feature_tests/contracts/17X_tuple_ambiguous_operation" {
@@ -11591,15 +11576,15 @@ test "feature_tests/contracts/24X_duplicate_parameter" {
 }
 
 test "feature_tests/contracts/25X_generic_tuple" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/25X_generic_tuple", "generic participant conformances are not supported yet", "panic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/25X_generic_tuple", "legacy conformance declarations are unsupported", "panic");
 }
 
 test "feature_tests/contracts/26X_legacy_tuple_relation" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/26X_legacy_tuple_relation", "explicit participant contracts require standalone satisfies declarations", "panic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/26X_legacy_tuple_relation", "legacy conformance declarations are unsupported", "panic");
 }
 
 test "feature_tests/contracts/27X_standalone_legacy" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/27X_standalone_legacy", "standalone satisfies requires a contract with explicit participants", "panic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/27X_standalone_legacy", "legacy conformance declarations are unsupported", "panic");
 }
 
 test "feature_tests/contracts/28X_unknown_contract" {
@@ -11649,11 +11634,11 @@ test "feature_tests/contracts/36_tuple_imported_identity" {
 }
 
 test "feature_tests/contracts/37X_tuple_invisible_operation" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/37X_tuple_invisible_operation", "missing operation", "panic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/37X_tuple_invisible_operation", "missing implementation operation", "panic");
 }
 
 test "feature_tests/contracts/38X_tuple_generic_legacy_relation" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/38X_tuple_generic_legacy_relation", "explicit participant contracts require standalone satisfies declarations", "panic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/38X_tuple_generic_legacy_relation", "legacy conformance declarations are unsupported", "panic");
 }
 
 test "feature_tests/contracts/39_tuple_input_invalidation" {
@@ -11683,11 +11668,11 @@ test "feature_tests/contracts/44X_extra_participant" {
 }
 
 test "feature_tests/contracts/45X_legacy_composed_tuple" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/45X_legacy_composed_tuple", "composition of explicit participant contracts is not supported yet", "panic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/45X_legacy_composed_tuple", "a required contract dependency is not satisfied", "panic");
 }
 
 test "feature_tests/contracts/46X_tuple_default" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/46X_tuple_default", "explicit participant contracts require standalone satisfies declarations", "panic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/46X_tuple_default", "defaultsto is unsupported", "panic");
 }
 
 test "feature_tests/contracts/47X_tuple_result_identity" {
@@ -11947,7 +11932,7 @@ test "feature_tests/contracts/98X_unary_normalized_receiver_safety" {
 }
 
 test "feature_tests/contracts/99X_unary_reserved_self_parameter" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/99X_unary_reserved_self_parameter", "Self is reserved for the implicit unary participant", "panic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/99X_unary_reserved_self_parameter", "associated contract members cannot be named Self", "panic");
 }
 
 test "feature_tests/contracts/100_body_associated_members" {
@@ -11971,7 +11956,7 @@ test "feature_tests/contracts/103X_body_member_missing_type" {
 }
 
 test "feature_tests/contracts/104X_body_member_default" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/104X_body_member_default", "associated contract members are supplied by satisfies", "panic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/104X_body_member_default", "associated contract members are supplied by implement", "panic");
 }
 
 test "feature_tests/contracts/105X_old_participant_marker" {
@@ -12969,4 +12954,12 @@ test "feature_tests/contracts/317_static_adapter_virtual_participant" {
     const test_path = "tests/feature_tests/contracts/317_static_adapter_virtual_participant";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
+}
+
+test "feature_tests/contracts/318X_legacy_abstract_declaration" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/318X_legacy_abstract_declaration", "Abstract declarations are unsupported", "panic");
+}
+
+test "feature_tests/contracts/319X_implicit_self_contract" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/319X_implicit_self_contract", "use named participants instead of Self", "panic");
 }

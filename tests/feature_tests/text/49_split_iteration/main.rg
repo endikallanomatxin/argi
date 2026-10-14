@@ -35,7 +35,7 @@ run_main() -> !Void = ..ok Void() := {
     if count != 1 { abort }
 }
 
-main(.writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+main#(.WriterType: Type: Writer#(WriterType))(.writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
     run_main()!!!
     status_code = 0
 }

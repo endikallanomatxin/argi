@@ -172,13 +172,12 @@ pub const FunctionFlags = packed struct(u16) {
     uses_inferred_error_reasons: bool = false,
     is_deinit: bool = false,
     is_generic_instantiation: bool = false,
-    is_abstract_dispatch: bool = false,
     is_entry: bool = false,
     is_c_abi: bool = false,
     is_c_export: bool = false,
     has_foreign_capability: bool = false,
     is_c_function_pointer: bool = false,
-    _padding: u4 = 0,
+    _padding: u5 = 0,
 };
 
 pub const StructLayout = enum(u8) { regular, c_union, c_struct, c_incomplete, c_function_pointer };
@@ -308,7 +307,6 @@ pub fn Field(comptime Ids: type) type {
     return struct {
         name: StringRange,
         ty: Ids.TypeId,
-        storage_type: ?Ids.TypeId = null,
         source: SourceRef,
         default_value: ?Ids.NodeId = null,
     };
@@ -365,9 +363,6 @@ pub fn Binding(comptime Ids: type) type {
         /// Lexical argument candidates captured where this local is declared,
         /// for resolving the same dependencies in its implicit destructor.
         cleanup_arguments: ?Ids.NodeId = null,
-        /// Concrete static implementer retained when `ty` exposes an abstract
-        /// interface. This is monomorphization evidence, not the visible type.
-        static_implementer: ?Ids.TypeId = null,
         mutability: Mutability,
     };
 }

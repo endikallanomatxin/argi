@@ -2,8 +2,8 @@ DummyWriter: Type = (
     .count : Int32 = 0
 )
 
-relay(
-        .writer : $&Writer
+relay#(.WriterType: Type: Writer#(WriterType))(
+        .writer : $&WriterType
     ) -> (
         .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
     ) := {

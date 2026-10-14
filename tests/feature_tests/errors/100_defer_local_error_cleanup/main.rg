@@ -14,10 +14,10 @@ fail() -> (.result: Errable#(Void, (..failure))) := {
     result = ..error(.reason = ..failure)
 }
 
-finish(
+finish#(.WriterType: Type: Writer#(WriterType))(
         .body_fails : Bool,
         .state      : $&Int32,
-        .writer     : $&Writer = reach writer
+        .writer     : $&WriterType = reach writer
     ) -> (
         .result : Int32 = 1
     ) := {

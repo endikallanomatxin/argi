@@ -13,24 +13,24 @@ attempt(.fail: Bool) -> (.result: Errable#(Int32, (..missing))) := {
     if fail { result = ..error(.reason = ..missing) } else { result = ..ok 7 }
 }
 
-run(.fail: Bool, .writer: $&Writer = reach writer) -> (.result: Int32 = 9) := {
+run#(.WriterType: Type: Writer#(WriterType))(.fail: Bool, .writer: $&WriterType = reach writer) -> (.result: Int32 = 9) := {
     local ::= Owner(1)
     value ::= attempt(fail)!!!
     result = value
 }
 
 unwrap#(
-        .t : Type
+        .t : Type, .WriterType: Type: Writer#(WriterType)
     )(
         .input  : Errable#(t, (..missing)),
-        .writer : $&Writer                  = reach writer
+        .writer : $&WriterType                  = reach writer
     ) -> (
         .result : Int32 = 9
     ) := {
     result = ~input!!!
 }
 
-main(.writer: $&Writer = reach writer) -> (.status_code: Int32 = 0) := {
+main#(.WriterType: Type: Writer#(WriterType))(.writer: $&WriterType = reach writer) -> (.status_code: Int32 = 0) := {
     if unwrap#(.t: Int32)(attempt(false)) != 7 { abort }
     if unwrap#(.t: Int32)(attempt(true)) != 9 { abort }
     if run(false) != 7 or drops != 1 { abort }

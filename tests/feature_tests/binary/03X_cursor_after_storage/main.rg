@@ -8,7 +8,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     _ ::= read_uint16(.self = $&reader, .order = ..big)!
 }
 
-main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+main#(.WriterType: Type: Writer#(WriterType))(.system: System, .writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
     run_main(.system = system)!!!
     status_code = 0
 }

@@ -51,7 +51,7 @@ forward_take(.slot: $&Virtual#(SlotProtocol), .present: Bool) -> (.value: ?Track
     value = take(slot, present)
 }
 
-static_take(.slot: $&SlotProtocol, .present: Bool) -> (.value: ?Tracked) := {
+static_take#(.SlotType: Type: SlotProtocol#(SlotType))(.slot: $&SlotType, .present: Bool) -> (.value: ?Tracked) := {
     value = take(slot, present)
 }
 

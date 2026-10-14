@@ -101,7 +101,7 @@ fn constructionField(graph: *const graph_mod.ModuleSemanticGraph, id: entities.M
     return .{
         .name = field.name,
         .ty = field.ty,
-        .storage_type = if (semantic) |value| value.storage_type else null,
+
         .source = .{ .file_index = field.module_file_index, .offset = field.source_offset },
         .default_value = if (semantic) |value| value.default_value else null,
     };

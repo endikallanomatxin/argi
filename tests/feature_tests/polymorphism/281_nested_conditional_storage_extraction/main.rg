@@ -57,7 +57,7 @@ forward_take(.slot: $&Virtual#(SlotProtocol), .present: Bool) -> (.value: Nested
     value = take(slot, present)
 }
 
-static_take(.slot: $&SlotProtocol, .present: Bool) -> (.value: NestedResult) := {
+static_take#(.SlotType: Type: SlotProtocol#(SlotType))(.slot: $&SlotType, .present: Bool) -> (.value: NestedResult) := {
     value = take(slot, present)
 }
 

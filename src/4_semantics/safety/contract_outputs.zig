@@ -65,7 +65,7 @@ const Builder = struct {
             const fields = try self.allocator.alloc(facts.OutputFieldEffect, range.len);
             for (self.graph.fields.items[range.start..][0..range.len], fields, 0..) |field, *output, index| {
                 const child = try self.allocator.create(facts.ValueEffect);
-                child.* = try self.value(types.effectiveFieldType(field), allowed, depth + 1);
+                child.* = try self.value(field.ty, allowed, depth + 1);
                 output.* = .{ .index = @intCast(index), .value = child };
             }
             result.fields = fields;

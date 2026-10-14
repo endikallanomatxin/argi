@@ -47,9 +47,9 @@ follows:
 Module-qualified calls accept explicit compile-time arguments, such as
 `dep.identity#(.t: Int32)(.value = 42)` or `dep.identity#(Int32)(42)`.
 
-Naming an imported type exposes its public `init` overloads for construction.
-Automatic cleanup first uses the caller's visible `deinit` overloads, then the
-type's defining module if no match exists. Reached arguments still come from
+Naming an imported type permits selecting its visible Init evidence for construction.
+Automatic cleanup first selects the caller's visible Deinit evidence, then looks
+in the type's defining module if none is available. Reached arguments still come from
 the caller's lexical context. These lifecycle lookups do not expose unrelated
 functions from the imported module to unqualified calls.
 

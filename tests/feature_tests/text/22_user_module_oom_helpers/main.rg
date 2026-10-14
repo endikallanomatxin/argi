@@ -1,5 +1,5 @@
-make_text(
-        .allocator : $&Allocator,
+make_text#(.AllocatorType: Type: Allocator#(AllocatorType))(
+        .allocator : $&AllocatorType,
     ) -> (
         .result : Errable#(.t: String, .reasons: (..out_of_memory))
     ) := {

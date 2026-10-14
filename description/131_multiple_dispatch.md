@@ -58,7 +58,6 @@ retain ordinary selected calls and can provide different associated results.
 
 Scalar equality, including Bool, Char and RawPointer, selects Equal evidence.
 Ordered comparisons and C enum/function-pointer equality still use representation
-primitives. Their migration and remaining ordinary function overload families are
-pending; see [contracts](135_contracts.md).
+primitives. Their contract migration remains pending; see [contracts](135_contracts.md).
 The official matrix library uses shape evidence and MatrixProduct specialization
 through standard Multiply adapters, including a diagonal result representation.

@@ -968,3 +968,46 @@ and safety declaration failures. Focused internal checks passed five tests and
 two imported-bound tests. Broad library/fixture validation passed 529 cases with 0 skips and no
 failures, leaks or error logs. Do not remove the legacy normalization path until
 the remaining fixtures are migrated.
+
+### Retiring legacy conformance and implicit participant machinery
+
+Reject Abstract, satisfies/implements and defaultsto with migration diagnostics.
+Remove their syntax nodes, relation lowering, hidden association inference and
+all direct/parameterized/default conformance tables. Select only canonical
+implement evidence, including operation bindings and virtual table construction;
+remove global method lookup and its constrained-call fallback. Eliminate the
+explicit/implicit operation flag and implicit Self metadata. Contract members
+use scoped declarations exclusively.
+
+Ordinary templates now contain only explicitly declared compile-time parameters.
+Remove synthetic abstract parameters and their dispatch kind/flags. Remove the
+frontend's prelude/import contract catalogs and derivative module normalization;
+finish immutable module snapshots once and resolve imported identities globally.
+Frontend cache tests preserve association projections, dimensions and virtual
+interfaces using implement, including their deliberately invalid edits.
+
+Remove runtime concrete-to-abstract call compatibility, static_implementer and
+field representation substitution. Keep field-access type refresh as a general
+semantic obligation. Contracts have no runtime representation; improve storage
+and return diagnostics to name concrete types and Virtual instead of defaults.
+Snapshot format is 61 after removing syntax, binding and field representation metadata.
+
+Focused validation passed 45 contract internals, seven module/cache internals and
+55 contract/reach internals. Earlier broad runs exposed only obsolete expected
+limitations and diagnostics; those tests now exercise dependency evidence and
+migration diagnostics. Full regression covered 1,950 program cases: 1,936 passed,
+11 skipped and three fixture migration failures. Qualify the two fake trusted
+hooks and give the associated SlotProtocol consumer an explicit parameter; all
+three focused reruns passed. The run recorded no leaks or error logs.
+
+Migrate abbreviated capability inputs in 133 fixture files and 20 local-protocol
+fixtures to explicit bounded parameters; preserve source line counts for exact
+diagnostics. Holder fields now use explicit writer parameters instead of inferred
+representation substitution. Reference-field assignment checks reject mismatched
+referents and mutation permissions independently of contract conformance.
+Four focused I/O/capability cases passed. The complete internal run passed 372
+and skipped one before the final reference-assignment check. The final joint run
+also passed 372 internal tests and skipped one. The frontend benchmark compiled and completed clean/reuse/edit
+scenarios without linked normalization. Two complete documentation examples
+compiled and ran successfully. Update the public polymorphism, virtual, generic,
+reach, iteration and module pages to describe the accepted model.

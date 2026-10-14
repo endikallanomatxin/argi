@@ -1,4 +1,4 @@
-make(.allocator: $&Allocator) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) := {
+make#(.AllocatorType: Type: Allocator#(AllocatorType))(.allocator: $&AllocatorType) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) := {
     assume allocator
 
     result = allocate_bytes(.self = allocator, .size = 1)

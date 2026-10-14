@@ -15,4 +15,4 @@ check := () -> (.result: Errable#(Void, logging.LogReasons) = ..ok Void()) {
     null_logger ::= logging.NullLogger()
     logging.Logger#().log(.self = $&null_logger, .level = ..error, .message = "ignored")!
 }
-main := (.writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) { check()!!! status_code = 0 }
+main#(.WriterType: Type: Writer#(WriterType)) := (.writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) { check()!!! status_code = 0 }

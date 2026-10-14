@@ -1,4 +1,4 @@
-check(.input: StringView, .expected: StringView, .allocator: $&Allocator) -> (
+check#(.AllocatorType: Type: Allocator#(AllocatorType))(.input: StringView, .expected: StringView, .allocator: $&AllocatorType) -> (
     .result : Errable#(.t: Void, .reasons: (..invalid_path, ..out_of_memory, ..test_failed)) = ..ok Void()
 ) := {
     assume allocator
@@ -26,7 +26,7 @@ run_main(.system: System) -> (
     }
 }
 
-main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+main#(.WriterType: Type: Writer#(WriterType))(.system: System, .writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
     run_main(.system = system)!!!
     status_code = 0
 }

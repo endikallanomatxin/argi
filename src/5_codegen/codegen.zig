@@ -148,7 +148,7 @@ pub const CodeGenerator = struct {
         const fields = try self.allocator.alloc(llvm.c.LLVMTypeRef, range.len);
         defer self.allocator.free(fields);
         for (self.graph.fields.items[range.start..][0..range.len], 0..) |field, index|
-            fields[index] = try self.toLLVMType(types.effectiveFieldType(field));
+            fields[index] = try self.toLLVMType(field.ty);
         return c.LLVMStructType(fields.ptr, @intCast(range.len), 0);
     }
 
@@ -158,7 +158,7 @@ pub const CodeGenerator = struct {
         try self.initializeGlobalBindings();
 
         for (self.graph.functions.items, 0..) |function, raw| {
-            if (function.body == null or function.flags.is_abstract_dispatch) continue;
+            if (function.body == null) continue;
             if (self.isCoreFunction(@enumFromInt(@as(u32, @intCast(raw))), "source_location")) continue;
             const id: graph_mod.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
             self.generateFunctionBody(id) catch |err| {
@@ -201,7 +201,7 @@ pub const CodeGenerator = struct {
             // implementations, so an abstract Self type must not enter ABI
             // lowering as though it were a material runtime type. Callback
             // signature rows describe pointer types and have no LLVM symbols.
-            if (function.flags.is_abstract_dispatch or function.flags.is_c_function_pointer) continue;
+            if (function.flags.is_c_function_pointer) continue;
             // Declarations that promised a body but have no global body are
             // semantic contracts/templates, not runtime ABI symbols.
             if (function.body == null and function.flags.has_declared_body) continue;
@@ -316,7 +316,7 @@ pub const CodeGenerator = struct {
     fn indirectOutput(self: *CodeGenerator, fields: graph_mod.FieldRange) !bool {
         var size: u64 = 0;
         for (self.graph.fields.items[fields.start..][0..fields.len]) |field| {
-            const layout = try types.layoutOf(self.graph, types.effectiveFieldType(field));
+            const layout = try types.layoutOf(self.graph, field.ty);
             size = std.mem.alignForward(u64, size, layout.alignment) + layout.size;
             if (size > 128) return true;
         }
@@ -1144,7 +1144,7 @@ pub const CodeGenerator = struct {
                 const hit = types.findField(self.graph, ty, name) orelse return CodegenError.InvalidType;
                 const value = (try self.visitNode(value_field.value)) orelse return CodegenError.ValueNotFound;
                 var lowerer = self.typeLowerer();
-                const pointer = try lowerer.buildUnionFieldPointer(self.builder, temp, types.effectiveFieldType(hit.field), "union.literal.field");
+                const pointer = try lowerer.buildUnionFieldPointer(self.builder, temp, hit.field.ty, "union.literal.field");
                 _ = c.LLVMBuildStore(self.builder, value.value_ref, pointer);
             }
             return .{ .value_ref = c.LLVMBuildLoad2(self.builder, type_ref, temp, "union.literal.value"), .type_ref = type_ref, .ty = ty };
@@ -1605,12 +1605,12 @@ pub const CodeGenerator = struct {
                 const field = self.graph.fields.items[hit_range.start + access.field_index];
                 if (self.isCUnion(base_ty)) {
                     var lowerer = self.typeLowerer();
-                    const pointer = try lowerer.buildUnionFieldPointer(self.builder, base.value_ref, types.effectiveFieldType(field), "union.field.addr");
-                    break :blk .{ .value_ref = pointer, .type_ref = c.LLVMPointerType(try self.toLLVMType(types.effectiveFieldType(field)), 0), .ty = field.ty };
+                    const pointer = try lowerer.buildUnionFieldPointer(self.builder, base.value_ref, field.ty, "union.field.addr");
+                    break :blk .{ .value_ref = pointer, .type_ref = c.LLVMPointerType(try self.toLLVMType(field.ty), 0), .ty = field.ty };
                 }
                 const struct_type = try self.toLLVMType(base_ty);
                 const pointer = c.LLVMBuildStructGEP2(self.builder, struct_type, base.value_ref, access.field_index, "field.addr");
-                break :blk .{ .value_ref = pointer, .type_ref = c.LLVMPointerType(try self.toLLVMType(types.effectiveFieldType(field)), 0), .ty = field.ty };
+                break :blk .{ .value_ref = pointer, .type_ref = c.LLVMPointerType(try self.toLLVMType(field.ty), 0), .ty = field.ty };
             },
             .choice_payload_access => |access| blk: {
                 const base = try self.addressablePointer(access.value);
@@ -1937,7 +1937,7 @@ pub const CodeGenerator = struct {
         const input = if (input_node) |node| ((try self.visitNode(node)) orelse return CodegenError.ValueNotFound).value_ref else c.LLVMConstNull(try self.fieldsLLVMType(function.input));
         const output = try self.callArgi(symbol, input, "expect_error.failure");
         const field = self.graph.fields.items[function.output.start];
-        if (!types.equal(self.graph, types.effectiveFieldType(field), result_ty)) return CodegenError.InvalidType;
+        if (!types.equal(self.graph, field.ty, result_ty)) return CodegenError.InvalidType;
         return c.LLVMBuildExtractValue(self.builder, output, 0, "expect_error.failure.result");
     }
 
@@ -2097,7 +2097,7 @@ pub const CodeGenerator = struct {
             abi_fields[index] = if (index == call.self_input_index)
                 c.LLVMPointerType(c.LLVMInt8Type(), 0)
             else
-                try self.toLLVMType(types.effectiveFieldType(self.graph.fields.items[semantic_input.start + @as(u32, @intCast(index))]));
+                try self.toLLVMType((self.graph.fields.items[semantic_input.start + @as(u32, @intCast(index))]).ty);
         }
         const input_type = c.LLVMStructType(if (abi_fields.len == 0) null else abi_fields.ptr, @intCast(abi_fields.len), 0);
         var patched_input = c.LLVMGetUndef(input_type);
@@ -2136,7 +2136,7 @@ pub const CodeGenerator = struct {
         if (output_fields.len == 0) return null;
         if (output_fields.len == 1) {
             const field = self.graph.fields.items[output_fields.start];
-            const field_ty = types.effectiveFieldType(field);
+            const field_ty = field.ty;
             return .{
                 .value_ref = c.LLVMBuildExtractValue(self.builder, result, 0, "virtual.call.out"),
                 .type_ref = try self.toLLVMType(field_ty),
@@ -2694,7 +2694,7 @@ pub const CodeGenerator = struct {
         const output = try self.callArgi(symbol, c.LLVMConstNull(input_type), "test");
         try self.cleanupNativeProcess();
         if (function.output.len != 1) return CodegenError.InvalidType;
-        const result_ty = types.effectiveFieldType(self.graph.fields.items[function.output.start]);
+        const result_ty = (self.graph.fields.items[function.output.start]).ty;
         const error_variant = types.findVariant(self.graph, result_ty, "error") orelse return CodegenError.InvalidType;
         const error_payload_ty = error_variant.variant.payload_type orelse return CodegenError.InvalidType;
         const reason_field = types.findField(self.graph, error_payload_ty, "reason") orelse return CodegenError.InvalidType;

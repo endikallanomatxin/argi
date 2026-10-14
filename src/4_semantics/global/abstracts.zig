@@ -108,9 +108,6 @@ fn relocationConflictsWithOutcome(relocation: primitives.MethodSafetyContract.Re
 
 pub const Stats = struct {
     checks: u32 = 0,
-    concrete_hits: u32 = 0,
-    parameterized_hits: u32 = 0,
-    defaults: u32 = 0,
     implementation_scans: u64 = 0,
     implementation_candidates: u64 = 0,
     implementation_scan_ns: u64 = 0,
@@ -119,12 +116,6 @@ pub const Stats = struct {
 pub const AbstractUse = struct {
     declaration: global_sg.GlobalDeclId,
     arguments: primitives.Range(global_sg.GlobalGenericArgId),
-};
-
-pub const ImplementationConflict = struct {
-    abstract_decl: global_sg.GlobalDeclId,
-    concrete: global_sg.GlobalTypeId,
-    source: primitives.SourceRef,
 };
 
 pub const ParticipantConformanceFailure = struct {
@@ -138,29 +129,11 @@ pub const ParticipantConformanceFailure = struct {
     output: ?global_sg.GlobalTypeId = null,
 };
 
-pub const RequirementFailure = struct {
-    ambiguous: bool = false,
-    abstract_decl: global_sg.GlobalDeclId,
-    concrete: global_sg.GlobalTypeId,
-    source: primitives.SourceRef,
-    method_name: []const u8,
-    input: global_sg.GlobalTypeId,
-    output: global_sg.GlobalTypeId,
-};
-
 pub const GenericTypeConstraintFailure = struct {
     generic_decl: global_sg.GlobalDeclId,
     abstract_decl: global_sg.GlobalDeclId,
     actual: global_sg.GlobalTypeId,
     parameter_name: []const u8,
-    source: primitives.SourceRef,
-};
-
-pub const AbstractFieldStorageConflict = struct {
-    field_name: primitives.StringRange,
-    abstract_type: global_sg.GlobalTypeId,
-    existing_type: global_sg.GlobalTypeId,
-    actual_type: global_sg.GlobalTypeId,
     source: primitives.SourceRef,
 };
 
@@ -207,7 +180,6 @@ pub const Resolver = struct {
     offsets: []const globalizer.Offsets,
     core: *core_mod.Resolver,
     generics: *generic_mod.Resolver,
-    field_storage_conflict: ?AbstractFieldStorageConflict = null,
     virtual_signature_failure: ?VirtualSignatureFailure = null,
     participant_conformance_failure: ?ParticipantConformanceFailure = null,
     stats: Stats = .{},
@@ -410,9 +382,7 @@ pub const Resolver = struct {
         const abstract_use = self.abstractUse(abstract_ty) orelse return null;
         const abstract_decl = abstract_use.declaration;
         const located = self.findAbstractDefinition(abstract_decl) orelse return null;
-        if (located.definition.hasExplicitParticipants() and
-            (located.definition.participants.len != 1 or abstract_use.arguments.len != located.definition.parameters.len))
-        {
+        if (located.definition.participants.len != 1 or abstract_use.arguments.len != located.definition.parameters.len) {
             self.virtual_signature_failure = .{ .source = self.sourceFor(module_index, reference.source), .method_name = "to_virtual", .reason = if (located.definition.participants.len != 1) "explicit participants require joint virtual evidence, which is not supported yet" else "unary virtual evidence requires every associated element to be bound" };
             return null;
         }
@@ -436,18 +406,12 @@ pub const Resolver = struct {
         if (!try self.validateVirtualContract(abstract_ty, located, self.sourceFor(module_index, reference.source), pointer.mutability)) return null;
         var evidence_bindings = try generic_mod.Resolver.Bindings.init(self.allocator, self.modules[located.module_index].semantic.parameterized_storage.comptime_parameters.items.len);
         defer evidence_bindings.deinit(self.allocator);
-        const evidence = if (located.definition.hasExplicitParticipants())
-            try self.selectConformance(abstract_decl, &.{concrete}, &evidence_bindings, 0, null)
-        else
-            null;
-        if (evidence != null and !try self.associatedArgumentsMatch(located, &evidence_bindings, abstract_use.arguments)) {
-            self.virtual_signature_failure = .{ .source = self.sourceFor(module_index, reference.source), .method_name = "to_virtual", .reason = "selected conformance has incompatible associated elements for the virtual interface" };
+        const evidence = try self.selectConformance(abstract_decl, &.{concrete}, &evidence_bindings, 0, null) orelse {
+            self.virtual_signature_failure = .{ .source = self.sourceFor(module_index, reference.source), .method_name = "to_virtual", .reason = "the concrete type has no selected conformance for this contract" };
             return null;
-        }
-        if ((located.definition.hasExplicitParticipants() and evidence == null) or
-            (!located.definition.hasExplicitParticipants() and !self.concreteImplements(concrete, abstract_ty)))
-        {
-            self.virtual_signature_failure = .{ .source = self.sourceFor(module_index, reference.source), .method_name = "to_virtual", .reason = "the concrete type does not implement the selected abstract with these associated arguments" };
+        };
+        if (!try self.associatedArgumentsMatch(located, &evidence_bindings, abstract_use.arguments)) {
+            self.virtual_signature_failure = .{ .source = self.sourceFor(module_index, reference.source), .method_name = "to_virtual", .reason = "selected conformance has incompatible associated elements for the virtual interface" };
             return null;
         }
 
@@ -460,10 +424,7 @@ pub const Resolver = struct {
             const instance = (try self.requirementInstanceForAbstractUse(abstract_use, concrete, located, requirement, @intCast(method_index))) orelse return null;
             // A virtual table freezes the selected evidence. Scoped operations
             // never re-enter global overload lookup when a type is erased.
-            const implementation = if (evidence) |selected|
-                try self.resolveOperationBinding(self.graph.contract_conformances.items[selected.tuple], method_index)
-            else
-                self.findConcreteMethod(self.modules[located.module_index].text(requirement.name), instance.input, instance.output) orelse return null;
+            const implementation = try self.resolveOperationBinding(self.graph.contract_conformances.items[evidence.tuple], method_index);
             if (self.fallibleOutput(instance.output)) try self.core.ensureErrorTracerInput(implementation);
             try methods.append(self.allocator, implementation);
             const erased = (try self.requirementInstanceForAbstractUse(abstract_use, abstract_ty, located, requirement, @intCast(method_index))) orelse return null;
@@ -514,82 +475,18 @@ pub const Resolver = struct {
         function: global_sg.GlobalFunctionId,
     };
 
-    fn selectConcreteMethod(
-        self: *Resolver,
-        name: []const u8,
-        expected_input: global_sg.GlobalTypeId,
-        expected_output: global_sg.GlobalTypeId,
-    ) MethodSelection {
-        return self.selectConcreteMethodVisible(name, expected_input, expected_output, null);
-    }
-
-    fn selectConcreteMethodVisible(
-        self: *Resolver,
-        name: []const u8,
-        expected_input: global_sg.GlobalTypeId,
-        expected_output: global_sg.GlobalTypeId,
-        module_index: ?usize,
-    ) MethodSelection {
-        const expected_inputs = global_types.fields(self.graph, expected_input) orelse return .missing;
-        const expected_outputs = global_types.fields(self.graph, expected_output) orelse return .missing;
-        var found: ?global_sg.GlobalFunctionId = null;
-        for (self.graph.functions.items, 0..) |function, raw| {
-            const function_id: global_sg.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
-            if (self.isAbstractContractInstance(function_id)) continue;
-            if (module_index) |context| {
-                // Cached generic instances are implementations, not new overloads.
-                if (function.flags.is_generic_instantiation or function.flags.is_c_function_pointer or function.flags.is_abstract_dispatch) continue;
-                if (!self.core.declarationVisible(context, function.declaration, null)) continue;
-            }
-            const declaration = self.graph.declarations.items[@intFromEnum(function.declaration)];
-            if (!std.mem.eql(u8, self.graph.text(declaration.name), name)) continue;
-            if (!self.inputFieldsSatisfyRequirement(expected_inputs, function.input)) continue;
-            // Return types cannot disambiguate an operation. Select its inputs
-            // before checking the associated output promised by the contract.
-            if (found != null) return .ambiguous;
-            found = function_id;
-        }
-        const selected = found orelse return .missing;
-        const actual_outputs = self.graph.functions.items[@intFromEnum(selected)].output;
-        if (module_index != null) {
-            if (expected_outputs.len != actual_outputs.len) return .incompatible_output;
-            for (0..expected_outputs.len) |index| {
-                if (!global_types.equal(self.graph, self.graph.fields.items[expected_outputs.start + index].ty, self.graph.fields.items[actual_outputs.start + index].ty)) return .incompatible_output;
-            }
-        } else if (!self.outputFieldsSatisfyRequirement(expected_outputs, actual_outputs))
-            return .incompatible_output;
-        return .{ .function = selected };
-    }
-
-    fn findConcreteMethod(
-        self: *Resolver,
-        name: []const u8,
-        expected_input: global_sg.GlobalTypeId,
-        expected_output: global_sg.GlobalTypeId,
-    ) ?global_sg.GlobalFunctionId {
-        return switch (self.selectConcreteMethod(name, expected_input, expected_output)) {
-            .function => |function| function,
-            else => null,
-        };
-    }
-
     fn resolveStorageDomains(self: *Resolver, use: AbstractUse, concrete: global_sg.GlobalTypeId, located: LocatedAbstractDefinition, source: primitives.SourceRef) !?[]const primitives.StorageDomainMapping {
         var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, self.modules[located.module_index].semantic.parameterized_storage.comptime_parameters.items.len);
         defer bindings.deinit(self.allocator);
         if (try self.selectConformance(use.declaration, &.{concrete}, &bindings, 0, null)) |selection| {
-            if (try self.associatedArgumentsMatch(located, &bindings, use.arguments)) switch (selection) {
-                .direct => |selected| return self.resolveDomainPaths(selected.module_index, selected.implementation.domains, concrete, located, source),
-                .parameterized => |selected| return self.resolveDomainPaths(selected.module_index, selected.implementation.domains, concrete, located, source),
-                .tuple => |index| {
-                    const evidence = self.graph.contract_conformances.items[index];
-                    const owner: usize = @intFromEnum(evidence.context);
-                    for (self.modules[owner].semantic.parameterized_storage.contract_conformances.items) |template| {
-                        if (std.meta.eql(self.sourceFor(owner, template.source), evidence.source))
-                            return self.resolveDomainPaths(owner, template.domains, concrete, located, source);
-                    }
-                },
-                .inherited => {},
-            };
+            if (try self.associatedArgumentsMatch(located, &bindings, use.arguments)) {
+                const evidence = self.graph.contract_conformances.items[selection.tuple];
+                const owner: usize = @intFromEnum(evidence.context);
+                for (self.modules[owner].semantic.parameterized_storage.contract_conformances.items) |template| {
+                    if (std.meta.eql(self.sourceFor(owner, template.source), evidence.source))
+                        return self.resolveDomainPaths(owner, template.domains, concrete, located, source);
+                }
+            }
         }
         if (located.definition.domains.len == 0) return &.{};
         return self.domainFailure(source, "storage domains require an explicit implementation mapping for this abstract");
@@ -636,7 +533,7 @@ pub const Resolver = struct {
                     for (self.graph.fields.items[range.start..][0..range.len], 0..) |field, field_index| {
                         if (std.mem.eql(u8, self.graph.text(field.name), self.modules[module_index].text(name))) {
                             selected = @intCast(field_index);
-                            ty = global_types.effectiveFieldType(field);
+                            ty = field.ty;
                             break;
                         }
                     }
@@ -661,23 +558,6 @@ pub const Resolver = struct {
         return try result.toOwnedSlice(self.allocator);
     }
 
-    fn isAbstractContractInstance(
-        self: *Resolver,
-        function_id: global_sg.GlobalFunctionId,
-    ) bool {
-        for (self.graph.generic_function_instances.items) |instance| {
-            if (instance.function != function_id) continue;
-            const owner = self.graph.moduleForDeclaration(instance.parameterized_declaration) orelse return false;
-            const module_index: usize = @intFromEnum(owner);
-            const parameterized = self.findFunctionParameterized(
-                module_index,
-                instance.parameterized_declaration,
-            ) orelse return false;
-            return parameterized.dispatch_kind == .abstract_contract;
-        }
-        return false;
-    }
-
     fn inputFieldsSatisfyRequirement(
         self: *const Resolver,
         required: global_sg.FieldRange,
@@ -699,99 +579,6 @@ pub const Resolver = struct {
         return true;
     }
 
-    fn outputFieldsSatisfyRequirement(
-        self: *Resolver,
-        expected: global_sg.FieldRange,
-        actual: global_sg.FieldRange,
-    ) bool {
-        if (expected.len != actual.len) return false;
-        for (0..expected.len) |index| {
-            const required = self.graph.fields.items[expected.start + @as(u32, @intCast(index))];
-            const implementation = self.graph.fields.items[actual.start + @as(u32, @intCast(index))];
-            // Outputs may specialize an abstract result to any concrete type
-            // that implements the same (possibly parameterized) abstract.
-            if (global_types.equal(self.graph, required.ty, implementation.ty)) continue;
-            if (!self.concreteImplements(implementation.ty, required.ty)) return false;
-        }
-        return true;
-    }
-
-    pub fn requirementCandidateInputMatches(
-        self: *const Resolver,
-        expected_input: global_sg.GlobalTypeId,
-        function: global_sg.Function,
-    ) bool {
-        const expected_fields = global_types.fields(self.graph, expected_input) orelse return false;
-        return self.inputFieldsSatisfyRequirement(expected_fields, function.input);
-    }
-
-    pub fn resolveStaticRequirementCall(
-        self: *Resolver,
-        module_index: usize,
-        constraint: parameterized_storage.AbstractConstraint,
-        substitutions: *generic_mod.Resolver.Bindings,
-        concrete: global_sg.GlobalTypeId,
-        reference: module_entities.ExternalRef,
-        input: global_sg.GlobalNodeId,
-        source: primitives.SourceRef,
-    ) !?global_sg.Node {
-        if (reference.module_path != null or reference.generic_arguments != null) return null;
-        const abstract_decl = try self.resolveDeclarationRef(module_index, constraint.abstract_ref, .abstract_type);
-        if (!try self.implements(concrete, abstract_decl)) return null;
-        const located = self.findAbstractDefinition(abstract_decl) orelse return null;
-        // Instantiate associated arguments in the caller's specialization, then
-        // use them to specialize the contract signature before concrete lookup.
-        // Implementations can live outside the generic definition's module.
-        const target_module = &self.modules[located.module_index];
-        const target_storage = &target_module.semantic.parameterized_storage;
-        var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, target_storage.comptime_parameters.items.len);
-        defer bindings.deinit(self.allocator);
-        bindImplicitParticipant(located, concrete, &bindings);
-        const caller_module = &self.modules[module_index];
-        const caller_ir = &caller_module.semantic.parameterized_storage.ir;
-        for (caller_ir.generic_arguments.items[constraint.arguments.start..][0..constraint.arguments.len], 0..) |argument, position| {
-            const name = caller_module.text(argument.name);
-            var target_raw: ?u32 = null;
-            for (0..located.definition.parameters.len) |offset| {
-                const raw = located.definition.parameters.start + @as(u32, @intCast(offset));
-                if ((name.len == 0 and offset == position) or
-                    std.mem.eql(u8, name, target_module.text(target_storage.comptime_parameters.items[raw].name)))
-                {
-                    target_raw = raw;
-                    break;
-                }
-            }
-            const raw = target_raw orelse return null;
-            switch (argument.value) {
-                .type => |pattern| bindings.types[raw] = try self.generics.instantiateParameterizedType(module_index, pattern, substitutions),
-                .comptime_int => |pattern| bindings.ints[raw] = try self.generics.evalInt(module_index, pattern, substitutions),
-            }
-        }
-
-        const method_name = self.modules[module_index].text(reference.name);
-        const storage = &self.modules[located.module_index].semantic.parameterized_storage;
-        for (storage.abstract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len], 0..) |requirement, method_index| {
-            if (!std.mem.eql(u8, self.modules[located.module_index].text(requirement.name), method_name)) continue;
-            const instance = RequirementInstance{
-                .declaration = abstract_decl,
-                .method_index = @intCast(method_index),
-                .input = try self.generics.instantiateParameterizedType(located.module_index, requirement.input, &bindings),
-                .output = try self.generics.instantiateParameterizedType(located.module_index, requirement.output, &bindings),
-            };
-            const implementation = self.findConcreteMethod(method_name, instance.input, instance.output) orelse continue;
-            const input_fields = global_types.fields(self.graph, instance.input) orelse continue;
-            if (self.core.scoreCallInput(input_fields, input) == null) continue;
-            if (!try self.core.completeCallInputFields(input_fields, input)) continue;
-            try self.recordStaticSafetyContract(located, requirement, &bindings, concrete, implementation, instance.output, source);
-            return .{
-                .source = source,
-                .ty = try self.core.functionOutputType(implementation),
-                .content = .{ .function_call = .{ .callee = implementation, .input = input } },
-            };
-        }
-        return null;
-    }
-
     pub fn resolveNestedCall(
         self: *Resolver,
         module_index: usize,
@@ -807,74 +594,13 @@ pub const Resolver = struct {
         return self.abstractDeclFromType(ty);
     }
 
-    pub fn requirementFailureForAbstractType(
-        self: *Resolver,
-        concrete: global_sg.GlobalTypeId,
-        abstract_type: global_sg.GlobalTypeId,
-        source: primitives.SourceRef,
-    ) !?RequirementFailure {
-        const abstract_use = self.abstractUse(abstract_type) orelse return null;
-        const located = self.findAbstractDefinition(abstract_use.declaration) orelse return null;
-        const storage = &self.modules[located.module_index].semantic.parameterized_storage;
-        var bindings = try generic_mod.Resolver.Bindings.init(
-            self.allocator,
-            storage.comptime_parameters.items.len,
-        );
-        defer bindings.deinit(self.allocator);
-
-        if (abstract_use.arguments.len != 0 and !self.bindAbstractUseArguments(abstract_use, located, &bindings)) return null;
-
-        bindImplicitParticipant(located, concrete, &bindings);
-        for (storage.abstract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len]) |requirement| {
-            const input = self.generics.instantiateParameterizedType(located.module_index, requirement.input, &bindings) catch |err| switch (err) {
-                error.UnboundGenericTypeParameter, error.UnboundComptimeParameter => continue,
-                else => return err,
-            };
-            const output = self.generics.instantiateParameterizedType(located.module_index, requirement.output, &bindings) catch |err| switch (err) {
-                error.UnboundGenericTypeParameter, error.UnboundComptimeParameter => null,
-                else => return err,
-            };
-            const method_name = self.modules[located.module_index].text(requirement.name);
-            if (output) |resolved_output|
-                if (self.findConcreteMethod(method_name, input, resolved_output) != null) continue;
-            return .{
-                .abstract_decl = abstract_use.declaration,
-                .concrete = concrete,
-                .source = source,
-                .method_name = method_name,
-                .input = input,
-                .output = output orelse input,
-                .ambiguous = if (output) |resolved_output| self.selectConcreteMethod(method_name, input, resolved_output) == .ambiguous else false,
-            };
-        }
-        return null;
-    }
-
-    pub fn concreteImplements(self: *Resolver, concrete: global_sg.GlobalTypeId, abstract_type: global_sg.GlobalTypeId) bool {
-        const identity = switch (self.graph.types.items[@intFromEnum(abstract_type)]) {
-            .declared => |declaration| {
-                if (self.findAbstractDefinition(declaration) == null) return false;
-                return self.implements(concrete, declaration) catch false;
-            },
-            .generic => |value| value,
+    pub fn concreteImplements(self: *Resolver, concrete: global_sg.GlobalTypeId, contract_type: global_sg.GlobalTypeId) bool {
+        const declaration = switch (self.graph.types.items[@intFromEnum(contract_type)]) {
+            .declared => |value| value,
             else => return false,
         };
-        if (self.findAbstractDefinition(identity.base) == null) return false;
-        return self.implementsParameterizedAbstractType(concrete, identity.base, identity.arguments) catch false;
-    }
-
-    fn implementsParameterizedAbstractType(
-        self: *Resolver,
-        concrete: global_sg.GlobalTypeId,
-        abstract_decl: global_sg.GlobalDeclId,
-        expected_arguments: primitives.Range(global_sg.GlobalGenericArgId),
-    ) !bool {
-        const located = self.findAbstractDefinition(abstract_decl) orelse return false;
-        if (located.definition.hasExplicitParticipants()) return false;
-        var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, self.modules[located.module_index].semantic.parameterized_storage.comptime_parameters.items.len);
-        defer bindings.deinit(self.allocator);
-        if (try self.selectConformance(abstract_decl, &.{concrete}, &bindings, 0, null) == null) return false;
-        return try self.associatedArgumentsMatch(located, &bindings, expected_arguments);
+        if (self.findAbstractDefinition(declaration) == null) return false;
+        return self.implements(concrete, declaration) catch false;
     }
 
     fn associatedArgumentsMatch(self: *Resolver, located: LocatedAbstractDefinition, bindings: *const generic_mod.Resolver.Bindings, expected: primitives.Range(global_sg.GlobalGenericArgId)) !bool {
@@ -896,94 +622,8 @@ pub const Resolver = struct {
         return true;
     }
 
-    const AbstractFieldAssignment = struct {
-        struct_type: global_sg.GlobalTypeId,
-        field_index: u32,
-        actual_type: global_sg.GlobalTypeId,
-        source: primitives.SourceRef,
-        direct_store_field_type: ?*global_sg.GlobalTypeId = null,
-    };
-
-    /// Normalize the two store representations supported by GlobalSG. Source
-    /// field assignments use pointer_assignment(address_of(struct_field_access(...)),
-    /// ...); synthesized semantic paths may use struct_field_store directly.
-    fn abstractFieldAssignment(
-        self: *Resolver,
-        node: *global_sg.Node,
-    ) ?AbstractFieldAssignment {
-        switch (node.content) {
-            .struct_field_store => |*store| {
-                const actual = self.graph.node(store.value).ty orelse return null;
-                return .{
-                    .struct_type = store.struct_type,
-                    .field_index = store.field_index,
-                    .actual_type = actual,
-                    .source = self.graph.node(store.value).source,
-                    .direct_store_field_type = &store.field_type,
-                };
-            },
-            .pointer_assignment => |assignment| {
-                const addressed = switch (self.graph.node(assignment.pointer).content) {
-                    .address_of => |value| value,
-                    else => return null,
-                };
-                const access = switch (self.graph.node(addressed).content) {
-                    .struct_field_access => |value| value,
-                    else => return null,
-                };
-                const base_ty = self.graph.node(access.value).ty orelse return null;
-                const struct_ty = switch (self.graph.types.items[@intFromEnum(base_ty)]) {
-                    .pointer => |pointer| pointer.child,
-                    else => base_ty,
-                };
-                const actual = self.graph.node(assignment.value).ty orelse return null;
-                return .{
-                    .struct_type = struct_ty,
-                    .field_index = access.field_index,
-                    .actual_type = actual,
-                    .source = self.graph.node(assignment.value).source,
-                };
-            },
-            else => return null,
-        }
-    }
-
-    /// Abstract fields use static backing storage. Once an assignment selects
-    /// a concrete implementer, every later access and codegen operation must
-    /// use that same representation; mixing implementers would make the
-    /// aggregate layout depend on control flow.
-    pub fn materializeAbstractFieldStorage(self: *Resolver) !bool {
+    pub fn materializeFieldAccessTypes(self: *Resolver) !bool {
         var changed = false;
-        for (self.graph.nodes.items) |*node| {
-            const assignment = self.abstractFieldAssignment(node) orelse continue;
-            const fields = global_types.fields(self.graph, assignment.struct_type) orelse continue;
-            if (assignment.field_index >= fields.len) return error.InvalidAbstractFieldIndex;
-            const field = &self.graph.fields.items[fields.start + assignment.field_index];
-            if (global_types.equal(self.graph, field.ty, assignment.actual_type)) continue;
-            if (!try self.abstractStorageCompatible(field.ty, assignment.actual_type)) continue;
-            if (field.storage_type) |existing| {
-                if (!global_types.equal(self.graph, existing, assignment.actual_type)) {
-                    if (self.field_storage_conflict == null) self.field_storage_conflict = .{
-                        .field_name = field.name,
-                        .abstract_type = field.ty,
-                        .existing_type = existing,
-                        .actual_type = assignment.actual_type,
-                        .source = assignment.source,
-                    };
-                    continue;
-                }
-            } else {
-                field.storage_type = assignment.actual_type;
-                changed = true;
-            }
-            if (assignment.direct_store_field_type) |field_type| {
-                if (!global_types.equal(self.graph, field_type.*, assignment.actual_type)) {
-                    field_type.* = assignment.actual_type;
-                    changed = true;
-                }
-            }
-        }
-
         // Access nodes keep the effective runtime representation in their
         // type. This is what lets later reach traversal and codegen stay
         // entirely static once the backing implementer is known.
@@ -999,33 +639,13 @@ pub const Resolver = struct {
             };
             const fields = global_types.fields(self.graph, struct_ty) orelse continue;
             if (access.field_index >= fields.len) return error.InvalidAbstractFieldIndex;
-            const effective = global_types.effectiveFieldType(
-                self.graph.fields.items[fields.start + access.field_index],
-            );
+            const effective = (self.graph.fields.items[fields.start + access.field_index]).ty;
             if (node.ty == null or !global_types.equal(self.graph, node.ty.?, effective)) {
                 node.ty = effective;
                 changed = true;
             }
         }
         return changed;
-    }
-
-    fn abstractStorageCompatible(self: *Resolver, expected: global_sg.GlobalTypeId, actual: global_sg.GlobalTypeId) !bool {
-        const expected_pointer = switch (self.graph.types.items[@intFromEnum(expected)]) {
-            .pointer => |value| value,
-            else => return false,
-        };
-        const actual_pointer = switch (self.graph.types.items[@intFromEnum(actual)]) {
-            .pointer => |value| value,
-            else => return false,
-        };
-        if (expected_pointer.mutability == .read_write and actual_pointer.mutability != .read_write) return false;
-        const abstract_decl = switch (self.graph.types.items[@intFromEnum(expected_pointer.child)]) {
-            .declared => |value| value,
-            else => return false,
-        };
-        if (self.findAbstractDefinition(abstract_decl) == null) return false;
-        return self.implements(actual_pointer.child, abstract_decl);
     }
 
     fn fallibleOutput(self: *const Resolver, output: global_sg.GlobalTypeId) bool {
@@ -1546,12 +1166,10 @@ pub const Resolver = struct {
         var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
         defer bindings.deinit(self.allocator);
         if (!self.bindAbstractUseArguments(abstract_use, located, &bindings)) return null;
-        if (located.definition.hasExplicitParticipants()) {
-            // The unary participant is hidden by this handle. Instantiate its
-            // fixed interface with the erased receiver identity; implementation
-            // signatures are instantiated separately with the concrete type.
-            bindings.types[located.definition.participants.start] = self_type;
-        } else bindImplicitParticipant(located, self_type, &bindings);
+        // The unary participant is hidden by this handle; its fixed signature
+        // uses the erased receiver identity.
+        if (located.definition.participants.len != 1) return null;
+        bindings.types[located.definition.participants.start] = self_type;
         return .{
             .declaration = abstract_use.declaration,
             .method_index = method_index,
@@ -1572,89 +1190,37 @@ pub const Resolver = struct {
         return null;
     }
 
-    const ConformanceSelection = union(enum) {
-        tuple: usize,
-        direct: struct { module_index: usize, implementation: parameterized_storage.AbstractImplementation },
-        parameterized: struct { module_index: usize, implementation: parameterized_storage.ParameterizedAbstractImplementation },
-        inherited,
-    };
-
-    fn bindImplicitParticipant(located: LocatedAbstractDefinition, participant: global_sg.GlobalTypeId, bindings: *generic_mod.Resolver.Bindings) void {
-        if (located.definition.implicit_participant) |parameter| bindings.types[@intFromEnum(parameter)] = participant;
-    }
+    const ConformanceSelection = struct { tuple: usize };
 
     /// Source forms differ only while matching candidates. A selected conformance
     /// binds every participant and associated element as ordinary parameters.
     fn selectConformance(self: *Resolver, declaration: global_sg.GlobalDeclId, participants: []const global_sg.GlobalTypeId, bindings: ?*generic_mod.Resolver.Bindings, depth: u8, deferred: ?*bool) anyerror!?ConformanceSelection {
         if (depth >= 64) return null;
         const located = self.findAbstractDefinition(declaration) orelse return null;
-        if (located.definition.hasExplicitParticipants()) {
-            if (participants.len != located.definition.participants.len) return null;
-            for (self.graph.contract_conformances.items, 0..) |conformance, index| {
-                if (conformance.declaration != declaration) continue;
-                var equal = true;
-                for (participants, 0..) |actual, position| {
-                    const expected = self.graph.generic_arguments.items[conformance.participants.start + position].value.type;
-                    if (!self.typeSelectionReady(expected, 0)) {
-                        if (deferred) |flag| flag.* = true;
-                        equal = false;
-                        break;
-                    }
-                    if (!global_types.equal(self.graph, actual, expected)) {
-                        equal = false;
-                        break;
-                    }
+        if (participants.len != located.definition.participants.len) return null;
+        for (self.graph.contract_conformances.items, 0..) |conformance, index| {
+            if (conformance.declaration != declaration) continue;
+            var equal = true;
+            for (participants, 0..) |actual, position| {
+                const expected = self.graph.generic_arguments.items[conformance.participants.start + position].value.type;
+                if (!self.typeSelectionReady(expected, 0)) {
+                    if (deferred) |flag| flag.* = true;
+                    equal = false;
+                    break;
                 }
-                if (!equal) continue;
-                if (bindings) |target| {
-                    try self.generics.bindGlobalArguments(located.module_index, located.definition.participants, conformance.participants, target);
-                    try self.generics.bindGlobalArguments(located.module_index, located.definition.parameters, conformance.associated_arguments, target);
+                if (!global_types.equal(self.graph, actual, expected)) {
+                    equal = false;
+                    break;
                 }
-                return .{ .tuple = index };
             }
-            return self.selectGenericParticipantConformance(declaration, participants, bindings);
+            if (!equal) continue;
+            if (bindings) |target| {
+                try self.generics.bindGlobalArguments(located.module_index, located.definition.participants, conformance.participants, target);
+                try self.generics.bindGlobalArguments(located.module_index, located.definition.parameters, conformance.associated_arguments, target);
+            }
+            return .{ .tuple = index };
         }
-        if (participants.len != 1) return null;
-        const concrete = participants[0];
-        for (self.modules, 0..) |*module, module_index| {
-            const storage = &module.semantic.parameterized_storage;
-            for (storage.abstract_implementations.items) |implementation| {
-                if (self.profile_implementation_scans) self.stats.implementation_candidates += 1;
-                if (try self.resolveDeclarationRef(module_index, implementation.abstract_ref, .abstract_type) != declaration) continue;
-                const candidate = globalizer.globalType(self.offsets[module_index], implementation.ty);
-                if (global_types.equal(self.graph, concrete, candidate)) {
-                    if (bindings) |target| {
-                        bindImplicitParticipant(located, concrete, target);
-                        try self.bindDirectAbstractArguments(module_index, implementation, located, target);
-                    }
-                    self.stats.concrete_hits += 1;
-                    return .{ .direct = .{ .module_index = module_index, .implementation = implementation } };
-                }
-                const inherited = switch (self.graph.types.items[@intFromEnum(candidate)]) {
-                    .declared => |value| value,
-                    else => continue,
-                };
-                if (inherited == declaration or self.findAbstractDefinition(inherited) == null) continue;
-                if (try self.implementsDepth(concrete, inherited, depth + 1)) {
-                    if (bindings) |target| bindImplicitParticipant(located, concrete, target);
-                    return .inherited;
-                }
-            }
-            for (storage.parameterized_abstract_implementations.items) |implementation| {
-                if (self.profile_implementation_scans) self.stats.implementation_candidates += 1;
-                if (try self.resolveDeclarationRef(module_index, implementation.abstract_ref, .abstract_type) != declaration) continue;
-                var candidate = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
-                defer candidate.deinit(self.allocator);
-                if (!(self.bindParameterizedImplementation(module_index, concrete, implementation, &candidate) catch false)) continue;
-                if (bindings) |target| {
-                    bindImplicitParticipant(located, concrete, target);
-                    try self.bindSelectedAssociatedArguments(located, module_index, implementation, &candidate, target);
-                }
-                self.stats.parameterized_hits += 1;
-                return .{ .parameterized = .{ .module_index = module_index, .implementation = implementation } };
-            }
-        }
-        return null;
+        return self.selectGenericParticipantConformance(declaration, participants, bindings);
     }
 
     /// This conservative query only restricts implicit copying. An unknown
@@ -1771,7 +1337,6 @@ pub const Resolver = struct {
             .associated_arguments = try self.publishConformanceArguments(located, located.definition.parameters, &contract_bindings),
             .implementation_arguments = implementation,
             .operation_bindings = operations,
-            .explicit_operations = true,
             .source = failure.source,
         });
         if (target) |destination| {
@@ -1938,24 +1503,6 @@ pub const Resolver = struct {
         return .{ .start = start, .len = parameters.len };
     }
 
-    fn bindSelectedAssociatedArguments(self: *Resolver, located: LocatedAbstractDefinition, module_index: usize, implementation: parameterized_storage.ParameterizedAbstractImplementation, candidate: *generic_mod.Resolver.Bindings, target: *generic_mod.Resolver.Bindings) !void {
-        const module = &self.modules[module_index];
-        const target_module = &self.modules[located.module_index];
-        const target_storage = &target_module.semantic.parameterized_storage;
-        for (module.semantic.parameterized_storage.ir.generic_arguments.items[implementation.arguments.start..][0..implementation.arguments.len], 0..) |argument, position| {
-            const name = module.text(argument.name);
-            for (0..located.definition.parameters.len) |offset| {
-                const raw = located.definition.parameters.start + @as(u32, @intCast(offset));
-                if (!((name.len == 0 and offset == position) or std.mem.eql(u8, name, target_module.text(target_storage.comptime_parameters.items[raw].name)))) continue;
-                switch (argument.value) {
-                    .type => |pattern| target.types[raw] = try self.generics.instantiateParameterizedType(module_index, pattern, candidate),
-                    .comptime_int => |pattern| target.ints[raw] = try self.generics.evalInt(module_index, pattern, candidate),
-                }
-                break;
-            }
-        }
-    }
-
     fn implementsDepth(
         self: *Resolver,
         concrete: global_sg.GlobalTypeId,
@@ -2082,43 +1629,6 @@ pub const Resolver = struct {
         return .{ .start = start, .len = parameters.len };
     }
 
-    pub fn findParticipantUnaryUseFailure(self: *Resolver) !?ParticipantConformanceFailure {
-        for (self.modules, 0..) |*module, module_index| {
-            const storage = &module.semantic.parameterized_storage;
-            for (storage.abstract_definitions.items) |definition| {
-                for (storage.abstract_constraints.items[definition.composition.start..][0..definition.composition.len]) |composed| {
-                    const declaration = self.resolveDeclarationRef(module_index, composed.abstract_ref, .abstract_type) catch |err| switch (err) {
-                        error.UnknownGlobalDeclaration, error.AmbiguousGlobalDeclaration, error.UnknownModuleReference, error.AmbiguousModuleReference => continue,
-                        else => return err,
-                    };
-                    const located = self.findAbstractDefinition(declaration) orelse continue;
-                    if (!located.definition.hasExplicitParticipants() or definition.hasExplicitParticipants()) continue;
-                    return .{
-                        .source = self.sourceFor(module_index, composed.source),
-                        .contract_name = self.modules[located.module_index].text(self.modules[located.module_index].declarations.items[@intFromEnum(located.definition.declaration)].name),
-                        .reason = "composition of explicit participant contracts is not supported yet",
-                    };
-                }
-            }
-            inline for (.{ storage.abstract_implementations.items, storage.parameterized_abstract_implementations.items, storage.abstract_defaults.items, storage.parameterized_abstract_defaults.items }) |relations| {
-                for (relations) |relation| {
-                    const declaration = self.resolveDeclarationRef(module_index, relation.abstract_ref, .abstract_type) catch |err| switch (err) {
-                        error.UnknownGlobalDeclaration, error.AmbiguousGlobalDeclaration, error.UnknownModuleReference, error.AmbiguousModuleReference => continue,
-                        else => return err,
-                    };
-                    const located = self.findAbstractDefinition(declaration) orelse continue;
-                    if (!located.definition.hasExplicitParticipants()) continue;
-                    return .{
-                        .source = self.sourceFor(module_index, relation.source),
-                        .contract_name = self.modules[located.module_index].text(self.modules[located.module_index].declarations.items[@intFromEnum(located.definition.declaration)].name),
-                        .reason = "explicit participant contracts require standalone satisfies declarations",
-                    };
-                }
-            }
-        }
-        return null;
-    }
-
     pub fn resolveScopedOperation(self: *Resolver, module_index: usize, module: *const module_sg.ModuleSemanticGraph, offsets: globalizer.Offsets, call: anytype) !resolution.Result {
         const reference = module.semantic.external_refs.items[@intFromEnum(call.callee)];
         const context = reach_context.Context.fromModule(module, offsets, call.visible_bindings, call.owner_function);
@@ -2163,7 +1673,7 @@ pub const Resolver = struct {
                 if (!self.core.declarationVisible(module_index, declaration, module_filter)) continue;
                 const storage = &module.semantic.parameterized_storage;
                 for (storage.abstract_requirements.items[definition.requirements.start..][0..definition.requirements.len]) |requirement| {
-                    if (!requirement.scoped or !std.mem.eql(u8, module.text(requirement.name), name)) continue;
+                    if (!std.mem.eql(u8, module.text(requirement.name), name)) continue;
                     if (try self.probeOperationCandidate(.{ .module_index = owner, .definition = definition }, declaration, requirement, input, context, &result.deferred, &result.failure)) |candidate|
                         try result.items.append(self.allocator, candidate);
                 }
@@ -2408,12 +1918,7 @@ pub const Resolver = struct {
             self.participant_conformance_failure = failure;
             return null;
         };
-        const method = if (conformance.explicit_operations)
-            try self.resolveOperationBinding(conformance, method_index)
-        else if (conformance.operations.len > method_index)
-            self.graph.function_refs.items[conformance.operations.start + method_index]
-        else
-            return null;
+        const method = try self.resolveOperationBinding(conformance, method_index);
         const requirement = storage.abstract_requirements.items[located.definition.requirements.start + method_index];
         const required_type = try self.generics.instantiateParameterizedType(located.module_index, requirement.input, &bindings);
         const required_fields = global_types.fields(self.graph, required_type) orelse return error.InvalidAbstractRequirementInput;
@@ -2528,7 +2033,7 @@ pub const Resolver = struct {
                     .contract_name = self.graph.text(self.graph.declaration(declaration).name),
                     .reason = "",
                 };
-                if (conformance.parameters.len != 0 and conformance.explicit_operations and located.module_index != module_index and
+                if (conformance.parameters.len != 0 and located.module_index != module_index and
                     !(module.is_bundled_core and self.modules[located.module_index].is_bundled_core) and
                     !try self.templateOwnsParticipant(module_index, conformance))
                 {
@@ -2573,7 +2078,7 @@ pub const Resolver = struct {
                 };
                 const located = self.findAbstractDefinition(declaration) orelse return error.InvalidContractDeclaration;
                 if (!located.definition.hasExplicitParticipants()) {
-                    failure.reason = "standalone satisfies requires a contract with explicit participants";
+                    failure.reason = "implement requires a contract with explicit participants";
                     self.participant_conformance_failure = failure;
                     return;
                 }
@@ -2616,20 +2121,10 @@ pub const Resolver = struct {
                         return;
                     }
                 }
-                const operations = if (conformance.explicit_operations)
-                    self.prepareOperationBindings(module_index, located, conformance, &failure) catch |err| {
-                        if (err != error.InvalidContractConformance) return err;
-                        self.participant_conformance_failure = failure;
-                        return;
-                    }
-                else blk: {
-                    const requirements = storage.abstract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len];
-                    for (requirements) |requirement| if (requirement.scoped) {
-                        failure.reason = "contract member operations require an implement declaration with explicit operation bindings";
-                        self.participant_conformance_failure = failure;
-                        return;
-                    };
-                    break :blk primitives.Range(global_sg.ContractOperationBindingId){ .start = 0, .len = 0 };
+                const operations = self.prepareOperationBindings(module_index, located, conformance, &failure) catch |err| {
+                    if (err != error.InvalidContractConformance) return err;
+                    self.participant_conformance_failure = failure;
+                    return;
                 };
                 // Make canonical associations available before checking operation signatures.
                 // This provisional evidence cannot escape a failed compilation.
@@ -2640,7 +2135,6 @@ pub const Resolver = struct {
                     .declaration = declaration,
                     .participants = canonical_participants,
                     .associated_arguments = canonical_associated,
-                    .explicit_operations = conformance.explicit_operations,
                     .operation_bindings = operations,
                     .source = failure.source,
                 });
@@ -2707,7 +2201,7 @@ pub const Resolver = struct {
     fn resolveOperationBody(self: *Resolver, conformance: global_sg.ContractConformance, index: usize) !global_sg.GlobalFunctionId {
         const binding = self.graph.contract_operation_bindings.items[conformance.operation_bindings.start + index];
         if (self.graph.declaration(binding.declaration).function_id) |function| {
-            if (!self.graph.function(function).flags.is_abstract_dispatch) return function;
+            return function;
         }
         if (!binding.instantiate_associated) {
             const located = self.findAbstractDefinition(conformance.declaration) orelse return error.InvalidContractDeclaration;
@@ -2771,7 +2265,7 @@ pub const Resolver = struct {
                 .contract_name = self.modules[located.module_index].text(self.modules[located.module_index].declarations.items[@intFromEnum(located.definition.declaration)].name),
                 .reason = "",
             };
-            if (conformance.explicit_operations and located.module_index != module_index and
+            if (located.module_index != module_index and
                 !(self.modules[module_index].is_bundled_core and self.modules[located.module_index].is_bundled_core))
             {
                 var owns_participant = false;
@@ -2845,7 +2339,7 @@ pub const Resolver = struct {
                 const name = self.modules[located.module_index].text(requirement.name);
                 const input = try self.generics.instantiateParameterizedType(located.module_index, requirement.input, &bindings);
                 const output = try self.generics.instantiateParameterizedType(located.module_index, requirement.output, &bindings);
-                const selected: MethodSelection = if (conformance.explicit_operations) selected: {
+                const selected: MethodSelection = selected: {
                     const method = try self.resolveOperationBinding(conformance, operation_index);
                     const function = self.graph.function(method);
                     const required_inputs = global_types.fields(self.graph, input).?;
@@ -2861,13 +2355,13 @@ pub const Resolver = struct {
                         if (!global_types.equal(self.graph, required.ty, actual.ty) or !std.mem.eql(u8, self.graph.text(required.name), self.graph.text(actual.name))) break :selected .incompatible_output;
                     }
                     break :selected .{ .function = method };
-                } else self.selectConcreteMethodVisible(name, input, output, module_index);
+                };
                 if (selected != .function) {
                     failure.operation = name;
                     failure.input = input;
                     failure.output = output;
                     failure.reason = switch (selected) {
-                        .missing => if (conformance.explicit_operations) "implementation operation has an incompatible input signature" else "missing operation",
+                        .missing => "implementation operation has an incompatible input signature",
                         .ambiguous => "ambiguous operation",
                         .incompatible_output => if (standard_contracts.standardDeclaration(self.graph, "Equal") == conformance.declaration) "Equal.equal must return exactly (.ok: Bool)" else "operation returns an incompatible associated result",
                         .function => unreachable,
@@ -3113,202 +2607,6 @@ pub const Resolver = struct {
         }
     }
 
-    pub fn findConcreteRequirementFailure(self: *Resolver) !?RequirementFailure {
-        for (self.modules, 0..) |*module, module_index| {
-            const storage = &module.semantic.parameterized_storage;
-            for (storage.abstract_implementations.items) |implementation| {
-                const abstract_decl = try self.resolveDeclarationRef(module_index, implementation.abstract_ref, .abstract_type);
-                const concrete = globalizer.globalType(self.offsets[module_index], implementation.ty);
-                switch (self.graph.types.items[@intFromEnum(concrete)]) {
-                    .declared => |declaration| if (self.findAbstractDefinition(declaration) != null) continue,
-                    else => {},
-                }
-
-                const located = self.findAbstractDefinition(abstract_decl) orelse continue;
-                const requirement_storage = &self.modules[located.module_index].semantic.parameterized_storage;
-                var bindings = try generic_mod.Resolver.Bindings.init(
-                    self.allocator,
-                    requirement_storage.comptime_parameters.items.len,
-                );
-                defer bindings.deinit(self.allocator);
-                try self.bindDirectAbstractArguments(
-                    module_index,
-                    implementation,
-                    located,
-                    &bindings,
-                );
-                bindImplicitParticipant(located, concrete, &bindings);
-                var operations: std.ArrayList(global_sg.GlobalFunctionId) = .empty;
-                defer operations.deinit(self.allocator);
-                var complete = true;
-
-                for (requirement_storage.abstract_requirements.items[located.definition.requirements.start..][0..located.definition.requirements.len]) |requirement| {
-                    const input = self.generics.instantiateParameterizedType(located.module_index, requirement.input, &bindings) catch |err| switch (err) {
-                        error.UnboundGenericTypeParameter, error.UnboundComptimeParameter => {
-                            complete = false;
-                            continue;
-                        },
-                        else => return err,
-                    };
-                    const output = self.generics.instantiateParameterizedType(located.module_index, requirement.output, &bindings) catch |err| switch (err) {
-                        error.UnboundGenericTypeParameter, error.UnboundComptimeParameter => null,
-                        else => return err,
-                    };
-                    const method_name = self.modules[located.module_index].text(requirement.name);
-                    if (output) |resolved_output| {
-                        if (self.findConcreteMethod(method_name, input, resolved_output)) |method| {
-                            try self.recordStaticSafetyContract(located, requirement, &bindings, concrete, method, resolved_output, self.sourceFor(module_index, implementation.source));
-                            try operations.append(self.allocator, method);
-                            continue;
-                        }
-                    }
-                    return .{
-                        .abstract_decl = abstract_decl,
-                        .concrete = concrete,
-                        .source = self.sourceFor(module_index, implementation.source),
-                        .method_name = method_name,
-                        .input = input,
-                        .output = output orelse input,
-                        .ambiguous = if (output) |resolved_output| self.selectConcreteMethod(method_name, input, resolved_output) == .ambiguous else false,
-                    };
-                }
-                if (complete) try self.publishUnaryConformance(located, &bindings, operations.items, module_index, self.sourceFor(module_index, implementation.source));
-            }
-        }
-        return null;
-    }
-
-    // Unary compatibility declarations use the same canonical, checkpointed
-    // evidence as explicit tuples once all their requirements are resolved.
-    fn publishUnaryConformance(self: *Resolver, located: LocatedAbstractDefinition, bindings: *generic_mod.Resolver.Bindings, operations: []const global_sg.GlobalFunctionId, module_index: usize, source: primitives.SourceRef) !void {
-        const storage = &self.modules[located.module_index].semantic.parameterized_storage;
-        for (located.definition.parameters.start..located.definition.parameters.start + located.definition.parameters.len) |raw| {
-            switch (storage.comptime_parameters.items[raw].kind) {
-                .type => if (bindings.types[raw] == null) return,
-                .comptime_int => if (bindings.ints[raw] == null) return,
-            }
-        }
-        const concrete = bindings.types[@intFromEnum(located.definition.implicit_participant.?)].?;
-        for (self.graph.contract_conformances.items) |previous| {
-            if (previous.declaration != globalizer.globalDecl(self.offsets[located.module_index], located.definition.declaration)) continue;
-            const participant = self.graph.generic_arguments.items[previous.participants.start].value.type;
-            if (global_types.equal(self.graph, participant, concrete)) return;
-        }
-        const participants = try self.publishConformanceArguments(located, located.definition.participants, bindings);
-        const associated = try self.publishConformanceArguments(located, located.definition.parameters, bindings);
-        const operation_start: u32 = @intCast(self.graph.function_refs.items.len);
-        try self.graph.function_refs.appendSlice(self.allocator, operations);
-        try self.graph.contract_conformances.append(self.allocator, .{
-            .context = @enumFromInt(@as(u32, @intCast(module_index))),
-            .declaration = globalizer.globalDecl(self.offsets[located.module_index], located.definition.declaration),
-            .participants = participants,
-            .associated_arguments = associated,
-            .operations = .{ .start = operation_start, .len = @intCast(operations.len) },
-            .source = source,
-        });
-    }
-
-    fn bindDirectAbstractArguments(
-        self: *Resolver,
-        implementation_module_index: usize,
-        implementation: parameterized_storage.AbstractImplementation,
-        located: LocatedAbstractDefinition,
-        bindings: *generic_mod.Resolver.Bindings,
-    ) !void {
-        const definition_storage = &self.modules[located.module_index].semantic.parameterized_storage;
-        const implementation_storage = &self.modules[implementation_module_index].semantic.parameterized_storage;
-        for (0..implementation.arguments.len) |position| {
-            const argument_raw = implementation.arguments.start + @as(u32, @intCast(position));
-            const name = if (argument_raw < implementation_storage.abstract_argument_names.items.len)
-                self.modules[implementation_module_index].text(implementation_storage.abstract_argument_names.items[argument_raw])
-            else
-                "";
-            var target_raw: ?u32 = null;
-            for (0..located.definition.parameters.len) |offset| {
-                const raw = located.definition.parameters.start + @as(u32, @intCast(offset));
-                if ((name.len == 0 and position == offset) or std.mem.eql(u8, name, self.modules[located.module_index].text(definition_storage.comptime_parameters.items[raw].name))) {
-                    target_raw = raw;
-                    break;
-                }
-            }
-            const raw = target_raw orelse continue;
-            const parameter = definition_storage.comptime_parameters.items[raw];
-            switch (implementation_storage.abstract_arguments.items[argument_raw]) {
-                .none => {},
-                .type => |local| if (parameter.kind == .type) {
-                    bindings.types[raw] = globalizer.globalType(self.offsets[implementation_module_index], local);
-                },
-                .comptime_int => |value| if (parameter.kind == .comptime_int) {
-                    bindings.ints[raw] = value;
-                },
-            }
-        }
-    }
-
-    pub fn findConcreteImplementationConflict(self: *Resolver) !?ImplementationConflict {
-        for (self.modules, 0..) |*left_module, left_module_index| {
-            const left_storage = &left_module.semantic.parameterized_storage;
-            for (left_storage.abstract_implementations.items, 0..) |left, left_index| {
-                const left_abstract = try self.resolveDeclarationRef(left_module_index, left.abstract_ref, .abstract_type);
-                const left_type = globalizer.globalType(self.offsets[left_module_index], left.ty);
-
-                for (self.modules, 0..) |*right_module, right_module_index| {
-                    const right_storage = &right_module.semantic.parameterized_storage;
-                    for (right_storage.abstract_implementations.items, 0..) |right, right_index| {
-                        if (right_module_index < left_module_index or
-                            (right_module_index == left_module_index and right_index <= left_index)) continue;
-
-                        const right_abstract = try self.resolveDeclarationRef(right_module_index, right.abstract_ref, .abstract_type);
-                        if (right_abstract != left_abstract) continue;
-                        const right_type = globalizer.globalType(self.offsets[right_module_index], right.ty);
-                        if (!global_types.equal(self.graph, left_type, right_type)) continue;
-                        if (try self.directImplementationArgumentsEqual(
-                            left_module_index,
-                            left,
-                            right_module_index,
-                            right,
-                        )) continue;
-
-                        return .{
-                            .abstract_decl = left_abstract,
-                            .concrete = left_type,
-                            .source = self.sourceFor(right_module_index, right.source),
-                        };
-                    }
-                }
-            }
-        }
-        return null;
-    }
-
-    fn directImplementationArgumentsEqual(
-        self: *Resolver,
-        left_module_index: usize,
-        left: parameterized_storage.AbstractImplementation,
-        right_module_index: usize,
-        right: parameterized_storage.AbstractImplementation,
-    ) !bool {
-        if (left.arguments.len != right.arguments.len) return false;
-        const declaration = try self.resolveDeclarationRef(left_module_index, left.abstract_ref, .abstract_type);
-        const located = self.findAbstractDefinition(declaration) orelse return false;
-        const storage = &self.modules[located.module_index].semantic.parameterized_storage;
-        var lhs = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
-        defer lhs.deinit(self.allocator);
-        var rhs = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
-        defer rhs.deinit(self.allocator);
-        try self.bindDirectAbstractArguments(left_module_index, left, located, &lhs);
-        try self.bindDirectAbstractArguments(right_module_index, right, located, &rhs);
-        for (located.definition.parameters.start..located.definition.parameters.start + located.definition.parameters.len) |raw| {
-            if (storage.comptime_parameters.items[raw].kind == .type) {
-                if (lhs.types[raw]) |actual| {
-                    const other = rhs.types[raw] orelse return false;
-                    if (!global_types.equal(self.graph, actual, other)) return false;
-                } else if (rhs.types[raw] != null) return false;
-            } else if (lhs.ints[raw] != rhs.ints[raw]) return false;
-        }
-        return true;
-    }
-
     pub fn constraintDeclaration(
         self: *Resolver,
         module_index: usize,
@@ -3541,31 +2839,6 @@ pub const Resolver = struct {
         return self.implementsDepth(concrete, abstract_decl, 0);
     }
 
-    pub fn defaultType(
-        self: *Resolver,
-        abstract_decl: global_sg.GlobalDeclId,
-        arguments: primitives.Range(global_sg.GlobalGenericArgId),
-    ) !?global_sg.GlobalTypeId {
-        for (self.modules, 0..) |*module, module_index| {
-            for (module.semantic.parameterized_storage.abstract_defaults.items) |default| {
-                const candidate = try self.resolveDeclarationRef(module_index, default.abstract_ref, .abstract_type);
-                if (candidate != abstract_decl) continue;
-                self.stats.defaults += 1;
-                return globalizer.globalType(self.offsets[module_index], default.ty);
-            }
-            for (module.semantic.parameterized_storage.parameterized_abstract_defaults.items) |default| {
-                const candidate = try self.resolveDeclarationRef(module_index, default.abstract_ref, .abstract_type);
-                if (candidate != abstract_decl) continue;
-                var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, module.semantic.parameterized_storage.comptime_parameters.items.len);
-                defer bindings.deinit(self.allocator);
-                try self.generics.bindGlobalArguments(module_index, default.parameters, arguments, &bindings);
-                self.stats.defaults += 1;
-                return try self.generics.instantiateParameterizedType(module_index, default.ty, &bindings);
-            }
-        }
-        return null;
-    }
-
     pub fn typeAbstractUse(self: *const Resolver, ty: global_sg.GlobalTypeId) ?AbstractUse {
         return self.abstractUse(ty);
     }
@@ -3590,39 +2863,6 @@ pub const Resolver = struct {
         };
         if (self.graph.isBindingTypeUnresolved(binding_id) or self.graph.isTypeUnresolved(binding.ty)) return null;
         return self.abstractUse(binding.ty);
-    }
-
-    pub fn hasDefaultDeclaration(self: *Resolver, abstract_decl: global_sg.GlobalDeclId) !bool {
-        for (self.modules, 0..) |*module, module_index| {
-            for (module.semantic.parameterized_storage.abstract_defaults.items) |default|
-                if (try self.resolveDeclarationRef(module_index, default.abstract_ref, .abstract_type) == abstract_decl) return true;
-            for (module.semantic.parameterized_storage.parameterized_abstract_defaults.items) |default|
-                if (try self.resolveDeclarationRef(module_index, default.abstract_ref, .abstract_type) == abstract_decl) return true;
-        }
-        return false;
-    }
-
-    pub fn materializeRuntimeBindingDefaults(self: *Resolver) !bool {
-        var changed = false;
-        const interface_mask = try self.allocator.alloc(bool, self.graph.bindings.items.len);
-        defer self.allocator.free(interface_mask);
-        @memset(interface_mask, false);
-        for (self.graph.functions.items) |function| {
-            for (self.graph.binding_refs.items[function.input_bindings.start..][0..function.input_bindings.len]) |binding|
-                interface_mask[@intFromEnum(binding)] = true;
-            for (self.graph.binding_refs.items[function.output_bindings.start..][0..function.output_bindings.len]) |binding|
-                interface_mask[@intFromEnum(binding)] = true;
-        }
-        for (self.graph.bindings.items, 0..) |*binding, raw| {
-            const binding_id: global_sg.GlobalBindingId = @enumFromInt(@as(u32, @intCast(raw)));
-            const abstract_use = self.runtimeBindingAbstractWithInterfaceMask(binding_id, interface_mask) orelse continue;
-            const concrete = (try self.defaultType(abstract_use.declaration, abstract_use.arguments)) orelse continue;
-            if (self.graph.isTypeUnresolved(concrete)) continue;
-            if (binding.ty == concrete or global_types.equal(self.graph, binding.ty, concrete)) continue;
-            binding.ty = concrete;
-            changed = true;
-        }
-        return changed;
     }
 
     fn abstractUse(self: *const Resolver, ty: global_sg.GlobalTypeId) ?AbstractUse {
@@ -3819,8 +3059,8 @@ pub const Resolver = struct {
     fn isUnaryReceiverParticipantType(self: *const Resolver, located: LocatedAbstractDefinition, ty: @import("../module/parameterized/ir.zig").ParameterizedTypeId) bool {
         // Identify the receiver from the requirement's symbolic participant,
         // never from coincident concrete argument types. Explicit unary
-        // contracts use the same receiver normalization as implicit Self.
-        const participant = located.definition.implicit_participant orelse if (located.definition.hasExplicitParticipants() and located.definition.participants.len == 1)
+        // contracts identify receivers through their declared participant.
+        const participant = if (located.definition.participants.len == 1)
             @as(ir.ComptimeParameterId, @enumFromInt(located.definition.participants.start))
         else
             return false;
@@ -3916,43 +3156,6 @@ pub const Resolver = struct {
             .generic => |generic| if (self.findAbstractDefinition(generic.base) != null) generic.base else null,
             else => null,
         };
-    }
-
-    fn bindParameterizedImplementation(
-        self: *Resolver,
-        module_index: usize,
-        concrete: global_sg.GlobalTypeId,
-        parameterized: parameterized_storage.ParameterizedAbstractImplementation,
-        bindings: *generic_mod.Resolver.Bindings,
-    ) !bool {
-        const module = &self.modules[module_index];
-
-        if (parameterized.concrete_type_pattern) |pattern| {
-            if (!try self.inferConstraintTypePattern(module_index, pattern, concrete, bindings)) return false;
-            return self.validateParameterizedImplementationConstraints(module_index, parameterized.parameters, bindings);
-        }
-
-        const concrete_name = parameterized.concrete_name orelse return false;
-        const wanted = module.text(concrete_name);
-        const identity = switch (self.graph.types.items[@intFromEnum(concrete)]) {
-            .generic => |value| value,
-            .declared => |decl| {
-                if (!std.mem.eql(u8, self.graph.text(self.graph.declarations.items[@intFromEnum(decl)].name), wanted)) return false;
-                return parameterized.parameters.len == 0;
-            },
-            else => return false,
-        };
-        if (!std.mem.eql(u8, self.graph.text(self.graph.declarations.items[@intFromEnum(identity.base)].name), wanted)) return false;
-        if (identity.arguments.len != parameterized.concrete_parameter_count) return false;
-
-        // Only declared parameters form the concrete generic identity.
-        // Hidden associated parameters are inferred by the bounds below.
-        const concrete_parameters: primitives.Range(ir.ComptimeParameterId) = .{
-            .start = parameterized.parameters.start,
-            .len = parameterized.concrete_parameter_count,
-        };
-        try self.generics.bindGlobalArguments(module_index, concrete_parameters, identity.arguments, bindings);
-        return self.validateParameterizedImplementationConstraints(module_index, parameterized.parameters, bindings);
     }
 
     pub fn validateParameterizedImplementationConstraints(

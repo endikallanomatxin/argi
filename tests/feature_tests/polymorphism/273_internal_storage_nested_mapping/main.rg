@@ -48,9 +48,9 @@ forward_take(.slot: $&Virtual#(SlotProtocol)) -> (.value: Tracked) := {
     value = take(slot)
 }
 
-static_put(.slot: $&SlotProtocol, .value: Tracked) -> () := { put(slot, ~value) }
+static_put#(.SlotType: Type: SlotProtocol#(SlotType))(.slot: $&SlotType, .value: Tracked) -> () := { put(slot, ~value) }
 
-static_take(.slot: $&SlotProtocol) -> (.value: Tracked) := { value = take(slot) }
+static_take#(.SlotType: Type: SlotProtocol#(SlotType))(.slot: $&SlotType) -> (.value: Tracked) := { value = take(slot) }
 
 main(.system: System) -> (.status_code: Int32 = 0) := {
     assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)

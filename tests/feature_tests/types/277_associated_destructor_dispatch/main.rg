@@ -14,7 +14,7 @@ implement Deinit#(Other) (
         record_drop(.amount = 10)
     }
 )
-exercise(.allocator: $&Allocator) -> () := {
+exercise#(.AllocatorType: Type: Allocator#(AllocatorType))(.allocator: $&AllocatorType) -> () := {
     assume allocator
     first ::= Box#(.t: Int32)(.value = 4)
     second ::= Box#(.t: Char)(.value = 'a')

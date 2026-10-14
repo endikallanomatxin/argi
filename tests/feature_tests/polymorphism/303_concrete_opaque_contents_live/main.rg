@@ -43,7 +43,7 @@ _impl_drain_Slot := (.self: $&Slot, .empty: Bool) -> (.result: ?Int32)  {
     result = ..none
 }
 
-static_drain(.slot: $&SlotProtocol, .empty: Bool) -> (.result: ?Int32) := {
+static_drain#(.SlotType: Type: SlotProtocol#(SlotType))(.slot: $&SlotType, .empty: Bool) -> (.result: ?Int32) := {
     result = drain(slot, empty)
 }
 

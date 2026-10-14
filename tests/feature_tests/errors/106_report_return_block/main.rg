@@ -15,7 +15,7 @@ attempt(.fail: Bool) -> (.result: Errable#(Int32, (..missing))) := {
     if fail { result = ..error(.reason = ..missing) } else { result = ..ok 7 }
 }
 
-finish(.fail: Bool, .writer: $&Writer = reach writer) -> (.result: Int32 = 0) := {
+finish#(.WriterType: Type: Writer#(WriterType))(.fail: Bool, .writer: $&WriterType = reach writer) -> (.result: Int32 = 0) := {
     owner ::= Owner(1)
     value ::= attempt(fail)!!! {
         action_owner ::= Owner(2)
@@ -25,10 +25,10 @@ finish(.fail: Bool, .writer: $&Writer = reach writer) -> (.result: Int32 = 0) :=
 }
 
 unwrap#(
-        .t : Type
+        .t : Type, .WriterType: Type: Writer#(WriterType)
     )(
         .input  : Errable#(t, (..missing)),
-        .writer : $&Writer                  = reach writer
+        .writer : $&WriterType                  = reach writer
     ) -> (
         .result : Int32 = 0
     ) := {
@@ -44,7 +44,7 @@ condition(.fail: Bool) -> (.result: Errable#(Bool, (..missing))) := {
     if fail { result = ..error(.reason = ..missing) } else { result = ..ok true }
 }
 
-check_conditions(.fail: Bool, .writer: $&Writer = reach writer) -> (.result: Int32 = 0) := {
+check_conditions#(.WriterType: Type: Writer#(WriterType))(.fail: Bool, .writer: $&WriterType = reach writer) -> (.result: Int32 = 0) := {
     if condition(false)!!! { result = 1 }
     if [condition(fail)!!! { result = 13 }] { result = 2 }
 }

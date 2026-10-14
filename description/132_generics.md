@@ -57,7 +57,7 @@ has an inferred error set. Supplying a reasons type retains an explicit set.
 ### Bounds
 
 ```argi
-sum#(.t: Type: Number) (.xs: []t) -> (.result: t)
+sum#(.t: Type: Number#(t)) (.xs: []t) -> (.result: t)
 -- t must implement the Number abstract
 ```
 
@@ -76,8 +76,8 @@ The intended order is:
 This is the compact system:
 
 ```argi
-sum#(.t: Type: Number) (.xs: []t) -> (.result: t)
-BufferedReader#(.base_type: Type: Reader) : Type = ...
+sum#(.t: Type: Number#(t)) (.xs: []t) -> (.result: t)
+BufferedReader#(.base_type: Type: Reader#(base_type)) : Type = ...
 ```
 
 Meaning:
@@ -85,12 +85,12 @@ Meaning:
 - `.t` is still a `Type` parameter
 - `Number` or `Reader` is not the parameter type itself
 - it is a static check saying that the concrete type bound to that parameter
-  must implement the given abstract
+  must satisfy the given contract
 
 This option is attractive because it keeps everything in one place:
 
 - `#(...)` declares the comptime parameters
-- the `: Abstract` suffix expresses a simple implements-check
+- the `: Contract#(participants)` suffix checks selected conformance
 
 This is enough for many useful cases:
 
@@ -139,8 +139,8 @@ For example:
 ```argi
 copy#(.r: Type, .w: Type)
 where(
-    r implements Reader,
-    w implements Writer,
+    Reader#(r),
+    Writer#(w),
 )(
     .reader: $&r,
     .writer: $&w,
@@ -156,7 +156,7 @@ ever taken it should be understood as:
 Its likely value would be cases that become awkward or impossible to express
 cleanly with Option A alone, such as:
 
-- expressing implements-checks outside the parameter declaration itself
+- expressing conformance checks outside the parameter declaration itself
 - arithmetic relations between comptime values when those relations are not
   already encoded naturally in the signature
 - future higher-order constraints if iterators, matrices or algebraic traits end
@@ -172,16 +172,18 @@ needed.
 
 In short:
 
-- implement `#(.t: Type: SomeAbstract)` well
+- implement `#(.t: Type: Capability#(t))` well
 - keep pushing signature-based composition first
 - only add `where(...)` if the simple bounded model is no longer enough
 
 
 ## Interaction with Multiple Dispatch
 
-* **Identity** = `name + parameter type pattern`.
-* The `#(...)` block is **not** part of the identity; it only **declares** the generics used.
-* The same signature cannot be duplicated with or without `#(...)` (redefinition).
+An ordinary function name has one identity in its module, regardless of its
+runtime signature or compile-time parameter shape. Generic declarations may
+specialize that identity, but cannot define overload families. Contract operations
+have identities within their contract; explicit participant patterns select the
+most specific implementation. See [Contract dispatch](131_multiple_dispatch.md).
 
 
 ## Constructor parameters

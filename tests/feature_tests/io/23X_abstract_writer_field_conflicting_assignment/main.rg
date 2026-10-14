@@ -7,7 +7,7 @@ implement Init#(FirstWriter, ()) (
     }
 )
 
-SecondWriter: Type = ()
+SecondWriter: Type = (.marker: Int32 = 0)
 
 implement Init#(SecondWriter, ()) (
     .Result: Type = SecondWriter
@@ -16,19 +16,19 @@ implement Init#(SecondWriter, ()) (
     }
 )
 
-Holder: Type = (
-    .writer : $&Writer
+Holder#(.WriterType: Type: Writer#(WriterType)): Type = (
+    .writer : $&WriterType
 )
 
 set_first(
-        .p      : $&Holder,
+        .p      : $&Holder#(FirstWriter),
         .writer : $&FirstWriter,
     ) -> () := {
     p&.writer = writer
 }
 
 set_second(
-        .p      : $&Holder,
+        .p      : $&Holder#(FirstWriter),
         .writer : $&SecondWriter,
     ) -> () := {
     p&.writer = writer
@@ -37,7 +37,7 @@ set_second(
 main() -> (.status_code: Int32) := {
     first :: FirstWriter = FirstWriter()
     second :: SecondWriter = SecondWriter()
-    holder :: Holder
+    holder :: Holder#(FirstWriter)
 
     set_first(.p = $&holder, .writer = $&first)
     set_second(.p = $&holder, .writer = $&second)

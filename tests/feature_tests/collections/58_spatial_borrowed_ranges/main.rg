@@ -3,7 +3,7 @@ window(.array: $&DynamicArray#(.t: UIntNative), .start: UIntNative, .count: UInt
     result = slice(.self = &borrowed_view, .start = start, .count = count).result
 }
 
-exercise(.allocator: $&Allocator) -> (.status: Int32 = 0) := {
+exercise#(.AllocatorType: Type: Allocator#(AllocatorType))(.allocator: $&AllocatorType) -> (.status: Int32 = 0) := {
     array ::= unwrap_or_abort(.value = DynamicArray#(.t: UIntNative)(.allocator = allocator, .capacity = 8))
     empty ::= view(.array = $&array)
     if length(.self = &empty).count != 0 { status = 1 }

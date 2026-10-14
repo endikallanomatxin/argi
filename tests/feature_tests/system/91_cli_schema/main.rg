@@ -56,7 +56,7 @@ run_main(.system: System) -> (.result: Errable#(.t: Void, .reasons: CliReasons) 
             ] { abort } } }
 }
 
-main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+main#(.WriterType: Type: Writer#(WriterType))(.system: System, .writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
     run_main(.system = system)!!!
     status_code = 0
 }

@@ -19,10 +19,10 @@ implement Deinit#(DummyWriter) (
     }
 )
 
-append_test_byte(
+append_test_byte#(.AllocatorType: Type: Allocator#(AllocatorType))(
         .self      : $&DummyWriter,
         .byte      : UInt8,
-        .allocator : $&Allocator
+        .allocator : $&AllocatorType
     ) -> (
         .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
     ) := {

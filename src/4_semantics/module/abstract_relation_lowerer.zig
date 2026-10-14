@@ -13,9 +13,6 @@ const primitives = @import("../primitives/schema.zig");
 
 pub const Stats = struct {
     implementations: u32 = 0,
-    implementation_parameterized_forms: u32 = 0,
-    defaults: u32 = 0,
-    default_parameterized_forms: u32 = 0,
 };
 
 const Param = parameterized_lowerer.ParameterBinding;
@@ -68,26 +65,6 @@ const Context = struct {
                     try self.lowerConformance(node, self.tree.contractConformance(node).?);
                     stats.implementations += 1;
                 },
-                .abstract_implements => {
-                    const relation = self.tree.abstractImplements(node).?;
-                    if (hasParams(relation.generic_params, relation.generic_params_struct)) {
-                        try self.lowerImplementationParameterized(node, relation);
-                        stats.implementation_parameterized_forms += 1;
-                    } else {
-                        try self.lowerImplementation(node, relation);
-                        stats.implementations += 1;
-                    }
-                },
-                .abstract_defaultsto => {
-                    const relation = self.tree.abstractDefaultsTo(node).?;
-                    if (hasParams(relation.generic_params, relation.generic_params_struct)) {
-                        try self.lowerDefaultParameterized(node, relation);
-                        stats.default_parameterized_forms += 1;
-                    } else {
-                        try self.lowerDefault(node, relation);
-                        stats.defaults += 1;
-                    }
-                },
                 else => {},
             };
         }
@@ -104,22 +81,20 @@ const Context = struct {
 
     fn lowerConformance(self: *Context, node: syn.NodeIndex, relation: syn.ContractConformance) !void {
         self.params.clearRetainingCapacity();
-        if (relation.implementation_members == null and hasParams(relation.generic_params, relation.generic_params_struct))
-            try self.conformanceError(node, "generic participant conformances are not supported yet");
-        const parameters = try self.lowerParams(relation.generic_params, relation.generic_params_struct, null);
+        const parameters = try self.lowerParams(relation.generic_params, relation.generic_params_struct);
         const syntax_type = self.tree.syntaxType(relation.contract_type) orelse return error.ExpectedContractType;
         const base_node = if (syntax_type == .generic) syntax_type.generic.base else relation.contract_type;
         const base = self.tree.syntaxType(base_node) orelse return error.ExpectedContractType;
-        if (base != .name) try self.conformanceError(node, "satisfies requires a named contract");
+        if (base != .name) try self.conformanceError(node, "implement requires a named contract");
         const name = self.tree.tokenTextFromSource(self.source, base.name.name_token);
         const reference = try self.declarationRef(base_node, name, .abstract);
         const participants = try self.lowerConformanceArguments(if (syntax_type == .generic) syntax_type.generic.arguments else null);
         var operations: primitives.Range(parameterized_storage.ContractOperationId) = .{ .start = 0, .len = 0 };
-        const associated = if (relation.implementation_members) |members| blk: {
+        const associated = blk: {
             var arguments: std.ArrayList(ir.GenericArgument) = .empty;
             defer arguments.deinit(self.allocator);
             const operation_start: u32 = @intCast(self.graph.semantic.parameterized_storage.contract_operations.items.len);
-            for (self.tree.structTypeLiteral(members).?.fields) |member_node| {
+            for (self.tree.structTypeLiteral(relation.implementation_members).?.fields) |member_node| {
                 const member = self.tree.structTypeField(member_node).?;
                 const member_name = self.tree.tokenTextFromSource(self.source, member.name_token);
                 const value = member.default_value orelse return error.InvalidContractArgument;
@@ -187,10 +162,9 @@ const Context = struct {
             }
             operations = .{ .start = operation_start, .len = @intCast(self.graph.semantic.parameterized_storage.contract_operations.items.len - operation_start) };
             break :blk try self.publishConformanceArguments(arguments.items);
-        } else try self.lowerConformanceArguments(relation.associated_arguments);
+        };
         try self.graph.semantic.parameterized_storage.contract_conformances.append(self.allocator, .{
             .parameters = parameters,
-            .explicit_operations = relation.implementation_members != null,
             .operations = operations,
             .contract_ref = reference,
             .participants = participants,
@@ -250,45 +224,6 @@ const Context = struct {
         };
     }
 
-    fn lowerImplementation(self: *Context, node: syn.NodeIndex, relation: syn.AbstractImplements) !void {
-        const concrete_name = self.tree.tokenTextFromSource(self.source, relation.concrete_name_token);
-        const concrete = try self.moduleTypeFromName(node, concrete_name, null);
-        const parsed = try self.abstractReference(relation.abstract_type, false);
-        const arg_start: u32 = @intCast(self.graph.semantic.parameterized_storage.abstract_arguments.items.len);
-        for (parsed.module_arguments) |argument| try self.graph.semantic.parameterized_storage.abstract_arguments.append(self.allocator, argument);
-        defer self.allocator.free(parsed.module_arguments);
-        try self.graph.semantic.parameterized_storage.abstract_implementations.append(self.allocator, .{
-            .abstract_ref = parsed.reference,
-            .ty = concrete,
-            .arguments = .{ .start = arg_start, .len = @intCast(parsed.module_arguments.len) },
-            .source = self.sourceRef(node),
-            .domains = try self.lowerDomainMappings(relation.domain_mapping),
-        });
-    }
-
-    fn lowerImplementationParameterized(self: *Context, node: syn.NodeIndex, relation: syn.AbstractImplements) !void {
-        self.params.clearRetainingCapacity();
-        const params = try self.lowerParams(relation.generic_params, relation.generic_params_struct, relation.abstract_type);
-        const concrete_parameter_count: u32 = @intCast(if (relation.generic_params_struct) |params_node|
-            self.tree.structTypeLiteral(params_node).?.fields.len
-        else
-            relation.generic_params.len);
-        const parsed = try self.abstractReference(relation.abstract_type, true);
-        defer self.allocator.free(parsed.module_arguments);
-        const concrete_name_text = self.tree.tokenTextFromSource(self.source, relation.concrete_name_token);
-        const concrete_name = try self.writer.addString(concrete_name_text);
-        try self.graph.semantic.parameterized_storage.parameterized_abstract_implementations.append(self.allocator, .{
-            .abstract_ref = parsed.reference,
-            .parameters = params,
-            .concrete_type_pattern = try self.lowerCompactConcretePattern(concrete_name_text),
-            .concrete_name = concrete_name,
-            .concrete_parameter_count = concrete_parameter_count,
-            .arguments = parsed.parameterized_arguments,
-            .source = self.sourceRef(node),
-            .domains = try self.lowerDomainMappings(relation.domain_mapping),
-        });
-    }
-
     fn lowerDomainMappings(self: *Context, optional: ?syn.NodeIndex) ![]const parameterized_storage.DomainMapping {
         const node = optional orelse return &.{};
         var result: std.ArrayList(parameterized_storage.DomainMapping) = .empty;
@@ -326,128 +261,7 @@ const Context = struct {
         if (self.tree.tag(node) != .identifier or !std.mem.eql(u8, self.tree.tokenTextFromSource(self.source, self.tree.mainToken(node)), "self")) return error.InvalidStorageDomainMapping;
     }
 
-    fn lowerCompactConcretePattern(self: *Context, concrete_name: []const u8) !?ir.ParameterizedTypeId {
-        // Array's nominal generic surface is deliberately compacted into the
-        // semantic array shape. Preserve that shape in abstract implementation
-        // templates so conformance does not depend on a nominal GlobalTypeId.
-        if (!std.mem.eql(u8, concrete_name, "Array")) return null;
-
-        var length_parameter: ?ir.ComptimeParameterId = null;
-        var element_parameter: ?ir.ComptimeParameterId = null;
-        for (self.params.items) |param| {
-            if (std.mem.eql(u8, param.name, "n") and param.kind == .comptime_int)
-                length_parameter = param.id
-            else if (std.mem.eql(u8, param.name, "t") and param.kind == .type)
-                element_parameter = param.id;
-        }
-        const length = length_parameter orelse return error.InvalidArrayAbstractImplementation;
-        const element = element_parameter orelse return error.InvalidArrayAbstractImplementation;
-
-        const length_id: ir.ParameterizedIntExprId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.parameterized_storage.ir.int_expressions.items.len)));
-        try self.graph.semantic.parameterized_storage.ir.int_expressions.append(self.allocator, .{ .parameter = length });
-        const element_id: ir.ParameterizedTypeId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.parameterized_storage.ir.types.items.len)));
-        try self.graph.semantic.parameterized_storage.ir.types.append(self.allocator, .{ .parameter = element });
-        const array_id: ir.ParameterizedTypeId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.parameterized_storage.ir.types.items.len)));
-        try self.graph.semantic.parameterized_storage.ir.types.append(self.allocator, .{ .array = .{
-            .length = length_id,
-            .element = element_id,
-        } });
-        return array_id;
-    }
-
-    fn lowerDefault(self: *Context, node: syn.NodeIndex, relation: syn.AbstractDefaultsTo) !void {
-        const abstract_name = self.tree.tokenTextFromSource(self.source, relation.name_token);
-        const abstract_ref = try self.declarationRef(node, abstract_name, .abstract);
-        const ty = try self.lowerModuleType(relation.type_node);
-        try self.graph.semantic.parameterized_storage.abstract_defaults.append(self.allocator, .{
-            .abstract_ref = abstract_ref,
-            .ty = ty,
-            .source = self.sourceRef(node),
-        });
-    }
-
-    fn lowerDefaultParameterized(self: *Context, node: syn.NodeIndex, relation: syn.AbstractDefaultsTo) !void {
-        self.params.clearRetainingCapacity();
-        const params = try self.lowerParams(relation.generic_params, relation.generic_params_struct, null);
-        const abstract_name = self.tree.tokenTextFromSource(self.source, relation.name_token);
-        const abstract_ref = try self.declarationRef(node, abstract_name, .abstract);
-        const ty = try self.lowerParameterizedType(relation.type_node);
-        try self.graph.semantic.parameterized_storage.parameterized_abstract_defaults.append(self.allocator, .{
-            .abstract_ref = abstract_ref,
-            .parameters = params,
-            .ty = ty,
-            .source = self.sourceRef(node),
-        });
-    }
-
-    const ParsedAbstract = struct {
-        reference: ir.DeclarationRef,
-        module_arguments: []parameterized_storage.AbstractArgument,
-        parameterized_arguments: primitives.Range(ir.ParameterizedGenericArgId),
-    };
-
-    fn abstractReference(self: *Context, node: syn.NodeIndex, parameterized_mode: bool) !ParsedAbstract {
-        const syntax_type = self.tree.syntaxType(node) orelse return error.ExpectedAbstractType;
-        var base_node = node;
-        var arguments_node: ?syn.NodeIndex = null;
-        switch (syntax_type) {
-            .name => {},
-            .generic => |generic| {
-                base_node = generic.base;
-                arguments_node = generic.arguments;
-            },
-            else => return error.ExpectedAbstractType,
-        }
-        const base = self.tree.syntaxType(base_node).?.name;
-        const name = self.tree.tokenTextFromSource(self.source, base.name_token);
-        const reference = try self.declarationRef(base_node, name, .abstract);
-        var module_args: std.ArrayList(parameterized_storage.AbstractArgument) = .empty;
-        errdefer module_args.deinit(self.allocator);
-        var parameterized_args: std.ArrayList(ir.GenericArgument) = .empty;
-        defer parameterized_args.deinit(self.allocator);
-        if (arguments_node) |args_node| {
-            const literal = self.tree.structTypeLiteral(args_node) orelse return error.InvalidAbstractArguments;
-            for (literal.fields) |field_node| {
-                const field = self.tree.structTypeField(field_node) orelse return error.InvalidAbstractArgument;
-                const arg_name = try self.writer.addString(type_arguments.name(self.tree, self.source, field, ""));
-                if (parameterized_mode) {
-                    if (field.type_node) |type_node| {
-                        try parameterized_args.append(self.allocator, .{
-                            .name = arg_name,
-                            .value = .{ .type = try self.lowerParameterizedType(type_node) },
-                        });
-                    } else if (field.default_value) |value_node| {
-                        var lowerer = self.parameterizedContext();
-                        defer lowerer.bindings.deinit();
-                        try parameterized_args.append(self.allocator, .{
-                            .name = arg_name,
-                            .value = try lowerer.lowerGenericValue(value_node, false),
-                        });
-                    } else return error.InvalidAbstractArgument;
-                } else {
-                    try self.graph.semantic.parameterized_storage.abstract_argument_names.append(self.allocator, arg_name);
-                    if (field.type_node) |type_node|
-                        try module_args.append(self.allocator, .{ .type = try self.lowerModuleType(type_node) })
-                    else if (field.default_value) |value_node|
-                        try module_args.append(self.allocator, .{ .comptime_int = try self.evalInt(value_node) })
-                    else
-                        try module_args.append(self.allocator, .none);
-                }
-            }
-        }
-        const parameterized_start: u32 = @intCast(self.graph.semantic.parameterized_storage.ir.generic_arguments.items.len);
-        try self.graph.semantic.parameterized_storage.ir.generic_arguments.appendSlice(self.allocator, parameterized_args.items);
-        return .{
-            .reference = reference,
-            .module_arguments = try module_args.toOwnedSlice(self.allocator),
-            .parameterized_arguments = .{
-                .start = parameterized_start,
-                .len = @intCast(parameterized_args.items.len),
-            },
-        };
-    }
-
-    fn lowerParams(self: *Context, params: []const syn.NodeIndex, params_struct: ?syn.NodeIndex, associated_target: ?syn.NodeIndex) !primitives.Range(ir.ComptimeParameterId) {
+    fn lowerParams(self: *Context, params: []const syn.NodeIndex, params_struct: ?syn.NodeIndex) !primitives.Range(ir.ComptimeParameterId) {
         const start: u32 = @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len);
         if (params_struct) |node| {
             const literal = self.tree.structTypeLiteral(node) orelse return error.InvalidGenericParameters;
@@ -466,18 +280,6 @@ const Context = struct {
                     .kind = kind,
                 });
                 try self.params.append(.{ .name = name_text, .id = id, .kind = kind });
-            }
-
-            // An implements relation can infer additional type parameters
-            // from associated arguments in its bounds and target abstract.
-            // Register them before lowering bounds so their names become
-            // parameter IDs rather than unresolved external type references.
-            if (associated_target) |target| {
-                for (literal.fields) |field_node| {
-                    const field = self.tree.structTypeField(field_node) orelse return error.InvalidGenericParameter;
-                    if (field.type_node) |type_node| try self.collectHiddenArgumentParameters(type_node);
-                }
-                try self.collectHiddenArgumentParameters(target);
             }
 
             for (literal.fields, 0..) |field_node, offset| {
@@ -506,61 +308,12 @@ const Context = struct {
                 });
                 try self.params.append(.{ .name = name_text, .id = id, .kind = .type });
             }
-            if (associated_target) |target| try self.collectHiddenArgumentParameters(target);
         }
         return .{ .start = start, .len = @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len - start) };
     }
 
-    fn collectHiddenArgumentParameters(self: *Context, node: syn.NodeIndex) !void {
-        const syntax_type = self.tree.syntaxType(node) orelse return;
-        if (syntax_type != .generic) return;
-        const literal = self.tree.structTypeLiteral(syntax_type.generic.arguments) orelse return;
-        for (literal.fields) |field_node| {
-            const field = self.tree.structTypeField(field_node) orelse continue;
-            if (field.type_node) |child| try self.collectHiddenTypeParameters(child);
-        }
-    }
-
-    fn collectHiddenTypeParameters(self: *Context, node: syn.NodeIndex) anyerror!void {
-        const syntax_type = self.tree.syntaxType(node) orelse return;
-        switch (syntax_type) {
-            .name => |name| {
-                if (name.qualifier_token != null) return;
-                const text = self.tree.tokenTextFromSource(self.source, name.name_token);
-                if (primitives.builtinTypeNamedForTarget(text, self.graph.target.stdTarget()) != null or self.localType(text) != null) return;
-                for (self.params.items) |parameter| if (std.mem.eql(u8, parameter.name, text)) return;
-                const id: ir.ComptimeParameterId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len)));
-                try self.graph.semantic.parameterized_storage.comptime_parameters.append(self.allocator, .{
-                    .name = try self.writer.addString(text),
-                    .kind = .type,
-                });
-                try self.params.append(.{ .name = text, .id = id, .kind = .type });
-            },
-            .pointer => |pointer| try self.collectHiddenTypeParameters(pointer.child),
-            .nullable, .inferred_errable => |child| try self.collectHiddenTypeParameters(child),
-            .array => |array| try self.collectHiddenTypeParameters(array.element),
-            .projection => |value| try self.collectHiddenTypeParameters(value.base),
-            .struct_literal => |literal| for (literal.fields) |field_node| {
-                const field = self.tree.structTypeField(field_node) orelse continue;
-                if (field.type_node) |child| try self.collectHiddenTypeParameters(child);
-            },
-            .choice_literal => |literal| for (literal.variants) |variant_node| {
-                const variant = self.tree.choiceTypeVariant(variant_node) orelse continue;
-                if (variant.payload_type) |child| try self.collectHiddenTypeParameters(child);
-            },
-            .generic => |generic| {
-                const literal = self.tree.structTypeLiteral(generic.arguments) orelse return;
-                for (literal.fields) |field_node| {
-                    const field = self.tree.structTypeField(field_node) orelse continue;
-                    if (field.type_node) |child| try self.collectHiddenTypeParameters(child);
-                }
-            },
-        }
-    }
-
     fn lowerParameterizedType(self: *Context, node: syn.NodeIndex) !ir.ParameterizedTypeId {
         var lowerer = self.parameterizedContext();
-        defer lowerer.abstract_parameters.deinit();
         defer lowerer.bindings.deinit();
         return lowerer.lowerType(node, false);
     }
@@ -572,7 +325,6 @@ const Context = struct {
             .files = self.files,
             .writer = self.writer,
             .parameters = self.params,
-            .abstract_parameters = .init(self.allocator),
             .bindings = .init(self.allocator),
             .file_index = self.file_index,
             .tree = self.tree,
@@ -593,17 +345,6 @@ const Context = struct {
         return ty;
     }
 
-    fn moduleTypeFromName(self: *Context, node: syn.NodeIndex, name: []const u8, qualifier: ?[]const u8) !entities.ModuleTypeId {
-        if (qualifier == null) if (self.localType(name)) |decl| return self.graph.declarations.items[@intFromEnum(decl)].type_id.?;
-        const external = try self.writer.addExternalRef(.{
-            .kind = .type,
-            .module_path = if (qualifier) |text| try self.writer.addString(text) else null,
-            .name = try self.writer.addString(name),
-            .source = self.sourceRef(node),
-        });
-        return self.writer.addExternalType(external);
-    }
-
     fn declarationRef(self: *Context, node: syn.NodeIndex, name: []const u8, kind: entities.ExternalKind) !ir.DeclarationRef {
         const syntax_type = self.tree.syntaxType(node);
         const qualifier = if (syntax_type) |ty| (if (ty == .name) ty.name.qualifier_token else null) else null;
@@ -621,101 +362,12 @@ const Context = struct {
         return .{ .external = external };
     }
 
-    fn lowerParameterizedInt(self: *Context, node: syn.NodeIndex) anyerror!ir.ParameterizedIntExprId {
-        if (self.tree.literal(node)) |literal| {
-            var value = std.fmt.parseInt(i64, self.tree.tokenTextFromSource(self.source, literal.token), 0) catch return error.InvalidComptimeInt;
-            if (literal.negative) value = -value;
-            return self.addInt(.{ .literal = value });
-        }
-        if (self.tree.tag(node) == .identifier) {
-            const text = self.tree.tokenTextFromSource(self.source, self.tree.mainToken(node));
-            for (self.params.items) |param| if (param.kind == .comptime_int and std.mem.eql(u8, param.name, text))
-                return self.addInt(.{ .parameter = param.id });
-        }
-        const op = self.tree.binaryOperation(node) orelse return error.InvalidComptimeInt;
-        const operator: ir.IntBinaryOperator = switch (self.tree.tag(node)) {
-            .binary_add => .add,
-            .binary_subtract => .subtract,
-            .binary_multiply => .multiply,
-            .binary_divide => .divide,
-            .binary_modulo => .modulo,
-            else => return error.InvalidComptimeInt,
-        };
-        return self.addInt(.{ .binary = .{
-            .operator = operator,
-            .left = try self.lowerParameterizedInt(op.lhs),
-            .right = try self.lowerParameterizedInt(op.rhs),
-        } });
-    }
-
-    fn lowerParameterizedIntFromToken(self: *Context, token: syn.TokenIndex) !ir.ParameterizedIntExprId {
-        const text = self.tree.tokenTextFromSource(self.source, token);
-        for (self.params.items) |param| if (param.kind == .comptime_int and std.mem.eql(u8, param.name, text))
-            return self.addInt(.{ .parameter = param.id });
-        return self.addInt(.{ .literal = try std.fmt.parseInt(i64, text, 0) });
-    }
-
-    fn evalInt(self: *Context, node: syn.NodeIndex) !i64 {
-        if (self.tree.literal(node)) |literal| {
-            var value = try std.fmt.parseInt(i64, self.tree.tokenTextFromSource(self.source, literal.token), 0);
-            if (literal.negative) value = -value;
-            return value;
-        }
-        const op = self.tree.binaryOperation(node) orelse return error.InvalidComptimeInt;
-        const left = try self.evalInt(op.lhs);
-        const right = try self.evalInt(op.rhs);
-        return switch (self.tree.tag(node)) {
-            .binary_add => left + right,
-            .binary_subtract => left - right,
-            .binary_multiply => left * right,
-            .binary_divide => @divTrunc(left, right),
-            .binary_modulo => @mod(left, right),
-            else => error.InvalidComptimeInt,
-        };
-    }
-
-    fn addParameterizedType(self: *Context, value: ir.Type) !ir.ParameterizedTypeId {
-        const id: ir.ParameterizedTypeId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.parameterized_storage.ir.types.items.len)));
-        try self.graph.semantic.parameterized_storage.ir.types.append(self.allocator, value);
-        return id;
-    }
-
-    fn addInt(self: *Context, value: ir.IntExpression) !ir.ParameterizedIntExprId {
-        const id: ir.ParameterizedIntExprId = @enumFromInt(@as(u32, @intCast(self.graph.semantic.parameterized_storage.ir.int_expressions.items.len)));
-        try self.graph.semantic.parameterized_storage.ir.int_expressions.append(self.allocator, value);
-        return id;
-    }
-
-    fn moduleBuiltin(self: *Context, builtin: primitives.BuiltinType) !entities.ModuleTypeId {
-        for (self.graph.types.items, 0..) |existing, index| switch (existing) {
-            .builtin => |value| if (value == builtin) return @enumFromInt(@as(u32, @intCast(index))),
-            else => {},
-        };
-        return self.writer.addResolvedType(.{ .builtin = builtin });
-    }
-
-    fn localType(self: *Context, name: []const u8) ?entities.ModuleDeclId {
-        for (self.graph.declarationsNamed(name)) |decl| switch (self.graph.declarations.items[@intFromEnum(decl)].kind) {
-            .type, .abstract_type => return decl,
-            else => {},
-        };
-        return null;
-    }
-
     fn sourceRef(self: *Context, node: syn.NodeIndex) primitives.SourceRef {
         return .{ .file_index = self.file_index, .offset = self.tree.location(node).offset };
     }
 };
 
-fn hasParams(params: []const syn.NodeIndex, params_struct: ?syn.NodeIndex) bool {
-    return params.len != 0 or params_struct != null;
-}
-
 fn isTypeName(tree: *const syn.FileSyntaxTree, source: []const u8, node: syn.NodeIndex, expected: []const u8) bool {
     const ty = tree.syntaxType(node) orelse return false;
     return ty == .name and ty.name.qualifier_token == null and std.mem.eql(u8, tree.tokenTextFromSource(source, ty.name.name_token), expected);
-}
-
-test "abstract relation lowering owns both concrete and parameterized forms" {
-    try std.testing.expect(@sizeOf(parameterized_storage.ParameterizedAbstractDefault) <= 32);
 }

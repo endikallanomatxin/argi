@@ -52,11 +52,11 @@ forward_take(.slot: $&Virtual#(SlotProtocol), .present: Bool) -> (.value: ?Track
     value = take(slot, present)
 }
 
-static_take(.slot: $&SlotProtocol, .present: Bool) -> (.value: ?Tracked) := {
+static_take#(.SlotType: Type: SlotProtocol#(SlotType))(.slot: $&SlotType, .present: Bool) -> (.value: ?Tracked) := {
     value = take(slot, present)
 }
 
-escape(.allocator: $&Allocator) -> (.value: ?Tracked) := {
+escape#(.AllocatorType: Type: Allocator#(AllocatorType))(.allocator: $&AllocatorType) -> (.value: ?Tracked) := {
     drops :: Int32 = 0
     implementation ::= Slot(unwrap_or_abort(allocate#(Tracked)(allocator)))
     slot ::= to_virtual#(SlotProtocol)($&implementation)

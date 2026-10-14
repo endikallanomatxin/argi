@@ -1,4 +1,4 @@
-ExampleAbstract : Abstract = ()
+ExampleAbstract#(.Participant: Type): Contract = ()
 
 main () -> (.status_code: Int32) := {
     x : ExampleAbstract

@@ -1,4 +1,4 @@
-make(.allocator: $&Allocator, .value: &Int32) -> (.result: DynamicArray#(&Int32)) := {
+make#(.AllocatorType: Type: Allocator#(AllocatorType))(.allocator: $&AllocatorType, .value: &Int32) -> (.result: DynamicArray#(&Int32)) := {
     assume allocator
     array ::= unwrap_or_abort(DynamicArray#(&Int32)(.capacity = 1))
 

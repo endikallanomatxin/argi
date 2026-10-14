@@ -483,7 +483,7 @@ pub const Syntaxer = struct {
     //   - an identifier: composed abstract name (e.g., Addable)
     //   - a function requirement: name ( StructTypeLiteral ) -> ( StructTypeLiteral )
     // Newlines and comments are ignored.
-    fn parseAbstractBody(self: *Syntaxer) SyntaxerError!struct {
+    fn parseContractBody(self: *Syntaxer) SyntaxerError!struct {
         req_names: syn.NodeRange,
         req_funcs: syn.NodeRange,
         domains: syn.NodeRange,
@@ -501,13 +501,17 @@ pub const Syntaxer = struct {
             if (self.tokenIs(.dot)) {
                 self.advanceOne();
                 const member = try self.parseName();
+                if (self.tokenIs(.hash)) {
+                    try self.diags.add(self.tokenLocation(), .syntax, "operation-local generic parameters are not supported in contracts; declare associated members in the contract body", .{});
+                    return SyntaxerError.ExpectedStructField;
+                }
                 if (!self.tokenIs(.colon)) {
                     try self.diags.add(self.tokenLocation(), .syntax, "associated contract members require a type declaration", .{});
                     return SyntaxerError.ExpectedStructField;
                 }
                 self.advanceOne();
                 if (self.tokenIs(.open_parenthesis)) {
-                    try self.scratch.append(self.allocator, try self.parseContractRequirement(member, true));
+                    try self.scratch.append(self.allocator, try self.parseContractRequirement(member));
                     self.skipNewLinesAndComments();
                     if (self.tokenIs(.comma)) {
                         self.advanceOne();
@@ -525,7 +529,7 @@ pub const Syntaxer = struct {
                     member_type = try self.parseType() orelse return SyntaxerError.ExpectedIdentifier;
                 }
                 if (self.tokenIs(.equal)) {
-                    try self.diags.add(self.tokenLocation(), .syntax, "associated contract members are supplied by satisfies; defaults are not supported", .{});
+                    try self.diags.add(self.tokenLocation(), .syntax, "associated contract members are supplied by implement; defaults are not supported", .{});
                     return SyntaxerError.ExpectedStructField;
                 }
                 const extra = try self.addExtra(syn.FieldExtra{
@@ -574,7 +578,8 @@ pub const Syntaxer = struct {
                 }
                 try self.scratch.append(self.allocator, dependency);
             } else if (self.tokenIs(.open_parenthesis)) {
-                try self.scratch.append(self.allocator, try self.parseContractRequirement(name, false));
+                try self.diags.add(self.tokenLocation(), .syntax, "contract operations use member declarations: .{s}: (...) -> (...)", .{name.text});
+                return SyntaxerError.ExpectedStructField;
             } else {
                 try self.scratch.append(self.allocator, try self.addNode(.type_name, name.token, .{ .token_and_optional_token = .{ .token = name.token, .optional = .none } }));
             }
@@ -620,7 +625,7 @@ pub const Syntaxer = struct {
         };
     }
 
-    fn parseContractRequirement(self: *Syntaxer, name: ParsedName, scoped: bool) SyntaxerError!syn.NodeIndex {
+    fn parseContractRequirement(self: *Syntaxer, name: ParsedName) SyntaxerError!syn.NodeIndex {
         const input = try self.parseStructTypeLiteral();
         if (!self.tokenIs(.arrow)) return SyntaxerError.ExpectedArrow;
         self.advanceOne();
@@ -633,7 +638,7 @@ pub const Syntaxer = struct {
         } else null;
         const empty = try self.addNodeRange(&.{});
         const extra = try self.addExtra(syn.FunctionExtra{
-            .contract_member = @intFromBool(scoped),
+            .contract_member = 1,
             .name_token = name.token,
             .generic_params_start = empty.start,
             .generic_params_end = empty.end,
@@ -2193,20 +2198,8 @@ pub const Syntaxer = struct {
         }
 
         if (std.mem.eql(u8, name.text, "satisfies") and self.currentContent() == .identifier) {
-            if (is_once) return SyntaxerError.ExpectedDeclarationOrAssignment;
-            const contract_type = (try self.parseType()) orelse return SyntaxerError.ExpectedConformanceType;
-            const associated_arguments: ?syn.NodeIndex = if (self.tokenIs(.equal)) blk: {
-                self.advanceOne();
-                break :blk try self.parseStructTypeFields(true);
-            } else null;
-            const extra = try self.addExtra(syn.GenericValueExtra{
-                .generic_params_start = generic_params.start,
-                .generic_params_end = generic_params.end,
-                .generic_params_struct = syn.OptionalNodeIndex.init(generic_params_struct),
-                .value = contract_type,
-                .safety_contract = syn.OptionalNodeIndex.init(associated_arguments),
-            });
-            return try self.addNode(.contract_conformance, name.token, .{ .extra = extra });
+            try self.diags.add(id_loc, .syntax, "legacy conformance declarations are unsupported; use implement Contract#(participants) (...) instead", .{});
+            return SyntaxerError.ExpectedDeclarationOrAssignment;
         }
 
         if (self.tokenIs(.colon) and self.contentAt(self.index + 1) == .equal) {
@@ -2290,33 +2283,11 @@ pub const Syntaxer = struct {
                     return SyntaxerError.ExpectedDeclarationOrAssignment;
                 }
                 if (std.mem.eql(u8, kw, "implements") or std.mem.eql(u8, kw, "satisfies")) {
-                    self.advanceOne();
-                    if (self.tokenIs(.new_line) or self.tokenIs(.eof) or self.tokenIs(.close_brace))
-                        return SyntaxerError.ExpectedConformanceType;
-                    const abstract_ty = (try self.parseType()) orelse return SyntaxerError.ExpectedConformanceType;
-                    const domain_mapping: ?syn.NodeIndex = if (self.currentIdentifierEquals("where")) blk: {
-                        self.advanceOne();
-                        self.skipNewLinesAndComments();
-                        break :blk try self.parseCodeBlock();
-                    } else null;
-                    const extra = try self.addExtra(syn.GenericValueExtra{
-                        .generic_params_start = generic_params.start,
-                        .generic_params_end = generic_params.end,
-                        .generic_params_struct = syn.OptionalNodeIndex.init(generic_params_struct),
-                        .value = abstract_ty,
-                        .safety_contract = syn.OptionalNodeIndex.init(domain_mapping),
-                    });
-                    return try self.addNode(.abstract_implements, name.token, .{ .extra = extra });
+                    try self.diags.add(id_loc, .syntax, "legacy conformance declarations are unsupported; use implement Contract#(participants) (...) instead", .{});
+                    return SyntaxerError.ExpectedDeclarationOrAssignment;
                 } else if (std.mem.eql(u8, kw, "defaultsto")) {
-                    self.advanceOne();
-                    const ty = (try self.parseType()).?; // required
-                    const extra = try self.addExtra(syn.GenericValueExtra{
-                        .generic_params_start = generic_params.start,
-                        .generic_params_end = generic_params.end,
-                        .generic_params_struct = syn.OptionalNodeIndex.init(generic_params_struct),
-                        .value = ty,
-                    });
-                    return try self.addNode(.abstract_defaultsto, name.token, .{ .extra = extra });
+                    try self.diags.add(id_loc, .syntax, "defaultsto is unsupported; choose a concrete representation explicitly", .{});
+                    return SyntaxerError.ExpectedDeclarationOrAssignment;
                 }
             },
             else => {},
@@ -2370,37 +2341,33 @@ pub const Syntaxer = struct {
                         .value = lit_node,
                     });
                     return try self.addNode(tag, name.token, .{ .extra = extra });
-                } else if (std.mem.eql(u8, type_name, "Abstract") or std.mem.eql(u8, type_name, "Contract")) {
+                } else if (std.mem.eql(u8, type_name, "Abstract")) {
+                    try self.diags.add(id_loc, .syntax, "Abstract declarations are unsupported; use Contract with explicit participants", .{});
+                    return SyntaxerError.ExpectedDeclarationOrAssignment;
+                } else if (std.mem.eql(u8, type_name, "Contract")) {
                     var req_names = try self.addNodeRange(&.{});
                     var req_funcs = try self.addNodeRange(&.{});
                     var domains = try self.addNodeRange(&.{});
                     var associated_struct: ?syn.NodeIndex = null;
-                    const is_contract = std.mem.eql(u8, type_name, "Contract");
-                    if (is_contract) {
-                        if (generic_params.start != generic_params.end and generic_params_struct == null) {
-                            try self.diags.add(self.tokenLocation(), .syntax, "contract participants must use named compile-time parameters", .{});
-                            return SyntaxerError.ExpectedStructField;
-                        }
-                        participants_struct = generic_params_struct;
+                    if (generic_params.start != generic_params.end and generic_params_struct == null) {
+                        try self.diags.add(self.tokenLocation(), .syntax, "contract participants must use named compile-time parameters", .{});
+                        return SyntaxerError.ExpectedStructField;
                     }
+                    participants_struct = generic_params_struct;
                     if (self.tokenIs(.equal)) {
                         self.advanceOne();
-                        const body = try self.parseAbstractBody();
+                        const body = try self.parseContractBody();
                         req_names = body.req_names;
                         req_funcs = body.req_funcs;
                         domains = body.domains;
                         associated_struct = body.associated_struct;
                     }
-                    if (!is_contract and associated_struct != null) {
-                        try self.diags.add(self.tokenLocation(), .syntax, "body-declared associated members require Contract", .{});
-                        return SyntaxerError.ExpectedStructField;
-                    }
                     const associated_range = if (associated_struct) |node| self.file.data(node).extra_range else try self.addNodeRange(&.{});
                     const extra = try self.addExtra(syn.AbstractExtra{
                         .participants_struct = syn.OptionalNodeIndex.init(participants_struct),
-                        .generic_params_start = if (is_contract) associated_range.start else generic_params.start,
-                        .generic_params_end = if (is_contract) associated_range.end else generic_params.end,
-                        .generic_params_struct = syn.OptionalNodeIndex.init(if (is_contract) associated_struct else generic_params_struct),
+                        .generic_params_start = associated_range.start,
+                        .generic_params_end = associated_range.end,
+                        .generic_params_struct = syn.OptionalNodeIndex.init(associated_struct),
                         .requires_abstracts_start = req_names.start,
                         .requires_abstracts_end = req_names.end,
                         .requires_functions_start = req_funcs.start,

@@ -12,7 +12,6 @@ const resolution = @import("resolution.zig");
 const core_mod = @import("core.zig");
 const generic_mod = @import("generics.zig");
 const abstract_mod = @import("abstracts.zig");
-const call_compatibility = @import("call_compatibility.zig");
 const global_types = @import("types.zig");
 const primitives = @import("../primitives/schema.zig");
 const implementation_arguments = @import("implementation_arguments.zig");
@@ -575,14 +574,7 @@ pub const Resolver = struct {
     /// An abstract-typed reached binding retains its selected implementer for
     /// monomorphization without widening ordinary member lookup.
     fn staticInputType(self: *Resolver, node_id: global_sg.GlobalNodeId) ?global_sg.GlobalTypeId {
-        const node = self.graph.node(node_id);
-        const visible = node.ty orelse return null;
-        const binding_id = switch (node.content) {
-            .binding_use => |binding| binding,
-            else => return visible,
-        };
-        const binding = self.graph.binding(binding_id);
-        return binding.static_implementer orelse visible;
+        return self.graph.node(node_id).ty;
     }
 
     fn inferBindingsFromReachDefaults(
@@ -664,7 +656,7 @@ pub const Resolver = struct {
                             valid = false;
                             break;
                         };
-                        current_ty = step.hit.field.storage_type orelse step.hit.field.ty;
+                        current_ty = step.hit.field.ty;
                         if (self.graph.isTypeUnresolved(current_ty)) valid = false;
                     }
                     if (!valid) continue;
@@ -715,7 +707,7 @@ pub const Resolver = struct {
                 for (try self.graph.functionsNamed(self.allocator, name)) |function_id| {
                     const function = self.graph.function(function_id);
                     if (@intFromEnum(self.graph.moduleForDeclaration(function.declaration).?) != module_index) continue;
-                    if (selected != null or function.flags.is_generic_instantiation or function.flags.is_once or function.flags.is_abstract_dispatch or function.input.len != 0 or function.output.len != 1) return null;
+                    if (selected != null or function.flags.is_generic_instantiation or function.flags.is_once or function.input.len != 0 or function.output.len != 1) return null;
                     const ty = self.graph.fields.items[function.output.start].ty;
                     if (self.graph.isTypeUnresolved(ty)) return null;
                     selected = ty;
@@ -1322,9 +1314,6 @@ pub const Resolver = struct {
         const ty = self.generics.instantiateParameterizedType(module_index, pattern, bindings) catch return .deferred;
         const fields = self.interfaceFields(ty) catch return .deferred;
         const matching_fields = self.materializeDefaultPresenceForMatch(module_index, pattern, fields) catch return .deferred;
-        if (self.nested_call_context) |abstracts| {
-            return call_compatibility.matchInput(.{ .core = self.core, .abstracts = abstracts }, matching_fields, input);
-        }
         return self.core.matchCallInput(matching_fields, input);
     }
 
@@ -1463,9 +1452,6 @@ pub const Resolver = struct {
                     if (self.definiteNominalReferenceMismatch(module_index, pattern, actual)) return false;
                     const expected = self.generics.instantiateParameterizedType(module_index, pattern, bindings) catch return false;
                     if (self.core.callTypesCompatible(actual, expected)) return true;
-                    if (self.nested_call_context) |abstracts| {
-                        return (call_compatibility.Abstract{ .core = self.core, .abstracts = abstracts }).compatible(actual, expected);
-                    }
                     return false;
                 },
                 .structural => |shape| {
@@ -1811,7 +1797,6 @@ pub const Resolver = struct {
                 .uses_inferred_error_reasons = inferred_errors,
                 // A contract template has no runtime ABI; its inferred
                 // instance does, once every abstract parameter is concrete.
-                .is_abstract_dispatch = false,
             },
         });
         try self.graph.generic_function_instances.append(self.allocator, .{
@@ -2333,7 +2318,7 @@ pub const Resolver = struct {
             var selected: ?global_sg.GlobalFunctionId = null;
             for (try self.resolver.graph.functionsNamed(self.resolver.allocator, name)) |function_id| {
                 const function = self.resolver.graph.function(function_id);
-                if (function.flags.is_generic_instantiation or function.flags.is_abstract_dispatch or function.flags.is_c_function_pointer) continue;
+                if (function.flags.is_generic_instantiation or function.flags.is_c_function_pointer) continue;
                 if (!self.resolver.core.declarationVisible(self.module_index, function.declaration, null)) continue;
                 if (selected != null) return;
                 selected = function_id;
@@ -2442,7 +2427,7 @@ pub const Resolver = struct {
             const function_id = self.function orelse return error.ParameterizedErrorPropagationOutsideFunction;
             const function = self.resolver.graph.functions.items[@intFromEnum(function_id)];
             if (function.output.len != 1) return error.InvalidParameterizedErrorPropagation;
-            const propagated_ty = global_types.effectiveFieldType(self.resolver.graph.fields.items[function.output.start]);
+            const propagated_ty = (self.resolver.graph.fields.items[function.output.start]).ty;
             const propagated_error = global_types.findVariant(self.resolver.graph, propagated_ty, "error") orelse return error.InvalidParameterizedErrorPropagation;
             const propagated_error_payload = propagated_error.variant.payload_type orelse error_payload;
             var errors: errors_mod.Resolver = .{ .allocator = self.resolver.allocator, .graph = self.resolver.graph, .modules = self.resolver.modules, .offsets = self.resolver.offsets, .core = self.resolver.core };
@@ -2450,7 +2435,7 @@ pub const Resolver = struct {
             try errors.absorbErrorPayloadReasons(error_payload, propagated_error_payload);
             const ok_fields = if (self.resolver.graph.types.items[@intFromEnum(ok_payload)] == .structural) global_types.fields(self.resolver.graph, ok_payload) else null;
             const result_ty = if (ok_fields) |fields|
-                if (fields.len == 1) global_types.effectiveFieldType(self.resolver.graph.fields.items[fields.start]) else ok_payload
+                if (fields.len == 1) (self.resolver.graph.fields.items[fields.start]).ty else ok_payload
             else
                 ok_payload;
             const id: global_sg.GlobalErrorPropagationId = @enumFromInt(@as(u32, @intCast(self.resolver.graph.error_propagations.items.len)));
@@ -2675,33 +2660,6 @@ pub const Resolver = struct {
             };
         }
 
-        fn resolveConstrainedStaticCall(
-            self: *InstanceContext,
-            reference: module_entities.ExternalRef,
-            input: global_sg.GlobalNodeId,
-            source: primitives.SourceRef,
-        ) !?global_sg.Node {
-            const abstracts = self.resolver.nested_call_context orelse return null;
-            const storage = &self.resolver.modules[self.module_index].semantic.parameterized_storage;
-            for (0..self.parameterized.parameters.len) |offset| {
-                const raw = self.parameterized.parameters.start + @as(u32, @intCast(offset));
-                const parameter = storage.comptime_parameters.items[raw];
-                const constraint_id = parameter.constraint orelse continue;
-                const concrete = self.substitutions.types[raw] orelse continue;
-                const constraint = storage.abstract_constraints.items[@intFromEnum(constraint_id)];
-                if (try abstracts.resolveStaticRequirementCall(
-                    self.module_index,
-                    constraint,
-                    self.substitutions,
-                    concrete,
-                    reference,
-                    input,
-                    self.resolver.sourceFor(self.module_index, source),
-                )) |node| return node;
-            }
-            return null;
-        }
-
         fn makeNamedCall(
             self: *InstanceContext,
             name_range: primitives.StringRange,
@@ -2853,12 +2811,6 @@ pub const Resolver = struct {
                                     try self.resolver.core.trackResolvedReachedCall(node, nested_reach);
                                     return node;
                                 }
-                            }
-                        }
-                        if (arguments.len == 0) {
-                            if (try self.resolveConstrainedStaticCall(reference, input, source)) |node| {
-                                try self.resolver.core.trackResolvedReachedCall(node, nested_reach);
-                                return node;
                             }
                         }
                         if (self.resolver.nested_call_context) |context| {

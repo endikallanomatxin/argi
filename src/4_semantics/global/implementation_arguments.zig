@@ -154,7 +154,7 @@ pub const Resolver = struct {
                                 if (self.core.callArgumentNamed(supplied, position, self.graph.text(field.name)) != null) continue;
                                 const fallback = field.default_value orelse continue;
                                 if (self.graph.node(fallback).content != .reach_directive) continue;
-                                if (try self.core.probeReachedDefaultWithCompatibility(reach, field, fallback, null) == .unavailable) {
+                                if (try self.core.probeReachedDefault(reach, field, fallback) == .unavailable) {
                                     missing_reach = field;
                                     break;
                                 }

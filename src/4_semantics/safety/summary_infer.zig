@@ -569,7 +569,7 @@ pub const Infer = struct {
                             scalar_field = false;
                             break;
                         }
-                        ty = types.effectiveFieldType(self.graph.fields.items[fields.start + index]);
+                        ty = (self.graph.fields.items[fields.start + index]).ty;
                     },
                     .dereference => {
                         const current = self.graph.semanticType(ty);
@@ -3855,7 +3855,7 @@ pub const Infer = struct {
                 .field => |index| blk: {
                     const fields = types.fields(self.graph, ty) orelse return false;
                     if (index >= fields.len) return false;
-                    break :blk types.effectiveFieldType(self.graph.fields.items[fields.start + index]);
+                    break :blk (self.graph.fields.items[fields.start + index]).ty;
                 },
                 .variant => |index| blk: {
                     const variants = types.variants(self.graph, ty) orelse return false;
@@ -4390,7 +4390,7 @@ pub const Infer = struct {
                 .field => |index| blk: {
                     const fields = types.fields(self.graph, ty) orelse return null;
                     if (index >= fields.len) return null;
-                    break :blk types.effectiveFieldType(self.graph.fields.items[fields.start + index]);
+                    break :blk (self.graph.fields.items[fields.start + index]).ty;
                 },
                 .variant => |index| blk: {
                     const variants = types.variants(self.graph, ty) orelse return null;
@@ -4429,7 +4429,7 @@ pub const Infer = struct {
                     .field => |index| blk: {
                         const fields = types.fields(self.graph, ty) orelse break :blk ty;
                         if (index >= fields.len) break :blk ty;
-                        break :blk types.effectiveFieldType(self.graph.fields.items[fields.start + index]);
+                        break :blk (self.graph.fields.items[fields.start + index]).ty;
                     },
                     .variant => |index| blk: {
                         const variants = types.variants(self.graph, ty) orelse break :blk ty;
@@ -5101,7 +5101,7 @@ pub const Infer = struct {
             for (self.graph.fields.items[range.start..][0..range.len], 0..) |field, index| {
                 const value = try self.allocator.create(facts.ValueEffect);
                 const projection = facts.Projection{ .field = @intCast(index) };
-                value.* = try self.overlay_capability_outputs(try self.projectValueEffect(destination, projection), try self.projectValueEffect(origin, projection), types.effectiveFieldType(field));
+                value.* = try self.overlay_capability_outputs(try self.projectValueEffect(destination, projection), try self.projectValueEffect(origin, projection), field.ty);
                 fields[index] = .{ .index = @intCast(index), .value = value };
             }
             result.fields = fields;
@@ -5206,7 +5206,7 @@ pub const Infer = struct {
             .structural, .declared, .generic => blk: {
                 const range = types.fields(self.graph, ty) orelse break :blk false;
                 for (self.graph.fields.items[range.start..][0..range.len]) |field|
-                    if (self.typeContainsPointer(types.effectiveFieldType(field))) break :blk true;
+                    if (self.typeContainsPointer(field.ty)) break :blk true;
                 break :blk false;
             },
             .structural_choice, .inferred_choice => blk: {

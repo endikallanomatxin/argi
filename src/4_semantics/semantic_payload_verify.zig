@@ -70,7 +70,7 @@ pub fn semanticType(comptime Ids: type, value: primitives.SemanticType(Ids), bou
 pub fn field(comptime Ids: type, value: primitives.Field(Ids), bounds: Bounds) !void {
     try require(verify.stringFits(value.name, bounds.strings));
     try require(verify.idFits(value.ty, bounds.types));
-    try require(verify.optionalIdFits(value.storage_type, bounds.types));
+
     try require(verify.sourceFits(value.source, bounds.files));
     try require(verify.optionalIdFits(value.default_value, bounds.nodes));
 }
@@ -108,7 +108,6 @@ pub fn binding(comptime Ids: type, value: primitives.Binding(Ids), bounds: Bound
     try require(verify.optionalIdFits(value.initialization, bounds.nodes));
     try require(verify.optionalIdFits(value.reinitialize_cleanup, bounds.nodes));
     try require(verify.optionalIdFits(value.cleanup_arguments, bounds.nodes));
-    try require(verify.optionalIdFits(value.static_implementer, bounds.types));
 }
 
 pub fn block(comptime Ids: type, value: primitives.Block(Ids), bounds: Bounds) !void {

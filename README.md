@@ -23,9 +23,9 @@ It’s an early work-in-progress.
     dependencies through intermediate calls.
 - 🚫 No objects or inheritance.
 - 🔀 Polymorphism through:
-  - 🎛️ Multiple dispatch
+  - 🎛️ Contract-scoped multiple dispatch
   - ⚙️ Compile-time parameters (Rust's generics style)
-  - 📜 Abstract types specialized at compile time (Rust's traits style)
+  - 📜 Contracts with named participants, associated elements and explicit implementations
   - 🎭 Virtual types for runtime dynamic dispatch.
 - ❓ Errable and Nullable types, with nominal error reasons, reason-set
   inference, and explicit propagation with optional trace context.

@@ -34,30 +34,14 @@ pub const BuildResult = struct {
     stats: BuildStats,
 };
 
-pub const QualifiedAbstract = parameterized_lowerer.QualifiedAbstract;
-pub const needsLinkedLowering = parameterized_lowerer.needsLinkedLowering;
-
-pub fn build(
-    allocator: std.mem.Allocator,
-    module_dir: []const u8,
-    files: []const module_sg.FileInput,
-) !BuildResult {
-    return buildLinked(allocator, module_dir, files, &.{});
+pub fn build(allocator: std.mem.Allocator, module_dir: []const u8, files: []const module_sg.FileInput) !BuildResult {
+    return buildForTarget(allocator, module_dir, files, .{});
 }
 
-pub fn buildLinked(
-    allocator: std.mem.Allocator,
-    module_dir: []const u8,
-    files: []const module_sg.FileInput,
-    abstract_types: []const QualifiedAbstract,
-) !BuildResult {
-    return buildLinkedForTarget(allocator, module_dir, files, abstract_types, .{});
-}
-
-pub fn buildLinkedForTarget(allocator: std.mem.Allocator, module_dir: []const u8, files: []const module_sg.FileInput, abstract_types: []const QualifiedAbstract, target: @import("../../1_base/target.zig").Config) !BuildResult {
+pub fn buildForTarget(allocator: std.mem.Allocator, module_dir: []const u8, files: []const module_sg.FileInput, target: @import("../../1_base/target.zig").Config) !BuildResult {
     var graph = try module_sg.buildForTarget(allocator, module_dir, files, target);
     errdefer graph.deinit(allocator);
-    const stats = try finishLinked(allocator, &graph, files, abstract_types, null);
+    const stats = try finish(allocator, &graph, files, null);
     return .{ .graph = graph, .stats = stats };
 }
 
@@ -65,11 +49,10 @@ pub fn buildLinkedForTarget(allocator: std.mem.Allocator, module_dir: []const u8
 /// discovery/interfaces. This lets the frontend discover all module headers
 /// first, derive explicit semantic configuration such as the bundled prelude,
 /// and still lower each durable ModuleSG only once.
-pub fn finishLinked(
+pub fn finish(
     allocator: std.mem.Allocator,
     graph: *module_sg.ModuleSemanticGraph,
     files: []const module_sg.FileInput,
-    abstract_types: []const QualifiedAbstract,
     diagnostics: ?*diagnostic.Diagnostics,
 ) !BuildStats {
     if (graph.semantic.local_semantics_complete) return error.ModuleSemanticGraphAlreadyComplete;
@@ -86,7 +69,7 @@ pub fn finishLinked(
 
     const global_roots = try global_roots_lowerer.lower(allocator, graph);
 
-    const parameterized_stats = try parameterized_lowerer.lowerLinked(allocator, graph, files, abstract_types, diagnostics);
+    const parameterized_stats = try parameterized_lowerer.lowerDiagnosed(allocator, graph, files, diagnostics);
     // Templates claim abstract interfaces before ordinary body lowering, so
     // each contract body is materialized only after specialization.
     const bodies = try body_lowerer.lowerMissingFunctions(allocator, graph, files, diagnostics);
@@ -106,7 +89,7 @@ pub fn finishLinked(
         .generic_types = parameterized_stats.generic_types,
         .generic_functions = parameterized_stats.generic_functions,
         .abstract_definitions = parameterized_stats.abstract_definitions,
-        .abstract_relations = relation_stats.implementations + relation_stats.implementation_parameterized_forms + relation_stats.defaults + relation_stats.default_parameterized_forms,
+        .abstract_relations = relation_stats.implementations,
         .generic_calls = generic_calls.generic_calls,
         .local_semantics_complete = true,
     };
@@ -130,19 +113,19 @@ fn lowerNominalLayouts(allocator: std.mem.Allocator, graph: *module_sg.ModuleSem
     }
 }
 
-test "finishLinked completes an already discovered module graph" {
+test "finish completes an already discovered module graph" {
     const allocator = std.testing.allocator;
     var graph = try module_sg.build(allocator, "empty", &.{});
     defer graph.deinit(allocator);
     try std.testing.expect(!graph.semantic.local_semantics_complete);
-    const stats = try finishLinked(allocator, &graph, &.{}, &.{}, null);
+    const stats = try finish(allocator, &graph, &.{}, null);
     try std.testing.expect(graph.semantic.local_semantics_complete);
     try std.testing.expect(stats.local_semantics_complete);
 }
 
-test "finishLinked applies bundled prelude abstracts in one pass" {
+test "finish lowers explicit bundled contract bounds in one pass" {
     const allocator = std.testing.allocator;
-    const source = "consume(.value: PreludeAbstract) -> () := {}\n";
+    const source = "consume#(.Value: Type: PreludeAbstract)(.value: Value) -> () := {}\n";
     const input_sources = [_]source_files.SourceFile{.{ .path = "app/use.rg", .code = source }};
     var diagnostics = diagnostic.Diagnostics.init(&allocator, &input_sources);
     defer diagnostics.deinit();
@@ -161,18 +144,13 @@ test "finishLinked applies bundled prelude abstracts in one pass" {
     defer graph.deinit(allocator);
     try std.testing.expectEqual(@as(usize, 0), graph.semantic.parameterized_storage.parameterized_functions.items.len);
 
-    _ = try finishLinked(
+    _ = try finish(
         allocator,
         &graph,
         &files,
-        &.{.{ .qualifier = null, .name = "PreludeAbstract" }},
         null,
     );
     try std.testing.expectEqual(@as(usize, 1), graph.semantic.parameterized_storage.parameterized_functions.items.len);
-    try std.testing.expectEqual(
-        @import("parameterized/storage.zig").GenericDispatchKind.abstract_contract,
-        graph.semantic.parameterized_storage.parameterized_functions.items[0].dispatch_kind,
-    );
 }
 
 test "module semantizer completes syntax-independent local semantics" {
@@ -183,57 +161,11 @@ test "module semantizer completes syntax-independent local semantics" {
     try std.testing.expect(result.stats.local_semantics_complete);
 }
 
-test "linked lowering trigger ignores abstracts outside function inputs" {
-    const allocator = std.testing.allocator;
-    const source =
-        "dep := import(\"../dep\")\n" ++
-        "consume(.value: Int32) -> (.result: dep.Abstract) := {}\n";
-    const input_sources = [_]source_files.SourceFile{.{ .path = "app/use.rg", .code = source }};
-    var diagnostics = diagnostic.Diagnostics.init(&allocator, &input_sources);
-    defer diagnostics.deinit();
-    var tokenizer_context = tokenizer.Tokenizer.init(allocator, &diagnostics, source, diagnostics.source_db.fileId(0));
-    _ = try tokenizer_context.tokenize();
-    var tokens = tokenizer_context.takeTokens();
-    defer tokens.deinit(allocator);
-    var compact = try syntaxer.Syntaxer.init(allocator, .init(&tokens), source, &diagnostics);
-    defer compact.deinit();
-    var tree = try compact.parse();
-    defer tree.deinit(allocator);
-    try std.testing.expect(!diagnostics.hasErrors());
-    const files = [_]module_sg.FileInput{.{ .path = "app/use.rg", .tree = &tree, .source = source }};
-    var result = try build(allocator, "app", &files);
-    defer result.graph.deinit(allocator);
-    try std.testing.expect(!needsLinkedLowering(&result.graph, &files, &.{.{ .qualifier = "dep", .name = "Abstract" }}));
-}
-
-test "linked lowering trigger detects imported abstract function inputs" {
-    const allocator = std.testing.allocator;
-    const source =
-        "dep := import(\"../dep\")\n" ++
-        "consume(.value: dep.Abstract) -> () := {}\n";
-    const input_sources = [_]source_files.SourceFile{.{ .path = "app/use.rg", .code = source }};
-    var diagnostics = diagnostic.Diagnostics.init(&allocator, &input_sources);
-    defer diagnostics.deinit();
-    var tokenizer_context = tokenizer.Tokenizer.init(allocator, &diagnostics, source, diagnostics.source_db.fileId(0));
-    _ = try tokenizer_context.tokenize();
-    var tokens = tokenizer_context.takeTokens();
-    defer tokens.deinit(allocator);
-    var compact = try syntaxer.Syntaxer.init(allocator, .init(&tokens), source, &diagnostics);
-    defer compact.deinit();
-    var tree = try compact.parse();
-    defer tree.deinit(allocator);
-    try std.testing.expect(!diagnostics.hasErrors());
-    const files = [_]module_sg.FileInput{.{ .path = "app/use.rg", .tree = &tree, .source = source }};
-    var result = try build(allocator, "app", &files);
-    defer result.graph.deinit(allocator);
-    try std.testing.expect(needsLinkedLowering(&result.graph, &files, &.{.{ .qualifier = "dep", .name = "Abstract" }}));
-}
-
 test "qualified external signature lowers without an abstract catalog" {
     const allocator = std.testing.allocator;
     const source =
         "dep := import(\"../dep\")\n" ++
-        "consume_imported(.value: dep.Abstract) -> (.result: Int32) := {\n" ++
+        "consume_imported#(.Value: Type: dep.Abstract)(.value: Value) -> (.result: Int32) := {\n" ++
         "    result = score(.value = value).result\n" ++
         "}\n";
     const input_sources = [_]source_files.SourceFile{.{ .path = "app/use.rg", .code = source }};
@@ -252,12 +184,5 @@ test "qualified external signature lowers without an abstract catalog" {
     var result = try build(allocator, "app", &files);
     defer result.graph.deinit(allocator);
     try std.testing.expect(result.graph.semantic.local_semantics_complete);
-    try std.testing.expectEqual(@as(usize, 0), result.graph.semantic.parameterized_storage.parameterized_functions.items.len);
-    var linked = try buildLinked(allocator, "app", &files, &.{.{ .qualifier = "dep", .name = "Abstract" }});
-    defer linked.graph.deinit(allocator);
-    try std.testing.expectEqual(@as(usize, 1), linked.graph.semantic.parameterized_storage.parameterized_functions.items.len);
-    try std.testing.expectEqual(
-        @import("parameterized/storage.zig").GenericDispatchKind.abstract_contract,
-        linked.graph.semantic.parameterized_storage.parameterized_functions.items[0].dispatch_kind,
-    );
+    try std.testing.expectEqual(@as(usize, 1), result.graph.semantic.parameterized_storage.parameterized_functions.items.len);
 }

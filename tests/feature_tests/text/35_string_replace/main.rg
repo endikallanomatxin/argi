@@ -1,9 +1,9 @@
-expect_replacement(
+expect_replacement#(.AllocatorType: Type: Allocator#(AllocatorType))(
         .text        : StringView,
         .pattern     : StringView,
         .replacement : StringView,
         .expected    : StringView,
-        .allocator   : $&Allocator
+        .allocator   : $&AllocatorType
     ) -> () := {
     output ::= unwrap_or_abort(
         .value = replace(

@@ -5,7 +5,7 @@ check_exit(.status: ProcessExitStatus, .expected: UInt32) -> () := {
     }
 }
 
-check_bytes(.reader: $&Reader, .expected: StringView) -> () := {
+check_bytes#(.ReaderType: Type: Reader#(ReaderType))(.reader: $&ReaderType, .expected: StringView) -> () := {
     i :: UIntNative = 0
     while i < expected.length {
         next ::= unwrap_or_abort(.value = Reader#().read_byte(.self = reader)).result

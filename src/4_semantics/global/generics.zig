@@ -649,7 +649,7 @@ pub const Resolver = struct {
             try items.append(self.allocator, .{
                 .name = try self.graph.addString(self.allocator, module.text(field.name)),
                 .ty = ty,
-                .storage_type = if (field.storage_type) |value| try self.instantiateParameterizedType(module_index, value, bindings) else null,
+
                 .source = self.globalSource(module_index, field.source),
                 .default_value = if (field.default_value) |value| try self.instantiateConstantFieldDefault(module_index, value, ty, bindings) else null,
             });

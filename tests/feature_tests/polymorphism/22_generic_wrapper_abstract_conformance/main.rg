@@ -6,8 +6,8 @@ Wrapper: Type = (
     .base : $&DummyWriter
 )
 
-accept(
-        .writer : $&Writer,
+accept#(.WriterType: Type: Writer#(WriterType))(
+        .writer : $&WriterType,
     ) -> (
         .status_code : Int32
     ) := {

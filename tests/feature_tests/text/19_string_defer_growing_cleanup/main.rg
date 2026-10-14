@@ -1,4 +1,4 @@
-helper(.allocator: $&Allocator) -> (.ok: Bool) := {
+helper#(.AllocatorType: Type: Allocator#(AllocatorType))(.allocator: $&AllocatorType) -> (.ok: Bool) := {
     assume allocator
 
     text ::= unwrap_or_abort(.value = string_with_capacity(.allocator = allocator, .capacity = 1))

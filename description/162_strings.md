@@ -94,9 +94,9 @@ API convention for borrowed text:
 - raw `&Char` is the C-string / low-level interop boundary, not the general
   string-like input type for high-level APIs.
 
-Avoid adding overloads only to accept every adjacent representation
+Avoid adding operation implementations only to accept every adjacent representation
 (`StringView`, `&StringView`, `&String`, `&Char`) unless those representations
-carry genuinely different semantics. Too many convenience overloads make
+carry genuinely different semantics. Too many convenience implementations make
 multiple dispatch encode API adapter noise instead of domain meaning.
 
 Text algorithms and formatting helpers such as `format` / `format_into`
@@ -117,9 +117,9 @@ suffix. Writing the value and terminator preserves the writer's error reasons;
 exact text output without a terminator, and explicit `flush` when needed.
 
 Text equality follows the same rule: the byte-wise comparison primitive and
-`==` / `!=` overloads work on `StringView` values. Callers with owning `String`
+`==` / `!=` select Equal evidence on `StringView` values. Callers with owning `String`
 or raw `&Char` values should convert them explicitly instead of relying on
-high-level adapter overloads.
+implicit high-level adapters.
 
 Borrowed byte utilities preserve the backing storage lifetime:
 

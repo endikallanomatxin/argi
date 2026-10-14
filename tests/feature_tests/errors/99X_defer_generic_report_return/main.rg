@@ -1,3 +1,3 @@
 fail() -> !Void = ..ok Void() := {}
-finish#(.t: Type)(.value: t, .writer: $&Writer = reach writer) -> () := { #defer { fail()!!! } }
-main(.writer: $&Writer = reach writer) -> () := { finish#(.t: Int32)(1) }
+finish#(.t: Type, .WriterType: Type: Writer#(WriterType))(.value: t, .writer: $&WriterType = reach writer) -> () := { #defer { fail()!!! } }
+main#(.WriterType: Type: Writer#(WriterType))(.writer: $&WriterType = reach writer) -> () := { finish#(.t: Int32)(1) }

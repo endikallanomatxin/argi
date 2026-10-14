@@ -50,7 +50,7 @@ test "deferred function interfaces retain external parameter types" {
 test "constrained generic parameters remain type parameters" {
     const allocator = std.testing.allocator;
     const source =
-        "Capability : Abstract = ()\n" ++
+        "Capability#(.Participant: Type): Contract = ()\n" ++
         "Box#(.t: Type: Capability) : Type = (.value: t)\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
@@ -530,7 +530,6 @@ test "explicit contract bounds specialize one body per concrete participant" {
     var module = try @import("semantizer.zig").build(allocator, "contract", &inputs);
     defer module.graph.deinit(allocator);
     const template = module.graph.semantic.parameterized_storage.parameterized_functions.items[0];
-    try std.testing.expectEqual(@as(@import("parameterized/storage.zig").GenericDispatchKind, .regular), template.dispatch_kind);
     try std.testing.expectEqual(@as(u32, 1), template.parameters.len);
     const parameter = module.graph.semantic.parameterized_storage.comptime_parameters.items[template.parameters.start];
     try std.testing.expect(parameter.constraint != null);
@@ -614,16 +613,15 @@ test "explicit imported contract bounds become constrained templates" {
     const source = "dep := import(\"../dep\")\nwrite#(.t: Type, .Provider: Type: dep.Writer)(.value: t, .writer: $&Provider) -> () := {}\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
-    var module = try @import("semantizer.zig").buildLinked(allocator, "consumer", &.{.{
+    var module = try @import("semantizer.zig").build(allocator, "consumer", &.{.{
         .path = "consumer/main.rg",
         .tree = &tree,
         .source = source,
-    }}, &.{.{ .qualifier = "dep", .name = "Writer" }});
+    }});
     defer module.graph.deinit(allocator);
 
     const templates = module.graph.semantic.parameterized_storage.parameterized_functions.items;
     try std.testing.expectEqual(@as(usize, 1), templates.len);
-    try std.testing.expectEqual(@import("parameterized/storage.zig").GenericDispatchKind.regular, templates[0].dispatch_kind);
     try std.testing.expectEqual(@as(u32, 2), templates[0].parameters.len);
     const parameter = module.graph.semantic.parameterized_storage.comptime_parameters.items[templates[0].parameters.start + 1];
     try std.testing.expect(parameter.constraint != null);
@@ -641,11 +639,11 @@ test "local concrete type shadows unqualified prelude abstract" {
         "consume(.value: Shadowed) -> () := {}\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
-    var module = try @import("semantizer.zig").buildLinked(allocator, "shadowing", &.{.{
+    var module = try @import("semantizer.zig").build(allocator, "shadowing", &.{.{
         .path = "shadowing/main.rg",
         .tree = &tree,
         .source = source,
-    }}, &.{.{ .qualifier = null, .name = "Shadowed" }});
+    }});
     defer module.graph.deinit(allocator);
 
     try std.testing.expectEqual(
@@ -830,15 +828,15 @@ test "callback invocation preserves binding and field editor targets" {
     try std.testing.expect(found_callback and found_entry and found_field);
 }
 
-test "unary compatibility contracts normalize Self to a type participant" {
+test "unary and tuple contracts retain explicit symbolic participants" {
     const allocator = std.testing.allocator;
     const source =
-        \\Legacy#(.Other: Type): Abstract = (borrow(.other: &Other, .source: &Self) -> (.value: &Self))
-        \\Modern: Contract = (
+        \\First#(.Participant: Type): Contract = (.Other: Type, .borrow: (.other: &Other, .source: &Participant) -> (.value: &Participant))
+        \\Modern#(.Participant: Type): Contract = (
         \\    .Other: Type
-        \\    borrow(.other: &Other, .source: &Self) -> (.value: &Self))
+        \\    .borrow: (.other: &Other, .source: &Participant) -> (.value: &Participant))
         \\Pair#(.Left: Type, .Right: Type): Contract = (
-        \\    combine(.left: &Left, .right: &Right) -> (.value: Result)
+        \\    .combine: (.left: &Left, .right: &Right) -> (.value: Result)
         \\    .Result: Type
         \\    .Count: Int
         \\)
@@ -853,11 +851,10 @@ test "unary compatibility contracts normalize Self to a type participant" {
     const storage = &graph.semantic.parameterized_storage;
     try std.testing.expectEqual(@as(usize, 3), storage.abstract_definitions.items.len);
     for (storage.abstract_definitions.items[0..2]) |definition| {
-        try std.testing.expect(!definition.hasExplicitParticipants());
-        const participant = definition.implicit_participant.?;
+        try std.testing.expect(definition.hasExplicitParticipants());
+        const participant: @import("parameterized/storage.zig").ComptimeParameterId = @enumFromInt(definition.participants.start);
         try std.testing.expectEqual(@as(u32, 1), definition.participants.len);
         try std.testing.expectEqual(@intFromEnum(participant), definition.participants.start);
-        try std.testing.expect(storage.comptime_parameters.items[@intFromEnum(participant)].implicit_participant);
         try std.testing.expect(participant != @as(@import("parameterized/storage.zig").ComptimeParameterId, @enumFromInt(definition.parameters.start)));
         const requirement = storage.abstract_requirements.items[definition.requirements.start];
         const fields = storage.ir.types.items[@intFromEnum(requirement.input)].resolved.structural.fields;
@@ -884,12 +881,11 @@ test "unary compatibility contracts normalize Self to a type participant" {
     const pair_input = storage.ir.types.items[@intFromEnum(pair_requirement.input)].resolved.structural.fields;
     const left = storage.ir.types.items[@intFromEnum(storage.ir.fields.items[pair_input.start].ty)].resolved.pointer.child;
     try std.testing.expectEqual(pair.participants.start, @intFromEnum(storage.ir.types.items[@intFromEnum(left)].parameter));
-    try std.testing.expectEqual(@as(?@import("parameterized/storage.zig").ComptimeParameterId, null), pair.implicit_participant);
 }
 
 test "contract participants require ordinary bindings in generic evaluation" {
     const allocator = std.testing.allocator;
-    const source = "Legacy: Contract = (read(.source: &Self) -> ())\nExplicit#(.Input: Type): Contract = (read(.source: &Input) -> ())\n";
+    const source = "First#(.Input: Type): Contract = (.read: (.source: &Input) -> ())\nExplicit#(.Input: Type): Contract = (.read: (.source: &Input) -> ())\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
     const inputs = [_]module_graph.FileInput{.{ .path = "contracts/main.rg", .tree = &tree, .source = source }};
@@ -1011,7 +1007,6 @@ test "scoped implementation evidence retains call and source identities" {
         if (result.graph.modules.items[@intFromEnum(result.graph.moduleForDeclaration(conformance.declaration).?)].is_bundled_core) continue;
         evidence += 1;
         operation_bindings += conformance.operation_bindings.len;
-        try std.testing.expect(conformance.explicit_operations);
         try std.testing.expectEqual(@as(u32, 1), conformance.operations.len);
         try std.testing.expectEqual(@as(u32, 1), conformance.operation_bindings.len);
         const method = result.graph.function_refs.items[conformance.operations.start];
@@ -1060,7 +1055,7 @@ test "generic contract implementations preserve participant and associated binde
     try std.testing.expectEqual(conformance.parameters.start, @intFromEnum(storage.ir.types.items[@intFromEnum(participant)].parameter));
     try std.testing.expectEqual(conformance.parameters.start, @intFromEnum(storage.ir.types.items[@intFromEnum(associated)].parameter));
     const relation = tree.contractConformance(tree.roots[1]).?;
-    const members = tree.structTypeLiteral(relation.implementation_members.?).?;
+    const members = tree.structTypeLiteral(relation.implementation_members).?;
     const body = tree.functionDeclaration(tree.structTypeField(members.fields[1]).?.default_value.?).?;
     try std.testing.expectEqual(@as(usize, 2), body.generic_params.len);
 }

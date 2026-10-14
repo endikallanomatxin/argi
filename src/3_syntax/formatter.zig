@@ -274,8 +274,7 @@ const Layout = struct {
         for (0..tree.nodes.len) |raw| {
             const node: syn.NodeIndex = @enumFromInt(@as(u32, @intCast(raw)));
             if (tree.contractConformance(node)) |conformance| {
-                if (conformance.implementation_members) |members|
-                    layout.space_before[@intFromEnum(tree.mainToken(members))] = true;
+                layout.space_before[@intFromEnum(tree.mainToken(conformance.implementation_members))] = true;
             }
             if (tree.tag(node) == .struct_value_literal) {
                 layout.struct_literals[@intFromEnum(tree.mainToken(node))] = true;

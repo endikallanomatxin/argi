@@ -9,19 +9,12 @@ pub const ParameterizedFunctionDefinitionId = enum(u32) { _ };
 pub const ParameterizedTypeDefinitionId = enum(u32) { _ };
 pub const AbstractRequirementId = enum(u32) { _ };
 pub const AbstractDefinitionId = enum(u32) { _ };
-pub const AbstractArgumentId = enum(u32) { _ };
-pub const AbstractImplementationId = enum(u32) { _ };
-pub const ParameterizedAbstractImplementationId = enum(u32) { _ };
-pub const AbstractDefaultId = enum(u32) { _ };
-pub const ParameterizedAbstractDefaultId = enum(u32) { _ };
 
 pub const DeclarationRef = ir.DeclarationRef;
 
 pub const ComptimeParameterKind = enum(u8) { type, comptime_int };
-pub const GenericDispatchKind = enum(u8) { regular, abstract_contract };
 
 pub const ComptimeParameter = struct {
-    implicit_participant: bool = false,
     name: primitives.StringRange,
     kind: ComptimeParameterKind,
     value_type: ?ir.ParameterizedTypeId = null,
@@ -42,7 +35,6 @@ pub const ParameterizedFunction = struct {
     input_bindings: primitives.Range(ir.ParameterizedBindingId) = .{ .start = 0, .len = 0 },
     output_bindings: primitives.Range(ir.ParameterizedBindingId) = .{ .start = 0, .len = 0 },
     body: ?ir.ParameterizedBlockId,
-    dispatch_kind: GenericDispatchKind = .regular,
     /// Destructor identity is resolved once while FileST is available. Global
     /// ownership consumes this bit and never infers temporal semantics by name.
     safety_primitive: primitives.SafetyPrimitive = .none,
@@ -55,7 +47,6 @@ pub const ParameterizedType = struct {
 };
 
 pub const AbstractRequirement = struct {
-    scoped: bool = false,
     name: primitives.StringRange,
     input: ir.ParameterizedTypeId,
     output: ir.ParameterizedTypeId,
@@ -64,7 +55,6 @@ pub const AbstractRequirement = struct {
 };
 
 pub const AbstractDefinition = struct {
-    implicit_participant: ?ComptimeParameterId = null,
     participants: primitives.Range(ComptimeParameterId) = .{ .start = 0, .len = 0 },
     // Dependencies retain their own operation namespaces and are proved against
     // the selected participant/associated bindings.
@@ -75,7 +65,7 @@ pub const AbstractDefinition = struct {
     domains: []const primitives.StringRange = &.{},
 
     pub fn hasExplicitParticipants(self: AbstractDefinition) bool {
-        return self.participants.len != 0 and self.implicit_participant == null;
+        return self.participants.len != 0;
     }
 };
 
@@ -83,27 +73,6 @@ pub const DomainMapping = struct {
     name: primitives.StringRange,
     paths: []const Path,
     pub const Path = struct { fields: []const primitives.StringRange };
-};
-
-pub const AbstractArgument = union(enum) { none, type: entities.ModuleTypeId, comptime_int: i64 };
-
-pub const AbstractImplementation = struct {
-    abstract_ref: DeclarationRef,
-    ty: entities.ModuleTypeId,
-    arguments: primitives.Range(AbstractArgumentId) = .{ .start = 0, .len = 0 },
-    source: primitives.SourceRef,
-    domains: []const DomainMapping = &.{},
-};
-
-pub const ParameterizedAbstractImplementation = struct {
-    abstract_ref: DeclarationRef,
-    parameters: primitives.Range(ComptimeParameterId),
-    concrete_type_pattern: ?ir.ParameterizedTypeId = null,
-    concrete_name: ?primitives.StringRange = null,
-    concrete_parameter_count: u32 = 0,
-    arguments: primitives.Range(ir.ParameterizedGenericArgId) = .{ .start = 0, .len = 0 },
-    source: primitives.SourceRef,
-    domains: []const DomainMapping = &.{},
 };
 
 // Tuple evidence keeps selector arguments separate from associated outputs.
@@ -116,26 +85,12 @@ pub const ContractOperation = struct {
 };
 pub const ContractConformance = struct {
     parameters: primitives.Range(ComptimeParameterId) = .{ .start = 0, .len = 0 },
-    explicit_operations: bool = false,
     operations: primitives.Range(ContractOperationId) = .{ .start = 0, .len = 0 },
     contract_ref: DeclarationRef,
     participants: primitives.Range(ir.ParameterizedGenericArgId),
     associated_arguments: primitives.Range(ir.ParameterizedGenericArgId),
     source: primitives.SourceRef,
     domains: []const DomainMapping = &.{},
-};
-
-pub const AbstractDefault = struct {
-    abstract_ref: DeclarationRef,
-    ty: entities.ModuleTypeId,
-    source: primitives.SourceRef,
-};
-
-pub const ParameterizedAbstractDefault = struct {
-    abstract_ref: DeclarationRef,
-    parameters: primitives.Range(ComptimeParameterId),
-    ty: ir.ParameterizedTypeId,
-    source: primitives.SourceRef,
 };
 
 pub const Storage = struct {
@@ -146,15 +101,9 @@ pub const Storage = struct {
     parameterized_types: std.ArrayList(ParameterizedType) = .empty,
     abstract_requirements: std.ArrayList(AbstractRequirement) = .empty,
     abstract_definitions: std.ArrayList(AbstractDefinition) = .empty,
-    abstract_arguments: std.ArrayList(AbstractArgument) = .empty,
     // Names share the argument index; empty names denote positional arguments.
-    abstract_argument_names: std.ArrayList(primitives.StringRange) = .empty,
-    abstract_implementations: std.ArrayList(AbstractImplementation) = .empty,
-    parameterized_abstract_implementations: std.ArrayList(ParameterizedAbstractImplementation) = .empty,
     contract_conformances: std.ArrayList(ContractConformance) = .empty,
     contract_operations: std.ArrayList(ContractOperation) = .empty,
-    abstract_defaults: std.ArrayList(AbstractDefault) = .empty,
-    parameterized_abstract_defaults: std.ArrayList(ParameterizedAbstractDefault) = .empty,
 
     pub fn deinit(self: *Storage, allocator: std.mem.Allocator) void {
         self.ir.deinit(allocator);
@@ -164,14 +113,8 @@ pub const Storage = struct {
         self.parameterized_types.deinit(allocator);
         self.abstract_requirements.deinit(allocator);
         self.abstract_definitions.deinit(allocator);
-        self.abstract_arguments.deinit(allocator);
-        self.abstract_argument_names.deinit(allocator);
-        self.abstract_implementations.deinit(allocator);
-        self.parameterized_abstract_implementations.deinit(allocator);
         self.contract_conformances.deinit(allocator);
         self.contract_operations.deinit(allocator);
-        self.abstract_defaults.deinit(allocator);
-        self.parameterized_abstract_defaults.deinit(allocator);
         self.* = .{};
     }
 
@@ -183,14 +126,8 @@ pub const Storage = struct {
             self.parameterized_types.items.len * @sizeOf(ParameterizedType) +
             self.abstract_requirements.items.len * @sizeOf(AbstractRequirement) +
             self.abstract_definitions.items.len * @sizeOf(AbstractDefinition) +
-            self.abstract_arguments.items.len * @sizeOf(AbstractArgument) +
-            self.abstract_argument_names.items.len * @sizeOf(primitives.StringRange) +
-            self.abstract_implementations.items.len * @sizeOf(AbstractImplementation) +
-            self.parameterized_abstract_implementations.items.len * @sizeOf(ParameterizedAbstractImplementation) +
             self.contract_conformances.items.len * @sizeOf(ContractConformance) +
-            self.contract_operations.items.len * @sizeOf(ContractOperation) +
-            self.abstract_defaults.items.len * @sizeOf(AbstractDefault) +
-            self.parameterized_abstract_defaults.items.len * @sizeOf(ParameterizedAbstractDefault);
+            self.contract_operations.items.len * @sizeOf(ContractOperation);
     }
 };
 

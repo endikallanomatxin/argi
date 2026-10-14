@@ -368,7 +368,7 @@ conservatively rather than gaining a guarantee that needs both results.
 > is insufficient. Existing output contracts use this proof path after concrete
 > domain resolution; unreachable output partitions have vacuous guarantees.
 > Stable terminal matches and branches can infer joint structural entry/input
-> and output conditions for dependency provenance. Abstract `on` clauses accept
+> and output conditions for dependency provenance. Contract `on` clauses accept
 > named inputs and outputs, including nested conjunctions and permissions on a
 > different output. Reference-input tags are captured before call effects;
 > later reads or mutations cannot establish the entry condition.
