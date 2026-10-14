@@ -15,6 +15,10 @@ registries or implicit participant/representation adapters.
 
 ## Independent diagnostic follow-up
 
+Profile conformance verification independently from executable reachability.
+Unused explicit implementations still require semantic and safety proofs; reuse
+those proofs without turning them into runtime roots or weakening diagnostics.
+
 Signature probes currently collapse some instantiation failures into pending
 resolution. Distinguish definite errors from missing bindings without exposing
 errors from losing candidates. Explicit and inferred calls now share argument

@@ -12967,3 +12967,7 @@ test "feature_tests/contracts/319X_implicit_self_contract" {
 test "feature_tests/contracts/320X_virtual_legacy_argument" {
     try buildExpectFailWithoutNoise("tests/feature_tests/contracts/320X_virtual_legacy_argument", "unknown virtual compile-time argument; use .contract: Contract", "panic");
 }
+
+test "feature_tests/contracts/321X_unused_conformance_consumption" {
+    try buildExpectFail("tests/feature_tests/contracts/321X_unused_conformance_consumption", "cannot prove consumes");
+}

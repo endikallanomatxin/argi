@@ -42,7 +42,25 @@ pub const FunctionSet = struct {
     }
 };
 
+/// Semantic validation also checks operations in unused explicit conformances.
 pub fn roots(
+    allocator: std.mem.Allocator,
+    graph: *const graph_mod.GlobalSemanticGraph,
+    selected_test_name: ?[]const u8,
+) !FunctionSet {
+    var result = try executionRoots(allocator, graph, selected_test_name);
+    errdefer result.deinit();
+    // Explicit implementations are checked even when the program never calls them.
+    for (graph.contract_conformances.items) |conformance| {
+        for (graph.function_refs.items[conformance.operations.start..][0..conformance.operations.len]) |method|
+            _ = try result.include(method);
+    }
+    return result;
+}
+
+/// Conservative runtime roots retain tracing and inferred-signature helpers,
+/// but exclude operations retained only to prove conformance.
+pub fn executionRoots(
     allocator: std.mem.Allocator,
     graph: *const graph_mod.GlobalSemanticGraph,
     selected_test_name: ?[]const u8,
@@ -65,10 +83,6 @@ pub fn roots(
             (std.mem.eql(u8, name, "_add_error_context") or std.mem.eql(u8, name, "_add_error_context_text") or std.mem.eql(u8, name, "source_location"));
         if (entrypoint or trace_runtime or function.flags.is_c_export or function.flags.uses_inferred_error_reasons)
             _ = try result.include(@enumFromInt(@as(u32, @intCast(raw))));
-    }
-    for (graph.contract_conformances.items) |conformance| {
-        for (graph.function_refs.items[conformance.operations.start..][0..conformance.operations.len]) |method|
-            _ = try result.include(method);
     }
     return result;
 }
@@ -385,4 +399,21 @@ test "reachability roots select main or one test" {
     defer selected.deinit();
     try std.testing.expect(!selected.contains(@enumFromInt(0)));
     try std.testing.expect(selected.contains(@enumFromInt(1)));
+
+    try graph.function_refs.append(allocator, @enumFromInt(1));
+    try graph.contract_conformances.append(allocator, .{
+        .declaration = @enumFromInt(0),
+        .participants = .{ .start = 0, .len = 0 },
+        .associated_arguments = .{ .start = 0, .len = 0 },
+        .operations = .{ .start = 0, .len = 1 },
+        .source = .{ .file_index = 0, .offset = 0 },
+    });
+    var validation = try roots(allocator, &graph, null);
+    defer validation.deinit();
+    try std.testing.expect(validation.contains(@enumFromInt(1)));
+    var runtime = try executionRoots(allocator, &graph, null);
+    defer runtime.deinit();
+    _ = try expand(allocator, &graph, &runtime);
+    try std.testing.expect(runtime.contains(@enumFromInt(0)));
+    try std.testing.expect(!runtime.contains(@enumFromInt(1)));
 }

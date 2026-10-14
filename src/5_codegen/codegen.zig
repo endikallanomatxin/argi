@@ -3,6 +3,7 @@ const llvm = @import("llvm.zig");
 const c = llvm.c;
 const graph_mod = @import("../4_semantics/global/graph.zig");
 const types = @import("../4_semantics/global/types.zig");
+const reachability = @import("../4_semantics/global/reachability.zig");
 const c_abi = @import("../4_semantics/global/c_abi.zig");
 const primitives = @import("../4_semantics/primitives/schema.zig");
 const diagnostic = @import("../1_base/diagnostic.zig");
@@ -157,10 +158,15 @@ pub const CodeGenerator = struct {
         try self.predeclareGlobalBindings();
         try self.initializeGlobalBindings();
 
+        var executable = try reachability.executionRoots(self.allocator, self.graph, self.options.selected_test_name);
+        defer executable.deinit();
+        _ = try reachability.expand(self.allocator, self.graph, &executable);
+
         for (self.graph.functions.items, 0..) |function, raw| {
             if (function.body == null) continue;
             if (self.isCoreFunction(@enumFromInt(@as(u32, @intCast(raw))), "source_location")) continue;
             const id: graph_mod.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
+            if (!executable.contains(id)) continue;
             self.generateFunctionBody(id) catch |err| {
                 if (err == CodegenError.Reported or err == error.OutOfMemory) return err;
                 const declaration = self.graph.declaration(function.declaration);
