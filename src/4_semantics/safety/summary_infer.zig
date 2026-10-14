@@ -100,8 +100,8 @@ pub const Infer = struct {
     /// Infer every SafetySummary dimension until reverse dependencies are stable:
     /// outputs, pointer/opaque-content requirements, input/outcome post-states,
     /// and opaque effects.
-    /// Reading a previous approximation records a dependency, including the
-    /// function's own approximation. Virtual effects come from fixed contracts,
+    /// Reading a previous output approximation records a dependency, including
+    /// the function's own approximation. Virtual effects come from fixed contracts,
     /// independently of implementation reachability and conformance checks.
     pub fn inferSafetySummariesFixedPoint(self: *Infer) !void {
         var functions = std.array_list.Managed(graph_mod.GlobalFunctionId).init(self.allocator);
@@ -146,7 +146,9 @@ pub const Infer = struct {
                 try self.requestContractSelectors(self.graph.function_refs.items[virtualize.methods.start + index], declared);
             }
         }
-        try self.engine.seed(functions.items);
+        const order = try @import("../global/reachability.zig").dependencyOrder(self.allocator, self.graph, functions.items);
+        defer self.allocator.free(order);
+        try self.engine.seed(order);
         while (self.engine.nextDirty()) |function| {
             self.evaluations += 1;
             self.engine.beginInference(function);
@@ -669,7 +671,11 @@ pub const Infer = struct {
 
     fn inferFunction(self: *Infer, function_id: graph_mod.GlobalFunctionId) !facts.SafetySummary {
         const function = self.graph.function(function_id);
-        const previous = self.engine.summaryFor(function_id) orelse return error.MissingSafetySummary;
+        const stored = self.engine.summaries.get(function_id) orelse return error.MissingSafetySummary;
+        // Only output approximation reuse creates a dependency on ourselves.
+        // With no outputs every dimension is computed from the body/callees;
+        // recursive calls still record their own dependencies normally.
+        const previous = if (stored.outputs.len == 0) stored else self.engine.summaryFor(function_id).?;
         const outputs = try self.allocator.dupe(facts.ValueEffect, previous.outputs);
 
         // Primitive effects are instantiated at the call site so their fresh
@@ -5977,4 +5983,51 @@ fn appendDomain(list: *std.array_list.Managed(facts.InputDomain), domain: facts.
         if (same) return;
     }
     try list.append(domain);
+}
+
+test "no-result summaries avoid self scheduling and retain recursive dependencies" {
+    const allocator = std.testing.allocator;
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    const name = try graph.addString(allocator, "value");
+    try graph.types.appendSlice(allocator, &.{
+        .{ .builtin = .Int32 },
+        .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } },
+    });
+    try graph.bindings.append(allocator, .{ .name = name, .source = source, .ty = @enumFromInt(1), .mutability = .constant });
+    try graph.binding_refs.append(allocator, @enumFromInt(0));
+    try graph.fields.append(allocator, .{ .name = name, .source = source, .ty = @enumFromInt(1) });
+    try graph.nodes.appendSlice(allocator, &.{
+        .{ .source = source, .ty = @enumFromInt(1), .content = .{ .binding_use = @enumFromInt(0) } },
+        .{ .source = source, .ty = @enumFromInt(0), .content = .{ .dereference = .{ .pointer = @enumFromInt(0), .ty = @enumFromInt(0), .pointer_type = @enumFromInt(1) } } },
+        .{ .source = source, .ty = null, .content = .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 1 } } } },
+        .{ .source = source, .ty = null, .content = .{ .function_call = .{ .callee = @enumFromInt(0), .input = @enumFromInt(2) } } },
+    });
+    try graph.value_fields.append(allocator, .{ .name = name, .value = @enumFromInt(0) });
+    try graph.node_refs.appendSlice(allocator, &.{ @enumFromInt(1), @enumFromInt(3) });
+    try graph.blocks.append(allocator, .{ .nodes = .{ .start = 0, .len = 1 } });
+    try graph.declarations.append(allocator, .{ .kind = .function, .name = name, .source = source });
+    try graph.functions.append(allocator, .{
+        .declaration = @enumFromInt(0),
+        .input = .{ .start = 0, .len = 1 },
+        .output = .{ .start = 0, .len = 0 },
+        .input_bindings = .{ .start = 0, .len = 1 },
+        .body = @enumFromInt(0),
+    });
+    for (0..2) |recursive| {
+        graph.blocks.items[0].nodes.len = if (recursive == 0) 1 else 2;
+        var arena = std.heap.ArenaAllocator.init(allocator);
+        defer arena.deinit();
+        var engine = summaries.Engine.init(arena.allocator());
+        defer engine.deinit();
+        var infer = Infer.init(arena.allocator(), &graph, &engine);
+        defer infer.deinit();
+        try infer.inferSafetySummariesFixedPoint();
+        const summary = engine.summaries.get(@enumFromInt(0)).?;
+        try std.testing.expectEqual(@as(usize, 1), summary.required_live_inputs.len);
+        try std.testing.expectEqual(@as(u32, 0), summary.required_live_inputs[0].input_index);
+        try std.testing.expectEqual(@as(u64, if (recursive == 0) 1 else 2), infer.evaluations);
+        try expectGlobalReseedingStable(&infer);
+    }
 }

@@ -115,6 +115,28 @@ pub fn expand(
     return state.changed;
 }
 
+/// Initial summary worklist order, placing concrete dependencies before callers.
+/// Cycles retain a deterministic DFS order and still require fixed-point work.
+/// Reuse the complete graph traversal, including cleanup and callback bodies.
+pub fn dependencyOrder(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSemanticGraph, functions: []const graph_mod.GlobalFunctionId) ![]graph_mod.GlobalFunctionId {
+    var included = FunctionSet.init(allocator);
+    defer included.deinit();
+    var order: std.ArrayList(graph_mod.GlobalFunctionId) = .empty;
+    errdefer order.deinit(allocator);
+    var state = State{
+        .allocator = allocator,
+        .graph = graph,
+        .functions = &included,
+        .visited_functions = std.AutoHashMap(graph_mod.GlobalFunctionId, void).init(allocator),
+        .visited_nodes = std.AutoHashMap(graph_mod.GlobalNodeId, void).init(allocator),
+        .dependency_order = &order,
+    };
+    defer state.visited_functions.deinit();
+    defer state.visited_nodes.deinit();
+    for (functions) |function| try state.walkFunction(function);
+    return order.toOwnedSlice(allocator);
+}
+
 const State = struct {
     allocator: std.mem.Allocator,
     graph: *const graph_mod.GlobalSemanticGraph,
@@ -122,6 +144,7 @@ const State = struct {
     visited_functions: std.AutoHashMap(graph_mod.GlobalFunctionId, void),
     visited_nodes: std.AutoHashMap(graph_mod.GlobalNodeId, void),
     changed: bool = false,
+    dependency_order: ?*std.ArrayList(graph_mod.GlobalFunctionId) = null,
 
     fn includeFunction(self: *State, function_id: graph_mod.GlobalFunctionId) !void {
         if (try self.functions.include(function_id)) self.changed = true;
@@ -139,6 +162,8 @@ const State = struct {
             if (field.default_value) |value| try self.walkNode(value);
         const body = function.body orelse return;
         try self.walkBlock(body);
+        if (self.dependency_order) |order| if (function.safety_primitive == .none)
+            try order.append(self.allocator, function_id);
     }
 
     fn includeBindingRange(self: *State, range: graph_mod.BindingRange) !void {
@@ -416,4 +441,34 @@ test "reachability roots select main or one test" {
     _ = try expand(allocator, &graph, &runtime);
     try std.testing.expect(runtime.contains(@enumFromInt(0)));
     try std.testing.expect(!runtime.contains(@enumFromInt(1)));
+}
+
+test "summary dependency order handles late callees and recursive cycles" {
+    const allocator = std.testing.allocator;
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    try graph.nodes.appendSlice(allocator, &.{
+        .{ .source = .{ .file_index = 0, .offset = 0 }, .ty = null, .content = .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 0 } } } },
+        .{ .source = .{ .file_index = 0, .offset = 0 }, .ty = null, .content = .{ .function_call = .{ .callee = @enumFromInt(1), .input = @enumFromInt(0) } } },
+        .{ .source = .{ .file_index = 0, .offset = 0 }, .ty = null, .content = .{ .function_call = .{ .callee = @enumFromInt(0), .input = @enumFromInt(0) } } },
+    });
+    try graph.node_refs.appendSlice(allocator, &.{ @enumFromInt(1), @enumFromInt(2) });
+    try graph.blocks.appendSlice(allocator, &.{
+        .{ .nodes = .{ .start = 0, .len = 1 } },
+        .{ .nodes = .{ .start = 1, .len = 0 } },
+    });
+    for (0..2) |index| try graph.functions.append(allocator, .{
+        .declaration = @enumFromInt(0),
+        .input = .{ .start = 0, .len = 0 },
+        .output = .{ .start = 0, .len = 0 },
+        .body = @enumFromInt(index),
+    });
+    const functions = [_]graph_mod.GlobalFunctionId{ @enumFromInt(0), @enumFromInt(1) };
+    const ordered = try dependencyOrder(allocator, &graph, &functions);
+    defer allocator.free(ordered);
+    try std.testing.expectEqualSlices(graph_mod.GlobalFunctionId, &.{ @enumFromInt(1), @enumFromInt(0) }, ordered);
+    graph.blocks.items[1].nodes.len = 1;
+    const recursive = try dependencyOrder(allocator, &graph, &functions);
+    defer allocator.free(recursive);
+    try std.testing.expectEqualSlices(graph_mod.GlobalFunctionId, ordered, recursive);
 }
