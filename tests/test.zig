@@ -12908,3 +12908,8 @@ test "feature_tests/contracts/290_known_default_participant_inference" {
 test "feature_tests/contracts/291X_generic_default_no_cached_inference" {
     try buildExpectFail("tests/feature_tests/contracts/291X_generic_default_no_cached_inference", "no matching generic overload of 'identity'");
 }
+
+test "feature_tests/contracts/292_test_equality_specialization" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/292_test_equality_specialization");
+    try runExpect("tests/feature_tests/contracts/292_test_equality_specialization", 0);
+}

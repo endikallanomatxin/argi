@@ -344,11 +344,10 @@ semantic claim that every pair has overlapping applicability.
 |---|---:|
 | `core/libc` | 1 |
 | `core/lists` | 5 |
-| `core/maps` | 11 |
+| `core/maps` | 8 |
 | `core/memory` | 1 |
 | `core/system` | 5 |
 | `core/system/file_system` | 10 |
-| `core/testing` | 4 |
 | `more/math/linear_algebra` | 5 |
 | `more/semver` | 1 |
 
@@ -555,3 +554,27 @@ passed (0 skipped) with the matching CPython 3.12 native adapter and NumPy
 enabled. The full internal suite passed 374 tests (1 skipped); contract/official
 library regressions passed separately. All runs had no failures or leaks. The
 normal compiler build still has no Python header/library requirement.
+
+### Assertion-family migration
+
+TestEquality selects specialized diagnostics while a generic conformance preserves
+ordinary equality assertions. Numeric diagnostic rendering uses closed scalar
+conformances and unique integer/float helpers. Text assertion entries are unique;
+the explicit raw-C-string failure helper has a distinct name. Preserve exact
+failure text, tracer context, success allocation behavior and partial cleanup.
+
+StringMapKey normalizes borrowed key representations through one operation.
+StringHashMap has/delete retain one generic facade per action, delegating to
+their original private view-key algorithms; duplicate Char/String wrappers are
+removed for those exclusive actions. get/put still share the maps namespace with
+other families and require a coordinated merge before becoming unique.
+
+Assertion and string-key queries need no ordinary ranking within their completed
+families. Generic HashMap get/put are still separate ordinary consumers; the
+compiler's existing duplicate-name check prevents switching those partial map
+facades to unique identities before their coordinated migration.
+
+Assertion/key batch validation: 474 collection, testing and contract program
+cases and 35 internal tests passed, without failures or leaks. The remaining
+inventory has 36 repeated names. The ordinary selector and legacy
+contract adapters remain open completion gates; this batch does not remove them.

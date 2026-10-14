@@ -9,7 +9,7 @@ test_skip_impl() -> (.result: Errable#(Void, (..test_skipped))) := {
     result = ..error(.reason = ..test_skipped)
 }
 
-fail(.message: &Char) -> (.result: Errable#(Void, (..test_failed))) := {
+fail_c_string(.message: &Char) -> (.result: Errable#(Void, (..test_failed))) := {
     test_fail_impl()!! message
 
     result = ..ok Void()
@@ -35,7 +35,7 @@ expect(
     result = _testing_failure(.detail = "expect failed: condition was false", .message = message)
 }
 
-expect_equal#(
+_assert_equal_generic#(
         .t : Type
     )(
         .expected : t,

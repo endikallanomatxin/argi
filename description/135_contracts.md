@@ -423,3 +423,9 @@ default or a unique local zero-input concrete factory's declared signature. This
 reads an input value's type without executing the factory or using the caller's
 expected result. It never infers from cached generic specializations. Factories
 execute only when the default is actually used, with ordinary safety and cleanup.
+
+TestEquality scopes assertion diagnostics. The ordinary expect_equal entry is
+unique; closed numeric/text conformances specialize the generic equality-based
+implementation. External nominal values can provide their own checked assertion
+operation. StringMapKey normalizes borrowed textual keys without retaining them
+in lookup results; StringHashMap has/delete reuse one canonical view-key algorithm.

@@ -21,7 +21,7 @@ StringHashMap#(.value: Type): Type = (
     .entries : DynamicArray#(.t: StringHashMapEntry#(.value: value))
 )
 
-string_hash_map_key_view(
+_string_key_from_view(
         .key : &StringView,
     ) -> (
         .view : StringView
@@ -29,7 +29,9 @@ string_hash_map_key_view(
     view = key&
 }
 
-string_hash_map_key_view(
+implement StringMapKey#(&StringView) (.key_view = _string_key_from_view)
+
+_string_key_from_c_string(
         .key : &Char,
     ) -> (
         .view : StringView
@@ -40,7 +42,9 @@ string_hash_map_key_view(
     )
 }
 
-string_hash_map_key_view(
+implement StringMapKey#(&Char) (.key_view = _string_key_from_c_string)
+
+_string_key_from_string(
         .key : &String,
     ) -> (
         .view : StringView
@@ -48,6 +52,8 @@ string_hash_map_key_view(
     key_view ::= as_view(key)
     view = key_view
 }
+
+implement StringMapKey#(&String) (.key_view = _string_key_from_string)
 
 -- Builds a native integer from byte bits without pointer casts or depending
 -- on implicit integer widening. The loop has exactly eight iterations.
@@ -384,6 +390,10 @@ put#(
     put#(.value: value)(.allocator = allocator, .self = self, .key = &key_view, .value = value)
 }
 
+
+
+
+
 get#(
         .value : Type
     )(
@@ -432,7 +442,11 @@ get#(
     value = get(self, .key = &key_view)
 }
 
-has#(
+
+
+
+
+_string_map_has_view#(
         .value : Type
     )(
         .self : &StringHashMap#(.value: value),
@@ -444,29 +458,9 @@ has#(
     ok = found ?
 }
 
-has#(
-        .value : Type
-    )(
-        .self : &StringHashMap#(.value: value),
-        .key  : &Char,
-    ) -> (
-        .ok : Bool
-    ) := {
-    key_view ::= string_hash_map_key_view(.key = key)
-    ok = has#(.value: value)(self, .key = &key_view)
-}
 
-has#(
-        .value : Type
-    )(
-        .self : &StringHashMap#(.value: value),
-        .key  : &String,
-    ) -> (
-        .ok : Bool
-    ) := {
-    key_view ::= string_hash_map_key_view(.key = key)
-    ok = has#(.value: value)(self, .key = &key_view)
-}
+
+
 
 string_hash_map_retarget_entry_index#(
         .value : Type
@@ -519,7 +513,7 @@ string_hash_map_retarget_entry_index#(
     }
 }
 
-delete#(
+_string_map_delete_view#(
         .value : Type
     )(
         .self : $&StringHashMap#(.value: value),
@@ -614,26 +608,17 @@ delete#(
     value = ..none
 }
 
-delete#(
-        .value : Type
-    )(
-        .self : $&StringHashMap#(.value: value),
-        .key  : &Char,
-    ) -> (
-        .value : ?value
-    ) := {
+
+
+
+
+
+has#(.value: Type, .Key: Type: StringMapKey#(Key)) := (.self: &StringHashMap#(.value: value), .key: Key) -> (.ok: Bool) {
     key_view ::= string_hash_map_key_view(.key = key)
-    value = delete#(.value: value)(self, .key = &key_view)
+    ok = _string_map_has_view#(.value: value)(.self = self, .key = &key_view)
 }
 
-delete#(
-        .value : Type
-    )(
-        .self : $&StringHashMap#(.value: value),
-        .key  : &String,
-    ) -> (
-        .value : ?value
-    ) := {
+delete#(.value: Type, .Key: Type: StringMapKey#(Key)) := (.self: $&StringHashMap#(.value: value), .key: Key) -> (.value: ?value) {
     key_view ::= string_hash_map_key_view(.key = key)
-    value = delete#(.value: value)(self, .key = &key_view)
+    value = _string_map_delete_view#(.value: value)(.self = self, .key = &key_view)
 }
