@@ -121,8 +121,8 @@ pub const Index = struct {
                     .len = @intCast(graph.text(name).len),
                     .target = .{ .function = call.callee },
                     .constructor_call = initialized != null,
-                    .operation = if (initialized == null) if (call.contract_operation) |identity| (evidence.selectedOperation(graph, identity) orelse continue).identity else null else null,
-                    .operation_name_start = if (initialized == null and call.contract_operation != null) name.start else std.math.maxInt(u32),
+                    .operation = if (initialized == null) if (graph.callOperation(call)) |identity| (evidence.selectedOperation(graph, identity) orelse continue).identity else null else null,
+                    .operation_name_start = if (initialized == null and graph.callOperation(call) != null) name.start else std.math.maxInt(u32),
                 });
             },
             .virtual_call => |id| {

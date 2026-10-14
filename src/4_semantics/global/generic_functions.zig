@@ -194,7 +194,7 @@ pub const Resolver = struct {
     const ScalarPrimitive = union(enum) { arithmetic: primitives.BinaryOperator, equality };
 
     fn isSelectedScalarPrimitive(self: *Resolver, call: global_sg.Node, operation: ScalarPrimitive) bool {
-        if (call.content != .function_call or call.content.function_call.contract_operation == null) return false;
+        if (call.content != .function_call or self.graph.callOperation(call.content.function_call) == null) return false;
         const declaration = self.graph.declaration(self.graph.function(call.content.function_call.callee).declaration);
         const function = self.graph.function(call.content.function_call.callee);
         const file = self.graph.files.items[declaration.source.file_index];

@@ -77,7 +77,7 @@ pub fn verifyGlobal(graph: *const graph_mod.GlobalSemanticGraph) !void {
     for (graph.nodes.items) |node| {
         if (node.content != .function_call) continue;
         const call = node.content.function_call;
-        if (call.contract_operation) |identity| {
+        if (graph.callOperation(call)) |identity| {
             try require(identity.conformance < graph.contract_conformances.items.len);
             const conformance = graph.contract_conformances.items[identity.conformance];
             try require(identity.index < conformance.operations.len);

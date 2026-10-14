@@ -572,8 +572,8 @@ pub fn ErrorContext(comptime Ids: type) type {
 }
 
 pub const ContractOperationIdentity = struct {
-    conformance: u32,
-    index: u32,
+    conformance: u32 = std.math.maxInt(u32),
+    index: u32 = 0,
 };
 
 pub fn Node(comptime Ids: type) type {
@@ -593,9 +593,10 @@ pub fn Node(comptime Ids: type) type {
             auto_deinit_binding: Ids.AutoDeinitId,
             function_address: Ids.FunctionId,
             function_call: struct {
-                // Populated after global conformance selection. Frontend calls
-                // retain their symbolic contract type in pending IR instead.
-                contract_operation: ?ContractOperationIdentity = null,
+                // A sentinel conformance denotes an ordinary call. Avoid an
+                // optional tag: its padding enlarges every semantic node.
+                // Frontend calls retain symbolic evidence in pending IR.
+                contract_operation: ContractOperationIdentity = .{},
                 callee: Ids.FunctionId,
                 // For indirect C calls, callee identifies signature metadata;
                 // the runtime address is evaluated separately from arguments.

@@ -1021,7 +1021,7 @@ test "scoped implementation evidence retains call and source identities" {
     for (result.graph.nodes.items) |node| {
         if (node.content != .function_call) continue;
         const call = node.content.function_call;
-        if (call.contract_operation == null) continue;
+        if (result.graph.callOperation(call) == null) continue;
         try std.testing.expectEqualStrings("multiply", result.graph.text(result.graph.callSourceName(call)));
         calls += 1;
     }

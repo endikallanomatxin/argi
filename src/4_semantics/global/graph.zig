@@ -356,8 +356,14 @@ pub const GlobalSemanticGraph = struct {
         return self.declaration(id).name;
     }
 
+    pub fn callOperation(self: *const GlobalSemanticGraph, call: anytype) ?primitives.ContractOperationIdentity {
+        _ = self;
+        if (call.contract_operation.conformance == std.math.maxInt(u32)) return null;
+        return call.contract_operation;
+    }
+
     pub fn callSourceName(self: *const GlobalSemanticGraph, call: anytype) StringRange {
-        if (call.contract_operation) |identity| {
+        if (self.callOperation(call)) |identity| {
             const selected = @import("contract_evidence.zig").selectedOperation(self, identity) orelse unreachable;
             return selected.binding.name;
         }
@@ -898,4 +904,21 @@ test "named function lookup excludes instances and callback prototypes across ro
     graph.rollback(saved);
     try graph.functions.append(allocator, callable);
     try std.testing.expectEqual(@as(usize, 2), (try graph.functionsNamed(allocator, "identity")).len);
+}
+
+test "selected call evidence stays compact and distinguishes aliased operations" {
+    var graph: GlobalSemanticGraph = .{};
+    // Keep the shared node union within its compact representation budget.
+    try std.testing.expect(@sizeOf(Node) <= 112);
+    const ordinary = Node.Content{ .function_call = .{ .callee = @enumFromInt(0), .input = @enumFromInt(0) } };
+    try std.testing.expect(graph.callOperation(ordinary.function_call) == null);
+    var first = ordinary.function_call;
+    first.contract_operation = .{ .conformance = 3, .index = 2 };
+    var second = first;
+    second.contract_operation = .{ .conformance = 5, .index = 1 };
+    try std.testing.expectEqual(first.callee, second.callee);
+    try std.testing.expectEqual(@as(u32, 3), graph.callOperation(first).?.conformance);
+    try std.testing.expectEqual(@as(u32, 2), graph.callOperation(first).?.index);
+    try std.testing.expectEqual(@as(u32, 5), graph.callOperation(second).?.conformance);
+    try std.testing.expectEqual(@as(u32, 1), graph.callOperation(second).?.index);
 }
