@@ -356,8 +356,8 @@ pub const GlobalSemanticGraph = struct {
 
     pub fn callSourceName(self: *const GlobalSemanticGraph, call: anytype) StringRange {
         if (call.contract_operation) |identity| {
-            const conformance = self.contract_conformances.items[identity.conformance];
-            return self.contract_operation_bindings.items[conformance.operation_bindings.start + identity.index].name;
+            const selected = @import("contract_evidence.zig").selectedOperation(self, identity) orelse unreachable;
+            return selected.binding.name;
         }
         return self.declarationSourceName(self.function(call.callee).declaration);
     }

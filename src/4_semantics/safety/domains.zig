@@ -3,7 +3,7 @@ const facts = @import("safety_facts.zig");
 
 pub const DomainId = enum(u32) { _ };
 
-/// One abstract domain may cover several concrete storage paths. Mappings are
+/// One contract domain may cover several concrete storage paths. Mappings are
 /// implementation metadata, not a new runtime owner or retained lifetime.
 pub const Mapping = struct {
     domain: DomainId,

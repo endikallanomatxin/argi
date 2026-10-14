@@ -70,7 +70,7 @@ pub fn finish(
     const global_roots = try global_roots_lowerer.lower(allocator, graph);
 
     const parameterized_stats = try parameterized_lowerer.lowerDiagnosed(allocator, graph, files, diagnostics);
-    // Templates claim abstract interfaces before ordinary body lowering, so
+    // Templates register contract interfaces before ordinary body lowering, so
     // each contract body is materialized only after specialization.
     const bodies = try body_lowerer.lowerMissingFunctions(allocator, graph, files, diagnostics);
     try function_identity_lowerer.lower(graph, files, diagnostics);
@@ -125,7 +125,7 @@ test "finish completes an already discovered module graph" {
 
 test "finish lowers explicit bundled contract bounds in one pass" {
     const allocator = std.testing.allocator;
-    const source = "consume#(.Value: Type: PreludeAbstract)(.value: Value) -> () := {}\n";
+    const source = "consume#(.Value: Type: PreludeContract)(.value: Value) -> () := {}\n";
     const input_sources = [_]source_files.SourceFile{.{ .path = "app/use.rg", .code = source }};
     var diagnostics = diagnostic.Diagnostics.init(&allocator, &input_sources);
     defer diagnostics.deinit();
@@ -161,11 +161,11 @@ test "module semantizer completes syntax-independent local semantics" {
     try std.testing.expect(result.stats.local_semantics_complete);
 }
 
-test "qualified external signature lowers without an abstract catalog" {
+test "qualified external signature lowers without a contract catalog" {
     const allocator = std.testing.allocator;
     const source =
         "dep := import(\"../dep\")\n" ++
-        "consume_imported#(.Value: Type: dep.Abstract)(.value: Value) -> (.result: Int32) := {\n" ++
+        "consume_imported#(.Value: Type: dep.Protocol)(.value: Value) -> (.result: Int32) := {\n" ++
         "    result = score(.value = value).result\n" ++
         "}\n";
     const input_sources = [_]source_files.SourceFile{.{ .path = "app/use.rg", .code = source }};

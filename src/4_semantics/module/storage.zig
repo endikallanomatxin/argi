@@ -22,8 +22,6 @@ pub const Storage = struct {
     declaration_bindings: std.ArrayList(entities.DeclarationBinding) = .empty,
     module_aliases: std.ArrayList(entities.ModuleAlias) = .empty,
     function_semantics: std.ArrayList(entities.FunctionSemantic) = .empty,
-    /// Aligned with ModuleSemanticGraph.functions. `null` is a normal named
-    /// function; non-null is the semantic overload operator identity.
     field_semantics: std.ArrayList(entities.FieldSemantic) = .empty,
     variant_semantics: std.ArrayList(entities.VariantSemantic) = .empty,
 

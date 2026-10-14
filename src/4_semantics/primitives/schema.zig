@@ -296,8 +296,8 @@ pub fn SemanticType(comptime Ids: type) type {
             base: Ids.DeclId,
             arguments: Range(Ids.GenericArgId),
         },
-        /// Runtime pair (data pointer, vtable pointer) carrying an Abstract.
-        /// The abstract type identity is explicit because `Virtual` is an
+        /// Runtime pair (data pointer, vtable pointer) carrying contract evidence.
+        /// The contract type identity is explicit because `Virtual` is an
         /// intrinsic type constructor, not a source declaration.
         virtual: Ids.TypeId,
     };
@@ -436,8 +436,8 @@ pub fn AutoDeinit(comptime Ids: type) type {
 pub fn VirtualMethodRegistry(comptime Ids: type) type {
     return struct {
         implementations: Range(Ids.FunctionId),
-        /// Receiver position comes from the erased abstract contract. A known
-        /// argument may have the same concrete type as Self after substitution.
+        /// Receiver position comes from the erased contract. A known
+        /// argument may have the same concrete type as the participant after substitution.
         receiver_input_index: u32,
         safety_contract: ?MethodSafetyContract = null,
         /// Scalar outputs and declared input referents need no concrete receiver

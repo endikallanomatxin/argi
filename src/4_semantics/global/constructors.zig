@@ -72,7 +72,7 @@ pub const Resolver = struct {
 
         const fields = types.fields(self.graph, ty) orelse return null;
         switch (self.core.matchCallInput(fields, input)) {
-            .score => {},
+            .applicable => {},
             .no_match, .deferred => return null,
         }
         if (!try self.core.completeCallInputFields(fields, input)) return null;
@@ -462,7 +462,7 @@ pub const Resolver = struct {
         const fields = types.fields(self.graph, ty) orelse return .deferred;
         self.core.contextualizeConstructorChoices(module_index, o, fields, input);
         switch (self.core.matchCallInput(fields, input)) {
-            .score => {},
+            .applicable => {},
             .no_match, .deferred => return .deferred,
         }
         if (!try self.core.completeCallInputFields(fields, input)) return .deferred;

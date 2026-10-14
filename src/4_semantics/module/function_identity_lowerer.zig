@@ -101,7 +101,7 @@ fn validatePrimitiveDeclaration(
             try bag.add(
                 location,
                 .internal,
-                "bundled core primitive `{s}` has an incompatible signature; expected an approved overload",
+                "bundled core primitive `{s}` has an incompatible signature; expected an approved signature",
                 .{spec.name},
             );
     }

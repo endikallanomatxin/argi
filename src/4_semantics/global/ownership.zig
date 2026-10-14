@@ -211,7 +211,7 @@ pub const Resolver = struct {
         if (self.hasExplicitCopyCapability(ty) or !self.triviallyCopyable(ty)) {
             // A binding use can still carry a temporal move error that Safety
             // must diagnose before the copy permission. Other expressions may
-            // be part of overload/initializer matching, where failure here
+            // be part of call/initializer matching, where failure here
             // must continue to reject the candidate.
             if (self.graph.nodes.items[@intFromEnum(source)].content != .binding_use) return false;
             const binding = self.graph.nodes.items[@intFromEnum(source)].content.binding_use;

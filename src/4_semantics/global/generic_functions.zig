@@ -413,8 +413,8 @@ pub const Resolver = struct {
         else
             null;
         const name = module.text(reference.name);
-        var best: ?global_sg.GlobalDeclId = null;
-        var best_arguments: primitives.Range(global_sg.GlobalGenericArgId) = .{ .start = 0, .len = 0 };
+        var selected: ?global_sg.GlobalDeclId = null;
+        var selected_arguments: primitives.Range(global_sg.GlobalGenericArgId) = .{ .start = 0, .len = 0 };
         var tied = false;
         var saw_deferred = false;
         var argument_failure: ?anyerror = null;
@@ -480,22 +480,22 @@ pub const Resolver = struct {
                     if (self.profile_io != null) self.selection_profile.explicit_argument_materializations_discarded += 1;
                     continue;
                 },
-                .score => {},
+                .applicable => {},
             }
             if (self.profile_io != null) self.selection_profile.explicit_candidates_matching += 1;
             self.addProfileTime(applicability_start, &self.selection_profile.explicit_applicability_ns);
             applicability_active = false;
-            if (best == null) {
-                best = declaration;
-                best_arguments = complete_arguments;
-            } else if (declaration != best.?) {
+            if (selected == null) {
+                selected = declaration;
+                selected_arguments = complete_arguments;
+            } else if (declaration != selected.?) {
                 tied = true;
                 if (self.profile_io != null) self.selection_profile.explicit_argument_materializations_discarded += 1;
             }
         }
         if (tied) return error.AmbiguousGenericFunction;
         if (saw_deferred) return error.DeferredGenericFunction;
-        const declaration = best orelse {
+        const declaration = selected orelse {
             if (argument_failure) |failure| if (!saw_deferred and !saw_valid_arguments) {
                 const reason = switch (failure) {
                     error.UnknownGenericArgument => "unknown compile-time argument",
@@ -513,7 +513,7 @@ pub const Resolver = struct {
             return if (saw_deferred) error.DeferredGenericFunction else error.NoMatchingGenericFunction;
         };
         const instantiate_start = self.profileTimestamp();
-        const result = try self.instantiate(declaration, best_arguments);
+        const result = try self.instantiate(declaration, selected_arguments);
         self.addProfileTime(instantiate_start, &self.selection_profile.explicit_final_instantiation_ns);
         return result;
     }
@@ -951,8 +951,8 @@ pub const Resolver = struct {
             .struct_value_literal => |literal| literal,
             else => return error.MissingGenericInputType,
         };
-        var best: ?global_sg.GlobalDeclId = null;
-        var best_arguments: primitives.Range(global_sg.GlobalGenericArgId) = .{ .start = 0, .len = 0 };
+        var selected: ?global_sg.GlobalDeclId = null;
+        var selected_arguments: primitives.Range(global_sg.GlobalGenericArgId) = .{ .start = 0, .len = 0 };
         var tied = false;
         var saw_deferred = false;
         var conflicting_candidates: usize = 0;
@@ -1069,11 +1069,11 @@ pub const Resolver = struct {
                     saw_deferred = true;
                     continue;
                 },
-                .score => {},
+                .applicable => {},
             }
             self.addProfileTime(applicability_start, &self.selection_profile.implicit_applicability_ns);
             applicability_active = false;
-            if (best == null) {
+            if (selected == null) {
                 phase_start = self.profileTimestamp();
                 // Only one applicable identity needs durable arguments.
                 // Failed and deferred probes leave no argument tail.
@@ -1090,13 +1090,13 @@ pub const Resolver = struct {
                 const range: primitives.Range(global_sg.GlobalGenericArgId) = .{ .start = @intCast(self.graph.generic_arguments.items.len), .len = @intCast(arguments.items.len) };
                 try self.graph.generic_arguments.appendSlice(self.allocator, arguments.items);
                 self.addProfileTime(phase_start, &self.selection_profile.implicit_argument_materialization_ns);
-                best = declaration;
-                best_arguments = range;
+                selected = declaration;
+                selected_arguments = range;
                 if (ambiguity_candidates) |candidates| {
                     candidates.clearRetainingCapacity();
                     try candidates.append(self.allocator, declaration);
                 }
-            } else if (declaration != best.?) {
+            } else if (declaration != selected.?) {
                 tied = true;
                 if (ambiguity_candidates) |candidates|
                     try candidates.append(self.allocator, declaration);
@@ -1104,8 +1104,8 @@ pub const Resolver = struct {
         }
         if (tied) return error.AmbiguousGenericFunction;
         if (saw_deferred) return error.DeferredGenericFunction;
-        const declaration = best orelse return if (saw_deferred) error.DeferredGenericFunction else if (candidate_count == 1 and conflicting_candidates == 1) error.ConflictingGenericArgument else error.NoMatchingGenericFunction;
-        return .{ .declaration = declaration, .arguments = best_arguments };
+        const declaration = selected orelse return if (saw_deferred) error.DeferredGenericFunction else if (candidate_count == 1 and conflicting_candidates == 1) error.ConflictingGenericArgument else error.NoMatchingGenericFunction;
+        return .{ .declaration = declaration, .arguments = selected_arguments };
     }
 
     fn contextualParameterizedLiteralFits(
@@ -1184,7 +1184,7 @@ pub const Resolver = struct {
         // Only explain constraints for otherwise compatible signatures, using
         // the same matcher as function applicability rather than a second rule set.
         switch (self.matchParameterizedInput(module_index, pattern, bindings, input)) {
-            .score => {},
+            .applicable => {},
             else => return,
         }
         try failures.append(self.allocator, .{
@@ -1249,8 +1249,8 @@ pub const Resolver = struct {
     }
 
     /// Re-run implicit generic selection transactionally for diagnostics and
-    /// report the declaration identities tied at the best rank. This keeps
-    /// diagnostics coupled to the real inference/specificity algorithm rather
+    /// report every applicable declaration identity. This keeps
+    /// diagnostics coupled to actual inference and applicability rather
     /// than maintaining an approximate second applicability matcher.
     pub fn collectImplicitGenericAmbiguity(
         self: *Resolver,

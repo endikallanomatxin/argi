@@ -1,3 +1,4 @@
+const evidence = @import("../4_semantics/global/contract_evidence.zig");
 const std = @import("std");
 const source_db = @import("../1_base/source_db.zig");
 const graph_mod = @import("../4_semantics/global/graph.zig");
@@ -13,10 +14,7 @@ pub const Target = union(enum) {
     variant: graph_mod.GlobalVariantId,
 };
 
-pub const OperationIdentity = struct {
-    contract: graph_mod.GlobalDeclId,
-    index: u32,
-};
+pub const OperationIdentity = evidence.Operation;
 
 pub const Occurrence = struct {
     source: primitives.SourceRef,
@@ -123,34 +121,18 @@ pub const Index = struct {
                     .len = @intCast(graph.text(name).len),
                     .target = .{ .function = call.callee },
                     .constructor_call = initialized != null,
-                    .operation = if (initialized == null) if (call.contract_operation) |identity| .{
-                        .contract = graph.contract_conformances.items[identity.conformance].declaration,
-                        .index = identity.index,
-                    } else null else null,
+                    .operation = if (initialized == null) if (call.contract_operation) |identity| (evidence.selectedOperation(graph, identity) orelse continue).identity else null else null,
                     .operation_name_start = if (initialized == null and call.contract_operation != null) name.start else std.math.maxInt(u32),
                 });
             },
             .virtual_call => |id| {
                 const call = graph.virtual_calls.items[@intFromEnum(id)];
-                const handle_type = graph.node(call.handle).ty orelse continue;
-                const referent = switch (graph.semanticType(handle_type)) {
-                    .pointer => |pointer| pointer.child,
-                    else => continue,
-                };
-                const contract_type = switch (graph.semanticType(referent)) {
-                    .virtual => |contract_type| contract_type,
-                    else => referent,
-                };
-                const contract = switch (graph.semanticType(contract_type)) {
-                    .declared => |declaration| declaration,
-                    .generic => |identity| identity.base,
-                    else => continue,
-                };
+                const operation = evidence.virtualOperation(graph, call) orelse continue;
                 try result.add(allocator, .{
                     .source = node.source,
                     .len = call.method_name.len,
-                    .target = .{ .declaration = contract },
-                    .operation = .{ .contract = contract, .index = call.method_index },
+                    .target = .{ .declaration = operation.contract },
+                    .operation = operation,
                     .operation_name_start = call.method_name.start,
                 });
             },

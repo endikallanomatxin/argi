@@ -484,7 +484,7 @@ test "LSP completion filters names and preserves scopes in unfinished code" {
         try std.testing.expect(item_named(result, name) == null);
 }
 
-test "LSP completion replaces whole identifier and deduplicates overloads" {
+test "LSP completion replaces whole identifier and deduplicates invalid duplicate declarations" {
     var result = try test_completion("main() -> () := { pri|nt }", &.{.{ .path = "/bundle/core/print.rg", .origin = .bundled_core, .code =
         \\print(.value: Int32) -> () := {}
         \\print(.value: Bool) -> () := {}

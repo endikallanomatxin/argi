@@ -322,7 +322,7 @@ test "syntax navigation preserves lexical scopes and ignores member guesses" {
     try std.testing.expect((try test_definition(&sources, "value\"")) == null);
 }
 
-test "syntax navigation respects visibility and refuses unresolved overloads" {
+test "syntax navigation respects visibility and refuses duplicate function identities" {
     const sources = [_]sf.SourceFile{
         .{ .path = "/app/main.rg", .code = "main() -> () := { local()\n unique()\n overload()\n foreign()\n _private()\n }" },
         .{ .path = "/app/helper.rg", .code = "local() -> () := {}" },

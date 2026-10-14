@@ -443,7 +443,7 @@ pub const Resolver = struct {
         input_node: global_sg.GlobalNodeId,
         context: reach_context.Context,
     ) !FunctionMatch {
-        var best: ?global_sg.GlobalFunctionId = null;
+        var selected: ?global_sg.GlobalFunctionId = null;
         var saw_deferred = false;
         const candidates = try self.graph.functionsNamed(self.allocator, name);
         for (candidates) |id| {
@@ -459,13 +459,13 @@ pub const Resolver = struct {
                     saw_deferred = true;
                     continue;
                 },
-                .score => {},
+                .applicable => {},
             }
-            if (best != null and best.? != id) return .ambiguous;
-            best = id;
+            if (selected != null and selected.? != id) return .ambiguous;
+            selected = id;
         }
         if (saw_deferred) return .deferred;
-        if (best) |function| return .{ .function = function };
+        if (selected) |function| return .{ .function = function };
         return .no_match;
     }
 
@@ -476,7 +476,7 @@ pub const Resolver = struct {
         module_filter: ?global_sg.GlobalModuleId,
         input_node: global_sg.GlobalNodeId,
     ) !FunctionMatch {
-        var best: ?global_sg.GlobalFunctionId = null;
+        var selected: ?global_sg.GlobalFunctionId = null;
         var saw_deferred = false;
         const candidates = try self.graph.functionsNamed(self.allocator, name);
         for (candidates) |id| {
@@ -492,13 +492,13 @@ pub const Resolver = struct {
                     saw_deferred = true;
                     continue;
                 },
-                .score => {},
+                .applicable => {},
             }
-            if (best != null and best.? != id) return .ambiguous;
-            best = id;
+            if (selected != null and selected.? != id) return .ambiguous;
+            selected = id;
         }
         if (saw_deferred) return .deferred;
-        if (best) |function| return .{ .function = function };
+        if (selected) |function| return .{ .function = function };
         return .no_match;
     }
 
@@ -605,7 +605,7 @@ pub const Resolver = struct {
             switch (self.matchCallInput(self.graph.function(signature).input, input)) {
                 .deferred => return .deferred,
                 .no_match => return .invalid,
-                .score => {},
+                .applicable => {},
             }
             const reach = reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function);
             if (!try self.completeCallInputWithReach(signature, input, reach)) return .deferred;
@@ -1094,10 +1094,10 @@ pub const Resolver = struct {
         return .not_applicable;
     }
 
-    pub const CallInputMatch = union(enum) {
+    pub const CallInputMatch = enum {
         no_match,
         deferred,
-        score: u32,
+        applicable,
     };
 
     /// A reached default is available, pending resolution, or absent from
@@ -1115,7 +1115,6 @@ pub const Resolver = struct {
             else => return .no_match,
         };
         if (!self.callInputNamesMatch(expected_fields, literal)) return .no_match;
-        var score: u32 = 0;
         for (0..expected_fields.len) |expected_offset| {
             const expected = self.graph.fields.items[expected_fields.start + @as(u32, @intCast(expected_offset))];
             const supplied = self.callArgument(literal, expected_offset, expected.name);
@@ -1128,16 +1127,17 @@ pub const Resolver = struct {
                     if (self.graph.isTypeUnresolved(actual)) {
                         return .deferred;
                     }
-                    if (types.equal(self.graph, actual, expected.ty)) score += 4 else if (self.callTypesCompatible(actual, expected.ty)) score += 3 else if (types.isBuiltin(self.graph, expected.ty, .Any)) score += 1 else if (self.contextualLiteralFits(node, expected.ty)) score += 3 else return .no_match;
-                } else if (self.contextualLiteralFits(node, expected.ty)) {
-                    score += 3;
-                } else switch (supplied_node.content) {
+                    if (!types.equal(self.graph, actual, expected.ty) and
+                        !self.callTypesCompatible(actual, expected.ty) and
+                        !types.isBuiltin(self.graph, expected.ty, .Any) and
+                        !self.contextualLiteralFits(node, expected.ty)) return .no_match;
+                } else if (!self.contextualLiteralFits(node, expected.ty)) switch (supplied_node.content) {
                     .string_literal, .struct_value_literal => return .no_match,
                     else => return .deferred,
-                }
+                };
             } else if (expected.default_value == null) return .no_match;
         }
-        return .{ .score = score };
+        return .applicable;
     }
 
     pub fn matchCallInputWithReach(
@@ -1147,7 +1147,7 @@ pub const Resolver = struct {
         context: reach_context.Context,
     ) !CallInputMatch {
         const base = self.matchCallInput(expected_fields, input_node);
-        if (base != .score) return base;
+        if (base != .applicable) return base;
         const literal = switch (self.graph.nodes.items[@intFromEnum(input_node)].content) {
             .struct_value_literal => |value| value,
             else => return .no_match,
@@ -1347,13 +1347,6 @@ pub const Resolver = struct {
             if (!known) return false;
         }
         return true;
-    }
-
-    pub fn scoreCallInput(self: *Resolver, expected_fields: global_sg.FieldRange, input_node: global_sg.GlobalNodeId) ?u32 {
-        return switch (self.matchCallInput(expected_fields, input_node)) {
-            .score => |score| score,
-            .no_match, .deferred => null,
-        };
     }
 
     pub fn callTypesCompatible(self: *const Resolver, actual: global_sg.GlobalTypeId, expected: global_sg.GlobalTypeId) bool {
@@ -2097,7 +2090,7 @@ test "call input matching distinguishes deferred arguments from mismatches" {
     try std.testing.expectEqual(Resolver.CallInputMatch.no_match, resolver.matchCallInput(expected, @enumFromInt(1)));
     graph.nodes.items[0].ty = int_ty;
     const matched = resolver.matchCallInput(expected, @enumFromInt(1));
-    try std.testing.expectEqual(@as(u32, 4), matched.score);
+    try std.testing.expectEqual(Resolver.CallInputMatch.applicable, matched);
 }
 test "assignment context materializes anonymous aggregate and child types" {
     const allocator = std.testing.allocator;

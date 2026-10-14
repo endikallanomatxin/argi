@@ -2531,7 +2531,7 @@ fn diagnoseUnresolvedCall(
                     };
                     const signature = graph.function(declaration.function_id.?);
                     const input = globalizer.globalNode(offsets[module_index], call.input);
-                    if (generic_functions.core.matchCallInput(signature.input, input) == .score) {
+                    if (generic_functions.core.matchCallInput(signature.input, input) == .applicable) {
                         try diagnostics.add(location, .semantic, "cannot resolve C callback '{s}': .ffi uses reach [ffi] and requires a ForeignFunctionInterface capability", .{name});
                     } else {
                         try diagnostics.add(location, .semantic, "arguments do not match the C callback signature of '{s}'", .{name});
@@ -2629,7 +2629,7 @@ fn diagnoseUnresolvedCall(
                 var contextual_matches: usize = 0;
                 for (candidates.items) |candidate| {
                     const function = graph.function(candidate);
-                    if (contextual_core.matchCallInput(function.input, input_id) == .score) contextual_matches += 1;
+                    if (contextual_core.matchCallInput(function.input, input_id) == .applicable) contextual_matches += 1;
                 }
                 if (contextual_matches < 2) continue;
             }
@@ -2675,14 +2675,14 @@ fn diagnoseUnresolvedCall(
 
             if (candidates.items.len == 0) {
                 if (generic_functions.hasVisibleParameterizedFunctionName(module_index, name, qualified_module)) {
-                    var generic_ties: std.ArrayList(global_sg.GlobalDeclId) = .empty;
-                    defer generic_ties.deinit(allocator);
+                    var applicable_generic_functions: std.ArrayList(global_sg.GlobalDeclId) = .empty;
+                    defer applicable_generic_functions.deinit(allocator);
                     if (try generic_functions.collectImplicitGenericAmbiguity(
                         module_index,
                         module,
                         reference,
                         input_id,
-                        &generic_ties,
+                        &applicable_generic_functions,
                     )) {
                         var ambiguity = std.array_list.Managed(u8).init(allocator);
                         defer ambiguity.deinit();
@@ -2724,24 +2724,24 @@ fn diagnoseUnresolvedCall(
                 .modules = modules,
                 .offsets = offsets,
             };
-            var best_matches: std.ArrayList(global_sg.GlobalFunctionId) = .empty;
-            defer best_matches.deinit(allocator);
+            var applicable_functions: std.ArrayList(global_sg.GlobalFunctionId) = .empty;
+            defer applicable_functions.deinit(allocator);
             for (candidates.items) |candidate| {
                 const function = graph.functions.items[@intFromEnum(candidate)];
                 if (function.flags.is_generic_instantiation or function.flags.is_c_function_pointer) continue;
                 switch (diagnostic_core.matchCallInput(function.input, input_id)) {
-                    .score => {},
+                    .applicable => {},
                     .no_match, .deferred => continue,
                 }
-                try best_matches.append(allocator, candidate);
+                try applicable_functions.append(allocator, candidate);
             }
-            if (best_matches.items.len > 1) {
+            if (applicable_functions.items.len > 1) {
                 var ambiguity = std.array_list.Managed(u8).init(allocator);
                 defer ambiguity.deinit();
                 try appendAmbiguousCallPrefix(&ambiguity, graph, diagnostics, source, module, reference);
                 try appendValueShape(&ambiguity, graph, input);
                 try ambiguity.appendSlice(". Applicable function identities:");
-                for (best_matches.items) |candidate| {
+                for (applicable_functions.items) |candidate| {
                     const function = graph.functions.items[@intFromEnum(candidate)];
                     try ambiguity.appendSlice("\n  - ");
                     try ambiguity.appendSlice(name);
@@ -2759,21 +2759,21 @@ fn diagnoseUnresolvedCall(
                 return true;
             }
 
-            var generic_ties: std.ArrayList(global_sg.GlobalDeclId) = .empty;
-            defer generic_ties.deinit(allocator);
+            var applicable_generic_functions: std.ArrayList(global_sg.GlobalDeclId) = .empty;
+            defer applicable_generic_functions.deinit(allocator);
             if (try generic_functions.collectImplicitGenericAmbiguity(
                 module_index,
                 module,
                 reference,
                 input_id,
-                &generic_ties,
+                &applicable_generic_functions,
             )) {
                 var ambiguity = std.array_list.Managed(u8).init(allocator);
                 defer ambiguity.deinit();
                 try appendAmbiguousCallPrefix(&ambiguity, graph, diagnostics, source, module, reference);
                 try appendValueShape(&ambiguity, graph, input);
                 try ambiguity.appendSlice(". Applicable function identities:");
-                for (generic_ties.items) |declaration_id| {
+                for (applicable_generic_functions.items) |declaration_id| {
                     const declaration = graph.declaration(declaration_id);
                     const function_id = declaration.function_id orelse continue;
                     const function = graph.functions.items[@intFromEnum(function_id)];
@@ -2900,7 +2900,7 @@ fn diagnoseUnresolvedCall(
             var reach_candidate_count: usize = 0;
             for (candidates.items) |candidate| {
                 const function = graph.functions.items[@intFromEnum(candidate)];
-                if (diagnostic_core.matchCallInput(function.input, input_id) != .score) continue;
+                if (diagnostic_core.matchCallInput(function.input, input_id) != .applicable) continue;
                 if (try appendOmittedReachDefaults(&reach_details, graph, name, function, input))
                     reach_candidate_count += 1;
             }

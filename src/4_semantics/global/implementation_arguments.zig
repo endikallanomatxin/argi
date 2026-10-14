@@ -60,7 +60,7 @@ pub const Resolver = struct {
             if (!types.equal(self.graph, default_type, field.ty) and !self.core.callTypesCompatible(default_type, field.ty) and !self.core.contextualLiteralFits(fallback, field.ty)) return .{ .incompatible_default = field };
         }
         switch (self.core.matchCallInput(fields, input)) {
-            .score => {},
+            .applicable => {},
             .deferred => return .deferred,
             .no_match => return .incompatible_arguments,
         }
@@ -143,13 +143,13 @@ pub const Resolver = struct {
                 }
                 const fields = types.fields(self.graph, participants[prefix.len]) orelse continue;
                 switch (try self.core.matchCallInputWithReach(fields, input, reach)) {
-                    .score => {},
+                    .applicable => {},
                     .deferred => {
                         deferred = true;
                         continue;
                     },
                     .no_match => {
-                        if (self.core.matchCallInput(fields, input) == .score) {
+                        if (self.core.matchCallInput(fields, input) == .applicable) {
                             for (self.graph.fields.items[fields.start..][0..fields.len], 0..) |field, position| {
                                 if (self.core.callArgumentNamed(supplied, position, self.graph.text(field.name)) != null) continue;
                                 const fallback = field.default_value orelse continue;

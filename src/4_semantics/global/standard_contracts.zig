@@ -1,3 +1,4 @@
+const evidence = @import("contract_evidence.zig");
 const std = @import("std");
 const primitives = @import("../primitives/schema.zig");
 const graph_mod = @import("graph.zig");
@@ -24,14 +25,8 @@ pub fn deinitializedType(graph: *const graph_mod.GlobalSemanticGraph, function: 
 
 fn participantOfOperation(graph: *const graph_mod.GlobalSemanticGraph, function: graph_mod.GlobalFunctionId, name: []const u8) ?graph_mod.GlobalTypeId {
     const declaration = standardDeclaration(graph, name) orelse return null;
-    for (graph.contract_conformances.items) |conformance| {
-        if (conformance.declaration != declaration or conformance.participants.len == 0) continue;
-        for (graph.function_refs.items[conformance.operations.start..][0..conformance.operations.len]) |operation| {
-            if (operation != function) continue;
-            return graph.generic_arguments.items[conformance.participants.start].value.type;
-        }
-    }
-    return null;
+    const selected = evidence.operationForFunction(graph, declaration, function) orelse return null;
+    return selected.participant(graph, 0);
 }
 
 pub const ArithmeticOperation = struct { contract: []const u8, operation: []const u8 };

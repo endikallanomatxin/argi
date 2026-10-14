@@ -531,11 +531,20 @@ test "cleanup queries require selected Deinit evidence" {
 
     try graph.generic_arguments.append(allocator, .{ .name = name, .value = .{ .type = @enumFromInt(0) } });
     try graph.function_refs.append(allocator, @enumFromInt(0));
+    try graph.contract_operation_bindings.append(allocator, .{
+        .contract_declaration = @enumFromInt(0),
+        .requirement_index = 0,
+        .requirement_source = source,
+        .implementation_source = source,
+        .name = name,
+        .declaration = @enumFromInt(1),
+    });
     try graph.contract_conformances.append(allocator, .{
         .declaration = @enumFromInt(0),
         .participants = .{ .start = 0, .len = 1 },
         .associated_arguments = .{ .start = 1, .len = 0 },
         .operations = .{ .start = 0, .len = 1 },
+        .operation_bindings = .{ .start = 0, .len = 1 },
         .source = source,
     });
     try std.testing.expect(hasDestructor(&graph, @enumFromInt(0)));

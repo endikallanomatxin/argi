@@ -204,7 +204,7 @@ test "module semantic graph owns declarations from all direct files" {
     try std.testing.expectEqualStrings("x", graph.text(graph.fields.items[point_fields.start].name));
 }
 
-test "module symbol index retains overload candidates" {
+test "module symbol index retains duplicate declarations for diagnostics" {
     const allocator = std.testing.allocator;
     const first_source = "convert(.value: Int32) -> () := {}\n";
     const second_source = "convert(.value: Bool) -> () := {}\n";
@@ -632,7 +632,7 @@ test "explicit imported contract bounds become constrained templates" {
     try std.testing.expectEqualStrings("Writer", module.graph.text(reference.name));
 }
 
-test "local concrete type shadows unqualified prelude abstract" {
+test "local concrete type shadows unqualified prelude contract" {
     const allocator = std.testing.allocator;
     const source =
         "Shadowed : Type = ()\n" ++
@@ -711,7 +711,7 @@ test "named call inputs reject unrelated default-only operation identities" {
         "main() -> (.result: Int32) := { result = fill(.self = 2).result }\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
-    var module = try @import("semantizer.zig").build(allocator, "named_overloads", &.{.{ .path = "named_overloads/main.rg", .tree = &tree, .source = source }});
+    var module = try @import("semantizer.zig").build(allocator, "named_operations", &.{.{ .path = "named_operations/main.rg", .tree = &tree, .source = source }});
     defer module.graph.deinit(allocator);
     var result = try @import("../global/semantizer.zig").semantize(allocator, &.{module.graph});
     defer result.graph.deinit(allocator);

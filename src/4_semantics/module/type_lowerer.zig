@@ -12,7 +12,7 @@ pub const LexicalModuleAlias = struct {
     path: primitives.StringRange,
 };
 
-// Virtual is a language-level runtime type constructor. Its abstract
+// Virtual is a language-level runtime type constructor. Its contract
 // argument describes a vtable contract, unlike an ordinary generic argument
 // whose type can be specialized from a concrete call input.
 pub fn isRuntimeVirtualType(tree: *const syn.FileSyntaxTree, source: []const u8, generic: syn.GenericType) bool {
