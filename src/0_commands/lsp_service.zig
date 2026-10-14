@@ -627,7 +627,7 @@ pub const LanguageService = struct {
         snapshot.files = files;
         var diagnostics = diag.Diagnostics.init(&work, files);
         defer diagnostics.deinit();
-        var pipeline = frontend.FrontendPipeline.init(work, self.io, &diagnostics, .{ .module_cache = &self.module_cache });
+        var pipeline = frontend.FrontendPipeline.init(work, self.io, &diagnostics, .{ .module_cache = &self.module_cache, .semantizing = .{ .exhaustive_function_bodies = true } });
         defer pipeline.deinit();
         const start = std.Io.Timestamp.now(self.io, .boot).nanoseconds;
         _ = pipeline.semantizeGlobalFiles(files) catch {};
@@ -1967,4 +1967,33 @@ test "LSP renames scoped operations independently of shared aliases" {
     defer alias_edits.deinit();
     try std.testing.expectEqual(@as(usize, 3), alias_edits.items.len);
     for (alias_edits.items) |edit| try std.testing.expect(edit.range.start.line == 3 or edit.range.start.line == 4 or edit.range.start.line == 5);
+}
+
+test "LSP proves unused concrete conformance safety promises" {
+    const code =
+        \\Releaser#(.Participant: Type): Contract = (
+        \\    .release: (.self: &Participant, .resource: $&Resource) -> () where consumes(resource)
+        \\)
+        \\Manager: Type = (.unused: Int32)
+        \\Resource: Type = (.value: Int32)
+        \\implement Deinit#(Resource) (.deinit = (.self: $&Resource) -> () {})
+        \\implement Releaser#(Manager) (
+        \\    .release = (.self: &Manager, .resource: $&Resource) -> () {}
+        \\)
+        \\main := () -> () {}
+    ;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.rg", .data = code });
+    const path = try @import("../test_support.zig").tmpFilePath(&tmp, "main.rg");
+    defer std.testing.allocator.free(path);
+    var service = LanguageService.init(std.testing.allocator, std.testing.io);
+    defer service.deinit();
+    const diagnostics = try service.openDocument("file:///unused-conformance.rg", path, 1, code);
+    defer diagnostics.deinit();
+    var found = false;
+    for (diagnostics.items) |entry| if (std.mem.indexOf(u8, entry.message, "cannot prove consumes") != null) {
+        found = true;
+    };
+    try std.testing.expect(found);
 }

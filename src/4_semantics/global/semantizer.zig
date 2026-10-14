@@ -457,7 +457,8 @@ pub fn semantizeWithOptions(
             pending_resolution_stats.initial(operation);
         };
     }
-    // Explicit conformance bodies must be checked even if main never calls them.
+    // Validate declarations independently of executable use. Body proofs follow
+    // selected operations, or all materialized bodies in exhaustive mode.
     contracts.validateParticipantConformances() catch |err| {
         try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, &generics);
         try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
@@ -467,7 +468,7 @@ pub fn semantizeWithOptions(
     var reachable_storage: reachability_mod.FunctionSet = undefined;
     var reachable: ?*reachability_mod.FunctionSet = null;
     if (!options.exhaustive_function_bodies) {
-        reachable_storage = try reachability_mod.roots(allocator, &relocation.graph, options.selected_test_name);
+        reachable_storage = try reachability_mod.executionRoots(allocator, &relocation.graph, options.selected_test_name);
         reachable = &reachable_storage;
     }
     defer if (reachable) |set| set.deinit();
@@ -780,6 +781,15 @@ pub fn semantizeWithOptions(
         }
     }
     if (reachable) |set| {
+        for (relocation.graph.contract_safety_conformances.items) |*proof| {
+            const conformance = relocation.graph.contract_conformances.items[proof.selection.conformance];
+            const cleanup = set.cleanup_functions.contains(proof.method) and
+                @import("standard_contracts.zig").standardDeclaration(&relocation.graph, "Deinit") == conformance.declaration;
+            proof.safety_required = cleanup or set.operations.contains(proof.selection);
+        }
+        for (relocation.graph.virtualizes.items, 0..) |*value, raw| {
+            value.safety_required = set.virtualizes.contains(@enumFromInt(raw));
+        }
         for (relocation.graph.functions.items, 0..) |*function, raw| {
             const id: global_sg.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
             if (options.profile_io != null and function.flags.is_generic_instantiation and function.body != null) {

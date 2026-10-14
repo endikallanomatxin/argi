@@ -362,6 +362,13 @@ feature first.
   Bound virtual contract identities include associated type/value arguments;
   safety implementation registries must keep those identities separate.
 
+- Executable builds validate conformance declarations at registration and prove
+  safety for reached selected operations after concrete summaries converge.
+  Keep operation identities distinct when several contracts alias one function;
+  ordinary calls do not select every promise attached to that function.
+  Automatic cleanup counts as Deinit use, and reached virtual construction
+  proves all operations in its evidence. `argi check` and editor diagnostics
+  use exhaustive body proofs, including unused concrete implementations.
 - Contract safety conformance is checked after concrete summaries converge.
   Static selection and virtual table construction share declaration validation
   and implementation proofs. Static conformance metadata belongs to GlobalSG,

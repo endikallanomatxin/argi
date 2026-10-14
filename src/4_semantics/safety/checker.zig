@@ -267,9 +267,11 @@ pub const SafetyChecker = struct {
         // virtual table slots share the same proof obligations; neither can
         // weaken a declaration by choosing a different dispatch mechanism.
         for (self.graph.contract_safety_conformances.items) |conformance| {
+            if (!conformance.safety_required) continue;
             try self.validateContractSafetyContract(inference, conformance.contract, conformance.method, conformance.receiver_input_index, conformance.domains, conformance.source);
         }
         for (self.graph.virtualizes.items) |virtualize| {
+            if (!virtualize.safety_required) continue;
             for (self.graph.virtual_registry_refs.items[virtualize.safety_methods.start..][0..virtualize.safety_methods.len], 0..) |registry_id, index| {
                 const registry = self.graph.virtual_registries.items[@intFromEnum(registry_id)];
                 const declared = registry.safety_contract orelse continue;

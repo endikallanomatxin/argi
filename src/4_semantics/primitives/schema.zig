@@ -451,6 +451,8 @@ pub fn Virtualize(comptime Ids: type) type {
     return struct {
         value: Ids.NodeId,
         concrete_type: Ids.TypeId,
+        // Unreached construction in executable mode retains no proof obligation.
+        safety_required: bool = true,
         contract_decl: Ids.DeclId,
         virtual_type: Ids.TypeId,
         methods: Range(Ids.FunctionId),

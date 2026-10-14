@@ -16,8 +16,10 @@ registries or implicit participant/representation adapters.
 ## Independent diagnostic follow-up
 
 Profile conformance verification independently from executable reachability.
-Unused explicit implementations still require semantic and safety proofs; reuse
-those proofs without turning them into runtime roots or weakening diagnostics.
+Executable builds prove selected operation bodies and reached virtual evidence.
+Exhaustive checks and editor diagnostics also prove unused concrete operations.
+Separate generic signature publication from body materialization so registering
+unused evidence does not lower operation bodies or their dependencies.
 
 Before reusing validated core graphs or summaries, specify invalidation for
 source, target, imports and specialization visibility. Preserve selected operation

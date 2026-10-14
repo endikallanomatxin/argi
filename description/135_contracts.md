@@ -170,6 +170,23 @@ capability dependencies, hidden-storage effects and relationships between
 participants. Type erasure never weakens these obligations. Contract checking
 proves the expressed promises, not mathematical correctness of an algorithm.
 
+## Declaration validation and body proofs
+
+Registering an implementation checks its participants, associated elements,
+operation signatures, declared safety clauses and conformance coherence. Its
+body proofs may remain pending while the implementation is unused.
+
+An executable build proves the bodies and safety promises of selected operations
+and their dependencies. Automatic cleanup counts as operation use. Constructing
+virtual evidence requires proving every operation supplied by that evidence,
+even when no dynamic call follows. Reusing an ordinary function in several
+implementations does not select their other operation identities or promises.
+
+`argi check` validates unused concrete bodies and materialized specializations
+as well. Editor diagnostics use this exhaustive mode. Generic bodies with unknown
+participants still require proof when their concrete specialization is selected.
+No pending safety promise may justify executable code without its body proof.
+
 ## Implementation status
 
 The compiler accepts unique ordinary declarations with `:=`, scoped contract
@@ -177,7 +194,8 @@ operation signatures, and concrete `implement` declarations with inline bodies
 or ordinary-function aliases. Qualified operation calls preserve their contract
 identity through generic function specialization and select direct calls. Associated
 Type and Int elements are bound to inline bodies; signature, visibility, extension
-ownership and declared safety guarantees are checked, including unused operations.
+ownership are checked at registration. Selected operations have their declared
+safety guarantees proved; exhaustive checking also validates unused operations.
 Frontend snapshots preserve these declarations and operation identities.
 
 The frontend preserves `implement#(...)` binders in participant patterns,

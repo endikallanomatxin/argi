@@ -4,4 +4,7 @@ Borrower: Type = (.owner: $&Owner)
 implement Deinit#(Borrower) (
     .deinit = (.self: $&Borrower) -> () { deinit(.self = self&.owner) }
 )
-main := () -> () {}
+main := () -> () {
+    owner ::= Owner(1)
+    borrower ::= Borrower($&owner)
+}

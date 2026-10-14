@@ -90,6 +90,10 @@ pub fn verifyGlobal(graph: *const graph_mod.GlobalSemanticGraph) !void {
         try require(graph.declaration(binding.declaration).kind == .function);
     }
     for (graph.contract_safety_conformances.items) |value| {
+        try require(value.selection.conformance < graph.contract_conformances.items.len);
+        const selected = graph.contract_conformances.items[value.selection.conformance];
+        try require(value.selection.index < selected.operations.len);
+        try require(graph.function_refs.items[selected.operations.start + value.selection.index] == value.method);
         try require(verify.idFits(value.method, graph.functions.items.len));
         try require(verify.sourceFits(value.source, graph.files.items.len));
         try require(verify.sourceFits(value.contract.source, graph.files.items.len));

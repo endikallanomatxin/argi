@@ -9,12 +9,18 @@ pub const FunctionSet = struct {
     values: std.AutoHashMap(graph_mod.GlobalFunctionId, void),
     bindings: std.AutoHashMap(graph_mod.GlobalBindingId, void),
     nodes: std.AutoHashMap(graph_mod.GlobalNodeId, void),
+    operations: std.AutoHashMap(@import("../primitives/schema.zig").ContractOperationIdentity, void),
+    virtualizes: std.AutoHashMap(graph_mod.GlobalVirtualizeId, void),
+    cleanup_functions: std.AutoHashMap(graph_mod.GlobalFunctionId, void),
 
     pub fn init(allocator: std.mem.Allocator) FunctionSet {
         return .{
             .values = std.AutoHashMap(graph_mod.GlobalFunctionId, void).init(allocator),
             .bindings = std.AutoHashMap(graph_mod.GlobalBindingId, void).init(allocator),
             .nodes = std.AutoHashMap(graph_mod.GlobalNodeId, void).init(allocator),
+            .operations = std.AutoHashMap(@import("../primitives/schema.zig").ContractOperationIdentity, void).init(allocator),
+            .virtualizes = std.AutoHashMap(graph_mod.GlobalVirtualizeId, void).init(allocator),
+            .cleanup_functions = std.AutoHashMap(graph_mod.GlobalFunctionId, void).init(allocator),
         };
     }
 
@@ -22,6 +28,9 @@ pub const FunctionSet = struct {
         self.values.deinit();
         self.bindings.deinit();
         self.nodes.deinit();
+        self.operations.deinit();
+        self.virtualizes.deinit();
+        self.cleanup_functions.deinit();
     }
 
     pub fn contains(self: *const FunctionSet, function: graph_mod.GlobalFunctionId) bool {
@@ -41,22 +50,6 @@ pub const FunctionSet = struct {
         return self.nodes.contains(node);
     }
 };
-
-/// Semantic validation also checks operations in unused explicit conformances.
-pub fn roots(
-    allocator: std.mem.Allocator,
-    graph: *const graph_mod.GlobalSemanticGraph,
-    selected_test_name: ?[]const u8,
-) !FunctionSet {
-    var result = try executionRoots(allocator, graph, selected_test_name);
-    errdefer result.deinit();
-    // Explicit implementations are checked even when the program never calls them.
-    for (graph.contract_conformances.items) |conformance| {
-        for (graph.function_refs.items[conformance.operations.start..][0..conformance.operations.len]) |method|
-            _ = try result.include(method);
-    }
-    return result;
-}
 
 /// Conservative runtime roots retain tracing and inferred-signature helpers,
 /// but exclude operations retained only to prove conformance.
@@ -146,6 +139,11 @@ const State = struct {
     changed: bool = false,
     dependency_order: ?*std.ArrayList(graph_mod.GlobalFunctionId) = null,
 
+    fn includeCleanupFunction(self: *State, function_id: graph_mod.GlobalFunctionId) !void {
+        try self.functions.cleanup_functions.put(function_id, {});
+        try self.includeFunction(function_id);
+    }
+
     fn includeFunction(self: *State, function_id: graph_mod.GlobalFunctionId) !void {
         if (try self.functions.include(function_id)) self.changed = true;
         try self.walkFunction(function_id);
@@ -201,11 +199,12 @@ const State = struct {
                 const value = self.graph.auto_deinits.items[@intFromEnum(id)];
                 try self.functions.bindings.put(value.binding, {});
                 if (value.input) |input| try self.walkNode(input);
-                if (value.deinit_fn) |callee| try self.includeFunction(callee);
+                if (value.deinit_fn) |callee| try self.includeCleanupFunction(callee);
                 try self.includeAutoDeinitFields(value.fields);
             },
             .function_address => |id| try self.includeFunction(id),
             .function_call => |call| {
+                if (self.graph.callOperation(call)) |operation| try self.functions.operations.put(operation, {});
                 if (call.callee_value) |value| try self.walkNode(value);
                 try self.walkNode(call.input);
                 if (call.consumes_auto_deinit) |value| try self.walkNode(value);
@@ -219,12 +218,13 @@ const State = struct {
                     const slot_ty = self.graph.fields.items[callee.input.start].ty;
                     if (self.graph.resolvedSemanticType(slot_ty)) |semantic| switch (semantic) {
                         .pointer => |pointer| if (try types.deinitFunctionForInput(self.graph, pointer.child, callee.input)) |destructor|
-                            try self.includeFunction(destructor),
+                            try self.includeCleanupFunction(destructor),
                         else => {},
                     };
                 }
             },
             .virtualize => |id| {
+                try self.functions.virtualizes.put(id, {});
                 const value = self.graph.virtualizes.items[@intFromEnum(id)];
                 try self.walkNode(value.value);
                 for (self.graph.function_refs.items[value.methods.start..][0..value.methods.len]) |method|
@@ -357,7 +357,7 @@ const State = struct {
     fn includeAutoDeinitFields(self: *State, range: @import("../primitives/schema.zig").Range(graph_mod.GlobalAutoDeinitFieldId)) anyerror!void {
         for (self.graph.auto_deinit_fields.items[range.start..][0..range.len]) |field| {
             if (field.input) |input| try self.walkNode(input);
-            if (field.deinit_fn) |callee| try self.includeFunction(callee);
+            if (field.deinit_fn) |callee| try self.includeCleanupFunction(callee);
             try self.includeAutoDeinitFields(field.fields);
         }
     }
@@ -398,7 +398,7 @@ test "function binding ranges dereference binding refs" {
         .input_bindings = .{ .start = 0, .len = 1 },
     });
 
-    var executable = try roots(allocator, &graph, null);
+    var executable = try executionRoots(allocator, &graph, null);
     defer executable.deinit();
     _ = try expand(allocator, &graph, &executable);
     try std.testing.expect(!executable.containsBinding(@enumFromInt(0)));
@@ -416,11 +416,11 @@ test "reachability roots select main or one test" {
     try graph.functions.append(allocator, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 } });
     try graph.functions.append(allocator, .{ .declaration = @enumFromInt(1), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 }, .flags = .{ .is_test = true } });
 
-    var executable = try roots(allocator, &graph, null);
+    var executable = try executionRoots(allocator, &graph, null);
     defer executable.deinit();
     try std.testing.expect(executable.contains(@enumFromInt(0)));
     try std.testing.expect(!executable.contains(@enumFromInt(1)));
-    var selected = try roots(allocator, &graph, "selected");
+    var selected = try executionRoots(allocator, &graph, "selected");
     defer selected.deinit();
     try std.testing.expect(!selected.contains(@enumFromInt(0)));
     try std.testing.expect(selected.contains(@enumFromInt(1)));
@@ -433,9 +433,6 @@ test "reachability roots select main or one test" {
         .operations = .{ .start = 0, .len = 1 },
         .source = .{ .file_index = 0, .offset = 0 },
     });
-    var validation = try roots(allocator, &graph, null);
-    defer validation.deinit();
-    try std.testing.expect(validation.contains(@enumFromInt(1)));
     var runtime = try executionRoots(allocator, &graph, null);
     defer runtime.deinit();
     _ = try expand(allocator, &graph, &runtime);

@@ -2473,7 +2473,7 @@ test "feature_tests/collections/48_array_view_fixed_storage" {
 test "feature_tests/collections/49X_array_view_unproven_length" {
     try buildExpectFail(
         "tests/feature_tests/collections/49X_array_view_unproven_length",
-        "no function named 'single_array_view' accepts arguments",
+        "no generic function named 'single_array_view' accepts arguments",
     );
 }
 
@@ -12969,5 +12969,22 @@ test "feature_tests/contracts/320X_virtual_legacy_argument" {
 }
 
 test "feature_tests/contracts/321X_unused_conformance_consumption" {
-    try buildExpectFail("tests/feature_tests/contracts/321X_unused_conformance_consumption", "cannot prove consumes");
+    try expectSuccessfulBuild("tests/feature_tests/contracts/321X_unused_conformance_consumption");
+    const result = try runChild(&.{ argi_bin, "check", "tests/feature_tests/contracts/321X_unused_conformance_consumption" });
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+    try expect(result.term == .exited and result.term.exited != 0);
+    try expect(std.mem.indexOf(u8, result.stderr, "cannot prove consumes") != null);
+}
+
+test "feature_tests/contracts/322X_used_conformance_consumption" {
+    try buildExpectFail("tests/feature_tests/contracts/322X_used_conformance_consumption", "cannot prove consumes");
+}
+
+test "feature_tests/contracts/323X_virtual_conformance_consumption" {
+    try buildExpectFail("tests/feature_tests/contracts/323X_virtual_conformance_consumption", "cannot prove consumes");
+}
+
+test "feature_tests/contracts/324_unused_aliased_conformance" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/324_unused_aliased_conformance");
 }

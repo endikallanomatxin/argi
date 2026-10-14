@@ -195,6 +195,10 @@ pub const Resolver = struct {
 
     fn isSelectedScalarPrimitive(self: *Resolver, call: global_sg.Node, operation: ScalarPrimitive) bool {
         if (call.content != .function_call or self.graph.callOperation(call.content.function_call) == null) return false;
+        // Retain calls carrying safety promises until their selected body is
+        // proved. Primitive elision must not hide that operation's use.
+        const selection = self.graph.callOperation(call.content.function_call).?;
+        for (self.graph.contract_safety_conformances.items) |proof| if (std.meta.eql(proof.selection, selection)) return false;
         const declaration = self.graph.declaration(self.graph.function(call.content.function_call.callee).declaration);
         const function = self.graph.function(call.content.function_call.callee);
         const file = self.graph.files.items[declaration.source.file_index];

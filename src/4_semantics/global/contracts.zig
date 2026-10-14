@@ -1968,7 +1968,7 @@ pub const Resolver = struct {
                     }
                 }
 
-                try self.recordStaticSafetyContract(located, requirement, &bindings, first, selected.function, output, failure.source);
+                try self.recordStaticSafetyContract(located, requirement, &bindings, first, selected.function, output, failure.source, .{ .conformance = @intCast(index), .index = @intCast(operation_index) });
                 try operations.append(self.allocator, selected.function);
             }
             const operation_start: u32 = @intCast(self.graph.function_refs.items.len);
@@ -2419,7 +2419,7 @@ pub const Resolver = struct {
         return value == .parameter and value.parameter == participant;
     }
 
-    fn recordStaticSafetyContract(self: *Resolver, located: LocatedContractDefinition, requirement: parameterized_storage.ContractRequirement, bindings: *generic_mod.Resolver.Bindings, concrete: global_sg.GlobalTypeId, method: global_sg.GlobalFunctionId, output: global_sg.GlobalTypeId, source: primitives.SourceRef) !void {
+    fn recordStaticSafetyContract(self: *Resolver, located: LocatedContractDefinition, requirement: parameterized_storage.ContractRequirement, bindings: *generic_mod.Resolver.Bindings, concrete: global_sg.GlobalTypeId, method: global_sg.GlobalFunctionId, output: global_sg.GlobalTypeId, source: primitives.SourceRef, selection: primitives.ContractOperationIdentity) !void {
         const declared = requirement.safety_contract orelse return;
         if (self.fallibleOutput(output)) try self.core.ensureErrorTracerInput(method);
         const function = self.graph.function(method);
@@ -2444,7 +2444,7 @@ pub const Resolver = struct {
             else => return err,
         };
         for (self.graph.contract_safety_conformances.items) |existing| {
-            if (existing.method == method and std.meta.eql(existing.contract.source, contract.source)) return;
+            if (std.meta.eql(existing.selection, selection)) return;
         }
         const storage = &self.modules[located.module_index].semantic.parameterized_storage;
         const start: u32 = @intCast(self.graph.generic_arguments.items.len);
@@ -2474,7 +2474,7 @@ pub const Resolver = struct {
                 break;
             }
         }
-        try self.graph.contract_safety_conformances.append(self.allocator, .{ .method = method, .contract = contract, .receiver_input_index = receiver, .domains = domains, .source = source });
+        try self.graph.contract_safety_conformances.append(self.allocator, .{ .selection = selection, .method = method, .contract = contract, .receiver_input_index = receiver, .domains = domains, .source = source });
     }
 
     fn contractDeclFromType(self: *const Resolver, ty: global_sg.GlobalTypeId) ?global_sg.GlobalDeclId {

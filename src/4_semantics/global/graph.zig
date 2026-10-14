@@ -86,6 +86,10 @@ pub const VirtualCall = primitives.VirtualCall(Ids);
 /// erasure. This metadata is recorded transactionally with selected functions
 /// and consumed after their safety summaries converge.
 pub const ContractSafetyConformance = struct {
+    selection: primitives.ContractOperationIdentity,
+    // Finalized from selected operation use, independently of body aliases.
+    // Exhaustive semantizing leaves every materialized proof enabled.
+    safety_required: bool = true,
     method: GlobalFunctionId,
     contract: primitives.MethodSafetyContract,
     receiver_input_index: ?u32,
