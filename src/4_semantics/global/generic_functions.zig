@@ -29,7 +29,7 @@ pub const SelectionProfile = struct {
     implicit_candidates: u64 = 0,
     implicit_prefilter_inference_ns: u64 = 0,
     implicit_constraints_ns: u64 = 0,
-    implicit_scoring_ns: u64 = 0,
+    implicit_applicability_ns: u64 = 0,
     implicit_argument_materialization_ns: u64 = 0,
     implicit_final_instantiation_ns: u64 = 0,
     explicit_calls: u64 = 0,
@@ -39,7 +39,7 @@ pub const SelectionProfile = struct {
     explicit_argument_materializations_discarded: u64 = 0,
     explicit_prefilter_inference_ns: u64 = 0,
     explicit_constraints_ns: u64 = 0,
-    explicit_scoring_ns: u64 = 0,
+    explicit_applicability_ns: u64 = 0,
     explicit_argument_materialization_ns: u64 = 0,
     explicit_final_instantiation_ns: u64 = 0,
 };
@@ -416,23 +416,20 @@ pub const Resolver = struct {
         const name = module.text(reference.name);
         var best: ?global_sg.GlobalDeclId = null;
         var best_arguments: primitives.Range(global_sg.GlobalGenericArgId) = .{ .start = 0, .len = 0 };
-        var best_score: u32 = 0;
-        var best_specificity: ParameterizedSpecificity = .{};
         var tied = false;
         var saw_deferred = false;
         var argument_failure: ?anyerror = null;
         var saw_valid_arguments = false;
-        var best_was_materialized = false;
         const function_candidates = try self.graph.parameterizedFunctionsNamed(self.allocator, self.modules, name);
         for (function_candidates) |candidate| {
             if (self.profile_io != null) self.selection_profile.explicit_candidates += 1;
             var phase_start = self.profileTimestamp();
             var prefilter_active = true;
-            var scoring_start: i96 = 0;
-            var scoring_active = false;
+            var applicability_start: i96 = 0;
+            var applicability_active = false;
             defer {
                 if (prefilter_active) self.addProfileTime(phase_start, &self.selection_profile.explicit_prefilter_inference_ns);
-                if (scoring_active) self.addProfileTime(scoring_start, &self.selection_profile.explicit_scoring_ns);
+                if (applicability_active) self.addProfileTime(applicability_start, &self.selection_profile.explicit_applicability_ns);
             }
             const candidate_index: usize = candidate.module_index;
             const candidate_module = &self.modules[candidate_index];
@@ -472,9 +469,9 @@ pub const Resolver = struct {
             };
             self.addProfileTime(phase_start, &self.selection_profile.explicit_argument_materialization_ns);
             phase_start = self.profileTimestamp();
-            scoring_start = phase_start;
-            scoring_active = true;
-            const score = switch (self.matchParameterizedInput(candidate_index, parameterized.input, &bindings, input)) {
+            applicability_start = phase_start;
+            applicability_active = true;
+            switch (self.matchParameterizedInput(candidate_index, parameterized.input, &bindings, input)) {
                 .no_match => {
                     if (self.profile_io != null) self.selection_profile.explicit_argument_materializations_discarded += 1;
                     continue;
@@ -484,36 +481,21 @@ pub const Resolver = struct {
                     if (self.profile_io != null) self.selection_profile.explicit_argument_materializations_discarded += 1;
                     continue;
                 },
-                .score => |score| score,
-            };
+                .score => {},
+            }
             if (self.profile_io != null) self.selection_profile.explicit_candidates_matching += 1;
-            const specificity = self.parameterizedInputSpecificity(candidate_index, parameterized.input, input);
-            const ordering: CandidateOrdering = if (best == null) .better else compareCandidates(specificity, score, best_specificity, best_score);
-            self.addProfileTime(scoring_start, &self.selection_profile.explicit_scoring_ns);
-            scoring_active = false;
-            switch (ordering) {
-                .better => {
-                    if (self.profile_io != null) {
-                        if (best_was_materialized)
-                            self.selection_profile.explicit_argument_materializations_discarded += 1;
-                        best_was_materialized = true;
-                    }
-                    best = declaration;
-                    best_arguments = complete_arguments;
-                    best_score = score;
-                    best_specificity = specificity;
-                    tied = false;
-                },
-                .worse => {
-                    if (self.profile_io != null) self.selection_profile.explicit_argument_materializations_discarded += 1;
-                },
-                .tie => if (declaration != best.?) {
-                    tied = true;
-                    if (self.profile_io != null) self.selection_profile.explicit_argument_materializations_discarded += 1;
-                },
+            self.addProfileTime(applicability_start, &self.selection_profile.explicit_applicability_ns);
+            applicability_active = false;
+            if (best == null) {
+                best = declaration;
+                best_arguments = complete_arguments;
+            } else if (declaration != best.?) {
+                tied = true;
+                if (self.profile_io != null) self.selection_profile.explicit_argument_materializations_discarded += 1;
             }
         }
         if (tied) return error.AmbiguousGenericFunction;
+        if (saw_deferred) return error.DeferredGenericFunction;
         const declaration = best orelse {
             if (argument_failure) |failure| if (!saw_deferred and !saw_valid_arguments) {
                 const reason = switch (failure) {
@@ -578,7 +560,7 @@ pub const Resolver = struct {
         for (fields, 0..) |field, expected_position| {
             const value = self.core.callArgumentNamed(literal, expected_position, module.text(field.name)) orelse continue;
             // Reject unrelated nominal references before instantiating their
-            // constraints; a losing overload must not emit type diagnostics.
+            // constraints; an inapplicable identity must not emit type diagnostics.
             if (self.staticInputType(value)) |actual|
                 if (self.definiteNominalReferenceMismatch(module_index, field.ty, actual)) return false;
             if (allow_contextual_concrete) {
@@ -880,10 +862,20 @@ pub const Resolver = struct {
             abstracts.participant_conformance_failure = failure;
             return error.InvalidContractConformance;
         }
-        if (candidates.items.items.len == 0) return null;
         const ordinary = try self.core.matchFunctionNamedWithReach(module_index, name, module_filter, input, reach);
+        if (candidates.items.items.len == 0) {
+            if (ordinary == .function) {
+                const generic = try self.implicitOrdinaryApplicableFiltered(module_index, name, input, reach, module_filter);
+                if (generic == .ambiguous or (generic == .applicable and generic.applicable != self.graph.functions.items[@intFromEnum(ordinary.function)].declaration)) {
+                    abstracts.participant_conformance_failure = .{ .source = source, .contract_name = name, .operation = name, .reason = "multiple applicable operation identities; qualify the function explicitly" };
+                    return error.AmbiguousOperationIdentity;
+                }
+                if (generic == .deferred) return error.DeferredOperationIdentity;
+            }
+            return null;
+        }
         const generic = try self.implicitOrdinaryApplicableFiltered(module_index, name, input, reach, module_filter);
-        if (candidates.items.items.len > 1 or ordinary == .function or ordinary == .ambiguous or generic == .applicable) {
+        if (candidates.items.items.len > 1 or ordinary == .function or ordinary == .ambiguous or generic == .applicable or generic == .ambiguous) {
             abstracts.participant_conformance_failure = .{ .source = source, .contract_name = name, .operation = name, .reason = "multiple applicable operation identities; qualify the contract operation explicitly" };
             return error.AmbiguousOperationIdentity;
         }
@@ -928,13 +920,20 @@ pub const Resolver = struct {
         return result;
     }
 
+    pub const OrdinaryApplicability = union(enum) {
+        applicable: global_sg.GlobalDeclId,
+        ambiguous,
+        missing,
+        deferred,
+    };
+
     /// Identity lookup checks generic applicability without instantiating a body.
     /// The same selector supplies the arguments used by ordinary resolution.
-    pub fn implicitOrdinaryApplicable(self: *Resolver, module_index: usize, name: []const u8, input: global_sg.GlobalNodeId, reach: ReachInferenceContext) !enum { applicable, missing, deferred } {
+    pub fn implicitOrdinaryApplicable(self: *Resolver, module_index: usize, name: []const u8, input: global_sg.GlobalNodeId, reach: ReachInferenceContext) !OrdinaryApplicability {
         return self.implicitOrdinaryApplicableFiltered(module_index, name, input, reach, null);
     }
 
-    fn implicitOrdinaryApplicableFiltered(self: *Resolver, module_index: usize, name: []const u8, input: global_sg.GlobalNodeId, reach: ReachInferenceContext, module_filter: ?global_sg.GlobalModuleId) !enum { applicable, missing, deferred } {
+    fn implicitOrdinaryApplicableFiltered(self: *Resolver, module_index: usize, name: []const u8, input: global_sg.GlobalNodeId, reach: ReachInferenceContext, module_filter: ?global_sg.GlobalModuleId) !OrdinaryApplicability {
         const checkpoint = self.graph.checkpoint();
         const side_effects = self.checkpointSideEffects();
         const failed = self.failed_constraint;
@@ -945,15 +944,15 @@ pub const Resolver = struct {
             self.failed_constraint = failed;
             self.generics.argument_failure = argument_failure;
         }
-        _ = self.selectImplicitGenericFunctionFiltered(module_index, name, module_filter, input, reach, null) catch |err| {
+        const selected = self.selectImplicitGenericFunctionFiltered(module_index, name, module_filter, input, reach, null) catch |err| {
             return switch (err) {
                 error.OutOfMemory => err,
                 error.DeferredGenericFunction => .deferred,
-                error.AmbiguousGenericFunction => .applicable,
+                error.AmbiguousGenericFunction => .ambiguous,
                 else => .missing,
             };
         };
-        return .applicable;
+        return .{ .applicable = selected.declaration };
     }
 
     fn selectImplicitGenericFunctionFiltered(
@@ -972,8 +971,6 @@ pub const Resolver = struct {
         };
         var best: ?global_sg.GlobalDeclId = null;
         var best_arguments: primitives.Range(global_sg.GlobalGenericArgId) = .{ .start = 0, .len = 0 };
-        var best_score: u32 = 0;
-        var best_specificity: ParameterizedSpecificity = .{};
         var tied = false;
         var saw_deferred = false;
         var conflicting_candidates: usize = 0;
@@ -989,11 +986,11 @@ pub const Resolver = struct {
             if (self.profile_io != null) self.selection_profile.implicit_candidates += 1;
             var phase_start = self.profileTimestamp();
             var prefilter_active = true;
-            var scoring_start: i96 = 0;
-            var scoring_active = false;
+            var applicability_start: i96 = 0;
+            var applicability_active = false;
             defer {
                 if (prefilter_active) self.addProfileTime(phase_start, &self.selection_profile.implicit_prefilter_inference_ns);
-                if (scoring_active) self.addProfileTime(scoring_start, &self.selection_profile.implicit_scoring_ns);
+                if (applicability_active) self.addProfileTime(applicability_start, &self.selection_profile.implicit_applicability_ns);
             }
             const candidate_index: usize = candidate.module_index;
             const candidate_module = &self.modules[candidate_index];
@@ -1082,57 +1079,49 @@ pub const Resolver = struct {
             }
             if (!arguments_complete) continue;
             phase_start = self.profileTimestamp();
-            scoring_start = phase_start;
-            scoring_active = true;
-            const score = switch (self.matchParameterizedInput(candidate_index, parameterized.input, &bindings, input)) {
+            applicability_start = phase_start;
+            applicability_active = true;
+            switch (self.matchParameterizedInput(candidate_index, parameterized.input, &bindings, input)) {
                 .no_match => continue,
                 .deferred => {
                     saw_deferred = true;
                     continue;
                 },
-                .score => |score| score,
-            };
-            const specificity = self.parameterizedInputSpecificity(candidate_index, parameterized.input, input);
-            const ordering: CandidateOrdering = if (best == null) .better else compareCandidates(specificity, score, best_specificity, best_score);
-            self.addProfileTime(scoring_start, &self.selection_profile.implicit_scoring_ns);
-            scoring_active = false;
-            switch (ordering) {
-                .better => {
-                    phase_start = self.profileTimestamp();
-                    // Only the current winner needs durable arguments. Failed,
-                    // deferred, and lower-ranked probes leave no argument tail.
-                    var arguments: std.ArrayList(global_sg.GenericArgument) = .empty;
-                    defer arguments.deinit(self.allocator);
-                    for (parameterized.parameters.start..parameterized.parameters.start + parameterized.parameters.len) |raw| {
-                        const parameter = candidate_module.semantic.parameterized_storage.comptime_parameters.items[raw];
-                        const argument: global_sg.GenericArgument.Value = switch (parameter.kind) {
-                            .type => .{ .type = bindings.types[raw].? },
-                            .comptime_int => .{ .comptime_int = bindings.ints[raw].? },
-                        };
-                        try arguments.append(self.allocator, .{ .name = try self.graph.addString(self.allocator, candidate_module.text(parameter.name)), .value = argument });
-                    }
-                    const range: primitives.Range(global_sg.GlobalGenericArgId) = .{ .start = @intCast(self.graph.generic_arguments.items.len), .len = @intCast(arguments.items.len) };
-                    try self.graph.generic_arguments.appendSlice(self.allocator, arguments.items);
-                    self.addProfileTime(phase_start, &self.selection_profile.implicit_argument_materialization_ns);
-                    best = declaration;
-                    best_arguments = range;
-                    best_score = score;
-                    best_specificity = specificity;
-                    tied = false;
-                    if (ambiguity_candidates) |candidates| {
-                        candidates.clearRetainingCapacity();
-                        try candidates.append(self.allocator, declaration);
-                    }
-                },
-                .worse => {},
-                .tie => if (declaration != best.?) {
-                    tied = true;
-                    if (ambiguity_candidates) |candidates|
-                        try candidates.append(self.allocator, declaration);
-                },
+                .score => {},
+            }
+            self.addProfileTime(applicability_start, &self.selection_profile.implicit_applicability_ns);
+            applicability_active = false;
+            if (best == null) {
+                phase_start = self.profileTimestamp();
+                // Only one applicable identity needs durable arguments.
+                // Failed and deferred probes leave no argument tail.
+                var arguments: std.ArrayList(global_sg.GenericArgument) = .empty;
+                defer arguments.deinit(self.allocator);
+                for (parameterized.parameters.start..parameterized.parameters.start + parameterized.parameters.len) |raw| {
+                    const parameter = candidate_module.semantic.parameterized_storage.comptime_parameters.items[raw];
+                    const argument: global_sg.GenericArgument.Value = switch (parameter.kind) {
+                        .type => .{ .type = bindings.types[raw].? },
+                        .comptime_int => .{ .comptime_int = bindings.ints[raw].? },
+                    };
+                    try arguments.append(self.allocator, .{ .name = try self.graph.addString(self.allocator, candidate_module.text(parameter.name)), .value = argument });
+                }
+                const range: primitives.Range(global_sg.GlobalGenericArgId) = .{ .start = @intCast(self.graph.generic_arguments.items.len), .len = @intCast(arguments.items.len) };
+                try self.graph.generic_arguments.appendSlice(self.allocator, arguments.items);
+                self.addProfileTime(phase_start, &self.selection_profile.implicit_argument_materialization_ns);
+                best = declaration;
+                best_arguments = range;
+                if (ambiguity_candidates) |candidates| {
+                    candidates.clearRetainingCapacity();
+                    try candidates.append(self.allocator, declaration);
+                }
+            } else if (declaration != best.?) {
+                tied = true;
+                if (ambiguity_candidates) |candidates|
+                    try candidates.append(self.allocator, declaration);
             }
         }
         if (tied) return error.AmbiguousGenericFunction;
+        if (saw_deferred) return error.DeferredGenericFunction;
         const declaration = best orelse return if (saw_deferred) error.DeferredGenericFunction else if (candidate_count == 1 and conflicting_candidates == 1) error.ConflictingGenericArgument else error.NoMatchingGenericFunction;
         return .{ .declaration = declaration, .arguments = best_arguments };
     }
@@ -1211,7 +1200,7 @@ pub const Resolver = struct {
         const failure = self.failed_constraint orelse return;
         // A bound can fail on a candidate whose other arguments do not fit.
         // Only explain constraints for otherwise compatible signatures, using
-        // the same matcher as overload selection rather than a second rule set.
+        // the same matcher as function applicability rather than a second rule set.
         switch (self.matchParameterizedInput(module_index, pattern, bindings, input)) {
             .score => {},
             else => return,
@@ -1226,7 +1215,7 @@ pub const Resolver = struct {
 
     /// Diagnostic probes use normal selection and roll back its graph and
     /// ownership effects. Rejected bounds must not escape a speculative probe
-    /// or become an error when another overload actually accepts the call.
+    /// or become an error when another visible identity actually accepts the call.
     pub fn collectGenericConstraintFailures(
         self: *Resolver,
         current_module: usize,
@@ -1280,7 +1269,7 @@ pub const Resolver = struct {
     /// Re-run implicit generic selection transactionally for diagnostics and
     /// report the declaration identities tied at the best rank. This keeps
     /// diagnostics coupled to the real inference/specificity algorithm rather
-    /// than maintaining an approximate second overload matcher.
+    /// than maintaining an approximate second applicability matcher.
     pub fn collectImplicitGenericAmbiguity(
         self: *Resolver,
         current_module: usize,
@@ -1319,203 +1308,6 @@ pub const Resolver = struct {
             else => false,
         };
         return false;
-    }
-
-    pub const ParameterizedSpecificity = struct {
-        /// Exact nominal/builtin leaves. Exactness also satisfies the weaker
-        /// "bounded" dimension so a concrete type dominates an abstract bound.
-        exact: u32 = 0,
-        bounded: u32 = 0,
-        /// Fixed type constructors such as pointer/array/structural shape.
-        structure: u32 = 0,
-
-        fn add(self: *ParameterizedSpecificity, other: ParameterizedSpecificity) void {
-            self.exact += other.exact;
-            self.bounded += other.bounded;
-            self.structure += other.structure;
-        }
-    };
-
-    const SpecificityOrdering = enum { less, equal, greater, incomparable };
-    const CandidateOrdering = enum { better, worse, tie };
-
-    fn compareSpecificity(left: ParameterizedSpecificity, right: ParameterizedSpecificity) SpecificityOrdering {
-        if (left.exact == right.exact and left.bounded == right.bounded and left.structure == right.structure) return .equal;
-        const left_at_least = left.exact >= right.exact and left.bounded >= right.bounded and left.structure >= right.structure;
-        const right_at_least = right.exact >= left.exact and right.bounded >= left.bounded and right.structure >= left.structure;
-        if (left_at_least) return .greater;
-        if (right_at_least) return .less;
-        return .incomparable;
-    }
-
-    pub fn compareCandidates(
-        candidate_specificity: ParameterizedSpecificity,
-        candidate_score: u32,
-        best_specificity: ParameterizedSpecificity,
-        best_score: u32,
-    ) CandidateOrdering {
-        return switch (compareSpecificity(candidate_specificity, best_specificity)) {
-            .greater => .better,
-            .less => .worse,
-            // Compatibility remains a useful discriminator when declarations
-            // impose the same restrictions, or restrictions on orthogonal
-            // dimensions. Equal quality in the latter case is ambiguous.
-            .equal, .incomparable => if (candidate_score > best_score)
-                .better
-            else if (candidate_score < best_score)
-                .worse
-            else
-                .tie,
-        };
-    }
-
-    fn exactSpecificity() ParameterizedSpecificity {
-        return .{ .exact = 1, .bounded = 1 };
-    }
-
-    pub fn parameterizedInputSpecificity(
-        self: *Resolver,
-        module_index: usize,
-        pattern: ir.ParameterizedTypeId,
-        input: global_sg.GlobalNodeId,
-    ) ParameterizedSpecificity {
-        const storage = &self.modules[module_index].semantic.parameterized_storage.ir;
-        const literal = switch (self.graph.nodes.items[@intFromEnum(input)].content) {
-            .struct_value_literal => |value| value,
-            else => return self.parameterizedTypeSpecificity(module_index, pattern),
-        };
-        const shape = switch (storage.types.items[@intFromEnum(pattern)]) {
-            .resolved => |resolved| switch (resolved) {
-                .structural => |value| value,
-                else => return self.parameterizedTypeSpecificity(module_index, pattern),
-            },
-            else => return self.parameterizedTypeSpecificity(module_index, pattern),
-        };
-
-        var specificity: ParameterizedSpecificity = .{};
-        for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len], 0..) |supplied, supplied_position| {
-            const positional = supplied_position < literal.dispatch_prefix_positional_count or self.graph.text(supplied.name).len == 0;
-            var matched: ?ir.ParameterizedTypeId = null;
-            if (positional) {
-                if (supplied_position < shape.fields.len) {
-                    matched = storage.fields.items[shape.fields.start + @as(u32, @intCast(supplied_position))].ty;
-                }
-            } else {
-                for (storage.fields.items[shape.fields.start..][0..shape.fields.len]) |field| {
-                    if (!std.mem.eql(u8, self.modules[module_index].text(field.name), self.graph.text(supplied.name))) continue;
-                    matched = field.ty;
-                    break;
-                }
-            }
-            if (matched) |field_type| specificity.add(self.parameterizedTypeSpecificity(module_index, field_type));
-        }
-        return specificity;
-    }
-
-    fn parameterizedTypeSpecificity(
-        self: *Resolver,
-        module_index: usize,
-        pattern: ir.ParameterizedTypeId,
-    ) ParameterizedSpecificity {
-        const module = &self.modules[module_index];
-        const storage = &module.semantic.parameterized_storage.ir;
-        return switch (storage.types.items[@intFromEnum(pattern)]) {
-            .parameter => |parameter| if (module.semantic.parameterized_storage.comptime_parameters.items[@intFromEnum(parameter)].constraint != null or
-                module.semantic.parameterized_storage.comptime_parameters.items[@intFromEnum(parameter)].implicit_participant)
-                .{ .bounded = 1 }
-            else
-                .{},
-            // TODO: Rank projection input constraints once tuple specificity is defined.
-            .projection => .{},
-            .concrete, .external => exactSpecificity(),
-            .array => |array| blk: {
-                var result: ParameterizedSpecificity = .{ .structure = 1 };
-                result.add(self.parameterizedIntSpecificity(module_index, array.length));
-                result.add(self.parameterizedTypeSpecificity(module_index, array.element));
-                break :blk result;
-            },
-            .choice_union => |value| blk: {
-                var result: ParameterizedSpecificity = .{ .structure = 1 };
-                result.add(self.parameterizedTypeSpecificity(module_index, value.left));
-                result.add(self.parameterizedTypeSpecificity(module_index, value.right));
-                break :blk result;
-            },
-            .resolved => |resolved| self.resolvedPatternSpecificity(module_index, resolved),
-        };
-    }
-
-    fn parameterizedIntSpecificity(
-        self: *Resolver,
-        module_index: usize,
-        expression: ir.ParameterizedIntExprId,
-    ) ParameterizedSpecificity {
-        const storage = &self.modules[module_index].semantic.parameterized_storage.ir;
-        return switch (storage.int_expressions.items[@intFromEnum(expression)]) {
-            .literal => exactSpecificity(),
-            .projection => .{},
-            .parameter => .{},
-            .binary => |binary| blk: {
-                var result: ParameterizedSpecificity = .{ .structure = 1 };
-                result.add(self.parameterizedIntSpecificity(module_index, binary.left));
-                result.add(self.parameterizedIntSpecificity(module_index, binary.right));
-                break :blk result;
-            },
-        };
-    }
-
-    fn resolvedPatternSpecificity(
-        self: *Resolver,
-        module_index: usize,
-        resolved: ir.ResolvedType,
-    ) ParameterizedSpecificity {
-        const storage = &self.modules[module_index].semantic.parameterized_storage.ir;
-        return switch (resolved) {
-            .builtin => |builtin| if (builtin == .Any) .{} else exactSpecificity(),
-            .declared => exactSpecificity(),
-            .pointer => |pointer| blk: {
-                var result: ParameterizedSpecificity = .{ .structure = 1 };
-                result.add(self.parameterizedTypeSpecificity(module_index, pointer.child));
-                break :blk result;
-            },
-            .array => |array| blk: {
-                var result: ParameterizedSpecificity = .{ .structure = 1 };
-                result.add(exactSpecificity());
-                result.add(self.parameterizedTypeSpecificity(module_index, array.element));
-                break :blk result;
-            },
-            .nullable, .inferred_errable, .virtual => |child| blk: {
-                var result: ParameterizedSpecificity = .{ .structure = 1 };
-                result.add(self.parameterizedTypeSpecificity(module_index, child));
-                break :blk result;
-            },
-            .generic => |generic| blk: {
-                var result = exactSpecificity();
-                result.structure += 1;
-                for (storage.generic_arguments.items[generic.arguments.start..][0..generic.arguments.len]) |argument| switch (argument.value) {
-                    .type => |ty| result.add(self.parameterizedTypeSpecificity(module_index, ty)),
-                    .comptime_int => |value| result.add(self.parameterizedIntSpecificity(module_index, value)),
-                };
-                break :blk result;
-            },
-            .structural => |shape| blk: {
-                var result: ParameterizedSpecificity = .{ .structure = 1 };
-                for (storage.fields.items[shape.fields.start..][0..shape.fields.len]) |field| {
-                    result.structure += 1;
-                    result.add(self.parameterizedTypeSpecificity(module_index, field.ty));
-                }
-                break :blk result;
-            },
-            .structural_choice => |shape| blk: {
-                var result: ParameterizedSpecificity = .{ .structure = 1 };
-                for (storage.variants.items[shape.variants.start..][0..shape.variants.len]) |variant| {
-                    result.structure += 1;
-                    if (variant == .semantic) if (variant.semantic.payload_type) |payload|
-                        result.add(self.parameterizedTypeSpecificity(module_index, payload));
-                }
-                break :blk result;
-            },
-            .inferred_choice => .{ .structure = 1 },
-        };
     }
 
     fn matchParameterizedInput(self: *Resolver, module_index: usize, pattern: ir.ParameterizedTypeId, bindings: *generic_mod.Resolver.Bindings, input: global_sg.GlobalNodeId) core_mod.Resolver.CallInputMatch {
@@ -3173,7 +2965,7 @@ pub const Resolver = struct {
             }
             // Tag tests retain comparison nodes. Unsupported aggregate nodes
             // remain typed for the final semantizing diagnostic, so speculative
-            // overload instantiation never emits errors for discarded candidates.
+            // speculative instantiation never emits errors for discarded candidates.
             return .{
                 .source = self.resolver.sourceFor(self.module_index, source),
                 .ty = bool_ty,

@@ -456,7 +456,7 @@ test "module semantic graph owns stable file provenance" {
 test "implicit generic calls infer pointer parameters through nested calls" {
     const allocator = std.testing.allocator;
     const source =
-        "empty#(.t: Type)(.storage: $&t, .required: Int32) -> () := { absent() }\n" ++
+        "empty_with_required#(.t: Type)(.storage: $&t, .required: Int32) -> () := { absent() }\n" ++
         "empty#(.t: Type)(.storage: $&t) -> () := {}\n" ++
         "release#(.t: Type)(.self: $&t) -> () := { local ::= self empty(.storage = local) }\n" ++
         "main() -> () := { value :: Int32 = 0 release(.self = $&value) }\n";
@@ -701,11 +701,15 @@ test "ordinary calls retain caller bindings for reached defaults" {
     try std.testing.expect(found);
 }
 
-test "named call inputs reject unrelated default-only overloads" {
+test "named call inputs reject unrelated default-only operation identities" {
     const allocator = std.testing.allocator;
     const source =
-        "fill(.stdout: Int32 = 1) -> (.result: Int32) := { result = stdout }\n" ++
-        "fill(.self: Int32) -> (.result: Int32) := { result = self }\n" ++
+        "StdoutFill#(.Value: Type): Contract = (.fill: (.stdout: Value = 1) -> (.result: Int32))\n" ++
+        "ReceiverFill#(.Value: Type): Contract = (.fill: (.self: Value) -> (.result: Int32))\n" ++
+        "_fill_stdout := (.stdout: Int32 = 1) -> (.result: Int32) { result = stdout }\n" ++
+        "_fill_self := (.self: Int32) -> (.result: Int32) { result = self }\n" ++
+        "implement StdoutFill#(Int32) (.fill = _fill_stdout)\n" ++
+        "implement ReceiverFill#(Int32) (.fill = _fill_self)\n" ++
         "main() -> (.result: Int32) := { result = fill(.self = 2).result }\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
@@ -718,7 +722,7 @@ test "named call inputs reject unrelated default-only overloads" {
     for (result.graph.nodes.items) |node| {
         if (node.content != .function_call) continue;
         const function = result.graph.functions.items[@intFromEnum(node.content.function_call.callee)];
-        if (!std.mem.eql(u8, result.graph.text(result.graph.declaration(function.declaration).name), "fill")) continue;
+        if (!std.mem.eql(u8, result.graph.text(result.graph.declaration(function.declaration).name), "_fill_self")) continue;
         try std.testing.expectEqualStrings("self", result.graph.text(result.graph.fields.items[function.input.start].name));
         matched = true;
     }

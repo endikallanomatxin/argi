@@ -1,6 +1,6 @@
-AbstractMatrix#(.rows: UIntNative) : Abstract = ()
+AbstractMatrix#(.Participant: Type): Contract = (.rows: Int)
 Matrix : Type = (.marker: Int32)
-Matrix implements AbstractMatrix#(.rows = 3)
+implement AbstractMatrix#(Matrix) (.rows: Int = 3)
 
 require_four_rows#(.t: Type: AbstractMatrix#(.rows = 4))(.value: &t) -> () := {}
 

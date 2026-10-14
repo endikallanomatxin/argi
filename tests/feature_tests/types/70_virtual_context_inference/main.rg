@@ -1,11 +1,11 @@
 Counter#(.Participant: Type): Contract = (.bump: (.self: $&Participant) -> () where {})
 
-Other: Abstract = ()
+Other#(.Participant: Type): Contract = ()
 
 Probe: Type = (.counter: $&UIntNative)
 
 implement Counter#(Probe) (.bump = _impl_bump_Probe)
-Probe implements Other
+implement Other#(Probe) ()
 
 _impl_bump_Probe := (.self: $&Probe) -> ()  { self&.counter&= self&.counter&+ 10 }
 
@@ -20,12 +20,12 @@ record#(.t: Type)(.value: t, .counter: $&UIntNative) -> () := {
 }
 
 in_generic#(.t: Type)(.value: $&t) -> () := {
-    handle :: Virtual#(.abstract: Counter) = to_virtual(.value = value)
+    handle :: Virtual#(.contract: Counter) = to_virtual(.value = value)
     bump(.self = $&handle)
 }
 
 run(.system: System) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
-    assume error_tracer: $&Virtual#(.abstract: ErrorTracer) = [
+    assume error_tracer: $&Virtual#(.contract: ErrorTracer) = [
         FixedSizeErrorTracer(
             .buffer = view($&zeroed#(.t: [4096]UInt8)())
         )
@@ -51,7 +51,7 @@ implement Init#(FailTracer, ()) (
 )
 
 failed_init() -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
-    assume error_tracer: $&Virtual#(.abstract: ErrorTracer) = FailTracer()! | to_virtual($&_) | $&_
+    assume error_tracer: $&Virtual#(.contract: ErrorTracer) = FailTracer()! | to_virtual($&_) | $&_
     result = ..ok Void()
 }
 
@@ -64,7 +64,7 @@ main(.system: System) -> (.status_code: Int32) := {
     }
     count :: UIntNative = 0
     if true {
-        assume counter: $&Virtual#(.abstract: Counter) = [
+        assume counter: $&Virtual#(.contract: Counter) = [
             Probe(.counter = $&count)
             | to_virtual($&_)
             | $&_
@@ -82,7 +82,7 @@ main(.system: System) -> (.status_code: Int32) := {
     }
     if true {
         probe ::= Probe(.counter = $&count)
-        handle :: Virtual#(.abstract: Counter) = to_virtual($&probe)
+        handle :: Virtual#(.contract: Counter) = to_virtual($&probe)
         bump(.self = $&handle)
         in_generic(.value = $&probe)
         direct ::= to_virtual#(Counter)($&probe)
@@ -122,7 +122,7 @@ implement ErrorTracer#(FailTracer)(
 
     .report = (
             .self   : $&FailTracer,
-            .writer : $&Virtual#(.abstract: Writer)
+            .writer : $&Virtual#(.contract: Writer)
         ) -> (
             .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
         ) {

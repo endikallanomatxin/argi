@@ -18,7 +18,7 @@ score(.value: Widget) -> (.result: Int32) := {
 }
 
 implement Capability#(Widget) (.unrelated = _impl_unrelated_Widget)
-Widget satisfies dep.Capability
+implement dep.Capability#(Widget) (.score = score)
 
 main() -> (.status_code: Int32) := {
     status_code = app.consume_imported(.value = Widget()).result - 42

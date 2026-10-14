@@ -37,9 +37,8 @@ pub fn validateOrdinaryIdentities(graph: *const module_sg.ModuleSemanticGraph, f
         const file = files[declaration.module_file_index];
         const node = module_sg.declarationSyntaxNode(files, declaration) orelse continue;
         const function = file.tree.functionDeclaration(node) orelse continue;
-        // Remove this source adapter when legacy overload declarations migrate.
-        // Ordinary identities are unique regardless of runtime or generic arity.
-        if (!function.identity_definition) continue;
+        // Ordinary identities are unique regardless of declaration spelling,
+        // runtime inputs or compile-time parameter arity.
         for (graph.declarations.items, 0..) |other, other_index| {
             if (index == other_index or other.kind != .function) continue;
             if (!std.mem.eql(u8, graph.text(declaration.name), graph.text(other.name))) continue;

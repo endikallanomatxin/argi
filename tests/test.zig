@@ -1812,12 +1812,7 @@ test "feature_tests/polymorphism/19_abstract_monomorphization_isolation" {
 }
 
 test "feature_tests/polymorphism/13X_abstract_function_input_requires_implementation" {
-    try buildExpectFailExact("tests/feature_tests/polymorphism/13X_abstract_function_input_requires_implementation",
-        \\tests/feature_tests/polymorphism/13X_abstract_function_input_requires_implementation/main.rg:8:28: error: type 'Int32' does not implement abstract 'ExampleAbstract' required by parameter '.value' of 'use_value'
-        \\      status_code = use_value(.value = 7)
-        \\                             ^
-        \\
-    );
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/13X_abstract_function_input_requires_implementation", "contract constraint 'ExampleAbstract' required by generic function parameter '.Value' of 'use_value'", "panic");
 }
 
 test "feature_tests/polymorphism/14X_abstract_function_output_requires_default" {
@@ -5488,32 +5483,18 @@ test "feature_tests/modules/25X_private_choice_option_imported" {
 }
 
 test "feature_tests/modules/26X_module_qualified_ambiguous_overload" {
-    try buildExpectFailExact("tests/feature_tests/modules/26X_module_qualified_ambiguous_overload",
-        \\tests/feature_tests/modules/26X_module_qualified_ambiguous_overload/main.rg:4:19: error: module-qualified call 'dep.pick' is ambiguous for arguments (.value: Int32). Possible overloads:
-        \\  - pick (.value: Int32, .left: Int32) -> (.result: Int32)
-        \\  - pick (.value: Int32, .right: Int32) -> (.result: Int32)
-        \\      _ ::= dep.pick(.value = 1)
-        \\                    ^
-        \\
-    );
+    try buildExpectFailWithoutNoise("tests/feature_tests/modules/26X_module_qualified_ambiguous_overload", "multiple applicable operation identities", "panic");
 }
 
 test "feature_tests/modules/28X_imported_abstract_input_requires_implementation" {
     try buildExpectFail(
         "tests/feature_tests/modules/28X_imported_abstract_input_requires_implementation",
-        "type 'Int32' does not implement abstract 'ExampleAbstract' required by parameter '.value' of 'use_value'",
+        "contract constraint 'ExampleAbstract' required by generic function parameter '.Value' of 'use_value'",
     );
 }
 
 test "feature_tests/modules/29X_imported_abstract_ambiguous_overload" {
-    try buildExpectFailExact("tests/feature_tests/modules/29X_imported_abstract_ambiguous_overload",
-        \\tests/feature_tests/modules/29X_imported_abstract_ambiguous_overload/main.rg:4:19: error: module-qualified call 'dep.pick' is ambiguous for arguments (.value: Int32). Possible overloads:
-        \\  - pick (.value: A, .left: Int32) -> (.result: Int32)
-        \\  - pick (.value: A, .right: Int32) -> (.result: Int32)
-        \\      _ ::= dep.pick(.value = 1)
-        \\                    ^
-        \\
-    );
+    try buildExpectFailWithoutNoise("tests/feature_tests/modules/29X_imported_abstract_ambiguous_overload", "multiple applicable operation identities", "panic");
 }
 
 test "feature_tests/modules/30X_nonconstant_module_binding_initialization" {
@@ -11584,7 +11565,7 @@ test "feature_tests/contracts/16X_tuple_missing_operation" {
 }
 
 test "feature_tests/contracts/17X_tuple_ambiguous_operation" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/17X_tuple_ambiguous_operation", "ambiguous operation", "panic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/17X_tuple_ambiguous_operation", "ambiguous conformances for the same participant tuple", "panic");
 }
 
 test "feature_tests/contracts/18X_duplicate_tuple" {
@@ -12976,4 +12957,22 @@ test "feature_tests/contracts/312X_scoped_static_association_mismatch" {
 
 test "feature_tests/contracts/313X_scoped_virtual_association_mismatch" {
     try buildExpectFail("tests/feature_tests/contracts/313X_scoped_virtual_association_mismatch", "incompatible associated elements for the operation interface");
+}
+
+test "feature_tests/contracts/314X_legacy_ordinary_duplicate_identity" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/314X_legacy_ordinary_duplicate_identity", "ordinary function 'value' has more than one declaration", "panic");
+}
+
+test "feature_tests/contracts/315X_legacy_ordinary_compiletime_identity" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/315X_legacy_ordinary_compiletime_identity", "ordinary function 'value' has more than one declaration", "panic");
+}
+
+test "feature_tests/contracts/316X_ordinary_concrete_generic_identity" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/316X_ordinary_concrete_generic_identity", "multiple applicable operation identities", "panic");
+}
+
+test "feature_tests/contracts/317_static_adapter_virtual_participant" {
+    const test_path = "tests/feature_tests/contracts/317_static_adapter_virtual_participant";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
 }

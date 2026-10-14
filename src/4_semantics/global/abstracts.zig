@@ -2230,10 +2230,14 @@ pub const Resolver = struct {
                     const child = self.graph.semanticType(ty.pointer.child);
                     if (child == .virtual) {
                         const use = self.abstractUse(child.virtual) orelse return null;
-                        if (use.declaration != declaration or !self.bindAbstractUseArguments(use, located, &bindings)) return null;
-                        bindings.types[located.definition.participants.start] = child.virtual;
-                        virtual = true;
-                        continue;
+                        if (use.declaration == declaration) {
+                            if (!self.bindAbstractUseArguments(use, located, &bindings)) return null;
+                            bindings.types[located.definition.participants.start] = child.virtual;
+                            virtual = true;
+                            continue;
+                        }
+                        // A different virtual interface is a known wrapper type,
+                        // and may participate in a static adapter conformance.
                     }
                 }
                 // Input patterns can mention associated elements. Infer what is
@@ -2251,10 +2255,12 @@ pub const Resolver = struct {
                     const child = self.graph.semanticType(actual.pointer.child);
                     if (child == .virtual) {
                         const use = self.abstractUse(child.virtual) orelse continue;
-                        if (use.declaration != declaration or !self.bindAbstractUseArguments(use, located, &bindings)) continue;
-                        bindings.types[located.definition.participants.start] = child.virtual;
-                        virtual = true;
-                        continue;
+                        if (use.declaration == declaration) {
+                            if (!self.bindAbstractUseArguments(use, located, &bindings)) continue;
+                            bindings.types[located.definition.participants.start] = child.virtual;
+                            virtual = true;
+                            continue;
+                        }
                     }
                 }
                 _ = try self.inferOperationInputPattern(located.module_index, field.ty, ty, &bindings);

@@ -4,11 +4,9 @@ Product#(.Left: Type, .Right: Type): Contract = (
 
     .local_product: (.left: Left, .right: Right) -> (.value: Result) where {}
 )
-satisfies dep.Product#(dep.Row, dep.Column) = (.Result: Int32)
 implement Product#(dep.Row, dep.Column) (.Result: Type = Int64, .local_product = _impl_local_product_373)
-multiply(.left: dep.Row, .right: dep.Column) -> (.value: Int32) := { value = 42 }
 _impl_local_product_373 := (.left: dep.Row, .right: dep.Column) -> (.value: Int64)  { value = 7 }
 main() -> () := {
-    if multiply(dep.Row(), dep.Column()).value != 42 { abort }
+    if dep.multiply(dep.Row(), dep.Column()).value != 42 { abort }
     if local_product(dep.Row(), dep.Column()).value != 7 { abort }
 }

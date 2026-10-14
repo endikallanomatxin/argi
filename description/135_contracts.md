@@ -195,10 +195,11 @@ type and integer arguments in declaration order, including named arguments.
 Symbolic arithmetic equivalence and other structural patterns remain pending.
 Construction, destruction and explicit conversion use Init, Deinit and Convert.
 Integer conversions and reference-address observation use selected Convert
-evidence; numeric type-call conversions are rejected. Operator migration,
-composition and joint virtual evidence remain pending.
-Unbound unary contracts with explicit participants and no associated parameters
-can construct virtual handles using selected implementation evidence. Qualified
+evidence; numeric type-call conversions are rejected. Arithmetic and equality
+operators select standard contract evidence. Composition preserves dependency
+operation identities; joint virtual evidence remains pending.
+Unary contracts with explicit participants can construct virtual handles using
+selected implementation evidence when their associated elements are fully bound. Qualified
 unary calls use `Contract#().operation(...)`; a concrete input infers the
 participant and a virtual handle supplies its hidden participant. Their tables reuse the existing representation and declared safety
 checks, including mutable receiver permissions and fallible capability inputs.
@@ -213,10 +214,20 @@ hashing reuses the corresponding value-key implementation.
 Generic function instance validation shares the same tuple-aware contract check
 used during selection.
 
-The compiler still contains transitional global overload resolution and earlier
-conformance syntax for other contracts. Removal obligations are tracked in
-`plan/contract_dispatch_refactor.md`; existing `Abstract`/`satisfies` adapters are
-not part of the intended final language.
+Ordinary declarations enforce one identity per module, regardless of declaration
+spelling or compile-time arity. Ordinary lookup checks applicability without
+specificity ranking; multiple applicable identities require qualification.
+Generic probes retain declaration identities so the same declaration is counted
+once. Earlier conformance syntax remains for unmigrated fixtures and compiler
+tests. Removal obligations are tracked in `plan/contract_dispatch_refactor.md`;
+existing `Abstract`/`satisfies` adapters are not part of the intended final language.
+
+BufferReading scopes complete input-buffer reads. Its generic Reader fallback
+copies bytes through read_byte, while File and TcpConnection select native block
+algorithms and their associated error result types. A fixed Virtual#(Reader)
+wrapper can participate in a static adapter conformance; the adapter invokes the
+handle's frozen Reader operations. TCP writes reuse the common BlockWriter
+write_all algorithm instead of a competing ordinary specialization.
 
 > [!IMPLEMENTATION]
 > Bundled Reader uses scoped implementations for files, process streams, TCP,

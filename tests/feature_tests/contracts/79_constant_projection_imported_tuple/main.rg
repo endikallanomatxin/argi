@@ -1,5 +1,4 @@
 dep := import("./dep")
-satisfies dep.Shape#(dep.Cell) = (.Count = 2)
 sum(.values: &Array#(.n = dep.Shape#(dep.Cell).Count, .t: Int32)) -> (.value: Int32) := { value = values&[0] + values&[1] }
 main() -> () := {
     values ::= (20, 22)

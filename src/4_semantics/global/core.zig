@@ -444,36 +444,28 @@ pub const Resolver = struct {
         context: reach_context.Context,
     ) !FunctionMatch {
         var best: ?global_sg.GlobalFunctionId = null;
-        var best_score: u32 = 0;
-        var tied = false;
         var saw_deferred = false;
         const candidates = try self.graph.functionsNamed(self.allocator, name);
         for (candidates) |id| {
             const function = self.graph.functions.items[@intFromEnum(id)];
             if (function.flags.is_abstract_dispatch or function.flags.is_c_function_pointer) continue;
-            // Specializations are cached implementations, not new overloads.
+            // Specializations are cached implementations of the same identity.
             // Reconsider the generic declaration so lookup is call-order independent.
             if (function.flags.is_generic_instantiation) continue;
             if (!self.declarationVisible(current_module, function.declaration, module_filter)) continue;
-            const score = switch (try self.matchCallInputWithReach(function.input, input_node, context)) {
+            switch (try self.matchCallInputWithReach(function.input, input_node, context)) {
                 .no_match => continue,
                 .deferred => {
                     saw_deferred = true;
                     continue;
                 },
-                .score => |score| score,
-            };
-            if (best == null or score > best_score) {
-                best = id;
-                best_score = score;
-                tied = false;
-            } else if (score == best_score) tied = true;
-        }
-        if (best) |function| {
-            if (tied) return .ambiguous;
-            return .{ .function = function };
+                .score => {},
+            }
+            if (best != null and best.? != id) return .ambiguous;
+            best = id;
         }
         if (saw_deferred) return .deferred;
+        if (best) |function| return .{ .function = function };
         return .no_match;
     }
 
@@ -485,36 +477,28 @@ pub const Resolver = struct {
         input_node: global_sg.GlobalNodeId,
     ) !FunctionMatch {
         var best: ?global_sg.GlobalFunctionId = null;
-        var best_score: u32 = 0;
-        var tied = false;
         var saw_deferred = false;
         const candidates = try self.graph.functionsNamed(self.allocator, name);
         for (candidates) |id| {
             const function = self.graph.functions.items[@intFromEnum(id)];
             if (function.flags.is_abstract_dispatch or function.flags.is_c_function_pointer) continue;
-            // Specializations are cached implementations, not new overloads.
+            // Specializations are cached implementations of the same identity.
             // Reconsider the generic declaration so lookup is call-order independent.
             if (function.flags.is_generic_instantiation) continue;
             if (!self.declarationVisible(current_module, function.declaration, module_filter)) continue;
-            const score = switch (self.matchCallInput(function.input, input_node)) {
+            switch (self.matchCallInput(function.input, input_node)) {
                 .no_match => continue,
                 .deferred => {
                     saw_deferred = true;
                     continue;
                 },
-                .score => |score| score,
-            };
-            if (best == null or score > best_score) {
-                best = id;
-                best_score = score;
-                tied = false;
-            } else if (score == best_score) tied = true;
-        }
-        if (best) |function| {
-            if (tied) return .ambiguous;
-            return .{ .function = function };
+                .score => {},
+            }
+            if (best != null and best.? != id) return .ambiguous;
+            best = id;
         }
         if (saw_deferred) return .deferred;
+        if (best) |function| return .{ .function = function };
         return .no_match;
     }
 

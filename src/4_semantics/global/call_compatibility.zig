@@ -141,8 +141,6 @@ fn matchFunctionNamed(
     reach: reach_context.Context,
 ) !core_mod.Resolver.FunctionMatch {
     var best: ?global_sg.GlobalFunctionId = null;
-    var best_score: u32 = 0;
-    var tied = false;
     var saw_deferred = false;
     const function_candidates = try compatibility.core.graph.functionsNamed(compatibility.core.allocator, name);
     for (function_candidates) |id| {
@@ -152,7 +150,7 @@ fn matchFunctionNamed(
         // Reconsider the generic declaration so lookup is call-order independent.
         if (function.flags.is_generic_instantiation) continue;
         if (!compatibility.core.declarationVisible(current_module, function.declaration, module_filter)) continue;
-        const score = switch (try matchInputWithReach(
+        switch (try matchInputWithReach(
             compatibility,
             function.input,
             input_node,
@@ -163,19 +161,13 @@ fn matchFunctionNamed(
                 saw_deferred = true;
                 continue;
             },
-            .score => |score| score,
-        };
-        if (best == null or score > best_score) {
-            best = id;
-            best_score = score;
-            tied = false;
-        } else if (score == best_score) tied = true;
-    }
-    if (best) |function| {
-        if (tied) return .ambiguous;
-        return .{ .function = function };
+            .score => {},
+        }
+        if (best != null and best.? != id) return .ambiguous;
+        best = id;
     }
     if (saw_deferred) return .deferred;
+    if (best) |function| return .{ .function = function };
     return .no_match;
 }
 

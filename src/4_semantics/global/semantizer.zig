@@ -2774,7 +2774,7 @@ fn diagnoseUnresolvedCall(
                         defer ambiguity.deinit();
                         try appendAmbiguousCallPrefix(&ambiguity, graph, diagnostics, source, module, reference);
                         try appendValueShape(&ambiguity, graph, input);
-                        try ambiguity.appendSlice(". Possible overloads:");
+                        try ambiguity.appendSlice(". Applicable function identities:");
                         try diagnostics.add(
                             if (reference.module_path != null) location else diagnosticLocation(graph, diagnostics, source),
                             .semantic,
@@ -2802,10 +2802,8 @@ fn diagnoseUnresolvedCall(
                 continue;
             }
 
-            // Reuse Core's matcher to distinguish a deterministic ambiguity
-            // from a genuine no-match. Resolution and diagnostics must agree
-            // on compatibility and scoring rather than maintaining parallel
-            // overload rules.
+            // Reuse Core's applicability matcher so diagnostics report every
+            // applicable identity, without introducing specificity ranking.
             var diagnostic_core = core_mod.Resolver{
                 .allocator = allocator,
                 .graph = graph,
@@ -2814,28 +2812,22 @@ fn diagnoseUnresolvedCall(
             };
             var best_matches: std.ArrayList(global_sg.GlobalFunctionId) = .empty;
             defer best_matches.deinit(allocator);
-            var best_score: ?u32 = null;
             for (candidates.items) |candidate| {
                 const function = graph.functions.items[@intFromEnum(candidate)];
                 if (function.flags.is_abstract_dispatch) continue;
-                const score = switch (diagnostic_core.matchCallInput(function.input, input_id)) {
-                    .score => |value| value,
+                if (function.flags.is_generic_instantiation or function.flags.is_c_function_pointer) continue;
+                switch (diagnostic_core.matchCallInput(function.input, input_id)) {
+                    .score => {},
                     .no_match, .deferred => continue,
-                };
-                if (best_score == null or score > best_score.?) {
-                    best_score = score;
-                    best_matches.clearRetainingCapacity();
-                    try best_matches.append(allocator, candidate);
-                } else if (score == best_score.?) {
-                    try best_matches.append(allocator, candidate);
                 }
+                try best_matches.append(allocator, candidate);
             }
             if (best_matches.items.len > 1) {
                 var ambiguity = std.array_list.Managed(u8).init(allocator);
                 defer ambiguity.deinit();
                 try appendAmbiguousCallPrefix(&ambiguity, graph, diagnostics, source, module, reference);
                 try appendValueShape(&ambiguity, graph, input);
-                try ambiguity.appendSlice(". Possible overloads:");
+                try ambiguity.appendSlice(". Applicable function identities:");
                 for (best_matches.items) |candidate| {
                     const function = graph.functions.items[@intFromEnum(candidate)];
                     try ambiguity.appendSlice("\n  - ");
@@ -2867,7 +2859,7 @@ fn diagnoseUnresolvedCall(
                 defer ambiguity.deinit();
                 try appendAmbiguousCallPrefix(&ambiguity, graph, diagnostics, source, module, reference);
                 try appendValueShape(&ambiguity, graph, input);
-                try ambiguity.appendSlice(". Possible overloads:");
+                try ambiguity.appendSlice(". Applicable function identities:");
                 for (generic_ties.items) |declaration_id| {
                     const declaration = graph.declaration(declaration_id);
                     const function_id = declaration.function_id orelse continue;

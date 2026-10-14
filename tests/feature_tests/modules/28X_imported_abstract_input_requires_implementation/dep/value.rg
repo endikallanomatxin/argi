@@ -1,5 +1,4 @@
-ExampleAbstract : Abstract = ()
-
-use_value(.value: ExampleAbstract) -> (.status_code: Int32) := {
-    status_code = value
+ExampleAbstract#(.Participant: Type): Contract = ()
+use_value#(.Value: Type: ExampleAbstract) := (.value: Value) -> (.status_code: Int32) {
+    status_code = 0
 }

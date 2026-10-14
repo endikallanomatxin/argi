@@ -918,3 +918,36 @@ Validation passed 338 polymorphism/shared-association/virtual ownership cases an
 19 focused projection, dimension, copy, default and native callback cases, without
 skips, failures, leaks or error logs. These are fixture migrations; global ordinary
 ranking and remaining legacy adapters are still pending removal.
+
+
+### Removing ordinary specificity ranking
+
+Ordinary identity validation now covers both declaration spellings and all
+compile-time arities. Dormant duplicate runtime and compile-time declarations
+are negative regressions: both built before the guard and are now rejected.
+Remove concrete and generic ordinary specificity ranking, including the generic
+structural score implementation. Keep applicability, reached defaults, inference
+rollback, unique declaration identities and deferred candidates. Count a generic
+probe by its declaration so a shared representation cannot manufacture ambiguity.
+A local concrete function and a distinct bundled generic identity are ambiguous;
+a focused negative regression observes the former concrete-first behavior.
+
+Ruling: retire the TCP write_all copy and scope read through BufferReading — both
+native read functions overlap the Reader fallback under identity resolution —
+cost if wrong: callers would receive different error types or byte-level instead
+of native reads. Selected File/TCP conformances retain their native algorithms
+and exact result types; the generic conformance retains the Reader fallback.
+Static adapters can use a different fixed virtual wrapper type as a participant,
+without treating its existing interface as the adapter's erased interface.
+
+Migrate imported conformances into their owning modules, imported composition,
+remaining defaults/ambiguities and virtual marker fixtures. Remove the syntax
+identity-definition marker and bump the frontend snapshot format to 54. Two
+embedded tests that used ordinary overloads were observed failing at the new
+identity guard and now pass with unique helpers/scoped operations.
+
+Validation passed 682 contract, polymorphism and module program cases without
+skips, failures, leaks or error logs; the full internal suite passed 375 tests
+with one skip. Final focused checks passed native network/file reads, identity
+guards, virtual static adapters, LSP navigation and input identity matching. Legacy Abstract/satisfies/Self compatibility remains a separate pending
+removal gate; it must not be described as complete.

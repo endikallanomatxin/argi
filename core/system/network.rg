@@ -540,7 +540,7 @@ _set_timeout_UdpSocket(
     result = ..ok Void()
 }
 
-read(
+_read_tcp(
         .self   : $&TcpConnection,
         .buffer : ArrayView#(.t: UInt8)
     ) -> (
@@ -702,38 +702,6 @@ receive_from(
     result = ..ok(.count = received, .peer = (._native = peer, ._datagram = true))
 }
 
--- Bulk writes may be partial. This helper retries with the remaining view
--- it reports failure instead of spinning if a nonempty write makes no progress.
-write_all(
-        .self   : $&TcpConnection,
-        .buffer : ArrayViewRO#(.t: UInt8)
-    ) -> (
-        .result : Errable#(Void, (..socket_write_failed))
-    ) := {
-    total ::= length(&buffer).count
-    written :: UIntNative = 0
-
-    while written < total {
-        remaining ::= unwrap_or_abort(
-            .value = slice(
-                &buffer
-                .start = written
-                .count = [
-                    total
-                    - written
-                ]
-            )
-        )
-        count ::= write(self, .value = remaining)!
-        if count == 0 {
-            result = ..error(.reason = ..socket_write_failed)
-            return
-        }
-        written = written + count
-    }
-
-    result = ..ok Void()
-}
 
 implement Reader#(TcpConnection)(
     .read_byte = (
@@ -829,3 +797,8 @@ implement Closeable#(UdpSocket) (
 )
 
 implement OpenState#(UdpSocket) (.check_open = _is_open_UdpSocket)
+
+implement BufferReading#(TcpConnection) (
+    .Result: Type = Errable#(UIntNative, (..socket_read_failed))
+    .read = _read_tcp
+)

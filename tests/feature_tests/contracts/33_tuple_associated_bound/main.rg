@@ -1,11 +1,11 @@
-Capability: Contract = (
+Capability#(.Participant: Type): Contract = (
     .item: Type
 )
 Group#(.Left: Type, .Right: Type): Contract = (
-    .Result: Type: Capability#(Left)
+    .Result: Type: Capability#(.item: Left)
 )
 Row: Type = ()
 Column: Type = ()
-Row satisfies Capability#(Row)
+implement Capability#(Row) (.item: Type = Row)
 implement Group#(Row, Column) (.Result: Type = Row)
 main() -> () := {}

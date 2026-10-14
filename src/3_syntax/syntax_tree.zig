@@ -192,7 +192,6 @@ pub const Mutability = enum(u32) { constant, variable };
 pub const PointerMutability = enum(u32) { read_only, read_write };
 
 pub const FunctionExtra = struct {
-    identity_definition: u32 = 0,
     contract_member: u32 = 0,
     name_token: TokenIndex,
     generic_params_start: ExtraIndex,
@@ -243,7 +242,6 @@ pub const ForExtra = struct { name_token: TokenIndex, iterable: NodeIndex, body:
 pub const MatchCaseExtra = struct { payload_name: OptionalTokenIndex, body: NodeIndex };
 
 pub const FunctionDeclaration = struct {
-    identity_definition: bool = false,
     contract_member: bool = false,
     name_token: TokenIndex,
     generic_params: []const NodeIndex,
@@ -516,7 +514,6 @@ pub const FileSyntaxTree = struct {
         if (node_tag != .function_declaration and node_tag != .function_declaration_once and node_tag != .c_function_pointer_declaration) return null;
         const extra = tree.extraData(FunctionExtra, tree.data(node).extra);
         return .{
-            .identity_definition = extra.identity_definition != 0,
             .contract_member = extra.contract_member != 0,
             .name_token = extra.name_token,
             .generic_params = tree.nodeRange(.{ .start = extra.generic_params_start, .end = extra.generic_params_end }),

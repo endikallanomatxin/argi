@@ -1900,7 +1900,7 @@ pub const Syntaxer = struct {
         is_once: bool,
         generic_params: syn.NodeRange,
         generic_params_struct: ?syn.NodeIndex,
-        identity_definition: bool,
+        body_follows_signature: bool,
     ) SyntaxerError!syn.NodeIndex {
         const input = try self.parseStructTypeLiteral();
 
@@ -1908,10 +1908,9 @@ pub const Syntaxer = struct {
         self.advanceOne();
         const output = try self.parseFunctionOutputType();
         self.skipNewLinesAndComments();
-        if (identity_definition) {
+        if (body_follows_signature) {
             const body = try self.parseCodeBlock();
             const extra = try self.addExtra(syn.FunctionExtra{
-                .identity_definition = 1,
                 .name_token = name.token,
                 .generic_params_start = generic_params.start,
                 .generic_params_end = generic_params.end,

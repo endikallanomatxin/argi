@@ -190,7 +190,7 @@ implement Reader#(File)(
         }
 )
 
-read(
+_read_file(
         .self   : $&File,
         .buffer : ArrayView#(.t: UInt8),
     ) -> (
@@ -331,3 +331,8 @@ implement Closeable#(File) (
 )
 
 implement OpenState#(File) (.check_open = _is_open_File)
+
+implement BufferReading#(File) (
+    .Result: Type = Errable#(UIntNative, (..stream_read_failed))
+    .read = _read_file
+)

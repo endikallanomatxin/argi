@@ -1,11 +1,11 @@
 Counter#(.Participant: Type): Contract = (.bump: (.self: $&Participant) -> () where {})
 
-Other: Abstract = ()
+Other#(.Participant: Type): Contract = ()
 
 Probe: Type = (.value: UIntNative = 0)
 
 implement Counter#(Probe) (.bump = _impl_bump_Probe)
-Probe implements Other
+implement Other#(Probe) ()
 
 _impl_bump_Probe := (.self: $&Probe) -> ()  { self&.value = self&.value + 1 }
 
