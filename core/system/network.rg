@@ -206,12 +206,12 @@ length(.self: &ResolvedAddresses) -> (.count: UIntNative) := {
     count = _network_count(.handle = self&._handle).count
 }
 
-get(
+address_at := (
         .self  : &ResolvedAddresses,
         .index : UIntNative
     ) -> (
         .result : Errable#(NetworkAddress, (..out_of_bounds))
-    ) := {
+    ) {
     assume ffi := self&._network&._ffi
     native :: _NetworkAddress = (._bytes = zeroed#(.t: [128]UInt8)(), ._length = 0)
 

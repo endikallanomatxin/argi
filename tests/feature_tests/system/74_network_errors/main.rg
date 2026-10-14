@@ -9,13 +9,13 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         }
     }
     addresses ::= resolve_addresses(.host = "localhost", .port = 0, .family = ..ipv4)!
-    match get(.self = &addresses, .index = length(.self = &addresses).count) {
+    match address_at(.self = &addresses, .index = length(.self = &addresses).count) {
         ..ok _ { abort } ..error error { if [
                 error.reason
                 != ..out_of_bounds
             ] { abort } }
     }
-    address ::= get(.self = &addresses, .index = 0)!
+    address ::= address_at(.self = &addresses, .index = 0)!
     match UdpSocket(.address = address) {
         ..ok _ { abort } ..error error {
             if [

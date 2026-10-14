@@ -346,7 +346,7 @@ semantic claim that every pair has overlapping applicability.
 | `core/lists` | 0 |
 | `core/maps` | 8 |
 | `core/memory` | 0 |
-| `core/system` | 1 |
+| `core/system` | 0 |
 | `core/system/file_system` | 4 |
 | `more/math/linear_algebra` | 5 |
 | `more/semver` | 0 |
@@ -771,3 +771,17 @@ skips, failures, leaks or error logs. Emitted LLVM specializes enumeration for
 PageAllocator and RefusingAllocator and selects the walker operation statically.
 No compiler code was changed in this batch. Global ordinary ranking and legacy
 Abstract compatibility remain pending removal.
+
+
+### Distinct system queries
+
+Separate environment name lookup from native address indexing: lookup_environment
+is one generic ordinary function, while address_at is one concrete ordinary
+function. Environment lookup retains its static allocation Provider through
+copy_c_string; address extraction still copies checked native bytes. Rename every
+caller and remove the get definitions rather than retaining overload wrappers.
+No compiler phase changes are needed. Seventeen repeated ordinary names remain.
+
+Focused system query validation passed all four environment/network cases,
+including missing environment names and out-of-range address indexing. The
+rename creates no new contract identities or dispatch paths.

@@ -7,7 +7,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         .passive = true
     )!
     if length(.self = &addresses).count == 0 { abort }
-    address ::= get(.self = &addresses, .index = 0)!
+    address ::= address_at(.self = &addresses, .index = 0)!
     listener ::= TcpListener(.address = address)!
     bound ::= local_address(.self = &listener)!
     if port(.self = &bound).value == 0 { abort }
@@ -46,7 +46,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         .transport = ..udp
         .family    = ..ipv4
     )!
-    udp_address ::= get(.self = &udp_addresses, .index = 0)!
+    udp_address ::= address_at(.self = &udp_addresses, .index = 0)!
     receiver ::= UdpSocket(.address = udp_address)!
     sender ::= UdpSocket(.address = udp_address)!
     set_timeout(.self = $&receiver, .milliseconds = 5000)!

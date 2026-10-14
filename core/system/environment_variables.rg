@@ -32,13 +32,13 @@ environment_variables_get_c_string(
     )
 }
 
-get(
+lookup_environment#(.Provider: Type: Allocator#(Provider)) := (
         .self      : &EnvironmentVariables,
         .key       : StringView,
-        .allocator : $&Allocator,
+        .allocator : $&Provider,
     ) -> (
         .result : Errable#(?StringView, (..out_of_memory))
-    ) := {
+    ) {
     assume ffi := self&._ffi
     assume allocator
 
@@ -62,7 +62,7 @@ has(
     assume ffi := self&._ffi
     assume allocator
 
-    found ::= get(self, .key = key, .allocator = allocator)
+    found ::= lookup_environment(self, .key = key, .allocator = allocator)
 
     match found {
         ..ok payload { result = ..ok payload ?}
