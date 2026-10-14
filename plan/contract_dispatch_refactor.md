@@ -351,16 +351,11 @@ semantic claim that every pair has overlapping applicability.
 | `more/math/linear_algebra` | 0 |
 | `more/semver` | 0 |
 
-Remaining consumers are map queries/mutations, filesystem operations, one system
-query family and five linear-algebra families. Preserve static allocator selection,
-explicit references, literal context and recursive cleanup while migrating them.
-File opening now uses Init with Args selecting the path representation and any
-allocation provider. Coordinated map
-migration must cover the full namespace before unique ordinary identities can be
-introduced. Functions with distinct actions can use meaningful separate names.
-
-Do not reject every duplicate ordinary name until these callers and declarations
-have been migrated; the old ordinary overload selector remains pending removal.
+All bundled core and more consumers now use unique ordinary identities or scoped
+contract operations. No repeated ordinary declaration names remain in the source
+inventory. File opening uses Init with Args; allocation and ownership protocols
+retain selected evidence. Legacy fixture overloads and source adapters still need
+migration before global ordinary ranking can be removed.
 
 Scalar equality validation: 1,899 program cases passed (11 skipped), and 374
 internal tests passed (1 skipped), with no failures or leaks. The emitted LLVM
@@ -873,3 +868,12 @@ erased receiver invalidation now consistently uses the same mapped-domain
 restriction for explicit and legacy declarations. Four corrective/numeric cases
 passed after updating expectations and giving numeric test helpers unique names.
 Generic Errable reason-pattern inference remains outside this fixture migration.
+
+Final fixture validation passed 1,190 polymorphism/ownership/types/contracts/module
+and numeric program cases with no skips, failures, leaks or error logs. Migrated
+simple unary and tuple conformances explicitly bind operation aliases, associated
+elements and storage mappings. Bound virtual calls complete their input signature
+with the interface's associated bindings, not just its erased participant. Generic
+associated and storage-virtual regressions pass. Remaining complex legacy forms
+and ordinary dispatch fixtures are separate pending migration work; compiler
+compatibility adapters are not yet removed.

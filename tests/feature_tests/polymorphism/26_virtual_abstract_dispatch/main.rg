@@ -1,17 +1,17 @@
-Shape: Abstract = (
-    get_value(.self: &Self) -> (.value: Int32) where {}
-    set_value(.self: $&Self, .value: Int32) -> () where {}
+Shape#(.Participant: Type): Contract = (
+    .get_value: (.self: &Participant) -> (.value: Int32) where {}
+    .set_value: (.self: $&Participant, .value: Int32) -> () where {}
 )
 
 Box: Type = (.value: Int32)
 
-Box implements Shape
+implement Shape#(Box) (.get_value = _impl_get_value_Box, .set_value = _impl_set_value_Box)
 
-get_value(.self: &Box) -> (.value: Int32) := {
+_impl_get_value_Box := (.self: &Box) -> (.value: Int32)  {
     value = self&.value
 }
 
-set_value(.self: $&Box, .value: Int32) -> () := {
+_impl_set_value_Box := (.self: $&Box, .value: Int32) -> ()  {
     self&.value = value
 }
 

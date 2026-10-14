@@ -1,13 +1,13 @@
-Counter: Abstract = (bump(.self: $&Self) -> () where {})
+Counter#(.Participant: Type): Contract = (.bump: (.self: $&Participant) -> () where {})
 
 Other: Abstract = ()
 
 Probe: Type = (.counter: $&UIntNative)
 
-Probe implements Counter
+implement Counter#(Probe) (.bump = _impl_bump_Probe)
 Probe implements Other
 
-bump(.self: $&Probe) -> () := { self&.counter&= self&.counter&+ 10 }
+_impl_bump_Probe := (.self: $&Probe) -> ()  { self&.counter&= self&.counter&+ 10 }
 
 implement Deinit#(Probe) (
     .deinit = (.self: $&Probe) -> () {

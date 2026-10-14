@@ -1,7 +1,7 @@
 Product#(.Left: Type, .Right: Type): Contract = (
     .Result: Type
 
-    multiply(.left: &Left, .right: &Right) -> (.value: Result) where {}
+    .multiply: (.left: &Left, .right: &Right) -> (.value: Result) where {}
 )
 
 Answer: Type = (.value: Int32)
@@ -9,9 +9,9 @@ Answer: Type = (.value: Int32)
 Row: Type = (.value: Int32)
 Column: Type = (.value: Int32)
 
-satisfies Product#(Row, Column) = (.Result: Answer)
+implement Product#(Row, Column) (.Result: Type = Answer, .multiply = _impl_multiply_289)
 
-multiply(.left: &Row, .right: &Column) -> (.value: Product#(Row, Column).Result) := {
+_impl_multiply_289 := (.left: &Row, .right: &Column) -> (.value: Product#(Row, Column).Result)  {
     value = Answer(left&.value * right&.value)
 }
 

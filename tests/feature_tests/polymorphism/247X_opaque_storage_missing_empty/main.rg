@@ -1,12 +1,12 @@
-Drain: Abstract = (
-    drain(.self: &Self, .storage: $&Allocation) -> () where empties(storage)
+Drain#(.Participant: Type): Contract = (
+    .drain: (.self: &Participant, .storage: $&Allocation) -> () where empties(storage)
 )
 
 Cell: Type = ()
 
-Cell implements Drain
+implement Drain#(Cell) (.drain = _impl_drain_Cell)
 
-drain(.self: &Cell, .storage: $&Allocation) -> () := {}
+_impl_drain_Cell := (.self: &Cell, .storage: $&Allocation) -> ()  {}
 
 main() -> () := {
     cell ::= Cell()

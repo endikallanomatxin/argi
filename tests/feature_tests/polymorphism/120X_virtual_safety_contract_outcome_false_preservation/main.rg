@@ -1,5 +1,5 @@
-Editor: Abstract = (
-    edit(.self: &Self, .target: $&Int32, .succeed: Bool) -> (.result: ?Int32) where {
+Editor#(.Participant: Type): Contract = (
+    .edit: (.self: &Participant, .target: $&Int32, .succeed: Bool) -> (.result: ?Int32) where {
         on result ..some { invalidates(target) }
         on result ..none {}
     }
@@ -7,17 +7,17 @@ Editor: Abstract = (
 
 Cell: Type = (.unused: Int32)
 
-Cell implements Editor
+implement Editor#(Cell) (.edit = _impl_edit_Cell)
 
-Resetter: Abstract = (
-    reset(.self: &Self, .target: $&Int32) -> () where invalidates(target)
+Resetter#(.Participant: Type): Contract = (
+    .reset: (.self: &Participant, .target: $&Int32) -> () where invalidates(target)
 )
 
-Cell implements Resetter
+implement Resetter#(Cell) (.reset = _impl_reset_Cell)
 
-reset(.self: &Cell, .target: $&Int32) -> () := { target&= 42 }
+_impl_reset_Cell := (.self: &Cell, .target: $&Int32) -> ()  { target&= 42 }
 
-edit(.self: &Cell, .target: $&Int32, .succeed: Bool) -> (.result: ?Int32) := {
+_impl_edit_Cell := (.self: &Cell, .target: $&Int32, .succeed: Bool) -> (.result: ?Int32)  {
     resetter ::= to_virtual#(Resetter)(self)
     reset(&resetter, target)
 

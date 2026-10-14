@@ -1,5 +1,5 @@
-View: Abstract = (
-    get(.self: &Self) -> (.result: RefResult) where depends_on(result, self)
+View#(.Participant: Type): Contract = (
+    .get: (.self: &Participant) -> (.result: RefResult) where depends_on(result, self)
 )
 
 RefResult: Type = (.reference: &Int32)
@@ -16,14 +16,14 @@ Holder: Type = (.cell: Cell)
 
 Other: Type = (.cell: Cell)
 
-Holder implements View
-Other implements View
+implement View#(Holder) (.get = _impl_get_Holder)
+implement View#(Other) (.get = _impl_get_Other)
 
-get(.self: &Holder) -> (.result: RefResult) := {
+_impl_get_Holder := (.self: &Holder) -> (.result: RefResult)  {
     result = (.reference = &self&.cell.value)
 }
 
-get(.self: &Other) -> (.result: RefResult) := {
+_impl_get_Other := (.self: &Other) -> (.result: RefResult)  {
     result = (.reference = &self&.cell.value)
 }
 

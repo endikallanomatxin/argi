@@ -10,11 +10,11 @@ implement Deinit#(Tracked) (
     }
 )
 
-SlotProtocol: Abstract = (
+SlotProtocol#(.Participant: Type): Contract = (
     domain contents
 
-    put(.self: $&Self, .value: Tracked) -> () where retains(self.contents, value)
-    take(.self: $&Self, .present: Bool) -> (.value: NestedResult) where {
+    .put: (.self: $&Participant, .value: Tracked) -> () where retains(self.contents, value)
+    .take: (.self: $&Participant, .present: Bool) -> (.value: NestedResult) where {
         empties(self.contents)
         on value ..some {
             on value ..some {
@@ -29,16 +29,16 @@ SlotProtocol: Abstract = (
 
 Slot: Type = (.storage: Allocation)
 
-Slot implements SlotProtocol where { contents(self.storage) }
+implement SlotProtocol#(Slot) (.put = _impl_put_Slot, .take = _impl_take_Slot) where { contents(self.storage) }
 
-put(.self: $&Slot, .value: Tracked) -> () := {
+_impl_put_Slot := (.self: $&Slot, .value: Tracked) -> ()  {
     slot ::= trusted_mutable_reinterpret_reference#(UInt8, Tracked)(
         unsafe_allocation.trusted_allocation_byte_rw($&self&.storage, 0).reference
     ).reference
     trusted_opaque_move_in#(Tracked, Allocation)($&self&.storage, slot, ~value)
 }
 
-take(.self: $&Slot, .present: Bool) -> (.value: NestedResult) := {
+_impl_take_Slot := (.self: $&Slot, .present: Bool) -> (.value: NestedResult)  {
     if present {
         slot ::= trusted_mutable_reinterpret_reference#(UInt8, Tracked)(
             unsafe_allocation.trusted_allocation_byte_rw($&self&.storage, 0).reference

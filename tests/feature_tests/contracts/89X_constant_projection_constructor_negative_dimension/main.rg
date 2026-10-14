@@ -2,7 +2,7 @@ Shape#(.Input: Type): Contract = (
     .Count: Int
 )
 Cell: Type = ()
-satisfies Shape#(Cell) = (.Count = -1)
+implement Shape#(Cell) (.Count: Int = -1)
 Buffer#(.n: Int): Type = (.values: Array#(.n = n, .t: Int32))
 sum(.values: &Array#(.n = 2, .t: Int32)) -> (.value: Int32) := { value = values&[0] + values&[1] }
 read_buffer(.buffer: &Buffer#(.n = 2)) -> (.value: Int32) := { value = sum(&buffer&.values).value }

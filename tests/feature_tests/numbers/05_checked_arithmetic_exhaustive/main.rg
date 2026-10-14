@@ -1,4 +1,4 @@
-verify(
+verify_Int8(
         .actual   : Errable#(.t: Int8, .reasons: (..out_of_range)),
         .expected : Int32,
         .minimum  : Int32,
@@ -16,7 +16,7 @@ verify(
     }
 }
 
-verify(
+verify_UInt8(
         .actual   : Errable#(.t: UInt8, .reasons: (..out_of_range)),
         .expected : Int32,
         .minimum  : Int32,
@@ -41,13 +41,13 @@ check_int8() -> () := {
         while right <= 127 {
             a ::= unwrap_or_abort(.value = left | convert#(.to: Int8)(_)).result
             b ::= unwrap_or_abort(.value = right | convert#(.to: Int8)(_)).result
-            verify(
+            verify_Int8(
                 .actual   = checked_add(.left = a, .right = b)
                 .expected = left + right
                 .minimum  = -128
                 .maximum  = 127
             )
-            verify(
+            verify_Int8(
                 .actual   = checked_subtract(.left = a, .right = b)
                 .expected = [
                     left
@@ -56,7 +56,7 @@ check_int8() -> () := {
                 .minimum = -128
                 .maximum = 127
             )
-            verify(
+            verify_Int8(
                 .actual   = checked_multiply(.left = a, .right = b)
                 .expected = [
                     left
@@ -94,7 +94,7 @@ check_uint8() -> () := {
         while right <= 255 {
             a ::= unwrap_or_abort(.value = left | convert#(.to: UInt8)(_)).result
             b ::= unwrap_or_abort(.value = right | convert#(.to: UInt8)(_)).result
-            verify(
+            verify_UInt8(
                 .actual   = checked_add(.left = a, .right = b)
                 .expected = [
                     left
@@ -103,7 +103,7 @@ check_uint8() -> () := {
                 .minimum = 0
                 .maximum = 255
             )
-            verify(
+            verify_UInt8(
                 .actual   = checked_subtract(.left = a, .right = b)
                 .expected = [
                     left
@@ -112,7 +112,7 @@ check_uint8() -> () := {
                 .minimum = 0
                 .maximum = 255
             )
-            verify(
+            verify_UInt8(
                 .actual   = checked_multiply(.left = a, .right = b)
                 .expected = [
                     left

@@ -1,7 +1,7 @@
 unsafe_allocation := import ("../../_support/unsafe_allocation")
 
-OpaqueStorer: Abstract = (
-    store(.self: $&Self, .storage: $&Allocation, .slot: $&Tracked, .source: $&Tracked) -> () where {}
+OpaqueStorer#(.Participant: Type): Contract = (
+    .store: (.self: $&Participant, .storage: $&Allocation, .slot: $&Tracked, .source: $&Tracked) -> () where {}
 )
 
 Tracked: Type = (.id: Int32)
@@ -10,8 +10,8 @@ First: Type = (.marker: UInt8)
 
 Second: Type = (.marker: UInt8)
 
-First implements OpaqueStorer
-Second implements OpaqueStorer
+implement OpaqueStorer#(First) (.store = _impl_store_First)
+implement OpaqueStorer#(Second) (.store = _impl_store_Second)
 
 drops :: Int32 = 0
 
@@ -21,7 +21,7 @@ implement Deinit#(Tracked) (
     }
 )
 
-store(.self: $&First, .storage: $&Allocation, .slot: $&Tracked, .source: $&Tracked) -> () := {
+_impl_store_First := (.self: $&First, .storage: $&Allocation, .slot: $&Tracked, .source: $&Tracked) -> ()  {
     trusted_opaque_move_in#(.t: Tracked, .storage_type: Allocation)(
         .storage     = storage
         .destination = slot
@@ -29,7 +29,7 @@ store(.self: $&First, .storage: $&Allocation, .slot: $&Tracked, .source: $&Track
     )
 }
 
-store(.self: $&Second, .storage: $&Allocation, .slot: $&Tracked, .source: $&Tracked) -> () := {
+_impl_store_Second := (.self: $&Second, .storage: $&Allocation, .slot: $&Tracked, .source: $&Tracked) -> ()  {
     trusted_opaque_move_in#(.t: Tracked, .storage_type: Allocation)(
         .storage     = storage
         .destination = slot

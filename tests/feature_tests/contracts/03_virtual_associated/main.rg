@@ -1,20 +1,20 @@
-Fixed: Contract = (
+Fixed#(.Participant: Type): Contract = (
     .n: UIntNative
     .item: Type
 
-    read(.self: &Self) -> (.value: item) where {}
+    .read: (.self: &Participant) -> (.value: item) where {}
 )
 
 Integer: Type = (.value: Int32)
 
 Floating: Type = (.value: Float64)
 
-Integer satisfies Fixed#(.n = 1, .item: Int32)
-Floating satisfies Fixed#(.n = 2, .item: Float64)
+implement Fixed#(Integer) (.n: Int = 1, .item: Type = Int32, .read = _impl_read_Integer)
+implement Fixed#(Floating) (.n: Int = 2, .item: Type = Float64, .read = _impl_read_Floating)
 
-read(.self: &Integer) -> (.value: Int32) := { value = self&.value }
+_impl_read_Integer := (.self: &Integer) -> (.value: Int32)  { value = self&.value }
 
-read(.self: &Floating) -> (.value: Float64) := { value = self&.value }
+_impl_read_Floating := (.self: &Floating) -> (.value: Float64)  { value = self&.value }
 
 consume_integer(.input: &Virtual#(.contract: Fixed#(.n = 1, .item: Int32))) -> (.value: Int32) := {
     value = read(.self = input)

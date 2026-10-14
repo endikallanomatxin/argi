@@ -1,7 +1,7 @@
 Selection: Type = (..left, ..right)
 
-Selector: Abstract = (
-    choose(.self: &Self, .mode: &Selection, .left: &Int32, .right: &Int32) -> (.result: &Int32) where {
+Selector#(.Participant: Type): Contract = (
+    .choose: (.self: &Participant, .mode: &Selection, .left: &Int32, .right: &Int32) -> (.result: &Int32) where {
         on mode ..left { depends_on(result, left) }
         on mode ..right { depends_on(result, right) }
     }
@@ -9,9 +9,9 @@ Selector: Abstract = (
 
 Manager: Type = (.unused: Int32)
 
-Manager implements Selector
+implement Selector#(Manager) (.choose = _impl_choose_Manager)
 
-choose(.self: &Manager, .mode: &Selection, .left: &Int32, .right: &Int32) -> (.result: &Int32) := {
+_impl_choose_Manager := (.self: &Manager, .mode: &Selection, .left: &Int32, .right: &Int32) -> (.result: &Int32)  {
     match mode&{
         ..left { result = left }
         ..right { result = right }

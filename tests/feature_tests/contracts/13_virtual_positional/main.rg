@@ -1,14 +1,14 @@
-Readable: Contract = (
+Readable#(.Participant: Type): Contract = (
     .item: Type
 
-    read(.source: &Self) -> (.value: item) where {}
+    .read: (.source: &Participant) -> (.value: item) where {}
 )
 
 Cell: Type = (.value: Int32)
 
-Cell satisfies Readable#(Int32)
+implement Readable#(Cell) (.item: Type = Int32, .read = _impl_read_Cell)
 
-read(.source: &Cell) -> (.value: Int32) := { value = source&.value }
+_impl_read_Cell := (.source: &Cell) -> (.value: Int32)  { value = source&.value }
 
 consume(.source: &Virtual#(Readable#(Int32))) -> (.value: Int32) := {
     value = read(source)

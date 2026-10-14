@@ -1,10 +1,10 @@
-Protocol: Abstract = (
+Protocol#(.Participant: Type): Contract = (
     domain contents
-    clear(.self: $&Self) -> () where empties(self.contents)
+    .clear: (.self: $&Participant) -> () where empties(self.contents)
 )
 Storage: Type = (.contents: $&Int32)
-Storage implements Protocol where { contents(self.contents) }
-clear(.self: $&Storage) -> () := {}
+implement Protocol#(Storage) (.clear = _impl_clear_Storage) where { contents(self.contents) }
+_impl_clear_Storage := (.self: $&Storage) -> ()  {}
 main() -> () := {
     contents :: Int32 = 0
     storage ::= Storage($&contents)

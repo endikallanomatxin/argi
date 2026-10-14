@@ -1,12 +1,12 @@
-A: Abstract = (
-    add(.amount: Int32, .target: $&Self) -> (.value: Int32) where depends_on(value, amount)
+A#(.Participant: Type): Contract = (
+    .add: (.amount: Int32, .target: $&Participant) -> (.value: Int32) where depends_on(value, amount)
 )
 
 Box: Type = (.value: Int32)
 
-Box implements A
+implement A#(Box) (.add = _impl_add_Box)
 
-add(.amount: Int32, .target: $&Box) -> (.value: Int32) := {
+_impl_add_Box := (.amount: Int32, .target: $&Box) -> (.value: Int32)  {
     target&.value = target&.value + amount
     value = target&.value
 }

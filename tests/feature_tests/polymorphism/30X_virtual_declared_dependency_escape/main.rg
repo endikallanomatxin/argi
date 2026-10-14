@@ -1,19 +1,19 @@
-Choose: Abstract = (
-    choose(.self: &Self, .other: &Int32) -> (.value: &Int32) where depends_on(value, self, other)
+Choose#(.Participant: Type): Contract = (
+    .choose: (.self: &Participant, .other: &Int32) -> (.value: &Int32) where depends_on(value, self, other)
 )
 
 FromSelf: Type = (.value: Int32)
 
 FromOther: Type = (.value: Int32)
 
-FromSelf implements Choose
-FromOther implements Choose
+implement Choose#(FromSelf) (.choose = _impl_choose_FromSelf)
+implement Choose#(FromOther) (.choose = _impl_choose_FromOther)
 
-choose(.self: &FromSelf, .other: &Int32) -> (.value: &Int32) := {
+_impl_choose_FromSelf := (.self: &FromSelf, .other: &Int32) -> (.value: &Int32)  {
     value = &self&.value
 }
 
-choose(.self: &FromOther, .other: &Int32) -> (.value: &Int32) := {
+_impl_choose_FromOther := (.self: &FromOther, .other: &Int32) -> (.value: &Int32)  {
     value = other
 }
 

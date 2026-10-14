@@ -1,19 +1,19 @@
 unsafe_allocation := import ("../../_support/unsafe_allocation")
 
-Rewriter: Abstract = (
-    rewrite(.reference: $&UInt8, .target: $&Self) -> () where {}
+Rewriter#(.Participant: Type): Contract = (
+    .rewrite: (.reference: $&UInt8, .target: $&Participant) -> () where {}
 )
 
 Keeping: Type = (.reference: $&UInt8)
 
 Rewriting: Type = (.reference: $&UInt8)
 
-Keeping implements Rewriter
-Rewriting implements Rewriter
+implement Rewriter#(Keeping) (.rewrite = _impl_rewrite_Keeping)
+implement Rewriter#(Rewriting) (.rewrite = _impl_rewrite_Rewriting)
 
-rewrite(.reference: $&UInt8, .target: $&Keeping) -> () := {}
+_impl_rewrite_Keeping := (.reference: $&UInt8, .target: $&Keeping) -> ()  {}
 
-rewrite(.reference: $&UInt8, .target: $&Rewriting) -> () := {
+_impl_rewrite_Rewriting := (.reference: $&UInt8, .target: $&Rewriting) -> ()  {
     target&.reference = reference
 }
 

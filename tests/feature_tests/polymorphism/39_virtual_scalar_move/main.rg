@@ -1,19 +1,19 @@
-Echo: Abstract = (
-    echo(.self: &Self, .input: Int32) -> (.output: Int32) where depends_on(output, input)
+Echo#(.Participant: Type): Contract = (
+    .echo: (.self: &Participant, .input: Int32) -> (.output: Int32) where depends_on(output, input)
 )
 
 Direct: Type = (.marker: Int32)
 
 Moved: Type = (.marker: Int32)
 
-Direct implements Echo
-Moved implements Echo
+implement Echo#(Direct) (.echo = _impl_echo_Direct)
+implement Echo#(Moved) (.echo = _impl_echo_Moved)
 
-echo(.self: &Direct, .input: Int32) -> (.output: Int32) := {
+_impl_echo_Direct := (.self: &Direct, .input: Int32) -> (.output: Int32)  {
     output = input
 }
 
-echo(.self: &Moved, .input: Int32) -> (.output: Int32) := {
+_impl_echo_Moved := (.self: &Moved, .input: Int32) -> (.output: Int32)  {
     output = ~input
 }
 

@@ -1,13 +1,13 @@
-Editor: Abstract = (
-    edit(.self: &Self, .target: &Int32) -> ()
+Editor#(.Participant: Type): Contract = (
+    .edit: (.self: &Participant, .target: &Int32) -> ()
     where invalidates(target)
 )
 
 Cell: Type = (.unused: Int32)
 
-Cell implements Editor
+implement Editor#(Cell) (.edit = _impl_edit_Cell)
 
-edit(.self: &Cell, .target: &Int32) -> () := {
+_impl_edit_Cell := (.self: &Cell, .target: &Int32) -> ()  {
 
 }
 

@@ -1,10 +1,10 @@
-BufferSource: Abstract = (read(.self: &Self) -> (.bytes: [65536]UInt8) where {})
+BufferSource#(.Participant: Type): Contract = (.read: (.self: &Participant) -> (.bytes: [65536]UInt8) where {})
 
 Source: Type = ()
 
-Source implements BufferSource
+implement BufferSource#(Source) (.read = _impl_read_Source)
 
-read(.self: &Source) -> (.bytes: [65536]UInt8) := {
+_impl_read_Source := (.self: &Source) -> (.bytes: [65536]UInt8)  {
     bytes = zeroed#(.t: [65536]UInt8)()
     bytes[65535] = 7
 }

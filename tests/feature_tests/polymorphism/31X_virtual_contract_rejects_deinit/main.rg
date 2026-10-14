@@ -1,13 +1,13 @@
-Closable: Abstract = (
-    close(.self: $&Self) -> () where {}
+Closable#(.Participant: Type): Contract = (
+    .close: (.self: $&Participant) -> () where {}
 )
 
 Closing: Type = (.value: Int32)
 
 Keeping: Type = (.value: Int32)
 
-Closing implements Closable
-Keeping implements Closable
+implement Closable#(Closing) (.close = _impl_close_Closing)
+implement Closable#(Keeping) (.close = _impl_close_Keeping)
 
 implement Deinit#(Closing) (
     .deinit = (.self: $&Closing) -> () {
@@ -15,11 +15,11 @@ implement Deinit#(Closing) (
     }
 )
 
-close(.self: $&Closing) -> () := {
+_impl_close_Closing := (.self: $&Closing) -> ()  {
     deinit(.self = self)
 }
 
-close(.self: $&Keeping) -> () := {
+_impl_close_Keeping := (.self: $&Keeping) -> ()  {
 }
 
 register_keeping(.value: $&Keeping) -> () := {

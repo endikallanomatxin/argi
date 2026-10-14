@@ -1,5 +1,5 @@
-Closable: Abstract = (
-    close(.self: $&Self) -> () where {}
+Closable#(.Participant: Type): Contract = (
+    .close: (.self: $&Participant) -> () where {}
 )
 
 drops :: Int32 = 0
@@ -8,8 +8,8 @@ First: Type = (.value: Int32)
 
 Second: Type = (.value: Int32)
 
-First implements Closable
-Second implements Closable
+implement Closable#(First) (.close = _impl_close_First)
+implement Closable#(Second) (.close = _impl_close_Second)
 
 implement Deinit#(First) (
     .deinit = (.self: $&First) -> () {
@@ -23,11 +23,11 @@ implement Deinit#(Second) (
     }
 )
 
-close(.self: $&First) -> () := {
+_impl_close_First := (.self: $&First) -> ()  {
     deinit(.self = self)
 }
 
-close(.self: $&Second) -> () := {
+_impl_close_Second := (.self: $&Second) -> ()  {
     deinit(.self = self)
 }
 

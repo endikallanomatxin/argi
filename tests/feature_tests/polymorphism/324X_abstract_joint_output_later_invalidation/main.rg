@@ -39,13 +39,13 @@ choose(
     }
 }
 
-Replacer: Abstract = (
-    replace(.self: &Self, .value: $&Int32) -> () where invalidates(value)
+Replacer#(.Participant: Type): Contract = (
+    .replace: (.self: &Participant, .value: $&Int32) -> () where invalidates(value)
 )
 
-Manager implements Replacer
+implement Replacer#(Manager) (.replace = _impl_replace_Manager)
 
-replace(.self: &Manager, .value: $&Int32) -> () := { value&= 0 }
+_impl_replace_Manager := (.self: &Manager, .value: $&Int32) -> ()  { value&= 0 }
 
 main() -> () := {
     manager ::= Manager(0)

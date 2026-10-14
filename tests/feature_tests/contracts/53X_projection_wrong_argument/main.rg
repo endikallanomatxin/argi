@@ -1,15 +1,15 @@
 Product#(.Left: Type, .Right: Type): Contract = (
     .Result: Type
 
-    multiply(.left: &Left, .right: &Right) -> (.value: Result) where {}
+    .multiply: (.left: &Left, .right: &Right) -> (.value: Result) where {}
 )
 
 Row: Type = (.value: Int32)
 Column: Type = (.value: Int32)
 
-satisfies Product#(Row, Column) = (.Result: Int32)
+implement Product#(Row, Column) (.Result: Type = Int32, .multiply = _impl_multiply_256)
 
-multiply(.left: &Row, .right: &Column) -> (.value: Product#(.Wrong: Row, .Right: Column).Result) := {
+_impl_multiply_256 := (.left: &Row, .right: &Column) -> (.value: Product#(.Wrong: Row, .Right: Column).Result)  {
     value = left&.value * right&.value
 }
 

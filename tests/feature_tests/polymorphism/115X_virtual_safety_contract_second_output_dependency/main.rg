@@ -1,5 +1,5 @@
-Source: Abstract = (
-    get(.self: &Self, .other: &Int32) -> (.count: Int32, .result: ?&Int32) where {
+Source#(.Participant: Type): Contract = (
+    .get: (.self: &Participant, .other: &Int32) -> (.count: Int32, .result: ?&Int32) where {
         on result ..some { depends_on(result, self) }
         on result ..none {}
     }
@@ -7,9 +7,9 @@ Source: Abstract = (
 
 Cell: Type = (.value: Int32)
 
-Cell implements Source
+implement Source#(Cell) (.get = _impl_get_Cell)
 
-get(.self: &Cell, .other: &Int32) -> (.count: Int32, .result: ?&Int32) := {
+_impl_get_Cell := (.self: &Cell, .other: &Int32) -> (.count: Int32, .result: ?&Int32)  {
     count = 1
     result = ..some(.value = other)
 }

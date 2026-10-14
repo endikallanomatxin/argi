@@ -1,17 +1,17 @@
-Mover: Abstract = (
-    transfer(.self: &Self, .source: $&DynamicArray#(Int32), .destination: $&DynamicArray#(Int32)) -> ()
+Mover#(.Participant: Type): Contract = (
+    .transfer: (.self: &Participant, .source: $&DynamicArray#(Int32), .destination: $&DynamicArray#(Int32)) -> ()
     where relocates(destination, source)
 )
 
 Manager: Type = (.unused: Int32)
 
-Manager implements Mover
+implement Mover#(Manager) (.transfer = _impl_transfer_Manager)
 
-transfer(
+_impl_transfer_Manager := (
         .self        : &Manager,
         .source      : $&DynamicArray#(Int32),
         .destination : $&DynamicArray#(Int32)
-    ) -> () := {
+    ) -> ()  {
     relocate(source, destination)
 }
 

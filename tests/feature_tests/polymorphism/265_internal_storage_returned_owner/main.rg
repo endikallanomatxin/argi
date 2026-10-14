@@ -8,11 +8,11 @@ implement Deinit#(Tracked) (
     }
 )
 
-SlotProtocol: Abstract = (
+SlotProtocol#(.Participant: Type): Contract = (
     domain contents
 
-    put(.self: $&Self, .value: Tracked) -> () where retains(self.contents, value)
-    take(.self: $&Self) -> (.value: Tracked) where {
+    .put: (.self: $&Participant, .value: Tracked) -> () where retains(self.contents, value)
+    .take: (.self: $&Participant) -> (.value: Tracked) where {
         owns(value)
         from_storage(value, self.contents)
         empties(self.contents)
@@ -21,16 +21,16 @@ SlotProtocol: Abstract = (
 
 Slot: Type = (.storage: Allocation)
 
-Slot implements SlotProtocol where { contents(self.storage) }
+implement SlotProtocol#(Slot) (.put = _impl_put_Slot, .take = _impl_take_Slot) where { contents(self.storage) }
 
-put(.self: $&Slot, .value: Tracked) -> () := {
+_impl_put_Slot := (.self: $&Slot, .value: Tracked) -> ()  {
     slot ::= trusted_mutable_reinterpret_reference#(UInt8, Tracked)(
         unsafe_allocation.trusted_allocation_byte_rw($&self&.storage, 0).reference
     ).reference
     trusted_opaque_move_in#(Tracked, Allocation)($&self&.storage, slot, ~value)
 }
 
-take(.self: $&Slot) -> (.value: Tracked) := {
+_impl_take_Slot := (.self: $&Slot) -> (.value: Tracked)  {
     slot ::= trusted_mutable_reinterpret_reference#(UInt8, Tracked)(
         unsafe_allocation.trusted_allocation_byte_rw($&self&.storage, 0).reference
     ).reference

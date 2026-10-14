@@ -1,12 +1,12 @@
-Mover: Abstract = (
-    move(.self: &Self, .input: &Int32) -> (.value: &Int32) where transfers(value, input)
+Mover#(.Participant: Type): Contract = (
+    .move: (.self: &Participant, .input: &Int32) -> (.value: &Int32) where transfers(value, input)
 )
 
 Cell: Type = (.value: Int32)
 
-Cell implements Mover
+implement Mover#(Cell) (.move = _impl_move_Cell)
 
-move(.self: &Cell, .input: &Int32) -> (.value: &Int32) := {
+_impl_move_Cell := (.self: &Cell, .input: &Int32) -> (.value: &Int32)  {
     value = ~input
 }
 

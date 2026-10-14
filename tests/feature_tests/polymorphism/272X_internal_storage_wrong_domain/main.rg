@@ -7,17 +7,17 @@ implement Deinit#(Tracked) (
     }
 )
 
-SlotProtocol: Abstract = (
+SlotProtocol#(.Participant: Type): Contract = (
     domain left
     domain right
-    put_left(.self: $&Self, .value: Tracked) -> () where retains(self.left, value)
-    take_left(.self: $&Self) -> (.value: Tracked) where {
+    .put_left: (.self: $&Participant, .value: Tracked) -> () where retains(self.left, value)
+    .take_left: (.self: $&Participant) -> (.value: Tracked) where {
         owns(value)
         from_storage(value, self.left)
         empties(self.left)
     }
-    put_right(.self: $&Self, .value: Tracked) -> () where retains(self.right, value)
-    take_right(.self: $&Self) -> (.value: Tracked) where {
+    .put_right: (.self: $&Participant, .value: Tracked) -> () where retains(self.right, value)
+    .take_right: (.self: $&Participant) -> (.value: Tracked) where {
         owns(value)
         from_storage(value, self.right)
         empties(self.right)
@@ -25,31 +25,31 @@ SlotProtocol: Abstract = (
 )
 
 Slot: Type = (.left: Allocation, .right: Allocation)
-Slot implements SlotProtocol where {
+implement SlotProtocol#(Slot) (.put_left = _impl_put_left_Slot, .take_left = _impl_take_left_Slot, .put_right = _impl_put_right_Slot, .take_right = _impl_take_right_Slot) where {
     left(self.left)
     right(self.right)
 }
 
-put_left(.self: $&Slot, .value: Tracked) -> () := {
+_impl_put_left_Slot := (.self: $&Slot, .value: Tracked) -> ()  {
     slot ::= trusted_mutable_reinterpret_reference#(UInt8, Tracked)(
         unsafe_allocation.trusted_allocation_byte_rw($&self&.right, 0).reference).reference
     trusted_opaque_move_in#(Tracked, Allocation)($&self&.right, slot, ~value)
 }
 
-take_left(.self: $&Slot) -> (.value: Tracked) := {
+_impl_take_left_Slot := (.self: $&Slot) -> (.value: Tracked)  {
     slot ::= trusted_mutable_reinterpret_reference#(UInt8, Tracked)(
         unsafe_allocation.trusted_allocation_byte_rw($&self&.left, 0).reference).reference
     value = trusted_opaque_move_out#(Tracked, Allocation)($&self&.left, slot)
     trusted_opaque_mark_empty($&self&.left)
 }
 
-put_right(.self: $&Slot, .value: Tracked) -> () := {
+_impl_put_right_Slot := (.self: $&Slot, .value: Tracked) -> ()  {
     slot ::= trusted_mutable_reinterpret_reference#(UInt8, Tracked)(
         unsafe_allocation.trusted_allocation_byte_rw($&self&.right, 0).reference).reference
     trusted_opaque_move_in#(Tracked, Allocation)($&self&.right, slot, ~value)
 }
 
-take_right(.self: $&Slot) -> (.value: Tracked) := {
+_impl_take_right_Slot := (.self: $&Slot) -> (.value: Tracked)  {
     slot ::= trusted_mutable_reinterpret_reference#(UInt8, Tracked)(
         unsafe_allocation.trusted_allocation_byte_rw($&self&.right, 0).reference).reference
     value = trusted_opaque_move_out#(Tracked, Allocation)($&self&.right, slot)

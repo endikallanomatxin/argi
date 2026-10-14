@@ -2297,6 +2297,8 @@ pub const Resolver = struct {
             } else return null;
             var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
             defer bindings.deinit(self.allocator);
+            const interface = self.abstractUse(candidate.participants[0]) orelse return null;
+            if (!self.bindAbstractUseArguments(interface, located, &bindings)) return null;
             bindings.types[located.definition.participants.start] = candidate.participants[0];
             const required = try self.generics.instantiateParameterizedType(located.module_index, requirement.input, &bindings);
             if (!try self.core.completeCallInputFieldsWithReach(global_types.fields(self.graph, required).?, input, context)) return null;

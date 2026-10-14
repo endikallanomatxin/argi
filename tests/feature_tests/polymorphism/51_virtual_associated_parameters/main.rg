@@ -1,12 +1,14 @@
-Readable#(.item: Type): Abstract = (
-    read(.self: &Self) -> (.value: item) where {}
+Readable#(.Participant: Type): Contract = (
+    .item: Type
+
+    .read: (.self: &Participant) -> (.value: item) where {}
 )
 
 Box: Type = (.value: Int32)
 
-Box implements Readable#(.item: Int32)
+implement Readable#(Box) (.item: Type = Int32, .read = _impl_read_Box)
 
-read(.self: &Box) -> (.value: Int32) := { value = self&.value }
+_impl_read_Box := (.self: &Box) -> (.value: Int32)  { value = self&.value }
 
 consume(.input: &Virtual#(.abstract: Readable#(.item: Int32))) -> (.value: Int32) := {
     value = read(.self = input)

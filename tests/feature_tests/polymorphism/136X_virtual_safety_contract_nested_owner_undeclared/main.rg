@@ -1,7 +1,7 @@
 ..failed
 
-Factory: Abstract = (
-    make(.self: &Self, .mode: Int32) -> (.result: Errable#(?Owned, (..failed))) where {
+Factory#(.Participant: Type): Contract = (
+    .make: (.self: &Participant, .mode: Int32) -> (.result: Errable#(?Owned, (..failed))) where {
         on result ..ok {
             on result ..some {}
             on result ..none {}
@@ -12,7 +12,7 @@ Factory: Abstract = (
 
 Cell: Type = (.unused: Int32)
 
-Cell implements Factory
+implement Factory#(Cell) (.make = _impl_make_Cell)
 
 Owned: Type = (.value: Int32)
 
@@ -24,7 +24,7 @@ implement Deinit#(Owned) (
 
 drops :: Int32 = 0
 
-make(.self: &Cell, .mode: Int32) -> (.result: Errable#(?Owned, (..failed))) := {
+_impl_make_Cell := (.self: &Cell, .mode: Int32) -> (.result: Errable#(?Owned, (..failed)))  {
     if mode == 0 {
         result = ..ok ..none
         return

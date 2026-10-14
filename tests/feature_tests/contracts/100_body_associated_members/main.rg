@@ -1,12 +1,12 @@
 Product#(.Left: Type, .Right: Type): Contract = (
     .Result: Type
-    multiply(.left: &Left, .right: &Right) -> (.value: Result)
+    .multiply: (.left: &Left, .right: &Right) -> (.value: Result)
     .Count: Int
 )
 Row: Type = (.value: Int32)
 Column: Type = (.value: Int32)
-satisfies Product#(.Right: Column, .Left: Row) = (.Count = 2, .Result: Int32)
-multiply(.left: &Row, .right: &Column) -> (.value: Product#(Row, Column).Result) := {
+implement Product#(.Right: Column, .Left: Row) (.Count: Int = 2, .Result: Type = Int32, .multiply = _impl_multiply_286)
+_impl_multiply_286 := (.left: &Row, .right: &Column) -> (.value: Product#(Row, Column).Result)  {
     value = left&.value * right&.value
 }
 Buffer#(.n: Int): Type = (.values: Array#(.n = n, .t: Int32))

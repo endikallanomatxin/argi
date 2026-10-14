@@ -1,17 +1,17 @@
-Mutator: Abstract = (
-    mutate(.self: $&Self) -> () where {}
+Mutator#(.Participant: Type): Contract = (
+    .mutate: (.self: $&Participant) -> () where {}
 )
 
 Keeping: Type = (.counter: Int32)
 
 Mutating: Type = (.counter: Int32)
 
-Keeping implements Mutator
-Mutating implements Mutator
+implement Mutator#(Keeping) (.mutate = _impl_mutate_Keeping)
+implement Mutator#(Mutating) (.mutate = _impl_mutate_Mutating)
 
-mutate(.self: $&Keeping) -> () := {}
+_impl_mutate_Keeping := (.self: $&Keeping) -> ()  {}
 
-mutate(.self: $&Mutating) -> () := {
+_impl_mutate_Mutating := (.self: $&Mutating) -> ()  {
     self&.counter = self&.counter + 1
 }
 

@@ -7,5 +7,5 @@ Group#(.Left: Type, .Right: Type): Contract = (
 Row: Type = ()
 Column: Type = ()
 Row satisfies Capability#(Column)
-satisfies Group#(Row, Column) = (.Result: Row)
+implement Group#(Row, Column) (.Result: Type = Row)
 main() -> () := {}

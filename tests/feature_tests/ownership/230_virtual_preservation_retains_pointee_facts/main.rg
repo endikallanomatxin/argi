@@ -1,7 +1,7 @@
 unsafe_allocation := import ("../../_support/unsafe_allocation")
 
-Mutator: Abstract = (
-    mutate(.self: $&Self) -> () where {}
+Mutator#(.Participant: Type): Contract = (
+    .mutate: (.self: $&Participant) -> () where {}
 )
 
 Stateful: Type = (
@@ -11,14 +11,14 @@ Stateful: Type = (
 
 Noop: Type = (.marker: UInt8)
 
-Stateful implements Mutator
-Noop implements Mutator
+implement Mutator#(Stateful) (.mutate = _impl_mutate_Stateful)
+implement Mutator#(Noop) (.mutate = _impl_mutate_Noop)
 
-mutate(.self: $&Stateful) -> () := {
+_impl_mutate_Stateful := (.self: $&Stateful) -> ()  {
     self&.counter = self&.counter + 1
 }
 
-mutate(.self: $&Noop) -> () := {}
+_impl_mutate_Noop := (.self: $&Noop) -> ()  {}
 
 register_noop(.value: $&Noop) -> () := {
     _ ::= to_virtual#(.abstract: Mutator)(.value = value)

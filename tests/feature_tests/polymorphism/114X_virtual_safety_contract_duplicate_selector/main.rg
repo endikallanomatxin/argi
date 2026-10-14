@@ -1,5 +1,5 @@
-Source: Abstract = (
-    get(.self: &Self) -> (.first: ?Int32, .second: ?Int32) where {
+Source#(.Participant: Type): Contract = (
+    .get: (.self: &Participant) -> (.first: ?Int32, .second: ?Int32) where {
         on first ..some {}
         on second ..some {}
         on second ..some {}
@@ -8,9 +8,9 @@ Source: Abstract = (
 
 Cell: Type = ()
 
-Cell implements Source
+implement Source#(Cell) (.get = _impl_get_Cell)
 
-get(.self: &Cell) -> (.first: ?Int32, .second: ?Int32) := {
+_impl_get_Cell := (.self: &Cell) -> (.first: ?Int32, .second: ?Int32)  {
     first = ..none
     second = ..none
 }

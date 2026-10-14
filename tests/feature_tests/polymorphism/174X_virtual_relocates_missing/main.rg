@@ -1,11 +1,11 @@
-Mover: Abstract = (
-    transfer(.self: &Self, .source: $&Resource, .destination: $&Resource) -> ()
+Mover#(.Participant: Type): Contract = (
+    .transfer: (.self: &Participant, .source: $&Resource, .destination: $&Resource) -> ()
     where relocates(destination, source)
 )
 
 Manager: Type = (.unused: Int32)
 
-Manager implements Mover
+implement Mover#(Manager) (.transfer = _impl_transfer_Manager)
 
 Resource: Type = (.value: Int32)
 
@@ -17,7 +17,7 @@ implement Deinit#(Resource) (
 
 drops :: Int32 = 0
 
-transfer(.self: &Manager, .source: $&Resource, .destination: $&Resource) -> () := {
+_impl_transfer_Manager := (.self: &Manager, .source: $&Resource, .destination: $&Resource) -> ()  {
     deinit(source)
 }
 

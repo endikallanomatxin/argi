@@ -1,7 +1,7 @@
 unsafe_allocation := import ("../../_support/unsafe_allocation")
 
-OpaqueStorer: Abstract = (
-    store(.self: $&Self, .storage: $&Allocation, .slot: $&Tracked, .source: $&Tracked) -> () where {}
+OpaqueStorer#(.Participant: Type): Contract = (
+    .store: (.self: $&Participant, .storage: $&Allocation, .slot: $&Tracked, .source: $&Tracked) -> () where {}
 )
 
 Tracked: Type = (.id: Int32)
@@ -10,8 +10,8 @@ Keeping: Type = (.marker: UInt8)
 
 Consuming: Type = (.marker: UInt8)
 
-Keeping implements OpaqueStorer
-Consuming implements OpaqueStorer
+implement OpaqueStorer#(Keeping) (.store = _impl_store_Keeping)
+implement OpaqueStorer#(Consuming) (.store = _impl_store_Consuming)
 
 drops :: Int32 = 0
 
@@ -21,9 +21,9 @@ implement Deinit#(Tracked) (
     }
 )
 
-store(.self: $&Keeping, .storage: $&Allocation, .slot: $&Tracked, .source: $&Tracked) -> () := {}
+_impl_store_Keeping := (.self: $&Keeping, .storage: $&Allocation, .slot: $&Tracked, .source: $&Tracked) -> ()  {}
 
-store(.self: $&Consuming, .storage: $&Allocation, .slot: $&Tracked, .source: $&Tracked) -> () := {
+_impl_store_Consuming := (.self: $&Consuming, .storage: $&Allocation, .slot: $&Tracked, .source: $&Tracked) -> ()  {
     trusted_opaque_move_in#(.t: Tracked, .storage_type: Allocation)(
         .storage     = storage
         .destination = slot

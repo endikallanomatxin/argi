@@ -1,10 +1,10 @@
-Factory: Abstract = (
-    make(.self: &Self) -> (.value: Owned) where owns(value)
+Factory#(.Participant: Type): Contract = (
+    .make: (.self: &Participant) -> (.value: Owned) where owns(value)
 )
 
 Cell: Type = (.unused: Int32)
 
-Cell implements Factory
+implement Factory#(Cell) (.make = _impl_make_Cell)
 
 Owned: Type = (.value: Int32)
 
@@ -16,7 +16,7 @@ implement Deinit#(Owned) (
 
 drops :: Int32 = 0
 
-make(.self: &Cell) -> (.value: Owned) := {
+_impl_make_Cell := (.self: &Cell) -> (.value: Owned)  {
     value = Owned(42)
 }
 

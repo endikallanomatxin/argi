@@ -1,5 +1,5 @@
-Store: Abstract = (
-    put(.self: &Self, .storage: $&Allocation, .value: Tracked) -> () where retains(storage, value)
+Store#(.Participant: Type): Contract = (
+    .put: (.self: &Participant, .storage: $&Allocation, .value: Tracked) -> () where retains(storage, value)
 )
 
 Tracked: Type = (.drops: $&Int32)
@@ -12,9 +12,9 @@ implement Deinit#(Tracked) (
 
 Cell: Type = ()
 
-Cell implements Store
+implement Store#(Cell) (.put = _impl_put_Cell)
 
-put(.self: &Cell, .storage: $&Allocation, .value: Tracked) -> () := {
+_impl_put_Cell := (.self: &Cell, .storage: $&Allocation, .value: Tracked) -> ()  {
     discarded ::= ~value
 }
 

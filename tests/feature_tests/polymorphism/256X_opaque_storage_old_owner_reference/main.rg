@@ -1,7 +1,7 @@
 unsafe_allocation := import ("../../_support/unsafe_allocation")
 
-Store: Abstract = (
-    put(.self: &Self, .storage: $&Allocation, .slot: $&Allocation, .value: Allocation) -> () where retains(
+Store#(.Participant: Type): Contract = (
+    .put: (.self: &Participant, .storage: $&Allocation, .slot: $&Allocation, .value: Allocation) -> () where retains(
         storage
         value
     )
@@ -9,9 +9,9 @@ Store: Abstract = (
 
 Cell: Type = ()
 
-Cell implements Store
+implement Store#(Cell) (.put = _impl_put_Cell)
 
-put(.self: &Cell, .storage: $&Allocation, .slot: $&Allocation, .value: Allocation) -> () := {
+_impl_put_Cell := (.self: &Cell, .storage: $&Allocation, .slot: $&Allocation, .value: Allocation) -> ()  {
     trusted_opaque_move_in#(Allocation, Allocation)(storage, slot, ~value)
 }
 

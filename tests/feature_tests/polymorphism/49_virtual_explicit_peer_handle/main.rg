@@ -1,10 +1,10 @@
-A: Abstract = (read(.self: &Self, .other: &Virtual#(.abstract: A)) -> (.value: Int32) where {})
+A#(.Participant: Type): Contract = (.read: (.self: &Participant, .other: &Virtual#(.abstract: A)) -> (.value: Int32) where {})
 
 Box: Type = (.value: Int32)
 
-Box implements A
+implement A#(Box) (.read = _impl_read_Box)
 
-read(.self: &Box, .other: &Virtual#(.abstract: A)) -> (.value: Int32) := { value = self&.value }
+_impl_read_Box := (.self: &Box, .other: &Virtual#(.abstract: A)) -> (.value: Int32)  { value = self&.value }
 
 main() -> (.status_code: Int32 = 0) := {
     box :: Box = (.value = 7)

@@ -1,19 +1,19 @@
-View: Abstract = (
-    get(.self: &Self) -> (.value: &Int32) where depends_on(value, self)
+View#(.Participant: Type): Contract = (
+    .get: (.self: &Participant) -> (.value: &Int32) where depends_on(value, self)
 )
 
 Left: Type = (.value: Int32)
 
 Right: Type = (.value: Int32)
 
-Left implements View
-Right implements View
+implement View#(Left) (.get = _impl_get_Left)
+implement View#(Right) (.get = _impl_get_Right)
 
-get(.self: &Left) -> (.value: &Int32) := {
+_impl_get_Left := (.self: &Left) -> (.value: &Int32)  {
     value = &self&.value
 }
 
-get(.self: &Right) -> (.value: &Int32) := {
+_impl_get_Right := (.self: &Right) -> (.value: &Int32)  {
     value = &self&.value
 }
 

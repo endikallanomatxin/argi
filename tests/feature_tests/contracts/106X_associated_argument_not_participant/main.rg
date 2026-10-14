@@ -3,5 +3,5 @@ Product#(.Left: Type, .Right: Type): Contract = (
 )
 Row: Type = ()
 Column: Type = ()
-satisfies Product#(.Left: Row, .Result: Int32) = (.Result: Int32)
+implement Product#(.Left: Row, .Result: Int32) (.Result: Type = Int32)
 main() -> () := {}

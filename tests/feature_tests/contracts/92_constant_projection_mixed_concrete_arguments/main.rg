@@ -2,7 +2,7 @@ Shape#(.Input: Type): Contract = (
     .Count: Int
 )
 Cell: Type = ()
-satisfies Shape#(Cell) = (.Count = 2)
+implement Shape#(Cell) (.Count: Int = 2)
 first#(.T: Type, .n: Int)(.values: &Array#(.n = n, .t: T)) -> (.value: T) := { value = values&[0] }
 main() -> () := {
     values ::= (42, 0)

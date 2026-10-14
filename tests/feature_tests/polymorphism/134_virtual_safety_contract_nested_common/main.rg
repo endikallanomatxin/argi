@@ -1,7 +1,7 @@
 ..failed
 
-Source: Abstract = (
-    get(.self: &Self) -> (.result: Errable#(?&Int32, (..failed))) where {
+Source#(.Participant: Type): Contract = (
+    .get: (.self: &Participant) -> (.result: Errable#(?&Int32, (..failed))) where {
         on result ..ok {
             depends_on(result, self)
             on result ..some {}
@@ -13,9 +13,9 @@ Source: Abstract = (
 
 Cell: Type = (.value: Int32)
 
-Cell implements Source
+implement Source#(Cell) (.get = _impl_get_Cell)
 
-get(.self: &Cell) -> (.result: Errable#(?&Int32, (..failed))) := {
+_impl_get_Cell := (.self: &Cell) -> (.result: Errable#(?&Int32, (..failed)))  {
     result = ..ok ..some(.value = &self&.value)
 }
 

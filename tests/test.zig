@@ -12125,7 +12125,7 @@ test "feature_tests/contracts/122X_implementation_input_mismatch" {
 }
 
 test "feature_tests/contracts/123X_operation_requires_explicit_implementation" {
-    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/123X_operation_requires_explicit_implementation", "require an implement declaration", "panic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/123X_operation_requires_explicit_implementation", "missing implementation operation", "panic");
 }
 
 test "feature_tests/contracts/124X_unknown_operation_alias" {

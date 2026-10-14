@@ -8,13 +8,13 @@ implement Deinit#(Cell) (
 
 Holder: Type = (.cell: Cell)
 
-View: Abstract = (
-    get(.other: &Holder, .self: &Self) -> (.value: &Int32) where depends_on(value, self)
+View#(.Participant: Type): Contract = (
+    .get: (.other: &Holder, .self: &Participant) -> (.value: &Int32) where depends_on(value, self)
 )
 
-Holder implements View
+implement View#(Holder) (.get = _impl_get_Holder)
 
-get(.other: &Holder, .self: &Holder) -> (.value: &Int32) := {
+_impl_get_Holder := (.other: &Holder, .self: &Holder) -> (.value: &Int32)  {
     value = &self&.cell.value
 }
 

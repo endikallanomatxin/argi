@@ -1,13 +1,13 @@
 Product#(.Left: Type, .Right: Type): Contract = (
     .Result: Type
 
-    multiply(.left: &Left, .right: &Right) -> (.value: Result) where {}
+    .multiply: (.left: &Left, .right: &Right) -> (.value: Result) where {}
 )
 Row: Type = (.value: Int32)
 Column: Type = (.value: Int32)
-satisfies Product#(Row, Column) = (.Result: Int32)
-satisfies Product#(.Right: Column, .Left: Row) = (.Result: Int64)
-multiply(.left: &Row, .right: &Column) -> (.value: Int32) := {
+implement Product#(Row, Column) (.Result: Type = Int32, .multiply = _impl_multiply_319)
+implement Product#(.Right: Column, .Left: Row) (.Result: Type = Int64, .multiply = _impl_multiply_319)
+_impl_multiply_319 := (.left: &Row, .right: &Column) -> (.value: Int32)  {
     value = left&.value * right&.value
 }
 main() -> () := {}

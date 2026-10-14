@@ -1,13 +1,13 @@
-Factory: Abstract = (
-    make(.self: &Self) -> (.value: Errable#(Allocation, (..out_of_memory)))
+Factory#(.Participant: Type): Contract = (
+    .make: (.self: &Participant) -> (.value: Errable#(Allocation, (..out_of_memory)))
     where depends_on(value, self, error_tracer)
 )
 
 Cell: Type = (.allocator: $&Virtual#(Allocator))
 
-Cell implements Factory
+implement Factory#(Cell) (.make = _impl_make_Cell)
 
-make(.self: &Cell) -> (.value: Errable#(Allocation, (..out_of_memory))) := {
+_impl_make_Cell := (.self: &Cell) -> (.value: Errable#(Allocation, (..out_of_memory)))  {
     value = allocate_bytes(self&.allocator, .size = 1, .alignment = 1)
 }
 

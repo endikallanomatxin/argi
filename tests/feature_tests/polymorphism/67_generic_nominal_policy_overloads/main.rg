@@ -1,4 +1,4 @@
-HasMarker: Abstract = (marker(.self: &Self) -> (.value: Int32))
+HasMarker#(.Participant: Type): Contract = (.marker: (.self: &Participant) -> (.value: Int32))
 
 Token: Type = (.id: Int32)
 
@@ -18,9 +18,9 @@ lookup#(.policy: Type)(.self: &Checked#(.policy: policy)) -> (.value: Int32) := 
 
 MarkerPolicy: Type = (.id: Int32)
 
-MarkerPolicy implements HasMarker
+implement HasMarker#(MarkerPolicy) (.marker = _impl_marker_MarkerPolicy)
 
-marker(.self: &MarkerPolicy) -> (.value: Int32) := { value = self&.id }
+_impl_marker_MarkerPolicy := (.self: &MarkerPolicy) -> (.value: Int32)  { value = self&.id }
 
 make_plain() -> (.result: Errable#(.t: Plain#(.policy: Token), .reasons: (..out_of_memory))) := {
     result = ..ok Plain#(.policy: Token)(.policy = Token(.id = 1), .value = 42)

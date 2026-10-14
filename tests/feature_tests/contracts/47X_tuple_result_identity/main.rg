@@ -4,8 +4,8 @@ Cell satisfies Reader
 Product#(.Left: Type, .Right: Type): Contract = (
     .Result: Type
 
-    multiply(.left: Left, .right: Right) -> (.value: Result) where {}
+    .multiply: (.left: Left, .right: Right) -> (.value: Result) where {}
 )
-satisfies Product#(Int32, Int64) = (.Result: Reader)
-multiply(.left: Int32, .right: Int64) -> (.value: Cell) := { value = Cell() }
+implement Product#(Int32, Int64) (.Result: Type = Reader, .multiply = _impl_multiply_254)
+_impl_multiply_254 := (.left: Int32, .right: Int64) -> (.value: Cell)  { value = Cell() }
 main() -> () := {}

@@ -1,17 +1,17 @@
-Counter: Abstract = (
-    increment(.self: $&Self) -> () where {}
-    count(.self: &Self) -> (.value: Int32) where {}
+Counter#(.Participant: Type): Contract = (
+    .increment: (.self: $&Participant) -> () where {}
+    .count: (.self: &Participant) -> (.value: Int32) where {}
 )
 
 Cell: Type = (.value: Int32)
 
-Cell implements Counter
+implement Counter#(Cell) (.increment = _impl_increment_Cell, .count = _impl_count_Cell)
 
-increment(.self: $&Cell) -> () := {
+_impl_increment_Cell := (.self: $&Cell) -> ()  {
     self&.value = self&.value + 1
 }
 
-count(.self: &Cell) -> (.value: Int32) := {
+_impl_count_Cell := (.self: &Cell) -> (.value: Int32)  {
     value = self&.value
 }
 

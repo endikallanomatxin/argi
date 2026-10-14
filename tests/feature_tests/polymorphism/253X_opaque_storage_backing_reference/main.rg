@@ -1,14 +1,14 @@
-Source: Abstract = (
-    get(.self: &Self, .storage: &Int32) -> (.reference: &Int32) where {
+Source#(.Participant: Type): Contract = (
+    .get: (.self: &Participant, .storage: &Int32) -> (.reference: &Int32) where {
         from_storage(reference, storage)
     }
 )
 
 Cell: Type = ()
 
-Cell implements Source
+implement Source#(Cell) (.get = _impl_get_Cell)
 
-get(.self: &Cell, .storage: &Int32) -> (.reference: &Int32) := { reference = storage }
+_impl_get_Cell := (.self: &Cell, .storage: &Int32) -> (.reference: &Int32)  { reference = storage }
 
 main() -> () := {
     cell ::= Cell()

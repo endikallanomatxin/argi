@@ -1,5 +1,5 @@
-Resettable: Abstract = (
-    reset(.self: $&Self) -> () where {}
+Resettable#(.Participant: Type): Contract = (
+    .reset: (.self: $&Participant) -> () where {}
 )
 
 Resource: Type = (.value: Int32)
@@ -12,9 +12,9 @@ implement Deinit#(Resource) (
 
 Cell: Type = (.resource: Resource)
 
-Cell implements Resettable
+implement Resettable#(Cell) (.reset = _impl_reset_Cell)
 
-reset(.self: $&Cell) -> () := {
+_impl_reset_Cell := (.self: $&Cell) -> ()  {
     deinit($&self&.resource)
 }
 

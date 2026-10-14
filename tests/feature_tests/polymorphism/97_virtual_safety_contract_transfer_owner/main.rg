@@ -1,10 +1,10 @@
-Forwarder: Abstract = (
-    forward(.self: &Self, .input: Owned) -> (.value: Owned) where transfers(value, input)
+Forwarder#(.Participant: Type): Contract = (
+    .forward: (.self: &Participant, .input: Owned) -> (.value: Owned) where transfers(value, input)
 )
 
 Cell: Type = (.unused: Int32)
 
-Cell implements Forwarder
+implement Forwarder#(Cell) (.forward = _impl_forward_Cell)
 
 Owned: Type = (.value: Int32)
 
@@ -16,7 +16,7 @@ implement Deinit#(Owned) (
 
 drops :: Int32 = 0
 
-forward(.self: &Cell, .input: Owned) -> (.value: Owned) := {
+_impl_forward_Cell := (.self: &Cell, .input: Owned) -> (.value: Owned)  {
     value = ~input
 }
 

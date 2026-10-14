@@ -2,7 +2,7 @@ Shape#(.Input: Type): Contract = (
     .Count: Int
 )
 Cell: Type = ()
-satisfies Shape#(Cell) = (.Count = -1)
+implement Shape#(Cell) (.Count: Int = -1)
 sum(.values: &Array#(.n = Shape#(Cell).Count, .t: Int32)) -> (.value: Int32) := { value = values&[0] + values&[1] }
 main() -> () := {
     values ::= (20, 22)
