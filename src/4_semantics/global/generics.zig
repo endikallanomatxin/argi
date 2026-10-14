@@ -32,6 +32,7 @@ pub const Resolver = struct {
         child: global_sg.GlobalTypeId,
         mutability: primitives.PointerMutability,
     };
+    const GenericKey = struct { base: global_sg.GlobalDeclId, arity: u32, values: u64 };
 
     allocator: std.mem.Allocator,
     graph: *global_sg.GlobalSemanticGraph,
@@ -46,9 +47,11 @@ pub const Resolver = struct {
     projection_resolver: ?*const fn (*anyopaque, global_sg.GlobalTypeId, []const u8, primitives.SourceRef) anyerror!global_sg.GlobalTypeId = null,
     constant_projection_resolver: ?*const fn (*anyopaque, global_sg.GlobalTypeId, []const u8, primitives.SourceRef) anyerror!i64 = null,
     pointer_types: std.AutoHashMapUnmanaged(PointerKey, global_sg.GlobalTypeId) = .empty,
+    generic_types: std.AutoHashMapUnmanaged(GenericKey, global_sg.GlobalTypeId) = .empty,
 
     pub fn deinit(self: *Resolver) void {
         self.pointer_types.deinit(self.allocator);
+        self.generic_types.deinit(self.allocator);
     }
 
     pub fn resolveExternalTypes(self: *Resolver) !void {
@@ -761,23 +764,25 @@ pub const Resolver = struct {
             self.stats.type_intern_calls += 1;
             self.stats.type_intern_calls_by_tag[tag_index] += 1;
             if (value == .pointer) if (self.findCachedPointer(value.pointer, true)) |id| return id;
+            if (value == .generic) if (self.findCachedGeneric(value.generic, true)) |id| return id;
             if (findEquivalentType(self.graph, value, &self.stats.type_intern_candidates, &self.stats.type_intern_candidates_by_tag)) |id| {
-                if (value == .pointer) self.cachePointer(value.pointer, id);
+                self.cacheType(value, id);
                 return id;
             }
             const id: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(self.graph.types.items.len)));
             try self.graph.types.append(self.allocator, value);
-            if (value == .pointer) self.cachePointer(value.pointer, id);
+            self.cacheType(value, id);
             return id;
         }
         if (value == .pointer) if (self.findCachedPointer(value.pointer, false)) |id| return id;
+        if (value == .generic) if (self.findCachedGeneric(value.generic, false)) |id| return id;
         if (findEquivalentType(self.graph, value, null, null)) |id| {
-            if (value == .pointer) self.cachePointer(value.pointer, id);
+            self.cacheType(value, id);
             return id;
         }
         const id: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(self.graph.types.items.len)));
         try self.graph.types.append(self.allocator, value);
-        if (value == .pointer) self.cachePointer(value.pointer, id);
+        self.cacheType(value, id);
         return id;
     }
 
@@ -785,6 +790,49 @@ pub const Resolver = struct {
         // This index is disposable. A failed allocation must not turn a
         // successfully interned type into a semantic resolution failure.
         self.pointer_types.put(self.allocator, .{ .child = pointer.child, .mutability = pointer.mutability }, id) catch {};
+    }
+
+    fn genericKey(self: *const Resolver, generic: anytype) GenericKey {
+        var hash = std.hash.Wyhash.init(0);
+        for (self.graph.generic_arguments.items[generic.arguments.start..][0..generic.arguments.len]) |argument| {
+            // Matching accepts positional spelling as a wildcard. Index each
+            // spelling separately so a later named instance cannot change the
+            // first match previously found for a positional argument list.
+            const name_length = argument.name.len;
+            hash.update(std.mem.asBytes(&name_length));
+            hash.update(self.graph.text(argument.name));
+            const kind: u8 = @intFromEnum(std.meta.activeTag(argument.value));
+            hash.update(std.mem.asBytes(&kind));
+            switch (argument.value) {
+                .type => |value| hash.update(std.mem.asBytes(&value)),
+                .comptime_int => |value| hash.update(std.mem.asBytes(&value)),
+            }
+        }
+        // Recursively equivalent types still use the original search on a miss.
+        return .{ .base = generic.base, .arity = generic.arguments.len, .values = hash.final() };
+    }
+
+    fn cacheType(self: *Resolver, value: global_sg.GlobalType, id: global_sg.GlobalTypeId) void {
+        switch (value) {
+            .pointer => |pointer| self.cachePointer(pointer, id),
+            .generic => |generic| self.generic_types.put(self.allocator, self.genericKey(generic), id) catch {},
+            else => {},
+        }
+    }
+
+    fn findCachedGeneric(self: *Resolver, generic: anytype, profile: bool) ?global_sg.GlobalTypeId {
+        const key = self.genericKey(generic);
+        const id = self.generic_types.get(key) orelse return null;
+        if (profile) {
+            self.stats.type_intern_candidates += 1;
+            self.stats.type_intern_candidates_by_tag[@intFromEnum(std.meta.Tag(global_sg.GlobalType).generic)] += 1;
+        }
+        // Hash collisions, type mutation and IDs reused after rollback all
+        // fall back to the original recursive equivalence search.
+        const raw: usize = @intFromEnum(id);
+        if (raw < self.graph.types.items.len and sameShallowType(self.graph, self.graph.types.items[raw], .{ .generic = generic })) return id;
+        _ = self.generic_types.remove(key);
+        return null;
     }
 
     fn findCachedPointer(self: *Resolver, pointer: anytype, profile: bool) ?global_sg.GlobalTypeId {
@@ -863,6 +911,42 @@ test "generic type identity is independent of argument pool position" {
         .arguments = .{ .start = 1, .len = 1 },
     } }, null, null) orelse return error.ExpectedEquivalentGenericType;
     try std.testing.expectEqual(@as(u32, 1), @intFromEnum(equivalent));
+}
+
+test "generic interning fast index preserves argument matching and rollback" {
+    const allocator = std.testing.allocator;
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    try graph.types.append(allocator, .{ .builtin = .Int32 });
+    const named = try graph.addString(allocator, "T");
+    const positional = try graph.addString(allocator, "");
+    const other = try graph.addString(allocator, "Other");
+    inline for (.{ named, positional, other }) |name| try graph.generic_arguments.append(allocator, .{ .name = name, .value = .{ .type = @enumFromInt(0) } });
+    var resolver: Resolver = .{ .allocator = allocator, .graph = &graph, .modules = &.{}, .offsets = &.{}, .core = undefined };
+    defer resolver.deinit();
+    const first = try resolver.internType(.{ .generic = .{ .base = @enumFromInt(7), .arguments = .{ .start = 0, .len = 1 } } });
+    try std.testing.expectEqual(first, try resolver.internType(.{ .generic = .{ .base = @enumFromInt(7), .arguments = .{ .start = 1, .len = 1 } } }));
+    const conflict = try resolver.internType(.{ .generic = .{ .base = @enumFromInt(7), .arguments = .{ .start = 2, .len = 1 } } });
+    try std.testing.expect(first != conflict);
+    // A key collision must not make incompatible named arguments reusable.
+    const wanted = graph.types.items[@intFromEnum(first)].generic;
+    try resolver.generic_types.put(allocator, resolver.genericKey(wanted), conflict);
+    try std.testing.expectEqual(first, try resolver.internType(.{ .generic = wanted }));
+
+    const saved = graph.checkpoint();
+    const speculative = try resolver.internType(.{ .generic = .{ .base = @enumFromInt(8), .arguments = .{ .start = 0, .len = 1 } } });
+    graph.rollback(saved);
+    try graph.types.append(allocator, .{ .builtin = .Bool });
+    const committed = try resolver.internType(.{ .generic = .{ .base = @enumFromInt(8), .arguments = .{ .start = 0, .len = 1 } } });
+    try std.testing.expect(committed != speculative);
+
+    graph.types.items[@intFromEnum(first)] = .{ .builtin = .UInt8 };
+    const replacement = try resolver.internType(.{ .generic = .{ .base = @enumFromInt(7), .arguments = .{ .start = 0, .len = 1 } } });
+    try std.testing.expect(replacement != first);
+    const equivalent: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(graph.types.items.len)));
+    try graph.types.append(allocator, .{ .builtin = .Int32 });
+    try graph.generic_arguments.append(allocator, .{ .name = named, .value = .{ .type = equivalent } });
+    try std.testing.expectEqual(replacement, try resolver.internType(.{ .generic = .{ .base = @enumFromInt(7), .arguments = .{ .start = 3, .len = 1 } } }));
 }
 
 test "pointer interning cache validates graph mutations" {

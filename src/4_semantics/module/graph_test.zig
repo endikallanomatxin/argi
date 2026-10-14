@@ -98,6 +98,7 @@ test "parameterized pools retain immediate children across recursive lowering" {
     defer relocation.deinit(allocator);
     var core_resolver: core.Resolver = .{ .allocator = allocator, .graph = &relocation.graph, .modules = &.{graph}, .offsets = relocation.offsets.items };
     var resolver: generics.Resolver = .{ .allocator = allocator, .graph = &relocation.graph, .modules = &.{graph}, .offsets = relocation.offsets.items, .core = &core_resolver };
+    defer resolver.deinit();
     var substitutions = try generics.Resolver.Bindings.init(allocator, parameterized_storage.comptime_parameters.items.len);
     defer substitutions.deinit(allocator);
     const int_type: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(relocation.graph.types.items.len)));
@@ -500,6 +501,7 @@ test "failed generic bodies do not publish reusable instances" {
     defer relocation.deinit(allocator);
     var core = @import("../global/core.zig").Resolver{ .allocator = allocator, .graph = &relocation.graph, .modules = &modules, .offsets = relocation.offsets.items };
     var generics = @import("../global/generics.zig").Resolver{ .allocator = allocator, .graph = &relocation.graph, .modules = &modules, .offsets = relocation.offsets.items, .core = &core };
+    defer generics.deinit();
     var functions = @import("../global/generic_functions.zig").Resolver{ .allocator = allocator, .graph = &relocation.graph, .modules = &modules, .offsets = relocation.offsets.items, .core = &core, .generics = &generics };
     const ty = try generics.internType(.{ .builtin = .Int32 });
     const name = try relocation.graph.addString(allocator, "t");
@@ -901,6 +903,7 @@ test "contract participants require ordinary bindings in generic evaluation" {
     defer relocation.deinit(allocator);
     var core_resolver: core.Resolver = .{ .allocator = allocator, .graph = &relocation.graph, .modules = &.{graph}, .offsets = relocation.offsets.items };
     var resolver: generics.Resolver = .{ .allocator = allocator, .graph = &relocation.graph, .modules = &.{graph}, .offsets = relocation.offsets.items, .core = &core_resolver };
+    defer resolver.deinit();
     const int_type: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(relocation.graph.types.items.len)));
     try relocation.graph.types.append(allocator, .{ .builtin = .Int32 });
     for (storage.contract_definitions.items) |definition| {
