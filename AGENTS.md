@@ -85,6 +85,11 @@ feature first.
 - Use `-j16 -Dtest-jobs=16` for routine validation, including filtered runs.
   Reduce both limits on constrained machines; retain the serial diagnostic
   exception below for memory-growth investigations.
+- For large program-fixture runs, prefer
+  `zig build test-programs -Doptimize=ReleaseSafe -j16 -Dtest-jobs=16`, retaining
+  a separate Debug `test-internal` run. This optimizes the compiler and test
+  runner; fixtures still use their CLI-selected Argi build mode. Finish the
+  active suite before switching optimization modes and reinstalling bundles.
 - Program tests use one process per worker, automatically choosing the CPU count
   capped at 16. `-Dtest-jobs=N` sets the worker count and `-jN` limits concurrent
   build steps. Shared-state tests finish before fixture workers start; fixtures
