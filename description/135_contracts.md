@@ -226,6 +226,9 @@ compile-time parameters and contract bounds. Module lowering creates no hidden
 contract parameters or imported normalization derivatives. Earlier conformance
 and default tables have been removed. Runtime values require concrete types or
 explicit virtual handles; conformance never changes a field's representation.
+Virtual and to_virtual use `.contract` or positional arguments; the former
+`.abstract` label is rejected. Unknown argument names are checked before
+contextual inference.
 Final validation and remaining cleanup are tracked in
 `plan/contract_dispatch_refactor.md`.
 

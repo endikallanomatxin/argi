@@ -7,7 +7,7 @@ external :: UInt8 = 9
 
 main(.system: System) -> (.status_code: Int32) := {
     c_allocator ::= CAllocator(.ffi = system.ffi)
-    deallocator ::= to_virtual#(.abstract: Deallocator)(.value = $&c_allocator)
+    deallocator ::= to_virtual#(.contract: Deallocator)(.value = $&c_allocator)
 
     borrowing_slots_storage ::= malloc(.size = size_of(.type = Borrowing), .ffi = system.ffi)
     borrowing_slots ::= trusted_establish_allocation(

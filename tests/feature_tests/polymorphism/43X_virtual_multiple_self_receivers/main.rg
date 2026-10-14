@@ -8,5 +8,5 @@ _impl_compare_Box := (.self: &Box, .other: &Box) -> (.value: Int32)  { value = s
 
 main() -> (.status_code: Int32 = 0) := {
     box :: Box = (.value = 7)
-    handle ::= to_virtual#(.abstract: A)(.value = $&box)
+    handle ::= to_virtual#(.contract: A)(.value = $&box)
 }

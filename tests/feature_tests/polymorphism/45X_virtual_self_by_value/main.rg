@@ -8,5 +8,5 @@ _impl_consume_Box := (.self: Box) -> ()  {}
 
 main() -> (.status_code: Int32 = 0) := {
     box :: Box = (.value = 7)
-    handle ::= to_virtual#(.abstract: A)(.value = $&box)
+    handle ::= to_virtual#(.contract: A)(.value = $&box)
 }

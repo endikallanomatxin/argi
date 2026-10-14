@@ -9,7 +9,7 @@ implement Init#(NoopDeallocator, ()) (
 
 main() -> (.status_code: Int32) := {
     noop :: NoopDeallocator = NoopDeallocator()
-    deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(.value = $&noop)
+    deallocator :: Virtual#(.contract: Deallocator) = to_virtual#(.contract: Deallocator)(.value = $&noop)
     byte :: UInt8 = 7
     Deallocator#().deallocate(.self = $&deallocator, .data = raw_pointer#(.t: UInt8)(.address = $&byte | convert#(.to: UIntNative)(_)).raw, .size = 1, .alignment = 1)
     status_code = 0

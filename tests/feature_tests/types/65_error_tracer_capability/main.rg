@@ -36,7 +36,7 @@ forward#(
 
 main() -> (.status_code: Int32) := {
     tracer ::= CountingTracer()
-    virtual_tracer ::= to_virtual#(.abstract: ErrorTracer)(.value = $&tracer)
+    virtual_tracer ::= to_virtual#(.contract: ErrorTracer)(.value = $&tracer)
     assume error_tracer ::= $&virtual_tracer
     failed ::= propagate()
     if tracer.count != 2 {
@@ -59,7 +59,7 @@ main() -> (.status_code: Int32) := {
         return
     }
     other ::= CountingTracer()
-    other_virtual ::= to_virtual#(.abstract: ErrorTracer)(.value = $&other)
+    other_virtual ::= to_virtual#(.contract: ErrorTracer)(.value = $&other)
     assume error_tracer ::= $&other_virtual
     forwarded ::= forward#(.t: Int32)(.value = ~failed)
     if tracer.count != 4 {
@@ -97,7 +97,7 @@ implement ErrorTracer#(CountingTracer)(
 
     .report = (
             .self   : $&CountingTracer,
-            .writer : $&Virtual#(.abstract: Writer)
+            .writer : $&Virtual#(.contract: Writer)
         ) -> (
             .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
         ) {

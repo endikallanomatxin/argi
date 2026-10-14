@@ -74,7 +74,7 @@ implement Allocator#(RecordingAllocator)(
             return
         }
         self&.allocations = self&.allocations + 1
-        deallocator: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(
+        deallocator: Virtual#(.contract: Deallocator) = to_virtual#(.contract: Deallocator)(
             .value = self
         )
         result = ..ok ~trusted_establish_allocation(

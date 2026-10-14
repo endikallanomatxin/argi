@@ -3,7 +3,7 @@
 CustomTracer: Type = (.marker: UInt8 = 0)
 
 custom_tracer_storage :: CustomTracer = (.marker = 0)
-custom_tracer_virtual :: Virtual#(.abstract: ErrorTracer) = to_virtual#(.abstract: ErrorTracer)(
+custom_tracer_virtual :: Virtual#(.contract: ErrorTracer) = to_virtual#(.contract: ErrorTracer)(
     .value = $&custom_tracer_storage
 )
 
@@ -24,7 +24,7 @@ implement ErrorTracer#(CustomTracer)(
 
     .report = (
             .self   : $&CustomTracer,
-            .writer : $&Virtual#(.abstract: Writer)
+            .writer : $&Virtual#(.contract: Writer)
         ) -> (
             .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
         ) {

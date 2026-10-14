@@ -29,7 +29,7 @@ implement Allocator#(CountingAllocator)(
             .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
         ) {
         storage ::= malloc(.size = 1, .ffi = self&.ffi)
-        deallocator ::= to_virtual#(.abstract: Deallocator)(.value = self)
+        deallocator ::= to_virtual#(.contract: Deallocator)(.value = self)
         allocation ::= trusted_establish_allocation(
             .storage     = storage
             .size        = size

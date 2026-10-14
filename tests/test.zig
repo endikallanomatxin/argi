@@ -12963,3 +12963,7 @@ test "feature_tests/contracts/318X_legacy_abstract_declaration" {
 test "feature_tests/contracts/319X_implicit_self_contract" {
     try buildExpectFailWithoutNoise("tests/feature_tests/contracts/319X_implicit_self_contract", "use named participants instead of Self", "panic");
 }
+
+test "feature_tests/contracts/320X_virtual_legacy_argument" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/320X_virtual_legacy_argument", "unknown virtual compile-time argument; use .contract: Contract", "panic");
+}

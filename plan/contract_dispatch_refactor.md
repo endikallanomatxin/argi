@@ -16,6 +16,26 @@ retains dependency operation identities. External implementations belong to the
 contract module or a nominal participant's module. Equivalent patterns and
 incomparable maximal candidates are errors; source/import ordering has no priority.
 
+## Current status
+
+Ordinary function identities, scoped operation selection, bundled library
+migration and retirement of the legacy abstract/conformance/overload adapters
+are complete. Static calls and unary virtual tables use selected implement
+operations. Parameters are explicit, fields retain their declared representation,
+and module snapshots need no imported normalization derivatives. Internal
+resolver/metadata names and virtual argument syntax consistently use contracts.
+
+The full regression covered 1,950 program cases; its three remaining fixture
+migrations passed focused reruns, leaving 1,939 validated cases and 11 optional
+or platform skips. Canonical virtual argument validation then passed 647
+contract/polymorphism cases, including a new rejection fixture. The final
+internal suite passed 372 tests and skipped one, with no failures.
+
+Remaining language work includes joint virtual evidence, richer symbolic
+arithmetic constraints and contract identities for ordered comparisons/C enum
+and callback-pointer equality. These are explicit limitations; no legacy
+ordinary overload or conformance route remains as a fallback.
+
 ## Implementation order and removal obligations
 
 1. Continue migration with the remaining bundled operations. Iterator, Iterable,
@@ -1020,3 +1040,13 @@ references and declaration kinds use consistent names throughout module/global
 semantics, safety, codegen and internal tests. This changes no selection or
 runtime representation rule. Bump snapshot format to 62 for renamed metadata.
 The complete internal suite passed 372 tests and skipped one after the rename.
+
+### Canonical virtual contract arguments
+
+Remove the .abstract argument alias from Virtual and to_virtual. Migrate 107
+fixture/source files to .contract. Reject unknown and repeated virtual argument
+names before contextual inference, so an expected virtual type cannot hide a
+misspelled or legacy argument. Preserve positional arguments and inference from
+an expected virtual interface. Add 320X_virtual_legacy_argument with an explicit
+expected type. Validation passed 647 program cases and the final 372 internal
+tests, with one internal skip and no program failures, leaks or error logs.

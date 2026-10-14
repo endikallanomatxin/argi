@@ -20,14 +20,14 @@ _impl_get_Other := (.self: &Other) -> (.value: &Int32)  {
 }
 
 register_other(.value: $&Other) -> () := {
-    unused ::= to_virtual#(.abstract: View)(.value = value)
+    unused ::= to_virtual#(.contract: View)(.value = value)
 }
 
 main() -> (.status_code: Int32 = 0) := {
     other :: Other = (.cell = (.value = 2))
     register_other(.value = $&other)
     holder :: Holder = (.cell = (.value = 1))
-    virtual ::= to_virtual#(.abstract: View)(.value = $&holder)
+    virtual ::= to_virtual#(.contract: View)(.value = $&holder)
     value ::= get(.self = &virtual)
     if value&!= 1 { status_code = 1 }
 }

@@ -11,7 +11,7 @@ propagate() -> (.result: Errable#(.t: Int32, .reasons: (..test_error))) := {
 
 main() -> (.status_code: Int32) := {
     tracer ::= ProbeTracer()
-    virtual_tracer ::= to_virtual#(.abstract: ErrorTracer)(.value = $&tracer)
+    virtual_tracer ::= to_virtual#(.contract: ErrorTracer)(.value = $&tracer)
     assume error_tracer ::= $&virtual_tracer
     failed ::= propagate()
     if tracer.count != 2 {
@@ -56,7 +56,7 @@ implement ErrorTracer#(ProbeTracer)(
 
     .report = (
             .self   : $&ProbeTracer,
-            .writer : $&Virtual#(.abstract: Writer)
+            .writer : $&Virtual#(.contract: Writer)
         ) -> (
             .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
         ) { result = ..ok Void() }

@@ -91,8 +91,8 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     if last.count != 2 or last.termination != ..end { abort }
     source.position = 0
     sink.position = 0
-    source_virtual ::= to_virtual#(.abstract: BlockReader)(.value = $&source)
-    sink_virtual ::= to_virtual#(.abstract: BlockWriter)(.value = $&sink)
+    source_virtual ::= to_virtual#(.contract: BlockReader)(.value = $&source)
+    sink_virtual ::= to_virtual#(.contract: BlockWriter)(.value = $&sink)
     copied ::= copy_stream_limited(
         .reader = $&source_virtual
         .writer = $&sink_virtual

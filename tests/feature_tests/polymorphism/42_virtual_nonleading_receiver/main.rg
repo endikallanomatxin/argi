@@ -13,7 +13,7 @@ _impl_add_Box := (.amount: Int32, .target: $&Box) -> (.value: Int32)  {
 
 main() -> (.status_code: Int32 = 0) := {
     box :: Box = (.value = 7)
-    handle ::= to_virtual#(.abstract: A)(.value = $&box)
+    handle ::= to_virtual#(.contract: A)(.value = $&box)
     value ::= add(.amount = 3, .target = $&handle)
     if value != 10 or box.value != 10 { status_code = 1 }
 }

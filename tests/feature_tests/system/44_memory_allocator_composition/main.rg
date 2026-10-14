@@ -76,7 +76,7 @@ implement Allocator#(TrackingAllocator)(
                 original ::= ~payload
                 self&.allocations = self&.allocations + 1
                 -- Tracking delegates release to the same backing allocator.
-                original.deallocator = to_virtual#(.abstract: Deallocator)(.value = self)
+                original.deallocator = to_virtual#(.contract: Deallocator)(.value = self)
                 result = ..ok ~original
             }
         }

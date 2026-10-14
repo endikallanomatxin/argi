@@ -18,7 +18,7 @@ _impl_mutate_Stateful := (.self: $&Stateful) -> ()  {
 _impl_mutate_Noop := (.self: $&Noop) -> ()  {}
 
 register_noop(.value: $&Noop) -> () := {
-    _ ::= to_virtual#(.abstract: Mutator)(.value = value)
+    _ ::= to_virtual#(.contract: Mutator)(.value = value)
 }
 
 main() -> (.status_code: Int32) := {
@@ -26,7 +26,7 @@ main() -> (.status_code: Int32) := {
     register_noop(.value = $&noop)
     state ::= Stateful(.counter = 0)
     holder ::= Holder(.state = $&state)
-    virtual ::= to_virtual#(.abstract: Mutator)(.value = $&state)
+    virtual ::= to_virtual#(.contract: Mutator)(.value = $&state)
     mutate(.self = $&virtual)
     status_code = holder.state&.counter - 1
 }

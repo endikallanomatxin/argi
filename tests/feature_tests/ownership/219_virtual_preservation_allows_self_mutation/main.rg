@@ -16,14 +16,14 @@ _impl_mutate_Mutating := (.self: $&Mutating) -> ()  {
 }
 
 register_keeping(.value: $&Keeping) -> () := {
-    _ ::= to_virtual#(.abstract: Mutator)(.value = value)
+    _ ::= to_virtual#(.contract: Mutator)(.value = value)
 }
 
 main() -> (.status_code: Int32) := {
     keeping :: Keeping = (.counter = 0)
     register_keeping(.value = $&keeping)
     value :: Mutating = (.counter = 0)
-    virtual ::= to_virtual#(.abstract: Mutator)(.value = $&value)
+    virtual ::= to_virtual#(.contract: Mutator)(.value = $&value)
     mutate(.self = $&virtual)
     status_code = value.counter - 1
 }

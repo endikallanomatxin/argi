@@ -17,11 +17,11 @@ _impl_read_Integer := (.self: &Integer) -> (.value: Int32)  { value = self&.valu
 
 _impl_read_Floating := (.self: &Floating) -> (.value: Float64)  { value = self&.value }
 
-consume_integer(.input: &Virtual#(.abstract: Fixed#(.n = 1, .item: Int32))) -> (.value: Int32) := {
+consume_integer(.input: &Virtual#(.contract: Fixed#(.n = 1, .item: Int32))) -> (.value: Int32) := {
     value = read(.self = input)
 }
 
-consume_float(.input: &Virtual#(.abstract: Fixed#(.n = 2, .item: Float64))) -> (.value: Float64) := {
+consume_float(.input: &Virtual#(.contract: Fixed#(.n = 2, .item: Float64))) -> (.value: Float64) := {
     value = read(.self = input)
 }
 
@@ -30,16 +30,16 @@ wrap#(
     )(
         .value : &t
     ) -> (
-        .result : Virtual#(.abstract: Fixed#(.n = 1, .item: Int32))
+        .result : Virtual#(.contract: Fixed#(.n = 1, .item: Int32))
     ) := {
-    result = to_virtual#(.abstract: Fixed#(.n = 1, .item: Int32))(.value = value)
+    result = to_virtual#(.contract: Fixed#(.n = 1, .item: Int32))(.value = value)
 }
 
 main() -> (.status_code: Int32 = 0) := {
     integer :: Integer = (.value = 17)
     floating :: Floating = (.value = 2.5)
     left ::= wrap(.value = &integer).result
-    right :: Virtual#(.abstract: Fixed#(.n = 2, .item: Float64)) = to_virtual(.value = &floating)
+    right :: Virtual#(.contract: Fixed#(.n = 2, .item: Float64)) = to_virtual(.value = &floating)
     if consume_integer(.input = &left).value != 17 { abort }
     if consume_float(.input = &right).value != 2.5 { abort }
 }

@@ -19,7 +19,7 @@ pub fn name(tree: *const syn.FileSyntaxTree, source: []const u8, field: syn.Stru
     return if (position < names.len) names[position] else "";
 }
 
-// Both spellings describe the same unary evidence type.
+// Virtual uses the canonical contract argument name or a positional argument.
 pub fn isVirtualContractParameter(parameter_name: []const u8) bool {
-    return std.mem.eql(u8, parameter_name, "contract") or std.mem.eql(u8, parameter_name, "abstract");
+    return std.mem.eql(u8, parameter_name, "contract");
 }

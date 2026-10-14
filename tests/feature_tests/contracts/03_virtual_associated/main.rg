@@ -20,7 +20,7 @@ consume_integer(.input: &Virtual#(.contract: Fixed#(.n = 1, .item: Int32))) -> (
     value = read(.self = input)
 }
 
-consume_float(.input: &Virtual#(.abstract: Fixed#(.n = 2, .item: Float64))) -> (.value: Float64) := {
+consume_float(.input: &Virtual#(.contract: Fixed#(.n = 2, .item: Float64))) -> (.value: Float64) := {
     value = read(.self = input)
 }
 

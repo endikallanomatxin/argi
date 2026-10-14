@@ -25,7 +25,7 @@ main() -> (.status_code: Int32 = 0) := {
     values ::= multiple()
     status_code = status_code + check(values.bytes[0], 9) + check(values.bytes[65535], 0)
     source ::= Source()
-    handle :: Virtual#(.abstract: BufferSource) = to_virtual(&source)
+    handle :: Virtual#(.contract: BufferSource) = to_virtual(&source)
     from_virtual ::= read(.self = &handle)
     status_code = status_code + check(from_virtual[0], 0) + check(from_virtual[65535], 7)
 }

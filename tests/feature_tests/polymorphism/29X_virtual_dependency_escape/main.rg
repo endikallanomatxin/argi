@@ -18,12 +18,12 @@ _impl_get_Right := (.self: &Right) -> (.value: &Int32)  {
 }
 
 register_right(.value: $&Right) -> () := {
-    unused ::= to_virtual#(.abstract: View)(.value = value)
+    unused ::= to_virtual#(.contract: View)(.value = value)
 }
 
 escape() -> (.value: &Int32) := {
     left :: Left = (.value = 1)
-    virtual ::= to_virtual#(.abstract: View)(.value = $&left)
+    virtual ::= to_virtual#(.contract: View)(.value = $&left)
     value = get(.self = &virtual)
 }
 

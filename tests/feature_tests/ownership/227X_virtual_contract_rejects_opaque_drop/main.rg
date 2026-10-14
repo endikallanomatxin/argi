@@ -38,7 +38,7 @@ _impl_store_Second := (.self: $&Second, .storage: $&Allocation, .slot: $&Tracked
 }
 
 register_second(.value: $&Second) -> () := {
-    _ ::= to_virtual#(.abstract: OpaqueStorer)(.value = value)
+    _ ::= to_virtual#(.contract: OpaqueStorer)(.value = value)
 }
 
 verify(.status: $&Int32) -> () := {
@@ -67,7 +67,7 @@ main(.system: System) -> (.status_code: Int32) := {
             second ::= Second(.marker = 0)
             register_second(.value = $&second)
             implementation ::= First(.marker = 0)
-            virtual ::= to_virtual#(.abstract: OpaqueStorer)(.value = $&implementation)
+            virtual ::= to_virtual#(.contract: OpaqueStorer)(.value = $&implementation)
             source :: Tracked = (.id = 1)
             store(.self = $&virtual, .storage = $&storage, .slot = slot, .source = $&source)
             trusted_opaque_drop#(.t: Tracked)(.slot = slot)

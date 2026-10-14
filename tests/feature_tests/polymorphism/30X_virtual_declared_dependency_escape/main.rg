@@ -18,12 +18,12 @@ _impl_choose_FromOther := (.self: &FromOther, .other: &Int32) -> (.value: &Int32
 }
 
 register_other(.value: $&FromOther) -> () := {
-    unused ::= to_virtual#(.abstract: Choose)(.value = value)
+    unused ::= to_virtual#(.contract: Choose)(.value = value)
 }
 
 escape(.self: $&FromSelf) -> (.value: &Int32) := {
     local :: Int32 = 2
-    virtual ::= to_virtual#(.abstract: Choose)(.value = self)
+    virtual ::= to_virtual#(.contract: Choose)(.value = self)
     value = choose(.self = &virtual, .other = &local)
 }
 

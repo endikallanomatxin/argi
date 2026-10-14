@@ -360,10 +360,18 @@ pub const Resolver = struct {
         arguments: primitives.Range(global_sg.GlobalGenericArgId),
         expected: ?global_sg.GlobalTypeId,
     ) !?global_sg.Node {
+        if (arguments.len > 1) {
+            self.virtual_signature_failure = .{ .source = self.sourceFor(module_index, reference.source), .method_name = "to_virtual", .reason = "to_virtual accepts one compile-time contract argument" };
+            return null;
+        }
         var contract_type: ?global_sg.GlobalTypeId = null;
         for (self.graph.generic_arguments.items[arguments.start..][0..arguments.len]) |argument| {
             if (!type_arguments.isVirtualContractParameter(self.graph.text(argument.name)) and
-                !(arguments.len == 1 and self.graph.text(argument.name).len == 0)) continue;
+                self.graph.text(argument.name).len != 0)
+            {
+                self.virtual_signature_failure = .{ .source = self.sourceFor(module_index, reference.source), .method_name = "to_virtual", .reason = "unknown virtual compile-time argument; use .contract: Contract" };
+                return null;
+            }
             contract_type = switch (argument.value) {
                 .type => |ty| ty,
                 else => return null,

@@ -86,7 +86,7 @@ run_main() -> !Void = ..ok Void() := {
     match write_all(.self = $&sink, .buffer = view(.array = &input)) {
         ..ok _ { abort } ..error _ {}
     }
-    virtual ::= to_virtual#(.abstract: BlockReader)(.value = $&source)
+    virtual ::= to_virtual#(.contract: BlockReader)(.value = $&source)
     match read_exact(.self = $&virtual, .buffer = view(.array = $&scratch)) {
         ..ok _ { abort } ..error _ {}
     }

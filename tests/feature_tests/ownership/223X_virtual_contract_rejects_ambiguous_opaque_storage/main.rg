@@ -46,13 +46,13 @@ _impl_store_Second := (
 }
 
 register_second(.value: $&Second) -> () := {
-    _ ::= to_virtual#(.abstract: OpaqueStorer)(.value = value)
+    _ ::= to_virtual#(.contract: OpaqueStorer)(.value = value)
 }
 
 main() -> (.status_code: Int32) := {
     second ::= Second(.marker = 0)
     register_second(.value = $&second)
     first ::= First(.marker = 0)
-    _ ::= to_virtual#(.abstract: OpaqueStorer)(.value = $&first)
+    _ ::= to_virtual#(.contract: OpaqueStorer)(.value = $&first)
     status_code = 0
 }

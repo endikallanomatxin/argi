@@ -47,7 +47,7 @@ _impl_store_Consuming := (
 }
 
 register_keeping(.value: $&Keeping) -> () := {
-    _ ::= to_virtual#(.abstract: OpaqueStorer)(.value = value)
+    _ ::= to_virtual#(.contract: OpaqueStorer)(.value = value)
 }
 
 main(.system: System) -> (.status_code: Int32) := {
@@ -72,7 +72,7 @@ main(.system: System) -> (.status_code: Int32) := {
                     keeping ::= Keeping(.marker = 0)
                     register_keeping(.value = $&keeping)
                     implementation ::= Consuming(.marker = 0)
-                    virtual ::= to_virtual#(.abstract: OpaqueStorer)(.value = $&implementation)
+                    virtual ::= to_virtual#(.contract: OpaqueStorer)(.value = $&implementation)
                     source ::= Borrowing(
                         .reference = unsafe_allocation.trusted_allocation_byte_rw(
                             .allocation = $&target

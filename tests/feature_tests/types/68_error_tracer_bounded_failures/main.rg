@@ -14,7 +14,7 @@ main(.system: System) -> (.status_code: Int32) := {
     )
     assume allocator ::= $&counting_allocator
     tracer ::= FixedSizeErrorTracer(.buffer = view($&zeroed#(.t: [288]UInt8)()))
-    virtual_tracer ::= to_virtual#(.abstract: ErrorTracer)(.value = $&tracer)
+    virtual_tracer ::= to_virtual#(.contract: ErrorTracer)(.value = $&tracer)
     assume error_tracer ::= $&virtual_tracer
     failed ::= fail()
     i :: UIntNative = 0
