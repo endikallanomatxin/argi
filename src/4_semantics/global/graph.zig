@@ -415,6 +415,13 @@ pub const GlobalSemanticGraph = struct {
         return if (self.lookup.declaration_names.get(name)) |matches| matches.items else &.{};
     }
 
+    /// Read an already complete name index without allocating during queries.
+    /// A null result asks the caller to use its ordinary traversal instead.
+    pub fn indexedDeclarationsNamed(self: *const GlobalSemanticGraph, name: []const u8) ?[]const GlobalDeclId {
+        if (self.lookup.indexed_declarations != self.declarations.items.len) return null;
+        return if (self.lookup.declaration_names.get(name)) |matches| matches.items else &.{};
+    }
+
     /// Speculative resolution can append functions and declarations before
     /// rolling their pools back. Remove those IDs before truncating the pools.
     pub fn discardIndexedTail(self: *GlobalSemanticGraph, function_count: usize, declaration_count: usize) void {

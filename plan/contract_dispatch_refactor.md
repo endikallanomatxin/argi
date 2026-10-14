@@ -19,9 +19,9 @@ Profile conformance verification independently from executable reachability.
 Unused explicit implementations still require semantic and safety proofs; reuse
 those proofs without turning them into runtime roots or weakening diagnostics.
 
-Storage-capability flow dominates concrete summary inference. Investigate repeated
-call-result substitution while preserving evaluation order, branch joins and
-call-site fresh identities; do not cache facts across storage generations.
+Before reusing validated core graphs or summaries, specify invalidation for
+source, target, imports and specialization visibility. Preserve selected operation
+identities and all conformance diagnostics.
 
 Signature probes currently collapse some instantiation failures into pending
 resolution. Distinguish definite errors from missing bindings without exposing
