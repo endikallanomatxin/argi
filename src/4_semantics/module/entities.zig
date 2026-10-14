@@ -151,7 +151,7 @@ pub const ExternalKind = enum(u8) {
     type,
     function,
     declaration,
-    abstract,
+    contract,
     choice_option,
     module,
 };
@@ -306,9 +306,9 @@ pub const PendingOperation = union(enum) {
         node: ModuleNodeId,
         path: primitives.StringRange,
     },
-    resolve_abstract: struct {
+    resolve_contract: struct {
         declaration: ModuleDeclId,
-        abstract_ref: ExternalRefId,
+        contract_ref: ExternalRefId,
     },
     resolve_copy: struct {
         node: ModuleNodeId,

@@ -17,7 +17,7 @@ const constructor_mod = @import("constructors.zig");
 const control_mod = @import("control.zig");
 const generic_mod = @import("generics.zig");
 const generic_functions_mod = @import("generic_functions.zig");
-const abstract_mod = @import("abstracts.zig");
+const contract_mod = @import("contracts.zig");
 const error_mod = @import("errors.zig");
 const ownership_mod = @import("ownership.zig");
 const resolution = @import("resolution.zig");
@@ -83,7 +83,7 @@ pub const Stats = struct {
     generics: generic_mod.Stats = .{},
     generic_functions: generic_functions_mod.Stats = .{},
     generic_selection: generic_functions_mod.SelectionProfile = .{},
-    abstracts: abstract_mod.Stats = .{},
+    contracts: contract_mod.Stats = .{},
     errors: error_mod.Stats = .{},
     ownership: ownership_mod.Stats = .{},
     pending_call_stages: [@typeInfo(dispatch_mod.PendingCallStage).@"enum".fields.len]dispatch_mod.PendingCallStageStats = @splat(.{}),
@@ -131,7 +131,7 @@ pub const PendingOwner = enum {
     core,
     expressions,
     control,
-    abstracts,
+    contracts,
     errors,
     ownership,
 };
@@ -183,7 +183,7 @@ const PendingResolutionStats = struct {
 const PendingPhase = enum {
     types_and_generics,
     expressions_and_calls,
-    control_and_abstracts,
+    control_and_contracts,
     errors,
     ownership,
 };
@@ -191,7 +191,7 @@ const PendingPhase = enum {
 const pending_phases = [_]PendingPhase{
     .types_and_generics,
     .expressions_and_calls,
-    .control_and_abstracts,
+    .control_and_contracts,
     .errors,
     .ownership,
 };
@@ -210,7 +210,7 @@ const PendingWorkItem = struct {
 const PendingWorklists = struct {
     types_and_generics: std.ArrayList(PendingWorkItem) = .empty,
     expressions_and_calls: std.ArrayList(PendingWorkItem) = .empty,
-    control_and_abstracts: std.ArrayList(PendingWorkItem) = .empty,
+    control_and_contracts: std.ArrayList(PendingWorkItem) = .empty,
     errors: std.ArrayList(PendingWorkItem) = .empty,
     ownership: std.ArrayList(PendingWorkItem) = .empty,
 
@@ -241,7 +241,7 @@ const PendingWorklists = struct {
     fn deinit(self: *PendingWorklists, allocator: std.mem.Allocator) void {
         self.types_and_generics.deinit(allocator);
         self.expressions_and_calls.deinit(allocator);
-        self.control_and_abstracts.deinit(allocator);
+        self.control_and_contracts.deinit(allocator);
         self.errors.deinit(allocator);
         self.ownership.deinit(allocator);
     }
@@ -250,7 +250,7 @@ const PendingWorklists = struct {
         return switch (phase) {
             .types_and_generics => &self.types_and_generics,
             .expressions_and_calls => &self.expressions_and_calls,
-            .control_and_abstracts => &self.control_and_abstracts,
+            .control_and_contracts => &self.control_and_contracts,
             .errors => &self.errors,
             .ownership => &self.ownership,
         };
@@ -268,7 +268,7 @@ const PendingWorklists = struct {
         return switch (phase) {
             .types_and_generics => &self.types_and_generics,
             .expressions_and_calls => &self.expressions_and_calls,
-            .control_and_abstracts => &self.control_and_abstracts,
+            .control_and_contracts => &self.control_and_contracts,
             .errors => &self.errors,
             .ownership => &self.ownership,
         };
@@ -348,7 +348,7 @@ pub fn semantizeWithOptions(
         .generics = &generics,
         .profile_io = options.profile_io,
     };
-    var abstracts = abstract_mod.Resolver{
+    var contracts = contract_mod.Resolver{
         .allocator = allocator,
         .graph = &relocation.graph,
         .modules = modules,
@@ -358,18 +358,18 @@ pub fn semantizeWithOptions(
         .profile_implementation_scans = options.profile_io != null,
         .profile_io = options.profile_io,
     };
-    generics.projection_context = &abstracts;
-    generics.projection_resolver = abstract_mod.Resolver.resolveAssociatedType;
-    generics.constant_projection_resolver = abstract_mod.Resolver.resolveAssociatedInt;
-    constructors.abstracts = &abstracts;
+    generics.projection_context = &contracts;
+    generics.projection_resolver = contract_mod.Resolver.resolveAssociatedType;
+    generics.constant_projection_resolver = contract_mod.Resolver.resolveAssociatedInt;
+    constructors.contracts = &contracts;
     control.generic_functions = &generic_functions;
-    control.abstracts = &abstracts;
-    defer abstracts.deinit();
-    abstracts.function_context = &generic_functions;
-    abstracts.instantiate_function = generic_functions_mod.Resolver.instantiateReferencedFunction;
-    abstracts.instantiate_alias = generic_functions_mod.Resolver.instantiateOperationAlias;
-    generic_functions.nested_call_context = &abstracts;
-    generic_functions.nested_call_resolver = abstract_mod.Resolver.resolveNestedCall;
+    control.contracts = &contracts;
+    defer contracts.deinit();
+    contracts.function_context = &generic_functions;
+    contracts.instantiate_function = generic_functions_mod.Resolver.instantiateReferencedFunction;
+    contracts.instantiate_alias = generic_functions_mod.Resolver.instantiateOperationAlias;
+    generic_functions.nested_call_context = &contracts;
+    generic_functions.nested_call_resolver = contract_mod.Resolver.resolveNestedCall;
     generic_functions.nested_constructor_context = &constructors;
     generic_functions.nested_constructor_resolver = constructor_mod.Resolver.resolveNestedCall;
     // These resolvers call back into one another while materializing generic
@@ -387,7 +387,7 @@ pub fn semantizeWithOptions(
         .core = &core,
         .generic_functions = &generic_functions,
         .constructors = &constructors,
-        .abstracts = &abstracts,
+        .contracts = &contracts,
         .control = &control,
         .errors = &errors,
         .profile_io = options.profile_io,
@@ -411,17 +411,17 @@ pub fn semantizeWithOptions(
     try generics.resolveExternalTypes();
     // Generic record fields can contain associated projections. Publish tuple
     // associations before materializing either their records or operation types.
-    try abstracts.prepareParticipantConformances();
-    try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, abstracts.participant_conformance_failure);
-    abstracts.resolveAssociatedTypes() catch |err| {
+    try contracts.prepareParticipantConformances();
+    try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
+    contracts.resolveAssociatedTypes() catch |err| {
         try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, &generics);
-        try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, abstracts.participant_conformance_failure);
+        try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
         return err;
     };
     _ = generics.materializeKnownTypes() catch |err| {
         try reportGenericArgumentFailure(&relocation.graph, options.diagnostics, &generics);
         try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, &generics);
-        try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, abstracts.participant_conformance_failure);
+        try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
         return err;
     };
     _ = try control.materializeSugarTypes();
@@ -429,20 +429,20 @@ pub fn semantizeWithOptions(
     if (options.diagnostics) |diagnostics| {
         for (relocation.graph.functions.items) |function| {
             for (relocation.graph.fields.items[function.output.start..][0..function.output.len]) |field| {
-                const abstract_use = abstracts.typeAbstractUse(field.ty) orelse continue;
+                const contract_use = contracts.typeContractUse(field.ty) orelse continue;
                 const declaration = relocation.graph.declaration(function.declaration);
                 try diagnostics.add(
                     diagnosticLocation(&relocation.graph, diagnostics, declaration.source),
                     .semantic,
                     "function '{s}' cannot return contract '{s}' as a runtime value; use a concrete type or Virtual",
-                    .{ relocation.graph.text(declaration.name), relocation.graph.text(relocation.graph.declaration(abstract_use.declaration).name) },
+                    .{ relocation.graph.text(declaration.name), relocation.graph.text(relocation.graph.declaration(contract_use.declaration).name) },
                 );
                 return error.Reported;
             }
         }
     }
 
-    try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, abstracts.participant_conformance_failure);
+    try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
 
     const total = totalPending(modules);
     const resolved = try allocator.alloc(bool, total);
@@ -460,12 +460,12 @@ pub fn semantizeWithOptions(
         };
     }
     // Explicit conformance bodies must be checked even if main never calls them.
-    abstracts.validateParticipantConformances() catch |err| {
+    contracts.validateParticipantConformances() catch |err| {
         try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, &generics);
-        try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, abstracts.participant_conformance_failure);
+        try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
         return err;
     };
-    try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, abstracts.participant_conformance_failure);
+    try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
     var reachable_storage: reachability_mod.FunctionSet = undefined;
     var reachable: ?*reachability_mod.FunctionSet = null;
     if (!options.exhaustive_function_bodies) {
@@ -500,7 +500,7 @@ pub fn semantizeWithOptions(
             profile_rounds += 1;
             // Pending resolution can fill existing type slots without growing
             // a pool, so failed conformance checks cannot cross rounds.
-            abstracts.invalidate_negative_implementation_cache();
+            contracts.invalidate_negative_implementation_cache();
             changed = false;
             const pending_start = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
             for (pending_phases) |phase| {
@@ -510,7 +510,7 @@ pub fn semantizeWithOptions(
                     &dispatch,
                     &control,
                     &generics,
-                    &abstracts,
+                    &contracts,
                     &errors,
                     &ownership,
                     modules,
@@ -525,11 +525,11 @@ pub fn semantizeWithOptions(
                     options.diagnostics,
                 ) catch |err| {
                     try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, &generics);
-                    try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, abstracts.participant_conformance_failure);
+                    try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
                     return err;
                 }) changed = true;
             }
-            try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, abstracts.participant_conformance_failure);
+            try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
             if (options.profile_io) |io| profile_pending_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - pending_start;
 
             var sweep_start = profileTimestamp(options.profile_io);
@@ -552,12 +552,12 @@ pub fn semantizeWithOptions(
             if (generics.materializeKnownTypes() catch |err| {
                 try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, &generics);
                 try reportGenericArgumentFailure(&relocation.graph, options.diagnostics, &generics);
-                try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, abstracts.participant_conformance_failure);
+                try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
                 return err;
             }) changed = true;
             profileAccumulate(options.profile_io, sweep_start, &profile_known_generic_types_ns);
             sweep_start = profileTimestamp(options.profile_io);
-            if (try abstracts.materializeFieldAccessTypes()) changed = true;
+            if (try contracts.materializeFieldAccessTypes()) changed = true;
             profileAccumulate(options.profile_io, sweep_start, &profile_field_access_types_ns);
             // Generic instantiation can intern nullable or inferred Errable
             // types during this pass. Their materialization must schedule a
@@ -576,12 +576,12 @@ pub fn semantizeWithOptions(
             const evidence_functions = relocation.graph.functions.items.len;
             const evidence_types = relocation.graph.types.items.len;
             const evidence_conformances = relocation.graph.contract_conformances.items.len;
-            abstracts.validateParticipantConformances() catch |err| {
+            contracts.validateParticipantConformances() catch |err| {
                 try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, &generics);
-                try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, abstracts.participant_conformance_failure);
+                try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
                 return err;
             };
-            try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, abstracts.participant_conformance_failure);
+            try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
             if (evidence_functions != relocation.graph.functions.items.len or
                 evidence_types != relocation.graph.types.items.len or
                 evidence_conformances != relocation.graph.contract_conformances.items.len) changed = true;
@@ -589,7 +589,7 @@ pub fn semantizeWithOptions(
                 if (try reachability_mod.expand(allocator, &relocation.graph, set)) changed = true;
             }
         }
-        abstracts.invalidate_negative_implementation_cache();
+        contracts.invalidate_negative_implementation_cache();
         var finalized_any = false;
         const finalization_count = relocation.graph.functions.items.len;
         var raw: usize = 0;
@@ -617,7 +617,7 @@ pub fn semantizeWithOptions(
     }
     const profile_postloop = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
 
-    try abstracts.validateGenericFunctionInstances();
+    try contracts.validateGenericFunctionInstances();
     control.annotateChoiceTests();
 
     if (reachable) |set| try retireDormantBindingResolution(&relocation.graph, set, try core.builtin(.Any));
@@ -638,7 +638,7 @@ pub fn semantizeWithOptions(
         return error.InvalidForEach;
     }
 
-    if (abstracts.virtual_signature_failure) |failure| {
+    if (contracts.virtual_signature_failure) |failure| {
         if (options.diagnostics) |diagnostics| {
             const location = diagnosticLocation(&relocation.graph, diagnostics, failure.source);
             if (failure.static_contract) {
@@ -659,7 +659,7 @@ pub fn semantizeWithOptions(
             return error.Reported;
         if (try diagnosePrivateFields(&relocation.graph, modules, reachable, relocation.offsets.items, diagnostics))
             return error.Reported;
-        if (try diagnoseAbstractRuntimeBindings(&relocation.graph, &abstracts, diagnostics))
+        if (try diagnoseContractRuntimeBindings(&relocation.graph, &contracts, diagnostics))
             return error.Reported;
         if (try diagnoseMissingArrayTypeContext(&relocation.graph, diagnostics))
             return error.Reported;
@@ -704,7 +704,7 @@ pub fn semantizeWithOptions(
                 );
                 return error.Reported;
             }
-            if (try diagnoseUnresolvedCall(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, &generic_functions, &abstracts, diagnostics))
+            if (try diagnoseUnresolvedCall(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, &generic_functions, &contracts, diagnostics))
                 return error.Reported;
             if (try diagnoseUnresolvedChoice(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics, true))
                 return error.Reported;
@@ -746,7 +746,7 @@ pub fn semantizeWithOptions(
         return if (options.diagnostics != null) error.Reported else error.InvalidPointerOperation;
 
     if (options.diagnostics) |diagnostics|
-        if (try abstracts.findGenericTypeConstraintFailure()) |failure| {
+        if (try contracts.findGenericTypeConstraintFailure()) |failure| {
             var actual_name = std.array_list.Managed(u8).init(allocator);
             defer actual_name.deinit();
             try appendTypeName(&actual_name, &relocation.graph, failure.actual);
@@ -756,7 +756,7 @@ pub fn semantizeWithOptions(
                 "type '{s}' does not implement abstract '{s}' required by generic type parameter '.{s}' of '{s}'",
                 .{
                     actual_name.items,
-                    relocation.graph.text(relocation.graph.declaration(failure.abstract_decl).name),
+                    relocation.graph.text(relocation.graph.declaration(failure.contract_decl).name),
                     failure.parameter_name,
                     relocation.graph.text(relocation.graph.declaration(failure.generic_decl).name),
                 },
@@ -764,17 +764,17 @@ pub fn semantizeWithOptions(
             return error.Reported;
         };
 
-    try abstracts.closeVirtualMethodRegistries();
+    try contracts.closeVirtualMethodRegistries();
 
     // Construction-only resolution metadata must disappear before the graph is
     // exposed to Safety, Codegen or editor consumers.
     try relocation.graph.finishTypeResolution(allocator);
-    abstracts.validateParticipantConformances() catch |err| {
+    contracts.validateParticipantConformances() catch |err| {
         try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, &generics);
-        try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, abstracts.participant_conformance_failure);
+        try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
         return err;
     };
-    try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, abstracts.participant_conformance_failure);
+    try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
     try relocation.graph.finishBindingTypeResolution(allocator);
 
     var generic_bodies_built: u64 = 0;
@@ -802,7 +802,7 @@ pub fn semantizeWithOptions(
         .generics = generics.stats,
         .generic_functions = generic_functions.stats,
         .generic_selection = generic_functions.selection_profile,
-        .abstracts = abstracts.stats,
+        .contracts = contracts.stats,
         .errors = errors.stats,
         .ownership = ownership.stats,
         .pending_call_stages = dispatch.pending_call_stages,
@@ -815,8 +815,8 @@ pub fn semantizeWithOptions(
         .rounds = @intCast(profile_rounds),
         .cleanup_attempts = @intCast(profile_finalize_count),
         .destructor_lookups = @intCast(ownership.profile_destructor_calls),
-        .cached_implementation_hits = abstracts.cached_implementation_hits,
-        .cached_nonimplementation_hits = abstracts.cached_nonimplementation_hits,
+        .cached_implementation_hits = contracts.cached_implementation_hits,
+        .cached_nonimplementation_hits = contracts.cached_nonimplementation_hits,
         .generic_instantiation_calls = generic_functions.profile_instantiate_calls,
         .generic_existing_instances = generic_functions.profile_instantiate_existing,
         .generic_bodies_built = generic_bodies_built,
@@ -1537,7 +1537,7 @@ fn resolvePendingPhase(
     dispatch: *dispatch_mod.Resolver,
     control: *control_mod.Resolver,
     generics: *generic_mod.Resolver,
-    abstracts: *abstract_mod.Resolver,
+    contracts: *contract_mod.Resolver,
     errors: *error_mod.Resolver,
     ownership: *ownership_mod.Resolver,
     modules: []const module_sg.ModuleSemanticGraph,
@@ -1578,7 +1578,7 @@ fn resolvePendingPhase(
             dispatch,
             control,
             generics,
-            abstracts,
+            contracts,
             errors,
             ownership,
             module_index,
@@ -1660,7 +1660,7 @@ fn pendingOwnerTag(tag: PendingTag) PendingOwner {
         .resolve_match,
         .resolve_match_case,
         => .control,
-        .resolve_abstract => .abstracts,
+        .resolve_contract => .contracts,
         .resolve_error_propagation => .errors,
         .resolve_defer,
         .resolve_copy,
@@ -1682,8 +1682,8 @@ fn pendingPhase(operation: module_entities.PendingOperation) PendingPhase {
         .expressions,
         => .expressions_and_calls,
         .control,
-        .abstracts,
-        => .control_and_abstracts,
+        .contracts,
+        => .control_and_contracts,
         .errors => .errors,
         .ownership => .ownership,
     };
@@ -1723,7 +1723,7 @@ fn resolvePendingOperation(
     dispatch: *dispatch_mod.Resolver,
     control: *control_mod.Resolver,
     generics: *generic_mod.Resolver,
-    abstracts: *abstract_mod.Resolver,
+    contracts: *contract_mod.Resolver,
     errors: *error_mod.Resolver,
     ownership: *ownership_mod.Resolver,
     module_index: usize,
@@ -1755,7 +1755,7 @@ fn resolvePendingOperation(
         },
         .expressions => ownedResult(try expressions.tryResolve(module_index, module, o, operation)),
         .control => ownedResult(try control.tryResolve(module_index, module, o, operation)),
-        .abstracts => ownedResult(try abstracts.tryResolve(module_index, module, o, operation)),
+        .contracts => ownedResult(try contracts.tryResolve(module_index, module, o, operation)),
         .errors => ownedResult(try errors.tryResolve(module_index, module, o, operation)),
         .ownership => ownedResult(try ownership.tryResolve(o, operation)),
     };
@@ -1807,7 +1807,7 @@ fn diagnoseUnresolvedQualifiedTypes(
                 else => return err,
             };
             const name = module.text(reference.name);
-            if (!declarationNameExistsInModule(graph, target, name, &.{ .type, .abstract_type })) {
+            if (!declarationNameExistsInModule(graph, target, name, &.{ .type, .contract_type })) {
                 try diagnostics.add(
                     diagnosticLocation(graph, diagnostics, globalSource(offsets[module_index], reference.source)),
                     .semantic,
@@ -1818,7 +1818,7 @@ fn diagnoseUnresolvedQualifiedTypes(
             }
             if (@intFromEnum(target) == module_index) continue;
             if (!std.mem.startsWith(u8, name, "_")) continue;
-            if (!declarationNameExistsInModule(graph, target, name, &.{ .type, .abstract_type })) continue;
+            if (!declarationNameExistsInModule(graph, target, name, &.{ .type, .contract_type })) continue;
             try diagnostics.add(
                 diagnosticLocation(graph, diagnostics, globalSource(offsets[module_index], reference.source)),
                 .semantic,
@@ -1977,15 +1977,15 @@ fn diagnoseUnresolvedBindingTypes(graph: *const global_sg.GlobalSemanticGraph, d
     return false;
 }
 
-fn diagnoseAbstractRuntimeBindings(
+fn diagnoseContractRuntimeBindings(
     graph: *const global_sg.GlobalSemanticGraph,
-    abstracts: *abstract_mod.Resolver,
+    contracts: *contract_mod.Resolver,
     diagnostics: *diagnostics_mod.Diagnostics,
 ) !bool {
     for (graph.bindings.items, 0..) |binding, raw| {
         const binding_id: global_sg.GlobalBindingId = @enumFromInt(@as(u32, @intCast(raw)));
-        const abstract_use = abstracts.runtimeBindingAbstract(binding_id) orelse continue;
-        const name = graph.text(graph.declarations.items[@intFromEnum(abstract_use.declaration)].name);
+        const contract_use = contracts.runtimeBindingContract(binding_id) orelse continue;
+        const name = graph.text(graph.declarations.items[@intFromEnum(contract_use.declaration)].name);
         try diagnostics.add(
             diagnosticLocation(graph, diagnostics, binding.source),
             .semantic,
@@ -2494,7 +2494,7 @@ fn diagnoseUnresolvedCall(
     reachable: ?*const reachability_mod.FunctionSet,
     offsets: []const globalizer.Offsets,
     generic_functions: *generic_functions_mod.Resolver,
-    abstracts: *abstract_mod.Resolver,
+    contracts: *contract_mod.Resolver,
     diagnostics: *diagnostics_mod.Diagnostics,
 ) !bool {
     var flat: usize = 0;
@@ -2664,7 +2664,7 @@ fn diagnoseUnresolvedCall(
                     "type '{s}' does not satisfy contract constraint '{s}' required by generic function parameter '.{s}' of '{s}'",
                     .{
                         constraint_actual_name.items,
-                        graph.text(graph.declaration(failure.abstract_decl).name),
+                        graph.text(graph.declaration(failure.contract_decl).name),
                         failure.parameter_name,
                         graph.text(graph.declaration(failure.function).name),
                     },
@@ -2803,9 +2803,9 @@ fn diagnoseUnresolvedCall(
 
             if (candidates.items.len == 1 and diagnostic_core.callInputNamesMatch(graph.functions.items[@intFromEnum(candidates.items[0])].input, input)) {
                 const function = graph.functions.items[@intFromEnum(candidates.items[0])];
-                var missing_abstract: ?struct {
+                var missing_contract: ?struct {
                     actual: global_sg.GlobalTypeId,
-                    abstract_type: global_sg.GlobalTypeId,
+                    contract_type: global_sg.GlobalTypeId,
                     declaration: global_sg.GlobalDeclId,
                     field: global_sg.Field,
                     source: primitives.SourceRef,
@@ -2830,7 +2830,7 @@ fn diagnoseUnresolvedCall(
                     };
                     if (global_types.equal(graph, actual, field.ty) or diagnostic_core.callTypesCompatible(actual, field.ty)) continue;
 
-                    var expected_abstract_type = field.ty;
+                    var expected_contract_type = field.ty;
                     var actual_concrete = actual;
                     switch (graph.semanticType(field.ty)) {
                         .pointer => |expected_pointer| {
@@ -2845,33 +2845,33 @@ fn diagnoseUnresolvedCall(
                                 other_mismatch = true;
                                 continue;
                             }
-                            expected_abstract_type = expected_pointer.child;
+                            expected_contract_type = expected_pointer.child;
                             actual_concrete = actual_pointer.child;
                         },
                         else => {},
                     }
 
-                    const declaration = abstracts.abstractDeclarationForType(expected_abstract_type) orelse {
+                    const declaration = contracts.contractDeclarationForType(expected_contract_type) orelse {
                         other_mismatch = true;
                         continue;
                     };
-                    if (abstracts.concreteImplements(actual_concrete, expected_abstract_type)) {
+                    if (contracts.concreteImplements(actual_concrete, expected_contract_type)) {
                         other_mismatch = true;
                         continue;
                     }
-                    if (missing_abstract != null) {
+                    if (missing_contract != null) {
                         other_mismatch = true;
                     } else {
-                        missing_abstract = .{
+                        missing_contract = .{
                             .actual = actual_concrete,
-                            .abstract_type = expected_abstract_type,
+                            .contract_type = expected_contract_type,
                             .declaration = declaration,
                             .field = field,
                             .source = graph.node(supplied_node).source,
                         };
                     }
                 }
-                if (!other_mismatch) if (missing_abstract) |missing| {
+                if (!other_mismatch) if (missing_contract) |missing| {
                     var actual_name = std.array_list.Managed(u8).init(allocator);
                     defer actual_name.deinit();
                     try appendTypeName(&actual_name, graph, missing.actual);
@@ -3278,7 +3278,7 @@ test "pending operation ownership is explicit" {
     try std.testing.expectEqual(PendingOwner.core, pendingOwnerTag(.resolve_field));
     try std.testing.expectEqual(PendingOwner.expressions, pendingOwnerTag(.resolve_name_use));
     try std.testing.expectEqual(PendingOwner.control, pendingOwnerTag(.resolve_match));
-    try std.testing.expectEqual(PendingOwner.abstracts, pendingOwnerTag(.resolve_abstract));
+    try std.testing.expectEqual(PendingOwner.contracts, pendingOwnerTag(.resolve_contract));
     try std.testing.expectEqual(PendingOwner.errors, pendingOwnerTag(.resolve_error_propagation));
     try std.testing.expectEqual(PendingOwner.ownership, pendingOwnerTag(.resolve_deinit));
 }
@@ -3334,7 +3334,7 @@ fn reportGenericArgumentFailure(graph: *const global_sg.GlobalSemanticGraph, dia
     try sink.add(diagnosticLocation(graph, sink, source), .semantic, "{s} for type '{s}'", .{ failure.reason, graph.text(declaration.name) });
 }
 
-fn reportParticipantConformanceFailure(allocator: std.mem.Allocator, graph: *const global_sg.GlobalSemanticGraph, diagnostics: ?*diagnostics_mod.Diagnostics, optional: ?abstract_mod.ParticipantConformanceFailure) !void {
+fn reportParticipantConformanceFailure(allocator: std.mem.Allocator, graph: *const global_sg.GlobalSemanticGraph, diagnostics: ?*diagnostics_mod.Diagnostics, optional: ?contract_mod.ParticipantConformanceFailure) !void {
     const failure = optional orelse return;
     if (diagnostics) |bag| {
         var message = std.array_list.Managed(u8).init(allocator);

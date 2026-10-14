@@ -6,7 +6,7 @@ const graph_mod = @import("graph.zig");
 /// contract cannot change construction, cleanup or conversion guarantees.
 pub fn standardDeclaration(graph: *const graph_mod.GlobalSemanticGraph, name: []const u8) ?graph_mod.GlobalDeclId {
     for (graph.declarations.items, 0..) |declaration, index| {
-        if (declaration.kind != .abstract_type or !std.mem.eql(u8, graph.text(declaration.name), name)) continue;
+        if (declaration.kind != .contract_type or !std.mem.eql(u8, graph.text(declaration.name), name)) continue;
         const id: graph_mod.GlobalDeclId = @enumFromInt(@as(u32, @intCast(index)));
         const owner = graph.moduleForDeclaration(id) orelse continue;
         if (graph.modules.items[@intFromEnum(owner)].is_bundled_core) return id;

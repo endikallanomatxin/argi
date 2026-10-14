@@ -746,7 +746,7 @@ fn augmentTypeOccurrences(
 fn findTypeDeclaration(graph: *const graph_mod.GlobalSemanticGraph, current_module: graph_mod.GlobalModuleId, name: []const u8) ?graph_mod.GlobalDeclId {
     var fallback: ?graph_mod.GlobalDeclId = null;
     for (graph.declarations.items, 0..) |declaration, raw| {
-        if (declaration.kind != .type and declaration.kind != .abstract_type) continue;
+        if (declaration.kind != .type and declaration.kind != .contract_type) continue;
         if (!std.mem.eql(u8, graph.text(declaration.name), name)) continue;
         const id: graph_mod.GlobalDeclId = @enumFromInt(@as(u32, @intCast(raw)));
         if (graph.moduleForDeclaration(id) == current_module) return id;
@@ -821,7 +821,7 @@ fn formatHover(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSeman
             const declaration = graph.declarations.items[@intFromEnum(id)];
             const name = graph.text(graph.declarationSourceName(id));
             switch (declaration.kind) {
-                .type, .abstract_type => {
+                .type, .contract_type => {
                     try writer.print("{s} : {s}", .{ name, if (declaration.kind == .type) "Type" else "Contract" });
                     if (declaration.type_id) |ty| {
                         const self_reference = switch (graph.types.items[@intFromEnum(ty)]) {
@@ -915,9 +915,9 @@ fn writeType(writer: HoverWriter, graph: *const graph_mod.GlobalSemanticGraph, t
             }
             try writer.writeAll(")");
         },
-        .virtual => |abstract_type| {
+        .virtual => |contract_type| {
             try writer.writeAll("Virtual#(.contract: ");
-            try writeType(writer, graph, abstract_type);
+            try writeType(writer, graph, contract_type);
             try writer.writeAll(")");
         },
     }
@@ -959,7 +959,7 @@ fn classifySyntax(allocator: std.mem.Allocator, tree: *const st.FileSyntaxTree, 
             try markSyntax(tree, classes, ty.name_token, TOKEN_INDEX.type_, declaration);
             try type_names.put(tree.tokenTextFromSource(source, ty.name_token), {});
         }
-        if (tree.abstractDeclaration(node)) |ty| try markSyntax(tree, classes, ty.name_token, TOKEN_INDEX.type_, declaration);
+        if (tree.contractDeclaration(node)) |ty| try markSyntax(tree, classes, ty.name_token, TOKEN_INDEX.type_, declaration);
         if (tree.symbolDeclaration(node)) |binding| {
             const readonly = if (binding.mutability == .constant) @as(u32, 1) << MOD_INDEX.readonly else 0;
             try markSyntax(tree, classes, binding.name_token, TOKEN_INDEX.variable, declaration | readonly);
@@ -1029,7 +1029,7 @@ fn classifyOccurrences(allocator: std.mem.Allocator, analysis: *const Analysis, 
                     classification.modifiers |= @as(u32, 1) << MOD_INDEX.readonly;
             },
             .declaration => |id| classification.type_index = switch (graph.declarations.items[@intFromEnum(id)].kind) {
-                .type, .abstract_type => TOKEN_INDEX.type_,
+                .type, .contract_type => TOKEN_INDEX.type_,
                 .import_alias => TOKEN_INDEX.namespace,
                 .function, .test_function => TOKEN_INDEX.function,
                 .choice_option => TOKEN_INDEX.enum_member,
@@ -1170,11 +1170,11 @@ fn outlineNodes(work: std.mem.Allocator, file: *const editor_syntax.File, nodes:
             name_token = decl.name_token;
             kind = 23;
             if (file.tree.structTypeLiteral(decl.value)) |value| children = value.fields;
-        } else if (file.tree.abstractDeclaration(node)) |decl| {
+        } else if (file.tree.contractDeclaration(node)) |decl| {
             name_token = decl.name_token;
             kind = 11;
             children = decl.requires_functions;
-        } else if (file.tree.abstractFunctionRequirement(node)) |decl| {
+        } else if (file.tree.contractFunctionRequirement(node)) |decl| {
             name_token = decl.name_token;
             kind = 6;
         } else if (file.tree.symbolDeclaration(node)) |decl| {

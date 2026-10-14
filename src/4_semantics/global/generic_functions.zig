@@ -11,7 +11,7 @@ const control_mod = @import("control.zig");
 const resolution = @import("resolution.zig");
 const core_mod = @import("core.zig");
 const generic_mod = @import("generics.zig");
-const abstract_mod = @import("abstracts.zig");
+const contract_mod = @import("contracts.zig");
 const global_types = @import("types.zig");
 const primitives = @import("../primitives/schema.zig");
 const implementation_arguments = @import("implementation_arguments.zig");
@@ -47,7 +47,7 @@ const ReachInferenceContext = reach_context_mod.Context;
 
 pub const ConstraintFailure = struct {
     function: global_sg.GlobalDeclId,
-    abstract_decl: global_sg.GlobalDeclId,
+    contract_decl: global_sg.GlobalDeclId,
     actual: global_sg.GlobalTypeId,
     parameter_name: []const u8,
 };
@@ -59,8 +59,8 @@ pub const Resolver = struct {
     offsets: []const globalizer.Offsets,
     core: *core_mod.Resolver,
     generics: *generic_mod.Resolver,
-    nested_call_context: ?*abstract_mod.Resolver = null,
-    nested_call_resolver: ?*const fn (*abstract_mod.Resolver, usize, module_entities.ExternalRef, global_sg.GlobalNodeId, primitives.SourceRef, ReachInferenceContext) anyerror!?global_sg.Node = null,
+    nested_call_context: ?*contract_mod.Resolver = null,
+    nested_call_resolver: ?*const fn (*contract_mod.Resolver, usize, module_entities.ExternalRef, global_sg.GlobalNodeId, primitives.SourceRef, ReachInferenceContext) anyerror!?global_sg.Node = null,
     nested_constructor_context: ?*anyopaque = null,
     nested_constructor_resolver: ?*const fn (*anyopaque, usize, module_entities.ExternalRef, primitives.Range(global_sg.GlobalGenericArgId), global_sg.GlobalNodeId, ReachInferenceContext, primitives.SourceRef) anyerror!?global_sg.Node = null,
     ownership_context: ?*anyopaque = null,
@@ -69,7 +69,7 @@ pub const Resolver = struct {
     rollback_ownership: ?*const fn (*anyopaque, [2]usize) void = null,
     constraint_diagnostics: ?*std.ArrayList(ConstraintFailure) = null,
     failed_constraint: ?struct {
-        abstract_decl: global_sg.GlobalDeclId,
+        contract_decl: global_sg.GlobalDeclId,
         actual: global_sg.GlobalTypeId,
         parameter_name: []const u8,
     } = null,
@@ -90,7 +90,7 @@ pub const Resolver = struct {
         ownership: ?[2]usize = null,
         reached_calls: usize = 0,
         reached_signatures: usize = 0,
-        abstracts: ?abstract_mod.Resolver.CacheCheckpoint = null,
+        contracts: ?contract_mod.Resolver.CacheCheckpoint = null,
         comptime_failure: ?generic_mod.ComptimeFailure = null,
     };
 
@@ -100,8 +100,8 @@ pub const Resolver = struct {
             if (self.ownership_checkpoint) |checkpoint|
                 saved.ownership = checkpoint(context);
         }
-        if (self.nested_call_context) |abstracts|
-            saved.abstracts = abstracts.checkpointImplementationCaches();
+        if (self.nested_call_context) |contracts|
+            saved.contracts = contracts.checkpointImplementationCaches();
         return saved;
     }
 
@@ -109,9 +109,9 @@ pub const Resolver = struct {
         self.generics.comptime_failure = saved.comptime_failure;
         self.core.rollbackReachedCalls(saved.reached_calls);
         self.core.rollback_reached_signatures(saved.reached_signatures);
-        if (saved.abstracts) |checkpoint|
-            if (self.nested_call_context) |abstracts|
-                abstracts.rollbackImplementationCaches(checkpoint);
+        if (saved.contracts) |checkpoint|
+            if (self.nested_call_context) |contracts|
+                contracts.rollbackImplementationCaches(checkpoint);
         if (saved.ownership) |checkpoint| {
             const context = self.ownership_context orelse return;
             const rollback = self.rollback_ownership orelse return;
@@ -221,15 +221,15 @@ pub const Resolver = struct {
             if (self.graph.isTypeUnresolved(ty)) return null;
         }
         const declaration = standard_contracts.standardDeclaration(self.graph, contract_name) orelse return null;
-        const abstracts = self.nested_call_context orelse return null;
+        const contracts = self.nested_call_context orelse return null;
         const checkpoint = self.graph.checkpoint();
         const side_effects = self.checkpointSideEffects();
         var committed = false;
-        var failure: ?abstract_mod.ParticipantConformanceFailure = null;
+        var failure: ?contract_mod.ParticipantConformanceFailure = null;
         defer if (!committed) {
             self.graph.rollback(checkpoint);
             self.rollbackSideEffects(side_effects);
-            if (failure) |value| abstracts.participant_conformance_failure = value;
+            if (failure) |value| contracts.participant_conformance_failure = value;
         };
         const input = try self.makePositionalInput(operands);
         // Operand transfer is explicit. No distinguished receiver is borrowed
@@ -237,7 +237,7 @@ pub const Resolver = struct {
         self.graph.nodes.items[@intFromEnum(input)].content.struct_value_literal.dispatch_prefix_positional_count = 0;
         if (reach == .global) self.graph.nodes.items[@intFromEnum(input)].content.struct_value_literal.assumed_fields = reach.global.assumed_fields;
         if (assumed) |node| self.graph.nodes.items[@intFromEnum(input)].content.struct_value_literal.assumed_fields = self.graph.node(node).content.struct_value_literal.assumed_fields;
-        var resolver: implementation_arguments.Resolver = .{ .graph = self.graph, .modules = self.modules, .core = self.core, .generics = self.generics, .functions = self, .abstracts = abstracts };
+        var resolver: implementation_arguments.Resolver = .{ .graph = self.graph, .modules = self.modules, .core = self.core, .generics = self.generics, .functions = self, .contracts = contracts };
         const selected = switch (try resolver.infer(declaration, &.{ .inferred, .inferred }, input, reach)) {
             .selected => |selection| selection,
             .ambiguous => {
@@ -265,7 +265,7 @@ pub const Resolver = struct {
         for (selected.participants) |participant| try self.graph.generic_arguments.append(self.allocator, .{ .name = .{ .start = 0, .len = 0 }, .value = .{ .type = participant } });
         const contract = try self.generics.internType(.{ .generic = .{ .base = declaration, .arguments = .{ .start = arguments_start, .len = 3 } } });
         const wrapped = try self.makePositionalInput(&.{input});
-        const call = try abstracts.makeScopedOperationCall(module_index, contract, operation_name, wrapped, reach, self.graph.node(operands[0]).source) orelse return null;
+        const call = try contracts.makeScopedOperationCall(module_index, contract, operation_name, wrapped, reach, self.graph.node(operands[0]).source) orelse return null;
         if (call.ty == null or self.graph.isTypeUnresolved(call.ty.?)) return null;
         committed = true;
         self.stats.calls += 1;
@@ -736,7 +736,7 @@ pub const Resolver = struct {
         bindings: *generic_mod.Resolver.Bindings,
     ) !bool {
         self.failed_constraint = null;
-        const abstracts = self.nested_call_context orelse return true;
+        const contracts = self.nested_call_context orelse return true;
         const storage = &self.modules[module_index].semantic.parameterized_storage;
 
         var made_progress = true;
@@ -757,16 +757,16 @@ pub const Resolver = struct {
                 const constraint_id = parameter.constraint orelse continue;
                 if (parameter.kind != .type) continue;
                 const concrete = bindings.types[raw] orelse continue;
-                const constraint_ok = try abstracts.inferConstraintBindings(module_index, constraint_id, concrete, bindings);
+                const constraint_ok = try contracts.inferConstraintBindings(module_index, constraint_id, concrete, bindings);
 
                 if (!constraint_ok) {
                     // Direct abstract inputs are lowered to synthetic bounded
                     // parameters. Their existing argument diagnostic names the
                     // source input, so do not expose compiler parameter names.
                     if (self.constraint_diagnostics != null and
-                        try abstracts.constraintArgumentsKnown(module_index, constraint_id, bindings) and
+                        try contracts.constraintArgumentsKnown(module_index, constraint_id, bindings) and
                         !std.mem.startsWith(u8, self.modules[module_index].text(parameter.name), "__abstract_")) self.failed_constraint = .{
-                        .abstract_decl = try abstracts.constraintDeclaration(module_index, constraint_id),
+                        .contract_decl = try contracts.constraintDeclaration(module_index, constraint_id),
                         .actual = concrete,
                         .parameter_name = self.modules[module_index].text(parameter.name),
                     };
@@ -847,11 +847,11 @@ pub const Resolver = struct {
     }
 
     pub fn resolveOperationIdentityFiltered(self: *Resolver, module_index: usize, name: []const u8, input: global_sg.GlobalNodeId, reach: ReachInferenceContext, source: primitives.SourceRef, module_filter: ?global_sg.GlobalModuleId) !?global_sg.Node {
-        const abstracts = self.nested_call_context orelse return null;
-        var candidates = try abstracts.operationCandidatesFiltered(module_index, name, input, reach, module_filter);
+        const contracts = self.nested_call_context orelse return null;
+        var candidates = try contracts.operationCandidatesFiltered(module_index, name, input, reach, module_filter);
         defer candidates.deinit(self.allocator);
         if (candidates.failure) |failure| {
-            abstracts.participant_conformance_failure = failure;
+            contracts.participant_conformance_failure = failure;
             return error.InvalidContractConformance;
         }
         const ordinary = try self.core.matchFunctionNamedWithReach(module_index, name, module_filter, input, reach);
@@ -859,7 +859,7 @@ pub const Resolver = struct {
             if (ordinary == .function) {
                 const generic = try self.implicitOrdinaryApplicableFiltered(module_index, name, input, reach, module_filter);
                 if (generic == .ambiguous or (generic == .applicable and generic.applicable != self.graph.functions.items[@intFromEnum(ordinary.function)].declaration)) {
-                    abstracts.participant_conformance_failure = .{ .source = source, .contract_name = name, .operation = name, .reason = "multiple applicable operation identities; qualify the function explicitly" };
+                    contracts.participant_conformance_failure = .{ .source = source, .contract_name = name, .operation = name, .reason = "multiple applicable operation identities; qualify the function explicitly" };
                     return error.AmbiguousOperationIdentity;
                 }
                 if (generic == .deferred) return error.DeferredOperationIdentity;
@@ -868,11 +868,11 @@ pub const Resolver = struct {
         }
         const generic = try self.implicitOrdinaryApplicableFiltered(module_index, name, input, reach, module_filter);
         if (candidates.items.items.len > 1 or ordinary == .function or ordinary == .ambiguous or generic == .applicable or generic == .ambiguous) {
-            abstracts.participant_conformance_failure = .{ .source = source, .contract_name = name, .operation = name, .reason = "multiple applicable operation identities; qualify the contract operation explicitly" };
+            contracts.participant_conformance_failure = .{ .source = source, .contract_name = name, .operation = name, .reason = "multiple applicable operation identities; qualify the contract operation explicitly" };
             return error.AmbiguousOperationIdentity;
         }
         if (candidates.deferred or ordinary == .deferred or generic == .deferred) return error.DeferredOperationIdentity;
-        return abstracts.callOperationCandidate(module_index, candidates.items.items[0], name, input, reach, source);
+        return contracts.callOperationCandidate(module_index, candidates.items.items[0], name, input, reach, source);
     }
 
     pub fn hasVisibleParameterizedFunctionName(
@@ -1199,7 +1199,7 @@ pub const Resolver = struct {
         }
         try failures.append(self.allocator, .{
             .function = declaration,
-            .abstract_decl = failure.abstract_decl,
+            .contract_decl = failure.contract_decl,
             .actual = failure.actual,
             .parameter_name = failure.parameter_name,
         });
@@ -1408,7 +1408,7 @@ pub const Resolver = struct {
                 // type while a caller is still unspecialized. Only an
                 // implementer's type may bind its constrained parameter.
                 if (comptime_parameter.constraint != null) switch (self.graph.types.items[@intFromEnum(actual)]) {
-                    .declared => |declaration| if (self.graph.declarations.items[@intFromEnum(declaration)].kind == .abstract_type) return false,
+                    .declared => |declaration| if (self.graph.declarations.items[@intFromEnum(declaration)].kind == .contract_type) return false,
                     else => {},
                 };
                 const slot = &bindings.types[@intFromEnum(parameter)];
@@ -1742,14 +1742,14 @@ pub const Resolver = struct {
         const saved_generic_stats = self.generics.stats;
         errdefer {
             const comptime_failure = self.generics.comptime_failure;
-            const projection_failure = if (self.nested_call_context) |abstracts| abstracts.participant_conformance_failure else null;
+            const projection_failure = if (self.nested_call_context) |contracts| contracts.participant_conformance_failure else null;
             self.graph.rollback(checkpoint);
             self.rollbackSideEffects(side_effect_checkpoint);
             self.generics.comptime_failure = comptime_failure;
             // A selected instantiation must keep its projection diagnostic;
             // speculative signature probes restore theirs through checkpoints.
-            if (self.nested_call_context) |abstracts| if (projection_failure) |failure| {
-                if (failure.is_projection or failure.operation != null) abstracts.participant_conformance_failure = failure;
+            if (self.nested_call_context) |contracts| if (projection_failure) |failure| {
+                if (failure.is_projection or failure.operation != null) contracts.participant_conformance_failure = failure;
             };
             self.stats = saved_stats;
             self.generics.stats = saved_generic_stats;
@@ -1762,7 +1762,7 @@ pub const Resolver = struct {
         defer substitutions.deinit(self.allocator);
         try self.generics.bindGlobalArguments(located.module_index, located.parameterized.parameters, arguments, &substitutions);
         if (!try self.inferAndValidateConstraints(located.module_index, located.parameterized.parameters, &substitutions))
-            return error.GenericAbstractConstraintNotSatisfied;
+            return error.GenericContractConstraintNotSatisfied;
 
         const input_ty = try self.generics.instantiateParameterizedType(located.module_index, located.parameterized.input, &substitutions);
         const output_ty = try self.generics.instantiateParameterizedType(located.module_index, located.parameterized.output, &substitutions);
@@ -2730,9 +2730,9 @@ pub const Resolver = struct {
             if (module_path == null and std.mem.eql(u8, name, "is"))
                 return self.resolveChoiceTest(input, source);
             if (module_path == null and std.mem.eql(u8, name, "to_virtual")) {
-                if (self.resolver.nested_call_context) |abstracts| {
+                if (self.resolver.nested_call_context) |contracts| {
                     const reference: module_entities.ExternalRef = .{ .kind = .function, .module_path = null, .name = name_range, .source = source };
-                    if (try abstracts.makeVirtualizeWithArguments(self.module_index, reference, input, arguments, expected)) |node| {
+                    if (try contracts.makeVirtualizeWithArguments(self.module_index, reference, input, arguments, expected)) |node| {
                         return node;
                     }
                 }
@@ -3059,7 +3059,7 @@ pub const Resolver = struct {
                 .offsets = self.resolver.offsets,
                 .core = self.resolver.core,
                 .generic_functions = self.resolver,
-                .abstracts = self.resolver.nested_call_context,
+                .contracts = self.resolver.nested_call_context,
             };
             // Resolve the iterator protocol before specializing the body: its
             // next output establishes the previously unknown item type. Both

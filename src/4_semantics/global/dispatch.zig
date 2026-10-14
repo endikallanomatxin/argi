@@ -9,7 +9,7 @@ const core_mod = @import("core.zig");
 const constructor_mod = @import("constructors.zig");
 const control_mod = @import("control.zig");
 const generic_functions_mod = @import("generic_functions.zig");
-const abstract_mod = @import("abstracts.zig");
+const contract_mod = @import("contracts.zig");
 const error_mod = @import("errors.zig");
 
 pub const PendingCallStage = enum {
@@ -17,7 +17,7 @@ pub const PendingCallStage = enum {
     ordinary,
     generic,
     constructor,
-    abstract,
+    contract,
     control,
 };
 
@@ -35,7 +35,7 @@ pub const Resolver = struct {
     core: *core_mod.Resolver,
     generic_functions: *generic_functions_mod.Resolver,
     constructors: *constructor_mod.Resolver,
-    abstracts: *abstract_mod.Resolver,
+    contracts: *contract_mod.Resolver,
     control: *control_mod.Resolver,
     errors: *error_mod.Resolver,
     profile_io: ?std.Io = null,
@@ -82,7 +82,7 @@ pub const Resolver = struct {
         operation: module_entities.PendingOperation,
     ) !resolution.Result {
         if (operation == .resolve_call and operation.resolve_call.contract_type != null)
-            return self.abstracts.resolveScopedOperation(module_index, module, o, operation.resolve_call);
+            return self.contracts.resolveScopedOperation(module_index, module, o, operation.resolve_call);
         // A lexical callable value shadows named functions and constructors.
         if (operation == .resolve_call and operation.resolve_call.callee_value != null)
             return self.core.tryResolve(module_index, module, o, operation);
@@ -125,9 +125,9 @@ pub const Resolver = struct {
         if (!constructor_result.allowsFallback()) return constructor_result;
 
         stage_start = self.profileTimestamp();
-        const abstract_result = try self.abstracts.tryResolve(module_index, module, o, operation);
-        self.profilePendingStage(.abstract, stage_start, abstract_result);
-        if (!abstract_result.allowsFallback()) return abstract_result;
+        const contract_result = try self.contracts.tryResolve(module_index, module, o, operation);
+        self.profilePendingStage(.contract, stage_start, contract_result);
+        if (!contract_result.allowsFallback()) return contract_result;
 
         stage_start = self.profileTimestamp();
         const control_result = try self.control.tryResolve(module_index, module, o, operation);

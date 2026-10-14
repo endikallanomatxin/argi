@@ -292,10 +292,10 @@ fn verifyPending(graph: *const graph_mod.ModuleSemanticGraph, operation: entitie
             try require(verify.idFits(value.node, semantic.nodes.items.len));
             try require(verify.stringFits(value.path, graph.strings.items));
         },
-        .resolve_abstract => |value| {
+        .resolve_contract => |value| {
             try require(verify.idFits(value.declaration, graph.declarations.items.len));
-            try require(verify.idFits(value.abstract_ref, semantic.external_refs.items.len));
-            try require(semantic.external_refs.items[@intFromEnum(value.abstract_ref)].kind == .abstract);
+            try require(verify.idFits(value.contract_ref, semantic.external_refs.items.len));
+            try require(semantic.external_refs.items[@intFromEnum(value.contract_ref)].kind == .contract);
         },
         .resolve_copy => |value| {
             try require(verify.idFits(value.node, semantic.nodes.items.len));

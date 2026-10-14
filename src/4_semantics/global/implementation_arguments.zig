@@ -5,7 +5,7 @@ const storage_mod = @import("../module/parameterized/storage.zig");
 const core_mod = @import("core.zig");
 const generic_mod = @import("generics.zig");
 const functions_mod = @import("generic_functions.zig");
-const abstracts_mod = @import("abstracts.zig");
+const contracts_mod = @import("contracts.zig");
 const reach_context = @import("reach_context.zig");
 const types = @import("types.zig");
 
@@ -37,7 +37,7 @@ pub const Resolver = struct {
     core: *core_mod.Resolver,
     generics: *generic_mod.Resolver,
     functions: *functions_mod.Resolver,
-    abstracts: *abstracts_mod.Resolver,
+    contracts: *contracts_mod.Resolver,
 
     pub const Completion = union(enum) {
         completed,
@@ -95,13 +95,13 @@ pub const Resolver = struct {
             const storage = &module.semantic.parameterized_storage;
             templates: for (storage.contract_conformances.items) |template| {
                 if (template.participants.len != prefix.len + 1) continue;
-                if (try self.abstracts.resolveDeclarationRef(module_index, template.contract_ref, .abstract_type) != declaration) continue;
+                if (try self.contracts.resolveDeclarationRef(module_index, template.contract_ref, .contract_type) != declaration) continue;
                 const patterns = storage.ir.generic_arguments.items[template.participants.start..][0..template.participants.len];
                 for (patterns) |pattern| if (pattern.value != .type) continue :templates;
                 var bindings = try generic_mod.Resolver.Bindings.init(allocator, storage.comptime_parameters.items.len);
                 defer bindings.deinit(allocator);
                 for (prefix, 0..) |participant, index| switch (participant) {
-                    .known => |known| if (!try self.abstracts.inferConstraintTypePattern(module_index, patterns[index].value.type, known, &bindings)) {
+                    .known => |known| if (!try self.contracts.inferConstraintTypePattern(module_index, patterns[index].value.type, known, &bindings)) {
                         continue :templates;
                     },
                     .family => |family| {
@@ -131,7 +131,7 @@ pub const Resolver = struct {
                     };
                     if (!matches) continue;
                 }
-                if (!try self.abstracts.validateParameterizedImplementationConstraints(module_index, template.parameters, &bindings)) continue;
+                if (!try self.contracts.validateParameterizedImplementationConstraints(module_index, template.parameters, &bindings)) continue;
                 const participants = try allocator.alloc(graph_mod.GlobalTypeId, patterns.len);
                 var retained = false;
                 defer if (!retained) allocator.free(participants);
@@ -176,8 +176,8 @@ pub const Resolver = struct {
                     dominated = true;
                     break;
                 }
-                if (try self.abstracts.patternTupleCovers(candidate.module, candidate.template, other.module, other.template) and
-                    !try self.abstracts.patternTupleCovers(other.module, other.template, candidate.module, candidate.template))
+                if (try self.contracts.patternTupleCovers(candidate.module, candidate.template, other.module, other.template) and
+                    !try self.contracts.patternTupleCovers(other.module, other.template, candidate.module, candidate.template))
                 {
                     dominated = true;
                     break;

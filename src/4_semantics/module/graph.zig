@@ -312,7 +312,7 @@ fn resolveModuleTypeReferences(graph: *ModuleSemanticGraph) void {
         }
         for (graph.declarationsNamed(graph.text(reference.name))) |declaration_id| {
             switch (graph.declaration(declaration_id).kind) {
-                .type, .abstract_type => {
+                .type, .contract_type => {
                     reference.resolution = .{ .module = declaration_id };
                     reference.resolved_type = graph.declaration(declaration_id).type_id;
                     break;
@@ -325,7 +325,7 @@ fn resolveModuleTypeReferences(graph: *ModuleSemanticGraph) void {
 
 fn predeclareTypes(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph) !void {
     for (graph.declarations.items, 0..) |*declaration, index| switch (declaration.kind) {
-        .type, .abstract_type => {
+        .type, .contract_type => {
             if (graph.types.items.len >= std.math.maxInt(u32)) return error.ModuleSemanticGraphTooLarge;
             declaration.type_id = @enumFromInt(@as(u32, @intCast(graph.types.items.len)));
             try graph.types.append(allocator, .{ .declared = @enumFromInt(@as(u32, @intCast(index))) });
@@ -787,7 +787,7 @@ fn discoverFile(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, input
                 const value = tree.symbolDeclaration(node).?.value;
                 break :blk if (value != null and tree.tag(value.?) == .import_statement) .import_alias else .binding;
             },
-            .abstract_declaration => .abstract_type,
+            .contract_declaration => .contract_type,
             .type_declaration, .c_struct_declaration, .c_incomplete_declaration, .c_enum_declaration, .c_union_declaration, .c_function_pointer_declaration => .type,
             .choice_option_declaration => .choice_option,
             .function_declaration, .function_declaration_once => .function,

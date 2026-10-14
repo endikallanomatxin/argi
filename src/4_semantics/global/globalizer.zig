@@ -298,7 +298,7 @@ fn relocateType(o: Offsets, value: module_entities.ResolvedType) global_sg.Globa
             .base = globalDecl(o, item.base),
             .arguments = relocateEntityRange(global_sg.GlobalGenericArgId, o.generic_argument_base, item.arguments),
         } },
-        .virtual => |abstract_type| .{ .virtual = globalType(o, abstract_type) },
+        .virtual => |contract_type| .{ .virtual = globalType(o, contract_type) },
     };
 }
 
@@ -404,7 +404,7 @@ fn appendBodyTables(allocator: std.mem.Allocator, result: *global_sg.GlobalSeman
     for (storage.virtualizes.items) |value| try result.virtualizes.append(allocator, .{
         .value = globalNode(o, value.value),
         .concrete_type = globalType(o, value.concrete_type),
-        .abstract_decl = globalDecl(o, value.abstract_decl),
+        .contract_decl = globalDecl(o, value.contract_decl),
         .virtual_type = globalType(o, value.virtual_type),
         .domains = value.domains,
         .methods = relocatePoolRange(global_sg.GlobalFunctionId, o.function_ref_base, value.methods),

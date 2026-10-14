@@ -15,7 +15,7 @@ const primitives = @import("../../primitives/schema.zig");
 pub const Stats = struct {
     generic_types: u32 = 0,
     generic_functions: u32 = 0,
-    abstract_definitions: u32 = 0,
+    contract_definitions: u32 = 0,
 };
 
 pub const ParameterBinding = struct {
@@ -192,10 +192,10 @@ pub const Context = struct {
                     });
                     stats.generic_functions += 1;
                 },
-                .abstract_type => {
-                    const abstract = self.tree.abstractDeclaration(declaration_node) orelse continue;
+                .contract_type => {
+                    const contract = self.tree.contractDeclaration(declaration_node) orelse continue;
                     self.parameters.clearRetainingCapacity();
-                    const params = try self.registerParameters(abstract.generic_params, abstract.generic_params_struct);
+                    const params = try self.registerParameters(contract.generic_params, contract.generic_params_struct);
                     for (self.parameters.items, 0..) |binding, position| {
                         if (std.mem.eql(u8, binding.name, "Self")) try self.contractError(declaration_node, "associated contract members cannot be named Self; use named participants");
                         for (self.parameters.items[0..position]) |previous| {
@@ -203,7 +203,7 @@ pub const Context = struct {
                                 try self.contractError(declaration_node, "duplicate associated contract member name");
                         }
                     }
-                    const participants = if (abstract.participants_struct) |participant_node| blk: {
+                    const participants = if (contract.participants_struct) |participant_node| blk: {
                         const literal = self.tree.structTypeLiteral(participant_node).?;
                         if (literal.fields.len == 0) try self.contractError(declaration_node, "contract requires at least one named participant");
                         for (literal.fields) |field_node| {
@@ -218,22 +218,22 @@ pub const Context = struct {
                                 if (std.mem.eql(u8, previous.name, parameter_binding.name)) try self.contractError(declaration_node, "duplicate participant or associated parameter name");
                             }
                         }
-                        if (abstract.domains.len != 0 and literal.fields.len != 1) try self.contractError(declaration_node, "storage domains currently require a unary contract");
+                        if (contract.domains.len != 0 and literal.fields.len != 1) try self.contractError(declaration_node, "storage domains currently require a unary contract");
                         break :blk range;
                     } else primitives.Range(ir.ComptimeParameterId){ .start = 0, .len = 0 };
                     // Both groups are visible before any bound is lowered.
-                    try self.lowerParameterBounds(params, abstract.generic_params_struct);
-                    try self.lowerParameterBounds(participants, abstract.participants_struct);
-                    const composition_start: u32 = @intCast(self.graph.semantic.parameterized_storage.abstract_constraints.items.len);
-                    for (abstract.requires_abstracts) |composed| _ = try self.lowerAbstractConstraint(composed);
-                    const composition: primitives.Range(parameterized_storage.AbstractConstraintId) = .{
+                    try self.lowerParameterBounds(params, contract.generic_params_struct);
+                    try self.lowerParameterBounds(participants, contract.participants_struct);
+                    const composition_start: u32 = @intCast(self.graph.semantic.parameterized_storage.contract_constraints.items.len);
+                    for (contract.requires_contracts) |composed| _ = try self.lowerContractConstraint(composed);
+                    const composition: primitives.Range(parameterized_storage.ContractConstraintId) = .{
                         .start = composition_start,
-                        .len = @intCast(abstract.requires_abstracts.len),
+                        .len = @intCast(contract.requires_contracts.len),
                     };
-                    const req_start: u32 = @intCast(self.graph.semantic.parameterized_storage.abstract_requirements.items.len);
+                    const req_start: u32 = @intCast(self.graph.semantic.parameterized_storage.contract_requirements.items.len);
                     var domains: std.ArrayList(primitives.StringRange) = .empty;
                     defer domains.deinit(self.allocator);
-                    for (abstract.domains) |domain| {
+                    for (contract.domains) |domain| {
                         const text = self.tree.tokenTextFromSource(self.source, self.tree.mainToken(domain));
                         for (domains.items) |previous| {
                             if (std.mem.eql(u8, self.graph.text(previous), text)) {
@@ -243,10 +243,10 @@ pub const Context = struct {
                         }
                         try domains.append(self.allocator, try self.writer.addString(text));
                     }
-                    for (abstract.requires_functions) |requirement_node| {
-                        const requirement = self.tree.abstractFunctionRequirement(requirement_node) orelse continue;
+                    for (contract.requires_functions) |requirement_node| {
+                        const requirement = self.tree.contractFunctionRequirement(requirement_node) orelse continue;
                         const name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, requirement.name_token));
-                        for (self.graph.semantic.parameterized_storage.abstract_requirements.items[req_start..]) |previous| {
+                        for (self.graph.semantic.parameterized_storage.contract_requirements.items[req_start..]) |previous| {
                             if (std.mem.eql(u8, self.graph.text(previous.name), self.graph.text(name)))
                                 try self.contractError(requirement_node, "duplicate contract operation identity");
                         }
@@ -255,25 +255,25 @@ pub const Context = struct {
                         const input = try self.lowerType(requirement.input, true);
                         const output = try self.lowerType(requirement.output, true);
                         const safety_contract = try self.lowerMethodSafetyContract(requirement, domains.items);
-                        try self.graph.semantic.parameterized_storage.abstract_requirements.append(self.allocator, .{
+                        try self.graph.semantic.parameterized_storage.contract_requirements.append(self.allocator, .{
                             .name = name,
                             .input = input,
                             .output = output,
                             .safety_contract = safety_contract,
                         });
                     }
-                    try self.graph.semantic.parameterized_storage.abstract_definitions.append(self.allocator, .{
+                    try self.graph.semantic.parameterized_storage.contract_definitions.append(self.allocator, .{
                         .declaration = decl_id,
                         .parameters = params,
                         .participants = participants,
                         .composition = composition,
                         .requirements = .{
                             .start = req_start,
-                            .len = @intCast(self.graph.semantic.parameterized_storage.abstract_requirements.items.len - req_start),
+                            .len = @intCast(self.graph.semantic.parameterized_storage.contract_requirements.items.len - req_start),
                         },
                         .domains = try domains.toOwnedSlice(self.allocator),
                     });
-                    stats.abstract_definitions += 1;
+                    stats.contract_definitions += 1;
                 },
                 else => {},
             }
@@ -281,7 +281,7 @@ pub const Context = struct {
         return stats;
     }
 
-    fn lowerMethodSafetyContract(self: *Context, requirement: syn.AbstractFunctionRequirement, domains: []const primitives.StringRange) anyerror!?primitives.MethodSafetyContract {
+    fn lowerMethodSafetyContract(self: *Context, requirement: syn.ContractFunctionRequirement, domains: []const primitives.StringRange) anyerror!?primitives.MethodSafetyContract {
         const node = requirement.safety_contract orelse return null;
         var general_conditions = false;
         var outcomes: std.ArrayList(primitives.MethodSafetyContract.Outcome) = .empty;
@@ -404,7 +404,7 @@ pub const Context = struct {
         return error.Reported;
     }
 
-    fn lowerDependencyClause(self: *Context, requirement: syn.AbstractFunctionRequirement, node: syn.NodeIndex, dependencies: *std.ArrayList(primitives.MethodSafetyContract.Dependency), referents: *std.ArrayList(primitives.MethodSafetyContract.Dependency), invalidates: *std.ArrayList(u32), domains: []const primitives.StringRange, domain_dependencies: *std.ArrayList(primitives.MethodSafetyContract.DomainDependency), invalidated_domains: *std.ArrayList(primitives.MethodSafetyContract.DomainInput), owned_outputs: *std.ArrayList(u32), transfers: *std.ArrayList(primitives.MethodSafetyContract.Dependency), consumed_inputs: *std.ArrayList(u32), relocations: *std.ArrayList(primitives.MethodSafetyContract.Relocation), retained_inputs: *std.ArrayList(primitives.MethodSafetyContract.Retention), emptied_inputs: *std.ArrayList(primitives.MethodSafetyContract.StorageInput), storage_sources: *std.ArrayList(primitives.MethodSafetyContract.StorageDependency)) !void {
+    fn lowerDependencyClause(self: *Context, requirement: syn.ContractFunctionRequirement, node: syn.NodeIndex, dependencies: *std.ArrayList(primitives.MethodSafetyContract.Dependency), referents: *std.ArrayList(primitives.MethodSafetyContract.Dependency), invalidates: *std.ArrayList(u32), domains: []const primitives.StringRange, domain_dependencies: *std.ArrayList(primitives.MethodSafetyContract.DomainDependency), invalidated_domains: *std.ArrayList(primitives.MethodSafetyContract.DomainInput), owned_outputs: *std.ArrayList(u32), transfers: *std.ArrayList(primitives.MethodSafetyContract.Dependency), consumed_inputs: *std.ArrayList(u32), relocations: *std.ArrayList(primitives.MethodSafetyContract.Relocation), retained_inputs: *std.ArrayList(primitives.MethodSafetyContract.Retention), emptied_inputs: *std.ArrayList(primitives.MethodSafetyContract.StorageInput), storage_sources: *std.ArrayList(primitives.MethodSafetyContract.StorageDependency)) !void {
         const call = self.tree.functionCall(node) orelse return self.contractError(node, "expected depends_on, refers_to, owns, transfers, consumes, relocates, invalidates, retains, empties or from_storage in a safety contract");
         const name = self.tree.tokenTextFromSource(self.source, call.callee_token);
         if ((std.mem.eql(u8, name, "retains") or std.mem.eql(u8, name, "empties") or std.mem.eql(u8, name, "from_storage")) and call.module_qualifier == null and call.type_arguments.len == 0 and call.type_arguments_struct == null) {
@@ -564,7 +564,7 @@ pub const Context = struct {
             return self.contractError(output_node, "safety contract arguments must be positional names");
     }
 
-    fn contractStorageInput(self: *Context, requirement: syn.AbstractFunctionRequirement, node: syn.NodeIndex, domains: []const primitives.StringRange) !primitives.MethodSafetyContract.StorageInput {
+    fn contractStorageInput(self: *Context, requirement: syn.ContractFunctionRequirement, node: syn.NodeIndex, domains: []const primitives.StringRange) !primitives.MethodSafetyContract.StorageInput {
         if (try self.contractDomainInput(requirement, node, domains)) |domain| return .{ .input_index = domain.input_index, .domain_index = domain.domain_index };
         const index = (try self.contractFieldIndex(requirement.input, node)) orelse {
             try self.contractError(node, "opaque storage clauses must name a storage input or a Self domain");
@@ -573,7 +573,7 @@ pub const Context = struct {
         return .{ .input_index = index };
     }
 
-    fn contractDomainInput(self: *Context, requirement: syn.AbstractFunctionRequirement, node: syn.NodeIndex, domains: []const primitives.StringRange) !?primitives.MethodSafetyContract.DomainInput {
+    fn contractDomainInput(self: *Context, requirement: syn.ContractFunctionRequirement, node: syn.NodeIndex, domains: []const primitives.StringRange) !?primitives.MethodSafetyContract.DomainInput {
         const field = self.tree.structFieldAccess(node) orelse return null;
         const input = (try self.contractInputIndex(requirement, field.value)) orelse return self.contractDomainError(node, "storage domains must be rooted at a method input");
         const name = self.tree.tokenTextFromSource(self.source, field.field_token);
@@ -588,7 +588,7 @@ pub const Context = struct {
         unreachable;
     }
 
-    fn contractInputIndex(self: *Context, requirement: syn.AbstractFunctionRequirement, node: syn.NodeIndex) !?u32 {
+    fn contractInputIndex(self: *Context, requirement: syn.ContractFunctionRequirement, node: syn.NodeIndex) !?u32 {
         if (try self.contractFieldIndex(requirement.input, node)) |index| return index;
         const name = self.tree.tokenTextFromSource(self.source, self.tree.mainToken(node));
         if (!std.mem.eql(u8, name, "error_tracer")) return null;
@@ -665,7 +665,7 @@ pub const Context = struct {
                 .comptime_int => parameter_record.value_type = try self.lowerType(value_type_node, false),
                 .type => {
                     if (!isTypeBuiltin(self.tree, self.source, value_type_node))
-                        parameter_record.constraint = try self.lowerAbstractConstraint(value_type_node);
+                        parameter_record.constraint = try self.lowerContractConstraint(value_type_node);
                 },
             }
         }
@@ -706,8 +706,8 @@ pub const Context = struct {
         return .{ .start = start, .len = @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len - start) };
     }
 
-    pub fn lowerAbstractConstraint(self: *Context, node: syn.NodeIndex) !parameterized_storage.AbstractConstraintId {
-        const syntax_type = self.tree.syntaxType(node) orelse return error.ExpectedAbstractType;
+    pub fn lowerContractConstraint(self: *Context, node: syn.NodeIndex) !parameterized_storage.ContractConstraintId {
+        const syntax_type = self.tree.syntaxType(node) orelse return error.ExpectedContractType;
         var base_node = node;
         var arguments_node: ?syn.NodeIndex = null;
         switch (syntax_type) {
@@ -716,19 +716,19 @@ pub const Context = struct {
                 base_node = generic.base;
                 arguments_node = generic.arguments;
             },
-            else => return error.ExpectedAbstractType,
+            else => return error.ExpectedContractType,
         }
 
-        const base = self.tree.syntaxType(base_node) orelse return error.ExpectedAbstractType;
-        if (base != .name) return error.ExpectedAbstractType;
+        const base = self.tree.syntaxType(base_node) orelse return error.ExpectedContractType;
+        if (base != .name) return error.ExpectedContractType;
         const name = self.tree.tokenTextFromSource(self.source, base.name.name_token);
         const local_declaration =
-            if (base.name.qualifier_token == null) self.localAbstractType(name) else null;
-        const abstract_ref: ir.DeclarationRef = if (local_declaration) |declaration|
+            if (base.name.qualifier_token == null) self.localContractType(name) else null;
+        const contract_ref: ir.DeclarationRef = if (local_declaration) |declaration|
             .{ .module = declaration }
         else
             .{ .external = try self.writer.addExternalRef(.{
-                .kind = .abstract,
+                .kind = .contract,
                 .module_path = if (base.name.qualifier_token) |qualifier|
                     try self.writer.addString(self.tree.tokenTextFromSource(self.source, qualifier))
                 else
@@ -740,15 +740,15 @@ pub const Context = struct {
         var arguments: std.ArrayList(ir.GenericArgument) = .empty;
         defer arguments.deinit(self.allocator);
         if (arguments_node) |args_node| {
-            const literal = self.tree.structTypeLiteral(args_node) orelse return error.InvalidAbstractArguments;
+            const literal = self.tree.structTypeLiteral(args_node) orelse return error.InvalidContractArguments;
             for (literal.fields) |field_node| {
-                const field = self.tree.structTypeField(field_node) orelse return error.InvalidAbstractArgument;
+                const field = self.tree.structTypeField(field_node) orelse return error.InvalidContractArgument;
                 const value: ir.GenericArgument.Value = if (field.type_node) |type_node|
                     .{ .type = try self.lowerType(type_node, false) }
                 else if (field.default_value) |value_node|
                     try self.lowerGenericValue(value_node, false)
                 else
-                    return error.InvalidAbstractArgument;
+                    return error.InvalidContractArgument;
                 try arguments.append(self.allocator, .{
                     .name = try self.writer.addString(type_arguments.name(self.tree, self.source, field, "")),
                     .value = value,
@@ -758,10 +758,10 @@ pub const Context = struct {
 
         const argument_start: u32 = @intCast(self.graph.semantic.parameterized_storage.ir.generic_arguments.items.len);
         try self.graph.semantic.parameterized_storage.ir.generic_arguments.appendSlice(self.allocator, arguments.items);
-        const id: parameterized_storage.AbstractConstraintId =
-            @enumFromInt(@as(u32, @intCast(self.graph.semantic.parameterized_storage.abstract_constraints.items.len)));
-        try self.graph.semantic.parameterized_storage.abstract_constraints.append(self.allocator, .{
-            .abstract_ref = abstract_ref,
+        const id: parameterized_storage.ContractConstraintId =
+            @enumFromInt(@as(u32, @intCast(self.graph.semantic.parameterized_storage.contract_constraints.items.len)));
+        try self.graph.semantic.parameterized_storage.contract_constraints.append(self.allocator, .{
+            .contract_ref = contract_ref,
             .arguments = .{ .start = argument_start, .len = @intCast(arguments.items.len) },
             .source = self.sourceRef(node),
         });
@@ -1841,15 +1841,15 @@ pub const Context = struct {
 
     fn localType(self: *Context, name: []const u8) ?entities.ModuleDeclId {
         for (self.graph.declarationsNamed(name)) |id| switch (self.graph.declarations.items[@intFromEnum(id)].kind) {
-            .type, .abstract_type => return id,
+            .type, .contract_type => return id,
             else => {},
         };
         return null;
     }
 
-    fn localAbstractType(self: *Context, name: []const u8) ?entities.ModuleDeclId {
+    fn localContractType(self: *Context, name: []const u8) ?entities.ModuleDeclId {
         for (self.graph.declarationsNamed(name)) |id|
-            if (self.graph.declarations.items[@intFromEnum(id)].kind == .abstract_type) return id;
+            if (self.graph.declarations.items[@intFromEnum(id)].kind == .contract_type) return id;
         return null;
     }
 

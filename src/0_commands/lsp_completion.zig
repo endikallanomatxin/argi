@@ -211,10 +211,10 @@ fn scope_close(file: *const File, open: usize) usize {
 
 fn add_declarations(builder: *Builder, file: *const File, private: bool) !void {
     for (file.tree.roots) |node| {
-        const name_token: st.TokenIndex = if (file.tree.functionDeclaration(node)) |function| function.name_token else if (file.tree.typeDeclaration(node)) |ty| ty.name_token else if (file.tree.abstractDeclaration(node)) |abstract| abstract.name_token else if (file.tree.cEnumDeclaration(node)) |ty| ty.name_token else if (file.tree.cUnionDeclaration(node)) |ty| ty.name_token else if (file.tree.symbolDeclaration(node)) |binding| binding.name_token else continue;
+        const name_token: st.TokenIndex = if (file.tree.functionDeclaration(node)) |function| function.name_token else if (file.tree.typeDeclaration(node)) |ty| ty.name_token else if (file.tree.contractDeclaration(node)) |contract| contract.name_token else if (file.tree.cEnumDeclaration(node)) |ty| ty.name_token else if (file.tree.cUnionDeclaration(node)) |ty| ty.name_token else if (file.tree.symbolDeclaration(node)) |binding| binding.name_token else continue;
         const name = file.tree.tokenTextFromSource(file.source.code, name_token);
         if (!private and std.mem.startsWith(u8, name, "_")) continue;
-        const kind: Kind = if (file.tree.functionDeclaration(node) != null) .function else if (file.tree.typeDeclaration(node) != null or file.tree.abstractDeclaration(node) != null or
+        const kind: Kind = if (file.tree.functionDeclaration(node) != null) .function else if (file.tree.typeDeclaration(node) != null or file.tree.contractDeclaration(node) != null or
             file.tree.cEnumDeclaration(node) != null or file.tree.cUnionDeclaration(node) != null) .type_ else blk: {
             const binding = file.tree.symbolDeclaration(node) orelse break :blk .variable;
             const value = binding.value orelse break :blk .variable;

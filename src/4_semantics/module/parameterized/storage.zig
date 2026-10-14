@@ -4,11 +4,11 @@ const ir = @import("ir.zig");
 const primitives = @import("../../primitives/schema.zig");
 
 pub const ComptimeParameterId = ir.ComptimeParameterId;
-pub const AbstractConstraintId = enum(u32) { _ };
+pub const ContractConstraintId = enum(u32) { _ };
 pub const ParameterizedFunctionDefinitionId = enum(u32) { _ };
 pub const ParameterizedTypeDefinitionId = enum(u32) { _ };
-pub const AbstractRequirementId = enum(u32) { _ };
-pub const AbstractDefinitionId = enum(u32) { _ };
+pub const ContractRequirementId = enum(u32) { _ };
+pub const ContractDefinitionId = enum(u32) { _ };
 
 pub const DeclarationRef = ir.DeclarationRef;
 
@@ -18,11 +18,11 @@ pub const ComptimeParameter = struct {
     name: primitives.StringRange,
     kind: ComptimeParameterKind,
     value_type: ?ir.ParameterizedTypeId = null,
-    constraint: ?AbstractConstraintId = null,
+    constraint: ?ContractConstraintId = null,
 };
 
-pub const AbstractConstraint = struct {
-    abstract_ref: DeclarationRef,
+pub const ContractConstraint = struct {
+    contract_ref: DeclarationRef,
     arguments: primitives.Range(ir.ParameterizedGenericArgId) = .{ .start = 0, .len = 0 },
     source: primitives.SourceRef,
 };
@@ -46,7 +46,7 @@ pub const ParameterizedType = struct {
     body: ir.ParameterizedTypeId,
 };
 
-pub const AbstractRequirement = struct {
+pub const ContractRequirement = struct {
     name: primitives.StringRange,
     input: ir.ParameterizedTypeId,
     output: ir.ParameterizedTypeId,
@@ -54,17 +54,17 @@ pub const AbstractRequirement = struct {
     safety_contract: ?primitives.MethodSafetyContract = null,
 };
 
-pub const AbstractDefinition = struct {
+pub const ContractDefinition = struct {
     participants: primitives.Range(ComptimeParameterId) = .{ .start = 0, .len = 0 },
     // Dependencies retain their own operation namespaces and are proved against
     // the selected participant/associated bindings.
-    composition: primitives.Range(AbstractConstraintId) = .{ .start = 0, .len = 0 },
+    composition: primitives.Range(ContractConstraintId) = .{ .start = 0, .len = 0 },
     declaration: entities.ModuleDeclId,
     parameters: primitives.Range(ComptimeParameterId),
-    requirements: primitives.Range(AbstractRequirementId),
+    requirements: primitives.Range(ContractRequirementId),
     domains: []const primitives.StringRange = &.{},
 
-    pub fn hasExplicitParticipants(self: AbstractDefinition) bool {
+    pub fn hasExplicitParticipants(self: ContractDefinition) bool {
         return self.participants.len != 0;
     }
 };
@@ -96,11 +96,11 @@ pub const ContractConformance = struct {
 pub const Storage = struct {
     ir: ir.Storage = .{},
     comptime_parameters: std.ArrayList(ComptimeParameter) = .empty,
-    abstract_constraints: std.ArrayList(AbstractConstraint) = .empty,
+    contract_constraints: std.ArrayList(ContractConstraint) = .empty,
     parameterized_functions: std.ArrayList(ParameterizedFunction) = .empty,
     parameterized_types: std.ArrayList(ParameterizedType) = .empty,
-    abstract_requirements: std.ArrayList(AbstractRequirement) = .empty,
-    abstract_definitions: std.ArrayList(AbstractDefinition) = .empty,
+    contract_requirements: std.ArrayList(ContractRequirement) = .empty,
+    contract_definitions: std.ArrayList(ContractDefinition) = .empty,
     // Names share the argument index; empty names denote positional arguments.
     contract_conformances: std.ArrayList(ContractConformance) = .empty,
     contract_operations: std.ArrayList(ContractOperation) = .empty,
@@ -108,11 +108,11 @@ pub const Storage = struct {
     pub fn deinit(self: *Storage, allocator: std.mem.Allocator) void {
         self.ir.deinit(allocator);
         self.comptime_parameters.deinit(allocator);
-        self.abstract_constraints.deinit(allocator);
+        self.contract_constraints.deinit(allocator);
         self.parameterized_functions.deinit(allocator);
         self.parameterized_types.deinit(allocator);
-        self.abstract_requirements.deinit(allocator);
-        self.abstract_definitions.deinit(allocator);
+        self.contract_requirements.deinit(allocator);
+        self.contract_definitions.deinit(allocator);
         self.contract_conformances.deinit(allocator);
         self.contract_operations.deinit(allocator);
         self.* = .{};
@@ -121,11 +121,11 @@ pub const Storage = struct {
     pub fn storageBytes(self: *const Storage) usize {
         return self.ir.storageBytes() +
             self.comptime_parameters.items.len * @sizeOf(ComptimeParameter) +
-            self.abstract_constraints.items.len * @sizeOf(AbstractConstraint) +
+            self.contract_constraints.items.len * @sizeOf(ContractConstraint) +
             self.parameterized_functions.items.len * @sizeOf(ParameterizedFunction) +
             self.parameterized_types.items.len * @sizeOf(ParameterizedType) +
-            self.abstract_requirements.items.len * @sizeOf(AbstractRequirement) +
-            self.abstract_definitions.items.len * @sizeOf(AbstractDefinition) +
+            self.contract_requirements.items.len * @sizeOf(ContractRequirement) +
+            self.contract_definitions.items.len * @sizeOf(ContractDefinition) +
             self.contract_conformances.items.len * @sizeOf(ContractConformance) +
             self.contract_operations.items.len * @sizeOf(ContractOperation);
     }

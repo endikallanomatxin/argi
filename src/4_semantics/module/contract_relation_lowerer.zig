@@ -87,7 +87,7 @@ const Context = struct {
         const base = self.tree.syntaxType(base_node) orelse return error.ExpectedContractType;
         if (base != .name) try self.conformanceError(node, "implement requires a named contract");
         const name = self.tree.tokenTextFromSource(self.source, base.name.name_token);
-        const reference = try self.declarationRef(base_node, name, .abstract);
+        const reference = try self.declarationRef(base_node, name, .contract);
         const participants = try self.lowerConformanceArguments(if (syntax_type == .generic) syntax_type.generic.arguments else null);
         var operations: primitives.Range(parameterized_storage.ContractOperationId) = .{ .start = 0, .len = 0 };
         const associated = blk: {
@@ -294,7 +294,7 @@ const Context = struct {
                     .comptime_int => parameter_record.value_type = try lowerer.lowerType(value_type_node, false),
                     .type => {
                         if (!isTypeName(self.tree, self.source, value_type_node, "Type"))
-                            parameter_record.constraint = try lowerer.lowerAbstractConstraint(value_type_node);
+                            parameter_record.constraint = try lowerer.lowerContractConstraint(value_type_node);
                     },
                 }
             }
@@ -350,7 +350,7 @@ const Context = struct {
         const qualifier = if (syntax_type) |ty| (if (ty == .name) ty.name.qualifier_token else null) else null;
         if (qualifier == null) for (self.graph.declarationsNamed(name)) |decl| {
             const candidate = self.graph.declarations.items[@intFromEnum(decl)];
-            if ((kind == .abstract and candidate.kind == .abstract_type) or (kind == .type and candidate.kind == .type))
+            if ((kind == .contract and candidate.kind == .contract_type) or (kind == .type and candidate.kind == .type))
                 return .{ .module = decl };
         };
         const external = try self.writer.addExternalRef(.{

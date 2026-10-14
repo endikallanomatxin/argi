@@ -6,7 +6,7 @@ const module_alias_lowerer = @import("module_alias_lowerer.zig");
 const global_roots_lowerer = @import("global_roots_lowerer.zig");
 const parameterized_lowerer = @import("parameterized/lowerer.zig");
 const function_identity_lowerer = @import("function_identity_lowerer.zig");
-const abstract_relation_lowerer = @import("abstract_relation_lowerer.zig");
+const contract_relation_lowerer = @import("contract_relation_lowerer.zig");
 const generic_call_args_lowerer = @import("generic_call_args_lowerer.zig");
 const canonicalize_storage = @import("canonicalize_storage.zig");
 const complete_verify = @import("complete_verify.zig");
@@ -23,8 +23,8 @@ pub const BuildStats = struct {
     field_defaults: u32 = 0,
     generic_types: u32 = 0,
     generic_functions: u32 = 0,
-    abstract_definitions: u32 = 0,
-    abstract_relations: u32 = 0,
+    contract_definitions: u32 = 0,
+    contract_relations: u32 = 0,
     generic_calls: u32 = 0,
     local_semantics_complete: bool = false,
 };
@@ -74,7 +74,7 @@ pub fn finish(
     // each contract body is materialized only after specialization.
     const bodies = try body_lowerer.lowerMissingFunctions(allocator, graph, files, diagnostics);
     try function_identity_lowerer.lower(graph, files, diagnostics);
-    const relation_stats = try abstract_relation_lowerer.lowerDiagnosed(allocator, graph, files, diagnostics);
+    const relation_stats = try contract_relation_lowerer.lowerDiagnosed(allocator, graph, files, diagnostics);
     const generic_calls = try generic_call_args_lowerer.lower(allocator, graph, files);
 
     graph.semantic.local_semantics_complete = true;
@@ -88,8 +88,8 @@ pub fn finish(
         .field_defaults = initializers.field_defaults,
         .generic_types = parameterized_stats.generic_types,
         .generic_functions = parameterized_stats.generic_functions,
-        .abstract_definitions = parameterized_stats.abstract_definitions,
-        .abstract_relations = relation_stats.implementations,
+        .contract_definitions = parameterized_stats.contract_definitions,
+        .contract_relations = relation_stats.implementations,
         .generic_calls = generic_calls.generic_calls,
         .local_semantics_complete = true,
     };

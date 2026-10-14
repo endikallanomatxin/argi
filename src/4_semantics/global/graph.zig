@@ -85,7 +85,7 @@ pub const VirtualCall = primitives.VirtualCall(Ids);
 /// Static abstract selection checks the declaration without creating runtime
 /// erasure. This metadata is recorded transactionally with selected functions
 /// and consumed after their safety summaries converge.
-pub const AbstractSafetyConformance = struct {
+pub const ContractSafetyConformance = struct {
     method: GlobalFunctionId,
     contract: primitives.MethodSafetyContract,
     receiver_input_index: ?u32,
@@ -252,7 +252,7 @@ pub const GlobalSemanticGraph = struct {
     auto_deinits: std.ArrayList(AutoDeinit) = .empty,
     virtual_registries: std.ArrayList(VirtualMethodRegistry) = .empty,
     virtualizes: std.ArrayList(Virtualize) = .empty,
-    abstract_safety_conformances: std.ArrayList(AbstractSafetyConformance) = .empty,
+    contract_safety_conformances: std.ArrayList(ContractSafetyConformance) = .empty,
     contract_conformances: std.ArrayList(ContractConformance) = .empty,
     contract_operation_bindings: std.ArrayList(ContractOperationBinding) = .empty,
     virtual_calls: std.ArrayList(VirtualCall) = .empty,
@@ -337,7 +337,7 @@ pub const GlobalSemanticGraph = struct {
             &self.reach_segments,              &self.reach_alternatives,         &self.reaches,                      &self.nullable_unwraps,
             &self.testing_expect_errors,       &self.error_propagations,         &self.error_contexts,               &self.node_refs,
             &self.type_refs,                   &self.binding_refs,               &self.function_refs,                &self.virtual_registry_refs,
-            &self.strings,                     &self.roots,                      &self.abstract_safety_conformances, &self.contract_conformances,
+            &self.strings,                     &self.roots,                      &self.contract_safety_conformances, &self.contract_conformances,
             &self.contract_operation_bindings,
         }) |list| list.deinit(allocator);
         self.* = .{};
@@ -634,7 +634,7 @@ pub const GlobalSemanticGraph = struct {
             self.auto_deinits.items.len * @sizeOf(AutoDeinit) +
             self.virtual_registries.items.len * @sizeOf(VirtualMethodRegistry) +
             self.virtualizes.items.len * @sizeOf(Virtualize) +
-            self.abstract_safety_conformances.items.len * @sizeOf(AbstractSafetyConformance) +
+            self.contract_safety_conformances.items.len * @sizeOf(ContractSafetyConformance) +
             self.contract_conformances.items.len * @sizeOf(ContractConformance) +
             self.contract_operation_bindings.items.len * @sizeOf(ContractOperationBinding) +
             self.virtual_calls.items.len * @sizeOf(VirtualCall) +

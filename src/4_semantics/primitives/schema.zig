@@ -132,7 +132,7 @@ pub const ComparisonOperator = enum(u8) { equal, not_equal, less_than, greater_t
 pub const DeclarationKind = enum {
     binding,
     import_alias,
-    abstract_type,
+    contract_type,
     type,
     choice_option,
     function,
@@ -451,7 +451,7 @@ pub fn Virtualize(comptime Ids: type) type {
     return struct {
         value: Ids.NodeId,
         concrete_type: Ids.TypeId,
-        abstract_decl: Ids.DeclId,
+        contract_decl: Ids.DeclId,
         virtual_type: Ids.TypeId,
         methods: Range(Ids.FunctionId),
         safety_methods: Range(Ids.VirtualRegistryId),

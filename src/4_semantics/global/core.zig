@@ -153,7 +153,7 @@ pub const Resolver = struct {
                 // Generic external references need parameterized substitution and are
                 // intentionally claimed by the generic resolver instead.
                 if (reference.generic_arguments != null) continue;
-                const target = self.resolveDeclaration(module_index, reference, &.{ .type, .abstract_type }) catch continue;
+                const target = self.resolveDeclaration(module_index, reference, &.{ .type, .contract_type }) catch continue;
                 const target_type = self.graph.declarations.items[@intFromEnum(target)].type_id orelse continue;
                 try self.graph.resolveType(globalizer.globalType(o, local_id), .{ .declared = target });
                 _ = target_type;
@@ -582,7 +582,7 @@ pub const Resolver = struct {
     fn resolveTypeHole(self: *Resolver, module_index: usize, module: *const module_sg.ModuleSemanticGraph, o: globalizer.Offsets, value: anytype) !resolution.Result {
         const reference = module.semantic.external_refs.items[@intFromEnum(value.external)];
         if (reference.generic_arguments != null or (reference.projection_base != null or reference.computed_type != null)) return .not_applicable;
-        const target = self.resolveDeclaration(module_index, reference, &.{ .type, .abstract_type }) catch return .deferred;
+        const target = self.resolveDeclaration(module_index, reference, &.{ .type, .contract_type }) catch return .deferred;
         try self.graph.resolveType(globalizer.globalType(o, value.destination), .{ .declared = target });
         self.stats.external_types += 1;
         return .resolved;
@@ -1375,7 +1375,7 @@ pub const Resolver = struct {
         // mutable pointer slots covariant (`&&Int32` -> `&&Any`).
         if (types.isBuiltin(self.graph, expected_pointer.child, .Any)) return true;
         return switch (self.graph.types.items[@intFromEnum(actual_pointer.child)]) {
-            .virtual => |abstract_type| types.equal(self.graph, abstract_type, expected_pointer.child),
+            .virtual => |contract_type| types.equal(self.graph, contract_type, expected_pointer.child),
             else => false,
         };
     }

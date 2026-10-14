@@ -260,20 +260,20 @@ pub const SafetyChecker = struct {
         // Conformance uses converged concrete summaries. Static selections and
         // virtual table slots share the same proof obligations; neither can
         // weaken a declaration by choosing a different dispatch mechanism.
-        for (self.graph.abstract_safety_conformances.items) |conformance| {
-            try self.validateAbstractSafetyContract(inference, conformance.contract, conformance.method, conformance.receiver_input_index, conformance.domains, conformance.source);
+        for (self.graph.contract_safety_conformances.items) |conformance| {
+            try self.validateContractSafetyContract(inference, conformance.contract, conformance.method, conformance.receiver_input_index, conformance.domains, conformance.source);
         }
         for (self.graph.virtualizes.items) |virtualize| {
             for (self.graph.virtual_registry_refs.items[virtualize.safety_methods.start..][0..virtualize.safety_methods.len], 0..) |registry_id, index| {
                 const registry = self.graph.virtual_registries.items[@intFromEnum(registry_id)];
                 const declared = registry.safety_contract orelse continue;
                 const method = self.graph.function_refs.items[virtualize.methods.start + index];
-                try self.validateAbstractSafetyContract(inference, declared, method, registry.receiver_input_index, virtualize.domains, virtualize.source);
+                try self.validateContractSafetyContract(inference, declared, method, registry.receiver_input_index, virtualize.domains, virtualize.source);
             }
         }
     }
 
-    fn validateAbstractSafetyContract(self: *SafetyChecker, inference: *summary_infer.Infer, declared: primitives.MethodSafetyContract, method: graph_mod.GlobalFunctionId, receiver: ?u32, domains: []const primitives.StorageDomainMapping, source: primitives.SourceRef) !void {
+    fn validateContractSafetyContract(self: *SafetyChecker, inference: *summary_infer.Infer, declared: primitives.MethodSafetyContract, method: graph_mod.GlobalFunctionId, receiver: ?u32, domains: []const primitives.StorageDomainMapping, source: primitives.SourceRef) !void {
         const contracts = @import("contracts.zig");
         var contract = try contracts.fromDeclaration(self.allocator, declared);
         if (!try self.resolveContractOpaqueStorage(&contract, domains, method, source)) return;

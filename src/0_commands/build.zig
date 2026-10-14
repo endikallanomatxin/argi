@@ -208,8 +208,8 @@ fn printStats(
         semantic.cached_implementation_hits, semantic.cached_nonimplementation_hits,
     });
     std.debug.print("  abstract implementation scans: {d:.3} ms, {d} over {d} candidates\n", .{
-        milliseconds(semantic.abstracts.implementation_scan_ns), semantic.abstracts.implementation_scans,
-        semantic.abstracts.implementation_candidates,
+        milliseconds(semantic.contracts.implementation_scan_ns), semantic.contracts.implementation_scans,
+        semantic.contracts.implementation_candidates,
     });
     std.debug.print("  type interning: {d:.3} ms, {d} calls, {d} candidates\n", .{
         milliseconds(semantic.generics.type_intern_ns), semantic.generics.type_intern_calls,

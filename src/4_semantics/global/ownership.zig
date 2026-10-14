@@ -200,7 +200,7 @@ pub const Resolver = struct {
             self.graph.nodes.items[@intFromEnum(target)] = self.graph.nodes.items[@intFromEnum(source)];
             return true;
         }
-        if (self.implementsNamedAbstract(ty, "ImplicitlyCopyable")) {
+        if (self.implementsNamedContract(ty, "ImplicitlyCopyable")) {
             const original = self.graph.nodes.items[@intFromEnum(source)];
             self.graph.nodes.items[@intFromEnum(target)] = original;
             self.stats.copies += 1;
@@ -246,26 +246,26 @@ pub const Resolver = struct {
     /// operation. Match value payloads use this permission even though they do
     /// not pass through a lowered `resolve_copy` node.
     pub fn canImplicitlyCopy(self: *Resolver, ty: global_sg.GlobalTypeId) bool {
-        if (self.implementsNamedAbstract(ty, "ImplicitlyCopyable")) return true;
+        if (self.implementsNamedContract(ty, "ImplicitlyCopyable")) return true;
         if (self.hasExplicitCopyCapability(ty)) return false;
         return self.triviallyCopyable(ty);
     }
 
     fn hasExplicitCopyCapability(self: *Resolver, ty: global_sg.GlobalTypeId) bool {
-        if (self.implementsNamedAbstract(ty, "InfalliblyCopyable")) return true;
+        if (self.implementsNamedContract(ty, "InfalliblyCopyable")) return true;
         const dispatch = self.dispatch orelse return false;
-        return dispatch.abstracts.mayImplementFirstParticipant("FalliblyCopyable", ty) catch true;
+        return dispatch.contracts.mayImplementFirstParticipant("FalliblyCopyable", ty) catch true;
     }
 
-    fn implementsNamedAbstract(self: *Resolver, concrete: global_sg.GlobalTypeId, name: []const u8) bool {
+    fn implementsNamedContract(self: *Resolver, concrete: global_sg.GlobalTypeId, name: []const u8) bool {
         const dispatch = self.dispatch orelse return false;
         for (self.graph.declarations.items, 0..) |declaration, raw| {
-            if (declaration.kind != .abstract_type or !std.mem.eql(u8, self.graph.text(declaration.name), name)) continue;
-            const abstract_decl: global_sg.GlobalDeclId = @enumFromInt(@as(u32, @intCast(raw)));
+            if (declaration.kind != .contract_type or !std.mem.eql(u8, self.graph.text(declaration.name), name)) continue;
+            const contract_decl: global_sg.GlobalDeclId = @enumFromInt(@as(u32, @intCast(raw)));
             for (self.graph.types.items, 0..) |candidate, type_raw| {
-                if (candidate != .declared or candidate.declared != abstract_decl) continue;
-                const abstract_type: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(type_raw)));
-                if (dispatch.abstracts.concreteImplements(concrete, abstract_type)) return true;
+                if (candidate != .declared or candidate.declared != contract_decl) continue;
+                const contract_type: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(type_raw)));
+                if (dispatch.contracts.concreteImplements(concrete, contract_type)) return true;
             }
         }
         return false;
@@ -725,10 +725,10 @@ pub const Resolver = struct {
         const address = try self.appendNode(source, pointer_ty, .{ .address_of = target });
 
         if (standard_contracts.standardDeclaration(self.graph, "Deinit")) |declaration| {
-            if (try dispatch.abstracts.implements(target_ty, declaration)) {
+            if (try dispatch.contracts.implements(target_ty, declaration)) {
                 const input = try self.singleNamedInput("self", address, source);
                 var participants = [_]global_sg.GlobalTypeId{target_ty};
-                const node = try dispatch.abstracts.callOperationCandidate(module_index, .{
+                const node = try dispatch.contracts.callOperationCandidate(module_index, .{
                     .declaration = declaration,
                     .participants = &participants,
                 }, "deinit", input, context, source) orelse return error.DeferredImplicitFunction;

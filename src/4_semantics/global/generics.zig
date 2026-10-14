@@ -64,7 +64,7 @@ pub const Resolver = struct {
                 const reference = module.semantic.external_refs.items[@intFromEnum(external)];
                 const args = reference.generic_arguments orelse continue;
                 if (reference.kind != .type) continue;
-                const base = self.core.resolveDeclaration(module_index, reference, &.{ .type, .abstract_type }) catch continue;
+                const base = self.core.resolveDeclaration(module_index, reference, &.{ .type, .contract_type }) catch continue;
                 const global_args = try self.relocateModuleArguments(module_index, args);
                 const destination = globalizer.globalType(o, local_id);
                 try self.graph.resolveType(destination, .{ .generic = .{ .base = base, .arguments = global_args } });
@@ -131,7 +131,7 @@ pub const Resolver = struct {
             return .resolved;
         }
         const args = reference.generic_arguments orelse return .not_applicable;
-        const base = self.core.resolveDeclaration(module_index, reference, &.{ .type, .abstract_type }) catch return .deferred;
+        const base = self.core.resolveDeclaration(module_index, reference, &.{ .type, .contract_type }) catch return .deferred;
         const global_args = try self.relocateModuleArguments(module_index, args);
         const destination = globalizer.globalType(o, value.destination);
         try self.graph.resolveType(destination, .{ .generic = .{ .base = base, .arguments = global_args } });
@@ -449,7 +449,7 @@ pub const Resolver = struct {
         _ = bindings;
         const module = &self.modules[module_index];
         const reference = module.semantic.external_refs.items[@intFromEnum(external)];
-        const decl = try self.core.resolveDeclaration(module_index, reference, &.{ .type, .abstract_type });
+        const decl = try self.core.resolveDeclaration(module_index, reference, &.{ .type, .contract_type });
         if (reference.generic_arguments) |args| {
             const global_args = try self.relocateModuleArguments(module_index, args);
             const id = try self.internType(.{ .generic = .{ .base = decl, .arguments = global_args } });
@@ -503,7 +503,7 @@ pub const Resolver = struct {
                 _ = try self.ensureGenericInstance(id);
                 break :blk id;
             },
-            .virtual => |abstract_type| self.internType(.{ .virtual = try self.instantiateParameterizedType(module_index, abstract_type, bindings) }),
+            .virtual => |contract_type| self.internType(.{ .virtual = try self.instantiateParameterizedType(module_index, contract_type, bindings) }),
         };
     }
 
@@ -514,7 +514,7 @@ pub const Resolver = struct {
             .external => |external| self.core.resolveDeclaration(
                 module_index,
                 self.modules[module_index].semantic.external_refs.items[@intFromEnum(external)],
-                &.{ .type, .abstract_type, .function },
+                &.{ .type, .contract_type, .function },
             ),
         };
     }

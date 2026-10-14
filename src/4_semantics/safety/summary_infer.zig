@@ -136,7 +136,7 @@ pub const Infer = struct {
         // Concrete summaries need enough selectors to prove their declarations.
         // These hints select precision only; they never infer virtual effects
         // from concrete implementations or depend on their final summaries.
-        for (self.graph.abstract_safety_conformances.items) |proof| try self.requestContractSelectors(proof.method, proof.contract);
+        for (self.graph.contract_safety_conformances.items) |proof| try self.requestContractSelectors(proof.method, proof.contract);
         for (self.graph.virtualizes.items) |virtualize| {
             for (self.graph.virtual_registry_refs.items[virtualize.safety_methods.start..][0..virtualize.safety_methods.len], 0..) |registry_id, index| {
                 const declared = self.graph.virtual_registries.items[@intFromEnum(registry_id)].safety_contract orelse continue;

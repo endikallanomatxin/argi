@@ -461,7 +461,7 @@ fn markOperatorChain(tree: *const syn.FileSyntaxTree, node: syn.NodeIndex, root:
 
 fn isGlobalDeclaration(tag: syn.Node.Tag) bool {
     return switch (tag) {
-        .function_declaration, .function_declaration_once, .test_declaration, .c_function_pointer_declaration, .type_declaration, .abstract_declaration, .contract_conformance, .c_enum_declaration, .c_union_declaration, .c_struct_declaration, .c_incomplete_declaration => true,
+        .function_declaration, .function_declaration_once, .test_declaration, .c_function_pointer_declaration, .type_declaration, .contract_declaration, .contract_conformance, .c_enum_declaration, .c_union_declaration, .c_struct_declaration, .c_incomplete_declaration => true,
         else => false,
     };
 }

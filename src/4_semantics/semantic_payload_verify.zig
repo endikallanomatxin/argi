@@ -63,7 +63,7 @@ pub fn semanticType(comptime Ids: type, value: primitives.SemanticType(Ids), bou
             try require(verify.idFits(item.base, bounds.declarations));
             try require(verify.rangeFits(item.arguments, bounds.generic_arguments));
         },
-        .virtual => |abstract_type| try require(verify.idFits(abstract_type, bounds.types)),
+        .virtual => |contract_type| try require(verify.idFits(contract_type, bounds.types)),
     }
 }
 
@@ -153,7 +153,7 @@ pub fn virtualRegistry(comptime Ids: type, value: primitives.VirtualMethodRegist
 pub fn virtualize(comptime Ids: type, value: primitives.Virtualize(Ids), bounds: Bounds) !void {
     try require(verify.idFits(value.value, bounds.nodes));
     try require(verify.idFits(value.concrete_type, bounds.types));
-    try require(verify.idFits(value.abstract_decl, bounds.declarations));
+    try require(verify.idFits(value.contract_decl, bounds.declarations));
     try require(verify.idFits(value.virtual_type, bounds.types));
     try require(verify.rangeFits(value.methods, bounds.function_refs));
     try require(verify.rangeFits(value.safety_methods, bounds.virtual_registry_refs));

@@ -1011,3 +1011,12 @@ also passed 372 internal tests and skipped one. The frontend benchmark compiled 
 scenarios without linked normalization. Two complete documentation examples
 compiled and ran successfully. Update the public polymorphism, virtual, generic,
 reach, iteration and module pages to describe the accepted model.
+
+### Contract resolver and metadata names
+
+Rename the resolver and relation lowerer to contracts.zig and
+contract_relation_lowerer.zig. Contract definitions, requirements, constraints,
+references and declaration kinds use consistent names throughout module/global
+semantics, safety, codegen and internal tests. This changes no selection or
+runtime representation rule. Bump snapshot format to 62 for renamed metadata.
+The complete internal suite passed 372 tests and skipped one after the rename.

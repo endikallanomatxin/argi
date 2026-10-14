@@ -625,10 +625,10 @@ test "explicit imported contract bounds become constrained templates" {
     try std.testing.expectEqual(@as(u32, 2), templates[0].parameters.len);
     const parameter = module.graph.semantic.parameterized_storage.comptime_parameters.items[templates[0].parameters.start + 1];
     try std.testing.expect(parameter.constraint != null);
-    const constraint = module.graph.semantic.parameterized_storage.abstract_constraints.items[@intFromEnum(parameter.constraint.?)];
-    try std.testing.expect(constraint.abstract_ref == .external);
-    const reference = module.graph.semantic.external_refs.items[@intFromEnum(constraint.abstract_ref.external)];
-    try std.testing.expectEqual(@import("entities.zig").ExternalKind.abstract, reference.kind);
+    const constraint = module.graph.semantic.parameterized_storage.contract_constraints.items[@intFromEnum(parameter.constraint.?)];
+    try std.testing.expect(constraint.contract_ref == .external);
+    const reference = module.graph.semantic.external_refs.items[@intFromEnum(constraint.contract_ref.external)];
+    try std.testing.expectEqual(@import("entities.zig").ExternalKind.contract, reference.kind);
     try std.testing.expectEqualStrings("Writer", module.graph.text(reference.name));
 }
 
@@ -849,14 +849,14 @@ test "unary and tuple contracts retain explicit symbolic participants" {
     defer graph.deinit(allocator);
     _ = try parameterized_lowerer.lower(allocator, &graph, &inputs);
     const storage = &graph.semantic.parameterized_storage;
-    try std.testing.expectEqual(@as(usize, 3), storage.abstract_definitions.items.len);
-    for (storage.abstract_definitions.items[0..2]) |definition| {
+    try std.testing.expectEqual(@as(usize, 3), storage.contract_definitions.items.len);
+    for (storage.contract_definitions.items[0..2]) |definition| {
         try std.testing.expect(definition.hasExplicitParticipants());
         const participant: @import("parameterized/storage.zig").ComptimeParameterId = @enumFromInt(definition.participants.start);
         try std.testing.expectEqual(@as(u32, 1), definition.participants.len);
         try std.testing.expectEqual(@intFromEnum(participant), definition.participants.start);
         try std.testing.expect(participant != @as(@import("parameterized/storage.zig").ComptimeParameterId, @enumFromInt(definition.parameters.start)));
-        const requirement = storage.abstract_requirements.items[definition.requirements.start];
+        const requirement = storage.contract_requirements.items[definition.requirements.start];
         const fields = storage.ir.types.items[@intFromEnum(requirement.input)].resolved.structural.fields;
         const other = storage.ir.types.items[@intFromEnum(storage.ir.fields.items[fields.start].ty)].resolved.pointer.child;
         const receiver = storage.ir.types.items[@intFromEnum(storage.ir.fields.items[fields.start + 1].ty)].resolved.pointer.child;
@@ -866,7 +866,7 @@ test "unary and tuple contracts retain explicit symbolic participants" {
         const returned = storage.ir.types.items[@intFromEnum(storage.ir.fields.items[output.start].ty)].resolved.pointer.child;
         try std.testing.expectEqual(participant, storage.ir.types.items[@intFromEnum(returned)].parameter);
     }
-    const pair = storage.abstract_definitions.items[2];
+    const pair = storage.contract_definitions.items[2];
     try std.testing.expect(pair.hasExplicitParticipants());
     try std.testing.expectEqual(@as(u32, 2), pair.participants.len);
     try std.testing.expectEqual(@as(u32, 2), pair.parameters.len);
@@ -874,7 +874,7 @@ test "unary and tuple contracts retain explicit symbolic participants" {
     try std.testing.expectEqualStrings("Result", graph.text(storage.comptime_parameters.items[pair.parameters.start].name));
     try std.testing.expectEqualStrings("Count", graph.text(storage.comptime_parameters.items[pair.parameters.start + 1].name));
     try std.testing.expectEqual(.comptime_int, storage.comptime_parameters.items[pair.parameters.start + 1].kind);
-    const pair_requirement = storage.abstract_requirements.items[pair.requirements.start];
+    const pair_requirement = storage.contract_requirements.items[pair.requirements.start];
     const pair_output = storage.ir.types.items[@intFromEnum(pair_requirement.output)].resolved.structural.fields;
     const result_type = storage.ir.fields.items[pair_output.start].ty;
     try std.testing.expectEqual(pair.parameters.start, @intFromEnum(storage.ir.types.items[@intFromEnum(result_type)].parameter));
@@ -903,10 +903,10 @@ test "contract participants require ordinary bindings in generic evaluation" {
     var resolver: generics.Resolver = .{ .allocator = allocator, .graph = &relocation.graph, .modules = &.{graph}, .offsets = relocation.offsets.items, .core = &core_resolver };
     const int_type: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(relocation.graph.types.items.len)));
     try relocation.graph.types.append(allocator, .{ .builtin = .Int32 });
-    for (storage.abstract_definitions.items) |definition| {
+    for (storage.contract_definitions.items) |definition| {
         var bindings = try generics.Resolver.Bindings.init(allocator, storage.comptime_parameters.items.len);
         defer bindings.deinit(allocator);
-        const requirement = storage.abstract_requirements.items[definition.requirements.start];
+        const requirement = storage.contract_requirements.items[definition.requirements.start];
         const fields = storage.ir.types.items[@intFromEnum(requirement.input)].resolved.structural.fields;
         const parameter_type = storage.ir.types.items[@intFromEnum(storage.ir.fields.items[fields.start].ty)].resolved.pointer.child;
         try std.testing.expectError(error.UnboundGenericTypeParameter, resolver.instantiateParameterizedType(0, parameter_type, &bindings));

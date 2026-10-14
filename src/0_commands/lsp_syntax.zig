@@ -143,7 +143,7 @@ pub fn load_files(work: std.mem.Allocator, sources: []const sf.SourceFile) ![]Fi
             for (0..file.tree.nodes.len) |raw| {
                 const node: st.NodeIndex = @enumFromInt(@as(u32, @intCast(raw)));
                 switch (file.tree.tag(node)) {
-                    .function_declaration, .function_declaration_once, .c_function_pointer_declaration, .type_declaration, .abstract_declaration, .symbol_declaration_constant, .symbol_declaration_variable, .c_enum_declaration, .c_union_declaration, .c_struct_declaration, .c_incomplete_declaration, .choice_option_declaration => {
+                    .function_declaration, .function_declaration_once, .c_function_pointer_declaration, .type_declaration, .contract_declaration, .symbol_declaration_constant, .symbol_declaration_variable, .c_enum_declaration, .c_union_declaration, .c_struct_declaration, .c_incomplete_declaration, .choice_option_declaration => {
                         if (file.scope_start[@intFromEnum(file.tree.mainToken(node))] == 0)
                             try roots.append(work, node);
                     },
@@ -180,7 +180,7 @@ pub const Declaration = struct { path: []const u8, offset: u32, len: u32 };
 fn name_token(file: *const File, node: st.NodeIndex) ?st.TokenIndex {
     if (file.tree.functionDeclaration(node)) |value| return value.name_token;
     if (file.tree.typeDeclaration(node)) |value| return value.name_token;
-    if (file.tree.abstractDeclaration(node)) |value| return value.name_token;
+    if (file.tree.contractDeclaration(node)) |value| return value.name_token;
     if (file.tree.cEnumDeclaration(node)) |value| return value.name_token;
     if (file.tree.cUnionDeclaration(node)) |value| return value.name_token;
     if (file.tree.symbolDeclaration(node)) |value| return value.name_token;

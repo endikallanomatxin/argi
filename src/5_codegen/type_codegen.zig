@@ -203,9 +203,9 @@ pub const Lowerer = struct {
                     .comptime_int => |value| try self.appendPrint(buffer, "_n{d}", .{value}),
                 };
             },
-            .virtual => |abstract_type| {
+            .virtual => |contract_type| {
                 try buffer.appendSlice("virtual_");
-                try self.encodeType(buffer, abstract_type);
+                try self.encodeType(buffer, contract_type);
             },
             .nullable, .inferred_errable => return Error.InvalidType,
         }

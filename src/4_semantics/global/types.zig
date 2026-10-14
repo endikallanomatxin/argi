@@ -512,7 +512,7 @@ test "cleanup queries require selected Deinit evidence" {
         .declarations = .{ .start = 0, .len = 2 },
     });
     try graph.declarations.appendSlice(allocator, &.{
-        .{ .kind = .abstract_type, .name = name, .source = source },
+        .{ .kind = .contract_type, .name = name, .source = source },
         .{ .kind = .function, .name = name, .source = source },
     });
     try graph.types.appendSlice(allocator, &.{

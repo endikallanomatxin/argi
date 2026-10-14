@@ -6,7 +6,7 @@ const globalizer = @import("globalizer.zig");
 const resolution = @import("resolution.zig");
 const core_mod = @import("core.zig");
 const generic_functions_mod = @import("generic_functions.zig");
-const abstract_mod = @import("abstracts.zig");
+const contract_mod = @import("contracts.zig");
 const types = @import("types.zig");
 const primitives = @import("../primitives/schema.zig");
 const reach_context = @import("reach_context.zig");
@@ -31,7 +31,7 @@ pub const Resolver = struct {
     offsets: []const globalizer.Offsets,
     core: ?*core_mod.Resolver = null,
     generic_functions: ?*generic_functions_mod.Resolver = null,
-    abstracts: ?*abstract_mod.Resolver = null,
+    contracts: ?*contract_mod.Resolver = null,
     stats: Stats = .{},
     for_each_failure: ?ForEachFailure = null,
 
@@ -158,7 +158,7 @@ pub const Resolver = struct {
 
     fn errorTracerType(self: *Resolver) !global_sg.GlobalTypeId {
         for (self.graph.declarations.items, 0..) |declaration, index| {
-            if (declaration.kind != .abstract_type or !std.mem.eql(u8, self.graph.text(declaration.name), "ErrorTracer")) continue;
+            if (declaration.kind != .contract_type or !std.mem.eql(u8, self.graph.text(declaration.name), "ErrorTracer")) continue;
             const contract: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(self.graph.types.items.len)));
             try self.graph.types.append(self.allocator, .{ .declared = @enumFromInt(@as(u32, @intCast(index))) });
             const handle: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(self.graph.types.items.len)));
@@ -507,7 +507,7 @@ pub const Resolver = struct {
     pub fn resolveForEach(self: *Resolver, module_index: usize, o: globalizer.Offsets, value: anytype) !resolution.Result {
         @setEvalBranchQuota(5000);
         const generic_functions = self.generic_functions orelse return .deferred;
-        const abstracts = self.abstracts orelse return .deferred;
+        const contracts = self.contracts orelse return .deferred;
         const iterable = globalizer.globalNode(o, value.iterable);
         const iterable_ty = self.graph.nodes.items[@intFromEnum(iterable)].ty orelse return .deferred;
         if (self.graph.isTypeUnresolved(iterable_ty)) return .deferred;
@@ -542,8 +542,8 @@ pub const Resolver = struct {
             else => null,
         } else null;
         const contract_ty = if (existing_reference) |pointer_type| pointer_type.child else iterable_ty;
-        const iterable_contract = self.visibleAbstract(module_index, iterable_contract_name) orelse return .deferred;
-        if (!try abstracts.implements(contract_ty, iterable_contract)) {
+        const iterable_contract = self.visibleContract(module_index, iterable_contract_name) orelse return .deferred;
+        if (!try contracts.implements(contract_ty, iterable_contract)) {
             if (self.for_each_failure == null) self.for_each_failure = .{
                 .source = .{ .file_index = o.file_base + value.source.file_index, .offset = value.source.offset },
                 .actual = iterable_ty,
@@ -582,8 +582,8 @@ pub const Resolver = struct {
         };
         const iterator_ty = self.graph.nodes.items[@intFromEnum(iterator_value)].ty orelse return .deferred;
         if (self.graph.isTypeUnresolved(iterator_ty)) return .deferred;
-        const iterator_contract = self.visibleAbstract(module_index, "Iterator") orelse return .deferred;
-        if (!try abstracts.implements(iterator_ty, iterator_contract)) {
+        const iterator_contract = self.visibleContract(module_index, "Iterator") orelse return .deferred;
+        if (!try contracts.implements(iterator_ty, iterator_contract)) {
             if (self.for_each_failure == null) self.for_each_failure = .{
                 .source = source,
                 .actual = iterator_ty,
@@ -692,12 +692,12 @@ pub const Resolver = struct {
     ) !SyntheticCallResult {
         const input = try self.positionalInput(argument, source);
         const contract_name = if (std.mem.eql(u8, name, "has_next") or std.mem.eql(u8, name, "next")) "Iterator" else if (std.mem.eql(u8, name, "to_iterator")) "Iterable" else if (std.mem.eql(u8, name, "to_ro_pointer_iterator")) "ROPointerIterable" else if (std.mem.eql(u8, name, "to_rw_pointer_iterator")) "RWPointerIterable" else "OwningIterable";
-        const declaration = self.visibleAbstract(module_index, contract_name) orelse return .deferred;
+        const declaration = self.visibleContract(module_index, contract_name) orelse return .deferred;
         const ty = self.graph.node(argument).ty orelse return .deferred;
         const participant = if (self.graph.semanticType(ty) == .pointer) self.graph.semanticType(ty).pointer.child else ty;
-        const abstracts = self.abstracts orelse return .deferred;
+        const contracts = self.contracts orelse return .deferred;
         var participants = [_]global_sg.GlobalTypeId{participant};
-        const node = try abstracts.callOperationCandidate(module_index, .{ .declaration = declaration, .participants = &participants }, name, input, reach_context.Context.fromGlobal(&.{}, null), source) orelse return .deferred;
+        const node = try contracts.callOperationCandidate(module_index, .{ .declaration = declaration, .participants = &participants }, name, input, reach_context.Context.fromGlobal(&.{}, null), source) orelse return .deferred;
         const value = try self.appendNode(source, node.ty orelse return .deferred, node.content);
         return .{ .call = value };
     }
@@ -720,11 +720,11 @@ pub const Resolver = struct {
         return input;
     }
 
-    fn visibleAbstract(self: *Resolver, module_index: usize, name: []const u8) ?global_sg.GlobalDeclId {
+    fn visibleContract(self: *Resolver, module_index: usize, name: []const u8) ?global_sg.GlobalDeclId {
         const core = self.core orelse return null;
         var found: ?global_sg.GlobalDeclId = null;
         for (self.graph.declarations.items, 0..) |declaration, raw| {
-            if (declaration.kind != .abstract_type or !std.mem.eql(u8, self.graph.text(declaration.name), name)) continue;
+            if (declaration.kind != .contract_type or !std.mem.eql(u8, self.graph.text(declaration.name), name)) continue;
             const id: global_sg.GlobalDeclId = @enumFromInt(@as(u32, @intCast(raw)));
             if (!core.declarationVisible(module_index, id, null)) continue;
             if (found != null) return null;
@@ -854,7 +854,7 @@ test "inferred errable keeps an open reason choice and direct tracer reference" 
     try graph.types.append(allocator, .{ .declared = @enumFromInt(0) });
     try graph.types.append(allocator, .{ .inferred_errable = @enumFromInt(0) });
     try graph.declarations.append(allocator, .{
-        .kind = .abstract_type,
+        .kind = .contract_type,
         .name = try graph.addString(allocator, "ErrorTracer"),
         .source = source,
         .type_id = @enumFromInt(1),

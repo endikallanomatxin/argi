@@ -75,10 +75,10 @@ pub const Node = struct {
         c_union_declaration,
         c_struct_declaration,
         c_incomplete_declaration,
-        abstract_declaration,
+        contract_declaration,
         contract_conformance,
-        abstract_function_requirement,
-        abstract_domain,
+        contract_function_requirement,
+        contract_domain,
         contract_outcome,
         c_function_pointer_declaration,
         function_declaration,
@@ -212,13 +212,13 @@ pub const GenericValueExtra = struct {
     value: NodeIndex,
     safety_contract: OptionalNodeIndex = .none,
 };
-pub const AbstractExtra = struct {
+pub const ContractExtra = struct {
     participants_struct: OptionalNodeIndex = .none,
     generic_params_start: ExtraIndex,
     generic_params_end: ExtraIndex,
     generic_params_struct: OptionalNodeIndex,
-    requires_abstracts_start: ExtraIndex,
-    requires_abstracts_end: ExtraIndex,
+    requires_contracts_start: ExtraIndex,
+    requires_contracts_end: ExtraIndex,
     requires_functions_start: ExtraIndex,
     requires_functions_end: ExtraIndex,
     domains_start: ExtraIndex,
@@ -301,16 +301,16 @@ pub const ContractConformance = struct {
     implementation_members: NodeIndex,
     domain_mapping: ?NodeIndex = null,
 };
-pub const AbstractDeclaration = struct {
+pub const ContractDeclaration = struct {
     participants_struct: ?NodeIndex = null,
     name_token: TokenIndex,
     generic_params: []const NodeIndex,
     generic_params_struct: ?NodeIndex,
-    requires_abstracts: []const NodeIndex,
+    requires_contracts: []const NodeIndex,
     requires_functions: []const NodeIndex,
     domains: []const NodeIndex,
 };
-pub const AbstractFunctionRequirement = struct { name_token: TokenIndex, input: NodeIndex, output: NodeIndex, safety_contract: ?NodeIndex = null };
+pub const ContractFunctionRequirement = struct { name_token: TokenIndex, input: NodeIndex, output: NodeIndex, safety_contract: ?NodeIndex = null };
 pub const GenericType = struct { base: NodeIndex, arguments: NodeIndex };
 pub const Type = union(enum) {
     name: struct { name_token: TokenIndex, qualifier_token: ?TokenIndex },
@@ -705,22 +705,22 @@ pub const FileSyntaxTree = struct {
         return .{ .generic_params = payload.generic_params, .generic_params_struct = payload.generic_params_struct, .contract_type = payload.value, .implementation_members = extra.implementation_members.unwrap().?, .domain_mapping = extra.safety_contract.unwrap() };
     }
 
-    pub fn abstractDeclaration(tree: *const FileSyntaxTree, node: NodeIndex) ?AbstractDeclaration {
-        if (tree.tag(node) != .abstract_declaration) return null;
-        const extra = tree.extraData(AbstractExtra, tree.data(node).extra);
+    pub fn contractDeclaration(tree: *const FileSyntaxTree, node: NodeIndex) ?ContractDeclaration {
+        if (tree.tag(node) != .contract_declaration) return null;
+        const extra = tree.extraData(ContractExtra, tree.data(node).extra);
         return .{
             .name_token = tree.mainToken(node),
             .participants_struct = extra.participants_struct.unwrap(),
             .generic_params = tree.nodeRange(.{ .start = extra.generic_params_start, .end = extra.generic_params_end }),
             .generic_params_struct = extra.generic_params_struct.unwrap(),
-            .requires_abstracts = tree.nodeRange(.{ .start = extra.requires_abstracts_start, .end = extra.requires_abstracts_end }),
+            .requires_contracts = tree.nodeRange(.{ .start = extra.requires_contracts_start, .end = extra.requires_contracts_end }),
             .requires_functions = tree.nodeRange(.{ .start = extra.requires_functions_start, .end = extra.requires_functions_end }),
             .domains = tree.nodeRange(.{ .start = extra.domains_start, .end = extra.domains_end }),
         };
     }
 
-    pub fn abstractFunctionRequirement(tree: *const FileSyntaxTree, node: NodeIndex) ?AbstractFunctionRequirement {
-        if (tree.tag(node) != .abstract_function_requirement) return null;
+    pub fn contractFunctionRequirement(tree: *const FileSyntaxTree, node: NodeIndex) ?ContractFunctionRequirement {
+        if (tree.tag(node) != .contract_function_requirement) return null;
         const extra = tree.extraData(FunctionExtra, tree.data(node).extra);
         return .{ .name_token = extra.name_token, .input = extra.input, .output = extra.output, .safety_contract = extra.safety_contract.unwrap() };
     }

@@ -11,7 +11,7 @@ const core_mod = @import("core.zig");
 const generic_mod = @import("generics.zig");
 const generic_functions_mod = @import("generic_functions.zig");
 const types = @import("types.zig");
-const abstract_mod = @import("abstracts.zig");
+const contract_mod = @import("contracts.zig");
 const initializer_contract = @import("initializer_contract.zig");
 const standard_contracts = @import("standard_contracts.zig");
 const c_abi = @import("c_abi.zig");
@@ -29,7 +29,7 @@ pub const Resolver = struct {
     // Constructor probes share their caches and services with normal calls.
     generics: ?*generic_mod.Resolver = null,
     generic_functions: ?*generic_functions_mod.Resolver = null,
-    abstracts: ?*abstract_mod.Resolver = null,
+    contracts: ?*contract_mod.Resolver = null,
 
     /// Resolve a constructor encountered while materializing a generic
     /// function body. Structural construction never bypasses a visible init.
@@ -191,7 +191,7 @@ pub const Resolver = struct {
             .core = self.core,
             .generics = self.generics.?,
             .functions = self.generic_functions.?,
-            .abstracts = self.abstracts.?,
+            .contracts = self.contracts.?,
         };
         const participant: implementation_arguments.Participant = if (target) |known| .{ .known = known } else .{ .family = family.? };
         switch (try resolver.infer(declaration, &.{participant}, input, reach)) {
@@ -224,7 +224,7 @@ pub const Resolver = struct {
             generic_functions.rollbackSideEffects(side_effects);
         };
         const declaration = standard_contracts.standardDeclaration(self.graph, "Init") orelse return null;
-        const abstracts = self.abstracts orelse return null;
+        const contracts = self.contracts orelse return null;
         const selected_arguments = try self.inferContractArguments(declaration, ty, null, input, reach, source) orelse return null;
         const arguments_type = selected_arguments.args;
         const generics = self.generics.?;
@@ -233,7 +233,7 @@ pub const Resolver = struct {
         try self.graph.generic_arguments.append(self.core.allocator, .{ .name = .{ .start = 0, .len = 0 }, .value = .{ .type = arguments_type } });
         const contract_type = try generics.internType(.{ .generic = .{ .base = declaration, .arguments = .{ .start = start, .len = 2 } } });
         _ = try generics.ensureGenericInstance(arguments_type);
-        var arguments_resolver: implementation_arguments.Resolver = .{ .graph = self.graph, .modules = self.modules, .core = self.core, .generics = generics, .functions = generic_functions, .abstracts = abstracts };
+        var arguments_resolver: implementation_arguments.Resolver = .{ .graph = self.graph, .modules = self.modules, .core = self.core, .generics = generics, .functions = generic_functions, .contracts = contracts };
         switch (try arguments_resolver.complete(arguments_type, input, reach)) {
             .completed => {},
             .deferred => return error.DeferredContractInitializer,
@@ -250,7 +250,7 @@ pub const Resolver = struct {
         try self.graph.value_fields.append(self.core.allocator, .{ .name = try self.graph.addString(self.core.allocator, "args"), .value = input });
         const wrapped: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.graph.nodes.items.len)));
         try self.graph.nodes.append(self.core.allocator, .{ .source = source, .ty = null, .content = .{ .struct_value_literal = .{ .fields = .{ .start = value_start, .len = 1 } } } });
-        const call = try abstracts.makeScopedOperationCall(module_index, contract_type, "init", wrapped, reach, source) orelse return error.DeferredContractInitializer;
+        const call = try contracts.makeScopedOperationCall(module_index, contract_type, "init", wrapped, reach, source) orelse return error.DeferredContractInitializer;
         const result_type = call.ty orelse return error.DeferredContractInitializer;
         if (self.graph.isTypeUnresolved(result_type)) return error.DeferredContractInitializer;
         if (!types.resultMatchesTarget(self.graph, result_type, ty)) {
@@ -386,12 +386,12 @@ pub const Resolver = struct {
         var failed = false;
         defer if (!committed) {
             const comptime_failure = self.generics.?.comptime_failure;
-            const projection_failure = if (self.abstracts) |abstracts| abstracts.participant_conformance_failure else null;
+            const projection_failure = if (self.contracts) |contracts| contracts.participant_conformance_failure else null;
             self.graph.rollback(checkpoint);
             generic_functions.rollbackSideEffects(side_effect_checkpoint);
             if (failed) {
                 self.generics.?.comptime_failure = comptime_failure;
-                if (self.abstracts) |abstracts| abstracts.participant_conformance_failure = projection_failure;
+                if (self.contracts) |contracts| contracts.participant_conformance_failure = projection_failure;
             }
         };
         errdefer failed = true;

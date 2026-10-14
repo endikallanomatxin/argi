@@ -547,7 +547,7 @@ pub const Syntaxer = struct {
             if (self.currentIdentifierEquals("domain")) {
                 self.advanceOne();
                 const domain = try self.parseName();
-                try self.scratch.append(self.allocator, try self.addNode(.abstract_domain, domain.token, .{ .unused = .{ 0, 0 } }));
+                try self.scratch.append(self.allocator, try self.addNode(.contract_domain, domain.token, .{ .unused = .{ 0, 0 } }));
                 self.skipNewLinesAndComments();
                 if (self.tokenIs(.comma)) {
                     self.advanceOne();
@@ -602,13 +602,13 @@ pub const Syntaxer = struct {
         index = scratch_top;
         while (index < items_end) : (index += 1) {
             const item = self.scratch.items[index];
-            if (self.file.tag(item) == .abstract_function_requirement) try self.scratch.append(self.allocator, item);
+            if (self.file.tag(item) == .contract_function_requirement) try self.scratch.append(self.allocator, item);
         }
         const domains_start = self.scratch.items.len;
         index = scratch_top;
         while (index < items_end) : (index += 1) {
             const item = self.scratch.items[index];
-            if (self.file.tag(item) == .abstract_domain) try self.scratch.append(self.allocator, item);
+            if (self.file.tag(item) == .contract_domain) try self.scratch.append(self.allocator, item);
         }
         const associated_start = self.scratch.items.len;
         index = scratch_top;
@@ -648,7 +648,7 @@ pub const Syntaxer = struct {
             .body = .none,
             .safety_contract = syn.OptionalNodeIndex.init(safety),
         });
-        return self.addNode(.abstract_function_requirement, name.token, .{ .extra = extra });
+        return self.addNode(.contract_function_requirement, name.token, .{ .extra = extra });
     }
 
     fn parseImplementationMembers(self: *Syntaxer, implementation_parameters: syn.NodeRange) SyntaxerError!syn.NodeIndex {
@@ -2363,19 +2363,19 @@ pub const Syntaxer = struct {
                         associated_struct = body.associated_struct;
                     }
                     const associated_range = if (associated_struct) |node| self.file.data(node).extra_range else try self.addNodeRange(&.{});
-                    const extra = try self.addExtra(syn.AbstractExtra{
+                    const extra = try self.addExtra(syn.ContractExtra{
                         .participants_struct = syn.OptionalNodeIndex.init(participants_struct),
                         .generic_params_start = associated_range.start,
                         .generic_params_end = associated_range.end,
                         .generic_params_struct = syn.OptionalNodeIndex.init(associated_struct),
-                        .requires_abstracts_start = req_names.start,
-                        .requires_abstracts_end = req_names.end,
+                        .requires_contracts_start = req_names.start,
+                        .requires_contracts_end = req_names.end,
                         .requires_functions_start = req_funcs.start,
                         .requires_functions_end = req_funcs.end,
                         .domains_start = domains.start,
                         .domains_end = domains.end,
                     });
-                    return try self.addNode(.abstract_declaration, name.token, .{ .extra = extra });
+                    return try self.addNode(.contract_declaration, name.token, .{ .extra = extra });
                 }
             }
 
