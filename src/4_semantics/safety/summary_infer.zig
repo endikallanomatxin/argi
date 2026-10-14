@@ -3838,10 +3838,22 @@ pub const Infer = struct {
         arguments: []const graph_mod.ValueField,
         override: ?SymbolicInputOverride,
     ) ![]const facts.InputPath {
+        return self.substituteRequiredInputPathInContext(function_id, path, arguments, override, null);
+    }
+
+    fn substituteRequiredInputPathInContext(
+        self: *Infer,
+        function_id: graph_mod.GlobalFunctionId,
+        path: facts.InputPath,
+        arguments: []const graph_mod.ValueField,
+        override: ?SymbolicInputOverride,
+        context: ?*SubstitutionContext,
+    ) ![]const facts.InputPath {
         if (path.storage_domain) |domain_index| {
             if (path.input_index >= arguments.len) return &.{};
             const argument = arguments[path.input_index].value;
-            var value = (try self.localPointeeEffect(function_id, argument)) orelse try self.inferExpression(function_id, argument);
+            var value = (if (context) |cache| try cache.pointee(path.input_index) else try self.localPointeeEffect(function_id, argument)) orelse
+                (if (context) |cache| try cache.effect(path.input_index) else try self.inferExpression(function_id, argument));
             for (path.projections) |projection| value = try self.projectValueEffect(value, projection);
             for (value.domain_values) |mapped| if (mapped.domain_index == domain_index) {
                 var sources = std.array_list.Managed(facts.InputPath).init(self.allocator);
@@ -3851,12 +3863,12 @@ pub const Infer = struct {
             };
             var receiver = path;
             receiver.storage_domain = null;
-            const paths = try self.substituteInputPath(function_id, receiver, arguments, override, .validity);
+            const paths = try self.substituteInputPathInContext(function_id, receiver, arguments, override, .validity, context);
             const result = try self.allocator.dupe(facts.InputPath, paths);
             for (result) |*source| source.storage_domain = domain_index;
             return result;
         }
-        return self.substituteInputPath(function_id, path, arguments, override, .validity);
+        return self.substituteInputPathInContext(function_id, path, arguments, override, .validity, context);
     }
 
     const InputPathPurpose = enum { validity, place };
@@ -3916,6 +3928,18 @@ pub const Infer = struct {
         override: ?SymbolicInputOverride,
         purpose: InputPathPurpose,
     ) ![]const facts.InputPath {
+        return self.substituteInputPathInContext(function_id, path, arguments, override, purpose, null);
+    }
+
+    fn substituteInputPathInContext(
+        self: *Infer,
+        function_id: graph_mod.GlobalFunctionId,
+        path: facts.InputPath,
+        arguments: []const graph_mod.ValueField,
+        override: ?SymbolicInputOverride,
+        purpose: InputPathPurpose,
+        context: ?*SubstitutionContext,
+    ) ![]const facts.InputPath {
         if (path.input_index >= arguments.len) return &.{};
         if (override) |symbolic| if (symbolic.input_index == path.input_index) {
             if (path.projections.len == 0) return &.{};
@@ -3925,8 +3949,7 @@ pub const Infer = struct {
         const argument = arguments[path.input_index].value;
         var direct = if (purpose == .place)
             try self.inferPointeePaths(function_id, argument)
-        else
-            try self.inferInputPaths(function_id, argument);
+        else if (context) |cache| try cache.paths(path.input_index) else try self.inferInputPaths(function_id, argument);
         if (direct.len != 0) {
             for (path.projections) |projection| direct = try self.projectInputPaths(direct, projection);
             return direct;
@@ -3941,7 +3964,7 @@ pub const Infer = struct {
             if (!self.pathReachesReferent(ty, path.projections)) return &.{};
         }
 
-        const effect = try self.inferExpression(function_id, argument);
+        const effect = if (context) |cache| try cache.effect(path.input_index) else try self.inferExpression(function_id, argument);
         return self.projectEffectInputPaths(function_id, effect, path.projections, purpose);
     }
 
@@ -4507,6 +4530,46 @@ pub const Infer = struct {
         return self.substituteOutputWithOverride(function_id, effect, arguments, null);
     }
 
+    const ArgumentFacts = struct {
+        effect: ?facts.ValueEffect = null,
+        paths: ?[]const facts.InputPath = null,
+        pointee: ?facts.ValueEffect = null,
+        pointee_ready: bool = false,
+    };
+
+    /// Queries are shared only during one substitution, with unchanged binding
+    /// and place facts. Nested calls create their own context; none survives a
+    /// statement, branch transition or summary reevaluation.
+    const SubstitutionContext = struct {
+        infer: *Infer,
+        function: graph_mod.GlobalFunctionId,
+        arguments: []const graph_mod.ValueField,
+        entries: []ArgumentFacts,
+
+        fn effect(self: *SubstitutionContext, index: u32) !facts.ValueEffect {
+            const entry = &self.entries[index];
+            if (entry.effect == null)
+                entry.effect = try self.infer.inferExpression(self.function, self.arguments[index].value);
+            return entry.effect.?;
+        }
+
+        fn paths(self: *SubstitutionContext, index: u32) ![]const facts.InputPath {
+            const entry = &self.entries[index];
+            if (entry.paths == null)
+                entry.paths = try self.infer.inferInputPaths(self.function, self.arguments[index].value);
+            return entry.paths.?;
+        }
+
+        fn pointee(self: *SubstitutionContext, index: u32) !?facts.ValueEffect {
+            const entry = &self.entries[index];
+            if (!entry.pointee_ready) {
+                entry.pointee = try self.infer.localPointeeEffect(self.function, self.arguments[index].value);
+                entry.pointee_ready = true;
+            }
+            return entry.pointee;
+        }
+    };
+
     fn substituteOutputWithOverride(
         self: *Infer,
         function_id: graph_mod.GlobalFunctionId,
@@ -4514,6 +4577,27 @@ pub const Infer = struct {
         arguments: []const graph_mod.ValueField,
         override: ?SymbolicInputOverride,
     ) !facts.ValueEffect {
+        if (!requiresOutputSubstitution(effect)) return effect;
+        var buffer: [4]ArgumentFacts = @splat(.{});
+        const entries = if (arguments.len <= buffer.len)
+            buffer[0..arguments.len]
+        else
+            try self.allocator.alloc(ArgumentFacts, arguments.len);
+        defer if (arguments.len > buffer.len) self.allocator.free(entries);
+        if (arguments.len > buffer.len) @memset(entries, .{});
+        var context: SubstitutionContext = .{ .infer = self, .function = function_id, .arguments = arguments, .entries = entries };
+        return self.substituteOutputInContext(function_id, effect, arguments, override, &context);
+    }
+
+    fn substituteOutputInContext(
+        self: *Infer,
+        function_id: graph_mod.GlobalFunctionId,
+        effect: facts.ValueEffect,
+        arguments: []const graph_mod.ValueField,
+        override: ?SymbolicInputOverride,
+        context: *SubstitutionContext,
+    ) !facts.ValueEffect {
+        if (!requiresOutputSubstitution(effect)) return effect;
         var result: facts.ValueEffect = .{
             .explicit_dependency = effect.explicit_dependency,
             .fresh_dependencies = effect.fresh_dependencies,
@@ -4530,8 +4614,7 @@ pub const Infer = struct {
         for (effect.input_domains) |domain| {
             var resolved = false;
             if (domain.path.input_index < arguments.len) {
-                const argument = arguments[domain.path.input_index].value;
-                var value = (try self.localPointeeEffect(function_id, argument)) orelse try self.inferExpression(function_id, argument);
+                var value = (try context.pointee(domain.path.input_index)) orelse try context.effect(domain.path.input_index);
                 for (domain.path.projections) |projection| value = try self.projectValueEffect(value, projection);
                 for (value.domain_values) |mapped| if (mapped.domain_index == domain.domain_index) {
                     result = try self.mergeValueEffects(result, mapped.value.*);
@@ -4539,7 +4622,7 @@ pub const Infer = struct {
                 };
             }
             if (!resolved) {
-                const paths = try self.substituteRequiredInputPath(function_id, domain.path, arguments, override);
+                const paths = try self.substituteRequiredInputPathInContext(function_id, domain.path, arguments, override, context);
                 for (paths) |path| try appendDomain(&input_domains, .{ .path = path, .domain_index = domain.domain_index });
             }
         }
@@ -4547,7 +4630,7 @@ pub const Infer = struct {
         const domain_values = try self.allocator.alloc(facts.OutputDomainEffect, effect.domain_values.len);
         for (effect.domain_values, domain_values) |domain, *mapped| {
             const value = try self.allocator.create(facts.ValueEffect);
-            value.* = try self.substituteOutputWithOverride(function_id, domain.value.*, arguments, override);
+            value.* = try self.substituteOutputInContext(function_id, domain.value.*, arguments, override, context);
             mapped.* = .{ .domain_index = domain.domain_index, .value = value };
         }
         result.domain_values = domain_values;
@@ -4555,31 +4638,31 @@ pub const Infer = struct {
         for (effect.input_storage_capabilities) |path| {
             if (path.input_index >= arguments.len) continue;
             var value = if (override) |symbolic|
-                if (symbolic.input_index == path.input_index) symbolic.effect else try self.inferExpression(function_id, arguments[path.input_index].value)
+                if (symbolic.input_index == path.input_index) symbolic.effect else try context.effect(path.input_index)
             else
-                try self.inferExpression(function_id, arguments[path.input_index].value);
-            if ((try self.inferInputPaths(function_id, arguments[path.input_index].value)).len == 0) {
-                if (try self.localPointeeEffect(function_id, arguments[path.input_index].value)) |pointee| value = pointee;
+                try context.effect(path.input_index);
+            if ((try context.paths(path.input_index)).len == 0) {
+                if (try context.pointee(path.input_index)) |pointee| value = pointee;
             }
             for (path.projections) |projection| value = try self.projectValueEffect(value, projection);
             result = try self.mergeValueEffects(result, try self.scalar_storage_effect(value));
         }
         var input_places = std.array_list.Managed(facts.InputPath).init(self.allocator);
         for (effect.input_places) |path| {
-            const mapped = try self.substituteRequiredInputPath(function_id, path, arguments, override);
+            const mapped = try self.substituteRequiredInputPathInContext(function_id, path, arguments, override, context);
             for (mapped) |candidate| try appendInputPath(&input_places, candidate);
         }
         result.input_places = try input_places.toOwnedSlice();
 
         var input_generations = std.array_list.Managed(facts.InputPath).init(self.allocator);
         for (effect.input_generation_dependencies) |path| {
-            const mapped = try self.substituteRequiredInputPath(function_id, path, arguments, override);
+            const mapped = try self.substituteRequiredInputPathInContext(function_id, path, arguments, override, context);
             for (mapped) |candidate| try appendInputPath(&input_generations, candidate);
         }
         result.input_generation_dependencies = try input_generations.toOwnedSlice();
         var captured_storages = std.array_list.Managed(facts.InputPath).init(self.allocator);
         for (effect.input_captured_storages) |path| {
-            const mapped = try self.substituteRequiredInputPath(function_id, path, arguments, override);
+            const mapped = try self.substituteRequiredInputPathInContext(function_id, path, arguments, override, context);
             for (mapped) |candidate| try appendInputPath(&captured_storages, candidate);
         }
         result.input_captured_storages = try captured_storages.toOwnedSlice();
@@ -4587,16 +4670,15 @@ pub const Infer = struct {
         var receiver_values = std.array_list.Managed(facts.InputPath).init(self.allocator);
         for (effect.input_receiver_values) |path| {
             if (path.input_index >= arguments.len) continue;
-            const argument = arguments[path.input_index].value;
-            if ((try self.inferInputPaths(function_id, argument)).len == 0) {
-                if (try self.localPointeeEffect(function_id, argument)) |pointee| {
+            if ((try context.paths(path.input_index)).len == 0) {
+                if (try context.pointee(path.input_index)) |pointee| {
                     var value = pointee;
                     for (path.projections) |projection| value = try self.projectValueEffect(value, projection);
                     result = try self.mergeValueEffects(result, try self.validityOnlyEffect(value));
                     continue;
                 }
             }
-            const mapped = try self.substituteRequiredInputPath(function_id, path, arguments, override);
+            const mapped = try self.substituteRequiredInputPathInContext(function_id, path, arguments, override, context);
             for (mapped) |candidate| try appendInputPath(&receiver_values, candidate);
         }
         result.input_receiver_values = try receiver_values.toOwnedSlice();
@@ -4611,16 +4693,15 @@ pub const Infer = struct {
                 input_place_value_overrides = try self.mergeValueEffects(input_place_value_overrides, value);
                 continue;
             };
-            const argument = arguments[path.input_index].value;
-            if ((try self.inferInputPaths(function_id, argument)).len == 0) {
-                if (try self.localPointeeEffect(function_id, argument)) |pointee| {
+            if ((try context.paths(path.input_index)).len == 0) {
+                if (try context.pointee(path.input_index)) |pointee| {
                     var value = pointee;
                     for (path.projections) |projection| value = try self.projectValueEffect(value, projection);
                     input_place_value_overrides = try self.mergeValueEffects(input_place_value_overrides, value);
                     continue;
                 }
             }
-            const mapped = try self.substituteRequiredInputPath(function_id, path, arguments, override);
+            const mapped = try self.substituteRequiredInputPathInContext(function_id, path, arguments, override, context);
             for (mapped) |candidate| try appendInputPath(&input_place_values, candidate);
         }
         result.input_place_values = try input_place_values.toOwnedSlice();
@@ -4628,21 +4709,21 @@ pub const Infer = struct {
 
         var input_owned_roots = std.array_list.Managed(facts.InputPath).init(self.allocator);
         for (effect.input_owned_roots) |path| {
-            const mapped = try self.substituteRequiredInputPath(function_id, path, arguments, override);
+            const mapped = try self.substituteRequiredInputPathInContext(function_id, path, arguments, override, context);
             for (mapped) |candidate| try appendInputPath(&input_owned_roots, candidate);
         }
         result.input_owned_roots = try input_owned_roots.toOwnedSlice();
 
         var opaque_generations = std.array_list.Managed(facts.InputPath).init(self.allocator);
         for (effect.opaque_generation_dependencies) |path| {
-            const mapped = try self.substituteRequiredInputPath(function_id, path, arguments, override);
+            const mapped = try self.substituteRequiredInputPathInContext(function_id, path, arguments, override, context);
             for (mapped) |candidate| try appendInputPath(&opaque_generations, candidate);
         }
         result.opaque_generation_dependencies = try opaque_generations.toOwnedSlice();
 
         var opaque_storages = std.array_list.Managed(facts.InputPath).init(self.allocator);
         for (effect.opaque_storage_dependencies) |path| {
-            const mapped = try self.substituteRequiredInputPath(function_id, path, arguments, override);
+            const mapped = try self.substituteRequiredInputPathInContext(function_id, path, arguments, override, context);
             for (mapped) |candidate| try appendInputPath(&opaque_storages, candidate);
         }
         result.opaque_storage_dependencies = try opaque_storages.toOwnedSlice();
@@ -4657,11 +4738,11 @@ pub const Infer = struct {
                 if (symbolic.input_index == dependency.path.input_index)
                     symbolic.effect
                 else
-                    try self.inferExpression(function_id, arguments[dependency.path.input_index].value)
+                    try context.effect(dependency.path.input_index)
             else
-                try self.inferExpression(function_id, arguments[dependency.path.input_index].value);
+                try context.effect(dependency.path.input_index);
             if (dependency.validity_only and dependency.path.projections.len != 0 and dependency.path.projections[0] != .dereference) {
-                if (try self.localPointeeEffect(function_id, arguments[dependency.path.input_index].value)) |pointee|
+                if (try context.pointee(dependency.path.input_index)) |pointee|
                     argument = pointee;
             }
             for (dependency.path.projections) |projection|
@@ -4678,7 +4759,7 @@ pub const Infer = struct {
             const fields = try self.allocator.alloc(facts.OutputFieldEffect, effect.fields.len);
             for (effect.fields, 0..) |field, index| {
                 const value = try self.allocator.create(facts.ValueEffect);
-                value.* = try self.substituteOutputWithOverride(function_id, field.value.*, arguments, override);
+                value.* = try self.substituteOutputInContext(function_id, field.value.*, arguments, override, context);
                 fields[index] = .{ .index = field.index, .value = value };
             }
             result.fields = fields;
@@ -4687,12 +4768,27 @@ pub const Infer = struct {
             const variants = try self.allocator.alloc(facts.OutputVariantEffect, effect.variants.len);
             for (effect.variants, 0..) |variant, index| {
                 const value = try self.allocator.create(facts.ValueEffect);
-                value.* = try self.substituteOutputWithOverride(function_id, variant.value.*, arguments, override);
+                value.* = try self.substituteOutputInContext(function_id, variant.value.*, arguments, override, context);
                 variants[index] = .{ .index = variant.index, .value = value };
             }
             result.variants = variants;
         }
         return result;
+    }
+
+    fn requiresOutputSubstitution(effect: facts.ValueEffect) bool {
+        // Sparse tag-only facts still need the existing normalization path.
+        if (effect.known_choice_variant != null and effect.variants.len == 0) return true;
+        inline for (.{
+            "input_domains",                  "input_dependencies",            "input_storage_capabilities",
+            "input_places",                   "input_generation_dependencies", "input_captured_storages",
+            "input_receiver_values",          "input_place_values",            "input_owned_roots",
+            "opaque_generation_dependencies", "opaque_storage_dependencies",
+        }) |field| if (@field(effect, field).len != 0) return true;
+        for (effect.domain_values) |domain| if (requiresOutputSubstitution(domain.value.*)) return true;
+        for (effect.fields) |field| if (requiresOutputSubstitution(field.value.*)) return true;
+        for (effect.variants) |variant| if (requiresOutputSubstitution(variant.value.*)) return true;
+        return false;
     }
 
     fn substitutePaths(
@@ -5478,6 +5574,49 @@ fn expectGlobalReseedingStable(infer: *Infer) !void {
         try infer.engine.endInference();
         try std.testing.expect(summaries.summaryEql(infer.engine.summaries.get(function).?, next));
     }
+}
+
+test "result substitution observes new binding facts and symbolic overrides" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    const source = primitives.SourceRef{ .file_index = 0, .offset = 0 };
+    const name = try graph.addString(allocator, "value");
+    try graph.types.append(allocator, .{ .builtin = .Int32 });
+    try graph.declarations.append(allocator, .{ .kind = .function, .name = name, .source = source });
+    try graph.functions.append(allocator, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 } });
+    try graph.bindings.append(allocator, .{ .name = name, .source = source, .ty = @enumFromInt(0), .mutability = .variable });
+    try graph.nodes.append(allocator, .{ .source = source, .ty = @enumFromInt(0), .content = .{ .binding_use = @enumFromInt(0) } });
+    var engine = summaries.Engine.init(allocator);
+    defer engine.deinit();
+    var inference = Infer.init(allocator, &graph, &engine);
+    defer inference.deinit();
+    const argument = graph_mod.ValueField{ .name = name, .value = @enumFromInt(0) };
+    const dependency: facts.ValueEffect = .{ .input_dependencies = &.{.{ .path = .{ .input_index = 0 } }} };
+    const result: facts.ValueEffect = .{ .fields = &.{
+        .{ .index = 0, .value = &dependency },
+        .{ .index = 1, .value = &dependency },
+    } };
+    try inference.bindings.put(@enumFromInt(0), .{ .fresh_storage_capabilities = &.{7} });
+    const first = try inference.substituteOutput(@enumFromInt(0), result, &.{argument});
+    for (first.fields) |field| try std.testing.expectEqual(@as(usize, 7), field.value.fresh_storage_capabilities[0]);
+    const constant_payload: facts.ValueEffect = .{ .fresh_owned_roots = &.{23} };
+    const constant: facts.ValueEffect = .{ .variants = &.{.{ .index = 0, .value = &constant_payload }} };
+    const shared_constant = try inference.substituteOutput(@enumFromInt(0), constant, &.{argument});
+    try std.testing.expect(summaries.valueEffectEql(constant, shared_constant));
+    try std.testing.expect(constant.variants.ptr == shared_constant.variants.ptr);
+
+    try inference.bindings.put(@enumFromInt(0), .{ .fresh_storage_capabilities = &.{13} });
+    const second = try inference.substituteOutput(@enumFromInt(0), result, &.{argument});
+    for (second.fields) |field| try std.testing.expectEqual(@as(usize, 13), field.value.fresh_storage_capabilities[0]);
+    // Exercise the dynamic buffer as well as the small ordinary-call buffer.
+    const wider = try inference.substituteOutput(@enumFromInt(0), result, &.{ argument, argument, argument, argument, argument });
+    try std.testing.expect(summaries.valueEffectEql(second, wider));
+    const overridden = try inference.substituteOutputWithOverride(@enumFromInt(0), result, &.{argument}, .{ .input_index = 0, .effect = .{ .fresh_storage_capabilities = &.{19} } });
+    for (overridden.fields) |field| try std.testing.expectEqual(@as(usize, 0), field.value.fresh_storage_capabilities.len);
+    for (first.fields) |field| try std.testing.expectEqual(@as(usize, 7), field.value.fresh_storage_capabilities[0]);
 }
 
 test "fresh storage availability preserves unchanged trees and marks nested consumption" {
