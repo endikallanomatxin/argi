@@ -12960,3 +12960,12 @@ test "feature_tests/contracts/302_directory_enumeration_evidence" {
     try expectSuccessfulBuild("tests/feature_tests/contracts/302_directory_enumeration_evidence");
     try runExpect("tests/feature_tests/contracts/302_directory_enumeration_evidence", 0);
 }
+
+test "feature_tests/contracts/303_module_qualified_operation_identity" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/303_module_qualified_operation_identity");
+    try runExpect("tests/feature_tests/contracts/303_module_qualified_operation_identity", 0);
+}
+
+test "feature_tests/contracts/304X_module_qualified_operation_ambiguity" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/304X_module_qualified_operation_ambiguity", "multiple applicable operation identities", "failed without a diagnostic");
+}

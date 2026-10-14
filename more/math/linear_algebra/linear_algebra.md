@@ -32,6 +32,16 @@ main() -> (.status_code: Int32 = 0) := {
 }
 ```
 
+`DotProduct#(Left, Right)` determines its associated Result from selected
+conformance: fixed vectors return their scalar directly, while dynamic vectors
+return an Errable scalar. Module qualification such as `math.dot(...)` restricts
+operation identities to that module; use the explicit contract operation when
+several identities remain applicable. Fixed scaling and transposition use
+VectorScaling and MatrixTransposition. Their allocating counterparts select
+Provider jointly with the dynamic representation. MatrixAccess and VectorAccess
+supply associated element context to checked coordinate operations. None of
+these operations retains an ordinary overload family.
+
 ## Dynamic dimensions
 
 `DynamicVector#(.t)` and `DynamicMatrix#(.t)` own private DynamicArray storage.

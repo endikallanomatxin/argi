@@ -869,16 +869,20 @@ pub const Resolver = struct {
     }
 
     pub fn resolveOperationIdentity(self: *Resolver, module_index: usize, name: []const u8, input: global_sg.GlobalNodeId, reach: ReachInferenceContext, source: primitives.SourceRef) !?global_sg.Node {
+        return self.resolveOperationIdentityFiltered(module_index, name, input, reach, source, null);
+    }
+
+    pub fn resolveOperationIdentityFiltered(self: *Resolver, module_index: usize, name: []const u8, input: global_sg.GlobalNodeId, reach: ReachInferenceContext, source: primitives.SourceRef, module_filter: ?global_sg.GlobalModuleId) !?global_sg.Node {
         const abstracts = self.nested_call_context orelse return null;
-        var candidates = try abstracts.operationCandidates(module_index, name, input, reach);
+        var candidates = try abstracts.operationCandidatesFiltered(module_index, name, input, reach, module_filter);
         defer candidates.deinit(self.allocator);
         if (candidates.failure) |failure| {
             abstracts.participant_conformance_failure = failure;
             return error.InvalidContractConformance;
         }
         if (candidates.items.items.len == 0) return null;
-        const ordinary = try self.core.matchUnqualifiedFunctionByNameWithReach(module_index, name, input, reach);
-        const generic = try self.implicitOrdinaryApplicable(module_index, name, input, reach);
+        const ordinary = try self.core.matchFunctionNamedWithReach(module_index, name, module_filter, input, reach);
+        const generic = try self.implicitOrdinaryApplicableFiltered(module_index, name, input, reach, module_filter);
         if (candidates.items.items.len > 1 or ordinary == .function or ordinary == .ambiguous or generic == .applicable) {
             abstracts.participant_conformance_failure = .{ .source = source, .contract_name = name, .operation = name, .reason = "multiple applicable operation identities; qualify the contract operation explicitly" };
             return error.AmbiguousOperationIdentity;
@@ -927,6 +931,10 @@ pub const Resolver = struct {
     /// Identity lookup checks generic applicability without instantiating a body.
     /// The same selector supplies the arguments used by ordinary resolution.
     pub fn implicitOrdinaryApplicable(self: *Resolver, module_index: usize, name: []const u8, input: global_sg.GlobalNodeId, reach: ReachInferenceContext) !enum { applicable, missing, deferred } {
+        return self.implicitOrdinaryApplicableFiltered(module_index, name, input, reach, null);
+    }
+
+    fn implicitOrdinaryApplicableFiltered(self: *Resolver, module_index: usize, name: []const u8, input: global_sg.GlobalNodeId, reach: ReachInferenceContext, module_filter: ?global_sg.GlobalModuleId) !enum { applicable, missing, deferred } {
         const checkpoint = self.graph.checkpoint();
         const side_effects = self.checkpointSideEffects();
         const failed = self.failed_constraint;
@@ -937,7 +945,7 @@ pub const Resolver = struct {
             self.failed_constraint = failed;
             self.generics.argument_failure = argument_failure;
         }
-        _ = self.selectImplicitGenericFunctionFiltered(module_index, name, null, input, reach, null) catch |err| {
+        _ = self.selectImplicitGenericFunctionFiltered(module_index, name, module_filter, input, reach, null) catch |err| {
             return switch (err) {
                 error.OutOfMemory => err,
                 error.DeferredGenericFunction => .deferred,
@@ -3005,8 +3013,9 @@ pub const Resolver = struct {
             const visible = try self.resolver.allocator.dupe(global_sg.GlobalBindingId, self.resolver.graph.binding_refs.items[input_bindings.start..][0..input_bindings.len]);
             defer self.resolver.allocator.free(visible);
             const nested_reach = ReachInferenceContext.fromGlobal(visible, self.function);
-            if (module_path == null and arguments.len == 0) {
-                if (try self.resolver.resolveOperationIdentity(self.module_index, name, input, nested_reach, self.resolver.sourceFor(self.module_index, source))) |operation| return operation;
+            if (arguments.len == 0) {
+                const operation_module = if (module_path) |path| try self.resolver.core.findModuleForQualifier(self.module_index, module.text(path)) else null;
+                if (try self.resolver.resolveOperationIdentityFiltered(self.module_index, name, input, nested_reach, self.resolver.sourceFor(self.module_index, source), operation_module)) |operation| return operation;
             }
             const function = blk: {
                 break :blk if (arguments.len != 0)

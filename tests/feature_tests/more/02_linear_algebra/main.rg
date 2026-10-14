@@ -7,7 +7,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     expected_sum: Float64 = 9.0
     factor: Float64 = 2.0
     expected_product: Float64 = 77.0
-    if math.dot(.left = &a, .right = &b).value != expected_dot { abort }
+    if math.dot(.left = &a, .right = &b).result != expected_dot { abort }
     added ::= &a + &b
     if added.values[2] != expected_sum { abort }
     scaled ::= math.scale(.self = &a, .factor = 2.0)

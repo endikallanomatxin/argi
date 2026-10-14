@@ -2121,6 +2121,10 @@ pub const Resolver = struct {
     /// specificity determines associated signatures within one identity, never
     /// a priority between contracts. Probes publish no evidence or runtime body.
     pub fn operationCandidates(self: *Resolver, module_index: usize, name: []const u8, input: global_sg.GlobalNodeId, context: reach_context.Context) !OperationCandidates {
+        return self.operationCandidatesFiltered(module_index, name, input, context, null);
+    }
+
+    pub fn operationCandidatesFiltered(self: *Resolver, module_index: usize, name: []const u8, input: global_sg.GlobalNodeId, context: reach_context.Context, module_filter: ?global_sg.GlobalModuleId) !OperationCandidates {
         var result: OperationCandidates = .{};
         errdefer result.deinit(self.allocator);
         if (std.mem.startsWith(u8, name, "_")) return result;
@@ -2128,7 +2132,7 @@ pub const Resolver = struct {
             for (module.semantic.parameterized_storage.abstract_definitions.items) |definition| {
                 if (!definition.hasExplicitParticipants()) continue;
                 const declaration = globalizer.globalDecl(self.offsets[owner], definition.declaration);
-                if (!self.core.declarationVisible(module_index, declaration, null)) continue;
+                if (!self.core.declarationVisible(module_index, declaration, module_filter)) continue;
                 const storage = &module.semantic.parameterized_storage;
                 for (storage.abstract_requirements.items[definition.requirements.start..][0..definition.requirements.len]) |requirement| {
                     if (!requirement.scoped or !std.mem.eql(u8, module.text(requirement.name), name)) continue;

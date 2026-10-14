@@ -348,7 +348,7 @@ semantic claim that every pair has overlapping applicability.
 | `core/memory` | 0 |
 | `core/system` | 0 |
 | `core/system/file_system` | 4 |
-| `more/math/linear_algebra` | 5 |
+| `more/math/linear_algebra` | 0 |
 | `more/semver` | 0 |
 
 Remaining consumers are map queries/mutations, filesystem operations, one system
@@ -785,3 +785,25 @@ No compiler phase changes are needed. Seventeen repeated ordinary names remain.
 Focused system query validation passed all four environment/network cases,
 including missing environment names and out-of-range address indexing. The
 rename creates no new contract identities or dispatch paths.
+
+
+### Linear algebra operation identities
+
+Replace dot, scale, transpose and dynamic matrix/vector get/set overloads with
+scoped capabilities. DotProduct associates a scalar or fallible scalar result.
+Fixed scaling/transposition and allocating counterparts select only their own
+applicable identities; allocating protocols retain a static Provider and reached
+default. MatrixAccess and VectorAccess keep distinct coordinate signatures and
+associated Element context. Reuse the unique generic algorithms as aliases.
+
+Qualified module calls now filter operation identities as well as ordinary
+functions, in concrete and specialized bodies. The filter must retain ambiguity
+inside one module and must not admit another visible module's identity. Positive
+and negative regressions cover module filtering and explicit contract selection.
+No syntax change is required. Twelve repeated ordinary names remain.
+
+Linear-algebra and module-qualified identity validation passed the full contracts,
+more and modules groups. The full internal run passed 374 tests and skipped one,
+with the cache-reuse test failing while core source edits were in progress. Its
+focused stable-workspace rerun passed both selected internal tests. The four
+filesystem consumer cases also passed with the new capability prototypes.

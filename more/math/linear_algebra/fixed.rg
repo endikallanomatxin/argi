@@ -77,36 +77,32 @@ implement#(.n: UIntNative, .t: Type: Scalar) Add#(
         }
     )
 
-dot#(
+_math_dot_fixed_vector#(
         .n : UIntNative,
         .t : Type: Scalar
-    )(
+    ) := (
         .left  : &Vector#(.n = n, .t: t),
         .right : &Vector#(.n = n, .t: t)
-    ) -> (
-        .value : t
-    ) := {
-    value = zeroed#(.t: t)()
+    ) -> (.result: t) {
+    result = zeroed#(.t: t)()
     i :: UIntNative = 0
 
     while i < n {
-        value = value + left&.values[i] * right&.values[i]
+        result = result + left&.values[i] * right&.values[i]
         i = i + 1
     }
 }
 
-scale#(
+_math_scale_fixed_vector#(
         .n : UIntNative,
         .t : Type: Scalar
-    )(
+    ) := (
         .self   : &Vector#(.n = n, .t: t),
         .factor : t
-    ) -> (
-        .result : Vector#(
+    ) -> (.result : Vector#(
             .n = n,
             .t : t
-        )
-    ) := {
+        )) {
     result = (.values = zeroed#(.t: Array#(.n = n, .t: t))())
     i :: UIntNative = 0
 
@@ -150,19 +146,17 @@ implement#(.rows: UIntNative, .cols: UIntNative, .t: Type: Scalar) Add#(
         }
     )
 
-transpose#(
+_math_transpose_fixed_matrix#(
         .rows : UIntNative,
         .cols : UIntNative,
         .t    : Type: Scalar
-    )(
+    ) := (
         .self : &Matrix#(
             .rows = rows,
             .cols = cols,
             .t    : t
         )
-    ) -> (
-        .result : Matrix#(.rows = cols, .cols = rows, .t: t)
-    ) := {
+    ) -> (.result : Matrix#(.rows = cols, .cols = rows, .t: t)) {
     result = (.values = zeroed#(.t: Array#(.n = cols, .t: Array#(.n = rows, .t: t)))())
     row :: UIntNative = 0
 

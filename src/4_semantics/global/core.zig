@@ -435,7 +435,7 @@ pub const Resolver = struct {
         return self.matchFunctionNamedWithReach(current_module, name, null, input_node, context);
     }
 
-    fn matchFunctionNamedWithReach(
+    pub fn matchFunctionNamedWithReach(
         self: *Resolver,
         current_module: usize,
         name: []const u8,

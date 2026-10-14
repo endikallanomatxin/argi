@@ -97,9 +97,10 @@ pub const Resolver = struct {
         if (operation == .resolve_call) {
             const call = operation.resolve_call;
             const reference = module.semantic.external_refs.items[@intFromEnum(call.callee)];
-            if (reference.module_path == null and reference.generic_arguments == null) {
+            if (reference.generic_arguments == null) {
                 const context = reach_context.Context.fromModule(module, o, call.visible_bindings, call.owner_function);
-                const selected = self.generic_functions.resolveOperationIdentity(module_index, module.text(reference.name), globalizer.globalNode(o, call.input), context, .{ .file_index = o.file_base + reference.source.file_index, .offset = reference.source.offset }) catch |err| switch (err) {
+                const operation_module = if (reference.module_path) |path| try self.core.findModuleForQualifier(module_index, module.text(path)) else null;
+                const selected = self.generic_functions.resolveOperationIdentityFiltered(module_index, module.text(reference.name), globalizer.globalNode(o, call.input), context, .{ .file_index = o.file_base + reference.source.file_index, .offset = reference.source.offset }, operation_module) catch |err| switch (err) {
                     error.AmbiguousOperationIdentity => return .invalid,
                     error.DeferredOperationIdentity => return .deferred,
                     else => return err,
