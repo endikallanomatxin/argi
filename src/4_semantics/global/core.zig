@@ -443,30 +443,7 @@ pub const Resolver = struct {
         input_node: global_sg.GlobalNodeId,
         context: reach_context.Context,
     ) !FunctionMatch {
-        var selected: ?global_sg.GlobalFunctionId = null;
-        var saw_deferred = false;
-        const candidates = try self.graph.functionsNamed(self.allocator, name);
-        for (candidates) |id| {
-            const function = self.graph.functions.items[@intFromEnum(id)];
-            if (function.flags.is_c_function_pointer) continue;
-            // Specializations are cached implementations of the same identity.
-            // Reconsider the generic declaration so lookup is call-order independent.
-            if (function.flags.is_generic_instantiation) continue;
-            if (!self.declarationVisible(current_module, function.declaration, module_filter)) continue;
-            switch (try self.matchCallInputWithReach(function.input, input_node, context)) {
-                .no_match => continue,
-                .deferred => {
-                    saw_deferred = true;
-                    continue;
-                },
-                .applicable => {},
-            }
-            if (selected != null and selected.? != id) return .ambiguous;
-            selected = id;
-        }
-        if (saw_deferred) return .deferred;
-        if (selected) |function| return .{ .function = function };
-        return .no_match;
+        return self.matchVisibleFunction(current_module, name, module_filter, input_node, context);
     }
 
     fn matchFunctionNamed(
@@ -476,26 +453,35 @@ pub const Resolver = struct {
         module_filter: ?global_sg.GlobalModuleId,
         input_node: global_sg.GlobalNodeId,
     ) !FunctionMatch {
+        return self.matchVisibleFunction(current_module, name, module_filter, input_node, null);
+    }
+
+    fn matchVisibleFunction(
+        self: *Resolver,
+        current_module: usize,
+        name: []const u8,
+        module_filter: ?global_sg.GlobalModuleId,
+        input_node: global_sg.GlobalNodeId,
+        context: ?reach_context.Context,
+    ) !FunctionMatch {
         var selected: ?global_sg.GlobalFunctionId = null;
         var saw_deferred = false;
         const candidates = try self.graph.functionsNamed(self.allocator, name);
         for (candidates) |id| {
-            const function = self.graph.functions.items[@intFromEnum(id)];
-            if (function.flags.is_c_function_pointer) continue;
-            // Specializations are cached implementations of the same identity.
-            // Reconsider the generic declaration so lookup is call-order independent.
-            if (function.flags.is_generic_instantiation) continue;
+            const function = self.graph.function(id);
             if (!self.declarationVisible(current_module, function.declaration, module_filter)) continue;
-            switch (self.matchCallInput(function.input, input_node)) {
+            const applicability = if (context) |reach|
+                try self.matchCallInputWithReach(function.input, input_node, reach)
+            else
+                self.matchCallInput(function.input, input_node);
+            switch (applicability) {
                 .no_match => continue,
-                .deferred => {
-                    saw_deferred = true;
-                    continue;
+                .deferred => saw_deferred = true,
+                .applicable => {
+                    if (selected != null and selected.? != id) return .ambiguous;
+                    selected = id;
                 },
-                .applicable => {},
             }
-            if (selected != null and selected.? != id) return .ambiguous;
-            selected = id;
         }
         if (saw_deferred) return .deferred;
         if (selected) |function| return .{ .function = function };

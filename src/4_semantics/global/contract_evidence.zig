@@ -82,12 +82,39 @@ pub fn associatedElement(graph: *const graph_mod.GlobalSemanticGraph, conformanc
     return graph.generic_arguments.items[conformance.associated_arguments.start + index].value;
 }
 
-pub fn operationForFunction(graph: *const graph_mod.GlobalSemanticGraph, contract: graph_mod.GlobalDeclId, function: graph_mod.GlobalFunctionId) ?SelectedOperation {
-    for (graph.contract_conformances.items, 0..) |conformance, conformance_index| {
-        if (conformance.declaration != contract) continue;
-        for (graph.function_refs.items[conformance.operations.start..][0..conformance.operations.len], 0..) |operation, index| {
-            if (operation == function) return selectedOperation(graph, .{ .conformance = @intCast(conformance_index), .index = @intCast(index) });
+/// A borrowed view of materialized evidence; it owns no dispatch registry or
+/// cache and therefore needs no independent invalidation or rollback.
+pub const MaterializedOperations = struct {
+    graph: *const graph_mod.GlobalSemanticGraph,
+    contract: graph_mod.GlobalDeclId,
+    conformance_index: usize = 0,
+    operation_index: u32 = 0,
+
+    pub fn next(self: *MaterializedOperations) ?SelectedOperation {
+        while (self.conformance_index < self.graph.contract_conformances.items.len) {
+            const conformance = self.graph.contract_conformances.items[self.conformance_index];
+            if (conformance.declaration == self.contract) {
+                while (self.operation_index < conformance.operations.len) {
+                    const index = self.operation_index;
+                    self.operation_index += 1;
+                    if (operationInConformance(self.graph, conformance, index)) |selected| return selected;
+                }
+            }
+            self.conformance_index += 1;
+            self.operation_index = 0;
         }
+        return null;
+    }
+};
+
+pub fn materializedOperations(graph: *const graph_mod.GlobalSemanticGraph, contract: graph_mod.GlobalDeclId) MaterializedOperations {
+    return .{ .graph = graph, .contract = contract };
+}
+
+pub fn operationForFunction(graph: *const graph_mod.GlobalSemanticGraph, contract: graph_mod.GlobalDeclId, function: graph_mod.GlobalFunctionId) ?SelectedOperation {
+    var operations = materializedOperations(graph, contract);
+    while (operations.next()) |selected| {
+        if (selected.materializedFunction(graph) == function) return selected;
     }
     return null;
 }

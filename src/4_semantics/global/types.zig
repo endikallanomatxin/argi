@@ -1,3 +1,4 @@
+const contract_evidence = @import("contract_evidence.zig");
 const std = @import("std");
 const standard_contracts = @import("standard_contracts.zig");
 const graph_mod = @import("graph.zig");
@@ -182,13 +183,20 @@ pub fn materializeNullable(
 /// never the value whose lifetime that destructor closes.
 pub fn deinitFunction(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?graph_mod.GlobalFunctionId {
     if (graph.semanticType(ty) == .pointer) return null;
-    for (graph.functions.items, 0..) |function, raw| {
+    const contract = standard_contracts.standardDeclaration(graph, "Deinit") orelse return null;
+    var operations = contract_evidence.materializedOperations(graph, contract);
+    var found: ?graph_mod.GlobalFunctionId = null;
+    while (operations.next()) |selected| {
+        const id = selected.materializedFunction(graph) orelse continue;
+        const function = graph.function(id);
         if (!function.flags.is_deinit or function.input.len == 0) continue;
-        if (standard_contracts.deinitializedType(graph, @enumFromInt(@as(u32, @intCast(raw))))) |participant| {
-            if (equal(graph, participant, ty)) return @enumFromInt(@as(u32, @intCast(raw)));
-        }
+        const participant = selected.participant(graph, 0) orelse continue;
+        if (!equal(graph, participant, ty)) continue;
+        // Preserve declaration-order selection when the same evidence is reached
+        // through several caller contexts.
+        if (found == null or @intFromEnum(id) < @intFromEnum(found.?)) found = id;
     }
-    return null;
+    return found;
 }
 
 /// A cleanup obligation comes from selected Deinit evidence, independently
@@ -201,9 +209,13 @@ pub fn hasDestructor(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.
 /// against the supplied arguments.
 pub fn deinitFunctionForInput(graph: *const graph_mod.GlobalSemanticGraph, value_type: graph_mod.GlobalTypeId, supplied: graph_mod.FieldRange) error{AmbiguousOpaqueDestructor}!?graph_mod.GlobalFunctionId {
     var found: ?graph_mod.GlobalFunctionId = null;
-    for (graph.functions.items, 0..) |function, raw| {
+    const contract = standard_contracts.standardDeclaration(graph, "Deinit") orelse return null;
+    var operations = contract_evidence.materializedOperations(graph, contract);
+    while (operations.next()) |selected| {
+        const id = selected.materializedFunction(graph) orelse continue;
+        const function = graph.function(id);
         if (!function.flags.is_deinit) continue;
-        const participant = standard_contracts.deinitializedType(graph, @enumFromInt(@as(u32, @intCast(raw)))) orelse continue;
+        const participant = selected.participant(graph, 0) orelse continue;
         if (!equal(graph, participant, value_type)) continue;
         var self_matches = false;
         var arguments_match = true;
@@ -225,8 +237,8 @@ pub fn deinitFunctionForInput(graph: *const graph_mod.GlobalSemanticGraph, value
             if (!arguments_match) break;
         }
         if (!self_matches or !arguments_match) continue;
-        if (found != null) return error.AmbiguousOpaqueDestructor;
-        found = @enumFromInt(@as(u32, @intCast(raw)));
+        if (found != null and found.? != id) return error.AmbiguousOpaqueDestructor;
+        found = id;
     }
     return found;
 }

@@ -366,10 +366,21 @@ pub const GlobalSemanticGraph = struct {
         return self.strings.items[range.start..][0..range.len];
     }
 
+    fn isNamedFunction(callable: Function) bool {
+        return !callable.flags.is_generic_instantiation and !callable.flags.is_c_function_pointer;
+    }
+
+    /// Named lookup indexes callable declarations, never cached specializations
+    /// or C callback prototypes. Concrete instances keep their FunctionIds.
     pub fn functionsNamed(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, name: []const u8) ![]const GlobalFunctionId {
         while (self.lookup.indexed_functions < self.functions.items.len) {
             const raw = self.lookup.indexed_functions;
-            const decl = self.declarations.items[@intFromEnum(self.functions.items[raw].declaration)];
+            const callable = self.functions.items[raw];
+            if (!isNamedFunction(callable)) {
+                self.lookup.indexed_functions += 1;
+                continue;
+            }
+            const decl = self.declarations.items[@intFromEnum(callable.declaration)];
             const spelling = self.text(decl.name);
             if (self.lookup.function_names.getPtr(spelling) == null) {
                 const owned = try allocator.dupe(u8, spelling);
@@ -408,6 +419,7 @@ pub const GlobalSemanticGraph = struct {
         while (self.lookup.indexed_functions > function_count) {
             self.lookup.indexed_functions -= 1;
             const entry = self.functions.items[self.lookup.indexed_functions];
+            if (!isNamedFunction(entry)) continue;
             const name = self.text(self.declarations.items[@intFromEnum(entry.declaration)].name);
             _ = self.lookup.function_names.getPtr(name).?.pop();
         }
@@ -835,4 +847,46 @@ test "generic argument rewrites restore existing types across nested checkpoints
     try std.testing.expectEqual(@as(u32, 0), graph.types.items[1].generic.arguments.start);
     try std.testing.expectEqual(@as(usize, 1), graph.generic_arguments.items.len);
     try std.testing.expectEqual(@as(usize, 0), graph.construction.type_argument_rewrites.items.len);
+}
+
+test "named function lookup excludes instances and callback prototypes across rollback" {
+    const allocator = std.testing.allocator;
+    var graph: GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    const name = try graph.addString(allocator, "identity");
+    try graph.declarations.append(allocator, .{
+        .kind = .function,
+        .name = name,
+        .source = .{ .file_index = 0, .offset = 0 },
+    });
+    const callable = Function{
+        .declaration = @enumFromInt(0),
+        .input = .{ .start = 0, .len = 0 },
+        .output = .{ .start = 0, .len = 0 },
+    };
+    try graph.functions.append(allocator, callable);
+    const saved = graph.checkpoint();
+    var instance = callable;
+    instance.flags.is_generic_instantiation = true;
+    try graph.functions.append(allocator, instance);
+    const callback_name = try graph.addString(allocator, "Callback");
+    try graph.declarations.append(allocator, .{
+        .kind = .type,
+        .name = callback_name,
+        .source = .{ .file_index = 0, .offset = 0 },
+    });
+    var prototype = callable;
+    prototype.declaration = @enumFromInt(1);
+    prototype.flags.is_c_function_pointer = true;
+    try graph.functions.append(allocator, prototype);
+    try std.testing.expectEqual(@as(usize, 0), (try graph.functionsNamed(allocator, "Callback")).len);
+    const names = try graph.functionsNamed(allocator, "identity");
+    try std.testing.expectEqual(@as(usize, 1), names.len);
+    try std.testing.expectEqual(@as(GlobalFunctionId, @enumFromInt(0)), names[0]);
+    // Cached bodies remain addressable for codegen, without joining name lookup.
+    try std.testing.expect(graph.function(@enumFromInt(1)).flags.is_generic_instantiation);
+    try std.testing.expect(graph.function(@enumFromInt(2)).flags.is_c_function_pointer);
+    graph.rollback(saved);
+    try graph.functions.append(allocator, callable);
+    try std.testing.expectEqual(@as(usize, 2), (try graph.functionsNamed(allocator, "identity")).len);
 }
