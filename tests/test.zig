@@ -12913,3 +12913,8 @@ test "feature_tests/contracts/292_test_equality_specialization" {
     try expectSuccessfulBuild("tests/feature_tests/contracts/292_test_equality_specialization");
     try runExpect("tests/feature_tests/contracts/292_test_equality_specialization", 0);
 }
+
+test "feature_tests/contracts/293_resource_state_protocol" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/293_resource_state_protocol");
+    try runExpect("tests/feature_tests/contracts/293_resource_state_protocol", 0);
+}

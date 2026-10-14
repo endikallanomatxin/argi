@@ -346,8 +346,8 @@ semantic claim that every pair has overlapping applicability.
 | `core/lists` | 2 |
 | `core/maps` | 8 |
 | `core/memory` | 0 |
-| `core/system` | 3 |
-| `core/system/file_system` | 10 |
+| `core/system` | 1 |
+| `core/system/file_system` | 9 |
 | `more/math/linear_algebra` | 5 |
 | `more/semver` | 1 |
 
@@ -606,3 +606,25 @@ passed before the byte-buffer/socket migration; the subsequent full system group
 passed 102 cases (1 skipped), with no failures or leaks. The full internal suite
 passed 374 tests (1 skipped). Both mutable and readonly file writes and TCP/UDP
 endpoint and timeout cases exercised selected evidence.
+
+### Resource lifecycle query migration
+
+Replace ordinary close/is_open families with Closeable and OpenState. A single
+ordinary close entry preserves associated Result for socket, stream and temporary
+directory errors. Open state consistently returns ok: Bool. Implementations reuse
+the native algorithms, retaining handle invalidation, caller capability lookup,
+closed-resource cleanup and retryable temporary-directory failures. No new lexer,
+parser or codegen mechanism is needed; selected evidence carries existing effects.
+
+Resource-state regression uses generic close forwarding with both Void and Errable
+results, explicit open-state queries and retryable failures. The native temporary
+directory fixture now keeps a child across a failed close, removes it and retries.
+The full system group passed 102 cases (1 skipped), with no failures or leaks.
+The full internal suite passed 374 tests (1 skipped). The generic regression
+compiled and executed successfully; emitted LLVM directly calls its selected
+concrete operations for each associated result. The declaration inventory has
+26 repeated names; removal of global ordinary ranking and legacy contracts remains
+pending migration of their remaining consumers, not complete in this batch.
+
+The registered resource-state regression and the updated native temporary-directory
+retry case both passed through the program runner, without failures or leaks.

@@ -38,7 +38,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     if read(.self = $&server, .buffer = destination)! != 0 { abort }
     close(.self = $&server)!
     close(.self = $&server)!
-    if is_open(.self = &server).value { abort }
+    if is_open(.self = &server).ok { abort }
 
     udp_addresses ::= resolve_addresses(
         .host      = "127.0.0.1"

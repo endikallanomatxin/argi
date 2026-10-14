@@ -237,9 +237,9 @@ terminate(
     result = ..ok Void()
 }
 
-is_open(.self: &ProcessStream) -> (.ok: Bool) := { ok = self&._handle != 0 }
+_is_open_ProcessStream(.self: &ProcessStream) -> (.ok: Bool) := { ok = self&._handle != 0 }
 
-close(.self: $&ProcessStream) -> (.result: Errable#(Void, (..stream_close_failed))) := {
+_close_ProcessStream(.self: $&ProcessStream) -> (.result: Errable#(Void, (..stream_close_failed))) := {
     assume ffi := self&._ffi
     handle ::= self&._handle
     self&._handle = 0
@@ -336,3 +336,10 @@ implement Writer#(ProcessStream)(
         result = ..ok Void()
     }
 )
+
+implement Closeable#(ProcessStream) (
+    .Result: Type = Errable#(Void, (..stream_close_failed))
+    .close_resource = _close_ProcessStream
+)
+
+implement OpenState#(ProcessStream) (.check_open = _is_open_ProcessStream)

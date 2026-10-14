@@ -429,3 +429,10 @@ unique; closed numeric/text conformances specialize the generic equality-based
 implementation. External nominal values can provide their own checked assertion
 operation. StringMapKey normalizes borrowed textual keys without retaining them
 in lookup results; StringHashMap has/delete reuse one canonical view-key algorithm.
+
+Closeable selects resource closing through close_resource, with an associated
+Result preserving each error protocol. Its unique ordinary close entry neither
+consumes the resource nor assumes success; the selected implementation determines
+the handle effects. OpenState supplies the unique is_open query returning ok: Bool.
+Files, process streams, TCP/UDP handles and temporary directories reuse their
+native close algorithms. Retryable temporary-directory failure retains its handle.

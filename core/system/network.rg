@@ -277,7 +277,7 @@ implement Init#(
     }
 )
 
-close(.self: $&TcpConnection) -> (.result: Errable#(Void, (..socket_close_failed))) := {
+_close_TcpConnection(.self: $&TcpConnection) -> (.result: Errable#(Void, (..socket_close_failed))) := {
     assume ffi := self&._network&._ffi
     handle ::= self&._handle
     self&._handle = 0
@@ -296,7 +296,7 @@ implement Deinit#(TcpConnection) (
     }
 )
 
-is_open(.self: &TcpConnection) -> (.value: Bool) := { value = self&._handle != 0 }
+_is_open_TcpConnection(.self: &TcpConnection) -> (.ok: Bool) := { ok = self&._handle != 0 }
 
 _local_address_TcpConnection(
         .self : &TcpConnection
@@ -363,7 +363,7 @@ implement Init#(
     }
 )
 
-close(.self: $&TcpListener) -> (.result: Errable#(Void, (..socket_close_failed))) := {
+_close_TcpListener(.self: $&TcpListener) -> (.result: Errable#(Void, (..socket_close_failed))) := {
     assume ffi := self&._network&._ffi
     handle ::= self&._handle
     self&._handle = 0
@@ -382,7 +382,7 @@ implement Deinit#(TcpListener) (
     }
 )
 
-is_open(.self: &TcpListener) -> (.value: Bool) := { value = self&._handle != 0 }
+_is_open_TcpListener(.self: &TcpListener) -> (.ok: Bool) := { ok = self&._handle != 0 }
 
 _local_address_TcpListener(
         .self : &TcpListener
@@ -449,7 +449,7 @@ implement Init#(
     }
 )
 
-close(.self: $&UdpSocket) -> (.result: Errable#(Void, (..socket_close_failed))) := {
+_close_UdpSocket(.self: $&UdpSocket) -> (.result: Errable#(Void, (..socket_close_failed))) := {
     assume ffi := self&._network&._ffi
     handle ::= self&._handle
     self&._handle = 0
@@ -468,7 +468,7 @@ implement Deinit#(UdpSocket) (
     }
 )
 
-is_open(.self: &UdpSocket) -> (.value: Bool) := { value = self&._handle != 0 }
+_is_open_UdpSocket(.self: &UdpSocket) -> (.ok: Bool) := { ok = self&._handle != 0 }
 
 _local_address_UdpSocket(
         .self : &UdpSocket
@@ -808,3 +808,24 @@ implement Writer#(TcpConnection)(
             result = ..ok Void()
         }
 )
+
+implement Closeable#(TcpConnection) (
+    .Result: Type = Errable#(Void, (..socket_close_failed))
+    .close_resource = _close_TcpConnection
+)
+
+implement OpenState#(TcpConnection) (.check_open = _is_open_TcpConnection)
+
+implement Closeable#(TcpListener) (
+    .Result: Type = Errable#(Void, (..socket_close_failed))
+    .close_resource = _close_TcpListener
+)
+
+implement OpenState#(TcpListener) (.check_open = _is_open_TcpListener)
+
+implement Closeable#(UdpSocket) (
+    .Result: Type = Errable#(Void, (..socket_close_failed))
+    .close_resource = _close_UdpSocket
+)
+
+implement OpenState#(UdpSocket) (.check_open = _is_open_UdpSocket)

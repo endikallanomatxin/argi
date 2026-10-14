@@ -403,7 +403,7 @@ path(.self: &TemporaryDirectory) -> (.view: StringView) := {
     view = as_view(&self&._path).view
 }
 
-close(.self: $&TemporaryDirectory) -> (.result: Errable#(Void, _FilesystemReasons)) := {
+_close_TemporaryDirectory(.self: $&TemporaryDirectory) -> (.result: Errable#(Void, _FilesystemReasons)) := {
     assume ffi := self&._filesystem&._ffi
     status ::= _fs_temp_close(.handle = self&._handle).status
 
@@ -423,4 +423,9 @@ implement Deinit#(TemporaryDirectory) (
         _fs_temp_cleanup(.handle = self&._handle)
         deinit(.self = $&self&._path)
     }
+)
+
+implement Closeable#(TemporaryDirectory) (
+    .Result: Type = Errable#(Void, _FilesystemReasons)
+    .close_resource = _close_TemporaryDirectory
 )

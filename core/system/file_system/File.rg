@@ -39,7 +39,7 @@ implement Init#(File, (.ffi : $&ForeignFunctionInterface = reach ffi, .stream_ad
     }
 )
 
-is_open(.self: &File) -> (.ok: Bool) := {
+_is_open_File(.self: &File) -> (.ok: Bool) := {
     ok = self&.stream_address != 0
 }
 
@@ -154,7 +154,7 @@ init_stderr(.p: $&File, .ffi: $&ForeignFunctionInterface = reach ffi) -> () := {
     )
 }
 
-close(.self: $&File) -> (.result: Errable#(Void, (..stream_close_failed))) := {
+_close_File(.self: $&File) -> (.result: Errable#(Void, (..stream_close_failed))) := {
     assume ffi := self&._ffi
 
     if self&.stream_address == 0 {
@@ -354,3 +354,10 @@ implement Writer#(File)(
             result = ..ok Void()
         }
 )
+
+implement Closeable#(File) (
+    .Result: Type = Errable#(Void, (..stream_close_failed))
+    .close_resource = _close_File
+)
+
+implement OpenState#(File) (.check_open = _is_open_File)
