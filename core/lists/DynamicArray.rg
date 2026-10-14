@@ -163,31 +163,14 @@ _trusted_dynamic_array_element_rw_pointer#(
     ).reference
 }
 
-dynamic_array_grow#(
-        .t : Type
-    )(
-        .allocator    : $&Allocator,
-        .array        : $&DynamicArray#(.t: t),
-        .min_capacity : UIntNative,
-    ) -> (
-        .result : Errable#(Void, (..out_of_memory))
-    ) := {
-    assume allocator
-
-    result = dynamic_array_grow_growing#(.t: t)(
-        .allocator    = allocator
-        .array        = array
-        .min_capacity = min_capacity
-    )
-}
-
 -- Ensures space for at least `capacity` elements without changing length.
 -- Callers that must commit an external resource after a successful capacity
 -- check can follow this with `push_assume_capacity` without another OOM point.
 ensure_capacity#(
-        .t : Type
+        .t : Type,
+        .Provider: Type: Allocator
     )(
-        .allocator : $&Allocator,
+        .allocator : $&Provider,
         .self      : $&DynamicArray#(.t: t),
         .capacity  : UIntNative,
     ) -> (
@@ -200,17 +183,18 @@ ensure_capacity#(
         return
     }
 
-    result = dynamic_array_grow_growing#(.t: t)(
+    result = _grow_dynamic_array(
         .allocator    = allocator
         .array        = self
         .min_capacity = capacity
     )
 }
 
-dynamic_array_grow_growing#(
-        .t : Type
+_grow_dynamic_array#(
+        .t : Type,
+        .Provider: Type: Allocator
     )(
-        .allocator    : $&Allocator,
+        .allocator    : $&Provider,
         .array        : $&DynamicArray#(.t: t),
         .min_capacity : UIntNative,
     ) -> (
@@ -238,7 +222,11 @@ dynamic_array_grow_growing#(
 
     if new_capacity < min_capacity { new_capacity = min_capacity }
     if new_capacity > maximum { new_capacity = maximum }
-    allocate_result ::= allocate#(.t: t)(allocator, .count = new_capacity)
+    allocate_result ::= Allocator#(Provider).allocate(
+        .self = allocator,
+        .size = element_size * new_capacity,
+        .alignment = alignment_of(.type = t)
+    )
 
     match allocate_result {
         ..ok ~payload {
@@ -322,7 +310,7 @@ insert_growing#(
     current_length ::= self&._length
 
     if self&._length == self&._capacity {
-        growth_result ::= dynamic_array_grow_growing#(.t: t)(
+        growth_result ::= _grow_dynamic_array(
             .allocator    = allocator
             .array        = self
             .min_capacity = [
@@ -507,7 +495,7 @@ implement#(.t: Type, .Provider: Type: Allocator#(Provider)) Resizable#(DynamicAr
         one :: UIntNative = 1
 
         if self&._length == self&._capacity {
-            growth_result ::= dynamic_array_grow_growing#(.t: t)(
+            growth_result ::= _grow_dynamic_array(
                 .allocator    = allocator
                 .array        = self
                 .min_capacity = [

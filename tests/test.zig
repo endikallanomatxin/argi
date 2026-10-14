@@ -12931,3 +12931,13 @@ test "feature_tests/contracts/296_local_reference_implementation_ownership" {
     try expectSuccessfulBuild("tests/feature_tests/contracts/296_local_reference_implementation_ownership");
     try runExpect("tests/feature_tests/contracts/296_local_reference_implementation_ownership", 0);
 }
+
+test "feature_tests/contracts/297_queue_operation_evidence" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/297_queue_operation_evidence");
+    try runExpect("tests/feature_tests/contracts/297_queue_operation_evidence", 0);
+}
+
+test "feature_tests/contracts/298_generic_input_argument_order" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/298_generic_input_argument_order");
+    try runExpect("tests/feature_tests/contracts/298_generic_input_argument_order", 0);
+}

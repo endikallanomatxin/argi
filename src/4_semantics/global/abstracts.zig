@@ -1142,11 +1142,6 @@ pub const Resolver = struct {
         definition: parameterized_storage.AbstractDefinition,
     };
 
-    const LocatedParameterizedType = struct {
-        module_index: usize,
-        parameterized: parameterized_storage.ParameterizedType,
-    };
-
     const RequirementInstance = struct {
         declaration: global_sg.GlobalDeclId,
         method_index: u32,
@@ -1537,19 +1532,6 @@ pub const Resolver = struct {
         };
     }
 
-    fn findParameterizedType(self: *const Resolver, declaration: global_sg.GlobalDeclId) ?LocatedParameterizedType {
-        const owner = self.graph.moduleForDeclaration(declaration) orelse return null;
-        const module_index: usize = @intFromEnum(owner);
-        const base = self.offsets[module_index].declaration_base;
-        const raw = @intFromEnum(declaration);
-        if (raw < base) return null;
-        const local: module_entities.ModuleDeclId = @enumFromInt(raw - base);
-        for (self.modules[module_index].semantic.parameterized_storage.parameterized_types.items) |parameterized|
-            if (parameterized.declaration == local)
-                return .{ .module_index = module_index, .parameterized = parameterized };
-        return null;
-    }
-
     fn findAbstractDefinition(self: *const Resolver, declaration: global_sg.GlobalDeclId) ?LocatedAbstractDefinition {
         const owner = self.graph.moduleForDeclaration(declaration) orelse return null;
         const module_index: usize = @intFromEnum(owner);
@@ -1814,38 +1796,18 @@ pub const Resolver = struct {
         return true;
     }
 
-    // Nominal patterns compare declaration identities and bind arguments in the
-    // declaration's parameter order. Source spelling and module-local IDs do
-    // not identify a nominal family, and named arguments may reorder its inputs.
-    fn nominalPatternArgument(self: *Resolver, module_index: usize, arguments: primitives.Range(ir.ParameterizedGenericArgId), position: usize, name: []const u8) ?ir.GenericArgument {
-        const module = &self.modules[module_index];
-        for (module.semantic.parameterized_storage.ir.generic_arguments.items[arguments.start..][0..arguments.len], 0..) |argument, index| {
-            const actual_name = module.text(argument.name);
-            if ((actual_name.len == 0 and index == position) or std.mem.eql(u8, actual_name, name)) return argument;
-        }
-        return null;
-    }
-
-    fn nominalConcreteArgument(self: *Resolver, arguments: primitives.Range(global_sg.GlobalGenericArgId), position: usize, name: []const u8) ?global_sg.GenericArgument {
-        for (self.graph.generic_arguments.items[arguments.start..][0..arguments.len], 0..) |argument, index| {
-            const actual_name = self.graph.text(argument.name);
-            if ((actual_name.len == 0 and index == position) or std.mem.eql(u8, actual_name, name)) return argument;
-        }
-        return null;
-    }
-
     fn nominalPatternsCover(self: *Resolver, a: SymbolicPattern, b: SymbolicPattern, substitutions: ?*PatternSubstitutions) !bool {
         const left = self.modules[a.module].semantic.parameterized_storage.ir.types.items[@intFromEnum(a.ty)].resolved.generic;
         const right = self.modules[b.module].semantic.parameterized_storage.ir.types.items[@intFromEnum(b.ty)].resolved.generic;
         const declaration = try self.generics.resolveParameterizedDeclaration(a.module, left.base);
         if (declaration != try self.generics.resolveParameterizedDeclaration(b.module, right.base)) return false;
-        const located = self.findParameterizedType(declaration) orelse return false;
+        const located = self.generics.findTypeParameterized(declaration) orelse return false;
         if (left.arguments.len != located.parameterized.parameters.len or right.arguments.len != left.arguments.len) return false;
         for (0..located.parameterized.parameters.len) |position| {
             const parameter = self.modules[located.module_index].semantic.parameterized_storage.comptime_parameters.items[located.parameterized.parameters.start + position];
             const name = self.modules[located.module_index].text(parameter.name);
-            const l = self.nominalPatternArgument(a.module, left.arguments, position, name) orelse return false;
-            const r = self.nominalPatternArgument(b.module, right.arguments, position, name) orelse return false;
+            const l = self.generics.findPatternArgument(a.module, left.arguments, position, name) orelse return false;
+            const r = self.generics.findPatternArgument(b.module, right.arguments, position, name) orelse return false;
             if (l.value == .type and r.value == .type) {
                 const lp: SymbolicPattern = .{ .module = a.module, .ty = l.value.type };
                 const rp: SymbolicPattern = .{ .module = b.module, .ty = r.value.type };
@@ -2021,7 +1983,7 @@ pub const Resolver = struct {
                 .generic => |value| value,
                 else => continue,
             };
-            const located = self.findParameterizedType(identity.base) orelse continue;
+            const located = self.generics.findTypeParameterized(identity.base) orelse continue;
             const storage = &self.modules[located.module_index].semantic.parameterized_storage;
             var bindings = try generic_mod.Resolver.Bindings.init(
                 self.allocator,
@@ -3456,13 +3418,13 @@ pub const Resolver = struct {
                     };
                     const declaration = try self.generics.resolveParameterizedDeclaration(module_index, nominal.base);
                     if (declaration != concrete.base) return false;
-                    const located = self.findParameterizedType(declaration) orelse return false;
+                    const located = self.generics.findTypeParameterized(declaration) orelse return false;
                     if (nominal.arguments.len != located.parameterized.parameters.len or concrete.arguments.len != nominal.arguments.len) return false;
                     for (0..located.parameterized.parameters.len) |position| {
                         const parameter = self.modules[located.module_index].semantic.parameterized_storage.comptime_parameters.items[located.parameterized.parameters.start + position];
                         const name = self.modules[located.module_index].text(parameter.name);
-                        const wanted = self.nominalPatternArgument(module_index, nominal.arguments, position, name) orelse return false;
-                        const given = self.nominalConcreteArgument(concrete.arguments, position, name) orelse return false;
+                        const wanted = self.generics.findPatternArgument(module_index, nominal.arguments, position, name) orelse return false;
+                        const given = self.generics.findGlobalArgument(name, concrete.arguments, position) orelse return false;
                         if (wanted.value == .type and given.value == .type) {
                             if (!try self.inferConstraintTypePattern(module_index, wanted.value.type, given.value.type, bindings)) return false;
                         } else if (wanted.value == .comptime_int and given.value == .comptime_int) {

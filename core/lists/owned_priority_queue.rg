@@ -40,7 +40,7 @@ implement#(
     ) Deinit#(OwnedPriorityQueue#(.t: t, .order: order)) (
     .deinit = (.self: $&OwnedPriorityQueue#(.t: t, .order: order)) -> () {
         while length(&self&._items).count > 0 {
-            discarded ::= ~unwrap_or_abort(.value = pop($&self&._items))
+            discarded ::= ~unwrap_or_abort(.value = Removable#(DynamicArray#(.t: t)).pop($&self&._items))
         }
 
         deinit(.self = $&self&._items)
@@ -63,13 +63,14 @@ implement#(
     .measure_length = _collection_length_owned_priority_queue
 )
 
-push#(
+_queue_push_owned_priority_queue#(
         .t     : Type,
-        .order : Type: BorrowedOrderPolicy#(order, t)
+        .order : Type: BorrowedOrderPolicy#(order, t),
+        .Provider: Type: Allocator
     )(
         .self      : $&OwnedPriorityQueue#(.t: t, .order: order),
         .value     : t,
-        .allocator : $&Allocator
+        .allocator : $&Provider
     ) -> (
         .result : Errable#(Void, (..out_of_memory)) = ..ok Void()
     ) := {
@@ -113,20 +114,20 @@ peek_ref#(
     )
 }
 
-pop#(
+_queue_pop_owned_priority_queue#(
         .t     : Type,
         .order : Type: BorrowedOrderPolicy#(order, t)
     )(
         .self : $&OwnedPriorityQueue#(.t: t, .order: order)
     ) -> (
-        .value : ?t = ..none
+        .result : ?t = ..none
     ) := {
     count ::= length(&self&._items).count
 
     if count == 0 { return }
     _swap_owned_array#(.t: t)($&self&._items, .left = 0, .right = count - 1)
-    extracted ::= ~unwrap_or_abort(.value = pop($&self&._items))
-    value = ..some(.value = ~extracted)
+    extracted ::= ~unwrap_or_abort(.value = Removable#(DynamicArray#(.t: t)).pop($&self&._items))
+    result = ..some(.value = ~extracted)
     count = count - 1
     root :: UIntNative = 0
 
@@ -146,3 +147,14 @@ pop#(
         root = child
     }
 }
+
+implement#(.t: Type, .order: Type: BorrowedOrderPolicy#(order, t)) Queue#(OwnedPriorityQueue#(.t: t, .order: order)) (
+    .Item: Type = t
+    .Result: Type = ?t
+    .pop = _queue_pop_owned_priority_queue
+)
+
+implement#(.t: Type, .order: Type: BorrowedOrderPolicy#(order, t), .Provider: Type: Allocator) QueueInsertion#(OwnedPriorityQueue#(.t: t, .order: order), Provider) (
+    .Result: Type = Errable#(Void, (..out_of_memory))
+    .push = _queue_push_owned_priority_queue
+)

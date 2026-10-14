@@ -59,18 +59,19 @@ implement#(
     .measure_length = _collection_length_priority_queue
 )
 
-push#(
+_queue_push_priority_queue#(
         .t     : Type: ImplicitlyCopyable,
-        .order : Type: OrderPolicy#(order, t)
+        .order : Type: OrderPolicy#(order, t),
+        .Provider: Type: Allocator
     )(
         .self      : $&PriorityQueue#(.t: t, .order: order),
         .value     : t,
-        .allocator : $&Allocator
+        .allocator : $&Provider
     ) -> (
         .result : Errable#(Void, (..out_of_memory)) = ..ok Void()
     ) := {
     assume allocator
-    push(.self = $&self&._items, .value = value, .allocator = allocator)!
+    Resizable#(DynamicArray#(.t: t), Provider).push(.self = $&self&._items, .value = value, .allocator = allocator)!
     child ::= length(&self&._items).count - 1
 
     while child > 0 {
@@ -97,20 +98,20 @@ peek#(
     )
 }
 
-pop#(
+_queue_pop_priority_queue#(
         .t     : Type: ImplicitlyCopyable,
         .order : Type: OrderPolicy#(order, t)
     )(
         .self : $&PriorityQueue#(.t: t, .order: order)
     ) -> (
-        .value : ?t = ..none
+        .result : ?t = ..none
     ) := {
     count ::= length(&self&._items).count
 
     if count == 0 { return }
-    value = peek(self).value
+    result = peek(self).value
     _swap_indexed_values#(.t: t)($&self&._items, .left = 0, .right = count - 1)
-    discarded ::= pop($&self&._items)
+    discarded ::= Removable#(DynamicArray#(.t: t)).pop($&self&._items)
     count = count - 1
     root :: UIntNative = 0
 
@@ -135,3 +136,14 @@ pop#(
         root = child
     }
 }
+
+implement#(.t: Type: ImplicitlyCopyable, .order: Type: OrderPolicy#(order, t)) Queue#(PriorityQueue#(.t: t, .order: order)) (
+    .Item: Type = t
+    .Result: Type = ?t
+    .pop = _queue_pop_priority_queue
+)
+
+implement#(.t: Type: ImplicitlyCopyable, .order: Type: OrderPolicy#(order, t), .Provider: Type: Allocator) QueueInsertion#(PriorityQueue#(.t: t, .order: order), Provider) (
+    .Result: Type = Errable#(Void, (..out_of_memory))
+    .push = _queue_push_priority_queue
+)

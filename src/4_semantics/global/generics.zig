@@ -141,6 +141,8 @@ pub const Resolver = struct {
     }
 
     pub fn ensureGenericInstance(self: *Resolver, ty: global_sg.GlobalTypeId) !bool {
+        // Every published instance has validated declaration-order arguments.
+        // Semantic identity with one can reuse its shape without rebinding.
         if (global_types.genericInstance(self.graph, ty) != null) return false;
         const identity = switch (self.graph.types.items[@intFromEnum(ty)]) {
             .generic => |value| value,
@@ -161,6 +163,36 @@ pub const Resolver = struct {
             self.argument_failure = .{ .declaration = identity.base, .ty = ty, .reason = reason };
             return err;
         };
+        const module = &self.modules[located.module_index];
+        const parameters = module.semantic.parameterized_storage.comptime_parameters.items[located.parameterized.parameters.start..][0..located.parameterized.parameters.len];
+        var canonical = true;
+        for (parameters, 0..) |parameter, position| {
+            const argument = self.graph.generic_arguments.items[identity.arguments.start + position];
+            if (!std.mem.eql(u8, module.text(parameter.name), self.graph.text(argument.name))) {
+                canonical = false;
+                break;
+            }
+        }
+        if (!canonical) {
+            var arguments: std.ArrayList(global_sg.GenericArgument) = .empty;
+            defer arguments.deinit(self.allocator);
+            for (parameters, 0..) |parameter, position| {
+                const raw = located.parameterized.parameters.start + position;
+                try arguments.append(self.allocator, .{
+                    .name = try self.graph.addString(self.allocator, module.text(parameter.name)),
+                    .value = switch (parameter.kind) {
+                        .type => .{ .type = bindings.types[raw].? },
+                        .comptime_int => .{ .comptime_int = bindings.ints[raw].? },
+                    },
+                });
+            }
+            const start: u32 = @intCast(self.graph.generic_arguments.items.len);
+            try self.graph.generic_arguments.appendSlice(self.allocator, arguments.items);
+            try self.graph.replaceTypeArguments(self.allocator, ty, .{ .start = start, .len = @intCast(arguments.items.len) });
+        }
+        // Type identity, layouts and operation signatures use declaration order.
+        // Validate and canonicalize before reusing an equivalent instance.
+        if (global_types.genericInstance(self.graph, ty) != null) return false;
         const body_type = try self.instantiateParameterizedType(located.module_index, located.parameterized.body, &bindings);
         const shape = switch (self.graph.types.items[@intFromEnum(body_type)]) {
             .structural => |value| @import("../primitives/type_shapes.zig").GenericInstanceShape(global_sg.Ids){ .structure = .{
@@ -182,7 +214,7 @@ pub const Resolver = struct {
         return true;
     }
 
-    const LocatedTypeParameterized = struct {
+    pub const LocatedTypeParameterized = struct {
         module_index: usize,
         parameterized: parameterized_storage.ParameterizedType,
     };
@@ -191,7 +223,7 @@ pub const Resolver = struct {
         return self.findTypeParameterized(declaration) != null;
     }
 
-    fn findTypeParameterized(self: *Resolver, declaration: global_sg.GlobalDeclId) ?LocatedTypeParameterized {
+    pub fn findTypeParameterized(self: *Resolver, declaration: global_sg.GlobalDeclId) ?LocatedTypeParameterized {
         const owner = self.graph.moduleForDeclaration(declaration) orelse return null;
         const module_index: usize = @intFromEnum(owner);
         const base = self.offsets[module_index].declaration_base;
@@ -270,7 +302,7 @@ pub const Resolver = struct {
         for (0..parameters.len) |position| {
             const param_raw = parameters.start + @as(u32, @intCast(position));
             const parameter = module.semantic.parameterized_storage.comptime_parameters.items[param_raw];
-            const argument = self.findGlobalArgument(module, parameter.name, arguments, position) orelse continue;
+            const argument = self.findGlobalArgument(module.text(parameter.name), arguments, position) orelse continue;
             switch (parameter.kind) {
                 .type => switch (argument.value) {
                     .type => |value| bindings.types[param_raw] = value,
@@ -284,14 +316,32 @@ pub const Resolver = struct {
         }
     }
 
-    fn findGlobalArgument(
+    pub fn findPatternArgument(
         self: *Resolver,
-        module: *const module_sg.ModuleSemanticGraph,
-        parameter_name: primitives.StringRange,
+        module_index: usize,
+        arguments: primitives.Range(ir.ParameterizedGenericArgId),
+        position: usize,
+        wanted: []const u8,
+    ) ?ir.GenericArgument {
+        const module = &self.modules[module_index];
+        const storage = &module.semantic.parameterized_storage.ir;
+        for (storage.generic_arguments.items[arguments.start..][0..arguments.len]) |argument| {
+            const name = module.text(argument.name);
+            if (name.len != 0 and std.mem.eql(u8, name, wanted)) return argument;
+        }
+        if (position < arguments.len) {
+            const argument = storage.generic_arguments.items[arguments.start + @as(u32, @intCast(position))];
+            if (module.text(argument.name).len == 0) return argument;
+        }
+        return null;
+    }
+
+    pub fn findGlobalArgument(
+        self: *Resolver,
+        wanted: []const u8,
         arguments: primitives.Range(global_sg.GlobalGenericArgId),
         position: usize,
     ) ?global_sg.GenericArgument {
-        const wanted = module.text(parameter_name);
         for (0..arguments.len) |offset| {
             const argument = self.graph.generic_arguments.items[arguments.start + @as(u32, @intCast(offset))];
             const name = self.graph.text(argument.name);

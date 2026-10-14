@@ -178,15 +178,21 @@ pub const GlobalSemanticGraph = struct {
         indexed_declarations: usize,
         type_resolution_len: usize,
         binding_type_resolution_len: usize,
+        type_argument_rewrites_len: usize,
     };
 
     const ConstructionState = struct {
         type_resolution: std.ArrayList(TypeResolutionState) = .empty,
         binding_type_resolution: std.ArrayList(TypeResolutionState) = .empty,
+        type_argument_rewrites: std.ArrayList(struct {
+            type_id: GlobalTypeId,
+            previous: primitives.Range(GlobalGenericArgId),
+        }) = .empty,
 
         fn deinit(self: *ConstructionState, allocator: std.mem.Allocator) void {
             self.type_resolution.deinit(allocator);
             self.binding_type_resolution.deinit(allocator);
+            self.type_argument_rewrites.deinit(allocator);
             self.* = .{};
         }
     };
@@ -288,6 +294,7 @@ pub const GlobalSemanticGraph = struct {
             .indexed_declarations = self.lookup.indexed_declarations,
             .type_resolution_len = self.construction.type_resolution.items.len,
             .binding_type_resolution_len = self.construction.binding_type_resolution.items.len,
+            .type_argument_rewrites_len = self.construction.type_argument_rewrites.items.len,
         };
         inline for (pools, 0..) |pool, index| if (comptime switch (@typeInfo(pool.type)) {
             .@"struct" => @hasField(pool.type, "items"),
@@ -299,10 +306,15 @@ pub const GlobalSemanticGraph = struct {
     }
 
     /// Drop indexed IDs before truncating the append-only pools they reference.
-    /// In-place mutations of pre-existing entries are outside this checkpoint.
+    /// Canonical generic argument rewrites are restored before their pools shrink.
+    /// Other in-place mutations of pre-existing entries remain outside this checkpoint.
     pub fn rollback(self: *GlobalSemanticGraph, saved: Checkpoint) void {
         const pools = @typeInfo(GlobalSemanticGraph).@"struct".fields;
         self.discardIndexedTail(saved.indexed_functions, saved.indexed_declarations);
+        while (self.construction.type_argument_rewrites.items.len > saved.type_argument_rewrites_len) {
+            const rewrite = self.construction.type_argument_rewrites.pop().?;
+            self.types.items[@intFromEnum(rewrite.type_id)].generic.arguments = rewrite.previous;
+        }
         self.construction.type_resolution.shrinkRetainingCapacity(saved.type_resolution_len);
         self.construction.binding_type_resolution.shrinkRetainingCapacity(saved.binding_type_resolution_len);
         inline for (pools, 0..) |pool, index| if (comptime switch (@typeInfo(pool.type)) {
@@ -477,6 +489,17 @@ pub const GlobalSemanticGraph = struct {
             self.construction.type_resolution.items[raw] = .resolved;
     }
 
+    /// Keep canonicalization of existing types transactional: the new argument
+    /// range may belong to an append-only pool that a speculative probe rolls back.
+    pub fn replaceTypeArguments(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, id: GlobalTypeId, arguments: primitives.Range(GlobalGenericArgId)) !void {
+        const raw: usize = @intFromEnum(id);
+        if (raw >= self.types.items.len or self.types.items[raw] != .generic) return error.InvalidGlobalTypeId;
+        const previous = self.types.items[raw].generic.arguments;
+        if (previous.start == arguments.start and previous.len == arguments.len) return;
+        try self.construction.type_argument_rewrites.append(allocator, .{ .type_id = id, .previous = previous });
+        self.types.items[raw].generic.arguments = arguments;
+    }
+
     pub fn hasUnresolvedTypes(self: *const GlobalSemanticGraph) bool {
         for (self.construction.type_resolution.items) |state| if (state == .unresolved) return true;
         return false;
@@ -489,6 +512,8 @@ pub const GlobalSemanticGraph = struct {
         if (self.hasUnresolvedTypes()) return error.UnresolvedGlobalTypeSlots;
         self.construction.type_resolution.deinit(allocator);
         self.construction.type_resolution = .empty;
+        self.construction.type_argument_rewrites.deinit(allocator);
+        self.construction.type_argument_rewrites = .empty;
     }
 
     fn ensureTypeResolutionCovers(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, count: usize) !void {
@@ -785,4 +810,26 @@ test "unresolved global type slots are construction state, not Any" {
     try std.testing.expect(!graph.hasUnresolvedTypes());
     try graph.finishTypeResolution(allocator);
     try std.testing.expect(graph.constructionStateEmpty());
+}
+
+test "generic argument rewrites restore existing types across nested checkpoints" {
+    const allocator = std.testing.allocator;
+    var graph = GlobalSemanticGraph{};
+    defer graph.deinit(allocator);
+    try graph.generic_arguments.append(allocator, .{ .name = .{ .start = 0, .len = 0 }, .value = .{ .type = @enumFromInt(0) } });
+    try graph.types.append(allocator, .{ .builtin = .Int32 });
+    try graph.types.append(allocator, .{ .generic = .{ .base = @enumFromInt(0), .arguments = .{ .start = 0, .len = 1 } } });
+    const outer = graph.checkpoint();
+    try graph.generic_arguments.append(allocator, graph.generic_arguments.items[0]);
+    try graph.replaceTypeArguments(allocator, @enumFromInt(1), .{ .start = 1, .len = 1 });
+    const inner = graph.checkpoint();
+    try graph.generic_arguments.append(allocator, graph.generic_arguments.items[0]);
+    try graph.replaceTypeArguments(allocator, @enumFromInt(1), .{ .start = 2, .len = 1 });
+    graph.rollback(inner);
+    try std.testing.expectEqual(@as(u32, 1), graph.types.items[1].generic.arguments.start);
+    try std.testing.expectEqual(@as(usize, 2), graph.generic_arguments.items.len);
+    graph.rollback(outer);
+    try std.testing.expectEqual(@as(u32, 0), graph.types.items[1].generic.arguments.start);
+    try std.testing.expectEqual(@as(usize, 1), graph.generic_arguments.items.len);
+    try std.testing.expectEqual(@as(usize, 0), graph.construction.type_argument_rewrites.items.len);
 }

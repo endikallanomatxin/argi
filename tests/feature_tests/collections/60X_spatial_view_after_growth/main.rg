@@ -9,7 +9,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     array ::= unwrap_or_abort(.value = DynamicArray#(.t: UIntNative)(.allocator = system.page_allocator, .capacity = 2))
     push_assume_capacity#(.t: UIntNative)(.self = $&array, .value = 7)
     borrowed_view ::= window(.array = $&array).borrowed_view
-    unwrap_or_abort(.value = ensure_capacity#(.t: UIntNative)(.allocator = system.page_allocator, .self = $&array, .capacity = 4).result)
+    unwrap_or_abort(.value = ensure_capacity(.allocator = system.page_allocator, .self = $&array, .capacity = 4).result)
     observed ::= read_window(.borrowed_view = &borrowed_view).value
     deinit( .self = $&array)
 }

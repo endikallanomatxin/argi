@@ -446,3 +446,15 @@ The semver library supplies TextViewOf for borrowed VersionView, StringFormattin
 with the selected allocator Provider, and WriteValue by delegating to the stream's
 StringView evidence. It exposes no separate format/as_view overloads. Writing a
 version preserves the stream's selected Result, including counts or fallible writes.
+
+Queue and QueueInsertion scope removal and insertion without ordinary overloads.
+Queue associates Item and its selected removal Result, preserving optional heap
+results and bounded-ring Errable results. QueueInsertion selects the allocation
+Provider separately and retains lexical allocator defaults. Generic functions
+can forward the selected removal result without imposing one representation.
+
+Nominal input matching uses the declaration's compile-time parameter order for
+ordinary generic functions and operation aliases, as it does for conformances.
+Positional and reordered named type arguments bind the same parameters; output
+types do not supply bindings. Shared argument lookup removes separate matching
+rules for these forms.

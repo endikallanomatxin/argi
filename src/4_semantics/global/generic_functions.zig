@@ -1687,26 +1687,28 @@ pub const Resolver = struct {
                         .generic => |value| value,
                         else => return false,
                     };
-                    if (try self.generics.resolveParameterizedDeclaration(module_index, generic.base) != value.base) return false;
-                    if (generic.arguments.len != value.arguments.len) return false;
-                    for (storage.generic_arguments.items[generic.arguments.start..][0..generic.arguments.len]) |argument| {
-                        var matched = false;
-                        for (self.graph.generic_arguments.items[value.arguments.start..][0..value.arguments.len]) |concrete| {
-                            if (!std.mem.eql(u8, module.text(argument.name), self.graph.text(concrete.name))) continue;
-                            switch (argument.value) {
-                                .type => |ty| {
-                                    if (concrete.value != .type) return false;
-                                    if (!try self.inferInputType(module_index, ty, concrete.value.type, bindings)) return false;
-                                },
-                                .comptime_int => |expression| {
-                                    if (concrete.value != .comptime_int) return false;
-                                    if (!try self.inferIntExpression(module_index, expression, concrete.value.comptime_int, bindings)) return false;
-                                },
-                            }
-                            matched = true;
-                            break;
+                    const declaration = try self.generics.resolveParameterizedDeclaration(module_index, generic.base);
+                    if (declaration != value.base) return false;
+                    const located = self.generics.findTypeParameterized(declaration) orelse return false;
+                    if (generic.arguments.len != located.parameterized.parameters.len or value.arguments.len != generic.arguments.len) return false;
+                    const owner = &self.modules[located.module_index];
+                    // Bind by declaration parameter order, regardless of the
+                    // participant's positional or reordered named spelling.
+                    for (0..located.parameterized.parameters.len) |position| {
+                        const parameter = owner.semantic.parameterized_storage.comptime_parameters.items[located.parameterized.parameters.start + position];
+                        const name = owner.text(parameter.name);
+                        const argument = self.generics.findPatternArgument(module_index, generic.arguments, position, name) orelse return false;
+                        const concrete = self.generics.findGlobalArgument(name, value.arguments, position) orelse return false;
+                        switch (argument.value) {
+                            .type => |ty| {
+                                if (concrete.value != .type) return false;
+                                if (!try self.inferInputType(module_index, ty, concrete.value.type, bindings)) return false;
+                            },
+                            .comptime_int => |expression| {
+                                if (concrete.value != .comptime_int) return false;
+                                if (!try self.inferIntExpression(module_index, expression, concrete.value.comptime_int, bindings)) return false;
+                            },
                         }
-                        if (!matched) return false;
                     }
                     return true;
                 },

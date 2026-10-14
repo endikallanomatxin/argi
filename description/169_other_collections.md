@@ -95,7 +95,7 @@ and unsuccessful removal do not change the table or invalidate an iterator.
 
 ## Queues
 
-`RingBuffer<T>` is an owning FIFO queue with a fixed positive capacity. Its
+`RingBuffer#(T)` is an owning FIFO queue with a fixed positive capacity. Its
 constructor accepts `.capacity` and an explicit `.allocator`, reserves storage
 once, and initializes no elements. Zero capacity reports `invalid_capacity`;
 unrepresentable allocation sizes and allocation failures report `out_of_memory`.
@@ -109,7 +109,7 @@ Zero-sized elements remain distinct logical occupied slots.
   owning value is independent of the buffer storage and can outlive it.
 - `length` and `capacity` report logical occupancy and fixed capacity.
 - `get_ro_ref(.self, .index)` borrows an occupied element in FIFO order,
-  or reports `out_of_bounds`. The buffer implements `Indexable<T>` and
+  or reports `out_of_bounds`. The buffer implements `Indexable#(RingBuffer#(T))` and
   supports equality search when its elements satisfy that algorithm's contract.
 - `deinit(.self)` destroys the remaining occupied elements once
   and releases the backing allocation. Vacant slots are never read or dropped.
@@ -221,8 +221,9 @@ heap of implicitly copyable values and borrows a strict-weak `OrderPolicy`.
 `length` reports the number of elements. Peek is constant time; push and pop
 perform logarithmic comparisons. Equal-priority removal order is unspecified.
 The policy must remain live and its comparisons stable while values are queued.
-`deinit` releases the backing dynamic array. Ownership-bearing elements need a
-separate borrowed comparison and movement protocol before they can be supported.
+`deinit` releases the backing dynamic array. `OwnedPriorityQueue` supports owning
+elements through BorrowedOrderPolicy, retaining borrowed comparisons and
+relocation without copying queued owners.
 
 `BitSet(.count, .allocator)` owns initialized storage for a fixed bit count.
 It shares the checked `length`, `contains_bit`, `set_bit` and `count_set` operations
@@ -235,3 +236,12 @@ from a readonly `.other` owner without allocating. Both bit counts must match;
 `bit_set_size_mismatch` leaves the destination unchanged. Using the same owner
 for both operands is valid. Unused high bits remain zero. Union and intersection
 with self preserve the set, and difference with self clears it.
+
+Queue supplies Item and the selected pop Result. RingBuffer returns Errable with
+empty, while both priority queue families return an optional item. All expose the
+result through the same .result label. QueueInsertion selects a collection and
+allocation Provider jointly; push uses its Result for full or out_of_memory.
+These are scoped contract operations, with no ordinary push/pop overload family.
+Provider defaults use lexical allocator lookup. Owning inputs move into lexical
+owners before fallible insertion, retaining cleanup on rejection and allocation
+failure. Dynamic-array reservation keeps that static Provider through allocation.

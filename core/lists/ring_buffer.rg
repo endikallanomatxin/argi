@@ -114,12 +114,13 @@ _ring_buffer_occupied_pointer#(
     ).reference
 }
 
-push#(
-        .t : Type
+_queue_push_ring_buffer#(
+        .t : Type,
+        .Provider: Type: Allocator
     )(
         .self      : $&RingBuffer#(.t: t),
         .value     : t,
-        .allocator : $&Allocator,
+        .allocator : $&Provider,
     ) -> (
         .result : Errable#(Void, (..full))
     ) := {
@@ -140,7 +141,7 @@ push#(
     result = ..ok Void()
 }
 
-pop#(.t: Type)(.self: $&RingBuffer#(.t: t)) -> (.result: Errable#(t, (..empty))) := {
+_queue_pop_ring_buffer#(.t: Type)(.self: $&RingBuffer#(.t: t)) -> (.result: Errable#(t, (..empty))) := {
     if self&._length == 0 {
         result = ..error(.reason = ..empty)
         return
@@ -193,4 +194,15 @@ implement#(.t: Type) Indexable#(RingBuffer#(.t: t)) (
 
         result = ..ok borrowed
     }
+)
+
+implement#(.t: Type) Queue#(RingBuffer#(.t: t)) (
+    .Item: Type = t
+    .Result: Type = Errable#(t, (..empty))
+    .pop = _queue_pop_ring_buffer
+)
+
+implement#(.t: Type, .Provider: Type: Allocator) QueueInsertion#(RingBuffer#(.t: t), Provider) (
+    .Result: Type = Errable#(Void, (..full))
+    .push = _queue_push_ring_buffer
 )

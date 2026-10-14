@@ -69,7 +69,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     match peek_ref(.self = &queue).value {
         ..none { abort } ..some entry { if entry.value&.a.id != 1 { abort } }
     }
-    match pop(.self = $&queue).value {
+    match pop(.self = $&queue).result {
         ..none { abort } ..some ~entry { if entry.value.a.id != 1 { abort } }
     }
     if drops != 8 { abort }

@@ -343,7 +343,7 @@ semantic claim that every pair has overlapping applicability.
 | Module | Names with multiple ordinary declarations |
 |---|---:|
 | `core/libc` | 0 |
-| `core/lists` | 2 |
+| `core/lists` | 0 |
 | `core/maps` | 8 |
 | `core/memory` | 0 |
 | `core/system` | 1 |
@@ -351,13 +351,13 @@ semantic claim that every pair has overlapping applicability.
 | `more/math/linear_algebra` | 5 |
 | `more/semver` | 0 |
 
-The four linear-algebra `add` declarations now use Add evidence. Prioritize
-the foundational IO formatting/writing and collection view families next. Preserve
-static allocator participants and explicit references. Private numeric families
-(`integer_limits`, `_float_encoding`, `_float_replace_bits`) should use one generic
-function or a scoped representation contract. Renaming unrelated operations is
-appropriate when they do not represent one shared protocol. Optional Python APIs
-need a separate migration without introducing a mandatory runtime dependency.
+Remaining consumers are map queries/mutations, filesystem operations, one system
+query family and five linear-algebra families. Preserve static allocator selection,
+explicit references, literal context and recursive cleanup while migrating them.
+File opening can reuse Init with Args selecting the path representation and any
+allocation provider, rather than adding an opener registry. Coordinated map
+migration must cover the full namespace before unique ordinary identities can be
+introduced. Functions with distinct actions can use meaningful separate names.
 
 Do not reject every duplicate ordinary name until these callers and declarations
 have been migrated; the old ordinary overload selector remains pending removal.
@@ -653,3 +653,54 @@ destination. The subsequent complete contract group passed 296 cases without
 skips, failures or leaks. The full internal suite passed 374 tests (1 skipped).
 Global ordinary ranking and legacy contract compatibility remain pending after
 these consumer migrations; the three requested completion gates are not complete.
+
+### Queue operation migration
+
+Replace the three ordinary push/pop families with Queue and QueueInsertion
+operation identities. Queue associates Item and its removal Result; bounded rings
+retain Errable while priority heaps retain optional outputs. QueueInsertion
+selects the collection and a static allocation Provider jointly, preserving full
+and allocation errors. The provider-independent Item projection supplies literal
+context. Reuse existing owning algorithms and scoped backing-array evidence.
+
+Capacity reservation and dynamic-array growth retain their static Provider through
+the selected Allocator operation. Remove the unused dynamic_array_grow wrapper
+and privatize the actual growth helper. Keep bounds checked before allocation,
+lexical input cleanup, ownership relocation and backing-shape invalidation. This
+batch changes library conformances and callers, without new compiler phases.
+
+Initial queue validation passed all 14 ring/heap and ownership cases. A generic
+queue regression exercises associated removal results, narrow literal context,
+reached providers, bounded rejection and heap growth. The declaration inventory
+has 23 repeated names; global ordinary selection and legacy contract compatibility
+remain pending migration of those consumers.
+
+Broad validation exposed source-spelling-sensitive nominal inference in ordinary
+functions and operation aliases: positional nominal participants could not match
+named alias inputs. Use declaration-order matching with shared generic argument
+lookup across function inference and conformance comparison. Remove duplicate
+nominal metadata lookup and argument matcher helpers from the contract resolver.
+Queue UInt8/default-provider and copied-array growth regressions now pass. Add
+ordinary-function coverage for positional/reordered named type and constant args.
+
+Canonicalize nominal type argument identity as well as inference, validating names
+and kinds before instance reuse. Rewrites of pre-existing type argument ranges
+participate in graph checkpoints, restoring the old range before speculative pools
+shrink. A nested-checkpoint regression checks both restoration levels and pool
+lengths. This avoids dangling argument references after losing candidate probes.
+
+The full suite passed 1,918 program cases (11 optional skips), with no failures
+or leaks, plus 374 internal tests (1 skipped), before the final checkpoint journal
+and cached-instance fast-path adjustment. The nested-checkpoint journal regression
+then passed in the complete internal suite: 375 passed, 1 skipped. Final validation
+covers contracts, collections, generic cases and optional Python/NumPy using the
+matching native adapter. Canonical argument rewrites are released with construction
+metadata after GlobalSema, and materialized instances retain their fast reuse path.
+
+Final queue/canonicalization validation passed 509 program cases and 32 selected
+internal tests with Python and NumPy enabled, without skips, failures or leaks.
+Both new executable regressions passed; LLVM preserves narrow UInt8 results,
+declaration-order nominal identity and direct PageAllocator growth calls. No
+ordinary push/pop declaration remains in core/lists. The global ordinary selector
+and legacy contract adapters remain required removals after the 23 remaining
+ordinary families and legacy fixtures migrate.
