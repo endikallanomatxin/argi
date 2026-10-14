@@ -18,8 +18,10 @@ registries or implicit participant/representation adapters.
 Profile conformance verification independently from executable reachability.
 Executable builds prove selected operation bodies and reached virtual evidence.
 Exhaustive checks and editor diagnostics also prove unused concrete operations.
-Separate generic signature publication from body materialization so registering
-unused evidence does not lower operation bodies or their dependencies.
+Reprofile per-module substitution maps and full-pool materialization sweeps
+before replacing them with function-local storage or unresolved-item worklists.
+Preserve signature binding/default identities and speculative rollback when
+changing their storage.
 
 Before reusing validated core graphs or summaries, specify invalidation for
 source, target, imports and specialization visibility. Preserve selected operation

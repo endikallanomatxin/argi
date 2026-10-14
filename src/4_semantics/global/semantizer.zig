@@ -498,6 +498,16 @@ pub fn semantizeWithOptions(
         while (changed) {
             profile_rounds += 1;
             changed = false;
+            // Published operation signatures do not make their bodies roots.
+            // Complete selected bodies before resolving their pending uses.
+            if (generic_functions.materializePublishedBodies(reachable) catch |err| {
+                try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, &generics);
+                try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
+                return err;
+            }) changed = true;
+            if (reachable) |set| {
+                if (try reachability_mod.expand(allocator, &relocation.graph, set)) changed = true;
+            }
             const pending_start = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
             for (pending_phases) |phase| {
                 if (resolvePendingPhase(

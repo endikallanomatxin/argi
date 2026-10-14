@@ -12988,3 +12988,16 @@ test "feature_tests/contracts/323X_virtual_conformance_consumption" {
 test "feature_tests/contracts/324_unused_aliased_conformance" {
     try expectSuccessfulBuild("tests/feature_tests/contracts/324_unused_aliased_conformance");
 }
+
+test "feature_tests/contracts/325_deferred_operation_body" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/325_deferred_operation_body");
+    const result = try runChild(&.{ argi_bin, "check", "tests/feature_tests/contracts/325_deferred_operation_body" });
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+    try expect(result.term == .exited and result.term.exited != 0);
+    try expect(std.mem.indexOf(u8, result.stderr, "cannot materialize body") != null);
+}
+
+test "feature_tests/contracts/326X_selected_deferred_operation_body" {
+    try buildExpectFail("tests/feature_tests/contracts/326X_selected_deferred_operation_body", "cannot materialize body");
+}

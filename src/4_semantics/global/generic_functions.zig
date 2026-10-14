@@ -85,6 +85,7 @@ pub const Resolver = struct {
     profile_instantiate_lookup_ns: i96 = 0,
     profile_instantiate_body_ns: i96 = 0,
     profile_instance_context_init_ns: i96 = 0,
+    publishing_signature: bool = false,
 
     pub const SideEffectCheckpoint = struct {
         ownership: ?[2]usize = null,
@@ -1709,6 +1710,9 @@ pub const Resolver = struct {
     /// and never a search through same-named functions.
     pub fn instantiateOperationAlias(context: *anyopaque, declaration: global_sg.GlobalDeclId, input: global_sg.GlobalTypeId) anyerror!global_sg.GlobalFunctionId {
         const self: *Resolver = @ptrCast(@alignCast(context));
+        const saved_publication = self.publishing_signature;
+        self.publishing_signature = true;
+        defer self.publishing_signature = saved_publication;
         const located = self.findParameterized(declaration) orelse return error.GenericFunctionParameterizedNotFound;
         const storage = &self.modules[located.module_index].semantic.parameterized_storage;
         var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
@@ -1724,6 +1728,9 @@ pub const Resolver = struct {
 
     pub fn instantiateReferencedFunction(context: *anyopaque, declaration: global_sg.GlobalDeclId, arguments: primitives.Range(global_sg.GlobalGenericArgId)) anyerror!global_sg.GlobalFunctionId {
         const self: *Resolver = @ptrCast(@alignCast(context));
+        const saved_publication = self.publishing_signature;
+        self.publishing_signature = true;
+        defer self.publishing_signature = saved_publication;
         return self.instantiate(declaration, arguments);
     }
 
@@ -1812,15 +1819,75 @@ pub const Resolver = struct {
         });
 
         context.function = function_id;
-        if (located.parameterized.body) |body| {
+        // Scalar representations are proved from their exact trusted bodies
+        // during operator selection, including module constant initializers.
+        // They are selected specializations, not eagerly registered families.
+        const declaration_file = self.graph.files.items[self.graph.declaration(declaration).source.file_index];
+        const scalar_primitive = module.is_bundled_core and std.mem.eql(u8, std.fs.path.basename(self.graph.text(declaration_file.path)), "scalar_arithmetic.rg");
+        if (!self.publishing_signature or scalar_primitive) if (located.parameterized.body) |body| {
             const body_started = if (self.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
             const instantiated_body = try context.instantiateBlock(body);
             if (self.profile_io) |io| self.profile_instantiate_body_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - body_started;
             self.graph.functions.items[@intFromEnum(function_id)].body = instantiated_body;
-        }
+        };
         self.stats.instances += 1;
         speculation.commit();
         return function_id;
+    }
+
+    /// Conformance registration publishes interfaces without lowering bodies.
+    /// Reachability and exhaustive semantizing complete those same identities.
+    pub fn materializePublishedBodies(self: *Resolver, reachable: ?*const @import("reachability.zig").FunctionSet) !bool {
+        var changed = false;
+        // Copy each instance before lowering: nested specialization can grow
+        // the instance and function pools. Newly published bodies join a later pass.
+        const count = self.graph.generic_function_instances.items.len;
+        for (0..count) |index| {
+            const instance = self.graph.generic_function_instances.items[index];
+            const function = self.graph.function(instance.function);
+            if (function.body != null or !function.flags.has_declared_body) continue;
+            if (reachable) |set| if (!set.contains(instance.function)) continue;
+            const located = self.findParameterized(instance.parameterized_declaration) orelse return error.GenericFunctionParameterizedNotFound;
+            const body = located.parameterized.body orelse continue;
+            const storage = &self.modules[located.module_index].semantic.parameterized_storage;
+            var substitutions = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
+            defer substitutions.deinit(self.allocator);
+            try self.generics.bindGlobalArguments(located.module_index, located.parameterized.parameters, instance.arguments, &substitutions);
+            var context = try InstanceContext.init(self, located.module_index, located.parameterized, &substitutions);
+            defer context.deinit();
+            context.function = instance.function;
+            inline for (.{ "input_bindings", "output_bindings" }) |name| {
+                const local = @field(located.parameterized, name);
+                const global = @field(function, name);
+                for (0..local.len) |offset| {
+                    context.binding_map[local.start + offset] = self.graph.binding_refs.items[global.start + offset];
+                }
+            }
+            const saved_publication = self.publishing_signature;
+            self.publishing_signature = false;
+            defer self.publishing_signature = saved_publication;
+            const body_started = if (self.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
+            defer if (self.profile_io) |io| {
+                self.profile_instantiate_body_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - body_started;
+            };
+            const instantiated = context.instantiateBlock(body) catch |err| {
+                if (err == error.OutOfMemory or err == error.Reported) return err;
+                // A dependency selected by the body owns the more precise
+                // conformance diagnostic; do not hide it behind this fallback.
+                if (self.nested_call_context) |contracts| if (contracts.participant_conformance_failure != null) return err;
+                if (self.generics.comptime_failure == null) {
+                    const declaration = self.graph.declaration(instance.parameterized_declaration);
+                    self.generics.comptime_failure = .{
+                        .source = declaration.source,
+                        .reason = try std.fmt.allocPrint(self.allocator, "cannot materialize body of '{s}': {s}", .{ self.graph.text(self.graph.declarationSourceName(instance.parameterized_declaration)), @errorName(err) }),
+                    };
+                }
+                return err;
+            };
+            self.graph.functions.items[@intFromEnum(instance.function)].body = instantiated;
+            changed = true;
+        }
+        return changed;
     }
 
     const LocatedParameterized = struct {
