@@ -78,7 +78,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     }
     if failing.attempts != 2 { abort }
     if as_view(.self = &text).view != "abc" { abort }
-    if bytes_get(.string = &text, .index = 3).byte != 0 { abort }
+    if bytes_get(.view = &text, .index = 3).byte != 0 { abort }
     clear(.self = $&text)
     string_append_byte(.self = $&text, .byte = 120)
     tail: [2]UInt8 = (121, 122)
@@ -86,7 +86,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     empty: [0]UInt8 = ()
     string_append_bytes(.self = $&text, .source = view(.array = &empty))
     if as_view(.self = &text).view != "xyz" { abort }
-    if bytes_get(.string = &text, .index = 3).byte != 0 { abort }
+    if bytes_get(.view = &text, .index = 3).byte != 0 { abort }
     deinit(.self = $&text)
 }
 

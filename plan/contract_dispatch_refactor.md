@@ -342,19 +342,13 @@ semantic claim that every pair has overlapping applicability.
 
 | Module | Names with multiple ordinary declarations |
 |---|---:|
-| `core/bytes` | 10 |
-| `core/errors` | 1 |
-| `core/io` | 1 |
 | `core/libc` | 1 |
-| `core/lists` | 12 |
-| `core/maps` | 13 |
-| `core/memory` | 2 |
-| `core/numbers` | 3 |
-| `core/strings` | 7 |
-| `core/system` | 6 |
+| `core/lists` | 5 |
+| `core/maps` | 11 |
+| `core/memory` | 1 |
+| `core/system` | 5 |
 | `core/system/file_system` | 10 |
 | `core/testing` | 4 |
-| `core/time` | 2 |
 | `more/math/linear_algebra` | 5 |
 | `more/python` | 9 |
 | `more/semver` | 1 |
@@ -468,3 +462,68 @@ remain intact across growth, insertion, removal, pop and release. Generic dynami
 reference selection and independent empty views also passed direct execution and
 LLVM inspection. Callers with local view bindings use borrowed_view or qualified
 ViewOf operations to preserve ordinary lexical name resolution.
+
+### Closing ordinary numeric families
+
+IntegerBounds selects limit operations by the value participant; one unique
+integer_limits function preserves the public two-output API. Private IEEE
+encoding/replacement families share _FloatRepresentation and retain their
+existing bit algorithms behind two unique generic entries. No compiler hooks or
+return-based selection are introduced. Validate checked arithmetic, classification,
+rounding and float text roundtrips before continuing ordinary-family removal.
+
+Unify terminal print into one generic function that delegates rendering to
+WriteValue and appends its terminator only on success. Remove its four ordinary
+overloads. Archive the explicitly unfinished numeric design sketches as text,
+so their rejected operators/Self/satisfies syntax is not shipped as executable
+Argi modules. This does not remove the compiler compatibility adapters yet.
+
+StringFormatting selects Value and allocator Provider jointly, reusing unique
+private algorithms as members. Ordinary format and format_into now have unique
+generic identities. Preserve exact allocation counts, atomic growth failures and
+cleanup of temporary encodings. Decimal digit extraction is one generic entry.
+
+ByteCursor scopes position/remaining/skip for reader and writer cursors, with
+unique ordinary entries. Indexed endian operations use explicit *_at names,
+separate from advancing cursor operations; find_byte is distinct from pattern
+search. Preserve range validation before writes and advance only on success.
+This removes all ten ordinary overload families in core/bytes.
+
+ContiguousView scopes base-pointer and subrange operations for mutable and
+readonly views. Pointer is associated, keeping the stored access mode explicit.
+Unique data/slice entries retain checked bounds and storage dependencies; no
+conversion to a common writable representation is introduced. Explicit redundant
+element arguments at old call sites are removed in favor of participant inference.
+
+CollectionLength and CollectionCapacity replace repeated ordinary queries in
+lists/maps. Scoped members directly reuse their unique private helpers. Preserve
+readonly receivers, generic policy bounds and exact count output names. Runtime
+representation intrinsics for native arrays/views remain separate from nominal
+collection algorithms. Other module query identities remain pending migration.
+
+TextViewOf and TextBytes replace strings' projection/byte-read overloads,
+preserving borrowed outputs and trailing-NUL behavior of owned strings. The
+allocating StringView-to-C-string factory is explicitly named copy_c_string,
+distinct from borrowing an existing terminated string via as_c_string.
+
+ReadLimit unifies limited reader queries. TimeCompare and NanosecondCount scope
+time queries, retaining duration/timestamp numeric result widths. Bounded memcpy
+uses one generic algorithm for mutable/readonly source views. Validate temporal
+anchors and native byte operations; no implicit borrow or allocation is added.
+
+### Completion audit after the current ordinary-family batch
+
+The inventory has 52 remaining repeated names (initially 84). Numbers, bytes,
+strings, IO and time now have unique ordinary identities within their folder
+modules. This is a declaration inventory, not proof that cross-module visible
+identities resolve without the old candidate selector. Global ordinary selection
+is still present, and legacy syntax/implicit Self fixture consumers still exist.
+Do not claim the three completion gates are closed or remove those paths before
+their remaining callers have migrated. Next batches are lists/maps, native system
+operations, official math and optional Python; testing protocols also remain.
+
+Current batch validation: full suite passed 1909 program cases (11
+skipped) and 374 internal tests (1 skipped), with no failures or leaks. Selected
+entry LLVM and the custom collection/numeric executable were checked. The ordinary
+selector and legacy contract adapters are still pending removal; this batch closes
+32 declaration families, not the overall three requested completion gates.

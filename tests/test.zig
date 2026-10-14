@@ -2835,14 +2835,7 @@ test "feature_tests/io/25_positional_text_helpers" {
 }
 
 test "feature_tests/io/26X_print_without_system" {
-    try buildExpectFailExact("tests/feature_tests/io/26X_print_without_system",
-        \\tests/feature_tests/io/26X_print_without_system/main.rg:2:10: error: no overload of 'print' accepts arguments (.: StringView). Available signatures:
-        \\  - print (.value: StringView, .writer: $&Writer, .terminator: StringView) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed)))
-        \\  - print (.value: &String, .writer: $&Writer, .terminator: StringView) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed)))
-        \\      print("Hello, World!\n")
-        \\           ^
-        \\
-    );
+    try buildExpectFail("tests/feature_tests/io/26X_print_without_system", "no matching generic overload of 'print'");
 }
 
 test "feature_tests/text/03_string_buffer_io" {
@@ -12901,4 +12894,9 @@ test "feature_tests/contracts/287X_view_reference_escape" {
 test "feature_tests/contracts/288_dynamic_view_reference_evidence" {
     try expectSuccessfulBuild("tests/feature_tests/contracts/288_dynamic_view_reference_evidence");
     try runExpect("tests/feature_tests/contracts/288_dynamic_view_reference_evidence", 0);
+}
+
+test "feature_tests/contracts/289_unique_numeric_and_collection_entries" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/289_unique_numeric_and_collection_entries");
+    try runExpect("tests/feature_tests/contracts/289_unique_numeric_and_collection_entries", 0);
 }

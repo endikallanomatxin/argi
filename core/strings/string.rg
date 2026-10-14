@@ -145,13 +145,13 @@ string_byte_reference(
     reference = _trusted_allocation_byte_ro(.allocation = &string&.allocation, .offset = index).reference
 }
 
-bytes_get(
-        .string : &String,
+_string_get_byte(
+        .view   : &String,
         .index  : UIntNative,
     ) -> (
         .byte : UInt8
     ) := {
-    byte = string_byte_reference(.string = string, .index = index).reference&
+    byte = string_byte_reference(.string = view, .index = index).reference&
 }
 
 bytes_set(
@@ -165,7 +165,7 @@ bytes_set(
     ptr&= value
 }
 
-as_view(
+_string_text_view(
         .self : &String,
     ) -> (
         .view : StringView
@@ -645,54 +645,38 @@ implement#(.Provider: Type: Allocator) Add#(StringView, String, (
     }
 )
 
-concat(
-        .left      : StringView,
-        .right     : &String,
-        .allocator : $&Allocator,
-    ) -> (
-        .result : Errable#(String, (..out_of_memory))
-    ) := {
+implement#(.Provider: Type: Allocator) Concatenation#(StringView, &String, Provider) (
+    .join = (.left: StringView, .right: &String, .allocator: $&Provider) -> (.result: Errable#(String, (..out_of_memory))) {
     assume allocator
     right_view := as_view(right)
 
     result = concat_views(&left, &right_view)
 }
+)
 
-concat(
-        .left      : StringView,
-        .right     : StringView,
-        .allocator : $&Allocator,
-    ) -> (
-        .result : Errable#(String, (..out_of_memory))
-    ) := {
+implement#(.Provider: Type: Allocator) Concatenation#(StringView, StringView, Provider) (
+    .join = (.left: StringView, .right: StringView, .allocator: $&Provider) -> (.result: Errable#(String, (..out_of_memory))) {
     assume allocator
 
     result = concat_views(&left, &right)
 }
+)
 
-concat(
-        .left      : &String,
-        .right     : StringView,
-        .allocator : $&Allocator,
-    ) -> (
-        .result : Errable#(String, (..out_of_memory))
-    ) := {
+implement#(.Provider: Type: Allocator) Concatenation#(&String, StringView, Provider) (
+    .join = (.left: &String, .right: StringView, .allocator: $&Provider) -> (.result: Errable#(String, (..out_of_memory))) {
     assume allocator
     left_view := as_view(left)
 
     result = concat_views(&left_view, &right)
 }
+)
 
-concat(
-        .left      : &String,
-        .right     : &String,
-        .allocator : $&Allocator,
-    ) -> (
-        .result : Errable#(String, (..out_of_memory))
-    ) := {
+implement#(.Provider: Type: Allocator) Concatenation#(&String, &String, Provider) (
+    .join = (.left: &String, .right: &String, .allocator: $&Provider) -> (.result: Errable#(String, (..out_of_memory))) {
     assume allocator
     left_view := as_view(left)
     right_view := as_view(right)
 
     result = concat_views(&left_view, &right_view)
 }
+)

@@ -80,7 +80,7 @@ implement#(
     }
 )
 
-length#(
+_collection_length_hash_map#(
         .key    : Type: ImplicitlyCopyable,
         .value  : Type: ImplicitlyCopyable,
         .policy : Type: HashPolicy#(policy, key)
@@ -90,7 +90,15 @@ length#(
         .count : UIntNative
     ) := { count = self&._length }
 
-capacity#(
+implement#(
+        .key    : Type: ImplicitlyCopyable,
+        .value  : Type: ImplicitlyCopyable,
+        .policy : Type: HashPolicy#(policy, key)
+    ) CollectionLength#(HashMap#(.key: key, .value: value, .policy: policy)) (
+    .measure_length = _collection_length_hash_map
+)
+
+_collection_capacity_hash_map#(
         .key    : Type: ImplicitlyCopyable,
         .value  : Type: ImplicitlyCopyable,
         .policy : Type: HashPolicy#(policy, key)
@@ -99,6 +107,14 @@ capacity#(
     ) -> (
         .count : UIntNative
     ) := { count = length(&self&._slots).count }
+
+implement#(
+        .key    : Type: ImplicitlyCopyable,
+        .value  : Type: ImplicitlyCopyable,
+        .policy : Type: HashPolicy#(policy, key)
+    ) CollectionCapacity#(HashMap#(.key: key, .value: value, .policy: policy)) (
+    .measure_capacity = _collection_capacity_hash_map
+)
 
 _hash_map_find#(
         .key    : Type: ImplicitlyCopyable,

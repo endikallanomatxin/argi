@@ -37,7 +37,11 @@ implement Init#(
     }
 )
 
-length(.self: &BitSetView) -> (.count: UIntNative) := { count = self&._count }
+_collection_length_bit_set(.self: &BitSetView) -> (.count: UIntNative) := { count = self&._count }
+
+implement CollectionLength#(BitSetView) (
+    .measure_length = _collection_length_bit_set
+)
 
 _bit_set_mask(.index: UIntNative) -> (.mask: UInt8 = 1) := {
     offset ::= index % 8

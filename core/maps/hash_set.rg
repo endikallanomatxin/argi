@@ -87,7 +87,7 @@ remove#(
     removed = remove(.self = $&self&._map, .key = key, .allocator = allocator).removed
 }
 
-length#(
+_collection_length_hash_set#(
         .key    : Type: ImplicitlyCopyable,
         .policy : Type: HashPolicy#(policy, key)
     )(
@@ -96,7 +96,14 @@ length#(
         .count : UIntNative
     ) := { count = length(&self&._map).count }
 
-capacity#(
+implement#(
+        .key    : Type: ImplicitlyCopyable,
+        .policy : Type: HashPolicy#(policy, key)
+    ) CollectionLength#(HashSet#(.key: key, .policy: policy)) (
+    .measure_length = _collection_length_hash_set
+)
+
+_collection_capacity_hash_set#(
         .key    : Type: ImplicitlyCopyable,
         .policy : Type: HashPolicy#(policy, key)
     )(
@@ -104,6 +111,13 @@ capacity#(
     ) -> (
         .count : UIntNative
     ) := { count = capacity(&self&._map).count }
+
+implement#(
+        .key    : Type: ImplicitlyCopyable,
+        .policy : Type: HashPolicy#(policy, key)
+    ) CollectionCapacity#(HashSet#(.key: key, .policy: policy)) (
+    .measure_capacity = _collection_capacity_hash_set
+)
 
 implement#(
         .key    : Type: ImplicitlyCopyable,

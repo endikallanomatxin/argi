@@ -855,34 +855,8 @@ _FloatEncoding: Type = (
     .bias           : Int32
 )
 
-_float_encoding(.value: Float16) -> (.encoding: _FloatEncoding) := {
-    bits ::= trusted_reinterpret_reference#(.from: Float16, .to: UInt16)(.base = &value).reference&
-    encoding = (
-        .bits           = bits | convert#(.to: UInt64)(_)
-        .fraction_unit  = 1024
-        .exponent_limit = 32
-        .bias           = 15
-    )
-}
-
-_float_encoding(.value: Float32) -> (.encoding: _FloatEncoding) := {
-    bits ::= trusted_reinterpret_reference#(.from: Float32, .to: UInt32)(.base = &value).reference&
-    encoding = (
-        .bits           = bits | convert#(.to: UInt64)(_)
-        .fraction_unit  = 8388608
-        .exponent_limit = 256
-        .bias           = 127
-    )
-}
-
-_float_encoding(.value: Float64) -> (.encoding: _FloatEncoding) := {
-    bits ::= trusted_reinterpret_reference#(.from: Float64, .to: UInt64)(.base = &value).reference&
-    encoding = (
-        .bits           = bits
-        .fraction_unit  = 4503599627370496
-        .exponent_limit = 2048
-        .bias           = 1023
-    )
+_float_encoding#(.Value: Type: _FloatRepresentation#(Value)) := (.value: Value) -> (.encoding: _FloatEncoding) {
+    encoding = _FloatRepresentation#(Value).encoding(.value = value)
 }
 
 _float_exact_digits(.integer: _FloatDecimalInteger) -> (.digits: _FloatExactDigits) := {

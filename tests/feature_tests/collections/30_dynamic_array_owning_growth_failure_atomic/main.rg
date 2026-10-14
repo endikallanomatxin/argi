@@ -94,7 +94,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
                     remaining ::= remaining_result ..ok
                     if [
                         length(.self = &array).count != 1
-                        or capacity#(.t: Tracked)(.self = &array).count != 1
+                        or capacity(.self = &array).count != 1
                         or remaining&.id != 1
                     ] {
                         status_code = 5

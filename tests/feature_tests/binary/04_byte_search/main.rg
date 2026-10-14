@@ -18,11 +18,11 @@ main() -> (.status_code: Int32 = 0) := {
         ..none { abort }
         ..some hit { if hit.value != 3 { abort } }
     }
-    match find(.self = a, .byte = 255).index {
+    match find_byte(.self = a, .byte = 255).index {
         ..none { abort }
         ..some hit { if hit.value != 1 { abort } }
     }
-    match find(.self = a, .byte = 2).index { ..none {} ..some _ { abort } }
+    match find_byte(.self = a, .byte = 2).index { ..none {} ..some _ { abort } }
     match find(.self = a, .pattern = empty).index {
         ..none { abort }
         ..some hit { if hit.value != 0 { abort } }

@@ -92,7 +92,7 @@ implement#(
 
         if current_index >= self&._view._length { abort }
         ptr ::= trusted_reference_offset#(.t: t)(
-            .base     = data#(.t: t)(&self&._view).pointer
+            .base     = data(&self&._view).pointer
             .elements = current_index
         ).reference
         value = ptr&
@@ -122,7 +122,7 @@ implement#(
 
         if current_index >= self&._view._length { abort }
         value = trusted_reference_offset#(.t: t)(
-            .base     = data#(.t: t)(&self&._view).pointer
+            .base     = data(&self&._view).pointer
             .elements = current_index
         ).reference
         self&._index = current_index + 1
@@ -151,7 +151,7 @@ implement#(
 
         if current_index >= self&._view._length { abort }
         value = trusted_mutable_reference_offset#(.t: t)(
-            .base     = data#(.t: t)(&self&._view).pointer
+            .base     = data(&self&._view).pointer
             .elements = current_index
         ).reference
         self&._index = current_index + 1

@@ -70,7 +70,7 @@ fread_into(
     }
 
     count = fread(
-        .buffer = data#(.t: UInt8)(&buffer).pointer
+        .buffer = data(&buffer).pointer
         .size   = 1
         .count  = length(&buffer).count
         .stream = stream
@@ -89,7 +89,7 @@ fwrite_from(
     }
 
     count = fwrite(
-        .buffer = read_reference#(.t: UInt8)(.base = data#(.t: UInt8)(&buffer).pointer).reference
+        .buffer = read_reference#(.t: UInt8)(.base = data(&buffer).pointer).reference
         .size   = 1
         .count  = length(&buffer).count
         .stream = stream

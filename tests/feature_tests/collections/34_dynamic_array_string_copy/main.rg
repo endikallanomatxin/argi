@@ -21,11 +21,11 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
             original ::= dynamic_array_element_ro_pointer#(.t: String)(.array = &array, .offset = 0).pointer
             duplicate ::= dynamic_array_element_rw_pointer#(.t: String)(.array = $&copied, .offset = 0).pointer
             bytes_set(.string = duplicate, .index = 0, .value = 66)
-            if bytes_get(.string = original, .index = 0).byte != 65 {
+            if bytes_get(.view = original, .index = 0).byte != 65 {
                 status_code = 3
                 return
             }
-            if bytes_get(.string = duplicate, .index = 0).byte != 66 {
+            if bytes_get(.view = duplicate, .index = 0).byte != 66 {
                 status_code = 4
             }
         }

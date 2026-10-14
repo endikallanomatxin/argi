@@ -47,7 +47,7 @@ string_view_has_c_string_layout(
     ok = terminator_ptr&== 0
 }
 
-as_c_string(
+copy_c_string(
         .self      : StringView,
         .allocator : $&Allocator,
     ) -> (
@@ -88,7 +88,7 @@ as_c_string(
     }
 }
 
-as_view(
+_c_text_view(
         .self : &Char,
     ) -> (
         .view : StringView

@@ -30,9 +30,13 @@ implement#(
     }
 )
 
-capacity#(.t: Type)(.self: &Deque#(.t: t)) -> (.count: UIntNative) := {
+_collection_capacity_deque#(.t: Type)(.self: &Deque#(.t: t)) -> (.count: UIntNative) := {
     count = self&._ring._capacity
 }
+
+implement#(.t: Type) CollectionCapacity#(Deque#(.t: t)) (
+    .measure_capacity = _collection_capacity_deque
+)
 
 reserve#(
         .t : Type

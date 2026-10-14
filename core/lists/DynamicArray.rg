@@ -29,9 +29,13 @@ DynamicArray#(.t: Type): Type = (
     ._shape    : _DynamicArrayShape
 )
 
-capacity#(.t: Type)(.self: &DynamicArray#(.t: t)) -> (.count: UIntNative) := {
+_collection_capacity_DynamicArray#(.t: Type)(.self: &DynamicArray#(.t: t)) -> (.count: UIntNative) := {
     count = self&._capacity
 }
+
+implement#(.t: Type) CollectionCapacity#(DynamicArray#(.t: t)) (
+    .measure_capacity = _collection_capacity_DynamicArray
+)
 
 -- An owner that has consumed every element may need to expose the empty
 -- opaque storage state to the safety checker before ending a temporal root.

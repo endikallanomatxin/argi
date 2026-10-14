@@ -42,7 +42,7 @@ get(
     assume ffi := self&._ffi
     assume allocator
 
-    converted ::= as_c_string(key, .allocator = allocator)
+    converted ::= copy_c_string(key, .allocator = allocator)
 
     match converted {
         ..error _ { result = ..error(.reason = ..out_of_memory) }

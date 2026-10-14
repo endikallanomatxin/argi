@@ -15,7 +15,7 @@ string_view_byte_address(
     reference = trusted_reference_offset#(.t: UInt8)(.base = self&.data, .elements = index)
 }
 
-bytes_get(
+_view_get_byte(
         .view  : &StringView,
         .index : UIntNative,
     ) -> (

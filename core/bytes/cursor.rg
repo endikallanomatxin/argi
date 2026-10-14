@@ -21,25 +21,25 @@ implement Init#(ByteWriter, (.bytes: ArrayView#(.t: UInt8))) (
     }
 )
 
-position(.self: &ByteReader) -> (.count: UIntNative) := { count = self&._position }
+_byte_reader_position(.self: &ByteReader) -> (.count: UIntNative) := { count = self&._position }
 
-position(.self: &ByteWriter) -> (.count: UIntNative) := { count = self&._position }
+_byte_writer_position(.self: &ByteWriter) -> (.count: UIntNative) := { count = self&._position }
 
-remaining(.self: &ByteReader) -> (.count: UIntNative) := {
+_byte_reader_remaining(.self: &ByteReader) -> (.count: UIntNative) := {
     count = [
         length(&self&._bytes).count
         - self&._position
     ]
 }
 
-remaining(.self: &ByteWriter) -> (.count: UIntNative) := {
+_byte_writer_remaining(.self: &ByteWriter) -> (.count: UIntNative) := {
     count = [
         length(&self&._bytes).count
         - self&._position
     ]
 }
 
-skip(
+_byte_reader_skip(
         .self  : $&ByteReader,
         .count : UIntNative
     ) -> (
@@ -61,7 +61,7 @@ read_uint16(
     ) -> (
         .result : Errable#(UInt16, (..out_of_bounds))
     ) := {
-    value_out ::= read_uint16(.bytes = self&._bytes, .offset = self&._position, .order = order)!
+    value_out ::= read_uint16_at(.bytes = self&._bytes, .offset = self&._position, .order = order)!
     self&._position = self&._position + 2
 
     result = ..ok value_out
@@ -73,7 +73,7 @@ read_uint32(
     ) -> (
         .result : Errable#(UInt32, (..out_of_bounds))
     ) := {
-    value_out ::= read_uint32(.bytes = self&._bytes, .offset = self&._position, .order = order)!
+    value_out ::= read_uint32_at(.bytes = self&._bytes, .offset = self&._position, .order = order)!
     self&._position = self&._position + 4
 
     result = ..ok value_out
@@ -85,13 +85,13 @@ read_uint64(
     ) -> (
         .result : Errable#(UInt64, (..out_of_bounds))
     ) := {
-    value_out ::= read_uint64(.bytes = self&._bytes, .offset = self&._position, .order = order)!
+    value_out ::= read_uint64_at(.bytes = self&._bytes, .offset = self&._position, .order = order)!
     self&._position = self&._position + 8
 
     result = ..ok value_out
 }
 
-skip(
+_byte_writer_skip(
         .self  : $&ByteWriter,
         .count : UIntNative
     ) -> (
@@ -114,7 +114,7 @@ write_uint16(
     ) -> (
         .result : Errable#(Void, (..out_of_bounds))
     ) := {
-    value_out ::= write_uint16(
+    value_out ::= write_uint16_at(
         .bytes  = self&._bytes
         .offset = self&._position
         .value  = value
@@ -132,7 +132,7 @@ write_uint32(
     ) -> (
         .result : Errable#(Void, (..out_of_bounds))
     ) := {
-    value_out ::= write_uint32(
+    value_out ::= write_uint32_at(
         .bytes  = self&._bytes
         .offset = self&._position
         .value  = value
@@ -150,7 +150,7 @@ write_uint64(
     ) -> (
         .result : Errable#(Void, (..out_of_bounds))
     ) := {
-    value_out ::= write_uint64(
+    value_out ::= write_uint64_at(
         .bytes  = self&._bytes
         .offset = self&._position
         .value  = value

@@ -41,7 +41,11 @@ implement Deinit#(BitSet) (
     }
 )
 
-length(.self: &BitSet) -> (.count: UIntNative) := { count = self&._count }
+_collection_length_owned_bit_set(.self: &BitSet) -> (.count: UIntNative) := { count = self&._count }
+
+implement CollectionLength#(BitSet) (
+    .measure_length = _collection_length_owned_bit_set
+)
 
 as_view(.self: $&BitSet) -> (.view: BitSetView) := {
     view = (._bytes = ViewOf#($&DynamicArray#(.t: UInt8)).make_view(.array = $&self&._storage), ._count = self&._count)

@@ -114,8 +114,8 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     )!
     if owned.length != 4 or capacity(.self = &owned).value > 4 { abort }
     if [
-        bytes_get(.string = &owned, .index = 1).byte != 0
-        or bytes_get(.string = &owned, .index = 3).byte != 10
+        bytes_get(.view = &owned, .index = 1).byte != 0
+        or bytes_get(.view = &owned, .index = 3).byte != 10
     ] { abort }
     source.position = 0
     other ::= read_all_limited(

@@ -20,7 +20,7 @@ main(.system: System) -> (.status_code: Int32) := {
             .data   = data
             .length = 3
         )
-        borrowed_result ::= as_c_string(.self = borrowed_view, .allocator = $&allocator_storage)
+        borrowed_result ::= copy_c_string(.self = borrowed_view, .allocator = $&allocator_storage)
         match borrowed_result {
             ..error _ { status_code = 7 }
             ..ok ~borrowed {
@@ -46,7 +46,7 @@ main(.system: System) -> (.status_code: Int32) := {
             .data   = data
             .length = 2
         )
-        copied_result ::= as_c_string(.self = copied_view, .allocator = $&allocator_storage)
+        copied_result ::= copy_c_string(.self = copied_view, .allocator = $&allocator_storage)
         match copied_result {
             ..error _ { status_code = 8 }
             ..ok ~copied {

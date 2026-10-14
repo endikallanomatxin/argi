@@ -136,7 +136,7 @@ implement#(
     }
 )
 
-length#(
+_collection_length_owned_hash_map#(
         .key    : Type,
         .value  : Type,
         .policy : Type: BorrowedHashPolicy#(policy, key)
@@ -146,7 +146,15 @@ length#(
         .count : UIntNative
     ) := { count = self&._length }
 
-capacity#(
+implement#(
+        .key    : Type,
+        .value  : Type,
+        .policy : Type: BorrowedHashPolicy#(policy, key)
+    ) CollectionLength#(OwnedHashMap#(.key: key, .value: value, .policy: policy)) (
+    .measure_length = _collection_length_owned_hash_map
+)
+
+_collection_capacity_owned_hash_map#(
         .key    : Type,
         .value  : Type,
         .policy : Type: BorrowedHashPolicy#(policy, key)
@@ -155,6 +163,14 @@ capacity#(
     ) -> (
         .count : UIntNative
     ) := { count = length(&self&._table._slots).count }
+
+implement#(
+        .key    : Type,
+        .value  : Type,
+        .policy : Type: BorrowedHashPolicy#(policy, key)
+    ) CollectionCapacity#(OwnedHashMap#(.key: key, .value: value, .policy: policy)) (
+    .measure_capacity = _collection_capacity_owned_hash_map
+)
 
 _owned_hash_invalidate#(
         .key    : Type,

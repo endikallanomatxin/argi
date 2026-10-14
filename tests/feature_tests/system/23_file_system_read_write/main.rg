@@ -41,22 +41,22 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
-    if bytes_get(.string = &read_back, .index = 0).byte != 65 {
+    if bytes_get(.view = &read_back, .index = 0).byte != 65 {
         status_code = 5
         return
     }
 
-    if bytes_get(.string = &read_back, .index = 1).byte != 114 {
+    if bytes_get(.view = &read_back, .index = 1).byte != 114 {
         status_code = 6
         return
     }
 
-    if bytes_get(.string = &read_back, .index = 2).byte != 103 {
+    if bytes_get(.view = &read_back, .index = 2).byte != 103 {
         status_code = 7
         return
     }
 
-    if bytes_get(.string = &read_back, .index = 3).byte != 105 {
+    if bytes_get(.view = &read_back, .index = 3).byte != 105 {
         status_code = 8
         return
     }

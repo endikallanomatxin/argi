@@ -1,6 +1,6 @@
 window(.array: $&DynamicArray#(.t: UIntNative)) -> (.borrowed_view: ArrayView#(.t: UIntNative)) := {
     full ::= view(.array = array)
-    borrowed_view = unwrap_or_abort(.value = slice#(.t: UIntNative)(.self = &full, .start = 0, .count = 1).result)
+    borrowed_view = unwrap_or_abort(.value = slice(.self = &full, .start = 0, .count = 1).result)
 }
 read_window(.borrowed_view: &ArrayView#(.t: UIntNative)) -> (.value: UIntNative) := {
     value = unwrap_or_abort(.value = get(.self = borrowed_view, .index = 0).result)

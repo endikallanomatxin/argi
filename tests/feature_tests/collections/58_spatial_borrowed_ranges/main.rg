@@ -1,6 +1,6 @@
 window(.array: $&DynamicArray#(.t: UIntNative), .start: UIntNative, .count: UIntNative) -> (.result: Errable#(.t: ArrayView#(.t: UIntNative), .reasons: (..out_of_bounds))) := {
     borrowed_view ::= view(.array = array)
-    result = slice#(.t: UIntNative)(.self = &borrowed_view, .start = start, .count = count).result
+    result = slice(.self = &borrowed_view, .start = start, .count = count).result
 }
 
 exercise(.allocator: $&Allocator) -> (.status: Int32 = 0) := {
@@ -17,24 +17,24 @@ exercise(.allocator: $&Allocator) -> (.status: Int32 = 0) := {
     borrowed_view ::= unwrap_or_abort(.value = window(.array = $&array, .start = 1, .count = 2))
     if length(.self = &borrowed_view).count != 2 { status = 3 }
     unwrap_or_abort(.value = set#(.t: UIntNative)(.self = $&borrowed_view, .index = 1, .value = 99).result)
-    nested ::= unwrap_or_abort(.value = slice#(.t: UIntNative)(.self = &borrowed_view, .start = 1, .count = 1).result)
+    nested ::= unwrap_or_abort(.value = slice(.self = &borrowed_view, .start = 1, .count = 1).result)
     observed ::= unwrap_or_abort(.value = get(.self = &nested, .index = 0).result)
     if observed != 99 { status = 4 }
     readonly ::= view(.array = &array)
-    ro_window ::= unwrap_or_abort(.value = slice#(.t: UIntNative)(.self = &readonly, .start = 2, .count = 1).result)
+    ro_window ::= unwrap_or_abort(.value = slice(.self = &readonly, .start = 2, .count = 1).result)
     ro_element ::= unwrap_or_abort(.value = get_ro_ref(.self = &ro_window, .index = 0).result)
     if ro_element& != 99 { status = 5 }
-    at_end ::= unwrap_or_abort(.value = slice#(.t: UIntNative)(.self = &readonly, .start = 4, .count = 0).result)
+    at_end ::= unwrap_or_abort(.value = slice(.self = &readonly, .start = 4, .count = 0).result)
     if length(.self = &at_end).count != 0 { status = 6 }
     spare ::= get_ro_ref(.self = &readonly, .index = 4).result
     if is(.value = spare, .variant = ..error) == false { status = 7 }
-    invalid_start ::= slice#(.t: UIntNative)(.self = &readonly, .start = 5, .count = 0).result
+    invalid_start ::= slice(.self = &readonly, .start = 5, .count = 0).result
     if is(.value = invalid_start, .variant = ..error) == false { status = 8 }
     huge :: UIntNative = 0
     huge = huge - 1
-    invalid_count ::= slice#(.t: UIntNative)(.self = &readonly, .start = 1, .count = huge).result
+    invalid_count ::= slice(.self = &readonly, .start = 1, .count = huge).result
     if is(.value = invalid_count, .variant = ..error) == false { status = 9 }
-    invalid_huge_start ::= slice#(.t: UIntNative)(.self = &borrowed_view, .start = huge, .count = 1).result
+    invalid_huge_start ::= slice(.self = &borrowed_view, .start = huge, .count = 1).result
     if is(.value = invalid_huge_start, .variant = ..error) == false { status = 10 }
     removed ::= unwrap_or_abort(.value = pop(.self = $&array).result)
     fresh ::= view(.array = $&array)

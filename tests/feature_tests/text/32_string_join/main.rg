@@ -43,7 +43,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     )
     deinit(.self = $&source)
     if independent.length != 9 { abort }
-    if bytes_get(.string = &independent, .index = 7).byte != 0 { abort }
-    if bytes_get(.string = &independent, .index = 8).byte != 98 { abort }
+    if bytes_get(.view = &independent, .index = 7).byte != 0 { abort }
+    if bytes_get(.view = &independent, .index = 8).byte != 98 { abort }
     deinit(.self = $&independent)
 }

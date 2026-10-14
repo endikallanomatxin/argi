@@ -46,7 +46,7 @@ exists(
     assume ffi := self&._ffi
     assume allocator
 
-    converted ::= as_c_string(path, .allocator = allocator)
+    converted ::= copy_c_string(path, .allocator = allocator)
 
     match converted {
         ..ok ~payload { result = ..ok exists(self, .path = payload.text).ok }
@@ -102,7 +102,7 @@ remove(
     assume ffi := self&._ffi
     assume allocator
 
-    converted ::= as_c_string(path, .allocator = allocator)
+    converted ::= copy_c_string(path, .allocator = allocator)
 
     match converted {
         ..ok ~payload {
@@ -170,12 +170,12 @@ rename(
     assume ffi := self&._ffi
     assume allocator
 
-    converted_from ::= as_c_string(from, .allocator = allocator)
+    converted_from ::= copy_c_string(from, .allocator = allocator)
 
     match converted_from {
         ..error _ { result = ..error(.reason = ..out_of_memory) }
         ..ok ~from_payload {
-            converted_to ::= as_c_string(to, .allocator = allocator)
+            converted_to ::= copy_c_string(to, .allocator = allocator)
             match converted_to {
                 ..ok ~to_payload {
                     result = rename(.self = self, .from = from_payload.text, .to = to_payload.text)
@@ -240,7 +240,7 @@ open_read(
     assume ffi := self&._ffi
     assume allocator
 
-    converted ::= as_c_string(path, .allocator = allocator)
+    converted ::= copy_c_string(path, .allocator = allocator)
 
     match converted {
         ..ok ~payload {
@@ -306,7 +306,7 @@ open_write(
     assume ffi := self&._ffi
     assume allocator
 
-    converted ::= as_c_string(path, .allocator = allocator)
+    converted ::= copy_c_string(path, .allocator = allocator)
 
     match converted {
         ..ok ~payload {
@@ -372,7 +372,7 @@ open_append(
     assume ffi := self&._ffi
     assume allocator
 
-    converted ::= as_c_string(path, .allocator = allocator)
+    converted ::= copy_c_string(path, .allocator = allocator)
 
     match converted {
         ..ok ~payload {
@@ -519,7 +519,7 @@ read_file(
     assume ffi := self&._ffi
     assume allocator
 
-    converted ::= as_c_string(path, .allocator = allocator)
+    converted ::= copy_c_string(path, .allocator = allocator)
 
     match converted {
         ..ok ~payload {
@@ -660,7 +660,7 @@ write_file(
     assume ffi := self&._ffi
     assume allocator
 
-    converted ::= as_c_string(path, .allocator = allocator)
+    converted ::= copy_c_string(path, .allocator = allocator)
 
     match converted {
         ..ok ~payload { result = write_file(self, .path = payload.text, .text = text) }

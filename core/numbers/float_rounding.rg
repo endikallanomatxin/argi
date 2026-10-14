@@ -1,17 +1,5 @@
-_float_replace_bits(.value: Float16, .bits: UInt64) -> (.result: Float16) := {
-    native ::= unwrap_or_abort(.value = bits | convert#(.to: UInt16)(_))
-
-    result = trusted_reinterpret_reference#(.from: UInt16, .to: Float16)(.base = &native).reference&
-}
-
-_float_replace_bits(.value: Float32, .bits: UInt64) -> (.result: Float32) := {
-    native ::= unwrap_or_abort(.value = bits | convert#(.to: UInt32)(_))
-
-    result = trusted_reinterpret_reference#(.from: UInt32, .to: Float32)(.base = &native).reference&
-}
-
-_float_replace_bits(.value: Float64, .bits: UInt64) -> (.result: Float64) := {
-    result = trusted_reinterpret_reference#(.from: UInt64, .to: Float64)(.base = &bits).reference&
+_float_replace_bits#(.Value: Type: _FloatRepresentation#(Value)) := (.value: Value, .bits: UInt64) -> (.result: Value) {
+    result = _FloatRepresentation#(Value).replace_bits(.value = value, .bits = bits)
 }
 
 -- Clear fractional mantissa bits without integer conversion of the value.

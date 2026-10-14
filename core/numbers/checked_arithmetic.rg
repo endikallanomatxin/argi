@@ -1,45 +1,72 @@
 -- Bounds stay in the operand domain; no widening or signedness change is needed.
-integer_limits(.value: Int8) -> (.minimum: Int8, .maximum: Int8) := {
+IntegerBounds#(.Value: Type): Contract = (
+    .bounds: (.value: Value) -> (.minimum: Value, .maximum: Value)
+)
+
+integer_limits#(.Value: Type: IntegerBounds#(Value)) := (.value: Value) -> (.minimum: Value, .maximum: Value) {
+    bounds ::= IntegerBounds#(Value).bounds(.value = value)
+    minimum = bounds.minimum
+    maximum = bounds.maximum
+}
+
+implement IntegerBounds#(Int8) (
+    .bounds = (.value: Int8) -> (.minimum: Int8, .maximum: Int8) {
     minimum = -128
     maximum = 127
 }
+)
 
-integer_limits(.value: Int16) -> (.minimum: Int16, .maximum: Int16) := {
+implement IntegerBounds#(Int16) (
+    .bounds = (.value: Int16) -> (.minimum: Int16, .maximum: Int16) {
     minimum = -32768
     maximum = 32767
 }
+)
 
-integer_limits(.value: Int32) -> (.minimum: Int32, .maximum: Int32) := {
+implement IntegerBounds#(Int32) (
+    .bounds = (.value: Int32) -> (.minimum: Int32, .maximum: Int32) {
     minimum = -2147483648
     maximum = 2147483647
 }
+)
 
-integer_limits(.value: Int64) -> (.minimum: Int64, .maximum: Int64) := {
+implement IntegerBounds#(Int64) (
+    .bounds = (.value: Int64) -> (.minimum: Int64, .maximum: Int64) {
     minimum = -9223372036854775808
     maximum = 9223372036854775807
 }
+)
 
-integer_limits(.value: UInt8) -> (.minimum: UInt8, .maximum: UInt8) := {
+implement IntegerBounds#(UInt8) (
+    .bounds = (.value: UInt8) -> (.minimum: UInt8, .maximum: UInt8) {
     minimum = 0
     maximum = 255
 }
+)
 
-integer_limits(.value: UInt16) -> (.minimum: UInt16, .maximum: UInt16) := {
+implement IntegerBounds#(UInt16) (
+    .bounds = (.value: UInt16) -> (.minimum: UInt16, .maximum: UInt16) {
     minimum = 0
     maximum = 65535
 }
+)
 
-integer_limits(.value: UInt32) -> (.minimum: UInt32, .maximum: UInt32) := {
+implement IntegerBounds#(UInt32) (
+    .bounds = (.value: UInt32) -> (.minimum: UInt32, .maximum: UInt32) {
     minimum = 0
     maximum = 4294967295
 }
+)
 
-integer_limits(.value: UInt64) -> (.minimum: UInt64, .maximum: UInt64) := {
+implement IntegerBounds#(UInt64) (
+    .bounds = (.value: UInt64) -> (.minimum: UInt64, .maximum: UInt64) {
     minimum = 0
     maximum = 18446744073709551615
 }
+)
 
-integer_limits(.value: UIntNative) -> (.minimum: UIntNative, .maximum: UIntNative) := {
+implement IntegerBounds#(UIntNative) (
+    .bounds = (.value: UIntNative) -> (.minimum: UIntNative, .maximum: UIntNative) {
     minimum = 0
     maximum = 0
     bytes ::= size_of(.type = UIntNative)
@@ -50,6 +77,8 @@ integer_limits(.value: UIntNative) -> (.minimum: UIntNative, .maximum: UIntNativ
         index = index + 1
     }
 }
+)
+
 
 ..division_by_zero
 

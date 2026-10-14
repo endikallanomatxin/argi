@@ -1,15 +1,11 @@
 -- Decimal integer encoding is shared with writer formatting.
 
-decimal_digit_byte(.digit: UInt64) -> (.byte: UInt8) := {
-    byte = _decimal_digit#(.t: UInt64)(.digit = digit).byte
+decimal_digit_byte#(.t: Type: Int) := (.digit: t) -> (.byte: UInt8) {
+    byte = _decimal_digit#(.t: t)(.digit = digit).byte
 }
 
 decimal_digit_byte_u32(.digit: UInt32) -> (.byte: UInt8) := {
     byte = _decimal_digit#(.t: UInt32)(.digit = digit).byte
-}
-
-decimal_digit_byte(.digit: Int64) -> (.byte: UInt8) := {
-    byte = _decimal_digit#(.t: Int64)(.digit = digit).byte
 }
 
 decimal_digit_byte_i32(.digit: Int32) -> (.byte: UInt8) := {
@@ -56,10 +52,10 @@ format_signed_decimal_into_i32(
     result = format_into(.out = out, .value = value, .allocator = allocator)
 }
 
-format_into(
+_format_text_into#(.Provider: Type: Allocator)(
         .out       : $&String,
         .value     : StringView,
-        .allocator : $&Allocator,
+        .allocator : $&Provider,
     ) -> (
         .result : Errable#(Void, (..out_of_memory))
     ) := {
@@ -68,10 +64,10 @@ format_into(
     result = push_view(out, .view = value)
 }
 
-format_into(
+_format_bool_into#(.Provider: Type: Allocator)(
         .out       : $&String,
         .value     : Bool,
-        .allocator : $&Allocator,
+        .allocator : $&Provider,
     ) -> (
         .result : Errable#(Void, (..out_of_memory))
     ) := {
@@ -84,9 +80,9 @@ format_into(
     }
 }
 
-format(
+_format_text_owned#(.Provider: Type: Allocator)(
         .value     : StringView,
-        .allocator : $&Allocator,
+        .allocator : $&Provider,
     ) -> (
         .result : Errable#(String, (..out_of_memory))
     ) := {
@@ -98,9 +94,9 @@ format(
     result = ..ok ~out
 }
 
-format(
+_format_bool_owned#(.Provider: Type: Allocator)(
         .value     : Bool,
-        .allocator : $&Allocator,
+        .allocator : $&Provider,
     ) -> (
         .result : Errable#(String, (..out_of_memory))
     ) := {
@@ -112,12 +108,13 @@ format(
     result = ..ok ~out
 }
 
-format_into#(
-        .t : Type: Int
+_format_integer_into#(
+        .t : Type: Int,
+        .Provider: Type: Allocator
     )(
         .out       : $&String,
         .value     : t,
-        .allocator : $&Allocator,
+        .allocator : $&Provider,
     ) -> (
         .result : Errable#(Void, (..out_of_memory))
     ) := {
@@ -130,11 +127,12 @@ format_into#(
     )
 }
 
-format#(
-        .t : Type: Int
+_format_integer_owned#(
+        .t : Type: Int,
+        .Provider: Type: Allocator
     )(
         .value     : t,
-        .allocator : $&Allocator,
+        .allocator : $&Provider,
     ) -> (
         .result : Errable#(String, (..out_of_memory))
     ) := {
@@ -145,12 +143,13 @@ format#(
     result = format(.value = view, .allocator = allocator)
 }
 
-format_into#(
-        .t : Type: Float
+_format_float_into#(
+        .t : Type: Float,
+        .Provider: Type: Allocator
     )(
         .out       : $&String,
         .value     : t,
-        .allocator : $&Allocator
+        .allocator : $&Provider
     ) -> (
         .result : Errable#(Void, (..out_of_memory))
     ) := {
@@ -163,11 +162,12 @@ format_into#(
     )
 }
 
-format#(
-        .t : Type: Float
+_format_float_owned#(
+        .t : Type: Float,
+        .Provider: Type: Allocator
     )(
         .value     : t,
-        .allocator : $&Allocator
+        .allocator : $&Provider
     ) -> (
         .result : Errable#(String, (..out_of_memory))
     ) := {

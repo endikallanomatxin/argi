@@ -116,17 +116,7 @@ read_line(
     result = ..ok ..ok ~line
 }
 
-print(
-        .value      : StringView,
-        .writer     : $&Writer,
-        .terminator : StringView  = "\n",
-    ) -> (
-        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-    ) := {
-    write(writer, .value = value)!
 
-    result = write(writer, .value = terminator)
-}
 
 flush := (
         .writer : $&Writer,
@@ -178,44 +168,18 @@ flush_error(
     result = Writer#().flush(.self = writer)
 }
 
-print(
-        .value      : &String,
-        .writer     : $&Writer,
-        .terminator : StringView = "\n",
-    ) -> (
-        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-    ) := {
-    assume writer
 
-    result = print(as_view(value), .terminator = terminator)
-}
 
-print#(
-        .t : Type: Int,
-        .Stream: Type: Writer#(Stream)
-    )(
-        .value      : t,
-        .writer     : $&Stream   = reach writer,
-        .terminator : StringView = "\n",
-    ) -> (
-        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-    ) := {
-    WriteValue#(Stream, t).write_value(.self = writer, .value = value)!
 
-    result = write(writer, .value = terminator)
-}
 
-print#(
-        .t : Type: Float,
-        .Stream: Type: Writer#(Stream)
-    )(
-        .value      : t,
-        .writer     : $&Stream   = reach writer,
-        .terminator : StringView = "\n",
-    ) -> (
-        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-    ) := {
-    WriteValue#(Stream, t).write_value(.self = writer, .value = value)!
 
-    result = write(writer, .value = terminator)
+
+-- Rendering is selected by WriteValue, not an ordinary print overload family.
+print#(.Value: Type, .Stream: Type: WriteValue#(Stream, Value)) := (
+    .value: Value,
+    .writer: $&Stream = reach writer,
+    .terminator: StringView = "\n"
+) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
+    write(.self = writer, .value = ~value)!
+    result = write(.self = writer, .value = terminator)
 }

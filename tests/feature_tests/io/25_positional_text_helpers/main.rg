@@ -93,12 +93,12 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         return
     }
 
-    if bytes_get(.string = &buffer, .index = 0).byte != 79 {
+    if bytes_get(.view = &buffer, .index = 0).byte != 79 {
         status_code = 7
         return
     }
 
-    if bytes_get(.string = &buffer, .index = 1).byte != 75 {
+    if bytes_get(.view = &buffer, .index = 1).byte != 75 {
         status_code = 8
         return
     }
@@ -127,12 +127,12 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
                         return
                     }
 
-                    if bytes_get(.string = &line, .index = 0).byte != 79 {
+                    if bytes_get(.view = &line, .index = 0).byte != 79 {
                         status_code = 11
                         return
                     }
 
-                    if bytes_get(.string = &line, .index = 1).byte != 75 {
+                    if bytes_get(.view = &line, .index = 1).byte != 75 {
                         status_code = 12
                         return
                     }

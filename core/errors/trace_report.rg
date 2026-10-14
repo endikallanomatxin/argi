@@ -110,7 +110,7 @@ report_error#(
     result = ..ok Void()
 }
 
-report_error#(
+report_error_message#(
         .reasons : Type
     )(
         .message : &Char,

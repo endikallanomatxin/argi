@@ -43,7 +43,7 @@ implement#(
     }
 )
 
-length#(
+_collection_length_priority_queue#(
         .t     : Type: ImplicitlyCopyable,
         .order : Type: OrderPolicy#(order, t)
     )(
@@ -51,6 +51,13 @@ length#(
     ) -> (
         .count : UIntNative
     ) := { count = length(&self&._items).count }
+
+implement#(
+        .t     : Type: ImplicitlyCopyable,
+        .order : Type: OrderPolicy#(order, t)
+    ) CollectionLength#(PriorityQueue#(.t: t, .order: order)) (
+    .measure_length = _collection_length_priority_queue
+)
 
 push#(
         .t     : Type: ImplicitlyCopyable,

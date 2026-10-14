@@ -98,7 +98,7 @@ find_last(
     }
 }
 
-find(.self: ArrayViewRO#(.t: UInt8), .byte: UInt8) -> (.index: ?UIntNative = ..none) := {
+find_byte(.self: ArrayViewRO#(.t: UInt8), .byte: UInt8) -> (.index: ?UIntNative = ..none) := {
     offset :: UIntNative = 0
 
     while offset < length(&self).count {

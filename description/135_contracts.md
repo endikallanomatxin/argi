@@ -395,3 +395,23 @@ an implicit flush. Numeric print delegates to this operation before writing its
 terminator. The former numeric write and writer format_into ordinary families
 are removed. Text/buffer/file/TCP write overloads are also removed. String
 format_into and readonly/mutable view families remain separate pending migrations.
+
+## Ordinary-family migration
+
+Numeric limits use IntegerBounds evidence behind the unique integer_limits
+entry. Private IEEE encoding/replacement uses _FloatRepresentation; these
+operations remain representation-specific, not a public Float extension hook.
+StringFormatting selects value and allocator provider jointly; unique format and
+format_into entries reuse selected render/append operations. Concatenation
+provides the unique concat entry for borrowed strings and string views.
+
+ContiguousView associates the base pointer type and shares checked subranges
+without erasing mutability. CollectionLength/CollectionCapacity select nominal
+collection queries. ByteCursor scopes stateful cursor queries, while *_uint*_at
+operations name independent indexed byte access. TextViewOf and TextBytes retain
+borrowed text projections. TimeCompare, NanosecondCount and ReadLimit replace
+ordinary query overload families without selecting by result type.
+
+These migrations remove individual ordinary families. Global ordinary candidate
+selection and legacy contract syntax remain transitional until all consumers and
+fixtures have moved; their final removal is a separate required completion gate.

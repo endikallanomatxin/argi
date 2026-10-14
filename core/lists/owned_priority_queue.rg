@@ -47,7 +47,7 @@ implement#(
     }
 )
 
-length#(
+_collection_length_owned_priority_queue#(
         .t     : Type,
         .order : Type: BorrowedOrderPolicy#(order, t)
     )(
@@ -55,6 +55,13 @@ length#(
     ) -> (
         .count : UIntNative
     ) := { count = length(&self&._items).count }
+
+implement#(
+        .t     : Type,
+        .order : Type: BorrowedOrderPolicy#(order, t)
+    ) CollectionLength#(OwnedPriorityQueue#(.t: t, .order: order)) (
+    .measure_length = _collection_length_owned_priority_queue
+)
 
 push#(
         .t     : Type,

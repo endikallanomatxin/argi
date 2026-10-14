@@ -19,14 +19,14 @@ ArrayViewRO#(.t: Type): Type = (
 implement#(.t: Type) ImplicitlyCopyable#(ArrayView#(.t: t)) ()
 implement#(.t: Type) ImplicitlyCopyable#(ArrayViewRO#(.t: t)) ()
 
-data#(.t: Type)(.self: &ArrayView#(.t: t)) -> (.pointer: $&t) := {
+_array_view_data#(.t: Type)(.self: &ArrayView#(.t: t)) -> (.pointer: $&t) := {
     match self&._data {
         ..none { abort }
         ..some payload { pointer = payload.value }
     }
 }
 
-data#(.t: Type)(.self: &ArrayViewRO#(.t: t)) -> (.pointer: &t) := {
+_array_view_ro_data#(.t: Type)(.self: &ArrayViewRO#(.t: t)) -> (.pointer: &t) := {
     match self&._data {
         ..none { abort }
         ..some payload { pointer = payload.value }
@@ -129,7 +129,7 @@ set#(
     }
 
     ptr ::= trusted_mutable_reference_offset#(.t: t)(
-        .base     = data#(.t: t)(self).pointer
+        .base     = data(self).pointer
         .elements = index
     )
     ptr&= value
@@ -166,7 +166,7 @@ implement#(.t: Type) Indexable#(ArrayView#(.t: t)) (
         }
 
         result = ..ok trusted_reference_offset#(.t: t)(
-            .base     = data#(.t: t)(self).pointer
+            .base     = data(self).pointer
             .elements = index
         ).reference
     }
@@ -191,7 +191,7 @@ implement#(.t: Type) Indexable#(ArrayViewRO#(.t: t)) (
         }
 
         result = ..ok trusted_reference_offset#(.t: t)(
-            .base     = data#(.t: t)(self).pointer
+            .base     = data(self).pointer
             .elements = index
         ).reference
     }
@@ -214,7 +214,7 @@ implement#(
         }
 
         result = ..ok trusted_mutable_reference_offset#(.t: t)(
-            .base     = data#(.t: t)(self).pointer
+            .base     = data(self).pointer
             .elements = index
         ).reference
     }
@@ -237,7 +237,7 @@ implement#(
         }
 
         ptr ::= trusted_reference_offset#(.t: t)(
-            .base     = data#(.t: t)(self).pointer
+            .base     = data(self).pointer
             .elements = index
         ).reference
 

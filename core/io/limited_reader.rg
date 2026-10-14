@@ -23,7 +23,7 @@ implement#(
     }
 )
 
-remaining#(.t: Type: BlockReader#(t))(.self: &LimitedReader#(.t: t)) -> (.count: UIntNative) := {
+_limited_block_remaining#(.t: Type: BlockReader#(t))(.self: &LimitedReader#(.t: t)) -> (.count: UIntNative) := {
     count = self&._remaining
 }
 
@@ -95,7 +95,7 @@ implement#(
     }
 )
 
-remaining#(.t: Type: Reader#(t))(.self: &LimitedByteReader#(.t: t)) -> (.count: UIntNative) := {
+_limited_byte_remaining#(.t: Type: Reader#(t))(.self: &LimitedByteReader#(.t: t)) -> (.count: UIntNative) := {
     count = self&._remaining
 }
 
@@ -119,4 +119,11 @@ implement#(
                 result = ..ok byte
             }
 
+)
+
+implement#(.t: Type: BlockReader#(t)) ReadLimit#(LimitedReader#(.t: t)) (
+    .remaining_bytes = _limited_block_remaining
+)
+implement#(.t: Type: Reader#(t)) ReadLimit#(LimitedByteReader#(.t: t)) (
+    .remaining_bytes = _limited_byte_remaining
 )

@@ -20,7 +20,7 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
-    if capacity#(.t: Int32)(.self = &arr).count < 4 {
+    if capacity(.self = &arr).count < 4 {
         status_code = 2
         return
     }

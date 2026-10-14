@@ -13,9 +13,9 @@ main(.system: System) -> (.status_code: Int32) := {
             copied ::= ~copied_payload
             bytes_set(.string = $&copied, .index = 0, .value = 66)
 
-            original_first ::= bytes_get(.string = &original, .index = 0).byte
-            copied_first ::= bytes_get(.string = &copied, .index = 0).byte
-            copied_nul ::= bytes_get(.string = &copied, .index = 3).byte
+            original_first ::= bytes_get(.view = &original, .index = 0).byte
+            copied_first ::= bytes_get(.view = &copied, .index = 0).byte
+            copied_nul ::= bytes_get(.view = &copied, .index = 3).byte
 
             if original_first != 65 {
                 status_code = 1

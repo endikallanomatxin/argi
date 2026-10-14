@@ -97,7 +97,7 @@ extract#(
     }
 }
 
-length#(
+_collection_length_owned_hash_set#(
         .key    : Type,
         .policy : Type: BorrowedHashPolicy#(policy, key)
     )(
@@ -106,7 +106,14 @@ length#(
         .count : UIntNative
     ) := { count = length(&self&._map).count }
 
-capacity#(
+implement#(
+        .key    : Type,
+        .policy : Type: BorrowedHashPolicy#(policy, key)
+    ) CollectionLength#(OwnedHashSet#(.key: key, .policy: policy)) (
+    .measure_length = _collection_length_owned_hash_set
+)
+
+_collection_capacity_owned_hash_set#(
         .key    : Type,
         .policy : Type: BorrowedHashPolicy#(policy, key)
     )(
@@ -114,6 +121,13 @@ capacity#(
     ) -> (
         .count : UIntNative
     ) := { count = capacity(&self&._map).count }
+
+implement#(
+        .key    : Type,
+        .policy : Type: BorrowedHashPolicy#(policy, key)
+    ) CollectionCapacity#(OwnedHashSet#(.key: key, .policy: policy)) (
+    .measure_capacity = _collection_capacity_owned_hash_set
+)
 
 reserve#(
         .key    : Type,

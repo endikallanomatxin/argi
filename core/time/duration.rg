@@ -52,7 +52,12 @@ duration_from_seconds(.seconds: UInt64) -> (.result: Errable#(Duration, (..out_o
     result = _duration_scaled(.value = seconds, .scale = 1000000000).result
 }
 
-nanoseconds(.self: &Duration) -> (.value: UInt64) := { value = self&._nanoseconds }
+_nanoseconds_Duration(.self: &Duration) -> (.value: UInt64) := { value = self&._nanoseconds }
+
+implement NanosecondCount#(Duration) (
+    .Count: Type = UInt64
+    .nanosecond_count = _nanoseconds_Duration
+)
 
 microseconds(.self: &Duration) -> (.value: UInt64) := { value = self&._nanoseconds / 1000 }
 
@@ -88,7 +93,9 @@ implement Equal#(Duration, Duration, (.left: Duration, .right: Duration)) (
     }
 )
 
-compare(.left: Duration, .right: Duration) -> (.order: Int32 = 0) := {
+_compare_Duration(.left: Duration, .right: Duration) -> (.order: Int32 = 0) := {
     if left._nanoseconds < right._nanoseconds { order = -1 }
     if left._nanoseconds > right._nanoseconds { order = 1 }
 }
+
+implement TimeCompare#(Duration) (.compare_value = _compare_Duration)

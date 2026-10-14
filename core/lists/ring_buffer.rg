@@ -62,9 +62,13 @@ implement#(
     }
 )
 
-capacity#(.t: Type)(.self: &RingBuffer#(.t: t)) -> (.count: UIntNative) := {
+_collection_capacity_ring_buffer#(.t: Type)(.self: &RingBuffer#(.t: t)) -> (.count: UIntNative) := {
     count = self&._capacity
 }
+
+implement#(.t: Type) CollectionCapacity#(RingBuffer#(.t: t)) (
+    .measure_capacity = _collection_capacity_ring_buffer
+)
 
 _ring_buffer_physical_index#(
         .t : Type

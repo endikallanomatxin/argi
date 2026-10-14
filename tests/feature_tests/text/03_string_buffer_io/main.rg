@@ -27,13 +27,13 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
-    first ::= bytes_get(.string = &buffer, .index = 0).byte
+    first ::= bytes_get(.view = &buffer, .index = 0).byte
     if first != 79 {
         status_code = 2
         return
     }
 
-    second ::= bytes_get(.string = &buffer, .index = 1).byte
+    second ::= bytes_get(.view = &buffer, .index = 1).byte
     if second != 75 {
         status_code = 3
         return

@@ -16,7 +16,7 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
     first_ptr : &String = first_ptr_result..ok
-    if bytes_get(.string = first_ptr, .index = 0).byte != 79 {
+    if bytes_get(.view = first_ptr, .index = 0).byte != 79 {
         status_code = 1
         return
     }
@@ -34,7 +34,7 @@ main(.system: System) -> (.status_code: Int32) := {
         status_code = 3
         return
     }
-    if bytes_get(.string = final_ptr_result..ok, .index = 0).byte != 78 {
+    if bytes_get(.view = final_ptr_result..ok, .index = 0).byte != 78 {
         status_code = 2
         return
     }

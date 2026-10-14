@@ -33,7 +33,12 @@ unix_timestamp_precise(
 
 unix_seconds(.self: &UnixTimestamp) -> (.value: Int64) := { value = self&._seconds }
 
-nanoseconds(.self: &UnixTimestamp) -> (.value: UInt32) := { value = self&._nanoseconds }
+_nanoseconds_UnixTimestamp(.self: &UnixTimestamp) -> (.value: UInt32) := { value = self&._nanoseconds }
+
+implement NanosecondCount#(UnixTimestamp) (
+    .Count: Type = UInt32
+    .nanosecond_count = _nanoseconds_UnixTimestamp
+)
 
 elapsed(
         .start : MonotonicInstant,
@@ -61,12 +66,14 @@ implement Equal#(UnixTimestamp, UnixTimestamp, (.left: UnixTimestamp, .right: Un
     }
 )
 
-compare(.left: MonotonicInstant, .right: MonotonicInstant) -> (.order: Int32 = 0) := {
+_compare_MonotonicInstant(.left: MonotonicInstant, .right: MonotonicInstant) -> (.order: Int32 = 0) := {
     if left._nanoseconds < right._nanoseconds { order = -1 }
     if left._nanoseconds > right._nanoseconds { order = 1 }
 }
 
-compare(.left: UnixTimestamp, .right: UnixTimestamp) -> (.order: Int32 = 0) := {
+implement TimeCompare#(MonotonicInstant) (.compare_value = _compare_MonotonicInstant)
+
+_compare_UnixTimestamp(.left: UnixTimestamp, .right: UnixTimestamp) -> (.order: Int32 = 0) := {
     if [
         left._seconds < right._seconds
         or [left._seconds == right._seconds and left._nanoseconds < right._nanoseconds]
@@ -81,6 +88,8 @@ compare(.left: UnixTimestamp, .right: UnixTimestamp) -> (.order: Int32 = 0) := {
         order = 1
     }
 }
+
+implement TimeCompare#(UnixTimestamp) (.compare_value = _compare_UnixTimestamp)
 
 -- Clock carries permission to call the platform; pure time values carry none.
 Clock: Type = (._ffi: $&ForeignFunctionInterface)
