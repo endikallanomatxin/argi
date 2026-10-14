@@ -12974,3 +12974,8 @@ test "feature_tests/contracts/305_filesystem_path_evidence" {
     try expectSuccessfulBuild("tests/feature_tests/contracts/305_filesystem_path_evidence");
     try runExpect("tests/feature_tests/contracts/305_filesystem_path_evidence", 0);
 }
+
+test "feature_tests/contracts/306_map_operation_evidence" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/306_map_operation_evidence");
+    try runExpect("tests/feature_tests/contracts/306_map_operation_evidence", 0);
+}

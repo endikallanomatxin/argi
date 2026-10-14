@@ -344,7 +344,7 @@ semantic claim that every pair has overlapping applicability.
 |---|---:|
 | `core/libc` | 0 |
 | `core/lists` | 0 |
-| `core/maps` | 8 |
+| `core/maps` | 0 |
 | `core/memory` | 0 |
 | `core/system` | 0 |
 | `core/system/file_system` | 0 |
@@ -825,3 +825,25 @@ failures or leaks. View rename/write adapters now use ordinary error propagation
 instead of assigning incompatible Errable reason sets; this preserves tracing
 and promotes failures through the established conversion. Borrowed path variants
 continue to allocate no temporary text.
+
+
+### Map operation migration
+
+Replace every map get/contains/get_ro_ref/put/remove/insert/reserve/extract
+ordinary family with scoped capabilities. Selected containers associate Key and
+Value, supplying narrow literal context before alias specialization. Owned
+containers retain borrowed query keys and by-value moved insertion keys. Text
+lookup uses explicit borrowed StringView capabilities. StringHashMap normalizes
+all accepted StringMapKey representations once and shares one get/put algorithm;
+get now consistently labels its output result. Allocation operations select a
+static Provider and keep reached defaults. Preserve native algorithms, table
+shape anchors, lexical cleanup, recursive structural ownership and errors.
+
+No repeated ordinary names remain in core or more. The compiler's old ordinary
+ranking and legacy Abstract fixtures still require migration and removal.
+
+Map validation passed 458 contract/collection/word-count program cases without
+skips, failures, leaks or error logs. Narrow UInt8 key/value regression covers
+associated context, generic lookup, borrowing and removal; StringHashMap covers
+normalized literal and borrowed view keys. Existing negative ownership and table
+shape tests remain enabled. Emitted LLVM retains selected concrete map aliases.

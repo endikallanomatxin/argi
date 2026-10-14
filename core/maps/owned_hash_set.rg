@@ -37,16 +37,14 @@ implement#(
     }
 )
 
-insert#(
+_map_insert_owned_hash_set#(
         .key    : Type,
-        .policy : Type: BorrowedHashPolicy#(policy, key)
-    )(
+        .policy : Type: BorrowedHashPolicy#(policy, key), .Provider: Type: Allocator#(Provider)
+) := (
         .self      : $&OwnedHashSet#(.key: key, .policy: policy),
         .key       : key,
-        .allocator : $&Allocator
-    ) -> (
-        .result : Errable#(Bool, (..out_of_memory))
-    ) := {
+        .allocator : $&Provider
+    ) -> (.result : Errable#(Bool, (..out_of_memory))) {
     if contains(&self&._map, .key = &key).ok {
         _owned_hash_discard(.value = ~key, .allocator = allocator)
         result = ..ok false
@@ -58,36 +56,30 @@ insert#(
     result = ..ok true
 }
 
-contains#(
+_map_contains_owned_hash_set#(
         .key    : Type,
         .policy : Type: BorrowedHashPolicy#(policy, key)
-    )(
+    ) := (
         .self : &OwnedHashSet#(.key: key, .policy: policy),
         .key  : &key
-    ) -> (
-        .ok : Bool
-    ) := { ok = contains(&self&._map, .key = key).ok }
+    ) -> (.ok : Bool) { ok = contains(&self&._map, .key = key).ok }
 
-remove#(
+_map_remove_owned_hash_set#(
         .key    : Type,
-        .policy : Type: BorrowedHashPolicy#(policy, key)
-    )(
+        .policy : Type: BorrowedHashPolicy#(policy, key), .Provider: Type: Allocator#(Provider)
+) := (
         .self      : $&OwnedHashSet#(.key: key, .policy: policy),
         .key       : &key,
-        .allocator : $&Allocator
-    ) -> (
-        .removed : Bool
-    ) := { removed = remove(.self = $&self&._map, .key = key, .allocator = allocator).removed }
+        .allocator : $&Provider
+    ) -> (.removed : Bool) { removed = remove(.self = $&self&._map, .key = key, .allocator = allocator).removed }
 
-extract#(
+_map_extract_owned_hash_set#(
         .key    : Type,
         .policy : Type: BorrowedHashPolicy#(policy, key)
-    )(
+    ) := (
         .self : $&OwnedHashSet#(.key: key, .policy: policy),
         .key  : &key
-    ) -> (
-        .result : ?key
-    ) := {
+    ) -> (.result : ?key) {
     match extract($&self&._map, .key = key).result {
         ..none { result = ..none }
         ..some ~payload {
@@ -129,16 +121,14 @@ implement#(
     .measure_capacity = _collection_capacity_owned_hash_set
 )
 
-reserve#(
+_map_reserve_owned_hash_set#(
         .key    : Type,
-        .policy : Type: BorrowedHashPolicy#(policy, key)
-    )(
+        .policy : Type: BorrowedHashPolicy#(policy, key), .Provider: Type: Allocator#(Provider)
+) := (
         .self      : $&OwnedHashSet#(.key: key, .policy: policy),
         .capacity  : UIntNative,
-        .allocator : $&Allocator
-    ) -> (
-        .result : Errable#(Void, (..out_of_memory))
-    ) := {
+        .allocator : $&Provider
+    ) -> (.result : Errable#(Void, (..out_of_memory))) {
     result = reserve($&self&._map, .capacity = capacity, .allocator = allocator)
 }
 

@@ -284,17 +284,18 @@ string_hash_map_find_entry_index#(
     }
 }
 
-put#(
-        .value : Type
-    )(
-        .allocator : $&Allocator,
+_map_put_StringHashMap#(
+        .value : Type, .Provider: Type: Allocator#(Provider), .Query: Type: StringMapKey#(Query)
+) := (
+        .allocator : $&Provider,
         .self      : $&StringHashMap#(.value: value),
-        .key       : &StringView,
+        .key       : Query,
         .value     : value,
-    ) -> () := {
+    ) -> () {
+    key_view ::= string_hash_map_key_view(.key = key)
     assume allocator
 
-    found ::= string_hash_map_find_entry_index#(.value: value)(self, .key = key).index
+    found ::= string_hash_map_find_entry_index#(.value: value)(self, .key = &key_view).index
 
     match found {
         ..some payload {
@@ -337,7 +338,7 @@ put#(
     new_index ::= length(&self&.entries).count
     bucket_index ::= string_hash_map_bucket_index(
         .bucket_count = length(&self&.buckets).count
-        .key          = key
+        .key          = &key_view
     ).index
     head ::= _trusted_dynamic_array_get#(.t: UIntNative)(
         .array = &self&.buckets
@@ -347,7 +348,7 @@ put#(
         .allocator = allocator
         .self      = $&self&.entries
         .value     = (
-            .key   = key&
+            .key   = key_view
             .value = value
             .next  = head
         )
@@ -362,47 +363,14 @@ put#(
     )
 }
 
-put#(
-        .value : Type
-    )(
-        .allocator : $&Allocator,
-        .self      : $&StringHashMap#(.value: value),
-        .key       : &Char,
-        .value     : value,
-    ) -> () := {
-    assume allocator
-
-    key_view ::= string_hash_map_key_view(.key = key)
-    put#(.value: value)(.allocator = allocator, .self = self, .key = &key_view, .value = value)
-}
-
-put#(
-        .value : Type
-    )(
-        .allocator : $&Allocator,
-        .self      : $&StringHashMap#(.value: value),
-        .key       : &String,
-        .value     : value,
-    ) -> () := {
-    assume allocator
-
-    key_view ::= string_hash_map_key_view(.key = key)
-    put#(.value: value)(.allocator = allocator, .self = self, .key = &key_view, .value = value)
-}
-
-
-
-
-
-get#(
-        .value : Type
-    )(
+_map_get_StringHashMap#(
+        .value : Type, .Query: Type: StringMapKey#(Query)
+) := (
         .self : &StringHashMap#(.value: value),
-        .key  : &StringView,
-    ) -> (
-        .value : ?value
-    ) := {
-    found ::= string_hash_map_find_entry_index#(.value: value)(self, .key = key).index
+        .key  : Query,
+    ) -> (.result : ?value) {
+    key_view ::= string_hash_map_key_view(.key = key)
+    found ::= string_hash_map_find_entry_index#(.value: value)(self, .key = &key_view).index
 
     match found {
         ..some payload {
@@ -410,41 +378,13 @@ get#(
                 .array = &self&.entries
                 .index = payload.value
             )
-            value = ..some(.value = entry.value)
+            result = ..some(.value = entry.value)
         }
         ..none {
-            value = ..none
+            result = ..none
         }
     }
 }
-
-get#(
-        .value : Type
-    )(
-        .self : &StringHashMap#(.value: value),
-        .key  : &Char,
-    ) -> (
-        .value : ?value
-    ) := {
-    key_view ::= string_hash_map_key_view(.key = key)
-    value = get(self, .key = &key_view)
-}
-
-get#(
-        .value : Type
-    )(
-        .self : &StringHashMap#(.value: value),
-        .key  : &String,
-    ) -> (
-        .value : ?value
-    ) := {
-    key_view ::= string_hash_map_key_view(.key = key)
-    value = get(self, .key = &key_view)
-}
-
-
-
-
 
 _string_map_has_view#(
         .value : Type
@@ -457,10 +397,6 @@ _string_map_has_view#(
     found ::= string_hash_map_find_entry_index#(.value: value)(self, .key = key).index
     ok = found ?
 }
-
-
-
-
 
 string_hash_map_retarget_entry_index#(
         .value : Type
@@ -607,11 +543,6 @@ _string_map_delete_view#(
 
     value = ..none
 }
-
-
-
-
-
 
 has#(.value: Type, .Key: Type: StringMapKey#(Key)) := (.self: &StringHashMap#(.value: value), .key: Key) -> (.ok: Bool) {
     key_view ::= string_hash_map_key_view(.key = key)

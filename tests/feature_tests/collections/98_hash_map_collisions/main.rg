@@ -23,7 +23,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     index :: Int32 = 0
     while index < 4 {
         unwrap_or_abort(
-            .value = put#(.key: Int32, .value: Int32, .policy: CollisionPolicy)(
+            .value = put(
                 .self      = $&map
                 .key       = index
                 .value     = index
@@ -35,7 +35,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     if remove(.self = $&map, .key = 0, .allocator = allocator).removed == false { abort }
     if remove(.self = $&map, .key = 2, .allocator = allocator).removed == false { abort }
     unwrap_or_abort(
-        .value = put#(.key: Int32, .value: Int32, .policy: CollisionPolicy)(
+        .value = put(
             .self      = $&map
             .key       = 3
             .value     = 99
@@ -46,7 +46,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     index = 4
     while index < 100 {
         unwrap_or_abort(
-            .value = put#(.key: Int32, .value: Int32, .policy: CollisionPolicy)(
+            .value = put(
                 .self      = $&map
                 .key       = index
                 .value     = index

@@ -42,16 +42,14 @@ implement#(
     }
 )
 
-insert#(
+_map_insert_hash_set#(
         .key    : Type: ImplicitlyCopyable,
-        .policy : Type: HashPolicy#(policy, key)
-    )(
+        .policy : Type: HashPolicy#(policy, key), .Provider: Type: Allocator#(Provider)
+) := (
         .self      : $&HashSet#(.key: key, .policy: policy),
         .key       : key,
-        .allocator : $&Allocator
-    ) -> (
-        .result : Errable#(Bool, (..out_of_memory))
-    ) := {
+        .allocator : $&Provider
+    ) -> (.result : Errable#(Bool, (..out_of_memory))) {
     if contains(&self&._map, .key = key).ok {
         result = ..ok false
         return
@@ -62,28 +60,24 @@ insert#(
     result = ..ok true
 }
 
-contains#(
+_map_contains_hash_set#(
         .key    : Type: ImplicitlyCopyable,
         .policy : Type: HashPolicy#(policy, key)
-    )(
+    ) := (
         .self : &HashSet#(.key: key, .policy: policy),
         .key  : key
-    ) -> (
-        .ok : Bool
-    ) := {
+    ) -> (.ok : Bool) {
     ok = contains(&self&._map, .key = key).ok
 }
 
-remove#(
+_map_remove_hash_set#(
         .key    : Type: ImplicitlyCopyable,
-        .policy : Type: HashPolicy#(policy, key)
-    )(
+        .policy : Type: HashPolicy#(policy, key), .Provider: Type: Allocator#(Provider)
+) := (
         .self      : $&HashSet#(.key: key, .policy: policy),
         .key       : key,
-        .allocator : $&Allocator
-    ) -> (
-        .removed : Bool
-    ) := {
+        .allocator : $&Provider
+    ) -> (.removed : Bool) {
     removed = remove(.self = $&self&._map, .key = key, .allocator = allocator).removed
 }
 

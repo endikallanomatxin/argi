@@ -269,17 +269,15 @@ _owned_hash_vacancy(
     abort
 }
 
-reserve#(
+_map_reserve_owned_hash_map#(
         .key    : Type,
         .value  : Type,
-        .policy : Type: BorrowedHashPolicy#(policy, key)
-    )(
+        .policy : Type: BorrowedHashPolicy#(policy, key), .Provider: Type: Allocator#(Provider)
+) := (
         .self      : $&OwnedHashMap#(.key: key, .value: value, .policy: policy),
         .capacity  : UIntNative,
-        .allocator : $&Allocator
-    ) -> (
-        .result : Errable#(Void, (..out_of_memory))
-    ) := {
+        .allocator : $&Provider
+    ) -> (.result : Errable#(Void, (..out_of_memory))) {
     assume allocator
     old_count ::= capacity(self).count
 
@@ -333,18 +331,16 @@ reserve#(
     result = ..ok Void()
 }
 
-put#(
+_map_put_owned_hash_map#(
         .key    : Type,
         .value  : Type,
-        .policy : Type: BorrowedHashPolicy#(policy, key)
-    )(
+        .policy : Type: BorrowedHashPolicy#(policy, key), .Provider: Type: Allocator#(Provider)
+) := (
         .self      : $&OwnedHashMap#(.key: key, .value: value, .policy: policy),
         .key       : key,
         .value     : value,
-        .allocator : $&Allocator
-    ) -> (
-        .result : Errable#(Void, (..out_of_memory))
-    ) := {
+        .allocator : $&Provider
+    ) -> (.result : Errable#(Void, (..out_of_memory))) {
     assume allocator
     digest ::= BorrowedHashPolicy#(policy, key).hash(&self&._policy, .key = &key).hash
 
@@ -408,16 +404,14 @@ put#(
     result = ..ok Void()
 }
 
-contains#(
+_map_contains_owned_hash_map#(
         .key    : Type,
         .value  : Type,
         .policy : Type: BorrowedHashPolicy#(policy, key)
-    )(
+    ) := (
         .self : &OwnedHashMap#(.key: key, .value: value, .policy: policy),
         .key  : &key
-    ) -> (
-        .ok : Bool
-    ) := {
+    ) -> (.ok : Bool) {
     digest ::= BorrowedHashPolicy#(policy, key).hash(&self&._policy, .key = key).hash
     ok = is(
         .value   = _owned_hash_find(self, .key = key, .hash = digest).index
@@ -425,16 +419,14 @@ contains#(
     )
 }
 
-get_ro_ref#(
+_map_get_ro_ref_owned_hash_map#(
         .key    : Type,
         .value  : Type,
         .policy : Type: BorrowedHashPolicy#(policy, key)
-    )(
+    ) := (
         .self : &OwnedHashMap#(.key: key, .value: value, .policy: policy),
         .key  : &key
-    ) -> (
-        .result : ?&value
-    ) := {
+    ) -> (.result : ?&value) {
     digest ::= BorrowedHashPolicy#(policy, key).hash(&self&._policy, .key = key).hash
 
     match _owned_hash_find(self, .key = key, .hash = digest).index {
@@ -450,16 +442,14 @@ get_ro_ref#(
     }
 }
 
-extract#(
+_map_extract_owned_hash_map#(
         .key    : Type,
         .value  : Type,
         .policy : Type: BorrowedHashPolicy#(policy, key)
-    )(
+    ) := (
         .self : $&OwnedHashMap#(.key: key, .value: value, .policy: policy),
         .key  : &key
-    ) -> (
-        .result : ?OwnedHashMapEntry#(.key: key, .value: value)
-    ) := {
+    ) -> (.result : ?OwnedHashMapEntry#(.key: key, .value: value)) {
     digest ::= BorrowedHashPolicy#(policy, key).hash(&self&._policy, .key = key).hash
 
     match _owned_hash_find(self, .key = key, .hash = digest).index {
@@ -482,17 +472,15 @@ extract#(
     }
 }
 
-remove#(
+_map_remove_owned_hash_map#(
         .key    : Type,
         .value  : Type,
-        .policy : Type: BorrowedHashPolicy#(policy, key)
-    )(
+        .policy : Type: BorrowedHashPolicy#(policy, key), .Provider: Type: Allocator#(Provider)
+) := (
         .self      : $&OwnedHashMap#(.key: key, .value: value, .policy: policy),
         .key       : &key,
-        .allocator : $&Allocator
-    ) -> (
-        .removed : Bool
-    ) := {
+        .allocator : $&Provider
+    ) -> (.removed : Bool) {
     assume allocator
 
     match extract(self, .key = key).result {
