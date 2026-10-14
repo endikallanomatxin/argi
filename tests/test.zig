@@ -10389,7 +10389,7 @@ test "feature_tests/polymorphism/84X_virtual_safety_contract_invalidate_readonly
 }
 
 test "feature_tests/polymorphism/85X_virtual_safety_contract_invalidate_self" {
-    try buildExpectFail("tests/feature_tests/polymorphism/85X_virtual_safety_contract_invalidate_self", "invalidating erased Self requires a mapped storage domain");
+    try buildExpectFail("tests/feature_tests/polymorphism/85X_virtual_safety_contract_invalidate_self", "invalidating an erased receiver requires a mapped storage domain");
 }
 
 test "feature_tests/polymorphism/86_virtual_safety_contract_domains" {
@@ -11579,7 +11579,7 @@ test "feature_tests/contracts/08X_ambiguous_operation" {
 }
 
 test "feature_tests/contracts/09X_incompatible_output" {
-    try buildExpectFail("tests/feature_tests/contracts/09X_incompatible_output", "missing function: read");
+    try buildExpectFail("tests/feature_tests/contracts/09X_incompatible_output", "operation returns an incompatible associated result");
 }
 
 test "feature_tests/contracts/10X_static_safety_dependency" {
@@ -12978,4 +12978,27 @@ test "feature_tests/contracts/305_filesystem_path_evidence" {
 test "feature_tests/contracts/306_map_operation_evidence" {
     try expectSuccessfulBuild("tests/feature_tests/contracts/306_map_operation_evidence");
     try runExpect("tests/feature_tests/contracts/306_map_operation_evidence", 0);
+}
+
+test "feature_tests/contracts/307_implement_storage_domains" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/307_implement_storage_domains");
+    try runExpect("tests/feature_tests/contracts/307_implement_storage_domains", 0);
+}
+
+test "feature_tests/contracts/308X_implement_storage_domain_alias" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/308X_implement_storage_domain_alias", "storage domains", "failed without a diagnostic");
+}
+
+test "feature_tests/contracts/309_virtual_bound_scoped_associations" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/309_virtual_bound_scoped_associations");
+    try runExpect("tests/feature_tests/contracts/309_virtual_bound_scoped_associations", 0);
+}
+
+test "feature_tests/contracts/310X_virtual_scoped_association_mismatch" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/310X_virtual_scoped_association_mismatch", "incompatible associated elements", "failed without a diagnostic");
+}
+
+test "feature_tests/contracts/311_generic_implement_storage_domains" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/311_generic_implement_storage_domains");
+    try runExpect("tests/feature_tests/contracts/311_generic_implement_storage_domains", 0);
 }

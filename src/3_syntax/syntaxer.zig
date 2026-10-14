@@ -2177,12 +2177,18 @@ pub const Syntaxer = struct {
             if (is_once) return SyntaxerError.ExpectedDeclarationOrAssignment;
             const contract_type = try self.parseType() orelse return SyntaxerError.ExpectedConformanceType;
             const members = try self.parseImplementationMembers(generic_params);
+            const domain_mapping: ?syn.NodeIndex = if (self.currentIdentifierEquals("where")) blk: {
+                self.advanceOne();
+                self.skipNewLinesAndComments();
+                break :blk try self.parseCodeBlock();
+            } else null;
             const extra = try self.addExtra(syn.GenericValueExtra{
                 .generic_params_start = generic_params.start,
                 .generic_params_end = generic_params.end,
                 .generic_params_struct = syn.OptionalNodeIndex.init(generic_params_struct),
                 .value = contract_type,
                 .implementation_members = syn.OptionalNodeIndex.init(members),
+                .safety_contract = syn.OptionalNodeIndex.init(domain_mapping),
             });
             return self.addNode(.contract_conformance, name.token, .{ .extra = extra });
         }

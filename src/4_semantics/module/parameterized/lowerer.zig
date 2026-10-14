@@ -366,7 +366,7 @@ pub const Context = struct {
                                 if (std.mem.eql(u8, previous.name, parameter_binding.name)) try self.contractError(declaration_node, "duplicate participant or associated parameter name");
                             }
                         }
-                        if (abstract.domains.len != 0) try self.contractError(declaration_node, "storage domains on explicit contract participants are not supported yet");
+                        if (abstract.domains.len != 0 and literal.fields.len != 1) try self.contractError(declaration_node, "storage domains currently require a unary contract");
                         break :blk range;
                     } else blk: {
                         for (self.parameters.items) |binding| if (std.mem.eql(u8, binding.name, "Self"))

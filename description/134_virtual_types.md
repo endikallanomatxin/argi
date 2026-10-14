@@ -1,15 +1,13 @@
 # Virtual types
 
 [Contracts and conformance](135_contracts.md) defines the general evidence model,
-including jointly virtualized participants. The unary representation and safety
-rules below also apply to unary compatibility declarations written with
-`Contract` and `satisfies`. Explicit participant contracts currently reject
-virtual conversion until their joint evidence has a representation.
+including jointly virtualized participants. Explicit unary contracts support
+runtime handles with selected implementation evidence and bound associated
+types/constants. Joint evidence for multiple hidden participants remains pending.
 
-Abstracts express static contracts and are monomorphized by default.
-`Virtual#(.abstract: A)` explicitly requests runtime dispatch through the
-contract `A`. It is useful for heterogeneous values and capability boundaries
-such as allocators, streams, and error tracers.
+Contracts are static and use monomorphization by default. `Virtual#(.contract: A)`
+requests runtime dispatch through the fixed interface of A, useful for streams,
+allocators, error tracers and heterogeneous values.
 
 ## Borrowed handle
 

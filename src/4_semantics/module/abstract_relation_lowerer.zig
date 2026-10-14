@@ -196,6 +196,7 @@ const Context = struct {
             .participants = participants,
             .associated_arguments = associated,
             .source = self.sourceRef(node),
+            .domains = try self.lowerDomainMappings(relation.domain_mapping),
         });
     }
 

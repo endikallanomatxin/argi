@@ -847,3 +847,29 @@ skips, failures, leaks or error logs. Narrow UInt8 key/value regression covers
 associated context, generic lookup, borrowing and removal; StringHashMap covers
 normalized literal and borrowed view keys. Existing negative ownership and table
 shape tests remain enabled. Emitted LLVM retains selected concrete map aliases.
+
+### Preparing removal of legacy safety adapters
+
+Allow unary explicit contracts to declare storage domains, and implement members
+to carry a where mapping. Keep mappings on the selected conformance template;
+resolve them through that evidence for static proofs and virtual construction,
+using the existing domain path validator and ownership proofs. Reject multiple
+participants until domain receivers can be identified explicitly. Verify mapping
+metadata in module graphs and bump the snapshot codec version for the added field.
+
+Allow unary virtual interfaces to bind associated types and constants. Their
+selected conformance must match all bound elements; operation candidates bind
+that interface's associated arguments before signature checking. Preserve frozen
+selected implementations and declaration-derived runtime safety summaries.
+Positive owned storage, generic domains and bound association regressions, plus
+negative domain alias and association mismatch cases, cover the prerequisites for
+migrating legacy Abstract safety fixtures. Legacy adapters remain pending removal.
+
+Modern virtual prerequisites passed five focused cases; the full internal suite
+passed 375 tests with one skip. A broad migration of 218 simple unary fixture files
+preserved existing safety checks: the first pass ran 1,186 successful cases with
+two diagnostic-expectation failures. Output mismatch reports conformance failure;
+erased receiver invalidation now consistently uses the same mapped-domain
+restriction for explicit and legacy declarations. Four corrective/numeric cases
+passed after updating expectations and giving numeric test helpers unique names.
+Generic Errable reason-pattern inference remains outside this fixture migration.

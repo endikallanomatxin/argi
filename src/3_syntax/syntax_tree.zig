@@ -306,6 +306,7 @@ pub const ContractConformance = struct {
     contract_type: NodeIndex,
     associated_arguments: ?NodeIndex,
     implementation_members: ?NodeIndex = null,
+    domain_mapping: ?NodeIndex = null,
 };
 pub const AbstractDeclaration = struct {
     participants_struct: ?NodeIndex = null,
@@ -716,7 +717,7 @@ pub const FileSyntaxTree = struct {
         if (tree.tag(node) != .contract_conformance) return null;
         const payload = tree.genericValuePayload(node);
         const extra = tree.extraData(GenericValueExtra, tree.data(node).extra);
-        return .{ .generic_params = payload.generic_params, .generic_params_struct = payload.generic_params_struct, .contract_type = payload.value, .associated_arguments = extra.safety_contract.unwrap(), .implementation_members = extra.implementation_members.unwrap() };
+        return .{ .generic_params = payload.generic_params, .generic_params_struct = payload.generic_params_struct, .contract_type = payload.value, .associated_arguments = if (extra.implementation_members.unwrap() == null) extra.safety_contract.unwrap() else null, .implementation_members = extra.implementation_members.unwrap(), .domain_mapping = if (extra.implementation_members.unwrap() != null) extra.safety_contract.unwrap() else null };
     }
 
     pub fn abstractDefaultsTo(tree: *const FileSyntaxTree, node: NodeIndex) ?AbstractDefaultsTo {

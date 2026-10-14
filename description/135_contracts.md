@@ -458,3 +458,28 @@ ordinary generic functions and operation aliases, as it does for conformances.
 Positional and reordered named type arguments bind the same parameters; output
 types do not supply bindings. Shared argument lookup removes separate matching
 rules for these forms.
+
+Unary contracts can declare storage domains. An implementation supplies their
+concrete paths after its members, for example:
+
+```rg
+Source#(.Value: Type): Contract = (
+    domain storage
+    .get: (.self: &Value) -> (.value: &Int32)
+        where depends_on(value, self, self.storage)
+)
+implement#(.Tag: Type) Source#(Cell#(Tag)) (
+    .get = get_cell
+) where { storage(self.storage) }
+```
+
+Static calls and virtual construction resolve those paths from the selected
+conformance. The existing ownership proofs reject missing, invalid or aliased
+domains. A domain mapping supplies no storage acquisition permission. Contracts
+with multiple participants still require an explicit domain receiver model.
+
+A unary virtual interface may bind associated types and constants. Every
+associated element must be fixed in the interface; the concrete selected
+conformance must match it when the handle is built. Different bound interfaces
+retain separate operation tables and safety identities. Runtime calls use those
+fixed signatures and implementations without rerunning multiple dispatch.

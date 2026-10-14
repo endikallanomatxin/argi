@@ -122,6 +122,7 @@ pub const ContractConformance = struct {
     participants: primitives.Range(ir.ParameterizedGenericArgId),
     associated_arguments: primitives.Range(ir.ParameterizedGenericArgId),
     source: primitives.SourceRef,
+    domains: []const DomainMapping = &.{},
 };
 
 pub const AbstractDefault = struct {

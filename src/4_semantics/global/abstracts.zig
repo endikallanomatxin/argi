@@ -411,9 +411,9 @@ pub const Resolver = struct {
         const abstract_decl = abstract_use.declaration;
         const located = self.findAbstractDefinition(abstract_decl) orelse return null;
         if (located.definition.hasExplicitParticipants() and
-            (located.definition.participants.len != 1 or located.definition.parameters.len != 0 or abstract_use.arguments.len != 0))
+            (located.definition.participants.len != 1 or abstract_use.arguments.len != located.definition.parameters.len))
         {
-            self.virtual_signature_failure = .{ .source = self.sourceFor(module_index, reference.source), .method_name = "to_virtual", .reason = if (located.definition.participants.len != 1) "explicit participants require joint virtual evidence, which is not supported yet" else "unary virtual evidence currently requires no associated parameters; use the unbound unary contract" };
+            self.virtual_signature_failure = .{ .source = self.sourceFor(module_index, reference.source), .method_name = "to_virtual", .reason = if (located.definition.participants.len != 1) "explicit participants require joint virtual evidence, which is not supported yet" else "unary virtual evidence requires every associated element to be bound" };
             return null;
         }
 
@@ -434,10 +434,16 @@ pub const Resolver = struct {
         };
         const concrete = pointer.child;
         if (!try self.validateVirtualContract(abstract_ty, located, self.sourceFor(module_index, reference.source), pointer.mutability)) return null;
+        var evidence_bindings = try generic_mod.Resolver.Bindings.init(self.allocator, self.modules[located.module_index].semantic.parameterized_storage.comptime_parameters.items.len);
+        defer evidence_bindings.deinit(self.allocator);
         const evidence = if (located.definition.hasExplicitParticipants())
-            try self.selectConformance(abstract_decl, &.{concrete}, null, 0, null)
+            try self.selectConformance(abstract_decl, &.{concrete}, &evidence_bindings, 0, null)
         else
             null;
+        if (evidence != null and !try self.associatedArgumentsMatch(located, &evidence_bindings, abstract_use.arguments)) {
+            self.virtual_signature_failure = .{ .source = self.sourceFor(module_index, reference.source), .method_name = "to_virtual", .reason = "selected conformance has incompatible associated elements for the virtual interface" };
+            return null;
+        }
         if ((located.definition.hasExplicitParticipants() and evidence == null) or
             (!located.definition.hasExplicitParticipants() and !self.concreteImplements(concrete, abstract_ty)))
         {
@@ -574,7 +580,15 @@ pub const Resolver = struct {
             if (try self.associatedArgumentsMatch(located, &bindings, use.arguments)) switch (selection) {
                 .direct => |selected| return self.resolveDomainPaths(selected.module_index, selected.implementation.domains, concrete, located, source),
                 .parameterized => |selected| return self.resolveDomainPaths(selected.module_index, selected.implementation.domains, concrete, located, source),
-                .tuple, .inherited => {},
+                .tuple => |index| {
+                    const evidence = self.graph.contract_conformances.items[index];
+                    const owner: usize = @intFromEnum(evidence.context);
+                    for (self.modules[owner].semantic.parameterized_storage.contract_conformances.items) |template| {
+                        if (std.meta.eql(self.sourceFor(owner, template.source), evidence.source))
+                            return self.resolveDomainPaths(owner, template.domains, concrete, located, source);
+                    }
+                },
+                .inherited => {},
             };
         }
         if (located.definition.domains.len == 0) return &.{};
@@ -1155,8 +1169,8 @@ pub const Resolver = struct {
         located: LocatedAbstractDefinition,
         bindings: *generic_mod.Resolver.Bindings,
     ) bool {
-        if (located.definition.hasExplicitParticipants())
-            return located.definition.participants.len == 1 and located.definition.parameters.len == 0 and abstract_use.arguments.len == 0;
+        if (located.definition.hasExplicitParticipants() and located.definition.participants.len != 1) return false;
+        if (abstract_use.arguments.len != located.definition.parameters.len) return false;
         self.generics.bindGlobalArguments(located.module_index, located.definition.parameters, abstract_use.arguments, bindings) catch return false;
         return true;
     }
@@ -1384,8 +1398,8 @@ pub const Resolver = struct {
                 reason = "invalidates requires a mutable reference input";
                 break;
             }
-            if (!located.definition.hasExplicitParticipants() and global_types.equal(self.graph, input_ty.pointer.child, abstract_ty)) {
-                reason = "invalidating erased Self requires a mapped storage domain; name a known reference input instead";
+            if (erased_self and global_types.equal(self.graph, input_ty.pointer.child, abstract_ty)) {
+                reason = "invalidating an erased receiver requires a mapped storage domain; name a known reference input instead";
                 break;
             }
             const child = self.graph.semanticType(input_ty.pointer.child);
@@ -2202,7 +2216,7 @@ pub const Resolver = struct {
                     const child = self.graph.semanticType(ty.pointer.child);
                     if (child == .virtual) {
                         const use = self.abstractUse(child.virtual) orelse return null;
-                        if (use.declaration != declaration or use.arguments.len != 0) return null;
+                        if (use.declaration != declaration or !self.bindAbstractUseArguments(use, located, &bindings)) return null;
                         bindings.types[located.definition.participants.start] = child.virtual;
                         virtual = true;
                         continue;
@@ -2223,7 +2237,7 @@ pub const Resolver = struct {
                     const child = self.graph.semanticType(actual.pointer.child);
                     if (child == .virtual) {
                         const use = self.abstractUse(child.virtual) orelse continue;
-                        if (use.declaration != declaration or use.arguments.len != 0) continue;
+                        if (use.declaration != declaration or !self.bindAbstractUseArguments(use, located, &bindings)) continue;
                         bindings.types[located.definition.participants.start] = child.virtual;
                         virtual = true;
                         continue;
