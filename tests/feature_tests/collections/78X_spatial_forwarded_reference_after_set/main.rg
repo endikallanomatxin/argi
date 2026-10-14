@@ -1,5 +1,5 @@
 replace(.array: $&DynamicArray#(.t: UIntNative), .allocator: $&Allocator) -> () := {
-    replaced ::= set#(.t: UIntNative)(.self = array, .index = 0, .value = 9, .allocator = allocator).result
+    replaced ::= replace#(.t: UIntNative)(.self = array, .index = 0, .value = 9, .allocator = allocator).result
 }
 main(.system: System) -> (.status_code: Int32 = 0) := {
     array ::= unwrap_or_abort(.value = DynamicArray#(.t: UIntNative)(.allocator = system.page_allocator, .capacity = 2))

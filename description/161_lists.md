@@ -81,7 +81,7 @@ capacity growth invalidate existing views, including their derived subranges
 and element references. The same rule applies to direct element loans from
 `get_ro_ref`, `get_rw_ref`, and the public element-pointer operations, and to
 elements borrowed through collection iterators. This conservative contract applies even when an append
-does not reallocate. Replacing an element through `DynamicArray.set` also invalidates existing
+does not reallocate. Replacing an element through `DynamicArray.replace` also invalidates existing
 content loans, views, and iterators, even though the length does not change. Owner cleanup and backing-arena reset invalidate its storage.
 A fresh view, element reference, or iterator can be borrowed after a structural
 change. Empty views contain no
@@ -147,7 +147,7 @@ rolls back the completed prefix before releasing the new backing allocation.
 - `get(index)` for value access
 - `get_ro_ref(index)` for borrowed read-only access
 - `get_rw_ref(index)` for borrowed mutable access
-- `set(index, value)` for assignment
+- `replace(index, value)` for owning replacement
 
 All four operations are fallible because an index may be outside the
 collection's logical length. Value access copies a named element implicitly

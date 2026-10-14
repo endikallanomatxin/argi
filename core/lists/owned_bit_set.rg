@@ -51,7 +51,7 @@ as_view(.self: $&BitSet) -> (.view: BitSetView) := {
     view = (._bytes = ViewOf#($&DynamicArray#(.t: UInt8)).make_view(.array = $&self&._storage), ._count = self&._count)
 }
 
-contains(
+_bit_query_BitSet(
         .self  : &BitSet,
         .index : UIntNative
     ) -> (
@@ -68,7 +68,7 @@ contains(
     result = ..ok byte&/ mask % 2 != 0
 }
 
-set(
+_bit_write_BitSet(
         .self  : $&BitSet,
         .index : UIntNative,
         .value : Bool        = true
@@ -77,12 +77,18 @@ set(
     ) := {
     borrowed_view ::= as_view(self).view
 
-    result = set($&borrowed_view, .index = index, .value = value)
+    result = set_bit($&borrowed_view, .index = index, .value = value)
 }
 
-count_set(.self: &BitSet) -> (.count: UIntNative) := {
+_bit_count_BitSet(.self: &BitSet) -> (.count: UIntNative) := {
     count = _bit_set_count(
         .bytes  = view(.array = &self&._storage)
         .extent = self&._count
     ).count
 }
+
+implement BitSetAccess#(BitSet) (
+    .read_bit = _bit_query_BitSet
+    .write_bit = _bit_write_BitSet
+    .population = _bit_count_BitSet
+)

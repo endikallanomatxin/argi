@@ -18,7 +18,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     if removed.id != 3 or drops != 0 { status_code = 1 }
     deinit(.self = $&removed)
     replacement ::= Tracked(.id = 4)
-    replaced ::= unwrap_or_abort(.value = set#(.t: Tracked)(.self = $&array, .index = 0, .value = ~replacement, .allocator = allocator).result)
+    replaced ::= unwrap_or_abort(.value = replace#(.t: Tracked)(.self = $&array, .index = 0, .value = ~replacement, .allocator = allocator).result)
     fresh ::= unwrap_or_abort(.value = get_ro_ref(.self = &array, .index = 0).result)
     if fresh&.id != 4 or drops != 2 { status_code = 2 }
     last ::= unwrap_or_abort(.value = pop(.self = $&array).result)

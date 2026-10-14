@@ -39,7 +39,6 @@ pub const specs = [_]Spec{
     .{ .primitive = .trusted_opaque_relocate, .path = "core/memory/opaque_ownership.rg", .name = "trusted_opaque_relocate", .signatures = &.{"#(.t: Type)(.source: $&t, .destination: $&t) -> ()"} },
     .{ .primitive = .trusted_opaque_drop, .path = "core/memory/opaque_ownership.rg", .name = "trusted_opaque_drop", .signatures = &.{
         "#(.t: Type)(.slot: $&t) -> ()",
-        "#(.t: Type)(.slot: $&t, .allocator: $&Allocator) -> ()",
     } },
     .{ .primitive = .trusted_opaque_mark_empty, .path = "core/memory/opaque_ownership.rg", .name = "trusted_opaque_mark_empty", .signatures = &.{"#(.t: Type)(.storage: $&t) -> ()"} },
     .{ .primitive = .raw_allocated_storage, .path = "core/libc/libc.rg", .name = "_malloc", .signatures = &.{"(.size: UIntNative) -> (.address: UIntNative)"}, .declaration = .extern_function },

@@ -82,3 +82,8 @@ remain distinguishable. The baseline does not expose platform errno values.
 
 Native adapters cover POSIX Linux/macOS and Windows Winsock. Async operation,
 readiness polling, TLS, HTTP, and cancellation are outside this baseline.
+
+SocketAddress selects the local endpoint operation for TCP connections, TCP
+listeners and UDP sockets. SocketTimeout selects timeout configuration for TCP
+connections and UDP sockets. Each public action has one ordinary generic entry;
+the scoped implementations retain native FFI dependencies and copied addresses.

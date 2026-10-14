@@ -334,7 +334,7 @@ assignment, sharing that proof with arithmetic. No syntax or codegen schema chan
 are required. Validate generic/qualified calls, literals and NaN; preserve tag and
 C-boundary comparison lowering. Ordered comparison migration remains separate.
 
-### Ordinary overload inventory after scalar equality
+### Current ordinary overload inventory
 
 The source inventory groups declarations by their folder module and function name.
 It excludes scoped implementation members. This is a migration inventory, not a
@@ -342,11 +342,11 @@ semantic claim that every pair has overlapping applicability.
 
 | Module | Names with multiple ordinary declarations |
 |---|---:|
-| `core/libc` | 1 |
-| `core/lists` | 5 |
+| `core/libc` | 0 |
+| `core/lists` | 2 |
 | `core/maps` | 8 |
-| `core/memory` | 1 |
-| `core/system` | 5 |
+| `core/memory` | 0 |
+| `core/system` | 3 |
 | `core/system/file_system` | 10 |
 | `more/math/linear_algebra` | 5 |
 | `more/semver` | 1 |
@@ -578,3 +578,31 @@ Assertion/key batch validation: 474 collection, testing and contract program
 cases and 35 internal tests passed, without failures or leaks. The remaining
 inventory has 36 repeated names. The ordinary selector and legacy
 contract adapters remain open completion gates; this batch does not remove them.
+
+BitSetAccess selects read/write/population for borrowed and owning bitsets.
+contains_bit and set_bit distinguish bit positions from value/key collection
+operations; count_set has one generic identity. Keep bounded writes atomic,
+default true semantics, zero-size behavior and backing lifetime dependencies.
+
+Owning DynamicArray replacement uses the unique replace action, distinct from
+copyable view set. It retains moving the incoming value into a lexical owner
+before range checks, recursively destroys displaced elements and preserves
+shape invalidation. This removes the final ordinary set overload family in lists.
+
+Collection action validation passed all registered collection cases. The unused
+allocator-taking trusted_opaque_drop declaration and its primitive approval
+signature are removed; cleanup uses the selected Deinit evidence. The declaration
+inventory now has 32 repeated names. Ordinary ranking and legacy contract
+adapters remain pending the remaining consumer migration.
+
+The mutable/readonly fwrite_from family uses one byte-buffer algorithm, with
+private selected evidence preserving the readonly C input. SocketAddress and
+SocketTimeout remove the networking local_address/set_timeout families while
+keeping their native implementations and safety dependencies. The repeated-name
+inventory is now 29; no global-selector or legacy-contract removal is claimed.
+
+Collection/byte-buffer/socket batch validation: all registered collection cases
+passed before the byte-buffer/socket migration; the subsequent full system group
+passed 102 cases (1 skipped), with no failures or leaks. The full internal suite
+passed 374 tests (1 skipped). Both mutable and readonly file writes and TCP/UDP
+endpoint and timeout cases exercised selected evidence.

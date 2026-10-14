@@ -47,7 +47,7 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
-    set_result ::= set(.self = $&arr, .index = second_offset, .value = 99, .allocator = allocator).result
+    set_result ::= replace(.self = $&arr, .index = second_offset, .value = 99, .allocator = allocator).result
     if is(.value = set_result, .variant = ..error) {
         status_code = 5
         return

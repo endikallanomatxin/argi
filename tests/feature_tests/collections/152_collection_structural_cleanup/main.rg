@@ -33,11 +33,11 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         ..ok _ { abort } ..error error { if error.reason != ..out_of_bounds { abort } }
     }
     if drops != 6 { abort }
-    match set(.self = $&array, .index = 9, .value = _pair(.id = 5).value, .allocator = allocator) {
+    match replace(.self = $&array, .index = 9, .value = _pair(.id = 5).value, .allocator = allocator) {
         ..ok _ { abort } ..error error { if error.reason != ..out_of_bounds { abort } }
     }
     if drops != 8 { abort }
-    set(.self = $&array, .index = 0, .value = _pair(.id = 6).value, .allocator = allocator)!
+    replace(.self = $&array, .index = 0, .value = _pair(.id = 6).value, .allocator = allocator)!
     if drops != 10 { abort }
     if unwrap_or_abort(.value = get_ro_ref(.self = &array, .index = 0))&.first.id != 6 { abort }
     deinit(.self = $&array)

@@ -206,8 +206,8 @@ low bit of the first byte. Insufficient storage reports `out_of_bounds`
 before writing anything; size calculation cannot overflow. Storage beyond
 the required bytes remains unchanged, and zero bits require no bytes.
 
-`length` reports bit capacity. Checked `contains(.self, .index)` queries a bit;
-`set(.self, .index, .value = true)` sets or clears it. Repeated writes are
+`length` reports bit capacity. Checked `contains_bit(.self, .index)` queries a bit;
+`set_bit(.self, .index, .value = true)` sets or clears it. Repeated writes are
 idempotent, and invalid indices leave storage unchanged. `count_set` counts
 only the recorded bit range, ignoring padding bits in the final byte. The
 view allocates nothing and retains the backing storage's lifetime.
@@ -225,7 +225,7 @@ The policy must remain live and its comparisons stable while values are queued.
 separate borrowed comparison and movement protocol before they can be supported.
 
 `BitSet(.count, .allocator)` owns initialized storage for a fixed bit count.
-It shares the checked `length`, `contains`, `set` and `count_set` operations
+It shares the checked `length`, `contains_bit`, `set_bit` and `count_set` operations
 with borrowed bit sets. `as_view(.self: $&BitSet)` borrows a mutable `BitSetView`
 without clearing any bits. Cleanup releases the underlying dynamic array and
 invalidates its borrowed views; owners cannot be implicitly copied.

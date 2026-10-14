@@ -298,7 +298,7 @@ implement Deinit#(TcpConnection) (
 
 is_open(.self: &TcpConnection) -> (.value: Bool) := { value = self&._handle != 0 }
 
-local_address(
+_local_address_TcpConnection(
         .self : &TcpConnection
     ) -> (
         .result : Errable#(NetworkAddress, (..socket_option_failed))
@@ -384,7 +384,7 @@ implement Deinit#(TcpListener) (
 
 is_open(.self: &TcpListener) -> (.value: Bool) := { value = self&._handle != 0 }
 
-local_address(
+_local_address_TcpListener(
         .self : &TcpListener
     ) -> (
         .result : Errable#(NetworkAddress, (..socket_option_failed))
@@ -470,7 +470,7 @@ implement Deinit#(UdpSocket) (
 
 is_open(.self: &UdpSocket) -> (.value: Bool) := { value = self&._handle != 0 }
 
-local_address(
+_local_address_UdpSocket(
         .self : &UdpSocket
     ) -> (
         .result : Errable#(NetworkAddress, (..socket_option_failed))
@@ -508,7 +508,7 @@ accept(
     result = ..ok(._network = self&._network, ._handle = handle)
 }
 
-set_timeout(
+_set_timeout_TcpConnection(
         .self         : $&TcpConnection,
         .milliseconds : UInt32
     ) -> (
@@ -524,7 +524,7 @@ set_timeout(
     result = ..ok Void()
 }
 
-set_timeout(
+_set_timeout_UdpSocket(
         .self         : $&UdpSocket,
         .milliseconds : UInt32
     ) -> (

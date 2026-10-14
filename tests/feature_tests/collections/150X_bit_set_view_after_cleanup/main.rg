@@ -3,7 +3,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     bits ::= BitSet(.count = 1, .allocator = allocator)!
     borrowed ::= as_view(.self = $&bits).view
     deinit(.self = $&bits)
-    contains(.self = &borrowed, .index = 0)!
+    contains_bit(.self = &borrowed, .index = 0)!
 }
 
 main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {

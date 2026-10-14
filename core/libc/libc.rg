@@ -77,21 +77,36 @@ fread_into(
     ).count
 }
 
-fwrite_from(
-        .buffer : ArrayView#(.t: UInt8),
-        .stream : &Any,
-    ) -> (
-        .count : UIntNative
-    ) := {
+_FileWriteBuffer#(.Buffer: Type): Contract = (
+    .bytes: (.self: &Buffer) -> (.pointer: &UInt8)
+)
+
+_write_buffer_mutable(.self: &ArrayView#(.t: UInt8)) -> (.pointer: &UInt8) := {
+    pointer = read_reference#(.t: UInt8)(.base = data(.self = self).pointer).reference
+}
+
+_write_buffer_readonly(.self: &ArrayViewRO#(.t: UInt8)) -> (.pointer: &UInt8) := {
+    pointer = data(.self = self).pointer
+}
+
+implement _FileWriteBuffer#(ArrayView#(.t: UInt8)) (
+    .bytes = _write_buffer_mutable
+)
+implement _FileWriteBuffer#(ArrayViewRO#(.t: UInt8)) (
+    .bytes = _write_buffer_readonly
+)
+
+fwrite_from#(.Buffer: Type: _FileWriteBuffer#(Buffer)) := (
+    .buffer: Buffer, .stream: &Any
+) -> (.count: UIntNative) {
     if length(&buffer).count == 0 {
         count = 0
         return
     }
-
     count = fwrite(
-        .buffer = read_reference#(.t: UInt8)(.base = data(&buffer).pointer).reference
-        .size   = 1
-        .count  = length(&buffer).count
+        .buffer = _FileWriteBuffer#(Buffer).bytes(.self = &buffer).pointer
+        .size = 1
+        .count = length(&buffer).count
         .stream = stream
     ).count
 }
@@ -118,18 +133,4 @@ free(.address: UIntNative, .ffi: $&ForeignFunctionInterface) -> () := {
 -- Aligned CRT storage has its own release operation on Windows.
 aligned_free(.address: UIntNative, .ffi: $&ForeignFunctionInterface) -> () := {
     _aligned_free(.address = address)
-}
-
-fwrite_from(.buffer: ArrayViewRO#(.t: UInt8), .stream: &Any) -> (.count: UIntNative) := {
-    if length(&buffer).count == 0 {
-        count = 0
-        return
-    }
-
-    count = fwrite(
-        .buffer = data(&buffer).pointer
-        .size   = 1
-        .count  = length(&buffer).count
-        .stream = stream
-    ).count
 }

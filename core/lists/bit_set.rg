@@ -52,7 +52,7 @@ _bit_set_mask(.index: UIntNative) -> (.mask: UInt8 = 1) := {
     }
 }
 
-contains(
+_bit_query_BitSetView(
         .self  : &BitSetView,
         .index : UIntNative
     ) -> (
@@ -69,14 +69,14 @@ contains(
     result = ..ok byte&/ mask % 2 != 0
 }
 
-set(
+_bit_write_BitSetView(
         .self  : $&BitSetView,
         .index : UIntNative,
         .value : Bool          = true
     ) -> (
         .result : Errable#(Void, (..out_of_bounds)) = ..ok Void()
     ) := {
-    present ::= contains(self, .index = index)!
+    present ::= contains_bit(self, .index = index)!
 
     if present == value { return }
     byte ::= unwrap_or_abort(.value = get_rw_ref($&self&._bytes, .index = index / 8))
@@ -107,9 +107,15 @@ _bit_set_count(.bytes: ArrayViewRO#(.t: UInt8), .extent: UIntNative) -> (.count:
     }
 }
 
-count_set(.self: &BitSetView) -> (.count: UIntNative) := {
+_bit_count_BitSetView(.self: &BitSetView) -> (.count: UIntNative) := {
     count = _bit_set_count(
         .bytes  = as_readonly(&self&._bytes).view
         .extent = self&._count
     ).count
 }
+
+implement BitSetAccess#(BitSetView) (
+    .read_bit = _bit_query_BitSetView
+    .write_bit = _bit_write_BitSetView
+    .population = _bit_count_BitSetView
+)

@@ -16,7 +16,7 @@ main(.system: System) -> (.status_code: Int32) := {
     copied ::= ~copied_result..ok
     #defer deinit(.self = $&copied)
 
-    set_result ::= set(.self = $&copied, .index = 0, .value = 99, .allocator = $&allocator_storage).result
+    set_result ::= replace(.self = $&copied, .index = 0, .value = 99, .allocator = $&allocator_storage).result
     if is(.value = set_result, .variant = ..error) {
         status_code = 6
         return

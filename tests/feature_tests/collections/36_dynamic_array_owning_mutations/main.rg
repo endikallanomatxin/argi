@@ -62,7 +62,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
                                     }
 
                                     one :: UIntNative = 1
-                                    replacement_result ::= set#(.t: Tracked)(.self = $&array, .index = one, .value = ~fourth, .allocator = $&allocator_storage).result
+                                    replacement_result ::= replace#(.t: Tracked)(.self = $&array, .index = one, .value = ~fourth, .allocator = $&allocator_storage).result
                                     if is(.value = replacement_result, .variant = ..error) {
                                         status_code = 5
                                         return

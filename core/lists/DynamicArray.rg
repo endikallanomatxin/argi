@@ -377,7 +377,7 @@ _destroy_array_element#(.t: Type)(.value: t, .allocator: $&Allocator) -> () := {
     discarded ::= ~value
 }
 
-set#(
+replace#(
         .t : Type
     )(
         .self      : $&DynamicArray#(.t: t),
