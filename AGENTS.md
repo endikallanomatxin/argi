@@ -354,10 +354,10 @@ feature first.
   Ownership must traverse value sequences nested in initializers, arguments,
   assignments, conditions, and returns before finalizing cleanup. Codegen must
   not retain binding-map entry pointers across recursive expression emission.
-  Bound virtual abstract identities include associated type/value arguments;
+  Bound virtual contract identities include associated type/value arguments;
   safety implementation registries must keep those identities separate.
 
-- Abstract safety conformance is checked after concrete summaries converge.
+- Contract safety conformance is checked after concrete summaries converge.
   Static selection and virtual table construction share declaration validation
   and implementation proofs. Static conformance metadata belongs to GlobalSG,
   participates in speculative checkpoints, and creates no runtime erasure.
@@ -428,7 +428,7 @@ feature first.
   clears the speculative destination and confirms current source facts. Keep
   transferred owned roots alive in both cases, and never restore value snapshots.
   Reject overlapping conditional source inputs before applying any effects.
-  Abstract outcome relocation inherits enclosing guarantees. Build its virtual
+  Contract outcome relocation inherits enclosing guarantees. Build its virtual
   summary from declarations, including available destinations and conservative
   unselected states; implementation lists only prove conformance. Shared input
   transitions across independent outputs require correlated facts. Alternative

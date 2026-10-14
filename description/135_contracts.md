@@ -414,8 +414,8 @@ The result preserves stream_write_failed and stream_flush_failed. Formatting
 stops on the first failed byte, keeps the written prefix and never requests
 an implicit flush. Numeric print delegates to this operation before writing its
 terminator. The former numeric write and writer format_into ordinary families
-are removed. Text/buffer/file/TCP write overloads are also removed. String
-format_into and readonly/mutable view families remain separate pending migrations.
+are removed. Text/buffer/file/TCP write overloads are also removed. String formatting and readonly/mutable views use the scoped protocols described
+below.
 
 ## Ordinary-family migration
 
