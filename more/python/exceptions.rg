@@ -51,9 +51,9 @@ initialization_error(.ffi: $&ForeignFunctionInterface) -> (.exception: Exception
     exception = (._handle = _initialization_snapshot().handle, ._ffi = ffi)
 }
 
-clone(.self: &Exception) -> (.exception: Exception) := {
+_python_exception_clone(.self: &Exception) -> (.result: Exception) := {
     assume ffi := self&._ffi
-    exception = (._handle = _exception_clone(.handle = self&._handle).handle, ._ffi = self&._ffi)
+    result = (._handle = _exception_clone(.handle = self&._handle).handle, ._ffi = self&._ffi)
 }
 
 -- Convert an operation's ordinary Errable immediately, before executing another

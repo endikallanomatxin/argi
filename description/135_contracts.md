@@ -415,3 +415,11 @@ ordinary query overload families without selecting by result type.
 These migrations remove individual ordinary families. Global ordinary candidate
 selection and legacy contract syntax remain transitional until all consumers and
 fixtures have moved; their final removal is a separate required completion gate.
+
+Optional Python conversion and invocation also use selected contract evidence.
+Numeric transfers share scalar/view metadata rather than ordinary overloads.
+Generic default inference may learn a direct participant from a known typed
+default or a unique local zero-input concrete factory's declared signature. This
+reads an input value's type without executing the factory or using the caller's
+expected result. It never infers from cached generic specializations. Factories
+execute only when the default is actually used, with ordinary safety and cleanup.

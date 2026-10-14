@@ -643,6 +643,15 @@ pub const Resolver = struct {
             if (self.core.callArgumentNamed(literal, expected_position, candidate_module.text(field.name)) != null) continue;
 
             const default_id = field.default_value orelse continue;
+            // A supplied input wins. Missing inputs may bind a direct parameter
+            // from a default whose type is known without executing its body.
+            if (storage.types.items[@intFromEnum(field.ty)] == .parameter) {
+                const parameter = storage.types.items[@intFromEnum(field.ty)].parameter;
+                if (bindings.types[@intFromEnum(parameter)] == null) {
+                    if (try self.knownDefaultType(module_index, default_id, bindings)) |ty|
+                        bindings.types[@intFromEnum(parameter)] = ty;
+                }
+            }
             const default_node = switch (storage.nodes.items[@intFromEnum(default_id)]) {
                 .resolved => |node| node,
                 .pending => continue,
@@ -695,6 +704,43 @@ pub const Resolver = struct {
             }
         }
         return true;
+    }
+
+    /// Read a fixed declaration signature, never expected result context or a
+    /// speculative default body. Overloaded/default-dependent calls stay deferred.
+    fn knownDefaultType(self: *Resolver, module_index: usize, node_id: ir.ParameterizedNodeId, bindings: *generic_mod.Resolver.Bindings) !?global_sg.GlobalTypeId {
+        const module = &self.modules[module_index];
+        const storage = &module.semantic.parameterized_storage.ir;
+        switch (storage.nodes.items[@intFromEnum(node_id)]) {
+            .resolved => |node| {
+                if (node.content == .reach_directive) return null;
+                const ty = node.ty orelse return null;
+                return self.generics.instantiateParameterizedType(module_index, ty, bindings) catch |err| switch (err) {
+                    error.OutOfMemory => return err,
+                    else => null,
+                };
+            },
+            .pending => |pending_id| {
+                const pending = storage.pending.items[@intFromEnum(pending_id)];
+                if (pending != .resolve_expression) return null;
+                const expression = pending.resolve_expression;
+                if (expression.kind != .generic_call or expression.module_path != null or expression.contract_type != null or expression.generic_arguments.len != 0 or expression.operands.len != 1) return null;
+                const input_id = storage.node_refs.items[expression.operands.start];
+                const input = storage.nodes.items[@intFromEnum(input_id)];
+                if (input != .resolved or input.resolved.content != .struct_value_literal or input.resolved.content.struct_value_literal.fields.len != 0) return null;
+                const name = module.text(expression.name orelse return null);
+                var selected: ?global_sg.GlobalTypeId = null;
+                for (try self.graph.functionsNamed(self.allocator, name)) |function_id| {
+                    const function = self.graph.function(function_id);
+                    if (@intFromEnum(self.graph.moduleForDeclaration(function.declaration).?) != module_index) continue;
+                    if (selected != null or function.flags.is_generic_instantiation or function.flags.is_once or function.flags.is_abstract_dispatch or function.input.len != 0 or function.output.len != 1) return null;
+                    const ty = self.graph.fields.items[function.output.start].ty;
+                    if (self.graph.isTypeUnresolved(ty)) return null;
+                    selected = ty;
+                }
+                return selected;
+            },
+        }
     }
 
     pub fn inferArgumentRecordBindings(
@@ -2908,7 +2954,12 @@ pub const Resolver = struct {
             const reference: module_entities.ExternalRef = .{ .kind = .function, .module_path = module_path, .name = name_range, .source = source };
             // Calls in an instantiated body can reach the instance's concrete
             // input bindings, including parameters inferred from generic args.
-            const input_bindings = self.resolver.graph.functions.items[@intFromEnum(self.function.?)].input_bindings;
+            // Default expressions can be materialized before a function body
+            // exists. They have no body-local input bindings to expose.
+            const input_bindings = if (self.function) |owner|
+                self.resolver.graph.function(owner).input_bindings
+            else
+                global_sg.BindingRange{ .start = 0, .len = 0 };
             const visible = try self.resolver.allocator.dupe(global_sg.GlobalBindingId, self.resolver.graph.binding_refs.items[input_bindings.start..][0..input_bindings.len]);
             defer self.resolver.allocator.free(visible);
             const nested_reach = ReachInferenceContext.fromGlobal(visible, self.function);

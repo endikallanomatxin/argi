@@ -9146,7 +9146,7 @@ test "feature_tests/python/11_numeric_buffers" {
     try checkPythonFixture("tests/feature_tests/python/11_numeric_buffers");
 }
 test "feature_tests/python/12X_numeric_readonly" {
-    try buildExpectFail("tests/feature_tests/python/12X_numeric_readonly", "no overload of 'copy_numeric' accepts arguments");
+    try buildExpectFail("tests/feature_tests/python/12X_numeric_readonly", "no matching generic overload of 'copy_numeric'");
 }
 
 test "feature_tests/functions/32_generic_view_dispatch_order" {
@@ -12899,4 +12899,12 @@ test "feature_tests/contracts/288_dynamic_view_reference_evidence" {
 test "feature_tests/contracts/289_unique_numeric_and_collection_entries" {
     try expectSuccessfulBuild("tests/feature_tests/contracts/289_unique_numeric_and_collection_entries");
     try runExpect("tests/feature_tests/contracts/289_unique_numeric_and_collection_entries", 0);
+}
+
+test "feature_tests/contracts/290_known_default_participant_inference" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/290_known_default_participant_inference");
+    try runExpect("tests/feature_tests/contracts/290_known_default_participant_inference", 0);
+}
+test "feature_tests/contracts/291X_generic_default_no_cached_inference" {
+    try buildExpectFail("tests/feature_tests/contracts/291X_generic_default_no_cached_inference", "no matching generic overload of 'identity'");
 }

@@ -350,7 +350,6 @@ semantic claim that every pair has overlapping applicability.
 | `core/system/file_system` | 10 |
 | `core/testing` | 4 |
 | `more/math/linear_algebra` | 5 |
-| `more/python` | 9 |
 | `more/semver` | 1 |
 
 The four linear-algebra `add` declarations now use Add evidence. Prioritize
@@ -527,3 +526,32 @@ skipped) and 374 internal tests (1 skipped), with no failures or leaks. Selected
 entry LLVM and the custom collection/numeric executable were checked. The ordinary
 selector and legacy contract adapters are still pending removal; this batch closes
 32 declaration families, not the overall three requested completion gates.
+
+### Optional Python ordinary-family migration
+
+Private scalar/view contracts select numeric transfer metadata, replacing 22
+numeric_buffer, 22 numeric_array and 11 copy_numeric declarations with unique
+generic algorithms. PythonValue supplies selected conversion evidence behind
+one to_object entry. Retain interpreter loans, native buffer validation/release
+and independent output storage; ordinary builds keep Python optional.
+
+Python integer, clone, keyword and call families now use private operation
+contracts and unique ordinary entries. Clone's associated Result preserves
+infallible exception snapshots and fallible Object duplication. Call argument
+representations specialize one invocation identity, preserving the canonical
+empty-array default. Generic defaults may bind a direct unknown type parameter
+from a typed value or a unique local zero-input concrete factory signature,
+without executing the factory, using expected outputs, or consulting cached
+generic instances. Default materialization has no body-local function context.
+The regression fixture checks exact runtime evaluation counts and rejects cached
+generic-default inference. Broader default expression inference stays deferred.
+
+All nine optional Python overload families are removed. The remaining inventory
+contains 43 repeated names; global ordinary selection and legacy contracts remain
+required removal work after those consumers migrate.
+
+Optional Python batch validation: 20 Python/default-inference program cases
+passed (0 skipped) with the matching CPython 3.12 native adapter and NumPy
+enabled. The full internal suite passed 374 tests (1 skipped); contract/official
+library regressions passed separately. All runs had no failures or leaks. The
+normal compiler build still has no Python header/library requirement.

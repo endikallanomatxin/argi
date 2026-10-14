@@ -23,31 +23,9 @@ _next(
         .handle : RawPointer#(.t: _PyObject)
     ): CFunction(.symbol = "_argi_python_next")
 
-call_method(
-        .self      : &Object,
-        .name      : StringView,
-        .arguments : ArrayViewRO#(.t: &Object) = _no_arguments(),
-        .keywords  : ?&Object                  = _no_keywords()
-    ) -> (
-        .result : Errable#(Object, (..python_error))
-    ) := {
-    method ::= attribute(.self = self, .name = name)!
 
-    result = call(.self = &method, .arguments = arguments, .keywords = keywords)
-}
 
-call_method(
-        .self      : &Object,
-        .name      : StringView,
-        .arguments : &Object,
-        .keywords  : ?&Object    = _no_keywords()
-    ) -> (
-        .result : Errable#(Object, (..python_error))
-    ) := {
-    method ::= attribute(.self = self, .name = name)!
 
-    result = call(.self = &method, .arguments = arguments, .keywords = keywords)
-}
 
 set_attribute(
         .self  : &Object,

@@ -241,7 +241,7 @@ bytes(
     )
 }
 
-clone(.self: &Object) -> (.result: Errable#(Object, (..python_error))) := {
+_python_object_clone(.self: &Object) -> (.result: Errable#(Object, (..python_error))) := {
     assume ffi := self&._python&._ffi
 
     result = _owned(
@@ -345,7 +345,7 @@ _no_arguments() -> (.value: ArrayViewRO#(.t: &Object)) := { value = empty_array_
 
 _no_keywords() -> (.value: ?&Object) := { value = ..none }
 
-call(
+_call_from_view(
         .self      : &Object,
         .arguments : ArrayViewRO#(.t: &Object) = _no_arguments(),
         .keywords  : ?&Object                  = _no_keywords()
@@ -393,6 +393,8 @@ call(
 
     result = _owned(.self = self&._python, .handle = handle)
 }
+
+implement _PythonCall#(ArrayViewRO#(.t: &Object)) (.invoke = _call_from_view)
 
 _bool(.context: UIntNative, .object: RawPointer#(.t: _PyObject)) -> (.status: Int32): CFunction(
     .symbol = "_argi_python_bool"
@@ -493,7 +495,7 @@ boolean(
     )
 }
 
-integer(
+_python_signed_integer(
         .self  : &Python,
         .value : Int64
     ) -> (
@@ -513,7 +515,7 @@ integer(
     )
 }
 
-integer(
+_python_unsigned_integer(
         .self  : &Python,
         .value : UInt64
     ) -> (

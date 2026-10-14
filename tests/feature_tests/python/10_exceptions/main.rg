@@ -12,7 +12,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         ..error _ {} ..ok _ { abort }
     }
     first ::= python.snapshot_error(.self = &interpreter).exception
-    copy ::= python.clone(.self = &first).exception
+    copy ::= python.clone(.self = &first).result
     match python.import_module(.self = &interpreter, .name = "another_missing_module") {
         ..error _ {} ..ok _ { abort }
     }
