@@ -19,6 +19,10 @@ Profile conformance verification independently from executable reachability.
 Unused explicit implementations still require semantic and safety proofs; reuse
 those proofs without turning them into runtime roots or weakening diagnostics.
 
+Storage-capability flow dominates concrete summary inference. Investigate repeated
+call-result substitution while preserving evaluation order, branch joins and
+call-site fresh identities; do not cache facts across storage generations.
+
 Signature probes currently collapse some instantiation failures into pending
 resolution. Distinguish definite errors from missing bindings without exposing
 errors from losing candidates. Explicit and inferred calls now share argument

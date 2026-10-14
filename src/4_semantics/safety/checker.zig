@@ -33,6 +33,9 @@ pub const SafetyChecker = struct {
         post_state_inference_ns: u64 = 0,
         outcome_inference_ns: u64 = 0,
         opaque_inference_ns: u64 = 0,
+        capability_inference_ns: u64 = 0,
+        capability_flow_ns: u64 = 0,
+        guard_inference_ns: u64 = 0,
         virtual_summary_ns: u64 = 0,
         summary_evaluations: u64 = 0,
         summary_changes: u64 = 0,
@@ -227,6 +230,9 @@ pub const SafetyChecker = struct {
             self.stats.post_state_inference_ns = inference.post_state_ns;
             self.stats.outcome_inference_ns = inference.outcome_ns;
             self.stats.opaque_inference_ns = inference.opaque_ns;
+            self.stats.capability_inference_ns = inference.capability_ns;
+            self.stats.capability_flow_ns = inference.capability_flow_ns;
+            self.stats.guard_inference_ns = inference.guards_ns;
         }
         try self.validateInitializerContracts(&engine);
         try self.validateVirtualSafetyContracts(&inference);

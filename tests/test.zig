@@ -6526,7 +6526,7 @@ test "feature_tests/types/71X_virtual_pipe_temporary_escape" {
 }
 
 test "feature_tests/types/72X_virtual_inference_missing_context" {
-    try buildExpectFail("tests/feature_tests/types/72X_virtual_inference_missing_context", "cannot infer the abstract parameter");
+    try buildExpectFail("tests/feature_tests/types/72X_virtual_inference_missing_context", "cannot infer the contract parameter");
 }
 
 test "feature_tests/polymorphism/41_recursive_virtual_summaries" {
@@ -6793,7 +6793,7 @@ test "feature_tests/types/91_acquired_storage_establishment" {
 }
 
 test "feature_tests/types/92X_acquired_storage_integer_establishment" {
-    try buildExpectFail("tests/feature_tests/types/92X_acquired_storage_integer_establishment", "no overload");
+    try buildExpectFail("tests/feature_tests/types/92X_acquired_storage_integer_establishment", "no function named 'establish_allocation' accepts arguments");
 }
 
 test "feature_tests/types/93X_acquired_storage_private_extent" {

@@ -30,6 +30,9 @@ pub const Infer = struct {
     post_state_ns: u64 = 0,
     outcome_ns: u64 = 0,
     opaque_ns: u64 = 0,
+    capability_ns: u64 = 0,
+    capability_flow_ns: u64 = 0,
+    guards_ns: u64 = 0,
     unbound_opaque_dependencies: facts.ValueEffect = .{},
     opaque_empty_seen: bool = false,
     virtual_summary_ns: u64 = 0,
@@ -859,12 +862,14 @@ pub const Infer = struct {
         // This finite domain tracks authorization separately from lifetime:
         // counts saturate at two, so recursion can express repeated consumption
         // without growing symbolic histories or introducing another scheduler.
+        start = profile.timestamp(self.profile_io);
         var capability_flow = CapabilityFlow.init(self.allocator);
         defer capability_flow.deinit();
         var capability_exits: ?CapabilityFlow = null;
         defer if (capability_exits) |*exit| exit.deinit();
         try self.infer_capability_block(function_id, function.body.?, &capability_flow, &capability_exits);
         if (capability_flow.reachable) try self.record_capability_exit(&capability_flow, &capability_exits);
+        profile.accumulate(self.profile_io, start, &self.capability_flow_ns);
         const counts = if (capability_exits) |exit| exit.counts.items else capability_flow.counts.items;
         var capability_uses = std.array_list.Managed(facts.StorageCapabilityUse).init(self.allocator);
         for (counts) |count| if (count.source == .input) {
@@ -888,6 +893,7 @@ pub const Infer = struct {
             post.value = try self.mark_unavailable_fresh_storage(post.value, counts);
         };
 
+        profile.accumulate(self.profile_io, start, &self.capability_ns);
         var summary: facts.SafetySummary = .{
             .outputs = outputs,
             .storage_capability_uses = try capability_uses.toOwnedSlice(),
@@ -900,6 +906,8 @@ pub const Infer = struct {
             .opaque_storage_empties = opaque_storage_empties,
             .invalidated_domains = try self.domain_invalidations.toOwnedSlice(),
         };
+        start = profile.timestamp(self.profile_io);
+        defer profile.accumulate(self.profile_io, start, &self.guards_ns);
         summary.guarded_effects = try self.inferEntryChoiceOutputGuards(function_id, summary, &summary.guarded_returns_complete);
         if (summary.guarded_effects.len == 0) summary.guarded_effects = try self.inferForwardedGeneralGuards(function_id, summary, &summary.guarded_returns_complete);
         return summaries.refreshOutcomeGuards(self.allocator, summary);
@@ -1795,6 +1803,12 @@ pub const Infer = struct {
     }
 
     fn mark_unavailable_fresh_storage(self: *Infer, effect: facts.ValueEffect, counts: []const CapabilityCount) anyerror!facts.ValueEffect {
+        // Input-capability consumption cannot change availability of fresh
+        // storage. Preserve the immutable tree when this pass has no updates.
+        const consumes_fresh = for (counts) |count| {
+            if (count.source == .fresh and count.maximum != 0) break true;
+        } else false;
+        if (!consumes_fresh) return effect;
         var result = effect;
         var unavailable = std.array_list.Managed(facts.FreshStorageCapabilityState).init(self.allocator);
         try unavailable.appendSlice(effect.unavailable_fresh_storage);
@@ -4757,6 +4771,9 @@ pub const Infer = struct {
     }
 
     fn mergeValueEffects(self: *Infer, left: facts.ValueEffect, right: facts.ValueEffect) !facts.ValueEffect {
+        // Effect union is idempotent. Keep immutable facts shared on stable
+        // branches and fixed-point reevaluations instead of rebuilding them.
+        if (summaries.valueEffectEql(left, right)) return left;
         var input_domains = std.array_list.Managed(facts.InputDomain).init(self.allocator);
         for (left.input_domains) |domain| try appendDomain(&input_domains, domain);
         for (right.input_domains) |domain| try appendDomain(&input_domains, domain);
@@ -5005,6 +5022,7 @@ pub const Infer = struct {
     }
 
     fn rebaseFreshSources(self: *Infer, effect: facts.ValueEffect, call_node: graph_mod.GlobalNodeId) !facts.ValueEffect {
+        if (!hasFreshSources(effect)) return effect;
         var result = effect;
         result.fresh_dependencies = try self.rebaseFreshSlice(effect.fresh_dependencies, call_node);
         result.fresh_owned_roots = try self.rebaseFreshSlice(effect.fresh_owned_roots, call_node);
@@ -5034,6 +5052,14 @@ pub const Infer = struct {
             result.variants = variants;
         }
         return result;
+    }
+
+    fn hasFreshSources(effect: facts.ValueEffect) bool {
+        if (effect.fresh_dependencies.len != 0 or effect.fresh_owned_roots.len != 0 or
+            effect.fresh_storage_capabilities.len != 0 or effect.unavailable_fresh_storage.len != 0) return true;
+        for (effect.fields) |field| if (hasFreshSources(field.value.*)) return true;
+        for (effect.variants) |variant| if (hasFreshSources(variant.value.*)) return true;
+        return false;
     }
 
     fn union_input_paths(self: *Infer, left: []const facts.InputPath, right: []const facts.InputPath) ![]const facts.InputPath {
@@ -5452,6 +5478,56 @@ fn expectGlobalReseedingStable(infer: *Infer) !void {
         try infer.engine.endInference();
         try std.testing.expect(summaries.summaryEql(infer.engine.summaries.get(function).?, next));
     }
+}
+
+test "fresh storage availability preserves unchanged trees and marks nested consumption" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    var engine = summaries.Engine.init(allocator);
+    defer engine.deinit();
+    var inference = Infer.init(allocator, &graph, &engine);
+    defer inference.deinit();
+
+    const payload: facts.ValueEffect = .{
+        .fresh_storage_capabilities = &.{7},
+        .unavailable_fresh_storage = &.{.{ .source = 11, .maybe_consumed = true }},
+    };
+    const original: facts.ValueEffect = .{ .fields = &.{.{ .index = 0, .value = &payload }} };
+    const unchanged = try inference.mark_unavailable_fresh_storage(original, &.{.{
+        .source = .{ .input = .{ .input_index = 0 } },
+        .minimum = 1,
+        .maximum = 1,
+    }});
+    try std.testing.expect(summaries.valueEffectEql(original, unchanged));
+    try std.testing.expect(original.fields.ptr == unchanged.fields.ptr);
+    const joined = try inference.mergeValueEffects(original, unchanged);
+    try std.testing.expect(summaries.valueEffectEql(original, joined));
+    try std.testing.expect(original.fields.ptr == joined.fields.ptr);
+
+    const consumed = try inference.mark_unavailable_fresh_storage(original, &.{.{
+        .source = .{ .fresh = 7 },
+        .minimum = 0,
+        .maximum = 1,
+    }});
+    try std.testing.expectEqual(@as(usize, 2), consumed.fields[0].value.unavailable_fresh_storage.len);
+    try std.testing.expectEqual(@as(usize, 7), consumed.fields[0].value.unavailable_fresh_storage[1].source);
+    try std.testing.expect(consumed.fields[0].value.unavailable_fresh_storage[1].maybe_consumed);
+    try std.testing.expectEqual(@as(usize, 1), original.fields[0].value.unavailable_fresh_storage.len);
+    const combined = try inference.mergeValueEffects(original, consumed);
+    try std.testing.expect(summaries.valueEffectEql(consumed, combined));
+    const rebased = try inference.rebaseFreshSources(original, @enumFromInt(1));
+    const other_call = try inference.rebaseFreshSources(original, @enumFromInt(2));
+    try std.testing.expect(!summaries.valueEffectEql(rebased, other_call));
+    try std.testing.expectEqual(@as(usize, 7), original.fields[0].value.fresh_storage_capabilities[0]);
+
+    const borrowed: facts.ValueEffect = .{ .input_dependencies = &.{.{ .path = .{ .input_index = 0 } }} };
+    const borrowed_record: facts.ValueEffect = .{ .fields = &.{.{ .index = 0, .value = &borrowed }} };
+    const shared = try inference.rebaseFreshSources(borrowed_record, @enumFromInt(3));
+    try std.testing.expect(summaries.valueEffectEql(borrowed_record, shared));
+    try std.testing.expect(borrowed_record.fields.ptr == shared.fields.ptr);
 }
 
 test "input post-state joins retain caller-visible transitions" {

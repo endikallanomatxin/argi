@@ -245,6 +245,9 @@ fn printStats(
     std.debug.print("    post-states:        {d:.3} ms\n", .{milliseconds(safety.post_state_inference_ns)});
     std.debug.print("    outcomes:           {d:.3} ms\n", .{milliseconds(safety.outcome_inference_ns)});
     std.debug.print("    opaque storage:     {d:.3} ms\n", .{milliseconds(safety.opaque_inference_ns)});
+    std.debug.print("    capabilities:       {d:.3} ms\n", .{milliseconds(safety.capability_inference_ns)});
+    std.debug.print("      flow:             {d:.3} ms\n", .{milliseconds(safety.capability_flow_ns)});
+    std.debug.print("    guards:             {d:.3} ms\n", .{milliseconds(safety.guard_inference_ns)});
     std.debug.print("  summary bytes requested: {d}\n", .{safety.summary_allocated_bytes});
     std.debug.print("  retained worklist bytes: {d}\n", .{safety.summary_worklist_bytes});
     std.debug.print("  virtual contract summary time: {d:.3} ms\n", .{milliseconds(safety.virtual_summary_ns)});
