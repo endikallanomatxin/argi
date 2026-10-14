@@ -19,7 +19,7 @@ RecordingWriter: Type = (
 main(.system: System) -> (.status_code: Int32 = 0) := {
     allocator ::= RecordingAllocator(.ffi = system.ffi)
     version ::= unwrap_or_abort(.value = semver.parse(.text = "1.2.3-alpha+001")).result
-    output ::= unwrap_or_abort(.value = semver.format(.value = &version, .allocator = $&allocator)).result
+    output ::= unwrap_or_abort(.value = format(.value = &version, .allocator = $&allocator)).result
     if as_view(.self = &output).view != "1.2.3-alpha+001" { abort }
     if allocator.allocations != 1 or allocator.last_size != 16 { abort }
     deinit(.self = $&output)
@@ -27,7 +27,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     allocator.fail = true
     unwrap_or_abort(.value = push_view(.self = $&buffer, .view = "v", .allocator = $&allocator))
     unwrap_or_abort(
-        .value = semver.format_into(
+        .value = format_into(
             .out       = $&buffer
             .value     = &version
             .allocator = $&allocator
@@ -35,7 +35,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     )
     if as_view(.self = &buffer).view != "v1.2.3-alpha+001" { abort }
     if allocator.allocations != 2 { abort }
-    match semver.format(.value = &version, .allocator = $&allocator) {
+    match format(.value = &version, .allocator = $&allocator) {
         ..error _ {} ..ok ~text {
             deinit(
                 .self = $&text
@@ -45,17 +45,20 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     }
     deinit(.self = $&buffer)
     if allocator.deallocations != 2 { abort }
+    counting ::= CountingDestination()
+    count ::= write(.self = $&counting, .value = &version).result
+    if count != 15 or counting.bytes != 15 { abort }
     writer ::= RecordingWriter(.expected = "1.2.3-alpha+001")
-    unwrap_or_abort(.value = semver.format_into(.out = $&writer, .value = &version))
+    unwrap_or_abort(.value = write(.self = $&writer, .value = &version))
     if writer.count != 15 or writer.flush_calls != 0 { abort }
     writer.count = 0
     writer.fail_at = 2
-    match semver.format_into(.out = $&writer, .value = &version) {
+    match write(.self = $&writer, .value = &version) {
         ..error error { if error.reason != ..stream_write_failed { abort } } ..ok _ { abort }
     }
     writer.count = 0
     writer.flush_failure = true
-    match semver.format_into(.out = $&writer, .value = &version) {
+    match write(.self = $&writer, .value = &version) {
         ..error error { if error.reason != ..stream_flush_failed { abort } } ..ok _ { abort }
     }
 }
@@ -140,5 +143,15 @@ implement Deallocator#(RecordingAllocator)(
         ) -> () {
         self&.deallocations = self&.deallocations + 1
         free(.address = data.address, .ffi = self&.ffi)
+    }
+)
+
+CountingDestination: Type = (.bytes: UIntNative = 0)
+
+implement WriteValue#(CountingDestination, StringView) (
+    .Result: Type = UIntNative
+    .write_value = (.self: $&CountingDestination, .value: StringView) -> (.result: UIntNative) {
+        self&.bytes = self&.bytes + value.length
+        result = value.length
     }
 )

@@ -69,7 +69,7 @@ main() -> (.status_code: Int32 = 0) := {
 
 check_valid(.text: StringView) -> () := {
     parsed ::= unwrap_or_abort(.value = semver.parse(.text = text)).result
-    if semver.as_view(.self = &parsed).text != text { abort }
+    if as_view(.self = &parsed).view != text { abort }
 }
 check_invalid(.text: StringView) -> () := {
     match semver.parse(.text = text) {

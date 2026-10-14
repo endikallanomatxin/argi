@@ -431,8 +431,18 @@ operation. StringMapKey normalizes borrowed textual keys without retaining them
 in lookup results; StringHashMap has/delete reuse one canonical view-key algorithm.
 
 Closeable selects resource closing through close_resource, with an associated
-Result preserving each error protocol. Its unique ordinary close entry neither
-consumes the resource nor assumes success; the selected implementation determines
-the handle effects. OpenState supplies the unique is_open query returning ok: Bool.
+Result preserving each error protocol. Its unique ordinary close entry forwards
+the selected operation and its safety effects without assuming success. OpenState supplies the unique is_open query returning ok: Bool.
 Files, process streams, TCP/UDP handles and temporary directories reuse their
 native close algorithms. Retryable temporary-directory failure retains its handle.
+
+For implementation ownership, readonly and mutable references preserve the
+nominal owner's right to extend a participant. This applies equally to closed
+participants and generic reference patterns. It does not grant extension rights
+through structural fields or arbitrary generic type arguments, and references to
+foreign types alone grant no extension rights.
+
+The semver library supplies TextViewOf for borrowed VersionView, StringFormatting
+with the selected allocator Provider, and WriteValue by delegating to the stream's
+StringView evidence. It exposes no separate format/as_view overloads. Writing a
+version preserves the stream's selected Result, including counts or fallible writes.

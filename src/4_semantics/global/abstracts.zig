@@ -2455,30 +2455,31 @@ pub const Resolver = struct {
         return null;
     }
 
+    fn templateParticipantOwner(self: *Resolver, module_index: usize, pattern: ir.ParameterizedTypeId) !?global_sg.GlobalModuleId {
+        const storage = &self.modules[module_index].semantic.parameterized_storage.ir;
+        const declaration = switch (storage.types.items[@intFromEnum(pattern)]) {
+            .concrete => |local| return global_types.conformanceParticipantOwner(self.graph, globalizer.globalType(self.offsets[module_index], local)),
+            .external => |external| try self.core.resolveDeclaration(
+                module_index,
+                self.modules[module_index].semantic.external_refs.items[@intFromEnum(external)],
+                &.{.type},
+            ),
+            .resolved => |resolved| switch (resolved) {
+                .pointer => |pointer| return self.templateParticipantOwner(module_index, pointer.child),
+                .generic => |nominal| try self.generics.resolveParameterizedDeclaration(module_index, nominal.base),
+                .declared => |reference| try self.generics.resolveParameterizedDeclaration(module_index, reference),
+                else => return null,
+            },
+            else => return null,
+        };
+        return self.graph.moduleForDeclaration(declaration);
+    }
+
     fn templateOwnsParticipant(self: *Resolver, module_index: usize, conformance: parameterized_storage.ContractConformance) !bool {
         const storage = &self.modules[module_index].semantic.parameterized_storage.ir;
         for (storage.generic_arguments.items[conformance.participants.start..][0..conformance.participants.len]) |argument| {
             if (argument.value != .type) continue;
-            const ty = storage.types.items[@intFromEnum(argument.value.type)];
-            const declaration = switch (ty) {
-                .concrete => |local| switch (self.graph.semanticType(globalizer.globalType(self.offsets[module_index], local))) {
-                    .declared => |nominal| nominal,
-                    .generic => |nominal| nominal.base,
-                    else => continue,
-                },
-                .external => |external| try self.core.resolveDeclaration(
-                    module_index,
-                    self.modules[module_index].semantic.external_refs.items[@intFromEnum(external)],
-                    &.{.type},
-                ),
-                .resolved => |resolved| switch (resolved) {
-                    .generic => |nominal| try self.generics.resolveParameterizedDeclaration(module_index, nominal.base),
-                    .declared => |reference| try self.generics.resolveParameterizedDeclaration(module_index, reference),
-                    else => continue,
-                },
-                else => continue,
-            };
-            if (self.graph.moduleForDeclaration(declaration)) |owner|
+            if (try self.templateParticipantOwner(module_index, argument.value.type)) |owner|
                 if (@intFromEnum(owner) == module_index) return true;
         }
         return false;
@@ -2751,7 +2752,7 @@ pub const Resolver = struct {
             {
                 var owns_participant = false;
                 for (self.graph.generic_arguments.items[conformance.participants.start..][0..conformance.participants.len]) |argument| {
-                    if (global_types.nominalTypeOwner(self.graph, argument.value.type)) |owner|
+                    if (global_types.conformanceParticipantOwner(self.graph, argument.value.type)) |owner|
                         if (@intFromEnum(owner) == module_index) {
                             owns_participant = true;
                             break;

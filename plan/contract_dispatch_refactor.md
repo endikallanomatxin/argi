@@ -349,7 +349,7 @@ semantic claim that every pair has overlapping applicability.
 | `core/system` | 1 |
 | `core/system/file_system` | 9 |
 | `more/math/linear_algebra` | 5 |
-| `more/semver` | 1 |
+| `more/semver` | 0 |
 
 The four linear-algebra `add` declarations now use Add evidence. Prioritize
 the foundational IO formatting/writing and collection view families next. Preserve
@@ -628,3 +628,28 @@ pending migration of their remaining consumers, not complete in this batch.
 
 The registered resource-state regression and the updated native temporary-directory
 retry case both passed through the program runner, without failures or leaks.
+
+### Semver operation reuse
+
+Remove semver-local format and format_into entries and its separate as_view
+identity. VersionView supplies TextViewOf, StringFormatting with a static allocator
+Provider, and WriteValue forwarding the destination's selected string result.
+Callers use the shared ordinary format/format_into/as_view/write entries. Preserve
+version text loans, allocation counts, no-flush behavior and write/flush errors.
+This affects library evidence and callers, with no new compiler mechanism.
+
+Semver migration exposed missing reference transparency in conformance ownership.
+Concrete and dormant generic conformance checks now follow readonly/mutable
+reference layers to a nominal participant owner. Lifecycle nominal-owner lookup
+is unchanged; structural fields and generic arguments do not grant ownership.
+Regressions accept concrete/mutable/generic references to local nominal types and
+reject concrete/dormant references to foreign types. The semver writer fixture
+also checks a custom StringView destination returning a count without Writer.
+The declaration inventory is now 25 repeated names.
+
+Semver/reference-ownership validation: all nine focused semver and ownership
+program cases passed, including both foreign rejection paths and the counting
+destination. The subsequent complete contract group passed 296 cases without
+skips, failures or leaks. The full internal suite passed 374 tests (1 skipped).
+Global ordinary ranking and legacy contract compatibility remain pending after
+these consumer migrations; the three requested completion gates are not complete.

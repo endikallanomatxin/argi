@@ -155,7 +155,9 @@ implement Init#(
     }
 )
 
-as_view(.self: &VersionView) -> (.text: StringView) := { text = self&._text }
+implement TextViewOf#(&VersionView) (
+    .text_view = (.self: &VersionView) -> (.view: StringView) { view = self&._text }
+)
 
 major(.self: &VersionView) -> (.text: StringView) := {
     text = string_view_slice(.view = &self&._text, .start = 0, .length = self&._major_end)
@@ -327,30 +329,18 @@ implement Equal#(VersionView, VersionView, (.left: &VersionView, .right: &Versio
     }
 )
 
-format(
-        .value     : &VersionView,
-        .allocator : $&Allocator
-    ) -> (
-        .result : Errable#(String, (..out_of_memory))
-    ) := {
-    result = format(.value = as_view(value).text, .allocator = allocator)
-}
+implement#(.Provider: Type: Allocator) StringFormatting#(&VersionView, Provider) (
+    .render = (.value: &VersionView, .allocator: $&Provider) -> (.result: Errable#(String, (..out_of_memory))) {
+        result = ~format(.value = as_view(.self = value).view, .allocator = allocator)
+    }
+    .append = (.out: $&String, .value: &VersionView, .allocator: $&Provider) -> (.result: Errable#(Void, (..out_of_memory))) {
+        result = format_into(.out = out, .value = as_view(.self = value).view, .allocator = allocator)
+    }
+)
 
-format_into(
-        .out       : $&String,
-        .value     : &VersionView,
-        .allocator : $&Allocator
-    ) -> (
-        .result : Errable#(Void, (..out_of_memory))
-    ) := {
-    result = format_into(.out = out, .value = as_view(value).text, .allocator = allocator)
-}
-
-format_into(
-        .out   : $&Writer,
-        .value : &VersionView
-    ) -> (
-        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-    ) := {
-    result = write(.self = out, .value = as_view(value).text)
-}
+implement#(.Stream: Type: WriteValue#(Stream, StringView)) WriteValue#(Stream, &VersionView) (
+    .Result: Type = WriteValue#(Stream, StringView).Result
+    .write_value = (.self: $&Stream, .value: &VersionView) -> (.result: Result) {
+        result = ~write(.self = self, .value = as_view(.self = value).view)
+    }
+)

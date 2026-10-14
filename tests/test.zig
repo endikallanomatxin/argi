@@ -12918,3 +12918,16 @@ test "feature_tests/contracts/293_resource_state_protocol" {
     try expectSuccessfulBuild("tests/feature_tests/contracts/293_resource_state_protocol");
     try runExpect("tests/feature_tests/contracts/293_resource_state_protocol", 0);
 }
+
+test "feature_tests/contracts/294X_external_reference_implementation" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/294X_external_reference_implementation", "must belong to the contract module or a nominal participant module");
+}
+
+test "feature_tests/contracts/295X_dormant_external_reference_implementation" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/295X_dormant_external_reference_implementation", "must belong to the contract module or a nominal participant module");
+}
+
+test "feature_tests/contracts/296_local_reference_implementation_ownership" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/296_local_reference_implementation_ownership");
+    try runExpect("tests/feature_tests/contracts/296_local_reference_implementation_ownership", 0);
+}

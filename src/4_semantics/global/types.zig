@@ -601,3 +601,11 @@ pub fn nominalTypeOwner(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_m
     };
     return graph.moduleForDeclaration(declaration);
 }
+
+/// References retain the extension owner of their nominal referent. Structural
+/// containers do not grant ownership through nested fields or type arguments.
+pub fn conformanceParticipantOwner(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?graph_mod.GlobalModuleId {
+    const semantic = graph.resolvedSemanticType(ty) orelse return null;
+    if (semantic == .pointer) return conformanceParticipantOwner(graph, semantic.pointer.child);
+    return nominalTypeOwner(graph, ty);
+}
