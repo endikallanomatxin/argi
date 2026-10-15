@@ -57,7 +57,11 @@ constant expressions without an ordinary-function fallback. Custom implementatio
 retain ordinary selected calls and can provide different associated results.
 
 Scalar equality, including Bool, Char and RawPointer, selects Equal evidence.
-Ordered comparisons and C enum/function-pointer equality still use representation
-primitives. Their contract migration remains pending; see [contracts](135_contracts.md).
+C enum and C function-pointer equality also select Equal evidence. Ordered
+comparisons use CompareRelations#(Left, Right), with four Bool predicates. Its
+generic implementation derives the predicates from Compare#(Left, Right).
+More specific implementations can replace those algorithms. Ordering has no Args
+participant. Native predicates lower only after evidence selection; see
+[contracts](135_contracts.md).
 The official matrix library uses shape evidence and MatrixProduct specialization
 through standard Multiply adapters, including a diagonal result representation.

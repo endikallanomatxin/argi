@@ -193,7 +193,7 @@ pub const Resolver = struct {
     /// Trusted scalar implementations preserve constant-expression lowering,
     /// after scoped evidence has selected the operation. Other implementations
     /// remain ordinary calls, even when their participants are scalar types.
-    const ScalarPrimitive = union(enum) { arithmetic: primitives.BinaryOperator, equality };
+    const ScalarPrimitive = union(enum) { arithmetic: primitives.BinaryOperator, comparison: primitives.ComparisonOperator };
 
     fn isSelectedScalarPrimitive(self: *Resolver, call: global_sg.Node, operation: ScalarPrimitive) bool {
         if (call.content != .function_call or self.graph.callOperation(call.content.function_call) == null) return false;
@@ -208,7 +208,7 @@ pub const Resolver = struct {
         if (!module.is_bundled_core or !std.mem.eql(u8, std.fs.path.basename(self.graph.text(file.path)), "scalar_arithmetic.rg")) return false;
         // Prove the exact primitive body before eliding the call. Adding checks,
         // capabilities or other effects in core must retain the ordinary call.
-        if (function.input.len != 1 or function.output.len != 1 or function.input_bindings.len != 1 or function.output_bindings.len != 1) return false;
+        if ((function.input.len != 1 and function.input.len != 2) or function.output.len != 1 or function.input_bindings.len != function.input.len or function.output_bindings.len != 1) return false;
         const body = self.graph.blocks.items[@intFromEnum(function.body orelse return false)];
         if (body.nodes.len != 1) return false;
         const statement = self.graph.node(self.graph.node_refs.items[body.nodes.start]);
@@ -219,13 +219,17 @@ pub const Resolver = struct {
                 .{ expression.content.binary_operation.left, expression.content.binary_operation.right }
             else
                 return false,
-            .equality => if (expression.content == .comparison and expression.content.comparison.operator == .equal)
+            .comparison => |operator| if (expression.content == .comparison and expression.content.comparison.operator == operator)
                 .{ expression.content.comparison.left, expression.content.comparison.right }
             else
                 return false,
         };
         for (primitive_operands, 0..) |operand, position| {
             const projection = self.graph.node(operand).content;
+            if (function.input.len == 2) {
+                if (projection != .binding_use or projection.binding_use != self.graph.binding_refs.items[function.input_bindings.start + position]) return false;
+                continue;
+            }
             if (projection != .struct_field_access or projection.struct_field_access.field_index != position) return false;
             const record = self.graph.node(projection.struct_field_access.value).content;
             if (record != .binding_use or record.binding_use != self.graph.binding_refs.items[function.input_bindings.start]) return false;
@@ -241,12 +245,56 @@ pub const Resolver = struct {
         return .{ .source = call.source, .ty = call.ty, .content = .{ .binary_operation = .{ .operator = operator, .left = operands[0], .right = operands[1] } } };
     }
 
-    fn lowerSelectedScalarEquality(self: *Resolver, call: global_sg.Node, operands: []const global_sg.GlobalNodeId) global_sg.Node {
-        if (!self.isSelectedScalarPrimitive(call, .equality)) return call;
+    fn lowerSelectedScalarComparison(self: *Resolver, call: global_sg.Node, operator: primitives.ComparisonOperator, operands: []const global_sg.GlobalNodeId) global_sg.Node {
+        if (!self.isSelectedScalarPrimitive(call, .{ .comparison = operator })) return call;
         const left = self.graph.node(operands[0]).ty orelse return call;
         const right = self.graph.node(operands[1]).ty orelse return call;
-        if (!self.core.isBuiltinComparable(left, right)) return call;
-        return .{ .source = call.source, .ty = call.ty, .content = .{ .comparison = .{ .operator = .equal, .left = operands[0], .right = operands[1] } } };
+        if (!self.core.isDirectComparison(operator, left, right)) return call;
+        return .{ .source = call.source, .ty = call.ty, .content = .{ .comparison = .{ .operator = operator, .left = operands[0], .right = operands[1] } } };
+    }
+
+    fn makeComparisonCall(self: *Resolver, module_index: usize, operator: primitives.ComparisonOperator, operands: []const global_sg.GlobalNodeId, reach: ReachInferenceContext, assumed: ?global_sg.GlobalNodeId) anyerror!?global_sg.Node {
+        const identity = standard_contracts.comparisonOperation(operator);
+        if (operator == .equal or operator == .not_equal)
+            return self.makeContractOperator(module_index, identity.contract, identity.operation, operands, reach, assumed);
+        const declaration = standard_contracts.standardDeclaration(self.graph, identity.contract) orelse return null;
+        const contracts = self.nested_call_context orelse return null;
+        for (operands) |operand| {
+            const ty = self.graph.node(operand).ty orelse return null;
+            if (self.graph.isTypeUnresolved(ty)) return null;
+        }
+        var speculation = self.beginSpeculation();
+        var failure: ?contract_mod.ParticipantConformanceFailure = null;
+        defer if (speculation.active) {
+            speculation.deinit();
+            if (failure) |value| contracts.participant_conformance_failure = value;
+        };
+        const start: u32 = @intCast(self.graph.generic_arguments.items.len);
+        for (operands) |operand| try self.graph.generic_arguments.append(self.allocator, .{
+            .name = .{ .start = 0, .len = 0 },
+            .value = .{ .type = self.graph.node(operand).ty.? },
+        });
+        const contract = try self.generics.internType(.{ .generic = .{ .base = declaration, .arguments = .{ .start = start, .len = 2 } } });
+        const input = try self.makePositionalInput(operands);
+        const call = contracts.makeScopedOperationCall(module_index, contract, identity.operation, input, reach, self.graph.node(operands[0]).source) catch |err| {
+            failure = contracts.participant_conformance_failure;
+            if (failure) |*value| {
+                value.input = null;
+                value.output = null;
+            }
+            return err;
+        } orelse {
+            failure = contracts.participant_conformance_failure;
+            if (failure) |*value| {
+                value.input = null;
+                value.output = null;
+            }
+            return null;
+        };
+        if (call.ty == null or self.graph.isTypeUnresolved(call.ty.?)) return null;
+        speculation.commit();
+        self.stats.calls += 1;
+        return call;
     }
 
     fn makeContractOperator(self: *Resolver, module_index: usize, contract_name: []const u8, operation_name: []const u8, operands: []const global_sg.GlobalNodeId, reach: ReachInferenceContext, assumed: ?global_sg.GlobalNodeId) anyerror!?global_sg.Node {
@@ -303,19 +351,18 @@ pub const Resolver = struct {
         return call;
     }
 
-    pub fn resolveContractEquality(self: *Resolver, module_index: usize, module: *const module_sg.ModuleSemanticGraph, o: globalizer.Offsets, value: anytype) !resolution.Result {
-        if (value.operator != .equal and value.operator != .not_equal) return .not_applicable;
+    pub fn resolveContractComparison(self: *Resolver, module_index: usize, module: *const module_sg.ModuleSemanticGraph, o: globalizer.Offsets, value: anytype) !resolution.Result {
         const reach = ReachInferenceContext.fromModule(module, o, value.visible_bindings, value.owner_function);
         const assumed = if (value.assumed_arguments) |local| globalizer.globalNode(o, local) else null;
         const operands = [_]global_sg.GlobalNodeId{ globalizer.globalNode(o, value.left), globalizer.globalNode(o, value.right) };
         self.core.contextualizeArithmeticPair(&operands);
-        const call = try self.makeContractOperator(module_index, "Equal", "equal", &operands, reach, assumed) orelse return .deferred;
-        self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = try self.equalityResult(self.lowerSelectedScalarEquality(call, &operands), value.operator);
+        const call = try self.makeComparisonCall(module_index, value.operator, &operands, reach, assumed) orelse return .deferred;
+        self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = try self.comparisonResult(self.lowerSelectedScalarComparison(call, if (value.operator == .not_equal) .equal else value.operator, &operands), value.operator);
         return .resolved;
     }
 
-    fn equalityResult(self: *Resolver, call: global_sg.Node, operator: primitives.ComparisonOperator) !global_sg.Node {
-        if (operator == .equal) return call;
+    fn comparisonResult(self: *Resolver, call: global_sg.Node, operator: primitives.ComparisonOperator) !global_sg.Node {
+        if (operator != .not_equal) return call;
         const value: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.graph.nodes.items.len)));
         try self.graph.nodes.append(self.allocator, call);
         const false_id: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.graph.nodes.items.len)));
@@ -2738,19 +2785,19 @@ pub const Resolver = struct {
         ) !global_sg.Node {
             const module = &self.resolver.modules[self.module_index];
             const name = module.text(name_range);
-            if (module_path == null and std.mem.eql(u8, name, "__scalar_equal")) {
+            if (module_path == null) if (standard_contracts.scalarComparisonPrimitive(name)) |operator| {
                 const declaration = self.resolver.graph.declaration(globalizer.globalDecl(self.resolver.offsets[self.module_index], self.parameterized.declaration));
                 const path = self.resolver.graph.text(self.resolver.graph.files.items[declaration.source.file_index].path);
                 if (!module.is_bundled_core or !std.mem.eql(u8, std.fs.path.basename(path), "scalar_arithmetic.rg")) return error.NoMatchingGenericFunction;
                 const literal = self.resolver.graph.node(input).content.struct_value_literal;
-                if (literal.fields.len != 2) return error.InvalidScalarEqualityPrimitive;
-                const left = self.resolver.core.callArgumentNamed(literal, 0, "left") orelse return error.InvalidScalarEqualityPrimitive;
-                const right = self.resolver.core.callArgumentNamed(literal, 1, "right") orelse return error.InvalidScalarEqualityPrimitive;
-                const left_type = self.resolver.graph.node(left).ty orelse return error.InvalidScalarEqualityPrimitive;
-                const right_type = self.resolver.graph.node(right).ty orelse return error.InvalidScalarEqualityPrimitive;
-                if (!self.resolver.core.isBuiltinComparable(left_type, right_type)) return error.InvalidScalarEqualityPrimitive;
-                return .{ .source = self.resolver.sourceFor(self.module_index, source), .ty = try self.resolver.generics.internType(.{ .builtin = .Bool }), .content = .{ .comparison = .{ .operator = .equal, .left = left, .right = right } } };
-            }
+                if (literal.fields.len != 2) return error.InvalidScalarComparisonPrimitive;
+                const left = self.resolver.core.callArgumentNamed(literal, 0, "left") orelse return error.InvalidScalarComparisonPrimitive;
+                const right = self.resolver.core.callArgumentNamed(literal, 1, "right") orelse return error.InvalidScalarComparisonPrimitive;
+                const left_type = self.resolver.graph.node(left).ty orelse return error.InvalidScalarComparisonPrimitive;
+                const right_type = self.resolver.graph.node(right).ty orelse return error.InvalidScalarComparisonPrimitive;
+                if (!self.resolver.core.isDirectComparison(operator, left_type, right_type)) return error.InvalidScalarComparisonPrimitive;
+                return .{ .source = self.resolver.sourceFor(self.module_index, source), .ty = try self.resolver.generics.internType(.{ .builtin = .Bool }), .content = .{ .comparison = .{ .operator = operator, .left = left, .right = right } } };
+            };
             if (module_path == null) if (standard_contracts.scalarArithmeticPrimitive(name)) |operator| {
                 const declaration = self.resolver.graph.declaration(globalizer.globalDecl(self.resolver.offsets[self.module_index], self.parameterized.declaration));
                 const path = self.resolver.graph.text(self.resolver.graph.files.items[declaration.source.file_index].path);
@@ -2971,20 +3018,18 @@ pub const Resolver = struct {
                 .comparison => |value| value,
                 else => return error.InvalidParameterizedComparison,
             };
-            var left_ty = self.resolver.graph.node(operands[0]).ty orelse return error.UntypedParameterizedComparison;
-            var right_ty = self.resolver.graph.node(operands[1]).ty orelse return error.UntypedParameterizedComparison;
             self.resolver.core.contextualizeArithmeticPair(operands);
-            left_ty = self.resolver.graph.node(operands[0]).ty.?;
-            right_ty = self.resolver.graph.node(operands[1]).ty.?;
             const bool_ty = try self.resolver.generics.internType(.{ .builtin = .Bool });
-            if ((operator == .equal or operator == .not_equal) and !self.resolver.core.isForeignEqualityRepresentation(left_ty, right_ty)) {
-                const reach = try self.operatorContext(assumed);
-                defer self.resolver.allocator.free(reach.global.visible_bindings);
-                if (try self.resolver.makeContractOperator(self.module_index, "Equal", "equal", operands, reach, null)) |call| return self.resolver.equalityResult(self.resolver.lowerSelectedScalarEquality(call, operands), operator);
-            }
+            const reach = try self.operatorContext(assumed);
+            defer self.resolver.allocator.free(reach.global.visible_bindings);
+            if (try self.resolver.makeComparisonCall(self.module_index, operator, operands, reach, null)) |call|
+                return self.resolver.comparisonResult(self.resolver.lowerSelectedScalarComparison(call, if (operator == .not_equal) .equal else operator, operands), operator);
+            const left = self.resolver.graph.node(operands[0]).ty orelse return error.UntypedParameterizedComparison;
+            const right = self.resolver.graph.node(operands[1]).ty orelse return error.UntypedParameterizedComparison;
+            if (self.resolver.core.isDirectComparison(operator, left, right)) return error.UnresolvedContractComparison;
             // Tag tests retain comparison nodes. Unsupported aggregate nodes
             // remain typed for the final semantizing diagnostic, so speculative
-            // speculative instantiation never emits errors for discarded candidates.
+            // instantiation never emits errors for discarded candidates.
             return .{
                 .source = self.resolver.sourceFor(self.module_index, source),
                 .ty = bool_ty,

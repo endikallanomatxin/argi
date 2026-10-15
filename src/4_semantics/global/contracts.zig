@@ -803,6 +803,26 @@ pub const Resolver = struct {
             }
             return .{ .tuple = index };
         }
+        // Native C identities have no source-level declaration in bundled core.
+        // Publish only their checked, operation-free representation fact; Equal
+        // still selects its ordinary generic implementation and operation.
+        if (participants.len == 1 and located.definition.requirements.len == 0 and located.definition.parameters.len == 0 and
+            standard_contracts.standardDeclaration(self.graph, "_BuiltinEquality") == declaration and
+            self.core.isForeignEqualityRepresentation(participants[0], participants[0]))
+        {
+            const definition = self.graph.declaration(declaration);
+            const file = self.graph.files.items[definition.source.file_index];
+            if (std.mem.eql(u8, std.fs.path.basename(self.graph.text(file.path)), "scalar_arithmetic.rg")) {
+                const start: u32 = @intCast(self.graph.generic_arguments.items.len);
+                const parameter = self.modules[located.module_index].semantic.parameterized_storage.comptime_parameters.items[located.definition.participants.start];
+                try self.graph.generic_arguments.append(self.allocator, .{ .name = try self.graph.addString(self.allocator, self.modules[located.module_index].text(parameter.name)), .value = .{ .type = participants[0] } });
+                const arguments: primitives.Range(global_sg.GlobalGenericArgId) = .{ .start = start, .len = 1 };
+                const index = self.graph.contract_conformances.items.len;
+                try self.graph.contract_conformances.append(self.allocator, .{ .declaration = declaration, .context = @enumFromInt(located.module_index), .participants = arguments, .associated_arguments = .{ .start = start, .len = 0 }, .source = definition.source, .declaration_validated = true });
+                if (bindings) |target| try self.generics.bindGlobalArguments(located.module_index, located.definition.participants, arguments, target);
+                return .{ .tuple = index };
+            }
+        }
         return self.selectGenericParticipantConformance(declaration, participants, bindings);
     }
 

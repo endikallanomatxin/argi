@@ -7331,7 +7331,7 @@ test "feature_tests/types/274X_specialized_comparison_missing" {
 }
 
 test "feature_tests/types/275X_specialized_ordering_missing" {
-    try buildExpectFail("tests/feature_tests/types/275X_specialized_ordering_missing", "no matching comparison operator '<' for 'StringView' and 'StringView'");
+    try buildExpectFail("tests/feature_tests/types/275X_specialized_ordering_missing", "invalid conformance for contract 'CompareRelations': no conformance for the qualified operation's participants");
 }
 
 test "feature_tests/types/276X_specialized_numeric_comparison_mismatch" {
@@ -13000,4 +13000,45 @@ test "feature_tests/contracts/325_deferred_operation_body" {
 
 test "feature_tests/contracts/326X_selected_deferred_operation_body" {
     try buildExpectFail("tests/feature_tests/contracts/326X_selected_deferred_operation_body", "cannot materialize body");
+}
+
+test "feature_tests/contracts/327_ordered_comparison_evidence" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/327_ordered_comparison_evidence");
+    try runExpect("tests/feature_tests/contracts/327_ordered_comparison_evidence", 0);
+}
+
+test "feature_tests/contracts/328_ordered_scalar_nan" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/328_ordered_scalar_nan");
+    try runExpect("tests/feature_tests/contracts/328_ordered_scalar_nan", 0);
+}
+
+test "feature_tests/contracts/329_foreign_equality_evidence" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/329_foreign_equality_evidence");
+    try runExpect("tests/feature_tests/contracts/329_foreign_equality_evidence", 0);
+}
+
+test "feature_tests/contracts/331_ordered_operand_context" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/331_ordered_operand_context");
+    try runExpect("tests/feature_tests/contracts/331_ordered_operand_context", 0);
+}
+
+test "feature_tests/contracts/330X_ordered_result_signature" {
+    try buildExpectFail("tests/feature_tests/contracts/330X_ordered_result_signature", "operation returns an incompatible associated result");
+}
+
+test "feature_tests/contracts/332X_ordered_primitive_private" {
+    try buildExpectFail("tests/feature_tests/contracts/332X_ordered_primitive_private", "no generic function");
+}
+
+test "feature_tests/contracts/333_ordered_specialized_adapters" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/333_ordered_specialized_adapters");
+    try runExpect("tests/feature_tests/contracts/333_ordered_specialized_adapters", 0);
+}
+
+test "feature_tests/contracts/334X_ordered_no_implicit_borrow" {
+    try buildExpectFail("tests/feature_tests/contracts/334X_ordered_no_implicit_borrow", "no conformance for the qualified operation's participants");
+}
+
+test "feature_tests/contracts/335X_ordered_requires_total" {
+    try buildExpectFail("tests/feature_tests/contracts/335X_ordered_requires_total", "does not satisfy contract constraint 'TotalOrder'");
 }
