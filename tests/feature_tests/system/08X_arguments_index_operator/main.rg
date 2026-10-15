@@ -6,7 +6,9 @@ main(.system: System) -> (.status_code: Int32) := {
     }
 
     arg0 ::= system.args[0]
-    arg0_explicit ::= unwrap_or_abort(.value = argument_view_at(.self = system.args, .index = 0))
+    arg0_explicit ::= unwrap_or_abort(
+        .value = argument_view_at(.self = system.args, .index = 0)
+    )
 
     if arg0.length != arg0_explicit.length {
         status_code = 2
@@ -18,7 +20,10 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
-    if bytes_get(.view = &arg0, .index = 0).byte != bytes_get(.view = &arg0_explicit, .index = 0).byte {
+    if [
+        unwrap_or_abort(.value = bytes_get(.view = &arg0, .index = 0))
+        != unwrap_or_abort(.value = bytes_get(.view = &arg0_explicit, .index = 0))
+    ] {
         status_code = 4
         return
     }

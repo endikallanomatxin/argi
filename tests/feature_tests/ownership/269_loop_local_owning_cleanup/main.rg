@@ -14,7 +14,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
             status_code = 1
             return
         }
-        data ::= string_byte_reference(.string = &local, .index = 0).reference
+        data ::= unwrap_or_abort(.value = string_byte_reference(.string = &local, .index = 0))
         if data&!= 65 {
             status_code = 2
             return

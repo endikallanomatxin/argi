@@ -51,7 +51,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     }
     if failing.attempts != 2 { abort }
     if as_view(.self = &text).view != "abc" { abort }
-    if bytes_get(.view = &text, .index = 3).byte != 0 { abort }
+    if is(.value = bytes_get(.view = &text, .index = 3), .variant = ..error) == false { abort }
     clear(.self = $&text)
     append_ascii_assume_capacity(.self = $&text, .byte = 120)
     tail: [2]UInt8 = (121, 122)
@@ -59,7 +59,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     empty: [0]UInt8 = ()
     append_text_assume_capacity(.self = $&text, .text = "")
     if as_view(.self = &text).view != "xyz" { abort }
-    if bytes_get(.view = &text, .index = 3).byte != 0 { abort }
+    if is(.value = bytes_get(.view = &text, .index = 3), .variant = ..error) == false { abort }
     deinit(.self = $&text)
 }
 

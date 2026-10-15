@@ -38,7 +38,10 @@ next#(.t: Type: ArgumentSource#(t))(.self: $&CliParser#(.t: t)) -> (
     while self&._index < length(self&._source).count {
         text ::= get(self&._source, .index = self&._index)!
         if self&._short_offset > 0 {
-            if bytes_get(.view = &text, .index = self&._short_offset).byte >= 128 {
+            if [
+                unwrap_or_abort(.value = bytes_get(.view = &text, .index = self&._short_offset))
+                >= 128
+            ] {
                 result = ..error(.reason = ..invalid_option)
                 return
             }
@@ -60,7 +63,7 @@ next#(.t: Type: ArgumentSource#(t))(.self: $&CliParser#(.t: t)) -> (
             result = ..ok ..some(.value = ..positional text)
             return
         }
-        if bytes_get(.view = &text, .index = 0).byte != 45 {
+        if unwrap_or_abort(.value = bytes_get(.view = &text, .index = 0)) != 45 {
             result = ..ok ..some(.value = ..positional text)
             return
         }
@@ -68,7 +71,7 @@ next#(.t: Type: ArgumentSource#(t))(.self: $&CliParser#(.t: t)) -> (
             self&._positionals = true
             continue
         }
-        if bytes_get(.view = &text, .index = 1).byte != 45 {
+        if unwrap_or_abort(.value = bytes_get(.view = &text, .index = 1)) != 45 {
             self&._index = self&._index - 1
             self&._short_offset = 1
             continue
@@ -76,7 +79,7 @@ next#(.t: Type: ArgumentSource#(t))(.self: $&CliParser#(.t: t)) -> (
         end ::= text._length
         index :: UIntNative = 2
         while index < text._length {
-            if bytes_get(.view = &text, .index = index).byte == 61 {
+            if unwrap_or_abort(.value = bytes_get(.view = &text, .index = index)) == 61 {
                 end = index
                 break
             }
@@ -115,7 +118,9 @@ take_value#(.t: Type: ArgumentSource#(t))(.self: $&CliParser#(.t: t), .option: C
     if self&._short_offset > 0 {
         text ::= get(self&._source, .index = self&._index)!
         start ::= self&._short_offset
-        if bytes_get(.view = &text, .index = start).byte == 61 { start = start + 1 }
+        if unwrap_or_abort(.value = bytes_get(.view = &text, .index = start)) == 61 {
+            start = [start + 1]
+        }
         result = ..ok unwrap_or_abort(
             .value = slice(text, .start = start, .count = [text._length - start])
         )

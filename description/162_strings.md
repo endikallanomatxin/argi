@@ -18,7 +18,7 @@ distinct questions:
 - text-unit access.
 
 ```
-my_string | bytes_get(.view = &_, .index = 3)  -- The fourth byte
+my_string | bytes_get(.view = &_, .index = 3)  -- Errable containing the fourth byte
 codepoints(.text = as_view(&my_string))  -- Checked Unicode scalar iteration
 ```
 
@@ -183,7 +183,12 @@ The text model uses these conventions:
   bytes, so value semantics stay independent.
 - `String` itself is not directly indexable.
 - byte-level access is explicit:
-  - `bytes_get(.view = &string, .index = i)`
+  - `bytes_get(.view = &string, .index = i)` returns
+    `Errable#(UInt8, (..out_of_bounds))`. Valid indices are strictly below
+    `byte_length`; the trailing NUL is accessible only through C interop.
+    The same rule applies to `StringView`, including empty views.
+  - `string_byte_reference` and `string_view_byte_address` return checked
+    `Errable#(&UInt8, (..out_of_bounds))` references within that same range.
   - `set_ascii(.self = $&string, .index = i, .byte = b)` checks the index and
     requires both the old and new byte to be ASCII.
   - `push_ascii`, `push_scalar`, and `push_view` append ASCII, a Unicode scalar,

@@ -78,19 +78,29 @@ next#(.AllocatorType: Type: Allocator#(AllocatorType))(
         field ::= DynamicArray#(UInt8)(.capacity = 16)!
         quoted ::= false
         if position < byte_length(&self&._text).count {
-            if bytes_get(.view = &self&._text, .index = position).byte == 34 {
+            if [
+                unwrap_or_abort(.value = bytes_get(.view = &self&._text, .index = position))
+                == 34
+            ] {
                 quoted = true
                 position = [position + 1]
             }
         }
         closed ::= false
         while position < byte_length(&self&._text).count {
-            byte ::= bytes_get(.view = &self&._text, .index = position).byte
+            byte ::= unwrap_or_abort(
+                .value = bytes_get(.view = &self&._text, .index = position)
+            )
             if quoted {
                 if byte == 34 {
                     position = position + 1
                     if position < byte_length(&self&._text).count {
-                        if bytes_get(.view = &self&._text, .index = position).byte == 34 {
+                        if [
+                            unwrap_or_abort(
+                                .value = bytes_get(.view = &self&._text, .index = position)
+                            )
+                            == 34
+                        ] {
                             if length(&field).count >= self&.maximum_field_bytes {
                                 result = ..error(.reason = ..size_limit_exceeded)
                                 return
@@ -124,12 +134,17 @@ next#(.AllocatorType: Type: Allocator#(AllocatorType))(
         text ::= string_from_bytes(.bytes = view(&field))!
         push(.self = $&record.fields, .value = ~text)!
         if position == byte_length(&self&._text).count { break }
-        separator ::= bytes_get(.view = &self&._text, .index = position).byte
+        separator ::= unwrap_or_abort(
+            .value = bytes_get(.view = &self&._text, .index = position)
+        )
         position = position + 1
         if separator == 44 { continue }
         if separator == 10 { break }
         if separator == 13 and position < byte_length(&self&._text).count {
-            if bytes_get(.view = &self&._text, .index = position).byte == 10 {
+            if [
+                unwrap_or_abort(.value = bytes_get(.view = &self&._text, .index = position))
+                == 10
+            ] {
                 position = [position + 1]
                 break
             }
@@ -156,7 +171,7 @@ write_record#(.WriterType: Type: Writer#(WriterType))(
         Writer#().write_byte(.self = writer, .byte = 34)!
         cursor :: UIntNative = 0
         while cursor < byte_length(&text).count {
-            byte ::= bytes_get(.view = &text, .index = cursor).byte
+            byte ::= unwrap_or_abort(.value = bytes_get(.view = &text, .index = cursor))
             Writer#().write_byte(.self = writer, .byte = byte)!
             if byte == 34 { Writer#().write_byte(.self = writer, .byte = byte)! }
             cursor = cursor + 1

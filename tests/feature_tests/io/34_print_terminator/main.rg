@@ -69,7 +69,12 @@ implement Writer#(RecordingWriter) (
             return
         }
         if self&.count >= byte_length(&self&.expected).count { abort }
-        if byte != bytes_get(.view = &self&.expected, .index = self&.count).byte { abort }
+        if [
+            byte
+            != unwrap_or_abort(
+                .value = bytes_get(.view = &self&.expected, .index = self&.count)
+            )
+        ] { abort }
         self&.count = self&.count + 1
         result = ..ok Void()
     }

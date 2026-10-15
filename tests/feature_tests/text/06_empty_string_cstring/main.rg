@@ -10,8 +10,8 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
-    nul ::= bytes_get(.view = &text, .index = 0).byte
-    if nul != 0 {
+    nul_rejected ::= is(.value = bytes_get(.view = &text, .index = 0), .variant = ..error)
+    if nul_rejected == false {
         status_code = 2
         return
     }

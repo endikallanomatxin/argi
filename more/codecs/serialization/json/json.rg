@@ -1,7 +1,7 @@
 JsonReasons: Type = (..invalid_json, ..json_depth_exceeded, ..invalid_utf8)
 
 _byte(.text: StringView, .position: UIntNative) -> (.value: UInt8) := {
-    value = bytes_get(.view = &text, .index = position).byte
+    value = unwrap_or_abort(.value = bytes_get(.view = &text, .index = position))
 }
 
 _space(.text: StringView, .position: UIntNative) -> (.next: UIntNative) := {

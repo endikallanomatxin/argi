@@ -13179,3 +13179,13 @@ test "feature_tests/text/81_utf8_copy_outlives_source" {
     try expectSuccessfulBuild("tests/feature_tests/text/81_utf8_copy_outlives_source");
     try run("tests/feature_tests/text/81_utf8_copy_outlives_source");
 }
+
+test "feature_tests/text/82_checked_text_byte_access" {
+    try expectSuccessfulBuild("tests/feature_tests/text/82_checked_text_byte_access");
+    try run("tests/feature_tests/text/82_checked_text_byte_access");
+}
+
+test "feature_tests/collections/144_iterator_reached_capability" {
+    try expectSuccessfulBuild("tests/feature_tests/collections/144_iterator_reached_capability");
+    try run("tests/feature_tests/collections/144_iterator_reached_capability");
+}

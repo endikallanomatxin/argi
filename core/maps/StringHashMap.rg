@@ -64,7 +64,7 @@ string_hash_map_hash(.key: &StringView) -> (.hash: UIntNative) := {
     index :: UIntNative = 0
 
     while index < key&._length {
-        byte ::= bytes_get(.view = key, .index = index).byte
+        byte ::= unwrap_or_abort(.value = bytes_get(.view = key, .index = index))
         digit ::= _string_hash_byte_value(.byte = byte).value
         hash = hash * multiplier + digit
         hash = hash % modulus

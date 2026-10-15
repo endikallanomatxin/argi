@@ -11,7 +11,13 @@ expect_replacement#(.AllocatorType: Type: Allocator#(AllocatorType))(
         )
     )
     if equals(.left = as_view(.self = &output).view, .right = expected).ok == false { abort }
-    if bytes_get(.view = &output, .index = byte_length(&output).count).byte != 0 { abort }
+    if [
+        is(
+            .value   = bytes_get(.view = &output, .index = byte_length(&output).count)
+            .variant = ..error
+        )
+        == false
+    ] { abort }
     deinit(.self = $&output)
 }
 
@@ -89,7 +95,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     )
     deinit(.self = $&source)
     if byte_length(&independent).count != 3 { abort }
-    if bytes_get(.view = &independent, .index = 1).byte != 0 { abort }
+    if unwrap_or_abort(.value = bytes_get(.view = &independent, .index = 1)) != 0 { abort }
     deinit(.self = $&independent)
     binary: [3]UInt8 = (97, 0, 98)
     binary_view: StringView = "a\0b"

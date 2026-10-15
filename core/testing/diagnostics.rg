@@ -17,7 +17,9 @@ _testing_append(.self: $&_TestDiagnostic, .text: StringView) -> () := {
         if decoded.width > 128 - self&._length { return }
         offset :: UIntNative = 0
         while offset < decoded.width {
-            self&._bytes[self&._length] = bytes_get(.view = &text, .index = index + offset).byte
+            self&._bytes[self&._length] = unwrap_or_abort(
+                .value = bytes_get(.view = &text, .index = [index + offset])
+            )
             self&._length = self&._length + 1
             offset = offset + 1
         }

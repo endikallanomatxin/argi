@@ -54,12 +54,12 @@ main(.system: System) -> (.status_code: Int32) := {
                         return
                     }
 
-                    if bytes_get(.view = &line, .index = 0).byte != 65 {
+                    if unwrap_or_abort(.value = bytes_get(.view = &line, .index = 0)) != 65 {
                         status_code = 4
                         return
                     }
 
-                    if bytes_get(.view = &line, .index = 19).byte != 65 {
+                    if unwrap_or_abort(.value = bytes_get(.view = &line, .index = 19)) != 65 {
                         status_code = 5
                         return
                     }

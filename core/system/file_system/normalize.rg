@@ -12,7 +12,7 @@ normalize_path#(.AllocatorType: Type: Allocator#(AllocatorType))(
     index :: UIntNative = 0
 
     while index < view._length {
-        if bytes_get(.view = &view, .index = index).byte == 0 {
+        if unwrap_or_abort(.value = bytes_get(.view = &view, .index = index)) == 0 {
             result = ..error(.reason = ..invalid_path) return
         }
         index = index + 1
@@ -22,8 +22,8 @@ normalize_path#(.AllocatorType: Type: Allocator#(AllocatorType))(
     prefix ::= root
     #if target_os("windows") {
         if view._length >= 2 {
-            a ::= bytes_get(.view = &view, .index = 0).byte
-            b ::= bytes_get(.view = &view, .index = 1).byte
+            a ::= unwrap_or_abort(.value = bytes_get(.view = &view, .index = 0))
+            b ::= unwrap_or_abort(.value = bytes_get(.view = &view, .index = 1))
             if path_is_separator(.byte = a).ok and path_is_separator(.byte = b).ok and root <= 1 {
                 result = ..error(.reason = ..invalid_path) return
             }
@@ -38,14 +38,18 @@ normalize_path#(.AllocatorType: Type: Allocator#(AllocatorType))(
 
     while index < view._length {
         while index < view._length {
-            if path_is_separator(.byte = bytes_get(.view = &view, .index = index).byte).ok == false {
+            if path_is_separator(
+                .byte = unwrap_or_abort(.value = bytes_get(.view = &view, .index = index))
+            ).ok == false {
                 break
             }
             index = index + 1
         }
         start ::= index
         while index < view._length {
-            if path_is_separator(.byte = bytes_get(.view = &view, .index = index).byte).ok {
+            if path_is_separator(
+                .byte = unwrap_or_abort(.value = bytes_get(.view = &view, .index = index))
+            ).ok {
                 break
             }
             index = index + 1
@@ -70,7 +74,7 @@ normalize_path#(.AllocatorType: Type: Allocator#(AllocatorType))(
     index = 0
 
     while index < prefix {
-        byte ::= bytes_get(.view = &view, .index = index).byte
+        byte ::= unwrap_or_abort(.value = bytes_get(.view = &view, .index = index))
         if path_is_separator(.byte = byte).ok { byte = 47 }
         _string_push_byte($&text, .byte = byte, .allocator = allocator)!
         index = index + 1
@@ -81,7 +85,9 @@ normalize_path#(.AllocatorType: Type: Allocator#(AllocatorType))(
     while index < length(&parts).count {
         if index > 0 or root > 0 {
             if text._length > 0 {
-                if bytes_get(.view = &as_view(&text), .index = text._length - 1).byte != 47 {
+                if unwrap_or_abort(
+                    .value = bytes_get(.view = &as_view(&text), .index = text._length - 1)
+                ) != 47 {
                     _string_push_byte($&text, .byte = 47, .allocator = allocator)!
                 }
             }

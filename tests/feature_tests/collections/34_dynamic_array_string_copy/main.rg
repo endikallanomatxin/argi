@@ -25,11 +25,11 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
                 .array = $&copied, .offset = 0
             ).pointer
             _ ::= unwrap_or_abort(.value = set_ascii(.self = duplicate, .index = 0, .byte = 66))
-            if bytes_get(.view = original, .index = 0).byte != 65 {
+            if unwrap_or_abort(.value = bytes_get(.view = original, .index = 0)) != 65 {
                 status_code = 3
                 return
             }
-            if bytes_get(.view = duplicate, .index = 0).byte != 66 {
+            if unwrap_or_abort(.value = bytes_get(.view = duplicate, .index = 0)) != 66 {
                 status_code = 4
             }
         }

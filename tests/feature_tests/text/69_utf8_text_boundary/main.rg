@@ -12,7 +12,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         ..error _ {}
     }
     bytes[0] = 255
-    if bytes_get(.view = &borrowed, .index = 0).byte != 240 { abort }
+    if unwrap_or_abort(.value = bytes_get(.view = &borrowed, .index = 0)) != 240 { abort }
     scalar ::= UnicodeScalar(.value = 233)!
     push_scalar($&text, .scalar = scalar)!
     if byte_length(&text) != 6 { abort }

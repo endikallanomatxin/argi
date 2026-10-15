@@ -29,13 +29,13 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
-    first ::= bytes_get(.view = &buffer, .index = 0).byte
+    first ::= unwrap_or_abort(.value = bytes_get(.view = &buffer, .index = 0))
     if first != 79 {
         status_code = 2
         return
     }
 
-    second ::= bytes_get(.view = &buffer, .index = 1).byte
+    second ::= unwrap_or_abort(.value = bytes_get(.view = &buffer, .index = 1))
     if second != 75 {
         status_code = 3
         return

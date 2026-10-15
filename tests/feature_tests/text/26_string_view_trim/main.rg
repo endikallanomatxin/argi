@@ -23,5 +23,5 @@ main() -> (.status_code: Int32 = 0) := {
     zeros: StringView = " \0 "
     zero ::= trim(.self = zeros).view
     if byte_length(&zero).count != 1 { abort }
-    if bytes_get(.view = &zero, .index = 0).byte != 0 { abort }
+    if unwrap_or_abort(.value = bytes_get(.view = &zero, .index = 0)) != 0 { abort }
 }

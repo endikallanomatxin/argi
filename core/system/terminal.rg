@@ -147,7 +147,9 @@ print_error#(.WriterType: Type: Writer#(WriterType))(.value: StringView, .writer
 
     while i < value._length {
         wrote ::= Writer#(
-        ).write_byte(writer, .byte = bytes_get(.view = &value, .index = i).byte)
+        ).write_byte(
+            writer, .byte = unwrap_or_abort(.value = bytes_get(.view = &value, .index = i))
+        )
         match wrote {
             ..ok _ {
             }

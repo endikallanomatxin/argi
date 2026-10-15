@@ -27,7 +27,10 @@ write_trace_uint(.value: UIntNative, .writer: $&Virtual#(.contract: Writer)) -> 
     while divisor > 0 {
         digit ::= remaining / divisor
         remaining = remaining % divisor
-        Writer#().write_byte(writer, .byte = bytes_get(.view = &digits, .index = digit).byte)!
+        Writer#(
+        ).write_byte(
+            writer, .byte = unwrap_or_abort(.value = bytes_get(.view = &digits, .index = digit))
+        )!
         divisor = divisor / 10
     }
 

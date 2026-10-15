@@ -30,7 +30,9 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     if is(.value = stable_push, .variant = ..error) {
         return
     }
-    stable_data ::= string_byte_reference(.string = &pair.stable, .index = 0).reference
+    stable_data ::= unwrap_or_abort(
+        .value = string_byte_reference(.string = &pair.stable, .index = 0)
+    )
     i :: UIntNative = 0
     while i < 2 {
         pushed ::= push_ascii(

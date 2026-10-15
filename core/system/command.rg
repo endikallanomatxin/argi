@@ -59,7 +59,7 @@ parse_cli#(.t: Type: ArgumentSource#(t), .AllocatorType: Type: Allocator#(Alloca
         }
         cursor :: UIntNative = 0
         while cursor < spec.name._length {
-            byte ::= bytes_get(.view = &spec.name, .index = cursor).byte
+            byte ::= unwrap_or_abort(.value = bytes_get(.view = &spec.name, .index = cursor))
             if byte == 61 or byte == 32 or byte == 0 {
                 result = ..error(.reason = ..invalid_cli_schema)
                 return

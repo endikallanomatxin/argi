@@ -25,7 +25,9 @@ trim_start(.self: StringView) -> (.view: StringView) := {
 
     while start < self._length {
         if [
-            ascii_is_whitespace(.byte = bytes_get(.view = &self, .index = start).byte).ok
+            ascii_is_whitespace(
+                .byte = unwrap_or_abort(.value = bytes_get(.view = &self, .index = start))
+            ).ok
             == false
         ] { break }
         start = start + 1
@@ -39,7 +41,9 @@ trim_end(.self: StringView) -> (.view: StringView) := {
 
     while end > 0 {
         if [
-            ascii_is_whitespace(.byte = bytes_get(.view = &self, .index = end - 1).byte).ok
+            ascii_is_whitespace(
+                .byte = unwrap_or_abort(.value = bytes_get(.view = &self, .index = end - 1))
+            ).ok
             == false
         ] { break }
         end = end - 1
@@ -87,6 +91,6 @@ _string_boundary(.text: StringView, .offset: UIntNative) -> (.ok: Bool) := {
         ok = true
         return
     }
-    byte ::= bytes_get(.view = &text, .index = offset).byte
+    byte ::= unwrap_or_abort(.value = bytes_get(.view = &text, .index = offset))
     ok = byte < 128 or byte >= 192
 }

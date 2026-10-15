@@ -10,7 +10,7 @@ _float_parse#(.t: Type: Float)(
 
     index :: UIntNative = 0
     negative ::= false
-    first ::= bytes_get(.view = &text, .index = index).byte
+    first ::= unwrap_or_abort(.value = bytes_get(.view = &text, .index = index))
 
     if first == 45 or first == 43 {
         negative = first == 45
@@ -28,7 +28,7 @@ _float_parse#(.t: Type: Float)(
     sticky ::= false
 
     while index < text._length {
-        byte ::= bytes_get(.view = &text, .index = index).byte
+        byte ::= unwrap_or_abort(.value = bytes_get(.view = &text, .index = index))
         if byte == 46 {
             if point {
                 result = ..error(.reason = ..invalid_input)
@@ -66,14 +66,14 @@ _float_parse#(.t: Type: Float)(
     exponent :: UIntNative = 0
 
     if index < text._length {
-        byte ::= bytes_get(.view = &text, .index = index).byte
+        byte ::= unwrap_or_abort(.value = bytes_get(.view = &text, .index = index))
         if byte != 101 and byte != 69 {
             result = ..error(.reason = ..invalid_input)
             return
         }
         index = index + 1
         if index < text._length {
-            sign ::= bytes_get(.view = &text, .index = index).byte
+            sign ::= unwrap_or_abort(.value = bytes_get(.view = &text, .index = index))
             if sign == 45 or sign == 43 {
                 exponent_negative = sign == 45
                 index = index + 1
@@ -85,7 +85,7 @@ _float_parse#(.t: Type: Float)(
         -- preserving invalid-input precedence even after an enormous exponent.
         cap ::= text._length + 2048
         while index < text._length {
-            digit_byte ::= bytes_get(.view = &text, .index = index).byte
+            digit_byte ::= unwrap_or_abort(.value = bytes_get(.view = &text, .index = index))
             if digit_byte < 48 or digit_byte > 57 {
                 result = ..error(.reason = ..invalid_input)
                 return

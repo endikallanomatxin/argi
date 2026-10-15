@@ -62,7 +62,7 @@ main(.system: System) -> (.status_code: Int32) := {
     while i < byte_length(&buffer).count {
         append_test_byte(
             .self      = $&writer
-            .byte      = bytes_get(.view = &buffer, .index = i).byte
+            .byte      = unwrap_or_abort(.value = bytes_get(.view = &buffer, .index = i))
             .allocator = $&allocator_storage
         )
         i = i + 1
@@ -74,9 +74,9 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
-    first ::= bytes_get(.view = &writer.bytes, .index = 0).byte
-    second ::= bytes_get(.view = &writer.bytes, .index = 1).byte
-    third ::= bytes_get(.view = &writer.bytes, .index = 2).byte
+    first ::= unwrap_or_abort(.value = bytes_get(.view = &writer.bytes, .index = 0))
+    second ::= unwrap_or_abort(.value = bytes_get(.view = &writer.bytes, .index = 1))
+    third ::= unwrap_or_abort(.value = bytes_get(.view = &writer.bytes, .index = 2))
     if first != 79 {
         status_code = 3
         return

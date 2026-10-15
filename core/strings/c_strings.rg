@@ -47,7 +47,7 @@ copy_c_string#(.Provider: Type: Allocator#(Provider)) := (
                 ptr ::= trusted_mutable_reference_offset#(.t: UInt8)(
                     .base = data, .elements = i
                 ).reference
-                ptr&= bytes_get(.view = &self, .index = i).byte
+                ptr&= unwrap_or_abort(.value = bytes_get(.view = &self, .index = i))
                 i = i + 1
             }
 

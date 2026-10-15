@@ -7,9 +7,9 @@ main(.system: System) -> (.status_code: Int32) := {
     _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = 1, .byte = 114))
     _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = 2, .byte = 103))
 
-    first ::= bytes_get(.view = &text, .index = 0).byte
-    second ::= bytes_get(.view = &text, .index = 1).byte
-    third ::= bytes_get(.view = &text, .index = 2).byte
+    first ::= unwrap_or_abort(.value = bytes_get(.view = &text, .index = 0))
+    second ::= unwrap_or_abort(.value = bytes_get(.view = &text, .index = 1))
+    third ::= unwrap_or_abort(.value = bytes_get(.view = &text, .index = 2))
 
     if first != 65 {
         status_code = 1

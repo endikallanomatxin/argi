@@ -10,13 +10,15 @@ implement TextViewOf#(&String) (.text_view = _string_text_view)
 
 TextBytes#(.Text: Type): Contract = (
     .measure_bytes : (.self: &Text) -> (.count: UIntNative)
-    .byte_at       : (.view: &Text, .index: UIntNative) -> (.byte: UInt8)
+    .byte_at       : (.view: &Text, .index: UIntNative) -> (
+        .result : Errable#(UInt8, (..out_of_bounds))
+    )
 )
 
 bytes_get#(.Text: Type: TextBytes#(Text)) := (.view: &Text, .index: UIntNative) -> (
-    .byte : UInt8
+    .result : Errable#(UInt8, (..out_of_bounds))
 ) {
-    byte = TextBytes#(Text).byte_at(.view = view, .index = index)
+    result = TextBytes#(Text).byte_at(.view = view, .index = index)
 }
 
 implement TextBytes#(String) (

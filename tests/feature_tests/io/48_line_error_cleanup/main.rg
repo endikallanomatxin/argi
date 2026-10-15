@@ -18,7 +18,7 @@ implement Reader#(Source) (
             return
         }
 
-        byte ::= bytes_get(&self&.text, self&.position).byte
+        byte ::= unwrap_or_abort(.value = bytes_get(&self&.text, self&.position))
         self&.position = self&.position + 1
         result = ..ok ..ok byte
     }

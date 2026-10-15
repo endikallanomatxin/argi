@@ -12,7 +12,7 @@ _integer_parse_digit#(.t: Type: Int)(.byte: UInt8) -> (.value: ?t) := {
     digit :: t = 0
 
     while index < alphabet._length {
-        if bytes_get(.view = &alphabet, .index = index).byte == normalized {
+        if unwrap_or_abort(.value = bytes_get(.view = &alphabet, .index = index)) == normalized {
             value = ..some(.value = digit)
             return
         }
@@ -38,7 +38,7 @@ _integer_parse#(.t: Type: Int)(
 
     index :: UIntNative = 0
     negative ::= false
-    first ::= bytes_get(.view = &text, .index = 0).byte
+    first ::= unwrap_or_abort(.value = bytes_get(.view = &text, .index = 0))
 
     if first == 45 {
         if allow_negative == false {
@@ -68,7 +68,7 @@ _integer_parse#(.t: Type: Int)(
 
     while index < text._length {
         decoded ::= _integer_parse_digit#(.t: t)(
-            .byte = bytes_get(.view = &text, .index = index).byte
+            .byte = unwrap_or_abort(.value = bytes_get(.view = &text, .index = index))
         ).value
         match decoded {
             ..none {

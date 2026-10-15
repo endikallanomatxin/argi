@@ -5,13 +5,24 @@ StringView: Type = (
 
 implement ImplicitlyCopyable#(StringView) ()
 
-string_view_byte_address(.self: &StringView, .index: UIntNative) -> (.reference: &UInt8) := {
-    if index >= self&._length { abort }
-    reference = trusted_reference_offset#(.t: UInt8)(.base = self&._data, .elements = index)
+-- Byte references exclude the end position, including for empty views.
+string_view_byte_address(.self: &StringView, .index: UIntNative) -> (
+    .result : Errable#(&UInt8, (..out_of_bounds))
+) := {
+    if index >= self&._length {
+        result = ..error(.reason = ..out_of_bounds)
+        return
+    }
+    result = ..ok trusted_reference_offset#(.t: UInt8)(
+        .base = self&._data, .elements = index
+    ).reference
 }
 
-_view_get_byte(.view: &StringView, .index: UIntNative) -> (.byte: UInt8) := {
-    byte = string_view_byte_address(view, .index = index).reference&
+_view_get_byte(.view: &StringView, .index: UIntNative) -> (
+    .result : Errable#(UInt8, (..out_of_bounds))
+) := {
+    reference ::= string_view_byte_address(view, .index = index)!
+    result = ..ok reference&
 }
 
 equals(.left: StringView, .right: StringView) -> (.ok: Bool) := {
@@ -24,8 +35,8 @@ equals(.left: StringView, .right: StringView) -> (.ok: Bool) := {
 
     while i < left._length {
         if [
-            bytes_get(.view = &left, .index = i).byte
-            != bytes_get(.view = &right, .index = i).byte
+            unwrap_or_abort(.value = bytes_get(.view = &left, .index = i))
+            != unwrap_or_abort(.value = bytes_get(.view = &right, .index = i))
         ] {
             ok = false
             return

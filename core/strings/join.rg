@@ -5,7 +5,7 @@ _string_copy_view_into(.output: $&String, .offset: UIntNative, .source: StringVi
         _string_set_byte(
             .string = output
             .index  = offset + index
-            .value  = bytes_get(.view = &source, .index = index).byte
+            .value  = unwrap_or_abort(.value = bytes_get(.view = &source, .index = index))
         )
         index = index + 1
     }

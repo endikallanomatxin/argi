@@ -12,7 +12,11 @@ check_bytes#(.ReaderType: Type: Reader#(ReaderType))(
     while i < byte_length(&expected).count {
         next ::= unwrap_or_abort(.value = Reader#().read_byte(.self = reader)).result
         match next {
-            ..ok byte { if byte != bytes_get(.view = &expected, .index = i).byte { abort } }
+            ..ok byte {
+                if [byte != unwrap_or_abort(.value = bytes_get(.view = &expected, .index = i))] {
+                    abort
+                }
+            }
             ..end { abort }
         }
         i = i + 1

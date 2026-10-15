@@ -17,8 +17,8 @@ _string_view_matches_at(.self: StringView, .pattern: StringView, .start: UIntNat
 
     while offset < pattern._length {
         if [
-            bytes_get(.view = &self, .index = start + offset).byte
-            != bytes_get(.view = &pattern, .index = offset).byte
+            unwrap_or_abort(.value = bytes_get(.view = &self, .index = start + offset))
+            != unwrap_or_abort(.value = bytes_get(.view = &pattern, .index = offset))
         ] {
             ok = false
             return

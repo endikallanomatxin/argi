@@ -72,7 +72,7 @@ pub const Resolver = struct {
             .resolve_nullable_test => |value| resolution.Result.fromBool(try self.resolveNullableTest(o, value)),
             .resolve_match => |value| try self.resolveMatch(module, o, value),
             .resolve_match_case => |value| resolution.Result.fromBool(self.matchCaseAlreadyResolved(o, value)),
-            .resolve_for_each => |value| try self.resolveForEach(module_index, o, value),
+            .resolve_for_each => |value| try self.resolveForEach(module_index, o, value, reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function)),
             else => .not_applicable,
         };
     }
@@ -504,7 +504,7 @@ pub const Resolver = struct {
         call: global_sg.GlobalNodeId,
     };
 
-    pub fn resolveForEach(self: *Resolver, module_index: usize, o: globalizer.Offsets, value: anytype) !resolution.Result {
+    pub fn resolveForEach(self: *Resolver, module_index: usize, o: globalizer.Offsets, value: anytype, context: reach_context.Context) !resolution.Result {
         @setEvalBranchQuota(5000);
         const generic_functions = self.generic_functions orelse return .deferred;
         const contracts = self.contracts orelse return .deferred;
@@ -574,7 +574,7 @@ pub const Resolver = struct {
             iterable_place
         else
             try self.appendAddress(iterable_place, iterable_ty, iterable_mutable, source);
-        const conversion = try self.syntheticCall(module_index, conversion_name, iterable_reference, source);
+        const conversion = try self.syntheticCall(module_index, conversion_name, iterable_reference, context, source);
         const iterator_value = switch (conversion) {
             .call => |node| node,
             .deferred => return .deferred,
@@ -605,7 +605,7 @@ pub const Resolver = struct {
 
         const condition_iterator = try self.appendNode(source, iterator_ty, .{ .binding_use = iterator_binding });
         const condition_self = try self.appendAddress(condition_iterator, iterator_ty, false, source);
-        const condition_result = try self.syntheticCall(module_index, "has_next", condition_self, source);
+        const condition_result = try self.syntheticCall(module_index, "has_next", condition_self, context, source);
         const condition = switch (condition_result) {
             .call => |node| node,
             .deferred => return .deferred,
@@ -617,7 +617,7 @@ pub const Resolver = struct {
 
         const next_iterator = try self.appendNode(source, iterator_ty, .{ .binding_use = iterator_binding });
         const next_self = try self.appendAddress(next_iterator, iterator_ty, true, source);
-        const next_result = try self.syntheticCall(module_index, "next", next_self, source);
+        const next_result = try self.syntheticCall(module_index, "next", next_self, context, source);
         const next_value = switch (next_result) {
             .call => |node| node,
             .deferred => return .deferred,
@@ -688,6 +688,7 @@ pub const Resolver = struct {
         module_index: usize,
         name: []const u8,
         argument: global_sg.GlobalNodeId,
+        context: reach_context.Context,
         source: primitives.SourceRef,
     ) !SyntheticCallResult {
         const input = try self.positionalInput(argument, source);
@@ -697,7 +698,9 @@ pub const Resolver = struct {
         const participant = if (self.graph.semanticType(ty) == .pointer) self.graph.semanticType(ty).pointer.child else ty;
         const contracts = self.contracts orelse return .deferred;
         var participants = [_]global_sg.GlobalTypeId{participant};
-        const node = try contracts.callOperationCandidate(module_index, .{ .declaration = declaration, .participants = &participants }, name, input, reach_context.Context.fromGlobal(&.{}, null), source) orelse return .deferred;
+        // Generated protocol calls retain the loop's lexical reach context.
+        // Selected operations can gain transitive inputs on later passes.
+        const node = try contracts.callOperationCandidate(module_index, .{ .declaration = declaration, .participants = &participants }, name, input, context, source) orelse return .deferred;
         const value = try self.appendNode(source, node.ty orelse return .deferred, node.content);
         return .{ .call = value };
     }

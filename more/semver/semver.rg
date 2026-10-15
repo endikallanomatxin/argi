@@ -16,14 +16,19 @@ _numeric_end(.text: &StringView, .start: UIntNative) -> (.end: UIntNative, .ok: 
     end = start
 
     while end < byte_length(&text&).count {
-        if _digit(.byte = bytes_get(.view = text, .index = end).byte).ok {} else { break }
+        if _digit(.byte = unwrap_or_abort(.value = bytes_get(.view = text, .index = end))).ok {
+        } else {
+            break
+        }
         end = end + 1
     }
 
     ok = end > start
 
     if end - start > 1 {
-        if bytes_get(.view = text, .index = start).byte == 48 { ok = false }
+        if unwrap_or_abort(.value = bytes_get(.view = text, .index = start)) == 48 {
+            ok = false
+        }
     }
 }
 
@@ -38,18 +43,20 @@ _identifiers_valid(.text: StringView, .allow_numeric_zeroes: Bool) -> (.ok: Bool
     while i <= byte_length(&text).count {
         boundary :: Bool = i == byte_length(&text).count
         if i < byte_length(&text).count {
-            boundary = [bytes_get(.view = &text, .index = i).byte == 46]
+            boundary = [unwrap_or_abort(.value = bytes_get(.view = &text, .index = i)) == 46]
         }
         if boundary {
             if i == start { return }
             if numeric and allow_numeric_zeroes == false and i - start > 1 {
-                if bytes_get(.view = &text, .index = start).byte == 48 { return }
+                if unwrap_or_abort(.value = bytes_get(.view = &text, .index = start)) == 48 {
+                    return
+                }
             }
             if i == byte_length(&text).count { break }
             start = i + 1
             numeric = true
         } else {
-            byte ::= bytes_get(.view = &text, .index = i).byte
+            byte ::= unwrap_or_abort(.value = bytes_get(.view = &text, .index = i))
             if _digit(.byte = byte).ok {
             } else {
                 numeric = false
@@ -73,7 +80,7 @@ parse(.text: StringView) -> (.result: Errable#(VersionView, (..invalid_input))) 
         return
     }
 
-    if bytes_get(.view = &text, .index = first.end).byte != 46 {
+    if unwrap_or_abort(.value = bytes_get(.view = &text, .index = first.end)) != 46 {
         result = ..error(.reason = ..invalid_input)
         return
     }
@@ -85,7 +92,7 @@ parse(.text: StringView) -> (.result: Errable#(VersionView, (..invalid_input))) 
         return
     }
 
-    if bytes_get(.view = &text, .index = second.end).byte != 46 {
+    if unwrap_or_abort(.value = bytes_get(.view = &text, .index = second.end)) != 46 {
         result = ..error(.reason = ..invalid_input)
         return
     }
@@ -100,10 +107,12 @@ parse(.text: StringView) -> (.result: Errable#(VersionView, (..invalid_input))) 
     pre_end :: UIntNative = third.end
 
     if third.end < byte_length(&text).count {
-        if bytes_get(.view = &text, .index = third.end).byte == 45 {
+        if unwrap_or_abort(.value = bytes_get(.view = &text, .index = third.end)) == 45 {
             pre_end = third.end + 1
             while pre_end < byte_length(&text).count {
-                if bytes_get(.view = &text, .index = pre_end).byte == 43 { break }
+                if unwrap_or_abort(.value = bytes_get(.view = &text, .index = pre_end)) == 43 {
+                    break
+                }
                 pre_end = pre_end + 1
             }
             pre ::= string_view_slice(
@@ -118,7 +127,7 @@ parse(.text: StringView) -> (.result: Errable#(VersionView, (..invalid_input))) 
     }
 
     if pre_end < byte_length(&text).count {
-        if bytes_get(.view = &text, .index = pre_end).byte != 43 {
+        if unwrap_or_abort(.value = bytes_get(.view = &text, .index = pre_end)) != 43 {
             result = ..error(.reason = ..invalid_input)
             return
         }
@@ -206,8 +215,8 @@ _lexical_compare(.left: StringView, .right: StringView) -> (.order: Int32) := {
     i :: UIntNative = 0
 
     while i < byte_length(&left).count and i < byte_length(&right).count {
-        a ::= bytes_get(.view = &left, .index = i).byte
-        b ::= bytes_get(.view = &right, .index = i).byte
+        a ::= unwrap_or_abort(.value = bytes_get(.view = &left, .index = i))
+        b ::= unwrap_or_abort(.value = bytes_get(.view = &right, .index = i))
         if a < b {
             order = -1
             return
@@ -246,7 +255,7 @@ _identifier_end(.text: &StringView, .start: UIntNative) -> (.end: UIntNative, .n
     numeric = true
 
     while end < byte_length(&text&).count {
-        byte ::= bytes_get(.view = text, .index = end).byte
+        byte ::= unwrap_or_abort(.value = bytes_get(.view = text, .index = end))
         if byte == 46 { break }
         if _digit(.byte = byte).ok {} else { numeric = false }
         end = end + 1

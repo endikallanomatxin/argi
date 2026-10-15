@@ -24,7 +24,7 @@ main(.system: System) -> (.status_code: Int32) := {
     first_ptr ::= trusted_reinterpret_reference#(.from: Char, .to: UInt8)(
         .base = arg0_ptr
     ).reference
-    if bytes_get(.view = &arg0_view, .index = 0).byte != first_ptr&{
+    if unwrap_or_abort(.value = bytes_get(.view = &arg0_view, .index = 0)) != first_ptr&{
         status_code = 4
         return
     }

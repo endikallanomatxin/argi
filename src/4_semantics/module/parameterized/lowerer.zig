@@ -1373,11 +1373,16 @@ pub const Context = struct {
             try self.bindings.append(.{ .name = name, .id = binding });
             defer self.bindings.shrinkRetainingCapacity(mark);
             const body = try self.lowerBlock(statement.body);
-            return self.addPending(node, .for_each, &.{iterable}, null, null, .{ .for_each = .{
+            const assumed = try self.addResolvedNode(node, null, .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 0 } } });
+            try self.captureAssumedFields(node, assumed);
+            const result = try self.addPending(node, .for_each, &.{iterable}, null, null, .{ .for_each = .{
                 .binding = binding,
                 .body = body,
                 .mode = graph_mod.forModeFromSyntax(statement.mode),
             } });
+            const pending_id = self.graph.semantic.parameterized_storage.ir.nodes.items[@intFromEnum(result)].pending;
+            self.graph.semantic.parameterized_storage.ir.pending.items[@intFromEnum(pending_id)].resolve_expression.assumed_arguments = assumed;
+            return result;
         }
         if (self.tree.tag(node) == .break_statement)
             return self.addResolvedNode(node, try self.parameterizedBuiltin(.Void), .break_statement);

@@ -14,7 +14,13 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         )
     )
     if allocator.allocations != 1 or allocator.last_size != 6 { abort }
-    if bytes_get(.view = &output, .index = byte_length(&output).count).byte != 0 { abort }
+    if [
+        is(
+            .value   = bytes_get(.view = &output, .index = byte_length(&output).count)
+            .variant = ..error
+        )
+        == false
+    ] { abort }
     deinit(.self = $&output)
     if allocator.deallocations != 1 { abort }
     empty: [0]StringView = ()

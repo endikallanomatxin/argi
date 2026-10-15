@@ -21,7 +21,9 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         i = i + 1
     }
 
-    fresh_data ::= string_byte_reference(.string = &buffer, .index = 0).reference
+    fresh_data ::= unwrap_or_abort(
+        .value = string_byte_reference(.string = &buffer, .index = 0)
+    )
     if fresh_data&!= 65 {
         status_code = 2
         return

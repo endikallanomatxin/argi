@@ -3237,15 +3237,17 @@ pub const Resolver = struct {
             // Resolve the iterator protocol before specializing the body: its
             // next output establishes the previously unknown item type. Both
             // concrete and generic loops use the same ownership wrapper.
-            const operation: module_entities.PendingOperation = .{ .resolve_for_each = .{
-                .node = @enumFromInt(@intFromEnum(target)),
-                .binding = @enumFromInt(@intFromEnum(binding)),
-                .iterable = @enumFromInt(@intFromEnum(operands[0])),
-                .body = @enumFromInt(@intFromEnum(empty)),
+            const operation = .{
+                .node = @as(module_entities.ModuleNodeId, @enumFromInt(@intFromEnum(target))),
+                .binding = @as(module_entities.ModuleBindingId, @enumFromInt(@intFromEnum(binding))),
+                .iterable = @as(module_entities.ModuleNodeId, @enumFromInt(@intFromEnum(operands[0]))),
+                .body = @as(module_entities.ModuleBlockId, @enumFromInt(@intFromEnum(empty))),
                 .mode = detail.mode,
                 .source = source,
-            } };
-            switch (try control.resolveForEach(self.module_index, std.mem.zeroes(globalizer.Offsets), operation.resolve_for_each)) {
+            };
+            const context = try self.operatorContext(value.assumed_arguments);
+            defer self.resolver.allocator.free(context.global.visible_bindings);
+            switch (try control.resolveForEach(self.module_index, std.mem.zeroes(globalizer.Offsets), operation, context)) {
                 .resolved => {},
                 .deferred => return error.DeferredGenericFunction,
                 else => return error.InvalidParameterizedForProtocol,

@@ -23,7 +23,9 @@ path_last_separator_index(.view: &StringView) -> (.value: ?UIntNative) := {
 
     while i > 0 {
         i = i - 1
-        if path_is_separator(.byte = bytes_get(.view = view, .index = i).byte).ok {
+        if path_is_separator(
+            .byte = unwrap_or_abort(.value = bytes_get(.view = view, .index = i))
+        ).ok {
             value = ..some(.value = i)
             return
         }
@@ -171,7 +173,7 @@ extension(.self: &Path) -> (.value: ?StringView) := {
             i :: UIntNative = file_view._length
             while i > 0 {
                 i = i - 1
-                current ::= bytes_get(.view = &file_view, .index = i).byte
+                current ::= unwrap_or_abort(.value = bytes_get(.view = &file_view, .index = i))
                 if current == 46 {
                     if i == 0 or i + 1 >= file_view._length {
                         value = ..none
@@ -215,7 +217,9 @@ join_views#(.AllocatorType: Type: Allocator#(AllocatorType))(
 
     if left&._length > 0 and right&._length > 0 {
         if path_is_separator(
-            .byte = bytes_get(.view = left, .index = left&._length - 1).byte
+            .byte = unwrap_or_abort(
+                .value = bytes_get(.view = left, .index = left&._length - 1)
+            )
         ).ok {
         } else {
             if target_capacity == maximum - 1 {
@@ -238,7 +242,9 @@ join_views#(.AllocatorType: Type: Allocator#(AllocatorType))(
 
             if left&._length > 0 and right&._length > 0 {
                 if path_is_separator(
-                    .byte = bytes_get(.view = left, .index = left&._length - 1).byte
+                    .byte = unwrap_or_abort(
+                        .value = bytes_get(.view = left, .index = [left&._length - 1])
+                    )
                 ).ok {
                 } else {
                     _string_append_byte($&text, .byte = 47)

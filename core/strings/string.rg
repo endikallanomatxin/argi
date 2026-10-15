@@ -127,16 +127,24 @@ implement#(.Provider: Type: Allocator) FalliblyCopyable#(String, Provider) (
 
 )
 
-string_byte_reference(.string: &String, .index: UIntNative) -> (.reference: &UInt8) := {
-    -- The trailing NUL is initialized and intentionally readable.
-    if index > string&._length { abort }
-    reference = _trusted_allocation_byte_ro(
+-- The trailing NUL belongs to C interop, outside the logical byte range.
+string_byte_reference(.string: &String, .index: UIntNative) -> (
+    .result : Errable#(&UInt8, (..out_of_bounds))
+) := {
+    if index >= string&._length {
+        result = ..error(.reason = ..out_of_bounds)
+        return
+    }
+    result = ..ok _trusted_allocation_byte_ro(
         .allocation = &string&._allocation, .offset = index
     ).reference
 }
 
-_string_get_byte(.view: &String, .index: UIntNative) -> (.byte: UInt8) := {
-    byte = string_byte_reference(.string = view, .index = index).reference&
+_string_get_byte(.view: &String, .index: UIntNative) -> (
+    .result : Errable#(UInt8, (..out_of_bounds))
+) := {
+    reference ::= string_byte_reference(.string = view, .index = index)!
+    result = ..ok reference&
 }
 
 _string_set_byte(.string: $&String, .index: UIntNative, .value: UInt8) -> () := {
@@ -701,7 +709,10 @@ set_ascii(.self: $&String, .index: UIntNative, .byte: UInt8) -> (
         result = ..error(.reason = ..out_of_bounds)
         return
     }
-    if byte >= 128 or _string_get_byte(.view = self, .index = index).byte >= 128 {
+    if [
+        byte >= 128
+        or unwrap_or_abort(.value = _string_get_byte(.view = self, .index = index)) >= 128
+    ] {
         result = ..error(.reason = ..invalid_codepoint)
         return
     }

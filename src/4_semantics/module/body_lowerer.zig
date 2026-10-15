@@ -1185,6 +1185,8 @@ const Context = struct {
             .body = body,
             .mode = graph_mod.forModeFromSyntax(statement.mode),
             .source = self.sourceRef(node),
+            .visible_bindings = try self.captureVisibleBindings(),
+            .owner_function = self.current_function,
         } }, try self.builtin(.Void));
     }
 

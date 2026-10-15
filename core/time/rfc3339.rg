@@ -9,7 +9,7 @@ _date_digits(.text: StringView, .start: UIntNative, .count: UIntNative) -> (
     index :: UIntNative = 0
 
     while index < count {
-        byte ::= bytes_get(.view = &text, .index = start + index).byte
+        byte ::= unwrap_or_abort(.value = bytes_get(.view = &text, .index = start + index))
         if byte < 48 or byte > 57 {
             result = ..error(.reason = ..invalid_datetime)
             return
@@ -28,12 +28,12 @@ parse_utc(.text: StringView) -> (.result: Errable#(UtcDateTime, (..invalid_datet
     }
 
     if [
-        bytes_get(.view = &text, .index = 4).byte != 45
-        or bytes_get(.view = &text, .index = 7).byte != 45
-        or bytes_get(.view = &text, .index = 10).byte != 84
-        or bytes_get(.view = &text, .index = 13).byte != 58
-        or bytes_get(.view = &text, .index = 16).byte != 58
-        or bytes_get(.view = &text, .index = text._length - 1).byte != 90
+        unwrap_or_abort(.value = bytes_get(.view = &text, .index = 4)) != 45
+        or unwrap_or_abort(.value = bytes_get(.view = &text, .index = 7)) != 45
+        or unwrap_or_abort(.value = bytes_get(.view = &text, .index = 10)) != 84
+        or unwrap_or_abort(.value = bytes_get(.view = &text, .index = 13)) != 58
+        or unwrap_or_abort(.value = bytes_get(.view = &text, .index = 16)) != 58
+        or unwrap_or_abort(.value = bytes_get(.view = &text, .index = text._length - 1)) != 90
     ] {
         result = ..error(.reason = ..invalid_datetime)
         return
@@ -42,7 +42,10 @@ parse_utc(.text: StringView) -> (.result: Errable#(UtcDateTime, (..invalid_datet
     fraction :: UInt32 = 0
 
     if text._length != 20 {
-        if text._length < 22 or bytes_get(.view = &text, .index = 19).byte != 46 {
+        if [
+            text._length < 22
+            or unwrap_or_abort(.value = bytes_get(.view = &text, .index = 19)) != 46
+        ] {
             result = ..error(.reason = ..invalid_datetime)
             return
         }
@@ -119,7 +122,7 @@ format_utc_into(.date: UtcDateTime, .buffer: MutableArrayView#(.t: UInt8)) -> (
 
     while index < count {
         target ::= unwrap_or_abort(.value = get_mutable_reference($&buffer, .index = index))
-        target&= bytes_get(.view = &skeleton, .index = index).byte
+        target&= unwrap_or_abort(.value = bytes_get(.view = &skeleton, .index = index))
         index = index + 1
     }
 

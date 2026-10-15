@@ -37,8 +37,8 @@ implement OrderPolicy#(StringViewOrderPolicy, StringView) (
         index :: UIntNative = 0
 
         while index < left._length and index < right._length {
-            left_byte ::= bytes_get(.view = &left, .index = index).byte
-            right_byte ::= bytes_get(.view = &right, .index = index).byte
+            left_byte ::= unwrap_or_abort(.value = bytes_get(.view = &left, .index = index))
+            right_byte ::= unwrap_or_abort(.value = bytes_get(.view = &right, .index = index))
             if left_byte != right_byte {
                 ok = left_byte < right_byte
                 return

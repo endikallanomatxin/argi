@@ -64,11 +64,14 @@ _hex(.byte: UInt8) -> (.value: UInt8, .ok: Bool = true) := {
 
 _scheme_valid(.text: StringView) -> (.ok: Bool = false) := {
     if byte_length(&text).count == 0 { return }
-    if _alpha(.byte = bytes_get(.view = &text, .index = 0).byte).ok == false { return }
+    if [
+        _alpha(.byte = unwrap_or_abort(.value = bytes_get(.view = &text, .index = 0))).ok
+        == false
+    ] { return }
     i :: UIntNative = 1
 
     while i < byte_length(&text).count {
-        byte ::= bytes_get(.view = &text, .index = i).byte
+        byte ::= unwrap_or_abort(.value = bytes_get(.view = &text, .index = i))
         if [
             _alpha(.byte = byte).ok
             or _digit(.byte = byte).ok
@@ -89,12 +92,26 @@ _component_valid(.text: StringView, .kind: UInt8) -> (.ok: Bool = false) := {
     i :: UIntNative = 0
 
     while i < byte_length(&text).count {
-        byte ::= bytes_get(.view = &text, .index = i).byte
+        byte ::= unwrap_or_abort(.value = bytes_get(.view = &text, .index = i))
         if byte == 37 {
             if byte_length(&text).count - i < 3 { return }
             if [
-                _hex(.byte = bytes_get(.view = &text, .index = i + 1).byte).ok == false
-                or _hex(.byte = bytes_get(.view = &text, .index = i + 2).byte).ok == false
+                [
+                    _hex(
+                        .byte = unwrap_or_abort(
+                            .value = bytes_get(.view = &text, .index = i + 1)
+                        )
+                    ).ok
+                    == false
+                ]
+                or [
+                    _hex(
+                        .byte = unwrap_or_abort(
+                            .value = bytes_get(.view = &text, .index = i + 2)
+                        )
+                    ).ok
+                    == false
+                ]
             ] { return }
             i = i + 3
         } else {
@@ -125,7 +142,7 @@ parse(.text: StringView) -> (.result: Errable#(UriView, (..invalid_input))) := {
     i :: UIntNative = 0
 
     while i < byte_length(&text).count {
-        if bytes_get(.view = &text, .index = i).byte == 35 {
+        if unwrap_or_abort(.value = bytes_get(.view = &text, .index = i)) == 35 {
             fragment_start = i
             break
         }
@@ -136,7 +153,7 @@ parse(.text: StringView) -> (.result: Errable#(UriView, (..invalid_input))) := {
     i = 0
 
     while i < fragment_start {
-        if bytes_get(.view = &text, .index = i).byte == 63 {
+        if unwrap_or_abort(.value = bytes_get(.view = &text, .index = i)) == 63 {
             query_start = i
             break
         }
@@ -151,7 +168,7 @@ parse(.text: StringView) -> (.result: Errable#(UriView, (..invalid_input))) := {
     i = 0
 
     while i < query_start {
-        byte ::= bytes_get(.view = &text, .index = i).byte
+        byte ::= unwrap_or_abort(.value = bytes_get(.view = &text, .index = i))
         if byte == 47 { break }
         if byte == 58 {
             candidate ::= _slice(.text = text, .start = 0, .end = i).value
@@ -168,12 +185,14 @@ parse(.text: StringView) -> (.result: Errable#(UriView, (..invalid_input))) := {
 
     if query_start - start >= 2 {
         if [
-            bytes_get(.view = &text, .index = start).byte == 47
-            and bytes_get(.view = &text, .index = start + 1).byte == 47
+            unwrap_or_abort(.value = bytes_get(.view = &text, .index = start)) == 47
+            and unwrap_or_abort(.value = bytes_get(.view = &text, .index = start + 1)) == 47
         ] {
             i = start + 2
             while i < query_start {
-                if bytes_get(.view = &text, .index = i).byte == 47 { break }
+                if unwrap_or_abort(.value = bytes_get(.view = &text, .index = i)) == 47 {
+                    break
+                }
                 i = i + 1
             }
             candidate ::= _slice(.text = text, .start = start + 2, .end = i).value
@@ -233,17 +252,20 @@ _ipv4_valid(.text: StringView) -> (.ok: Bool = false) := {
     while i <= byte_length(&text).count {
         boundary ::= i == byte_length(&text).count
         if i < byte_length(&text).count {
-            boundary = [bytes_get(.view = &text, .index = i).byte == 46]
+            boundary = [unwrap_or_abort(.value = bytes_get(.view = &text, .index = i)) == 46]
         }
         if boundary {
             if i == start or i - start > 3 or number > 255 { return }
-            if i - start > 1 and bytes_get(.view = &text, .index = start).byte == 48 { return }
+            if [
+                i - start > 1
+                and unwrap_or_abort(.value = bytes_get(.view = &text, .index = start)) == 48
+            ] { return }
             groups = groups + 1
             if i == byte_length(&text).count { break }
             start = i + 1
             number = 0
         } else {
-            byte ::= bytes_get(.view = &text, .index = i).byte
+            byte ::= unwrap_or_abort(.value = bytes_get(.view = &text, .index = i))
             if _digit(.byte = byte).ok == false or i - start >= 3 { return }
             number = number * 10 + [byte - 48] | convert#(.to: UIntNative)(_)
         }
@@ -255,20 +277,23 @@ _ipv4_valid(.text: StringView) -> (.ok: Bool = false) := {
 
 _ip_literal_valid(.text: StringView) -> (.ok: Bool = false) := {
     if byte_length(&text).count == 0 { return }
-    first ::= bytes_get(.view = &text, .index = 0).byte
+    first ::= unwrap_or_abort(.value = bytes_get(.view = &text, .index = 0))
 
     if first == 118 or first == 86 {
         i :: UIntNative = 1
         while i < byte_length(&text).count {
-            if _hex(.byte = bytes_get(.view = &text, .index = i).byte).ok == false { break }
+            if [
+                _hex(.byte = unwrap_or_abort(.value = bytes_get(.view = &text, .index = i))).ok
+                == false
+            ] { break }
             i = i + 1
         }
         if i == 1 or i == byte_length(&text).count { return }
-        if bytes_get(.view = &text, .index = i).byte != 46 { return }
+        if unwrap_or_abort(.value = bytes_get(.view = &text, .index = i)) != 46 { return }
         i = i + 1
         if i == byte_length(&text).count { return }
         while i < byte_length(&text).count {
-            byte ::= bytes_get(.view = &text, .index = i).byte
+            byte ::= unwrap_or_abort(.value = bytes_get(.view = &text, .index = i))
             if _unreserved(.byte = byte).ok or _subdelimiter(.byte = byte).ok or byte == 58 {
             } else {
                 return
@@ -284,9 +309,11 @@ _ip_literal_valid(.text: StringView) -> (.ok: Bool = false) := {
     i :: UIntNative = 0
 
     while i < byte_length(&text).count {
-        if bytes_get(.view = &text, .index = i).byte == 58 {
+        if unwrap_or_abort(.value = bytes_get(.view = &text, .index = i)) == 58 {
             if compressed or byte_length(&text).count - i < 2 { return }
-            if bytes_get(.view = &text, .index = i + 1).byte != 58 { return }
+            if unwrap_or_abort(.value = bytes_get(.view = &text, .index = i + 1)) != 58 {
+                return
+            }
             compressed = true
             i = i + 2
             if i == byte_length(&text).count { break }
@@ -294,7 +321,7 @@ _ip_literal_valid(.text: StringView) -> (.ok: Bool = false) := {
         start ::= i
         dotted ::= false
         while i < byte_length(&text).count {
-            byte ::= bytes_get(.view = &text, .index = i).byte
+            byte ::= unwrap_or_abort(.value = bytes_get(.view = &text, .index = i))
             if byte == 58 { break }
             if byte == 46 { dotted = true }
             i = i + 1
@@ -310,7 +337,12 @@ _ip_literal_valid(.text: StringView) -> (.ok: Bool = false) := {
             if byte_length(&part).count > 4 { return }
             j :: UIntNative = 0
             while j < byte_length(&part).count {
-                if _hex(.byte = bytes_get(.view = &part, .index = j).byte).ok == false {
+                if [
+                    _hex(
+                        .byte = unwrap_or_abort(.value = bytes_get(.view = &part, .index = j))
+                    ).ok
+                    == false
+                ] {
                     return
                 }
                 j = j + 1
@@ -320,7 +352,9 @@ _ip_literal_valid(.text: StringView) -> (.ok: Bool = false) := {
         if groups > 8 { return }
         if i < byte_length(&text).count {
             if byte_length(&text).count - i >= 2 {
-                if bytes_get(.view = &text, .index = i + 1).byte == 58 { continue }
+                if unwrap_or_abort(.value = bytes_get(.view = &text, .index = i + 1)) == 58 {
+                    continue
+                }
             }
             i = i + 1
             if i == byte_length(&text).count { return }
@@ -336,7 +370,7 @@ _authority_valid(.text: StringView) -> (.ok: Bool = false) := {
     i :: UIntNative = 0
 
     while i < byte_length(&text).count {
-        byte ::= bytes_get(.view = &text, .index = i).byte
+        byte ::= unwrap_or_abort(.value = bytes_get(.view = &text, .index = i))
         if byte == 64 {
             if host_start != 0 { return }
             user ::= _slice(.text = text, .start = 0, .end = i).value
@@ -350,10 +384,12 @@ _authority_valid(.text: StringView) -> (.ok: Bool = false) := {
     port_start ::= byte_length(&text).count
 
     if host_start < byte_length(&text).count {
-        if bytes_get(.view = &text, .index = host_start).byte == 91 {
+        if unwrap_or_abort(.value = bytes_get(.view = &text, .index = host_start)) == 91 {
             i = host_start + 1
             while i < byte_length(&text).count {
-                if bytes_get(.view = &text, .index = i).byte == 93 { break }
+                if unwrap_or_abort(.value = bytes_get(.view = &text, .index = i)) == 93 {
+                    break
+                }
                 i = i + 1
             }
             if i == byte_length(&text).count or i == host_start + 1 { return }
@@ -361,13 +397,15 @@ _authority_valid(.text: StringView) -> (.ok: Bool = false) := {
             if _ip_literal_valid(.text = literal).ok == false { return }
             host_end = i + 1
             if host_end < byte_length(&text).count {
-                if bytes_get(.view = &text, .index = host_end).byte != 58 { return }
+                if unwrap_or_abort(.value = bytes_get(.view = &text, .index = host_end)) != 58 {
+                    return
+                }
                 port_start = host_end + 1
             }
         } else {
             i = host_start
             while i < byte_length(&text).count {
-                byte ::= bytes_get(.view = &text, .index = i).byte
+                byte ::= unwrap_or_abort(.value = bytes_get(.view = &text, .index = i))
                 if byte == 58 {
                     host_end = i
                     port_start = i + 1
@@ -382,7 +420,10 @@ _authority_valid(.text: StringView) -> (.ok: Bool = false) := {
     i = port_start
 
     while i < byte_length(&text).count {
-        if _digit(.byte = bytes_get(.view = &text, .index = i).byte).ok == false { return }
+        if [
+            _digit(.byte = unwrap_or_abort(.value = bytes_get(.view = &text, .index = i))).ok
+            == false
+        ] { return }
         i = i + 1
     }
 
@@ -400,7 +441,7 @@ build#(.AllocatorType: Type: Allocator#(AllocatorType))(
     ] {
         i :: UIntNative = 0
         while i < byte_length(&value.path).count {
-            byte ::= bytes_get(.view = &value.path, .index = i).byte
+            byte ::= unwrap_or_abort(.value = bytes_get(.view = &value.path, .index = i))
             if byte == 47 { break }
             if byte == 58 {
                 result = ..error(.reason = ..invalid_input)
@@ -428,8 +469,14 @@ build#(.AllocatorType: Type: Allocator#(AllocatorType))(
         ..none {
             if byte_length(&value.path).count >= 2 {
                 if [
-                    bytes_get(.view = &value.path, .index = 0).byte == 47
-                    and bytes_get(.view = &value.path, .index = 1).byte == 47
+                    [
+                        unwrap_or_abort(.value = bytes_get(.view = &value.path, .index = 0))
+                        == 47
+                    ]
+                    and [
+                        unwrap_or_abort(.value = bytes_get(.view = &value.path, .index = 1))
+                        == 47
+                    ]
                 ] {
                     result = ..error(.reason = ..invalid_input)
                     return
@@ -442,7 +489,7 @@ build#(.AllocatorType: Type: Allocator#(AllocatorType))(
                 return
             }
             if byte_length(&value.path).count > 0 {
-                if bytes_get(.view = &value.path, .index = 0).byte != 47 {
+                if unwrap_or_abort(.value = bytes_get(.view = &value.path, .index = 0)) != 47 {
                     result = ..error(.reason = ..invalid_input)
                     return
                 }
@@ -494,23 +541,27 @@ encode_component#(.AllocatorType: Type: Allocator#(AllocatorType))(
     i :: UIntNative = 0
 
     while i < byte_length(&text).count {
-        byte ::= bytes_get(.view = &text, .index = i).byte
+        byte ::= unwrap_or_abort(.value = bytes_get(.view = &text, .index = i))
         if _unreserved(.byte = byte).ok {
             push_ascii(.self = $&output, .byte = byte, .allocator = allocator)!
         } else {
             push_ascii(.self = $&output, .byte = 37, .allocator = allocator)!
             push_ascii(
                 .self = $&output
-                .byte = bytes_get(
-                    .view = &hex, .index = [[byte / 16] | convert#(.to: UIntNative)(_)]
-                ).byte
+                .byte = unwrap_or_abort(
+                    .value = bytes_get(
+                        .view = &hex, .index = [[byte / 16] | convert#(.to: UIntNative)(_)]
+                    )
+                )
                 .allocator = allocator
             )!
             push_ascii(
                 .self = $&output
-                .byte = bytes_get(
-                    .view = &hex, .index = [[byte % 16] | convert#(.to: UIntNative)(_)]
-                ).byte
+                .byte = unwrap_or_abort(
+                    .value = bytes_get(
+                        .view = &hex, .index = [[byte % 16] | convert#(.to: UIntNative)(_)]
+                    )
+                )
                 .allocator = allocator
             )!
         }
@@ -527,14 +578,18 @@ decode_component#(.AllocatorType: Type: Allocator#(AllocatorType))(
     i :: UIntNative = 0
 
     while i < byte_length(&text).count {
-        byte ::= bytes_get(.view = &text, .index = i).byte
+        byte ::= unwrap_or_abort(.value = bytes_get(.view = &text, .index = i))
         if byte == 37 {
             if byte_length(&text).count - i < 3 {
                 result = ..error(.reason = ..invalid_input)
                 return
             }
-            high ::= _hex(.byte = bytes_get(.view = &text, .index = i + 1).byte)
-            low ::= _hex(.byte = bytes_get(.view = &text, .index = i + 2).byte)
+            high ::= _hex(
+                .byte = unwrap_or_abort(.value = bytes_get(.view = &text, .index = [i + 1]))
+            )
+            low ::= _hex(
+                .byte = unwrap_or_abort(.value = bytes_get(.view = &text, .index = [i + 2]))
+            )
             if high.ok == false or low.ok == false {
                 result = ..error(.reason = ..invalid_input)
                 return
@@ -566,7 +621,7 @@ authority_parts(.text: StringView) -> (.result: Errable#(AuthorityView, (..inval
     i :: UIntNative = 0
 
     while i < byte_length(&text).count {
-        if bytes_get(.view = &text, .index = i).byte == 64 {
+        if unwrap_or_abort(.value = bytes_get(.view = &text, .index = i)) == 64 {
             userinfo = ..some(.value = _slice(.text = text, .start = 0, .end = i).value)
             start = i + 1
             break
@@ -578,14 +633,16 @@ authority_parts(.text: StringView) -> (.result: Errable#(AuthorityView, (..inval
     i = start
 
     if i < byte_length(&text).count {
-        if bytes_get(.view = &text, .index = i).byte == 91 {
-            while bytes_get(.view = &text, .index = i).byte != 93 { i = i + 1 }
+        if unwrap_or_abort(.value = bytes_get(.view = &text, .index = i)) == 91 {
+            while unwrap_or_abort(.value = bytes_get(.view = &text, .index = i)) != 93 {
+                i = [i + 1]
+            }
             i = i + 1
         }
     }
 
     while i < byte_length(&text).count {
-        if bytes_get(.view = &text, .index = i).byte == 58 {
+        if unwrap_or_abort(.value = bytes_get(.view = &text, .index = i)) == 58 {
             end = i
             port = ..some(
                 .value = _slice(

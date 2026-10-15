@@ -9,7 +9,9 @@ _whitespace_token_start(.text: StringView, .start: UIntNative) -> (.position: UI
 
     while position < text._length {
         if [
-            ascii_is_whitespace(.byte = bytes_get(.view = &text, .index = position).byte).ok
+            ascii_is_whitespace(
+                .byte = unwrap_or_abort(.value = bytes_get(.view = &text, .index = position))
+            ).ok
             == false
         ] {
             return
@@ -49,7 +51,7 @@ implement Iterator#(StringWhitespaceIterator) (
 
         while end < self&._text._length {
             if ascii_is_whitespace(
-                .byte = bytes_get(.view = &self&._text, .index = end).byte
+                .byte = unwrap_or_abort(.value = bytes_get(.view = &self&._text, .index = end))
             ).ok {
                 break
             }

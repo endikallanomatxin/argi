@@ -23,18 +23,22 @@ encode#(.AllocatorType: Type: Allocator#(AllocatorType))(
             .value = set_ascii(
                 .self  = $&text
                 .index = index * 2
-                .byte  = bytes_get(
-                    .view = &alphabet, .index = [byte / 16] | convert#(.to: UIntNative)(_)
-                ).byte
+                .byte  = unwrap_or_abort(
+                    .value = bytes_get(
+                        .view = &alphabet, .index = [byte / 16] | convert#(.to: UIntNative)(_)
+                    )
+                )
             )
         )
         _ ::= unwrap_or_abort(
             .value = set_ascii(
                 .self  = $&text
                 .index = index * 2 + 1
-                .byte  = bytes_get(
-                    .view = &alphabet, .index = [byte % 16] | convert#(.to: UIntNative)(_)
-                ).byte
+                .byte  = unwrap_or_abort(
+                    .value = bytes_get(
+                        .view = &alphabet, .index = [byte % 16] | convert#(.to: UIntNative)(_)
+                    )
+                )
             )
         )
         index = index + 1
@@ -57,7 +61,12 @@ decode#(.AllocatorType: Type: Allocator#(AllocatorType))(
     index :: UIntNative = 0
 
     while index < byte_length(&text).count {
-        if _digit(.byte = bytes_get(.view = &text, .index = index).byte).value == 255 {
+        if [
+            _digit(
+                .byte = unwrap_or_abort(.value = bytes_get(.view = &text, .index = index))
+            ).value
+            == 255
+        ] {
             result = ..error(.reason = ..invalid_hex)
             return
         }
@@ -70,8 +79,12 @@ decode#(.AllocatorType: Type: Allocator#(AllocatorType))(
     index = 0
 
     while index < byte_length(&text).count {
-        high ::= _digit(.byte = bytes_get(.view = &text, .index = index).byte).value
-        low ::= _digit(.byte = bytes_get(.view = &text, .index = index + 1).byte).value
+        high ::= _digit(
+            .byte = unwrap_or_abort(.value = bytes_get(.view = &text, .index = index))
+        ).value
+        low ::= _digit(
+            .byte = unwrap_or_abort(.value = bytes_get(.view = &text, .index = [index + 1]))
+        ).value
         push_assume_capacity(.self = $&bytes, .value = high * 16 + low)
         index = index + 2
     }

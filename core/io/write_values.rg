@@ -3,7 +3,10 @@ implement#(.Stream: Type: Writer#(Stream)) WriteValue#(Stream, StringView) (
     .write_value = (.self: $&Stream, .value: StringView) -> (.result: Result) {
         i :: UIntNative = 0
         while i < value._length {
-            Writer#().write_byte(self, .byte = bytes_get(.view = &value, .index = i).byte)!
+            Writer#(
+            ).write_byte(
+                self, .byte = unwrap_or_abort(.value = bytes_get(.view = &value, .index = i))
+            )!
             i = i + 1
         }
         result = ..ok Void()

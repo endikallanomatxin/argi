@@ -66,33 +66,41 @@ encode#(.AllocatorType: Type: Allocator#(AllocatorType))(
             .value = set_ascii(
                 .self  = $&text
                 .index = output
-                .byte  = bytes_get(
-                    .view = &alphabet, .index = [[a / 4] | convert#(.to: UIntNative)(_)]
-                ).byte
+                .byte  = unwrap_or_abort(
+                    .value = bytes_get(
+                        .view = &alphabet, .index = [[a / 4] | convert#(.to: UIntNative)(_)]
+                    )
+                )
             )
         )
         _ ::= unwrap_or_abort(
             .value = set_ascii(
                 .self  = $&text
                 .index = output + 1
-                .byte  = bytes_get(
-                    .view  = &alphabet
-                    .index = [[a % 4] * 16 + b / 16] | convert#(.to: UIntNative)(_)
-                ).byte
+                .byte  = unwrap_or_abort(
+                    .value = bytes_get(
+                        .view  = &alphabet
+                        .index = [[a % 4] * 16 + b / 16] | convert#(.to: UIntNative)(_)
+                    )
+                )
             )
         )
         third :: UInt8 = 61
         fourth :: UInt8 = 61
         if count - index > 1 {
-            third = bytes_get(
-                .view  = &alphabet
-                .index = [[b % 16] * 4 + c / 64] | convert#(.to: UIntNative)(_)
-            ).byte
+            third = unwrap_or_abort(
+                .value = bytes_get(
+                    .view  = &alphabet
+                    .index = [[b % 16] * 4 + c / 64] | convert#(.to: UIntNative)(_)
+                )
+            )
         }
         if count - index > 2 {
-            fourth = bytes_get(
-                .view = &alphabet, .index = [[c % 64] | convert#(.to: UIntNative)(_)]
-            ).byte
+            fourth = unwrap_or_abort(
+                .value = bytes_get(
+                    .view = &alphabet, .index = [[c % 64] | convert#(.to: UIntNative)(_)]
+                )
+            )
         }
         _ ::= unwrap_or_abort(
             .value = set_ascii(.self = $&text, .index = output + 2, .byte = third)
@@ -125,10 +133,20 @@ decode#(.AllocatorType: Type: Allocator#(AllocatorType))(
     padding :: UIntNative = 0
 
     if byte_length(&text).count > 0 {
-        if bytes_get(.view = &text, .index = byte_length(&text).count - 1).byte == 61 {
+        if [
+            unwrap_or_abort(
+                .value = bytes_get(.view = &text, .index = byte_length(&text).count - 1)
+            )
+            == 61
+        ] {
             padding = 1
         }
-        if bytes_get(.view = &text, .index = byte_length(&text).count - 2).byte == 61 {
+        if [
+            unwrap_or_abort(
+                .value = bytes_get(.view = &text, .index = byte_length(&text).count - 2)
+            )
+            == 61
+        ] {
             padding = padding + 1
         }
     }
@@ -136,7 +154,12 @@ decode#(.AllocatorType: Type: Allocator#(AllocatorType))(
     index :: UIntNative = 0
 
     while index < byte_length(&text).count - padding {
-        if _value(.byte = bytes_get(.view = &text, .index = index).byte).value == 255 {
+        if [
+            _value(
+                .byte = unwrap_or_abort(.value = bytes_get(.view = &text, .index = index))
+            ).value
+            == 255
+        ] {
             result = ..error(.reason = ..invalid_base64)
             return
         }
@@ -145,9 +168,11 @@ decode#(.AllocatorType: Type: Allocator#(AllocatorType))(
 
     if padding > 0 {
         last ::= _value(
-            .byte = bytes_get(
-                .view = &text, .index = byte_length(&text).count - padding - 1
-            ).byte
+            .byte = unwrap_or_abort(
+                .value = bytes_get(
+                    .view = &text, .index = byte_length(&text).count - padding - 1
+                )
+            )
         ).value
         if [padding == 2 and last % 16 != 0] or [padding == 1 and last % 4 != 0] {
             result = ..error(.reason = ..invalid_base64)
@@ -159,10 +184,18 @@ decode#(.AllocatorType: Type: Allocator#(AllocatorType))(
     index = 0
 
     while index < byte_length(&text).count {
-        a ::= _value(.byte = bytes_get(.view = &text, .index = index).byte).value
-        b ::= _value(.byte = bytes_get(.view = &text, .index = index + 1).byte).value
-        c ::= _value(.byte = bytes_get(.view = &text, .index = index + 2).byte).value
-        d ::= _value(.byte = bytes_get(.view = &text, .index = index + 3).byte).value
+        a ::= _value(
+            .byte = unwrap_or_abort(.value = bytes_get(.view = &text, .index = index))
+        ).value
+        b ::= _value(
+            .byte = unwrap_or_abort(.value = bytes_get(.view = &text, .index = [index + 1]))
+        ).value
+        c ::= _value(
+            .byte = unwrap_or_abort(.value = bytes_get(.view = &text, .index = [index + 2]))
+        ).value
+        d ::= _value(
+            .byte = unwrap_or_abort(.value = bytes_get(.view = &text, .index = [index + 3]))
+        ).value
         push_assume_capacity(
             .self  = $&bytes
             .value = unwrap_or_abort(.value = [a * 4 + b / 16] | convert#(.to: UInt8)(_))

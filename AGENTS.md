@@ -126,6 +126,10 @@ feature first.
   invocation. Run optimization-mode validation serially after the active suite.
 
 - Current module rules in the compiler:
+  - Iterator protocol calls generated for `for` retain the loop's lexical
+    reach context and participate in late reached-input completion. Preserve
+    both module-visible bindings and specialized `assume` values; an empty
+    context can leave call arguments inconsistent with the final signature.
   - all `.rg` files in a folder share namespace
   - `argi build` compiles a folder module, not a single `.rg` file
   - `import("...")` must be assigned to a name
