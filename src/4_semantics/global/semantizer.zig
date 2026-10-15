@@ -1794,7 +1794,7 @@ fn resolvePendingOperation(
             }
             const core_result = try core.tryResolve(module_index, module, o, operation);
             if (core_result != .resolved and operation == .resolve_comparison) {
-                const contract_result = try dispatch.generic_functions.resolveContractEquality(module_index, module, o, operation.resolve_comparison);
+                const contract_result = try dispatch.generic_functions.resolveContractComparison(module_index, module, o, operation.resolve_comparison);
                 if (contract_result == .resolved) break :blk contract_result;
             }
             break :blk ownedResult(core_result);

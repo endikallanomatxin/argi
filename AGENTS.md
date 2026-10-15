@@ -159,6 +159,13 @@ feature first.
   Arithmetic uses Add, Subtract, Multiply, Divide and Remainder with Left,
   Right and Args participants. Custom equality uses Equal with the same tuple;
   Equal returns (.ok: Bool), and != negates one selected operation call.
+  Ordering uses CompareRelations#(Left, Right), with explicit operand types and
+  four Bool predicates. Its blanket implementation consumes Compare#(Left, Right)
+  and ordinary Ordering interpreters; scalar specializations retain direct predicates.
+  These contracts have no Args participant or default operations. Unordered maps
+  to false for all four predicates; TotalOrder excludes unordered by semantic promise.
+  C enum and callback equality selects Equal evidence;
+  the compiler supplies only their private empty representation classification.
   Infer participant bindings from Args, including reached generic providers,
   never from Result. Concrete and specialized generic expressions share the
   selected-evidence path; no receiver is implicitly borrowed. Trusted scalar

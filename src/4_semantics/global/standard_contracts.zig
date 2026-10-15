@@ -62,9 +62,9 @@ fn participantOfOperation(graph: *const graph_mod.GlobalSemanticGraph, function:
     return selected.participant(graph, 0);
 }
 
-pub const ArithmeticOperation = struct { contract: []const u8, operation: []const u8 };
+pub const OperatorIdentity = struct { contract: []const u8, operation: []const u8 };
 
-pub fn arithmeticOperation(operator: primitives.BinaryOperator) ArithmeticOperation {
+pub fn arithmeticOperation(operator: primitives.BinaryOperator) OperatorIdentity {
     return switch (operator) {
         .addition => .{ .contract = "Add", .operation = "add" },
         .subtraction => .{ .contract = "Subtract", .operation = "subtract" },
@@ -72,6 +72,26 @@ pub fn arithmeticOperation(operator: primitives.BinaryOperator) ArithmeticOperat
         .division => .{ .contract = "Divide", .operation = "divide" },
         .modulo => .{ .contract = "Remainder", .operation = "remainder" },
     };
+}
+
+pub fn comparisonOperation(operator: primitives.ComparisonOperator) OperatorIdentity {
+    return switch (operator) {
+        .equal, .not_equal => .{ .contract = "Equal", .operation = "equal" },
+        .less_than => .{ .contract = "CompareRelations", .operation = "less_than" },
+        .less_than_or_equal => .{ .contract = "CompareRelations", .operation = "less_than_or_equal" },
+        .greater_than => .{ .contract = "CompareRelations", .operation = "greater_than" },
+        .greater_than_or_equal => .{ .contract = "CompareRelations", .operation = "greater_than_or_equal" },
+    };
+}
+
+pub fn scalarComparisonPrimitive(name: []const u8) ?primitives.ComparisonOperator {
+    const prefix = "__scalar_";
+    if (!std.mem.startsWith(u8, name, prefix)) return null;
+    for (std.meta.tags(primitives.ComparisonOperator)) |operator| {
+        if (operator == .not_equal) continue;
+        if (std.mem.eql(u8, name[prefix.len..], comparisonOperation(operator).operation)) return operator;
+    }
+    return null;
 }
 
 pub fn scalarArithmeticPrimitive(name: []const u8) ?primitives.BinaryOperator {
@@ -86,7 +106,7 @@ pub fn scalarArithmeticPrimitive(name: []const u8) ?primitives.BinaryOperator {
 /// Diagnostics retain the selected identity without allocating messages into
 /// graph storage that a failed speculative operation will roll back.
 pub fn operatorMessage(contract: []const u8, comptime prefix: []const u8, comptime suffix: []const u8) []const u8 {
-    inline for (.{ "Add", "Subtract", "Multiply", "Divide", "Remainder", "Equal" }) |name| {
+    inline for (.{ "Add", "Subtract", "Multiply", "Divide", "Remainder", "Equal", "CompareRelations" }) |name| {
         if (std.mem.eql(u8, contract, name)) return prefix ++ name ++ suffix;
     }
     return prefix ++ "operator" ++ suffix;

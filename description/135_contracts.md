@@ -146,8 +146,35 @@ Multiply, Divide or Remainder. Bundled scalar conformances use private
 representation hooks; primitive lowering happens after evidence selection and
 preserves constant expressions. It never replaces a custom implementation.
 Scalar equality also selects Equal evidence before primitive lowering, preserving
-IEEE NaN behavior and evaluating != once. Ordered comparisons and C enum/function
-pointer equality still use representation primitives and remain migration work.
+IEEE NaN behavior and evaluating != once.
+
+Ordered comparisons use two contracts with ordinary Left and Right participants:
+
+- `Compare#(Left, Right)` requires `compare(.left: Left, .right: Right)` returning
+  `(.order: Ordering)`. Ordering has less, equal, greater and unordered variants.
+- `CompareRelations#(Left, Right)` requires Compare and the four Bool operations
+  less_than, less_than_or_equal, greater_than and greater_than_or_equal.
+
+A generic implementation of CompareRelations consumes Compare evidence and
+interprets its result through ordinary core functions. More specific implementations
+replace that complete predicate implementation. Contracts have no optional operations
+or default bodies. Operators select CompareRelations using the actual operand types;
+references must be passed explicitly. These contracts have no Args participant and
+require no inference through auxiliary argument records or associated results.
+Primitive scalar implementations specialize the predicates, preserving direct LLVM
+comparisons without computing the complete classification. All four derived
+predicates return false for unordered; they never derive inclusive comparisons by
+negating strict comparisons. Compare is infallible; fallible algorithms use explicit
+operations outside these standard contracts.
+
+`TotalOrder#(Left, Right)` requires Compare and promises a total ordering, including
+that compare never returns unordered. Mathematical consistency, transitivity and
+coherence with any corresponding Equal implementation remain implementer obligations.
+Integers, Bool and Char provide this evidence; floating-point types do not.
+
+C enum and C function-pointer equality also select Equal evidence. Their private
+representation classification is compiler-provided; it does not provide ordering
+or bypass operation selection. Choice tag tests retain their control-flow representation.
 
 ## Virtual evidence and safety
 

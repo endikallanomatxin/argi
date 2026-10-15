@@ -34,4 +34,16 @@ pub const arithmetic_core_source =
     \\implement#(.Value: Type: _TestEquality) Equal#(Value, Value, (.left: Value, .right: Value)) (
     \\    .equal = (.args: (.left: Value, .right: Value)) -> (.ok: Bool) { ok = __scalar_equal(.left = args.left, .right = args.right) }
     \\)
+    \\CompareRelations#(.Left: Type, .Right: Type): Contract = (
+    \\    .less_than: (.left: Left, .right: Right) -> (.ok: Bool)
+    \\    .less_than_or_equal: (.left: Left, .right: Right) -> (.ok: Bool)
+    \\    .greater_than: (.left: Left, .right: Right) -> (.ok: Bool)
+    \\    .greater_than_or_equal: (.left: Left, .right: Right) -> (.ok: Bool)
+    \\)
+    \\implement#(.Value: Type: _TestEquality) CompareRelations#(Value, Value) (
+    \\    .less_than = (.left: Value, .right: Value) -> (.ok: Bool) { ok = __scalar_less_than(.left = left, .right = right) }
+    \\    .less_than_or_equal = (.left: Value, .right: Value) -> (.ok: Bool) { ok = __scalar_less_than_or_equal(.left = left, .right = right) }
+    \\    .greater_than = (.left: Value, .right: Value) -> (.ok: Bool) { ok = __scalar_greater_than(.left = left, .right = right) }
+    \\    .greater_than_or_equal = (.left: Value, .right: Value) -> (.ok: Bool) { ok = __scalar_greater_than_or_equal(.left = left, .right = right) }
+    \\)
 ;

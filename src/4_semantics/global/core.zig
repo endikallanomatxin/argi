@@ -928,18 +928,6 @@ pub const Resolver = struct {
             }
         }
         self.coerceIntegerPair(left, &left_ty, right, &right_ty);
-        const bool_ty = try self.builtin(.Bool);
-        const target = globalizer.globalNode(o, value.node);
-        const directly_comparable = self.isDirectComparison(value.operator, left_ty, right_ty);
-        if (directly_comparable and ((value.operator != .equal and value.operator != .not_equal) or self.isForeignEqualityRepresentation(left_ty, right_ty))) {
-            self.graph.nodes.items[@intFromEnum(target)] = .{
-                .source = self.graph.nodes.items[@intFromEnum(left)].source,
-                .ty = bool_ty,
-                .content = .{ .comparison = .{ .operator = value.operator, .left = left, .right = right } },
-            };
-            self.stats.operators += 1;
-            return true;
-        }
         return false;
     }
 

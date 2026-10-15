@@ -10,8 +10,6 @@ registries or implicit participant/representation adapters.
 - Define joint virtual evidence for several hidden participants, including its
   representation, ownership and lifetime relations.
 - Extend symbolic dimension constraints conservatively without inverse inference.
-- Specify standard identities for ordered comparisons, C enum equality and
-  callback-pointer equality before replacing their representation primitives.
 
 ## Independent diagnostic follow-up
 
@@ -59,8 +57,33 @@ Verify contextual fixed-array initialization in parameterized ordinary bodies:
 `[1]UInt8 = (0)` previously produced an incorrect generic-input mismatch. Keep
 this issue independent of contract evidence and virtual representation.
 
+## Independent parameterized lowering follow-up
+
+- TODO: Normalize an `else if` node into a branch block before calling
+  `blockAsNode`; the current parameterized operand traversal assumes every else
+  branch is a code block and can report ExpectedParameterizedBlock without a
+  useful source diagnostic. The scalar classification currently uses nested blocks.
+- TODO: Supply known comparison-operand context to bare choice tags in generic
+  bodies. The comparison adapters intentionally call ordinary Ordering predicates,
+  whose fixed input types already provide that context.
+
 ## Validation
 
 Use focused contract, polymorphism and editor checks with parallel workers,
 then the complete regression. Preserve selected-evidence rollback, associated
 signature checking, virtual safety proofs and cold/warm frontend equivalence.
+
+## Ordered comparison migration
+
+Compare#(Left, Right) classifies two explicit operand values with an infallible
+Ordering result: less, equal, greater or unordered. CompareRelations#(Left, Right)
+requires Compare and the four Bool predicates. A normal generic implementation
+supplies the predicates through ordinary core functions. More specific concrete
+and generic implementations replace that implementation, including direct scalar
+representation hooks. No optional operations, default operation bodies, Args
+participant or inverse inference are involved.
+
+TotalOrder is a semantic promise over Compare, available for integers, Bool and
+Char but not floating-point types. All derived predicates return false for unordered.
+C enum and callback equality uses Equal through checked empty representation facts.
+Tag tests keep their control-flow representation. Codegen reuses native predicates.
