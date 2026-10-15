@@ -9,12 +9,12 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     sum :: Int32 = 0
     for item in queue { sum = sum + item }
     if sum != 9 { abort }
-    iterator ::= to_rw_pointer_iterator(.value = $&queue).iterator
+    iterator ::= to_mutable_reference_iterator(.value = $&queue).iterator
     while has_next(.self = &iterator).ok {
         pointer ::= next(.self = $&iterator).value
         pointer&= pointer&+ 10
     }
-    readonly ::= to_ro_pointer_iterator(.value = &queue).iterator
+    readonly ::= to_reference_iterator(.value = &queue).iterator
     sum = 0
     while has_next(.self = &readonly).ok { sum = sum + next(.self = $&readonly).value&}
     if sum != 39 { abort }
@@ -22,7 +22,9 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     for item in empty { abort }
 }
 
-main#(.WriterType: Type: Writer#(WriterType))(.system: System, .writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
+main#(.WriterType: Type: Writer#(WriterType))(
+    .system: System, .writer: $&WriterType = reach writer
+) -> (.status_code: Int32 = 1) := {
     run_main(.system = system)!!!
     status_code = 0
 }

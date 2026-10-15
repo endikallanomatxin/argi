@@ -35,7 +35,7 @@ read_line#(.SelfType: Type: Reader#(SelfType))(
     }
 
     if terminated and count > 0 {
-        last ::= unwrap_or_abort(.value = get_ro_ref(&buffer, .index = count - 1))
+        last ::= unwrap_or_abort(.value = get_reference(&buffer, .index = count - 1))
         if last&== 13 { count = count - 1 }
     }
 

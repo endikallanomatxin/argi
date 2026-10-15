@@ -22,7 +22,7 @@ implement#(.Stream: Type: Writer#(Stream)) WriteValue#(Stream, ArrayView#(.t: UI
     .write_value = (.self: $&Stream, .value: ArrayView#(.t: UInt8)) -> (.result: Result) {
         wrote_count :: UIntNative = 0
         while wrote_count < length(&value).count {
-            byte ::= unwrap_or_abort(.value = get_ro_ref(&value, .index = wrote_count))
+            byte ::= unwrap_or_abort(.value = get_reference(&value, .index = wrote_count))
             Writer#().write_byte(self, .byte = byte&)!
             wrote_count = wrote_count + 1
         }

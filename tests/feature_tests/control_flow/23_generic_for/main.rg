@@ -2,11 +2,11 @@ sum#(.t: Type: Iterable#(t))(.input: &t) -> (.total: Int32 = 0) := {
     for item in input { total = total + item }
 }
 
-borrow_sum#(.t: Type: ROPointerIterable#(t))(.input: &t) -> (.total: Int32 = 0) := {
+borrow_sum#(.t: Type: ReferenceIterable#(t))(.input: &t) -> (.total: Int32 = 0) := {
     for &item in input&{ total = total + item&}
 }
 
-mutate#(.t: Type: RWPointerIterable#(t))(.input: $&t) -> () := {
+mutate#(.t: Type: MutableReferenceIterable#(t))(.input: $&t) -> () := {
     for $&item in input&{ item&= item&+ 1 }
 }
 
@@ -42,7 +42,9 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     if drops != 2 { abort }
 }
 
-main#(.WriterType: Type: Writer#(WriterType))(.system: System, .writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
+main#(.WriterType: Type: Writer#(WriterType))(
+    .system: System, .writer: $&WriterType = reach writer
+) -> (.status_code: Int32 = 1) := {
     run_main(.system = system)!!!
     status_code = 0
 }

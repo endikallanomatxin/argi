@@ -86,7 +86,9 @@ _next_directory_walker#(.Provider: Type: Allocator#(Provider)) := (
 
     while length(&self&._frames).count > 0 {
         count ::= length(&self&._frames).count
-        frame ::= unwrap_or_abort(.value = get_rw_ref($&self&._frames, .index = count - 1))
+        frame ::= unwrap_or_abort(
+            .value = get_mutable_reference($&self&._frames, .index = [count - 1])
+        )
         match next($&frame&.directory)! {
             ..none { discarded ::= ~unwrap_or_abort(.value = pop($&self&._frames)) }
             ..some ~entry {

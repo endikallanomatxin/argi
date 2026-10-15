@@ -31,8 +31,8 @@ reverse_owned#(.t: Type)(.self: $&DynamicArray#(.t: t)) -> () := {
 _owned_array_less#(.t: Type, .Policy: Type: BorrowedOrderPolicy#(Policy, t))(
     .self: &DynamicArray#(.t: t), .order: &Policy, .left: UIntNative, .right: UIntNative
 ) -> (.ok: Bool) := {
-    a ::= _trusted_dynamic_array_get_ro_ref#(.t: t)(.array = self, .index = left).reference
-    b ::= _trusted_dynamic_array_get_ro_ref#(.t: t)(.array = self, .index = right).reference
+    a ::= _trusted_dynamic_array_get_reference#(.t: t)(.array = self, .index = left).reference
+    b ::= _trusted_dynamic_array_get_reference#(.t: t)(.array = self, .index = right).reference
     ok = BorrowedOrderPolicy#(Policy, t).less(order, .left = a, .right = b).ok
 }
 

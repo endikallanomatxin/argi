@@ -38,7 +38,7 @@ copying a borrowed key or value does not acquire its backing storage.
   retains the existing key and does not allocate. Construction and growth
   report `out_of_memory`; failed growth preserves all existing entries.
 - `get(.self, .key)` returns an optional copied value. `contains` tests membership.
-- `get_ro_ref(.self, .key)` returns an optional borrowed value. Mutation and
+- `get_reference(.self, .key)` returns an optional borrowed value. Mutation and
   cleanup invalidate element borrows; acquire a new reference after mutation.
 - `remove(.self, .key, .allocator)` reports whether an entry was removed.
 - `length` reports entries, `capacity` reports slots, and
@@ -108,7 +108,7 @@ Zero-sized elements remain distinct logical occupied slots.
 - `pop(.self)` moves the oldest value out, or reports `empty`. An extracted
   owning value is independent of the buffer storage and can outlive it.
 - `length` and `capacity` report logical occupancy and fixed capacity.
-- `get_ro_ref(.self, .index)` borrows an occupied element in FIFO order,
+- `get_reference(.self, .index)` borrows an occupied element in FIFO order,
   or reports `out_of_bounds`. The buffer implements `Indexable#(RingBuffer#(T))` and
   supports equality search when its elements satisfy that algorithm's contract.
 - `deinit(.self)` destroys the remaining occupied elements once
@@ -160,7 +160,7 @@ without allocating table storage. Failed growth destroys consumed inputs and
 preserves existing entries. This replacement rule differs from copyable
 `HashMap`, which retains the existing key.
 
-`contains(.self, .key: &K)` queries membership; `get_ro_ref` returns an optional
+`contains(.self, .key: &K)` queries membership; `get_reference` returns an optional
 borrowed `&V`. `extract(.self, .key: &K)` removes an entry and returns an optional
 owning `OwnedHashMapEntry<K, V>` containing `.key` and `.value`. The extracted
 entry has independent ownership and can outlive the table. `remove` destroys
@@ -183,14 +183,14 @@ Duplicate insertion retains the stored key and destroys the supplied equivalent
 key. Failed growth destroys the supplied key and preserves membership.
 `contains`, `remove`, `reserve`, `length`, `capacity`, and `deinit` correspond to
 map operations. `extract(.self, .key: &K)` returns the removed owning key.
-`to_ro_pointer_iterator` visits readonly key references; it never copies owners.
+`to_reference_iterator` visits readonly key references; it never copies owners.
 
 Owning a key or value does not freeze borrowed state inside it. External backing
 storage must remain live and key contents must remain unchanged while stored.
 Ownership transfer supplies no new native allocation receipt or reference
 validity beyond the original values' checked storage contracts.
 
-For `OwnedHashMap<String, V, StringHashPolicy>`, `contains` and `get_ro_ref`
+For `OwnedHashMap<String, V, StringHashPolicy>`, `contains` and `get_reference`
 also accept `.key: StringView`. `get_ref(.self: $&map, .key: StringView)`
 returns an optional mutable value reference. These probes allocate nothing,
 retain the map shape dependency and never expose mutable keys. Editing a value

@@ -32,8 +32,10 @@ _bit_set_combine_into(.self: $&BitSet, .other: &BitSet, .mode: UInt8) -> (
     index :: UIntNative = 0
 
     while index < length(&self&._storage).count {
-        left ::= unwrap_or_abort(.value = get_rw_ref($&self&._storage, .index = index))
-        right ::= unwrap_or_abort(.value = get_ro_ref(&other&._storage, .index = index))
+        left ::= unwrap_or_abort(
+            .value = get_mutable_reference($&self&._storage, .index = index)
+        )
+        right ::= unwrap_or_abort(.value = get_reference(&other&._storage, .index = index))
         left&= _bit_set_combine(.left = left&, .right = right&, .mode = mode).value
         index = index + 1
     }

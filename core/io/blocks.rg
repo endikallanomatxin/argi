@@ -114,7 +114,9 @@ read_until#(.SelfType: Type: Reader#(SelfType))(
                     result = ..ok(.count = count, .termination = ..delimiter)
                     return
                 }
-                pointer ::= unwrap_or_abort(.value = get_rw_ref($&buffer, .index = count))
+                pointer ::= unwrap_or_abort(
+                    .value = get_mutable_reference($&buffer, .index = count)
+                )
                 pointer&= value
                 count = count + 1
             }

@@ -73,8 +73,8 @@ _queue_push_owned_priority_queue#(
 
     while child > 0 {
         parent ::= [child - 1] / 2
-        a ::= unwrap_or_abort(.value = get_ro_ref(&self&._items, .index = child))
-        b ::= unwrap_or_abort(.value = get_ro_ref(&self&._items, .index = parent))
+        a ::= unwrap_or_abort(.value = get_reference(&self&._items, .index = child))
+        b ::= unwrap_or_abort(.value = get_reference(&self&._items, .index = parent))
         if BorrowedOrderPolicy#(order, t).less(self&._order, .left = a, .right = b).ok == false {
             return
         }
@@ -88,7 +88,7 @@ peek_ref#(.t: Type, .order: Type: BorrowedOrderPolicy#(order, t))(
 ) -> (.value: ?&t = ..none) := {
     if length(&self&._items).count == 0 { return }
     value = ..some(
-        .value = _trusted_dynamic_array_get_ro_ref#(.t: t)(
+        .value = _trusted_dynamic_array_get_reference#(.t: t)(
             .array = &self&._items, .index = 0
         ).reference
     )
@@ -111,16 +111,16 @@ _queue_pop_owned_priority_queue#(.t: Type, .order: Type: BorrowedOrderPolicy#(or
     while root < count / 2 {
         child ::= root * 2 + 1
         if child + 1 < count {
-            left ::= unwrap_or_abort(.value = get_ro_ref(&self&._items, .index = child))
-            right ::= unwrap_or_abort(.value = get_ro_ref(&self&._items, .index = child + 1))
+            left ::= unwrap_or_abort(.value = get_reference(&self&._items, .index = child))
+            right ::= unwrap_or_abort(.value = get_reference(&self&._items, .index = child + 1))
             if BorrowedOrderPolicy#(
                 order, t
             ).less(self&._order, .left = right, .right = left).ok {
                 child = [child + 1]
             }
         }
-        a ::= unwrap_or_abort(.value = get_ro_ref(&self&._items, .index = child))
-        b ::= unwrap_or_abort(.value = get_ro_ref(&self&._items, .index = root))
+        a ::= unwrap_or_abort(.value = get_reference(&self&._items, .index = child))
+        b ::= unwrap_or_abort(.value = get_reference(&self&._items, .index = root))
         if BorrowedOrderPolicy#(order, t).less(self&._order, .left = a, .right = b).ok == false {
             return
         }

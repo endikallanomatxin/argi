@@ -12,12 +12,12 @@ main() -> (.status_code: Int32) := {
         status_code = 2
         return
     }
-    observed ::= get_ro_ref(.self = &ro, .index = 1).result
+    observed ::= get_reference(.self = &ro, .index = 1).result
     if is(.value = observed, .variant = ..error) {
         status_code = 3
         return
     }
-    if observed..ok& != 9 {
+    if observed ..ok&!= 9 {
         status_code = 4
         return
     }

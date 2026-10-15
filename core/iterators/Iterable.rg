@@ -4,14 +4,14 @@ Iterable#(.Collection: Type): Contract = (
     .to_iterator  : (.value: &Collection) -> (.iterator: IteratorType)
 )
 
-ROPointerIterable#(.Collection: Type): Contract = (
+ReferenceIterable#(.Collection: Type): Contract = (
     .Item : Type
     .IteratorType : Type
-    .to_ro_pointer_iterator : (.value: &Collection) -> (.iterator: IteratorType)
+    .to_reference_iterator : (.value: &Collection) -> (.iterator: IteratorType)
 )
 
-RWPointerIterable#(.Collection: Type): Contract = (
+MutableReferenceIterable#(.Collection: Type): Contract = (
     .Item : Type
     .IteratorType : Type
-    .to_rw_pointer_iterator : (.value: $&Collection) -> (.iterator: IteratorType)
+    .to_mutable_reference_iterator : (.value: $&Collection) -> (.iterator: IteratorType)
 )

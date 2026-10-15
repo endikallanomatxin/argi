@@ -7032,8 +7032,8 @@ test "feature_tests/collections/75X_spatial_iterator_private_fields" {
     try buildExpectFail("tests/feature_tests/collections/75X_spatial_iterator_private_fields", "field '_index' is private");
 }
 
-test "feature_tests/collections/76X_spatial_private_element_pointer" {
-    try buildExpectFail("tests/feature_tests/collections/76X_spatial_private_element_pointer", "no function named '_trusted_dynamic_array_element_ro_pointer' exists");
+test "feature_tests/collections/76X_spatial_private_element_reference" {
+    try buildExpectFail("tests/feature_tests/collections/76X_spatial_private_element_reference", "no function named '_trusted_dynamic_array_element_reference' exists");
 }
 
 test "feature_tests/ownership/301X_storage_capability_forwarded_twice" {
@@ -9961,17 +9961,17 @@ test "feature_tests/system/87_path_capacity_bounds" {
     try runExpect("tests/feature_tests/system/87_path_capacity_bounds", 0);
 }
 
-test "feature_tests/control_flow/17_for_owning" {
-    try expectSuccessfulBuild("tests/feature_tests/control_flow/17_for_owning");
-    try runExpect("tests/feature_tests/control_flow/17_for_owning", 0);
+test "feature_tests/control_flow/17_for_moving" {
+    try expectSuccessfulBuild("tests/feature_tests/control_flow/17_for_moving");
+    try runExpect("tests/feature_tests/control_flow/17_for_moving", 0);
 }
 
-test "feature_tests/control_flow/20X_for_owning_reuse" {
-    try buildExpectFail("tests/feature_tests/control_flow/20X_for_owning_reuse", "moved");
+test "feature_tests/control_flow/20X_for_moving_reuse" {
+    try buildExpectFail("tests/feature_tests/control_flow/20X_for_moving_reuse", "moved");
 }
 
-test "feature_tests/control_flow/21X_for_owning_borrow" {
-    try buildExpectFail("tests/feature_tests/control_flow/21X_for_owning_borrow", "OwningIterable");
+test "feature_tests/control_flow/21X_for_moving_borrow" {
+    try buildExpectFail("tests/feature_tests/control_flow/21X_for_moving_borrow", "MovingIterable");
 }
 
 test "feature_tests/control_flow/22_loop_transfer_cleanup" {

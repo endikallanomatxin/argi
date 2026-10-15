@@ -33,13 +33,17 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         ..ok _ { abort } ..error error { if error.reason != ..out_of_bounds { abort } }
     }
     if drops != 6 { abort }
-    match replace(.self = $&array, .index = 9, .value = _pair(.id = 5).value, .allocator = allocator) {
+    match replace(
+        .self = $&array, .index = 9, .value = _pair(.id = 5).value, .allocator = allocator
+    ) {
         ..ok _ { abort } ..error error { if error.reason != ..out_of_bounds { abort } }
     }
     if drops != 8 { abort }
     replace(.self = $&array, .index = 0, .value = _pair(.id = 6).value, .allocator = allocator)!
     if drops != 10 { abort }
-    if unwrap_or_abort(.value = get_ro_ref(.self = &array, .index = 0))&.first.id != 6 { abort }
+    if unwrap_or_abort(.value = get_reference(.self = &array, .index = 0))&.first.id != 6 {
+        abort
+    }
     deinit(.self = $&array)
     if drops != 12 { abort }
     ring ::= RingBuffer#(.t: Pair)(.capacity = 2, .allocator = allocator)!
@@ -68,17 +72,15 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     if drops != 26 { abort }
 }
 
-main#(.WriterType: Type: Writer#(WriterType))(.system: System, .writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
+main#(.WriterType: Type: Writer#(WriterType))(
+    .system: System, .writer: $&WriterType = reach writer
+) -> (.status_code: Int32 = 1) := {
     run_main(.system = system)!!!
     status_code = 0
 }
 
-implement Allocator#(RefusingAllocator)(
-    .allocate = (
-            .self      : $&RefusingAllocator,
-            .size      : UIntNative,
-            .alignment : UIntNative           = 1
-        ) -> (
-            .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
-        ) { result = ..error(.reason = ..out_of_memory) }
+implement Allocator#(RefusingAllocator) (
+    .allocate = (.self: $&RefusingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
+        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+    ) { result = ..error(.reason = ..out_of_memory) }
 )

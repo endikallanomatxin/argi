@@ -1,14 +1,14 @@
 words ::= import ("../../../usecase_tests/03_word_count/library")
 
 expect_count(
-        .self      : &OwnedHashMap#(.key: String, .value: UIntNative, .policy: StringHashPolicy),
-        .word      : StringView,
-        .expected  : UIntNative,
-        .allocator : $&PageAllocator
-    ) -> !Void = ..ok Void() := {
+    .self      : &OwnedHashMap#(.key: String, .value: UIntNative, .policy: StringHashPolicy),
+    .word      : StringView,
+    .expected  : UIntNative,
+    .allocator : $&PageAllocator
+) -> !Void = ..ok Void() := {
     assume allocator
     key ::= format(.value = word)!
-    match get_ro_ref(.self = self, .key = &key).result {
+    match get_reference(.self = self, .key = &key).result {
         ..none { abort }
         ..some borrowed { if borrowed.value&!= expected { abort } }
     }
@@ -17,8 +17,7 @@ expect_count(
 run_main(.system: System) -> !Void = ..ok Void() := {
     assume allocator := system.page_allocator
     counts ::= OwnedHashMap#(.key: String, .value: UIntNative, .policy: StringHashPolicy)(
-        .policy    = StringHashPolicy()
-        .allocator = allocator
+        .policy = StringHashPolicy(), .allocator = allocator
     )!
     scratch :: [4]UInt8 = (0, 0, 0, 0)
     words.count_directory(
@@ -54,7 +53,9 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     expect_count(.self = &counts, .word = "café", .expected = 3, .allocator = allocator)!
 }
 
-main#(.WriterType: Type: Writer#(WriterType))(.system: System, .writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
+main#(.WriterType: Type: Writer#(WriterType))(
+    .system: System, .writer: $&WriterType = reach writer
+) -> (.status_code: Int32 = 1) := {
     run_main(.system = system)!!!
     status_code = 0
 }

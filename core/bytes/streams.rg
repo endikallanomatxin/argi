@@ -7,7 +7,9 @@ implement Reader#(ByteReader) (
             return
         }
 
-        byte ::= unwrap_or_abort(.value = get_ro_ref(&self&._bytes, .index = self&._position))
+        byte ::= unwrap_or_abort(
+            .value = get_reference(&self&._bytes, .index = self&._position)
+        )
         self&._position = self&._position + 1
 
         result = ..ok ..ok byte&
@@ -26,9 +28,9 @@ implement BlockReader#(ByteReader) (
 
         while index < count {
             source ::= unwrap_or_abort(
-                .value = get_ro_ref(&self&._bytes, .index = [self&._position + index])
+                .value = get_reference(&self&._bytes, .index = [self&._position + index])
             )
-            target ::= unwrap_or_abort(.value = get_rw_ref($&buffer, .index = index))
+            target ::= unwrap_or_abort(.value = get_mutable_reference($&buffer, .index = index))
             target&= source&
             index = index + 1
         }
@@ -55,9 +57,11 @@ implement BlockWriter#(ByteWriter) (
         index :: UIntNative = 0
 
         while index < count {
-            source ::= unwrap_or_abort(.value = get_ro_ref(&buffer, .index = index))
+            source ::= unwrap_or_abort(.value = get_reference(&buffer, .index = index))
             target ::= unwrap_or_abort(
-                .value = get_rw_ref($&self&._bytes, .index = [self&._position + index])
+                .value = get_mutable_reference(
+                    $&self&._bytes, .index = [self&._position + index]
+                )
             )
             target&= source&
             index = index + 1
@@ -79,7 +83,7 @@ implement Writer#(ByteWriter) (
         }
 
         target ::= unwrap_or_abort(
-            .value = get_rw_ref($&self&._bytes, .index = self&._position)
+            .value = get_mutable_reference($&self&._bytes, .index = self&._position)
         )
         target&= byte
         self&._position = self&._position + 1

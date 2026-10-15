@@ -529,10 +529,10 @@ pub const Resolver = struct {
             mutable: bool,
         };
         const protocol: ForProtocol = switch (value.mode) {
-            .move => .{ .iterable_contract = "OwningIterable", .conversion = "to_owning_iterator", .mutable = false },
+            .move => .{ .iterable_contract = "MovingIterable", .conversion = "to_moving_iterator", .mutable = false },
             .value => .{ .iterable_contract = "Iterable", .conversion = "to_iterator", .mutable = false },
-            .borrow => .{ .iterable_contract = "ROPointerIterable", .conversion = "to_ro_pointer_iterator", .mutable = false },
-            .mut_borrow => .{ .iterable_contract = "RWPointerIterable", .conversion = "to_rw_pointer_iterator", .mutable = true },
+            .borrow => .{ .iterable_contract = "ReferenceIterable", .conversion = "to_reference_iterator", .mutable = false },
+            .mut_borrow => .{ .iterable_contract = "MutableReferenceIterable", .conversion = "to_mutable_reference_iterator", .mutable = true },
         };
         const iterable_contract_name = protocol.iterable_contract;
         const conversion_name = protocol.conversion;
@@ -691,7 +691,7 @@ pub const Resolver = struct {
         source: primitives.SourceRef,
     ) !SyntheticCallResult {
         const input = try self.positionalInput(argument, source);
-        const contract_name = if (std.mem.eql(u8, name, "has_next") or std.mem.eql(u8, name, "next")) "Iterator" else if (std.mem.eql(u8, name, "to_iterator")) "Iterable" else if (std.mem.eql(u8, name, "to_ro_pointer_iterator")) "ROPointerIterable" else if (std.mem.eql(u8, name, "to_rw_pointer_iterator")) "RWPointerIterable" else "OwningIterable";
+        const contract_name = if (std.mem.eql(u8, name, "has_next") or std.mem.eql(u8, name, "next")) "Iterator" else if (std.mem.eql(u8, name, "to_iterator")) "Iterable" else if (std.mem.eql(u8, name, "to_reference_iterator")) "ReferenceIterable" else if (std.mem.eql(u8, name, "to_mutable_reference_iterator")) "MutableReferenceIterable" else "MovingIterable";
         const declaration = self.visibleContract(module_index, contract_name) orelse return .deferred;
         const ty = self.graph.node(argument).ty orelse return .deferred;
         const participant = if (self.graph.semanticType(ty) == .pointer) self.graph.semanticType(ty).pointer.child else ty;

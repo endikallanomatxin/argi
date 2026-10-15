@@ -21,7 +21,7 @@ join#(.AllocatorType: Type: Allocator#(AllocatorType))(
     -- Inspect lengths before allocating or reading any text bytes. Each sum
     -- is checked by subtraction, including the trailing-NUL reservation.
     while index < count {
-        part ::= unwrap_or_abort(.value = get_ro_ref(&parts, .index = index))&
+        part ::= unwrap_or_abort(.value = get_reference(&parts, .index = index))&
         if part.length > limit - total {
             result = ..error(.reason = ..size_overflow)
             return
@@ -46,7 +46,7 @@ join#(.AllocatorType: Type: Allocator#(AllocatorType))(
             _string_copy_view_into(.output = $&output, .offset = offset, .source = separator)
             offset = offset + separator.length
         }
-        part ::= unwrap_or_abort(.value = get_ro_ref(&parts, .index = index))&
+        part ::= unwrap_or_abort(.value = get_reference(&parts, .index = index))&
         _string_copy_view_into(.output = $&output, .offset = offset, .source = part)
         offset = offset + part.length
         index = index + 1

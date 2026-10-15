@@ -1,26 +1,38 @@
 BytePolicy: Type = ()
+
 implement ImplicitlyCopyable#(BytePolicy) ()
+
 implement HashPolicy#(BytePolicy, UInt8) (
-    .hash = (.self: &BytePolicy, .key: UInt8) -> (.hash: UIntNative) { hash = key | convert#(.to: UIntNative)(_) }
-    .eql = (.self: &BytePolicy, .left: UInt8, .right: UInt8) -> (.ok: Bool) { ok = left == right }
+    .hash = (.self: &BytePolicy, .key: UInt8) -> (.hash: UIntNative) {
+        hash = [key | convert#(.to: UIntNative)(_)]
+    }
+    .eql = (.self: &BytePolicy, .left: UInt8, .right: UInt8) -> (.ok: Bool) {
+        ok = left == right
+    }
 )
 
-lookup_byte#(.Map: Type: MapLookup#(.Map: Map, .Key: UInt8, .Value: UInt8)) := (.self: &Map) -> (.result: ?UInt8) {
+lookup_byte#(.Map: Type: MapLookup#(.Map: Map, .Key: UInt8, .Value: UInt8)) := (.self: &Map) -> (
+    .result : ?UInt8
+) {
     result = ~MapLookup#(Map).get(.self = self, .key = 250)
 }
 
 main := (.system: System) -> (.status_code: Int32 = 0) {
     assume allocator := system.page_allocator
-    map ::= unwrap_or_abort(.value = HashMap#(.key: UInt8, .value: UInt8, .policy: BytePolicy)(.policy = BytePolicy(), .capacity = 1))
+    map ::= unwrap_or_abort(
+        .value = HashMap#(.key: UInt8, .value: UInt8, .policy: BytePolicy)(
+            .policy = BytePolicy(), .capacity = 1
+        )
+    )
     unwrap_or_abort(.value = put(.self = $&map, .key = 250, .value = 251))
     if contains(.self = &map, .key = 250).ok == false { status_code = 1 }
     match lookup_byte(.self = &map) {
         ..none { status_code = 2 }
         ..some item { if item.value != 251 { status_code = 3 } }
     }
-    match get_ro_ref(.self = &map, .key = 250).result {
+    match get_reference(.self = &map, .key = 250).result {
         ..none { status_code = 4 }
-        ..some item { if item.value& != 251 { status_code = 5 } }
+        ..some item { if item.value&!= 251 { status_code = 5 } }
     }
     if remove(.self = $&map, .key = 250).removed == false { status_code = 6 }
     if contains(.self = &map, .key = 250).ok { status_code = 7 }

@@ -70,7 +70,9 @@ implement#(.base_type: Type: Writer#(base_type)) Writer#(BufferedWriter#(.base_t
             return
         }
 
-        ptr ::= unwrap_or_abort(.value = get_rw_ref($&self&.buffer, .index = self&.length))
+        ptr ::= unwrap_or_abort(
+            .value = get_mutable_reference($&self&.buffer, .index = self&.length)
+        )
         ptr&= byte
         next_length ::= self&.length + 1
         self&.length = next_length

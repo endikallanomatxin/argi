@@ -1,20 +1,18 @@
 run_main(.system: System) -> !Void = ..ok Void() := {
     assume allocator := system.page_allocator
     map ::= OwnedHashMap#(.key: String, .value: String, .policy: StringHashPolicy)(
-        .policy    = StringHashPolicy()
-        .allocator = allocator
+        .policy = StringHashPolicy(), .allocator = allocator
     )!
     key ::= format(.value = "key", .allocator = allocator)!
     value ::= format(.value = "first", .allocator = allocator)!
     put(.self = $&map, .key = ~key, .value = ~value, .allocator = allocator)!
     query ::= format(.value = "key", .allocator = allocator)!
-    match get_ro_ref(.self = &map, .key = &query).result {
+    match get_reference(.self = &map, .key = &query).result {
         ..none { abort }
         ..some borrowed {
-            if [
-                equals(.left = as_view(.self = borrowed.value), .right = "first").ok
-                == false
-            ] { abort }
+            if [equals(.left = as_view(.self = borrowed.value), .right = "first").ok == false] {
+                abort
+            }
         }
     }
     replacement_key ::= format(.value = "key", .allocator = allocator)!
@@ -33,7 +31,9 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         ..none { abort }
         ..some ~payload {
             entry ::= ~payload.value
-            if equals(.left = as_view(.self = &entry.key), .right = "key").ok == false { abort }
+            if equals(.left = as_view(.self = &entry.key), .right = "key").ok == false {
+                abort
+            }
             if equals(.left = as_view(.self = &entry.value), .right = "second").ok == false {
                 abort
             }
@@ -41,7 +41,9 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     }
 }
 
-main#(.WriterType: Type: Writer#(WriterType))(.system: System, .writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
+main#(.WriterType: Type: Writer#(WriterType))(
+    .system: System, .writer: $&WriterType = reach writer
+) -> (.status_code: Int32 = 1) := {
     run_main(.system = system)!!!
     status_code = 0
 }

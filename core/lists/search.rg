@@ -7,7 +7,7 @@ find#(.t: Type: ImplicitlyCopyable, .Collection: Type: Indexable#(.Item: t))(
     position :: UIntNative = 0
 
     while position < count {
-        element ::= unwrap_or_abort(.value = get_ro_ref(self, .index = position))&
+        element ::= unwrap_or_abort(.value = get_reference(self, .index = position))&
         if element == value {
             index = ..some(.value = position)
             return

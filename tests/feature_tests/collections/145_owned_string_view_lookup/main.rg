@@ -1,8 +1,7 @@
 run_main(.system: System) -> !Void = ..ok Void() := {
     assume allocator := system.page_allocator
     map ::= OwnedHashMap#(.key: String, .value: UIntNative, .policy: StringHashPolicy)(
-        .policy    = StringHashPolicy()
-        .allocator = allocator
+        .policy = StringHashPolicy(), .allocator = allocator
     )!
     key ::= format(.value = "café", .allocator = allocator)!
     put(.self = $&map, .key = ~key, .value = 1, .allocator = allocator)!
@@ -12,7 +11,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         ..none { abort }
         ..some borrowed { borrowed.value&= 42 }
     }
-    match get_ro_ref(.self = &map, .key = "café").result {
+    match get_reference(.self = &map, .key = "café").result {
         ..none { abort }
         ..some borrowed { if borrowed.value&!= 42 { abort } }
     }
@@ -24,7 +23,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     found :: ?&UIntNative = ..none
     {
         query ::= format(.value = "café", .allocator = allocator)!
-        found = get_ro_ref(.self = &map, .key = as_view(.self = &query).view).result
+        found = get_reference(.self = &map, .key = as_view(.self = &query).view).result
     }
     match found {
         ..none { abort }
@@ -33,7 +32,9 @@ run_main(.system: System) -> !Void = ..ok Void() := {
 
 }
 
-main#(.WriterType: Type: Writer#(WriterType))(.system: System, .writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
+main#(.WriterType: Type: Writer#(WriterType))(
+    .system: System, .writer: $&WriterType = reach writer
+) -> (.status_code: Int32 = 1) := {
     run_main(.system = system)!!!
     status_code = 0
 }

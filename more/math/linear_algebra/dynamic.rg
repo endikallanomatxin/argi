@@ -97,7 +97,7 @@ _math_set_dynamic_matrix#(.t: Type: Scalar) := (
         return
     }
 
-    pointer ::= get_rw_ref(.self = $&self&._values, .index = row * self&._cols + col)!
+    pointer ::= get_mutable_reference(.self = $&self&._values, .index = row * self&._cols + col)!
     pointer&= value
 
     result = ..ok Void()
@@ -271,7 +271,7 @@ _math_get_dynamic_vector#(.t: Type: Scalar) := (
 _math_set_dynamic_vector#(.t: Type: Scalar) := (
     .self: $&DynamicVector#(.t: t), .index: UIntNative, .value: t
 ) -> (.result: Errable#(Void, (..out_of_bounds))) {
-    pointer ::= get_rw_ref(.self = $&self&._values, .index = index)!
+    pointer ::= get_mutable_reference(.self = $&self&._values, .index = index)!
     pointer&= value
 
     result = ..ok Void()

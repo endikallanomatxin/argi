@@ -19,7 +19,7 @@ implement Init#(BitSetView, (.bytes: ArrayView#(.t: UInt8), .count: UIntNative))
         index :: UIntNative = 0
 
         while index < needed {
-            target ::= unwrap_or_abort(.value = get_rw_ref($&bytes, .index = index))
+            target ::= unwrap_or_abort(.value = get_mutable_reference($&bytes, .index = index))
             target&= 0
             index = index + 1
         }
@@ -53,7 +53,7 @@ _bit_query_BitSetView(.self: &BitSetView, .index: UIntNative) -> (
         return
     }
 
-    byte ::= unwrap_or_abort(.value = get_ro_ref(&self&._bytes, .index = index / 8))
+    byte ::= unwrap_or_abort(.value = get_reference(&self&._bytes, .index = index / 8))
     mask ::= _bit_set_mask(.index = index).mask
 
     result = ..ok byte&/ mask % 2 != 0
@@ -65,7 +65,7 @@ _bit_write_BitSetView(.self: $&BitSetView, .index: UIntNative, .value: Bool = tr
     present ::= contains_bit(self, .index = index)!
 
     if present == value { return }
-    byte ::= unwrap_or_abort(.value = get_rw_ref($&self&._bytes, .index = index / 8))
+    byte ::= unwrap_or_abort(.value = get_mutable_reference($&self&._bytes, .index = index / 8))
     mask ::= _bit_set_mask(.index = index).mask
 
     if value { byte&= byte&+ mask } else { byte&= byte&- mask }
@@ -76,7 +76,7 @@ _bit_set_count(.bytes: ArrayViewRO#(.t: UInt8), .extent: UIntNative) -> (.count:
     index :: UIntNative = 0
 
     while index < full {
-        byte ::= unwrap_or_abort(.value = get_ro_ref(&bytes, .index = index))
+        byte ::= unwrap_or_abort(.value = get_reference(&bytes, .index = index))
         count = count + count_ones#(.t: UInt8)(.value = byte&).count
         index = index + 1
     }
@@ -84,7 +84,7 @@ _bit_set_count(.bytes: ArrayViewRO#(.t: UInt8), .extent: UIntNative) -> (.count:
     remaining ::= extent % 8
 
     if remaining == 0 { return }
-    tail ::= unwrap_or_abort(.value = get_ro_ref(&bytes, .index = full))&
+    tail ::= unwrap_or_abort(.value = get_reference(&bytes, .index = full))&
 
     while remaining > 0 {
         if tail % 2 != 0 { count = count + 1 }

@@ -32,7 +32,7 @@ _map_contains_owned_string_lookup#(.value: Type) := (
     ok = _owned_string_find(self, .key = key).index ?
 }
 
-_map_get_ro_ref_owned_string_lookup#(.value: Type) := (
+_map_get_reference_owned_string_lookup#(.value: Type) := (
     .self : &OwnedHashMap#(.key: String, .value: value, .policy: StringHashPolicy),
     .key  : StringView
 ) -> (.result: ?&value = ..none) {

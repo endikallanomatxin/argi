@@ -120,7 +120,9 @@ _object_from_readonly_view#(.t: Type)(.self: &Python, .value: ArrayViewRO#(.t: t
     index :: UIntNative = 0
 
     while index < length(&value).count {
-        source ::= unwrap_or_abort(.value = get_ro_ref(.self = &value, .index = index)).result
+        source ::= unwrap_or_abort(
+            .value = get_reference(.self = &value, .index = index)
+        ).result
         element ::= to_object(.self = self, .value = source)!
         append(.self = &converted, .value = &element)!
         index = index + 1
@@ -160,7 +162,9 @@ _keywords_from_objects(.self: &Python, .values: ArrayViewRO#(.t: Keyword)) -> (
     index :: UIntNative = 0
 
     while index < length(&values).count {
-        entry ::= unwrap_or_abort(.value = get_ro_ref(.self = &values, .index = index)).result
+        entry ::= unwrap_or_abort(
+            .value = get_reference(.self = &values, .index = index)
+        ).result
         key ::= string(.self = self, .value = entry&.name)!
         set_item(.self = &converted, .key = &key, .value = entry&.value)!
         index = index + 1
@@ -236,7 +240,9 @@ _keywords_from_values(.self: &Python, .values: ArrayViewRO#(.t: NamedArgument)) 
     index :: UIntNative = 0
 
     while index < length(&values).count {
-        entry ::= unwrap_or_abort(.value = get_ro_ref(.self = &values, .index = index)).result
+        entry ::= unwrap_or_abort(
+            .value = get_reference(.self = &values, .index = index)
+        ).result
         key ::= string(.self = self, .value = entry&.name)!
         value ::= to_object(.self = self, .value = entry&.value)!
         set_item(.self = &converted, .key = &key, .value = &value)!
@@ -292,7 +298,9 @@ _object_from_mutable_view#(.t: Type)(.self: &Python, .value: ArrayView#(.t: t)) 
     index :: UIntNative = 0
 
     while index < length(&value).count {
-        source ::= unwrap_or_abort(.value = get_ro_ref(.self = &value, .index = index)).result
+        source ::= unwrap_or_abort(
+            .value = get_reference(.self = &value, .index = index)
+        ).result
         element ::= to_object(.self = self, .value = source)!
         append(.self = &converted, .value = &element)!
         index = index + 1

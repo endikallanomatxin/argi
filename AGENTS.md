@@ -550,7 +550,7 @@ feature first.
   in summary equality, substitution and deduplication. Grouped storage and
   mappings through references require additional transfer identities.
 
-- Moving `for ~ item in collection` loops consume through `OwningIterable`.
+- Moving `for ~ item in collection` loops consume through `MovingIterable`.
   Global semantizing wraps the iterator declaration and loop in one lexical
   block; synthetic iterator owners inherit the source item's captured cleanup
   arguments. Loop transfers clean only scopes inside the current loop boundary,

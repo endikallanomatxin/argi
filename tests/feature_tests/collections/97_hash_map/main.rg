@@ -1,9 +1,17 @@
 main(.system: System) -> (.status_code: Int32 = 0) := {
     assume allocator ::= system.page_allocator
-    map ::= unwrap_or_abort(.value = HashMap#(.key: Int32, .value: Int32, .policy: Int32HashPolicy)(.policy = Int32HashPolicy(), .allocator = allocator))
+    map ::= unwrap_or_abort(
+        .value = HashMap#(.key: Int32, .value: Int32, .policy: Int32HashPolicy)(
+            .policy = Int32HashPolicy(), .allocator = allocator
+        )
+    )
     index :: Int32 = 0
     while index < 40 {
-        unwrap_or_abort(.value = put(.self = $&map, .key = index, .value = index * 3, .allocator = allocator))
+        unwrap_or_abort(
+            .value = put(
+                .self = $&map, .key = index, .value = index * 3, .allocator = allocator
+            )
+        )
         index = index + 1
     }
     if length(.self = &map).count != 40 { abort }
@@ -20,9 +28,9 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     if remove(.self = $&map, .key = 1, .allocator = allocator).removed == false { abort }
     if remove(.self = $&map, .key = 1, .allocator = allocator).removed { abort }
     if contains(.self = &map, .key = 1).ok { abort }
-    match get_ro_ref(.self = &map, .key = 2).result {
+    match get_reference(.self = &map, .key = 2).result {
         ..none { abort }
-        ..some pointer { if pointer.value& != 999 { abort } }
+        ..some pointer { if pointer.value&!= 999 { abort } }
     }
     deinit(.self = $&map)
 }

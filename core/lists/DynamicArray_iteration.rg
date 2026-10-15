@@ -5,12 +5,12 @@ DynamicArrayIterator#(.t: Type): Type = (
     ._index : UIntNative
 )
 
-DynamicArrayROPointerIterator#(.t: Type): Type = (
+DynamicArrayReferenceIterator#(.t: Type): Type = (
     ._view  : ArrayViewRO#(.t: t)
     ._index : UIntNative
 )
 
-DynamicArrayRWPointerIterator#(.t: Type): Type = (
+DynamicArrayMutableReferenceIterator#(.t: Type): Type = (
     ._view  : ArrayView#(.t: t)
     ._index : UIntNative
 )
@@ -24,23 +24,23 @@ implement#(.t: Type: ImplicitlyCopyable) Iterable#(DynamicArray#(.t: t)) (
     }
 )
 
-implement#(.t: Type) ROPointerIterable#(DynamicArray#(.t: t)) (
+implement#(.t: Type) ReferenceIterable#(DynamicArray#(.t: t)) (
     .Item         : Type = t
-    .IteratorType : Type = DynamicArrayROPointerIterator#(.t: t)
+    .IteratorType : Type = DynamicArrayReferenceIterator#(.t: t)
 
-    .to_ro_pointer_iterator = (.value: &DynamicArray#(.t: t)) -> (
-        .iterator : DynamicArrayROPointerIterator#(.t: t)
+    .to_reference_iterator = (.value: &DynamicArray#(.t: t)) -> (
+        .iterator : DynamicArrayReferenceIterator#(.t: t)
     ) {
         iterator = (._view = view(.array = value), ._index = 0)
     }
 )
 
-implement#(.t: Type) RWPointerIterable#(DynamicArray#(.t: t)) (
+implement#(.t: Type) MutableReferenceIterable#(DynamicArray#(.t: t)) (
     .Item         : Type = t
-    .IteratorType : Type = DynamicArrayRWPointerIterator#(.t: t)
+    .IteratorType : Type = DynamicArrayMutableReferenceIterator#(.t: t)
 
-    .to_rw_pointer_iterator = (.value: $&DynamicArray#(.t: t)) -> (
-        .iterator : DynamicArrayRWPointerIterator#(.t: t)
+    .to_mutable_reference_iterator = (.value: $&DynamicArray#(.t: t)) -> (
+        .iterator : DynamicArrayMutableReferenceIterator#(.t: t)
     ) {
         iterator = (._view = view(.array = value), ._index = 0)
     }
@@ -66,14 +66,14 @@ implement#(.t: Type: ImplicitlyCopyable) Iterator#(DynamicArrayIterator#(.t: t))
     }
 )
 
-implement#(.t: Type) Iterator#(DynamicArrayROPointerIterator#(.t: t)) (
+implement#(.t: Type) Iterator#(DynamicArrayReferenceIterator#(.t: t)) (
     .Item : Type = &t
 
-    .has_next = (.self: &DynamicArrayROPointerIterator#(.t: t)) -> (.ok: Bool) {
+    .has_next = (.self: &DynamicArrayReferenceIterator#(.t: t)) -> (.ok: Bool) {
         ok = self&._index < length(&self&._view).count
     }
 
-    .next = (.self: $&DynamicArrayROPointerIterator#(.t: t)) -> (.value: &t) {
+    .next = (.self: $&DynamicArrayReferenceIterator#(.t: t)) -> (.value: &t) {
         current_index :: UIntNative = self&._index
 
         if current_index >= self&._view._length { abort }
@@ -84,14 +84,14 @@ implement#(.t: Type) Iterator#(DynamicArrayROPointerIterator#(.t: t)) (
     }
 )
 
-implement#(.t: Type) Iterator#(DynamicArrayRWPointerIterator#(.t: t)) (
+implement#(.t: Type) Iterator#(DynamicArrayMutableReferenceIterator#(.t: t)) (
     .Item : Type = $&t
 
-    .has_next = (.self: &DynamicArrayRWPointerIterator#(.t: t)) -> (.ok: Bool) {
+    .has_next = (.self: &DynamicArrayMutableReferenceIterator#(.t: t)) -> (.ok: Bool) {
         ok = self&._index < length(&self&._view).count
     }
 
-    .next = (.self: $&DynamicArrayRWPointerIterator#(.t: t)) -> (.value: $&t) {
+    .next = (.self: $&DynamicArrayMutableReferenceIterator#(.t: t)) -> (.value: $&t) {
         current_index :: UIntNative = self&._index
 
         if current_index >= self&._view._length { abort }

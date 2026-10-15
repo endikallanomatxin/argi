@@ -408,7 +408,7 @@ _string_map_delete_view#(.value: Type)(
                             .index = current_index
                             .value = ~last_entry
                         )
-                        moved_entry ::= _trusted_dynamic_array_get_ro_ref#(
+                        moved_entry ::= _trusted_dynamic_array_get_reference#(
                             .t : StringHashMapEntry#(.value: value)
                         )(.array = &self&.entries, .index = current_index).reference
                         string_hash_map_retarget_entry_index#(.value: value)(

@@ -1,30 +1,25 @@
 Source: Type = (.bytes: ArrayViewRO#(.t: UInt8), .position: UIntNative, .calls: UIntNative)
 
-implement Reader#(Source)(
-    .read_byte = (
-                .self : $&Source
-            ) -> (
-                .result : Errable#(.t: ReadByte, .reasons: (..stream_read_failed))
-            ) {
-            if self&.position == length(.self = &self&.bytes).count {
-                result = ..ok ..end
-                return
-            }
-            byte ::= unwrap_or_abort(
-                .value = get_ro_ref(.self = &self&.bytes, .index = self&.position)
-            )
-            self&.position = self&.position + 1
-            result = ..ok ..ok byte&
+implement Reader#(Source) (
+    .read_byte = (.self: $&Source) -> (
+        .result : Errable#(.t: ReadByte, .reasons: (..stream_read_failed))
+    ) {
+        if self&.position == length(.self = &self&.bytes).count {
+            result = ..ok ..end
+            return
         }
+        byte ::= unwrap_or_abort(
+            .value = get_reference(.self = &self&.bytes, .index = self&.position)
+        )
+        self&.position = self&.position + 1
+        result = ..ok ..ok byte&
+    }
 )
 
 implement BlockReader#(Source) (
-    .read_block = (
-            .self   : $&Source,
-            .buffer : ArrayView#(.t: UInt8)
-        ) -> (
-            .result : Errable#(.t: UIntNative, .reasons: (..stream_read_failed))
-        ) {
+    .read_block = (.self: $&Source, .buffer: ArrayView#(.t: UInt8)) -> (
+        .result : Errable#(.t: UIntNative, .reasons: (..stream_read_failed))
+    ) {
         self&.calls = self&.calls + 1
         if length(.self = &buffer).count == 0 {
             result = ..ok 0
@@ -33,7 +28,9 @@ implement BlockReader#(Source) (
         match Reader#().read_byte(.self = self)! {
             ..end { result = ..ok 0 }
             ..ok byte {
-                pointer ::= unwrap_or_abort(.value = get_rw_ref(.self = $&buffer, .index = 0))
+                pointer ::= unwrap_or_abort(
+                    .value = get_mutable_reference(.self = $&buffer, .index = 0)
+                )
                 pointer&= byte
                 result = ..ok 1
             }
@@ -44,18 +41,19 @@ implement BlockReader#(Source) (
 Sink: Type = (.bytes: ArrayView#(.t: UInt8), .position: UIntNative, .stalled: Bool)
 
 implement BlockWriter#(Sink) (
-    .write_block = (
-            .self   : $&Sink,
-            .buffer : ArrayViewRO#(.t: UInt8)
-        ) -> (
-            .result : Errable#(.t: UIntNative, .reasons: (..stream_write_failed, ..stream_flush_failed))
-        ) {
+    .write_block = (.self: $&Sink, .buffer: ArrayViewRO#(.t: UInt8)) -> (
+        .result : Errable#(
+            .t: UIntNative, .reasons: (..stream_write_failed, ..stream_flush_failed)
+        )
+    ) {
         if self&.stalled or length(.self = &buffer).count == 0 {
             result = ..ok 0
             return
         }
-        byte ::= unwrap_or_abort(.value = get_ro_ref(.self = &buffer, .index = 0))
-        target ::= unwrap_or_abort(.value = get_rw_ref(.self = $&self&.bytes, .index = self&.position))
+        byte ::= unwrap_or_abort(.value = get_reference(.self = &buffer, .index = 0))
+        target ::= unwrap_or_abort(
+            .value = get_mutable_reference(.self = $&self&.bytes, .index = self&.position)
+        )
         target&= byte&
         self&.position = self&.position + 1
         result = ..ok 1
@@ -68,7 +66,10 @@ run_main() -> !Void = ..ok Void() := {
     source :: Source = (.bytes = view(.array = &input), .position = 0, .calls = 0)
     sink :: Sink = (.bytes = view(.array = $&output), .position = 0, .stalled = false)
     scratch :: [2]UInt8 = (0, 0)
-    if copy_stream(.reader = $&source, .writer = $&sink, .buffer = view(.array = $&scratch))! != 4 {
+    if [
+        copy_stream(.reader = $&source, .writer = $&sink, .buffer = view(.array = $&scratch))!
+        != 4
+    ] {
         abort
     }
     if output[0] != 65 or output[1] != 0 or output[2] != 66 or output[3] != 10 { abort }
@@ -92,7 +93,9 @@ run_main() -> !Void = ..ok Void() := {
     }
 }
 
-main#(.WriterType: Type: Writer#(WriterType))(.writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
+main#(.WriterType: Type: Writer#(WriterType))(.writer: $&WriterType = reach writer) -> (
+    .status_code : Int32 = 1
+) := {
     run_main()!!!
     status_code = 0
 }

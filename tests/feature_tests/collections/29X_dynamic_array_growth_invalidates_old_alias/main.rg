@@ -8,12 +8,12 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         return
     }
 
-    old_alias_result ::= get_ro_ref(.self = &array, .index = 0).result
+    old_alias_result ::= get_reference(.self = &array, .index = 0).result
     if is(.value = old_alias_result, .variant = ..error) {
         status_code = 3
         return
     }
-    old_alias ::= old_alias_result..ok
+    old_alias ::= old_alias_result ..ok
     second_push ::= push(.self = $&array, .value = 20)
     if is(.value = second_push, .variant = ..error) {
         status_code = 2

@@ -57,7 +57,7 @@ _bit_query_BitSet(.self: &BitSet, .index: UIntNative) -> (
         return
     }
 
-    byte ::= unwrap_or_abort(.value = get_ro_ref(&self&._storage, .index = index / 8))
+    byte ::= unwrap_or_abort(.value = get_reference(&self&._storage, .index = index / 8))
     mask ::= _bit_set_mask(.index = index).mask
 
     result = ..ok byte&/ mask % 2 != 0

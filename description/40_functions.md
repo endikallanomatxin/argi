@@ -87,9 +87,13 @@ named arguments use `#(.t: Type, .other: OtherType)`.
 
 ## Function variants
 
-Functions with the same name may have different input types. Dispatch uses
-the name and input types, not output types or input field names. An ambiguous
-call is an error.
+An ordinary function has one identity in its module namespace. It cannot be
+overloaded by changing runtime inputs or compile-time parameters. Generic
+functions specialize that single declaration.
+
+Multiple dispatch selects implementations of [contract operations](135_contracts.md).
+Calls with multiple applicable operation identities require qualification;
+incomparable most-specific implementations are rejected as ambiguous.
 
 A function may be declared `once` when it is intended to be consumed at most
 once from the reachable call graph of the compiled entrypoint.

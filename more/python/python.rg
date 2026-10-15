@@ -301,7 +301,7 @@ _call_from_view(
 
     while index < length(&arguments).count {
         argument ::= unwrap_or_abort(
-            .value = get_ro_ref(.self = &arguments, .index = index)
+            .value = get_reference(.self = &arguments, .index = index)
         ).result
         if [
             _tuple_set(

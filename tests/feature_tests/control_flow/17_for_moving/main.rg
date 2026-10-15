@@ -15,12 +15,9 @@ return_early(.array: DynamicArray#(.t: Tracked), .allocator: $&PageAllocator) ->
 
 ..iteration_failed
 
-fail_early(
-        .array     : DynamicArray#(.t: Tracked),
-        .allocator : $&PageAllocator
-    ) -> (
-        .result : Errable#(.t: Void, .reasons: (..iteration_failed)) = ..ok Void()
-    ) := {
+fail_early(.array: DynamicArray#(.t: Tracked), .allocator: $&PageAllocator) -> (
+    .result : Errable#(.t: Void, .reasons: (..iteration_failed)) = ..ok Void()
+) := {
     assume allocator
     for ~item in array {
         result = ..error(.reason = ..iteration_failed)
@@ -39,12 +36,9 @@ iteration_error() -> (.result: Errable#(.t: Void, .reasons: (..iteration_failed)
     result = ..error(.reason = ..iteration_failed)
 }
 
-propagate_early(
-        .array     : DynamicArray#(.t: Tracked),
-        .allocator : $&PageAllocator
-    ) -> (
-        .result : Errable#(.t: Void, .reasons: (..iteration_failed)) = ..ok Void()
-    ) := {
+propagate_early(.array: DynamicArray#(.t: Tracked), .allocator: $&PageAllocator) -> (
+    .result : Errable#(.t: Void, .reasons: (..iteration_failed)) = ..ok Void()
+) := {
     assume allocator
     for ~item in array { iteration_error()! }
 }
@@ -89,7 +83,9 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     failing ::= DynamicArray#(.t: Tracked)(.allocator = allocator, .capacity = 2)!
     push(.self = $&failing, .value = Tracked(.id = 8), .allocator = allocator)!
     push(.self = $&failing, .value = Tracked(.id = 9), .allocator = allocator)!
-    match fail_early(.array = ~failing, .allocator = allocator) { ..ok _ { abort } ..error _ {} }
+    match fail_early(.array = ~failing, .allocator = allocator) {
+        ..ok _ { abort } ..error _ {}
+    }
     if drops != 9 { abort }
     empty ::= DynamicArray#(.t: Tracked)(.allocator = allocator, .capacity = 0)!
     for ~item in empty { abort }
@@ -145,7 +141,9 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         expected = expected + 1
     }
     if expected != 5 { abort }
-    outer ::= DynamicArray#(.t: DynamicArray#(.t: Tracked))(.allocator = allocator, .capacity = 1)!
+    outer ::= DynamicArray#(.t: DynamicArray#(.t: Tracked))(
+        .allocator = allocator, .capacity = 1
+    )!
     inner ::= DynamicArray#(.t: Tracked)(.allocator = allocator, .capacity = 2)!
     push(.self = $&inner, .value = Tracked(.id = 20), .allocator = allocator)!
     push(.self = $&inner, .value = Tracked(.id = 21), .allocator = allocator)!
@@ -157,7 +155,9 @@ run_main(.system: System) -> !Void = ..ok Void() := {
 
 }
 
-main#(.WriterType: Type: Writer#(WriterType))(.system: System, .writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
+main#(.WriterType: Type: Writer#(WriterType))(
+    .system: System, .writer: $&WriterType = reach writer
+) -> (.status_code: Int32 = 1) := {
     run_main(.system = system)!!!
     status_code = 0
 }

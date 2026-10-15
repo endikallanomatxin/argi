@@ -125,7 +125,7 @@ implement#(
         out ::= DynamicArray#(t)(.allocator = allocator, .capacity = self&._length)!
         i :: UIntNative = 0
         while i < self&._length {
-            ptr ::= _trusted_dynamic_array_element_ro_pointer#(t)(
+            ptr ::= _trusted_dynamic_array_element_reference#(t)(
                 .array = self, .offset = i
             ).pointer
             copied ::= FalliblyCopyable#(t, Provider).copy(ptr, .allocator = allocator)!
@@ -137,7 +137,7 @@ implement#(
 )
 
 -- Only the occupied prefix may cross from a slot handle to a normal reference.
-_trusted_dynamic_array_element_ro_pointer#(.t: Type)(
+_trusted_dynamic_array_element_reference#(.t: Type)(
     .array: &DynamicArray#(.t: t), .offset: UIntNative
 ) -> (.pointer: &t) := {
     if offset >= array&._length { abort }
@@ -150,7 +150,7 @@ _trusted_dynamic_array_element_ro_pointer#(.t: Type)(
     pointer = read_reference#(.t: t)(.base = mutable).reference
 }
 
-_trusted_dynamic_array_element_rw_pointer#(.t: Type)(
+_trusted_dynamic_array_element_mutable_reference#(.t: Type)(
     .array: $&DynamicArray#(.t: t), .offset: UIntNative
 ) -> (.pointer: $&t) := {
     if offset >= array&._length { abort }
@@ -374,23 +374,23 @@ replace#(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType))(
 _trusted_dynamic_array_get#(.t: Type: ImplicitlyCopyable)(
     .array: &DynamicArray#(.t: t), .index: UIntNative
 ) -> (.value: t) := {
-    value = _trusted_dynamic_array_element_ro_pointer#(.t: t)(
+    value = _trusted_dynamic_array_element_reference#(.t: t)(
         .array = array, .offset = index
     ).pointer&
 }
 
-_trusted_dynamic_array_get_ro_ref#(.t: Type)(.array: &DynamicArray#(.t: t), .index: UIntNative) -> (
-    .reference : &t
-) := {
-    reference = _trusted_dynamic_array_element_ro_pointer#(.t: t)(
+_trusted_dynamic_array_get_reference#(.t: Type)(
+    .array: &DynamicArray#(.t: t), .index: UIntNative
+) -> (.reference: &t) := {
+    reference = _trusted_dynamic_array_element_reference#(.t: t)(
         .array = array, .offset = index
     ).pointer
 }
 
-_trusted_dynamic_array_get_rw_ref#(.t: Type)(.array: $&DynamicArray#(.t: t), .index: UIntNative) -> (
-    .reference : $&t
-) := {
-    reference = _trusted_dynamic_array_element_rw_pointer#(.t: t)(
+_trusted_dynamic_array_get_mutable_reference#(.t: Type)(
+    .array: $&DynamicArray#(.t: t), .index: UIntNative
+) -> (.reference: $&t) := {
+    reference = _trusted_dynamic_array_element_mutable_reference#(.t: t)(
         .array = array, .offset = index
     ).pointer
 }
@@ -400,7 +400,7 @@ _trusted_dynamic_array_get_rw_ref#(.t: Type)(.array: $&DynamicArray#(.t: t), .in
 _trusted_dynamic_array_set#(.t: Type: ImplicitlyCopyable)(
     .array: $&DynamicArray#(.t: t), .index: UIntNative, .value: t
 ) -> () := {
-    ptr ::= _trusted_dynamic_array_element_rw_pointer#(.t: t)(
+    ptr ::= _trusted_dynamic_array_element_mutable_reference#(.t: t)(
         .array = array, .offset = index
     ).pointer
     trusted_opaque_drop(.slot = ptr)
@@ -417,7 +417,7 @@ implement#(.t: Type) Indexable#(DynamicArray#(.t: t)) (
         count = self&._length
     }
 
-    .get_ro_ref = (.self: &DynamicArray#(.t: t), .index: UIntNative) -> (
+    .get_reference = (.self: &DynamicArray#(.t: t), .index: UIntNative) -> (
         .result : Errable#(&t, (..out_of_bounds))
     ) {
         if index >= self&._length {
@@ -425,7 +425,7 @@ implement#(.t: Type) Indexable#(DynamicArray#(.t: t)) (
             return
         }
 
-        result = ..ok dynamic_array_element_ro_pointer#(.t: t)(
+        result = ..ok dynamic_array_element_reference#(.t: t)(
             .array = self, .offset = index
         ).pointer
     }
@@ -561,7 +561,7 @@ implement#(.t: Type: ImplicitlyCopyable) IndexableValue#(DynamicArray#(.t: t)) (
             return
         }
 
-        ptr ::= _trusted_dynamic_array_element_ro_pointer#(.t: t)(
+        ptr ::= _trusted_dynamic_array_element_reference#(.t: t)(
             .array = self, .offset = index
         ).pointer
 
@@ -572,7 +572,7 @@ implement#(.t: Type: ImplicitlyCopyable) IndexableValue#(DynamicArray#(.t: t)) (
 implement#(.t: Type) IndexableMutable#(DynamicArray#(.t: t)) (
     .Item : Type = t
 
-    .get_rw_ref = (.self: $&DynamicArray#(.t: t), .index: UIntNative) -> (
+    .get_mutable_reference = (.self: $&DynamicArray#(.t: t), .index: UIntNative) -> (
         .result : Errable#($&t, (..out_of_bounds))
     ) {
         if index >= self&._length {
@@ -580,7 +580,7 @@ implement#(.t: Type) IndexableMutable#(DynamicArray#(.t: t)) (
             return
         }
 
-        result = ..ok dynamic_array_element_rw_pointer#(.t: t)(
+        result = ..ok dynamic_array_element_mutable_reference#(.t: t)(
             .array = self, .offset = index
         ).pointer
     }

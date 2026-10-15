@@ -298,7 +298,7 @@ _map_contains_hash_map#(
     ok = is(.value = _hash_map_find(self, .key = key, .hash = digest).index, .variant = ..some)
 }
 
-_map_get_ro_ref_hash_map#(
+_map_get_reference_hash_map#(
     .key    : Type: ImplicitlyCopyable,
     .value  : Type: ImplicitlyCopyable,
     .policy : Type: HashPolicy#(policy, key)
@@ -311,7 +311,7 @@ _map_get_ro_ref_hash_map#(
         ..none { result = ..none }
         ..some found {
             reference ::= unwrap_or_abort(
-                .value = get_ro_ref(&self&._slots, .index = found.value)
+                .value = get_reference(&self&._slots, .index = found.value)
             )
             match reference&{
                 ..occupied&entry {

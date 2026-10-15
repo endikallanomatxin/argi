@@ -10,6 +10,6 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         push_assume_capacity#(.t: &Int32)(.self = $&array, .value = &local)
         i = i + 1
     }
-    reference ::= unwrap_or_abort(.value = get_ro_ref(.self = &array, .index = 0))
+    reference ::= unwrap_or_abort(.value = get_reference(.self = &array, .index = 0))
     status_code = read(.value = reference)
 }

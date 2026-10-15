@@ -85,7 +85,9 @@ _write_date_digits(
 
     while index > 0 {
         index = index - 1
-        target ::= unwrap_or_abort(.value = get_rw_ref($&buffer, .index = start + index))
+        target ::= unwrap_or_abort(
+            .value = get_mutable_reference($&buffer, .index = [start + index])
+        )
         target&= unwrap_or_abort(.value = [remaining % 10 + 48] | convert#(.to: UInt8)(_))
         remaining = remaining / 10
     }
@@ -113,12 +115,12 @@ format_utc_into(.date: UtcDateTime, .buffer: ArrayView#(.t: UInt8)) -> (
     index :: UIntNative = 0
 
     while index < count {
-        target ::= unwrap_or_abort(.value = get_rw_ref($&buffer, .index = index))
+        target ::= unwrap_or_abort(.value = get_mutable_reference($&buffer, .index = index))
         target&= bytes_get(.view = &skeleton, .index = index).byte
         index = index + 1
     }
 
-    target ::= unwrap_or_abort(.value = get_rw_ref($&buffer, .index = count - 1))
+    target ::= unwrap_or_abort(.value = get_mutable_reference($&buffer, .index = count - 1))
     target&= 90
     _write_date_digits(
         .buffer = buffer

@@ -13,20 +13,20 @@ main(.system: System) -> (.status_code: Int32) := {
         status_code = 1
         return
     }
-    first ::= first_result..ok
-    second_ptr_result ::= get_ro_ref(.self = &arr, .index = 1).result
+    first ::= first_result ..ok
+    second_ptr_result ::= get_reference(.self = &arr, .index = 1).result
     if is(.value = second_ptr_result, .variant = ..error) {
         status_code = 2
         return
     }
-    second_ptr : &Int32 = second_ptr_result..ok
+    second_ptr: &Int32 = second_ptr_result ..ok
 
     if first != 10 {
         status_code = 1
         return
     }
 
-    if second_ptr& != 20 {
+    if second_ptr&!= 20 {
         status_code = 2
         return
     }

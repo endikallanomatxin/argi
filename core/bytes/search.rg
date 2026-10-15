@@ -7,8 +7,8 @@ compare(.left: ArrayViewRO#(.t: UInt8), .right: ArrayViewRO#(.t: UInt8)) -> (.or
     index :: UIntNative = 0
 
     while index < count {
-        a ::= unwrap_or_abort(.value = get_ro_ref(&left, .index = index))
-        b ::= unwrap_or_abort(.value = get_ro_ref(&right, .index = index))
+        a ::= unwrap_or_abort(.value = get_reference(&left, .index = index))
+        b ::= unwrap_or_abort(.value = get_reference(&right, .index = index))
         if a&< b&{
             order = -1
             return
@@ -39,8 +39,8 @@ _bytes_match_at(
     offset :: UIntNative = 0
 
     while offset < count {
-        a ::= unwrap_or_abort(.value = get_ro_ref(&self, .index = start + offset))
-        b ::= unwrap_or_abort(.value = get_ro_ref(&pattern, .index = offset))
+        a ::= unwrap_or_abort(.value = get_reference(&self, .index = start + offset))
+        b ::= unwrap_or_abort(.value = get_reference(&pattern, .index = offset))
         if a&!= b&{ return }
         offset = offset + 1
     }
@@ -92,7 +92,7 @@ find_byte(.self: ArrayViewRO#(.t: UInt8), .byte: UInt8) -> (.index: ?UIntNative 
     offset :: UIntNative = 0
 
     while offset < length(&self).count {
-        current ::= unwrap_or_abort(.value = get_ro_ref(&self, .index = offset))
+        current ::= unwrap_or_abort(.value = get_reference(&self, .index = offset))
         if current&== byte {
             index = ..some(.value = offset)
             return

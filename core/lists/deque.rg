@@ -174,7 +174,7 @@ pop_back#(.t: Type)(.self: $&Deque#(.t: t)) -> (.result: Errable#(t, (..empty)))
 get#(.t: Type: ImplicitlyCopyable)(.self: &Deque#(.t: t), .index: UIntNative) -> (
     .result : Errable#(t, (..out_of_bounds))
 ) := {
-    pointer ::= get_ro_ref(self, .index = index)!
+    pointer ::= get_reference(self, .index = index)!
 
     result = ..ok pointer&
 }
@@ -192,17 +192,17 @@ implement#(.t: Type) Indexable#(Deque#(.t: t)) (
         count = self&._ring._length
     }
 
-    .get_ro_ref = (.self: &Deque#(.t: t), .index: UIntNative) -> (
+    .get_reference = (.self: &Deque#(.t: t), .index: UIntNative) -> (
         .result : Errable#(&t, (..out_of_bounds))
     ) {
-        result = get_ro_ref(&self&._ring, .index = index)
+        result = get_reference(&self&._ring, .index = index)
     }
 )
 
 implement#(.t: Type) IndexableMutable#(Deque#(.t: t)) (
     .Item : Type = t
 
-    .get_rw_ref = (.self: $&Deque#(.t: t), .index: UIntNative) -> (
+    .get_mutable_reference = (.self: $&Deque#(.t: t), .index: UIntNative) -> (
         .result : Errable#($&t, (..out_of_bounds))
     ) {
         if index >= self&._ring._length {

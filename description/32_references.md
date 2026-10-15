@@ -16,6 +16,12 @@ Aliases are checked when they are used. Mutable references may alias in
 sequential code: `$&T` does not imply exclusive access or `noalias`.
 Concurrency requires additional rules.
 
+API names use `Reference` for `&T` and `MutableReference` for `$&T`.
+The latter adds write permission; neither name implies exclusive access.
+`Pointer` is reserved for raw-pointer APIs when distinguishing them from safe
+references. Moving iteration transfers elements; it does not imply that each
+element owns a resource.
+
 In [Rust](https://doc.rust-lang.org/book/ch04-02-references-and-borrowing.html),
 an active mutable borrow excludes other references to the same value. Argi
 permits multiple `$&` and mixed `&`/`$&` aliases in sequential code; it

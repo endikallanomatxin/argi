@@ -376,7 +376,7 @@ _map_contains_owned_hash_map#(
     )
 }
 
-_map_get_ro_ref_owned_hash_map#(
+_map_get_reference_owned_hash_map#(
     .key: Type, .value: Type, .policy: Type: BorrowedHashPolicy#(policy, key)
 ) := (.self: &OwnedHashMap#(.key: key, .value: value, .policy: policy), .key: &key) -> (
     .result : ?&value

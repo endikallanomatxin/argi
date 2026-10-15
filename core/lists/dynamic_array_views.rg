@@ -15,7 +15,7 @@ _dynamic_array_view#(.t: Type)(.array: $&DynamicArray#(.t: t)) -> (.view: ArrayV
         return
     }
 
-    first ::= _trusted_dynamic_array_element_rw_pointer#(.t: t)(
+    first ::= _trusted_dynamic_array_element_mutable_reference#(.t: t)(
         .array = array, .offset = 0
     ).pointer
     borrowed ::= depend_on#(.t: $&t)(
@@ -31,7 +31,7 @@ _dynamic_array_view_ro#(.t: Type)(.array: &DynamicArray#(.t: t)) -> (.view: Arra
         return
     }
 
-    first ::= _trusted_dynamic_array_element_ro_pointer#(.t: t)(
+    first ::= _trusted_dynamic_array_element_reference#(.t: t)(
         .array = array, .offset = 0
     ).pointer
     borrowed ::= depend_on#(.t: &t)(
@@ -43,10 +43,10 @@ _dynamic_array_view_ro#(.t: Type)(.array: &DynamicArray#(.t: t)) -> (.view: Arra
 
 -- Public element loans share the collection's structural invalidation rule.
 -- Internal opaque transfers use private pointers without a shape dependency.
-dynamic_array_element_ro_pointer#(.t: Type)(.array: &DynamicArray#(.t: t), .offset: UIntNative) -> (
+dynamic_array_element_reference#(.t: Type)(.array: &DynamicArray#(.t: t), .offset: UIntNative) -> (
     .pointer : &t
 ) := {
-    element ::= _trusted_dynamic_array_element_ro_pointer#(.t: t)(
+    element ::= _trusted_dynamic_array_element_reference#(.t: t)(
         .array = array, .offset = offset
     ).pointer
     pointer = depend_on#(.t: &t)(
@@ -55,10 +55,10 @@ dynamic_array_element_ro_pointer#(.t: Type)(.array: &DynamicArray#(.t: t), .offs
     ).result
 }
 
-dynamic_array_element_rw_pointer#(.t: Type)(.array: $&DynamicArray#(.t: t), .offset: UIntNative) -> (
-    .pointer : $&t
-) := {
-    element ::= _trusted_dynamic_array_element_rw_pointer#(.t: t)(
+dynamic_array_element_mutable_reference#(.t: Type)(
+    .array: $&DynamicArray#(.t: t), .offset: UIntNative
+) -> (.pointer: $&t) := {
+    element ::= _trusted_dynamic_array_element_mutable_reference#(.t: t)(
         .array = array, .offset = offset
     ).pointer
     pointer = depend_on#(.t: $&t)(

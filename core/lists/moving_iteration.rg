@@ -1,13 +1,13 @@
 -- The initialized interval shrinks from the front without relocating values.
 -- Slots outside [_next, _end) are vacant and are never read or destroyed.
-DynamicArrayOwningIterator#(.t: Type): Type = (
+DynamicArrayMovingIterator#(.t: Type): Type = (
     ._allocation : Allocation,
     ._next       : UIntNative,
     ._end        : UIntNative
 )
 
-implement#(.t: Type) Deinit#(DynamicArrayOwningIterator#(.t: t)) (
-    .deinit = (.self: $&DynamicArrayOwningIterator#(.t: t)) -> () {
+implement#(.t: Type) Deinit#(DynamicArrayMovingIterator#(.t: t)) (
+    .deinit = (.self: $&DynamicArrayMovingIterator#(.t: t)) -> () {
         while self&._next < self&._end {
             discarded ::= ~next(self).value
         }
@@ -17,10 +17,10 @@ implement#(.t: Type) Deinit#(DynamicArrayOwningIterator#(.t: t)) (
     }
 )
 
-DequeOwningIterator#(.t: Type): Type = (._owner: Deque#(.t: t))
+DequeMovingIterator#(.t: Type): Type = (._owner: Deque#(.t: t))
 
-implement#(.t: Type) Deinit#(DequeOwningIterator#(.t: t)) (
-    .deinit = (.self: $&DequeOwningIterator#(.t: t)) -> () {
+implement#(.t: Type) Deinit#(DequeMovingIterator#(.t: t)) (
+    .deinit = (.self: $&DequeMovingIterator#(.t: t)) -> () {
         while has_next(self).ok {
             discarded ::= ~next(self).value
         }
@@ -29,12 +29,12 @@ implement#(.t: Type) Deinit#(DequeOwningIterator#(.t: t)) (
     }
 )
 
-implement#(.t: Type) OwningIterable#(DynamicArray#(.t: t)) (
+implement#(.t: Type) MovingIterable#(DynamicArray#(.t: t)) (
     .Item         : Type = t
-    .IteratorType : Type = DynamicArrayOwningIterator#(.t: t)
+    .IteratorType : Type = DynamicArrayMovingIterator#(.t: t)
 
-    .to_owning_iterator = (.value: DynamicArray#(.t: t)) -> (
-        .iterator : DynamicArrayOwningIterator#(.t: t)
+    .to_moving_iterator = (.value: DynamicArray#(.t: t)) -> (
+        .iterator : DynamicArrayMovingIterator#(.t: t)
     ) {
         count ::= value._length
         value._length = 0
@@ -42,14 +42,14 @@ implement#(.t: Type) OwningIterable#(DynamicArray#(.t: t)) (
     }
 )
 
-implement#(.t: Type) Iterator#(DynamicArrayOwningIterator#(.t: t)) (
+implement#(.t: Type) Iterator#(DynamicArrayMovingIterator#(.t: t)) (
     .Item : Type = t
 
-    .has_next = (.self: &DynamicArrayOwningIterator#(.t: t)) -> (.ok: Bool) {
+    .has_next = (.self: &DynamicArrayMovingIterator#(.t: t)) -> (.ok: Bool) {
         ok = self&._next < self&._end
     }
 
-    .next = (.self: $&DynamicArrayOwningIterator#(.t: t)) -> (.value: t) {
+    .next = (.self: $&DynamicArrayMovingIterator#(.t: t)) -> (.value: t) {
         if self&._next == self&._end { abort }
         slot ::= _trusted_uninit_slot#(.t: t)(
             .allocation = &self&._allocation, .index = self&._next
@@ -59,23 +59,23 @@ implement#(.t: Type) Iterator#(DynamicArrayOwningIterator#(.t: t)) (
     }
 )
 
-implement#(.t: Type) OwningIterable#(Deque#(.t: t)) (
+implement#(.t: Type) MovingIterable#(Deque#(.t: t)) (
     .Item         : Type = t
-    .IteratorType : Type = DequeOwningIterator#(.t: t)
+    .IteratorType : Type = DequeMovingIterator#(.t: t)
 
-    .to_owning_iterator = (.value: Deque#(.t: t)) -> (.iterator: DequeOwningIterator#(.t: t)) {
+    .to_moving_iterator = (.value: Deque#(.t: t)) -> (.iterator: DequeMovingIterator#(.t: t)) {
         iterator = (._owner = ~value)
     }
 )
 
-implement#(.t: Type) Iterator#(DequeOwningIterator#(.t: t)) (
+implement#(.t: Type) Iterator#(DequeMovingIterator#(.t: t)) (
     .Item : Type = t
 
-    .has_next = (.self: &DequeOwningIterator#(.t: t)) -> (.ok: Bool) {
+    .has_next = (.self: &DequeMovingIterator#(.t: t)) -> (.ok: Bool) {
         ok = length(&self&._owner).count != 0
     }
 
-    .next = (.self: $&DequeOwningIterator#(.t: t)) -> (.value: t) {
+    .next = (.self: $&DequeMovingIterator#(.t: t)) -> (.value: t) {
         ring ::= $&self&._owner._ring
 
         if ring&._length == 0 { abort }

@@ -10,14 +10,14 @@ _sift_down#(
     while root < count / 2 {
         child ::= root * 2 + 1
         if child + 1 < count {
-            left ::= unwrap_or_abort(.value = get_ro_ref(self, .index = child))&
-            right ::= unwrap_or_abort(.value = get_ro_ref(self, .index = child + 1))&
+            left ::= unwrap_or_abort(.value = get_reference(self, .index = child))&
+            right ::= unwrap_or_abort(.value = get_reference(self, .index = child + 1))&
             if OrderPolicy#(policy, t).less(order, .left = left, .right = right).ok {
                 child = [child + 1]
             }
         }
-        parent ::= unwrap_or_abort(.value = get_ro_ref(self, .index = root))&
-        candidate ::= unwrap_or_abort(.value = get_ro_ref(self, .index = child))&
+        parent ::= unwrap_or_abort(.value = get_reference(self, .index = root))&
+        candidate ::= unwrap_or_abort(.value = get_reference(self, .index = child))&
         if OrderPolicy#(policy, t).less(order, .left = parent, .right = candidate).ok == false {
             return
         }

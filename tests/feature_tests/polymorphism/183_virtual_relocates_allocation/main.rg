@@ -1,5 +1,9 @@
 Mover#(.Participant: Type): Contract = (
-    .transfer: (.self: &Participant, .source: $&DynamicArray#(Int32), .destination: $&DynamicArray#(Int32)) -> ()
+    .transfer : (
+        .self        : &Participant,
+        .source      : $&DynamicArray#(Int32),
+        .destination : $&DynamicArray#(Int32)
+    ) -> ()
     where relocates(destination, source)
 )
 
@@ -8,18 +12,16 @@ Manager: Type = (.unused: Int32)
 implement Mover#(Manager) (.transfer = _impl_transfer_Manager)
 
 _impl_transfer_Manager := (
-        .self        : &Manager,
-        .source      : $&DynamicArray#(Int32),
-        .destination : $&DynamicArray#(Int32)
-    ) -> ()  {
+    .self: &Manager, .source: $&DynamicArray#(Int32), .destination: $&DynamicArray#(Int32)
+) -> () {
     relocate(source, destination)
 }
 
 transfer_owned(
-        .mover       : &Virtual#(Mover),
-        .source      : $&DynamicArray#(Int32),
-        .destination : $&DynamicArray#(Int32)
-    ) -> () := {
+    .mover       : &Virtual#(Mover),
+    .source      : $&DynamicArray#(Int32),
+    .destination : $&DynamicArray#(Int32)
+) -> () := {
     transfer(mover, source, destination)
 }
 
@@ -35,6 +37,6 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     transfer_owned(&mover, $&source, $&destination)
 
     offset :: UIntNative = 0
-    element ::= unwrap_or_abort(get_ro_ref(.self = &destination, .index = offset))
+    element ::= unwrap_or_abort(get_reference(.self = &destination, .index = offset))
     if element&!= 42 { status_code = 1 }
 }

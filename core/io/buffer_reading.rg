@@ -17,7 +17,9 @@ _reader_read#(.Stream: Type: Reader#(Stream))(.self: $&Stream, .buffer: ArrayVie
         match Reader#().read_byte(self)! {
             ..end { break }
             ..ok byte {
-                target ::= unwrap_or_abort(.value = get_rw_ref($&buffer, .index = copied))
+                target ::= unwrap_or_abort(
+                    .value = get_mutable_reference($&buffer, .index = copied)
+                )
                 target&= byte
                 copied = copied + 1
             }

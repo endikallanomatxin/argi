@@ -80,13 +80,13 @@ implement#(.key: Type, .value: Type, .policy: Type: BorrowedHashPolicy#(policy, 
     }
 )
 
-implement#(.key: Type, .policy: Type: BorrowedHashPolicy#(policy, key)) ROPointerIterable#(
+implement#(.key: Type, .policy: Type: BorrowedHashPolicy#(policy, key)) ReferenceIterable#(
     OwnedHashSet#(.key: key, .policy: policy)
 ) (
     .Item         : Type = key
     .IteratorType : Type = OwnedHashSetIterator#(.key: key, .policy: policy)
 
-    .to_ro_pointer_iterator = (.value: &OwnedHashSet#(.key: key, .policy: policy)) -> (
+    .to_reference_iterator = (.value: &OwnedHashSet#(.key: key, .policy: policy)) -> (
         .iterator : OwnedHashSetIterator#(.key: key, .policy: policy)
     ) { iterator = (._entries = to_iterator(.value = &value&._map).iterator) }
 )

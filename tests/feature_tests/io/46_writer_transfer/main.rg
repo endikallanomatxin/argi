@@ -1,23 +1,20 @@
 Source: Type = (
-    .bytes           : ArrayViewRO#(.t: UInt8)
-    .position        : UIntNative              = 0
-    .largest_request : UIntNative              = 0
-    .fail            : Bool                    = false
-    .fail_after      : UIntNative              = 999
+    .bytes : ArrayViewRO#(.t: UInt8)
+    .position        : UIntNative = 0
+    .largest_request : UIntNative = 0
+    .fail : Bool = false
+    .fail_after      : UIntNative = 999
 )
 
 implement BlockReader#(Source) (
-    .read_block = (
-            .self   : $&Source,
-            .buffer : ArrayView#(.t: UInt8)
-        ) -> (
-            .result : Errable#(UIntNative, (..stream_read_failed))
-        ) {
+    .read_block = (.self: $&Source, .buffer: ArrayView#(.t: UInt8)) -> (
+        .result : Errable#(UIntNative, (..stream_read_failed))
+    ) {
         size ::= length(&buffer).count
         if size > self&.largest_request { self&.largest_request = size }
         if self&.fail or self&.position == self&.fail_after {
             if size > 0 {
-                target ::= unwrap_or_abort(.value = get_rw_ref($&buffer, 0))
+                target ::= unwrap_or_abort(.value = get_mutable_reference($&buffer, 0))
                 target&= 99
             }
             result = ..error(.reason = ..stream_read_failed)
@@ -28,8 +25,8 @@ implement BlockReader#(Source) (
             return
         }
 
-        byte ::= unwrap_or_abort(.value = get_ro_ref(&self&.bytes, self&.position))
-        target ::= unwrap_or_abort(.value = get_rw_ref($&buffer, 0))
+        byte ::= unwrap_or_abort(.value = get_reference(&self&.bytes, self&.position))
+        target ::= unwrap_or_abort(.value = get_mutable_reference($&buffer, 0))
         target&= byte&
         self&.position = self&.position + 1
         result = ..ok 1
@@ -69,7 +66,9 @@ run_main() -> !Void = ..ok Void() := {
     fallback_output ::= zeroed#([5]UInt8)()
     fallback ::= ByteWriter(.bytes = view($&fallback_output))
     if transfer_stream(.writer = $&fallback, .reader = $&source)! != 5 { abort }
-    if fallback_output[0] != 0 or fallback_output[1] != 255 or fallback_output[4] != 10 { abort }
+    if fallback_output[0] != 0 or fallback_output[1] != 255 or fallback_output[4] != 10 {
+        abort
+    }
 
     source.position = 0
     empty_storage ::= zeroed#([0]UInt8)()
@@ -131,27 +130,24 @@ run_main() -> !Void = ..ok Void() := {
 
 }
 
-main#(.WriterType: Type: Writer#(WriterType))(.writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
+main#(.WriterType: Type: Writer#(WriterType))(.writer: $&WriterType = reach writer) -> (
+    .status_code : Int32 = 1
+) := {
     run_main()!!!
     status_code = 0
 }
 
-implement Writer#(FailingSink)(
-    .write_byte = (
-                .self : $&FailingSink,
-                .byte : UInt8
-            ) -> (
-                .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-            ) {
-            self&.received = self&.received + 1
-            result = ..ok Void()
-        }
+implement Writer#(FailingSink) (
+    .write_byte = (.self: $&FailingSink, .byte: UInt8) -> (
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+    ) {
+        self&.received = self&.received + 1
+        result = ..ok Void()
+    }
 
-        .flush = (
-                .self : $&FailingSink
-            ) -> (
-                .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-            ) {
-            result = ..error(.reason = ..stream_flush_failed)
-        }
+    .flush = (.self: $&FailingSink) -> (
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+    ) {
+        result = ..error(.reason = ..stream_flush_failed)
+    }
 )

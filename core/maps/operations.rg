@@ -20,14 +20,14 @@ TextMapMembership#(.Map: Type): Contract = (
 )
 
 MapBorrowedLookup#(.Map: Type): Contract = (
-    .Key        : Type
-    .Value      : Type
-    .get_ro_ref : (.self: &Map, .key: Key) -> (.result: ?&Value)
+    .Key : Type
+    .Value         : Type
+    .get_reference : (.self: &Map, .key: Key) -> (.result: ?&Value)
 )
 
 TextMapBorrowedLookup#(.Map: Type): Contract = (
-    .Value      : Type
-    .get_ro_ref : (.self: &Map, .key: StringView) -> (.result: ?&Value)
+    .Value         : Type
+    .get_reference : (.self: &Map, .key: StringView) -> (.result: ?&Value)
 )
 
 MapInsertion#(.Map: Type, .Provider: Type: Allocator#(Provider)): Contract = (
@@ -91,8 +91,8 @@ implement#(
 implement#(.value: Type) TextMapBorrowedLookup#(
     OwnedHashMap#(.key: String, .value: value, .policy: StringHashPolicy)
 ) (
-    .Value      : Type = value
-    .get_ro_ref = _map_get_ro_ref_owned_string_lookup
+    .Value         : Type = value
+    .get_reference = _map_get_reference_owned_string_lookup
 )
 
 implement#(.value: Type) TextMapMembership#(
@@ -122,9 +122,9 @@ implement#(.key: Type, .value: Type, .policy: Type: BorrowedHashPolicy#(policy, 
 implement#(.key: Type, .value: Type, .policy: Type: BorrowedHashPolicy#(policy, key)) MapBorrowedLookup#(
     OwnedHashMap#(.key: key, .value: value, .policy: policy)
 ) (
-    .Key        : Type = &key
-    .Value      : Type = value
-    .get_ro_ref = _map_get_ro_ref_owned_hash_map
+    .Key : Type = &key
+    .Value         : Type = value
+    .get_reference = _map_get_reference_owned_hash_map
 )
 
 implement#(.key: Type, .value: Type, .policy: Type: BorrowedHashPolicy#(policy, key)) MapMembership#(
@@ -235,9 +235,9 @@ implement#(
     .value  : Type: ImplicitlyCopyable,
     .policy : Type: HashPolicy#(policy, key)
 ) MapBorrowedLookup#(HashMap#(.key: key, .value: value, .policy: policy)) (
-    .Key        : Type = key
-    .Value      : Type = value
-    .get_ro_ref = _map_get_ro_ref_hash_map
+    .Key : Type = key
+    .Value         : Type = value
+    .get_reference = _map_get_reference_hash_map
 )
 
 implement#(

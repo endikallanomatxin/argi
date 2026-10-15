@@ -1,8 +1,8 @@
 -- Collection operations retain one identity per capability.
 Indexable#(.Collection: Type): Contract = (
-    .Item       : Type
-    .length     : (.self: &Collection) -> (.count: UIntNative)
-    .get_ro_ref : (.self: &Collection, .index: UIntNative) -> (
+    .Item : Type
+    .length        : (.self: &Collection) -> (.count: UIntNative)
+    .get_reference : (.self: &Collection, .index: UIntNative) -> (
         .result : Errable#(&Item, (..out_of_bounds))
     )
 )
@@ -11,7 +11,7 @@ Indexable#(.Collection: Type): Contract = (
 IndexableMutable#(.Collection: Type): Contract = (
     .Item : Type
     Indexable#(.Collection: Collection, .Item: Item)
-    .get_rw_ref : (.self: $&Collection, .index: UIntNative) -> (
+    .get_mutable_reference : (.self: $&Collection, .index: UIntNative) -> (
         .result : Errable#($&Item, (..out_of_bounds))
     )
 )

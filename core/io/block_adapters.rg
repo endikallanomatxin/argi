@@ -10,7 +10,7 @@ _writer_block#(.t: Type: Writer#(t))(.self: $&t, .buffer: ArrayViewRO#(.t: UInt8
     index :: UIntNative = 0
 
     while index < length(&buffer).count {
-        byte ::= unwrap_or_abort(.value = get_ro_ref(&buffer, .index = index))
+        byte ::= unwrap_or_abort(.value = get_reference(&buffer, .index = index))
         Writer#().write_byte(self, .byte = byte&)!
         index = index + 1
     }

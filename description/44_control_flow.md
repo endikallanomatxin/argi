@@ -76,13 +76,13 @@ mode selects the corresponding iterable contract:
 
 | Form | Required contract | Element type |
 | --- | --- | --- |
-| `for item in value` | `Iterable#(.t: T)` | `T` |
-| `for & item in value` | `ROPointerIterable#(.t: T)` | `&T` |
-| `for $& item in value` | `RWPointerIterable#(.t: T)` | `$&T` |
-| `for ~ item in value` | `OwningIterable#(.t: T)` | owned `T` |
+| `for item in value` | `Iterable#(Collection)` | `T` |
+| `for & item in value` | `ReferenceIterable#(Collection)` | `&T` |
+| `for $& item in value` | `MutableReferenceIterable#(Collection)` | `$&T` |
+| `for ~ item in value` | `MovingIterable#(Collection)` | moved `T` |
 
 `for ~ item in value` consumes the complete collection once through
-`to_owning_iterator(.value: Self)`. The source becomes moved, including for an
+`to_moving_iterator(.value: Collection)`. The source becomes moved, including for an
 empty collection. The iterator owns all undelivered elements; each `next`
 transfers one element to the body binding. The binding has ordinary lexical
 cleanup and may itself be moved elsewhere. `continue` cleans the current body,
@@ -92,8 +92,8 @@ leaving the loop's scope. DynamicArray and Deque preserve logical element order.
 No backing allocation or element copy is needed for consuming traversal.
 
 Each iterable contract associates its Item and concrete IteratorType through
-`to_iterator`, `to_ro_pointer_iterator`, `to_rw_pointer_iterator`, or
-`to_owning_iterator`,
+`to_iterator`, `to_reference_iterator`, `to_mutable_reference_iterator`, or
+`to_moving_iterator`,
 respectively. A `for` loop accepts an iterable, rather than an iterator
 directly.
 
@@ -103,15 +103,15 @@ Iterable#(.Collection: Type): Contract = (
     .IteratorType: Type
     .to_iterator: (.value: &Collection) -> (.iterator: IteratorType)
 )
-ROPointerIterable#(.Collection: Type): Contract = (
+ReferenceIterable#(.Collection: Type): Contract = (
     .Item: Type
     .IteratorType: Type
-    .to_ro_pointer_iterator: (.value: &Collection) -> (.iterator: IteratorType)
+    .to_reference_iterator: (.value: &Collection) -> (.iterator: IteratorType)
 )
-RWPointerIterable#(.Collection: Type): Contract = (
+MutableReferenceIterable#(.Collection: Type): Contract = (
     .Item: Type
     .IteratorType: Type
-    .to_rw_pointer_iterator: (.value: $&Collection) -> (.iterator: IteratorType)
+    .to_mutable_reference_iterator: (.value: $&Collection) -> (.iterator: IteratorType)
 )
 
 Iterator#(.State: Type): Contract = (

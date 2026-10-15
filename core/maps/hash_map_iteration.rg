@@ -316,7 +316,7 @@ implement#(
         index ::= _hash_map_next_index(self&._owner, .start = self&._index).index
 
         if index >= capacity(self&._owner).count { abort }
-        slot ::= dynamic_array_element_ro_pointer(
+        slot ::= dynamic_array_element_reference(
             .array = &self&._owner&._slots, .offset = index
         ).pointer
         self&._index = index + 1
@@ -362,7 +362,7 @@ implement#(
         index ::= _hash_map_next_index(self&._owner, .start = self&._index).index
 
         if index >= capacity(self&._owner).count { abort }
-        slot ::= dynamic_array_element_rw_pointer(
+        slot ::= dynamic_array_element_mutable_reference(
             .array = $&self&._owner&._slots, .offset = index
         ).pointer
         self&._index = index + 1

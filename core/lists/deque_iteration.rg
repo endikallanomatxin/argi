@@ -1,9 +1,12 @@
 -- Iterators retain both the owner and the shape generation at creation.
 DequeIterator#(.t: Type): Type = (._owner: &Deque#(.t: t), ._index: UIntNative)
 
-DequeROPointerIterator#(.t: Type): Type = (._owner: &Deque#(.t: t), ._index: UIntNative)
+DequeReferenceIterator#(.t: Type): Type = (._owner: &Deque#(.t: t), ._index: UIntNative)
 
-DequeRWPointerIterator#(.t: Type): Type = (._owner: $&Deque#(.t: t), ._index: UIntNative)
+DequeMutableReferenceIterator#(.t: Type): Type = (
+    ._owner : $&Deque#(.t: t),
+    ._index : UIntNative
+)
 
 implement#(.t: Type: ImplicitlyCopyable) Iterable#(Deque#(.t: t)) (
     .Item         : Type = t
@@ -37,12 +40,12 @@ implement#(.t: Type: ImplicitlyCopyable) Iterator#(DequeIterator#(.t: t)) (
     }
 )
 
-implement#(.t: Type) ROPointerIterable#(Deque#(.t: t)) (
+implement#(.t: Type) ReferenceIterable#(Deque#(.t: t)) (
     .Item         : Type = t
-    .IteratorType : Type = DequeROPointerIterator#(.t: t)
+    .IteratorType : Type = DequeReferenceIterator#(.t: t)
 
-    .to_ro_pointer_iterator = (.value: &Deque#(.t: t)) -> (
-        .iterator : DequeROPointerIterator#(.t: t)
+    .to_reference_iterator = (.value: &Deque#(.t: t)) -> (
+        .iterator : DequeReferenceIterator#(.t: t)
     ) {
         owner ::= depend_on#(.t: &Deque#(.t: t))(
             .value = value
@@ -54,14 +57,14 @@ implement#(.t: Type) ROPointerIterable#(Deque#(.t: t)) (
     }
 )
 
-implement#(.t: Type) Iterator#(DequeROPointerIterator#(.t: t)) (
+implement#(.t: Type) Iterator#(DequeReferenceIterator#(.t: t)) (
     .Item : Type = &t
 
-    .has_next = (.self: &DequeROPointerIterator#(.t: t)) -> (.ok: Bool) {
+    .has_next = (.self: &DequeReferenceIterator#(.t: t)) -> (.ok: Bool) {
         ok = self&._index < length(self&._owner).count
     }
 
-    .next = (.self: $&DequeROPointerIterator#(.t: t)) -> (.value: &t) {
+    .next = (.self: $&DequeReferenceIterator#(.t: t)) -> (.value: &t) {
         current ::= self&._index
         pointer ::= _ring_buffer_occupied_pointer(
             &self&._owner&._ring, .index = current
@@ -77,12 +80,12 @@ implement#(.t: Type) Iterator#(DequeROPointerIterator#(.t: t)) (
     }
 )
 
-implement#(.t: Type) RWPointerIterable#(Deque#(.t: t)) (
+implement#(.t: Type) MutableReferenceIterable#(Deque#(.t: t)) (
     .Item         : Type = t
-    .IteratorType : Type = DequeRWPointerIterator#(.t: t)
+    .IteratorType : Type = DequeMutableReferenceIterator#(.t: t)
 
-    .to_rw_pointer_iterator = (.value: $&Deque#(.t: t)) -> (
-        .iterator : DequeRWPointerIterator#(.t: t)
+    .to_mutable_reference_iterator = (.value: $&Deque#(.t: t)) -> (
+        .iterator : DequeMutableReferenceIterator#(.t: t)
     ) {
         owner ::= depend_on#(.t: $&Deque#(.t: t))(
             .value = value
@@ -94,14 +97,14 @@ implement#(.t: Type) RWPointerIterable#(Deque#(.t: t)) (
     }
 )
 
-implement#(.t: Type) Iterator#(DequeRWPointerIterator#(.t: t)) (
+implement#(.t: Type) Iterator#(DequeMutableReferenceIterator#(.t: t)) (
     .Item : Type = $&t
 
-    .has_next = (.self: &DequeRWPointerIterator#(.t: t)) -> (.ok: Bool) {
+    .has_next = (.self: &DequeMutableReferenceIterator#(.t: t)) -> (.ok: Bool) {
         ok = self&._index < length(self&._owner).count
     }
 
-    .next = (.self: $&DequeRWPointerIterator#(.t: t)) -> (.value: $&t) {
+    .next = (.self: $&DequeMutableReferenceIterator#(.t: t)) -> (.value: $&t) {
         current ::= self&._index
         pointer ::= _ring_buffer_occupied_pointer(
             &self&._owner&._ring, .index = current

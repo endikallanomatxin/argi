@@ -129,7 +129,7 @@ implement ErrorTracer#(FixedSizeErrorTracer) (
         while i < count {
             byte ::= bytes_get(.view = &context, .index = i).byte
             destination ::= unwrap_or_abort(
-                .value = get_rw_ref($&self&._buffer, .index = [offset + i])
+                .value = get_mutable_reference($&self&._buffer, .index = [offset + i])
             )
             destination&= byte
             i = i + 1

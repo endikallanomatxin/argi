@@ -15,11 +15,15 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     copied_result ::= copy(.self = &array, .allocator = $&allocator_storage)
     match copied_result {
         ..error _ { status_code = 2 }
-        ..ok ~ copied_payload {
+        ..ok ~copied_payload {
             copied ::= ~copied_payload
             #defer deinit(.self = $&copied)
-            original ::= dynamic_array_element_ro_pointer#(.t: String)(.array = &array, .offset = 0).pointer
-            duplicate ::= dynamic_array_element_rw_pointer#(.t: String)(.array = $&copied, .offset = 0).pointer
+            original ::= dynamic_array_element_reference#(.t: String)(
+                .array = &array, .offset = 0
+            ).pointer
+            duplicate ::= dynamic_array_element_mutable_reference#(.t: String)(
+                .array = $&copied, .offset = 0
+            ).pointer
             bytes_set(.string = duplicate, .index = 0, .value = 66)
             if bytes_get(.view = original, .index = 0).byte != 65 {
                 status_code = 3

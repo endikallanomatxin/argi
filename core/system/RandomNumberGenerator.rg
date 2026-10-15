@@ -46,7 +46,7 @@ fill_random_bytes(
             chunk ::= extent - offset
             if chunk > 256 { chunk = 256 }
             pointer ::= unwrap_or_abort(
-                .value = get_rw_ref($&destination, .index = offset)
+                .value = get_mutable_reference($&destination, .index = offset)
             ).result
             if _system_entropy(.bytes = pointer, .length = chunk).status != 0 {
                 result = ..error(.reason = ..entropy_unavailable)

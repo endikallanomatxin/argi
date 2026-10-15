@@ -1,7 +1,5 @@
 ## Strings
 
-ThePrimeagen says Go's string handling is mediocre, while Rust's is amazing.
-
 Two literals:
 
 - `'c'` for characters
@@ -9,7 +7,7 @@ Two literals:
 
 A string should be explicitly viewable in several forms:
 
-- `bytes`: the raw UTF-8 bytes.
+- `bytes`: raw bytes, without an implicit UTF-8 guarantee.
 - `codepoints`: Unicode scalar values decoded from those bytes.
 - `graphemes`: visual units perceived by the user.
 
@@ -20,8 +18,8 @@ distinct questions:
 - text-unit access.
 
 ```
-my_string | bytes_get(&_, 4)  -- The fourth byte
-my_string | view_codepoints(&_, 0, 5) | _[4]  -- Future explicit code-point view
+my_string | bytes_get(.view = &_, .index = 3)  -- The fourth byte
+codepoints(.text = as_view(&my_string))  -- Checked Unicode scalar iteration
 ```
 
 
@@ -53,32 +51,20 @@ Several escape sequences are supported:
 
 ## Implementation
 
-Strings should follow the same ownership split as lists:
+`String` owns an `Allocation` and records its logical byte length. Its storage
+includes a trailing NUL. `StringView` borrows a byte region and records its length;
+it need not refer to an owning String or include a terminator:
 
-- `String` is the owning type.
-- it should be backed by `Allocation`.
-- string views should stay borrowed and non-owning.
-
-One reasonable base direction is:
-
-```
-String : Type = (
-    .allocation : Allocation
-    .length     : UIntNative
-)
-
-StringViewRO : Type = (
-    .string : &String
-    .start  : UIntNative
-    .length : UIntNative
-)
-
-StringViewRW : Type = (
-    .string : $&String
-    .start  : UIntNative
+```rg
+StringView: Type = (
+    .data   : &UInt8
     .length : UIntNative
 )
 ```
+
+Neither type guarantees valid UTF-8. `Utf8View` provides checked Unicode scalar
+iteration, as described below. There is no separate mutable string-view type;
+mutable byte storage uses `ArrayView#(UInt8)`.
 
 Copying a string view should copy only the descriptor. It should never imply
 ownership of the underlying bytes.
@@ -131,7 +117,7 @@ Borrowed byte utilities preserve the backing storage lifetime:
   and embedded NULs, and leave non-ASCII whitespace unchanged. Empty results
   need no one-past reference.
 - `split(.self, .separator)` returns a fallible `StringSplitIterator` that
-  implements `Iterator<StringView>` and `Iterable<StringView>`. A `for` loop
+  implements the `Iterator` and `Iterable` contracts with `StringView` items. A `for` loop
   copies its current cursor without advancing the original. The iterator
   borrows both text and
   separator; both backing stores must remain live while it is used. Matching
@@ -153,7 +139,7 @@ saturates at the largest capacity that leaves room for the terminator.
 The infallible `string_append_byte` and `string_append_bytes` helpers require
 sufficient existing capacity and abort before writing if that precondition fails.
 
-`join(.parts, .separator, .allocator)` accepts an `ArrayViewRO<StringView>`
+`join(.parts, .separator, .allocator)` accepts an `ArrayViewRO#(StringView)`
 and produces a new owning `String`. It inserts the separator only between
 parts, preserves empty parts and embedded NULs, and accepts an empty separator.
 An empty list produces an owning empty string. Parts and separator may overlap;
@@ -175,7 +161,7 @@ normalize text.
 
 Nomenclature to keep consistent:
 
-- `bytes`: byte-level access over UTF-8 storage.
+- `bytes`: byte-level access without Unicode interpretation.
 - `codepoints`: decoded Unicode scalar values.
 - `graphemes`: user-perceived text units, potentially spanning multiple code
   points.
@@ -185,8 +171,8 @@ The text model uses these conventions:
 - `String` is an owning byte buffer over `Allocation`.
 - `String` is also the single growable text buffer shape in `core`; there is
   no separate `TextBuffer` type.
-- buffered IO wrappers own only their internal byte buffers; they borrow the
-  underlying stream handles.
+- buffered I/O wrappers borrow their underlying streams. `BufferedReader` owns
+  its buffer; `BufferedWriter` borrows a caller-provided byte buffer.
 - `read_line()` returns an owning `String`, so the resulting text outlives the
   temporary buffering used while reading.
 - string literals materialize as borrowed read-only `StringView`.
@@ -199,22 +185,16 @@ The text model uses these conventions:
   bytes, so value semantics stay independent.
 - `String` itself is not directly indexable.
 - byte-level access is explicit:
-  - `bytes_get(.string = &string, .index = i)`
+  - `bytes_get(.view = &string, .index = i)`
   - `bytes_set(.string = $&string, .index = i, .value = b)`
-- byte/code-point/grapheme slicing uses explicit view
-  constructors such as:
-  - `view_bytes(.string = &string, .from = from, .to = to)`
-  - `view_codepoints(.string = &string, .from = from, .to = to)`
-  - `view_graphemes(.string = &string, .from = from, .to = to)`
-- text-level indexing belongs on those views, not directly on
-  `String`.
-- borrowed `StringViewRO/RW` types provide
-  explicit windows into a string, but byte indexing should not live directly on
-  `String`.
+- `slice(.self = as_view(&string), .start = start, .count = count)` returns a
+  checked borrowed byte range; it does not validate UTF-8 boundaries.
+- `codepoints(.text = as_view(&string))` validates bytes and returns a borrowed
+  `Utf8View` for scalar iteration. `utf8_decode` supports checked byte offsets.
 
 > [!IMPLEMENTATION]
-> UTF-8-aware indexing and the view constructors described above are not yet
-> available. The owner/view split already exists.
+> Codepoint-range slicing and grapheme views are not implemented. Byte slicing,
+> UTF-8 decoding, and validated scalar iteration are available.
 
 
 > [!IDEA]

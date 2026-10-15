@@ -12,7 +12,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         or get(.self = &queue, .index = 1)! != 2
         or get(.self = &queue, .index = 2)! != 3
     ] { abort }
-    reference ::= get_rw_ref(.self = $&queue, .index = 1)!
+    reference ::= get_mutable_reference(.self = $&queue, .index = 1)!
     reference&= 20
     if pop_back(.self = $&queue)! != 3 { abort }
     if pop_front(.self = $&queue)! != 0 { abort }
@@ -34,7 +34,9 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     }
 }
 
-main#(.WriterType: Type: Writer#(WriterType))(.system: System, .writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
+main#(.WriterType: Type: Writer#(WriterType))(
+    .system: System, .writer: $&WriterType = reach writer
+) -> (.status_code: Int32 = 1) := {
     run_main(.system = system)!!!
     status_code = 0
 }

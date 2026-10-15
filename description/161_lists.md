@@ -52,9 +52,9 @@ creates a one-element view; `view(.array = $&array)`
 derives the length from a fixed `[N]T`. The read-only constructors use
 `single_array_view_ro` and `view(.array = &array)` in the same way. Zero-length fixed
 arrays produce empty views without establishing an element reference. An
-empty view has length zero, rejects every index, and has no element pointer;
+empty view has length zero, rejects every index, and has no element reference;
 `data` requires a nonempty view and aborts otherwise. Zero-length bulk-copy
-and stream operations do not require an element pointer.
+and stream operations do not require an element reference.
 
 A pointer to one element does not establish the extent of a larger region.
 Private core helpers accept an explicit length only where the implementation
@@ -79,7 +79,7 @@ A nonempty dynamic-array view depends on both its backing storage and the
 collection's shape generation. Successful append, pop, insert, remove, and
 capacity growth invalidate existing views, including their derived subranges
 and element references. The same rule applies to direct element loans from
-`get_ro_ref`, `get_rw_ref`, and the public element-pointer operations, and to
+`get_reference`, `get_mutable_reference`, and the public operations returning element references, and to
 elements borrowed through collection iterators. This conservative contract applies even when an append
 does not reallocate. Replacing an element through `DynamicArray.replace` also invalidates existing
 content loans, views, and iterators, even though the length does not change. Owner cleanup and backing-arena reset invalidate its storage.
@@ -145,8 +145,8 @@ rolls back the completed prefix before releasing the new backing allocation.
 `DynamicArray` access uses named core operations:
 
 - `get(index)` for value access
-- `get_ro_ref(index)` for borrowed read-only access
-- `get_rw_ref(index)` for borrowed mutable access
+- `get_reference(index)` for borrowed read-only access
+- `get_mutable_reference(index)` for borrowed mutable access
 - `replace(index, value)` for owning replacement
 
 All four operations are fallible because an index may be outside the
@@ -174,14 +174,14 @@ The core collection library includes these families alongside `DynamicArray`:
 Iteration follows the same access-mode split, but at the iterable layer rather
 than the iterator layer:
 
-- `Iterable#(.t: T)` for `for item in arr`
-- `ROPointerIterable#(.t: T)` for `for & item in arr`
-- `RWPointerIterable#(.t: T)` for `for $& item in arr`
+- `Iterable#(Collection)` for `for item in arr`
+- `ReferenceIterable#(Collection)` for `for & item in arr`
+- `MutableReferenceIterable#(Collection)` for `for $& item in arr`
 
 The iterator contract itself stays unified:
 
 ```rg
-Iterator#(.t: T)
+Iterator#(State)
 ```
 
 That means borrowed iteration still uses `next(...)`, but on iterators whose
@@ -198,8 +198,8 @@ forge the private iterator state or use internal transfer-only pointer helpers.
 
 ## List abstracts
 
-- `Indexable<T>` requires `length` and fallible `get_ro_ref`.
-- `IndexableMutable<T>` also requires fallible `get_rw_ref`.
+- `Indexable<T>` requires `length` and fallible `get_reference`.
+- `IndexableMutable<T>` also requires fallible `get_mutable_reference`.
 - `IndexableValue<T>` adds fallible `get` for implicitly copyable elements.
 - `Resizable<T>` specifies fallible `push`, `pop`, `insert`, and `remove`.
 
@@ -322,7 +322,7 @@ shrinking and leaves the deque unchanged if allocation fails. Arithmetic
 overflow returns `..out_of_memory` before acquiring storage. Insertion consumes
 its supplied value even if growth fails, cleaning it up exactly once.
 
-Checked `get_ro_ref` and `get_rw_ref` borrow an element by logical index; `get`
+Checked `get_reference` and `get_mutable_reference` borrow an element by logical index; `get`
 requires `ImplicitlyCopyable` and returns a copy. Deque implements `Indexable`.
 Structural changes invalidate outstanding element references, including pushes
 that do not grow, pops, and successful growth. A failed reserve preserves the
@@ -332,7 +332,7 @@ elements and releases storage through its recorded deallocator; an allocator
 may be reached for element destructors.
 
 Deque supports value iteration when elements are `ImplicitlyCopyable`, and
-readonly/mutable pointer iteration for all element types. Iteration follows
+reference/mutable-reference iteration for all element types. Iteration follows
 logical front-to-back order, including wrapped storage. Iterators borrow the
 owner and its shape generation; insertion, extraction, growth, and cleanup
 invalidate them. Returned references retain the same shape dependency. Calling
