@@ -1,6 +1,7 @@
 const std = @import("std");
 const build_cmd = @import("0_commands/build.zig");
 const init_cmd = @import("0_commands/init.zig");
+const format_cmd = @import("0_commands/format.zig");
 const lsp_cmd = @import("0_commands/lsp.zig");
 const run_cmd = @import("0_commands/run.zig");
 const test_cmd = @import("0_commands/test.zig");
@@ -39,17 +40,30 @@ fn printHelp() void {
     std.debug.print("  init [name]                            Create an executable package\n", .{});
     std.debug.print("  init --lib [name]                      Create a library package\n", .{});
     std.debug.print("  lsp                                    Start the language server\n", .{});
+    std.debug.print("  format [paths...] [--check]              Format .rg files or directories recursively\n", .{});
+    std.debug.print("  format <file.rg> --stdout                Print formatted source without writing\n", .{});
     std.debug.print("  version                                Show the Argi version\n", .{});
     std.debug.print("  help                                   Show this help\n", .{});
     std.debug.print("\nBuild flags:\n", .{});
     std.debug.print("  --output <path>                        Write the final binary there\n", .{});
+    std.debug.print("  --frontend-jobs <auto|count>            Module workers (default: auto; half CPUs, capped at 8)\n", .{});
     std.debug.print("  --emit-llvm <path>                     Write the emitted LLVM IR there\n", .{});
     std.debug.print("  --emit-obj <path>                      Write the object file there as an extra output\n", .{});
     std.debug.print("  --just-emit-obj <path>                 Emit an object file there and skip final linking\n", .{});
     std.debug.print("  --sysroot <path>                       Use an Argi installation prefix for core\n", .{});
     std.debug.print("  --exec <name>                          Build a named executable from argi.toml\n", .{});
+    std.debug.print("  --link-library <name>                 Link a native library by name (repeatable)\n", .{});
+    std.debug.print("  --link-static-library <name>          Link a named static archive (repeatable)\n", .{});
+    std.debug.print("  --link-shared-library <name>          Link a named shared library (repeatable)\n", .{});
+    std.debug.print("  --library-path <path>                 Add a native library search path (repeatable)\n", .{});
+    std.debug.print("  --link-file <path>                    Link a native object/archive/shared library (repeatable)\n", .{});
+    std.debug.print("  --no-cache                             Rebuild modules without reading or writing the frontend cache\n", .{});
     std.debug.print("  --stats                                Print compilation timings and internal statistics\n", .{});
-    std.debug.print("  --release                              Use the optimized machine-code backend\n", .{});
+    std.debug.print("  --cc <driver>                           Select the C linking driver (overrides CC)\n", .{});
+    std.debug.print("  --cc-arg <argument>                     Add one driver argument (repeatable)\n", .{});
+    std.debug.print("  --c-sysroot <path>                      Select the target C toolchain sysroot\n", .{});
+    std.debug.print("  --target <arch-os-abi>                   Select native or Linux x86_64/aarch64 GNU target\n", .{});
+    std.debug.print("  --release                              Optimize LLVM IR and generated machine code\n", .{});
     std.debug.print("\nTest flags:\n", .{});
     std.debug.print("  --filter <name>                        Run only tests whose name contains this text\n", .{});
     std.debug.print("\nBuild diagnostic flags:\n", .{});
@@ -98,6 +112,10 @@ pub fn main(init: std.process.Init) !void {
     } else if (std.mem.eql(u8, command, "init")) {
         init_cmd.run(io, args[2..]) catch |err| {
             exitCommandError("Init error", err);
+        };
+    } else if (std.mem.eql(u8, command, "format")) {
+        format_cmd.run(io, args[2..]) catch |err| {
+            exitCommandError("Format error", err);
         };
     } else if (std.mem.eql(u8, command, "lsp")) {
         lsp_cmd.start(io) catch |err| {

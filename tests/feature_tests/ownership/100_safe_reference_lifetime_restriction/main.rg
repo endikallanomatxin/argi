@@ -18,9 +18,9 @@ main(.system: System) -> (.status_code: Int32) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 
-    source_result ::= allocate(.self = $&allocator_storage, .size = 1)
-    first_result ::= allocate(.self = $&allocator_storage, .size = 1)
-    second_result ::= allocate(.self = $&allocator_storage, .size = 1)
+    source_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
+    first_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
+    second_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
     match source_result {
         ..error _ { status_code = 1 }
         ..ok ~ source_payload {

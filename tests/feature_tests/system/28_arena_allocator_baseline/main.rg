@@ -5,13 +5,16 @@ main(.system: System) -> (.status_code: Int32) := {
     assume backing_allocator ::= $&allocator_storage
 
     arena :: ArenaAllocator
-    initialized ::= init(.p = $&arena, .allocator = $&allocator_storage, .block_size = 64)
-    if is(.value = initialized, .variant = ..error) {
+    initialized ::= ArenaAllocator(.allocator = $&allocator_storage, .block_size = 64)
+    match initialized {
+        ..ok ~constructed_value { arena = ~constructed_value }
+        ..error _ {
         status_code = 18
         return
     }
+    }
 
-    first_result ::= allocate(.self = $&arena, .size = 1)
+    first_result ::= allocate_bytes(.self = $&arena, .size = 1)
     match first_result {
     ..error _ {
     deinit(.self = $&arena)
@@ -19,7 +22,7 @@ main(.system: System) -> (.status_code: Int32) := {
     }
     ..ok ~ first_payload {
     first ::= ~first_payload
-    second_result ::= allocate(.self = $&arena, .size = 8, .alignment = 32)
+    second_result ::= allocate_bytes(.self = $&arena, .size = 8, .alignment = 32)
     match second_result {
     ..error _ {
     deinit(.self = $&first)
@@ -74,7 +77,7 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
-    third_result ::= allocate(.self = $&arena, .size = 64)
+    third_result ::= allocate_bytes(.self = $&arena, .size = 64)
     match third_result {
     ..error _ {
     deinit(.self = $&arena)

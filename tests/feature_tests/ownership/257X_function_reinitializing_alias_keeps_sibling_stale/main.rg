@@ -1,6 +1,10 @@
 Value : Type = (.number: Int32)
 
-deinit(.self: $&Value) -> () := {}
+implement Deinit#(Value) (
+    .deinit = (.self: $&Value) -> () {
+
+    }
+)
 
 replace(.target: $&Value) -> () := {
     target& = (.number = 9)

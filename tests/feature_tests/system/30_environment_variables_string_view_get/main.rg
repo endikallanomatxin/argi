@@ -1,11 +1,12 @@
 main(.system: System) -> (.status_code: Int32) := {
+    assume ffi := system.ffi
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 
     key_literal ::= from_literal(.data = "PATH")
     key ::= as_view(.self = key_literal)
 
-    found_result ::= get(.self = system.env_vars, .key = key)
+    found_result ::= lookup_environment(.self = system.env_vars, .key = key)
     if is(.value = found_result, .variant = ..error) {
         status_code = 3
         return

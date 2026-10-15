@@ -11,13 +11,17 @@ Result : Type = (
     ..error Int32
 )
 
-copy(.self: &Borrowing) -> (.value: Borrowing) := {
-    value = (.reference = self&.reference)
-}
+implement InfalliblyCopyable#(Borrowing) (
+    .copy = (.self: &Borrowing) -> (.value: Borrowing) {
+        value = (.reference = self&.reference)
+    }
+)
 
-Borrowing implements InfalliblyCopyable
+implement Deinit#(Target) (
+    .deinit = (.self: $&Target) -> () {
 
-deinit(.self: $&Target) -> () := {}
+    }
+)
 
 read(.pointer: $&UInt8) -> (.value: UInt8) := {
     value = pointer&

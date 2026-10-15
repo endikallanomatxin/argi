@@ -90,10 +90,14 @@ pub fn lowerInitializerExpression(
     return context.lowerNode(node, expected);
 }
 
+const PipeOperandOverride = struct { syntax: syn.NodeIndex, value: Lowered };
+
 const Context = struct {
     allocator: std.mem.Allocator,
     graph: *graph_mod.ModuleSemanticGraph,
     files: []const graph_mod.FileInput,
+    in_defer: bool = false,
+    defer_loop_depth: u32 = 0,
     diagnostics: ?*diagnostics_mod.Diagnostics,
     writer: writer_mod.Writer,
     bindings: std.array_list.Managed(NamedBinding),
@@ -104,6 +108,7 @@ const Context = struct {
     tree: *const syn.FileSyntaxTree = undefined,
     source: []const u8 = &.{},
     pipe_value: ?Lowered = null,
+    pipe_operand_overrides: []const PipeOperandOverride = &.{},
     expression_mode: ExpressionMode = .body,
     suppress_implicit_copies: bool = false,
     current_function: ?entities.ModuleFunctionId = null,
@@ -125,11 +130,18 @@ const Context = struct {
             self.source = file.source;
             const declaration_node = graph_mod.declarationSyntaxNode(self.files, source_decl) orelse continue;
             const declaration = switch (source_decl.kind) {
-                .function => self.tree.functionDeclaration(declaration_node) orelse continue,
+                .function, .type => self.tree.functionDeclaration(declaration_node) orelse continue,
                 .test_function => (self.tree.testDeclaration(declaration_node) orelse continue).function,
                 else => continue,
             };
             if (declaration.generic_params.len != 0 or declaration.generic_params_struct != null) continue;
+            if (declaration.c_abi and declaration.body == null) {
+                for (0..interface.input.len) |offset| {
+                    const field = try views.fieldView(self.graph, @enumFromInt(interface.input.start + @as(u32, @intCast(offset))));
+                    if (std.mem.eql(u8, self.graph.text(field.name), "ffi"))
+                        return self.foreignOptionError(declaration_node, "CFunction imports reserve '.ffi' for the checked capability; rename the C parameter");
+                }
+            }
 
             self.bindings.clearRetainingCapacity();
             self.refinements.clearRetainingCapacity();
@@ -147,16 +159,23 @@ const Context = struct {
             const output_range = try self.writer.appendBindingRefs(outputs.items);
             self.writer.pending_owner_function = function_id;
             const body = if (declaration.body) |body_node| try self.lowerBlock(body_node) else null;
+            const foreign = if (declaration.c_options) |options| try self.lowerForeignOptions(options) else ForeignOptions{};
+            if (foreign.exported and declaration.body == null)
+                return self.foreignOptionError(declaration.c_options.?, "an exported CFunction requires a body");
             try self.graph.semantic.function_semantics.append(self.allocator, .{
                 .function = function_id,
                 .body = body,
+                .foreign_symbol = foreign.symbol,
                 .input_bindings = input_range,
                 .output_bindings = output_range,
                 .flags = .{
-                    .is_entry = self.files[self.file_index].is_entry,
+                    .is_entry = self.files[self.file_index].is_entry and !declaration.c_function_pointer,
                     .is_once = declaration.is_once,
                     .is_test = source_decl.kind == .test_function,
                     .has_declared_body = declaration.body != null,
+                    .is_c_abi = declaration.c_abi,
+                    .is_c_function_pointer = declaration.c_function_pointer,
+                    .is_c_export = foreign.exported,
                     .uses_inferred_error_reasons = try self.interfaceUsesInferredErrable(interface.output),
                 },
             });
@@ -165,6 +184,53 @@ const Context = struct {
         }
         self.writer.pending_owner_function = null;
         return stats;
+    }
+
+    // Options become owned module-local metadata. Cached canonical graphs and
+    // global relocation must not recover foreign names from borrowed syntax.
+    const ForeignOptions = struct { symbol: ?primitives.StringRange = null, exported: bool = false };
+
+    fn lowerForeignOptions(self: *Context, options: syn.NodeIndex) !ForeignOptions {
+        const fields = self.tree.structValueLiteral(options).?.fields;
+        var symbol: ?primitives.StringRange = null;
+        var exported: ?bool = null;
+        for (fields) |field| {
+            if (self.tree.tag(field) != .struct_value_field)
+                return self.foreignOptionError(field, "CFunction options must be named");
+            const name = self.tree.tokenTextFromSource(self.source, self.tree.mainToken(field));
+            if (std.mem.eql(u8, name, "export")) {
+                if (exported != null) return self.foreignOptionError(field, "duplicate CFunction '.export' option");
+                const value = self.tree.data(field).node;
+                const literal = self.tree.literal(value) orelse
+                    return self.foreignOptionError(value, "CFunction '.export' requires a boolean literal");
+                const content = self.tree.tokenContent(literal.token);
+                if (content != .literal or content.literal != .bool_literal)
+                    return self.foreignOptionError(value, "CFunction '.export' requires a boolean literal");
+                exported = content.literal.bool_literal;
+                continue;
+            }
+            if (!std.mem.eql(u8, name, "symbol"))
+                return self.foreignOptionError(field, "unsupported CFunction option; expected '.symbol' or '.export'");
+            if (symbol != null) return self.foreignOptionError(field, "duplicate CFunction '.symbol' option");
+            const value = self.tree.data(field).node;
+            const literal = self.tree.literal(value) orelse
+                return self.foreignOptionError(value, "CFunction '.symbol' requires a string literal");
+            const content = self.tree.tokenContent(literal.token);
+            if (content != .literal or content.literal != .string_literal)
+                return self.foreignOptionError(value, "CFunction '.symbol' requires a string literal");
+            const raw = self.tree.tokenTextFromSource(self.source, literal.token);
+            const decoded = try tok.decodeStringLiteral(self.allocator, raw);
+            defer if (std.mem.indexOfScalar(u8, raw, '\\') != null) self.allocator.free(decoded);
+            if (decoded.len == 0 or std.mem.indexOfScalar(u8, decoded, 0) != null)
+                return self.foreignOptionError(value, "CFunction '.symbol' must be nonempty and contain no NUL bytes");
+            symbol = try self.writer.addString(decoded);
+        }
+        return .{ .symbol = symbol, .exported = exported orelse false };
+    }
+
+    fn foreignOptionError(self: *Context, node: syn.NodeIndex, message: []const u8) error{ OutOfMemory, Reported } {
+        if (self.diagnostics) |bag| try bag.add(self.tree.tokenLocation(self.tree.mainToken(node)), .semantic, "{s}", .{message});
+        return error.Reported;
     }
 
     fn interfaceUsesInferredErrable(self: *const Context, fields: graph_mod.FieldRange) !bool {
@@ -204,7 +270,13 @@ const Context = struct {
     }
 
     fn lowerBlock(self: *Context, node: syn.NodeIndex) anyerror!entities.ModuleBlockId {
-        const block = self.tree.codeBlock(node) orelse return error.ExpectedCodeBlock;
+        // Else-if syntax is a nested statement, but branch semantics use blocks.
+        const source_statements = if (self.tree.codeBlock(node)) |block|
+            block.statements
+        else if (self.tree.ifStatement(node) != null)
+            &.{node}
+        else
+            return error.ExpectedCodeBlock;
         try self.pushScope();
         defer self.popScope();
         var nodes = std.array_list.Managed(entities.ModuleNodeId).init(self.allocator);
@@ -215,7 +287,7 @@ const Context = struct {
         self.temporary_declarations = &temporaries;
         defer self.temporary_declarations = previous_temporaries;
         var ret_val: ?entities.ModuleNodeId = null;
-        for (block.statements) |statement| {
+        for (source_statements) |statement| {
             temporaries.clearRetainingCapacity();
             if (self.tree.tag(statement) == .assume_statement) {
                 if (self.tree.assumedDeclaration(statement)) |declaration| {
@@ -240,11 +312,32 @@ const Context = struct {
     }
 
     fn lowerNode(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) anyerror!Lowered {
+        // A deferred action must complete without bypassing remaining defers
+        // or automatic owner cleanup. Handle its failures locally instead.
+        if (self.in_defer) switch (self.tree.tag(node)) {
+            .return_statement, .error_propagation, .error_context, .error_report_return, .error_report_return_block => {
+                if (self.diagnostics) |bag| try bag.add(self.tree.tokenLocation(self.tree.mainToken(node)), .semantic, "cannot return or propagate errors from a deferred action; use handle to process the error locally", .{});
+                return error.Reported;
+            },
+            .break_statement, .continue_statement => if (self.defer_loop_depth == 0) {
+                if (self.diagnostics) |bag| try bag.add(self.tree.tokenLocation(self.tree.mainToken(node)), .semantic, "cannot exit an enclosing loop from a deferred action", .{});
+                return error.Reported;
+            },
+            else => {},
+        };
+
+        const previous_loop_depth = self.defer_loop_depth;
+        if (self.in_defer and (self.tree.tag(node) == .while_statement or self.tree.forStatement(node) != null)) self.defer_loop_depth += 1;
+        defer self.defer_loop_depth = previous_loop_depth;
+
+        for (self.pipe_operand_overrides) |entry| if (entry.syntax == node) return entry.value;
         if (self.expression_mode == .initializer) switch (self.tree.tag(node)) {
             .literal,
             .identifier,
             .function_call,
             .struct_value_literal,
+            .choice_literal,
+            .choice_some_literal,
             .list_literal,
             .struct_field_access,
             .index_access,
@@ -272,6 +365,7 @@ const Context = struct {
             .inferred_errable_type,
             .array_type,
             .generic_type_instantiation,
+            .associated_type_projection,
             .struct_type_literal,
             .choice_type_literal,
             => {},
@@ -292,6 +386,7 @@ const Context = struct {
             .expression_statement => self.lowerNode(self.tree.unaryOperand(node).?, expected),
             .move_expression => self.wrapUnary(node, .move_value, expected),
             .pipe_expression => self.lowerPipe(node, expected),
+            .handle_expression, .error_report_return, .error_report_return_block => self.lowerHandle(node, expected),
             .unwrap_or, .unwrap_or_do => self.lowerUnwrap(node, expected),
             .function_call => self.lowerCall(node, expected),
             .code_block => self.lowerBlockNode(node),
@@ -312,7 +407,7 @@ const Context = struct {
             .compare_equal, .compare_not_equal, .compare_less, .compare_greater, .compare_less_equal, .compare_greater_equal => self.lowerComparison(node),
             .logical_and, .logical_or => self.lowerLogical(node),
             .if_statement => self.lowerIf(node),
-            .for_value, .for_borrow, .for_mut_borrow => self.lowerFor(node),
+            .for_value, .for_borrow, .for_mut_borrow, .for_move => self.lowerFor(node),
             .while_statement => self.lowerWhile(node),
             .match_statement => self.lowerMatch(node),
             .defer_statement => self.lowerDefer(node),
@@ -321,7 +416,7 @@ const Context = struct {
             .address_of, .address_of_mut => self.lowerAddress(node, expected),
             .dereference => self.lowerDereference(node, expected),
             .pointer_assignment => self.lowerPointerAssignment(node, expected),
-            .type_name, .pointer_type, .pointer_type_mut, .nullable_type, .inferred_errable_type, .array_type, .generic_type_instantiation, .struct_type_literal, .choice_type_literal => self.lowerTypeLiteral(node),
+            .type_name, .pointer_type, .pointer_type_mut, .nullable_type, .inferred_errable_type, .array_type, .generic_type_instantiation, .associated_type_projection, .struct_type_literal, .choice_type_literal => self.lowerTypeLiteral(node),
             .import_statement => self.lowerImport(node, expected),
             else => return error.UnexpectedBodySyntaxNode,
         };
@@ -420,6 +515,7 @@ const Context = struct {
         }
         const value = try self.valuePosition(assignment.value, try self.lowerNode(assignment.value, expected));
         return self.pending(node, .{ .resolve_name_assignment = .{
+            .source = self.sourceRef(node),
             .node = self.nextNodeId(),
             .name = try self.writer.addString(name_text),
             .value = value.node,
@@ -435,11 +531,169 @@ const Context = struct {
             if (expected) |ty| try self.pointerChild(ty) else null
         else
             null;
-        const lhs = try self.lowerNode(op.lhs, lhs_expected);
+        var evaluations = std.array_list.Managed(entities.ModuleNodeId).init(self.allocator);
+        defer evaluations.deinit();
+        const lhs = try self.lowerPipeOperand(op.lhs, lhs_expected, &evaluations);
         const previous = self.pipe_value;
         self.pipe_value = lhs;
         defer self.pipe_value = previous;
-        return self.lowerNode(op.rhs, expected);
+        const rhs = try self.lowerNode(op.rhs, expected);
+        if (evaluations.items.len == 0) return rhs;
+        try evaluations.append(rhs.node);
+        const block = try self.writer.addBlock(.{ .nodes = try self.writer.appendNodeRefs(evaluations.items), .ret_val = rhs.node });
+        return self.resolved(node, rhs.ty, .{ .value_sequence = block });
+    }
+
+    // Stable lvalues retain their original storage. Effectful bases and index
+    // expressions are cached before projection, so repeated placeholders do
+    // not repeat calls and mutable borrows still refer to the original object.
+    fn lowerPipeOperand(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId, evaluations: *std.array_list.Managed(entities.ModuleNodeId)) anyerror!Lowered {
+        switch (self.tree.tag(node)) {
+            .identifier, .pipe_placeholder => return self.lowerNode(node, expected),
+            .struct_field_access, .choice_payload_access, .dereference, .index_access => {
+                const base_node = switch (self.tree.tag(node)) {
+                    .struct_field_access => self.tree.structFieldAccess(node).?.value,
+                    .choice_payload_access => self.tree.choicePayloadAccess(node).?.value,
+                    .dereference => self.tree.unaryOperand(node).?,
+                    .index_access => self.tree.binaryOperation(node).?.lhs,
+                    else => unreachable,
+                };
+                const base = try self.lowerPipeOperand(base_node, null, evaluations);
+                var entries: [2]PipeOperandOverride = undefined;
+                entries[0] = .{ .syntax = base_node, .value = base };
+                var count: usize = 1;
+                if (self.tree.tag(node) == .index_access) {
+                    const index_node = self.tree.binaryOperation(node).?.rhs;
+                    const index = try self.cachePipeValue(index_node, try self.lowerNode(index_node, try self.builtin(.UIntNative)), evaluations);
+                    entries[1] = .{ .syntax = index_node, .value = index };
+                    count = 2;
+                }
+                const previous = self.pipe_operand_overrides;
+                self.pipe_operand_overrides = entries[0..count];
+                defer self.pipe_operand_overrides = previous;
+                return self.lowerNode(node, expected);
+            },
+            else => return self.cachePipeValue(node, try self.lowerNode(node, expected), evaluations),
+        }
+    }
+
+    fn cachePipeValue(self: *Context, node: syn.NodeIndex, value: Lowered, evaluations: *std.array_list.Managed(entities.ModuleNodeId)) !Lowered {
+        // Keep literals contextual: hiding them behind a binding would freeze
+        // their default width before a call or array index provides its type.
+        if (self.tree.tag(node) == .literal) return value;
+        const temporaries = self.temporary_declarations orelse return value;
+        // Reserve storage in the enclosing lexical block. Initialization stays
+        // inside this expression, preserving branches and short-circuiting.
+        const name = try self.writer.addString("#pipe_temporary");
+        const storage = if (value.ty) |ty|
+            try self.writer.addBinding(.{ .name = name, .source = self.sourceRef(node), .ty = ty, .initialization = value.node, .deferred_initialization = true, .mutability = .variable })
+        else blk: {
+            const id = try self.writer.addUnresolvedBinding(name, self.sourceRef(node), value.node, .variable);
+            self.graph.semantic.bindings.items[@intFromEnum(id)].deferred_initialization = true;
+            break :blk id;
+        };
+        try self.captureBindingCleanup(node, storage);
+        const declaration = try self.resolved(node, value.ty, .{ .binding_declaration = storage });
+        try temporaries.append(declaration.node);
+        const assignment = try self.resolved(node, value.ty, .{ .assignment = .{ .binding = storage, .value = value.node } });
+        try evaluations.append(assignment.node);
+        return self.resolved(node, value.ty, .{ .binding_use = storage });
+    }
+
+    // The result storage belongs to the enclosing scope; only its assignment
+    // is conditional. Match payloads remain branch-local and are moved into
+    // that storage, so cleanup and definite initialization use ordinary flow.
+    fn lowerHandle(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
+        const reporting = self.tree.tag(node) == .error_report_return or self.tree.tag(node) == .error_report_return_block;
+        const handle = if (reporting) syn.HandleExtra{ .value = self.tree.unaryOperand(node).?, .result_name = .none, .error_name = self.tree.mainToken(node), .body = node } else self.tree.extraData(syn.HandleExtra, self.tree.data(node).extra);
+        const value = try self.lowerNode(handle.value, null);
+        const payload = try self.pending(node, .{ .resolve_choice_payload = .{
+            .requires_errable = true,
+            .node = self.nextNodeId(),
+            .value = value.node,
+            .option_name = try self.writer.addString("ok"),
+            .source = self.sourceRef(node),
+        } }, expected);
+        if (!reporting and handle.result_name == .none) {
+            if (expected) |ty| if (ty != try self.builtin(.Void)) {
+                if (self.diagnostics) |bag| try bag.add(self.tree.tokenLocation(handle.error_name), .semantic, "handle without a value binding produces Void", .{});
+                return error.Reported;
+            };
+            return self.lowerHandleWithoutResult(node, value.node);
+        }
+        const result_name = if (reporting) "#reported_value" else self.tree.tokenTextFromSource(self.source, handle.result_name.unwrap().?);
+        const error_name = if (reporting) "#reported_error" else self.tree.tokenTextFromSource(self.source, handle.error_name);
+        if (std.mem.eql(u8, result_name, error_name)) {
+            if (self.diagnostics) |bag| try bag.add(self.tree.tokenLocation(handle.error_name), .semantic, "handle result and error bindings must have different names", .{});
+            return error.Reported;
+        }
+        const result = try self.writer.addUnresolvedBinding(try self.writer.addString(result_name), self.sourceRef(node), payload.node, .variable);
+        self.graph.semantic.bindings.items[@intFromEnum(result)].deferred_initialization = true;
+        try self.captureBindingCleanup(node, result);
+        const declaration = try self.resolved(node, expected, .{ .binding_declaration = result });
+        const temporaries = self.temporary_declarations orelse return error.HandleOutsideFunction;
+        try temporaries.append(declaration.node);
+        const success = try self.writer.addUnresolvedBinding(try self.writer.addString("#handle_success"), self.sourceRef(node), null, .constant);
+        const failure = try self.writer.addUnresolvedBinding(try self.writer.addString(error_name), self.sourceRef(node), null, .constant);
+        const success_use = try self.resolved(node, expected, .{ .binding_use = success });
+        const moved = try self.resolved(node, expected, .{ .move_value = success_use.node });
+        const assignment = try self.resolved(node, expected, .{ .assignment = .{ .binding = result, .value = moved.node } });
+        const success_body = try self.writer.addBlock(.{ .nodes = try self.writer.appendNodeRefs(&.{assignment.node}), .ret_val = null });
+        try self.pushScope();
+        try self.bindings.append(.{ .name = self.graph.semantic.bindings.items[@intFromEnum(result)].name, .id = result, .ty = expected });
+        try self.bindings.append(.{ .name = self.graph.semantic.bindings.items[@intFromEnum(failure)].name, .id = failure, .ty = null });
+        const failure_body = if (reporting) try self.lowerReportReturnBlock(node, failure) else try self.lowerBlock(handle.body);
+        self.popScope();
+        var cases: [2]entities.ModuleNodeId = undefined;
+        for ([_][]const u8{ "ok", "error" }, [_]entities.ModuleBindingId{ success, failure }, [_]entities.ModuleBlockId{ success_body, failure_body }, 0..) |name, binding, body, i| {
+            const option = try self.writer.addExternalRef(.{ .kind = .choice_option, .module_path = null, .name = try self.writer.addString(name), .source = self.sourceRef(node) });
+            cases[i] = (try self.pending(node, .{ .resolve_match_case = .{ .node = self.nextNodeId(), .option = option, .payload_binding = binding, .body = body, .mode = .move } }, null)).node;
+        }
+        const dispatch = try self.pending(node, .{ .resolve_match = .{ .node = self.nextNodeId(), .value = value.node, .cases = try self.writer.appendNodeRefs(&cases) } }, try self.builtin(.Void));
+        const result_use = try self.resolved(node, expected, .{ .binding_use = result });
+        const result_move = try self.resolved(node, expected, .{ .move_value = result_use.node });
+        const block = try self.writer.addBlock(.{ .nodes = try self.writer.appendNodeRefs(&.{ dispatch.node, result_move.node }), .ret_val = result_move.node });
+        return self.resolved(node, expected, .{ .value_sequence = block });
+    }
+
+    // Reporting is an ordinary reached call. A bare return then follows the
+    // enclosing function's output and cleanup rules.
+    fn lowerReportReturnBlock(self: *Context, node: syn.NodeIndex, failure: entities.ModuleBindingId) !entities.ModuleBlockId {
+        const error_use = try self.resolved(node, null, .{ .binding_use = failure });
+        const trace = try self.pending(node, .{ .resolve_field = .{ .node = self.nextNodeId(), .value = error_use.node, .field_name = try self.writer.addString("tracer"), .source = self.sourceRef(node) } }, null);
+        const start: u32 = @intCast(self.graph.semantic.value_fields.items.len);
+        try self.graph.semantic.value_fields.append(self.allocator, .{ .name = try self.writer.addString("tracer"), .value = trace.node });
+        const input = try self.resolved(node, null, .{ .struct_value_literal = .{ .fields = .{ .start = start, .len = 1 } } });
+        try self.captureAssumedFields(node, input.node);
+        const callee = try self.writer.addExternalRef(.{ .kind = .function, .module_path = null, .name = try self.writer.addString("report_trace"), .source = self.sourceRef(node) });
+        const report = try self.pending(node, .{ .resolve_call = .{ .node = self.nextNodeId(), .callee = callee, .callee_value = null, .input = input.node, .expected_type = null, .visible_bindings = try self.captureVisibleBindings(), .owner_function = self.current_function } }, null);
+        const ret = try self.resolved(node, try self.builtin(.Void), .{ .return_statement = .{ .expression = null, .cleanup = .{ .start = 0, .len = 0 } } });
+        if (self.tree.tag(node) == .error_report_return_block) {
+            const action = try self.lowerBlock(self.tree.data(node).node_and_node.second);
+            const action_node = try self.resolved(node, try self.builtin(.Void), .{ .code_block = action });
+            return self.writer.addBlock(.{ .nodes = try self.writer.appendNodeRefs(&.{ report.node, action_node.node, ret.node }), .ret_val = null });
+        }
+        return self.writer.addBlock(.{ .nodes = try self.writer.appendNodeRefs(&.{ report.node, ret.node }), .ret_val = null });
+    }
+
+    fn lowerHandleWithoutResult(self: *Context, node: syn.NodeIndex, value: entities.ModuleNodeId) !Lowered {
+        const handle = self.tree.extraData(syn.HandleExtra, self.tree.data(node).extra);
+        const error_name = self.tree.tokenTextFromSource(self.source, handle.error_name);
+        const success = try self.writer.addUnresolvedBinding(try self.writer.addString("#handle_success"), self.sourceRef(node), null, .constant);
+        const failure = try self.writer.addUnresolvedBinding(try self.writer.addString(error_name), self.sourceRef(node), null, .constant);
+        const success_body = try self.writer.addBlock(.{ .nodes = try self.writer.appendNodeRefs(&.{}), .ret_val = null });
+        try self.pushScope();
+        try self.bindings.append(.{ .name = self.graph.semantic.bindings.items[@intFromEnum(failure)].name, .id = failure, .ty = null });
+        const failure_body = try self.lowerBlock(handle.body);
+        self.popScope();
+        var cases: [2]entities.ModuleNodeId = undefined;
+        for ([_][]const u8{ "ok", "error" }, [_]entities.ModuleBindingId{ success, failure }, [_]entities.ModuleBlockId{ success_body, failure_body }, 0..) |name, binding, body, index| {
+            const option = try self.writer.addExternalRef(.{ .kind = .choice_option, .module_path = null, .name = try self.writer.addString(name), .source = self.sourceRef(node) });
+            cases[index] = (try self.pending(node, .{ .resolve_match_case = .{ .node = self.nextNodeId(), .option = option, .payload_binding = binding, .body = body, .mode = .move } }, null)).node;
+        }
+        const dispatch = try self.pending(node, .{ .resolve_match = .{ .node = self.nextNodeId(), .value = value, .cases = try self.writer.appendNodeRefs(&cases) } }, try self.builtin(.Void));
+        const block = try self.writer.addBlock(.{ .nodes = try self.writer.appendNodeRefs(&.{dispatch.node}), .ret_val = dispatch.node });
+        return self.resolved(node, try self.builtin(.Void), .{ .value_sequence = block });
     }
 
     fn lowerUnwrap(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
@@ -456,13 +710,36 @@ const Context = struct {
     fn lowerCall(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
         const call = self.tree.functionCall(node).?;
         const name_text = self.tree.tokenTextFromSource(self.source, call.callee_token);
+        if (try @import("../target_predicate.zig").evaluate(self.allocator, self.tree, self.source, node, self.graph.target, self.diagnostics)) |matched|
+            return self.resolved(node, try self.builtin(.Bool), .{ .bool_literal = matched });
         const previous_suppression = self.suppress_implicit_copies;
         if (std.mem.eql(u8, name_text, "is") or std.mem.eql(u8, name_text, "type_of"))
             self.suppress_implicit_copies = true;
         defer self.suppress_implicit_copies = previous_suppression;
+        var callee_value: ?entities.ModuleNodeId = null;
+        if (call.module_qualifier) |qualifier| {
+            if (self.lookupBinding(self.tree.tokenTextFromSource(self.source, qualifier))) |binding| {
+                const base = try self.writer.addResolvedNode(.{
+                    .source = .{ .file_index = self.file_index, .offset = self.tree.tokenLocation(qualifier).offset },
+                    .ty = binding.ty,
+                    .content = .{ .binding_use = binding.id },
+                });
+                const field = try self.pending(node, .{ .resolve_field = .{
+                    .node = self.nextNodeId(),
+                    .value = base,
+                    .field_name = try self.writer.addString(name_text),
+                    .source = .{ .file_index = self.file_index, .offset = self.tree.tokenLocation(call.callee_token).offset },
+                } }, null);
+                callee_value = field.node;
+            }
+        } else if (call.contract_type == null) if (self.lookupBinding(name_text)) |binding| {
+            callee_value = (try self.resolved(node, binding.ty, .{ .binding_use = binding.id })).node;
+        };
         const input = try self.lowerNode(call.input, null);
         try self.captureAssumedFields(node, input.node);
-        const module_path = if (call.module_qualifier) |token_index|
+        const module_path = if (callee_value != null)
+            null
+        else if (call.module_qualifier) |token_index|
             try self.modulePathForQualifier(token_index)
         else
             null;
@@ -474,8 +751,10 @@ const Context = struct {
         });
         const visible_bindings = try self.captureVisibleBindings();
         return self.pending(node, .{ .resolve_call = .{
+            .contract_type = if (call.contract_type) |contract| try self.lowerType(contract) else null,
             .node = self.nextNodeId(),
             .callee = external,
+            .callee_value = callee_value,
             .input = input.node,
             .expected_type = expected,
             .visible_bindings = visible_bindings,
@@ -580,20 +859,20 @@ const Context = struct {
             if (payload_node == .resolved and payload_node.resolved.content == .struct_value_literal) {
                 const fields = payload_node.resolved.content.struct_value_literal.fields;
                 var has_reason = false;
-                var has_trace = false;
+                var has_tracer = false;
                 for (self.graph.semantic.value_fields.items[fields.start..][0..fields.len]) |field| {
                     has_reason = has_reason or std.mem.eql(u8, self.graph.text(field.name), "reason");
-                    has_trace = has_trace or std.mem.eql(u8, self.graph.text(field.name), "trace");
+                    has_tracer = has_tracer or std.mem.eql(u8, self.graph.text(field.name), "tracer");
                 }
-                if (has_reason and !has_trace) {
-                    // Trace creation is an ordinary reached call, so its
+                if (has_reason and !has_tracer) {
+                    // Capturing the tracer is an ordinary reached call, so its
                     // receiver dependency participates in safety summaries.
                     const location = try self.syntheticErrorCall(node, "error_location_id", null);
-                    const trace = try self.syntheticErrorCall(node, "create_error_trace", location);
+                    const trace = try self.syntheticErrorCall(node, "capture_error_tracer", location);
                     const start: u32 = @intCast(self.graph.semantic.value_fields.items.len);
                     try self.graph.semantic.value_fields.ensureUnusedCapacity(self.allocator, fields.len + 1);
                     self.graph.semantic.value_fields.appendSliceAssumeCapacity(self.graph.semantic.value_fields.items[fields.start..][0..fields.len]);
-                    try self.graph.semantic.value_fields.append(self.allocator, .{ .name = try self.writer.addString("trace"), .value = trace });
+                    try self.graph.semantic.value_fields.append(self.allocator, .{ .name = try self.writer.addString("tracer"), .value = trace });
                     self.graph.semantic.nodes.items[@intFromEnum(payload_id)].resolved.content.struct_value_literal.fields = .{ .start = start, .len = fields.len + 1 };
                 }
             }
@@ -696,7 +975,7 @@ const Context = struct {
     fn lowerIndex(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId, store: ?entities.ModuleNodeId) !Lowered {
         const access = self.tree.indexAccess(node).?;
         const value = try self.lowerNode(access.value, null);
-        const index = try self.lowerNode(access.index, try self.builtin(.Int32));
+        const index = try self.lowerNode(access.index, null);
         return self.pending(node, .{ .resolve_index = .{
             .node = self.nextNodeId(),
             .value = value.node,
@@ -709,7 +988,7 @@ const Context = struct {
         const assignment = self.tree.indexAssignment(node).?;
         const target = self.tree.indexAccess(assignment.target) orelse return error.InvalidIndexAssignmentTarget;
         const collection = try self.lowerNode(target.value, null);
-        const index = try self.lowerNode(target.index, try self.builtin(.Int32));
+        const index = try self.lowerNode(target.index, null);
         const value = try self.lowerNode(assignment.value, expected);
         return self.pending(node, .{ .resolve_index = .{
             .node = self.nextNodeId(),
@@ -781,7 +1060,14 @@ const Context = struct {
             .compare_greater_equal => .greater_than_or_equal,
             else => unreachable,
         };
+        const assumed = try self.resolved(node, null, .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 0 } } });
+        try self.captureAssumedFields(node, assumed.node);
+        const visible_bindings = try self.captureVisibleBindings();
         return self.pending(node, .{ .resolve_comparison = .{
+            .source = self.sourceRef(node),
+            .visible_bindings = visible_bindings,
+            .assumed_arguments = assumed.node,
+            .owner_function = self.current_function,
             .node = self.nextNodeId(),
             .operator = operator,
             .left = lhs.node,
@@ -904,7 +1190,18 @@ const Context = struct {
 
     fn lowerMatch(self: *Context, node: syn.NodeIndex) !Lowered {
         const statement = self.tree.matchStatement(node).?;
-        const value = try self.lowerNode(statement.value, null);
+        var value = try self.lowerNode(statement.value, null);
+        var evaluations = std.array_list.Managed(entities.ModuleNodeId).init(self.allocator);
+        defer evaluations.deinit();
+        const borrowed = for (statement.cases) |case_node| {
+            const mode = self.tree.matchCase(case_node).?.mode;
+            if (mode == .borrow or mode == .mut_borrow) break true;
+        } else false;
+        // Borrowed payload patterns require stable storage even when the
+        // scrutinee is computed. Reserve its owner in the enclosing scope and
+        // evaluate it exactly once at the match's lexical position.
+        if (borrowed and !self.syntaxIsAddressable(statement.value))
+            value = try self.cachePipeValue(statement.value, value, &evaluations);
         var case_nodes = std.array_list.Managed(entities.ModuleNodeId).init(self.allocator);
         defer case_nodes.deinit();
         for (statement.cases) |case_node| {
@@ -944,14 +1241,24 @@ const Context = struct {
             const stored = try self.writer.addNode(.{ .pending = pending_id });
             try case_nodes.append(stored);
         }
-        return self.pending(node, .{ .resolve_match = .{
+        const matched = try self.pending(node, .{ .resolve_match = .{
             .node = self.nextNodeId(),
             .value = value.node,
             .cases = try self.writer.appendNodeRefs(case_nodes.items),
         } }, try self.builtin(.Void));
+        if (evaluations.items.len == 0) return matched;
+        try evaluations.append(matched.node);
+        const block = try self.writer.addBlock(.{ .nodes = try self.writer.appendNodeRefs(evaluations.items), .ret_val = null });
+        return self.resolved(node, try self.builtin(.Void), .{ .value_sequence = block });
     }
 
     fn lowerDefer(self: *Context, node: syn.NodeIndex) !Lowered {
+        const previous = self.in_defer;
+        self.in_defer = true;
+        defer self.in_defer = previous;
+        const previous_loop_depth = self.defer_loop_depth;
+        self.defer_loop_depth = 0;
+        defer self.defer_loop_depth = previous_loop_depth;
         const value = try self.lowerNode(self.tree.unaryOperand(node).?, null);
         return self.pending(node, .{ .resolve_defer = .{ .node = self.nextNodeId(), .value = value.node } }, try self.builtin(.Void));
     }

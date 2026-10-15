@@ -5,7 +5,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     match get_ro_ref(.self = &map, .key = 1).result {
         ..none { abort }
         ..some pointer {
-            deinit(.self = $&map, .allocator = allocator)
+            deinit(.self = $&map)
             if pointer.value& != 1 { abort }
         }
     }

@@ -9,8 +9,8 @@ const LinkError = error{
     LinkFailed,
 };
 
-// This selects LLVM's machine-code pipeline only. Argi does not yet run an
-// LLVM IR optimization pipeline; release mode can add that independently.
+// Development preserves generated IR; release runs the target-aware O2
+// pipeline before machine-code generation.
 pub const OptimizationMode = enum {
     development,
     release,
@@ -35,8 +35,17 @@ fn createTargetMachine(
     triple: [:0]const u8,
     optimization_mode: OptimizationMode,
 ) !llvm.c.LLVMTargetMachineRef {
-    if (c.LLVMInitializeNativeTarget() != 0 or c.LLVMInitializeNativeAsmPrinter() != 0)
-        return error.LLVMTargetInitFailed;
+    // Initialize the backends supported by target selection. The C headers of
+    // one LLVM installation can list more backends than a redistributable DLL
+    // contains, so the all-target helpers would require unrelated symbols.
+    c.LLVMInitializeX86TargetInfo();
+    c.LLVMInitializeX86Target();
+    c.LLVMInitializeX86TargetMC();
+    c.LLVMInitializeX86AsmPrinter();
+    c.LLVMInitializeAArch64TargetInfo();
+    c.LLVMInitializeAArch64Target();
+    c.LLVMInitializeAArch64TargetMC();
+    c.LLVMInitializeAArch64AsmPrinter();
 
     var err_ptr: [*c]u8 = null;
     var target_ref: llvm.c.LLVMTargetRef = null;
@@ -60,7 +69,27 @@ fn createTargetMachine(
     ) orelse return error.TargetMachineFailed;
 
     c.LLVMSetTarget(module, triple);
+    const layout = c.LLVMCreateTargetDataLayout(tm);
+    defer c.LLVMDisposeTargetData(layout);
+    c.LLVMSetModuleDataLayout(module, layout);
     return tm;
+}
+
+/// Prepare IR before publishing it or emitting machine code. Both outputs must
+/// describe the same optimized module, using the target's actual data layout.
+pub fn prepareModule(module: c.LLVMModuleRef, triple: [:0]const u8, mode: OptimizationMode) !void {
+    const machine = try createTargetMachine(module, triple, mode);
+    defer c.LLVMDisposeTargetMachine(machine);
+    if (mode != .release) return;
+    const options = c.LLVMCreatePassBuilderOptions();
+    defer c.LLVMDisposePassBuilderOptions(options);
+    c.LLVMPassBuilderOptionsSetVerifyEach(options, 1);
+    if (c.LLVMRunPasses(module, "default<O2>", machine, options)) |failure| {
+        const message = c.LLVMGetErrorMessage(failure);
+        defer c.LLVMDisposeErrorMessage(message);
+        std.debug.print("LLVM IR optimization failed: {s}\n", .{message});
+        return error.OptimizationFailed;
+    }
 }
 
 pub fn emitObjectFile(
@@ -94,17 +123,140 @@ fn chooseLinkerCommand(cc_env: ?[]const u8) []const u8 {
     if (cc_env) |value| {
         if (value.len != 0) return value;
     }
-    return "cc";
+    return if (@import("builtin").os.tag == .windows) "gcc" else "cc";
 }
 
+/// Keep native inputs typed and ordered: archive resolution can depend on the
+/// order of files and libraries. Paths and names are separate process arguments,
+/// never shell command fragments. Target/toolchain selection can reuse this list.
+pub const NativeInput = union(enum) {
+    library: []const u8,
+    static_library: []const u8,
+    shared_library: []const u8,
+    search_path: []const u8,
+    file: []const u8,
+};
+
+pub const DriverOptions = struct {
+    target: @import("../1_base/target.zig").Config = .{},
+    cc: ?[]const u8 = null,
+    args: []const []const u8 = &.{},
+    sysroot: ?[]const u8 = null,
+};
+
 fn buildLinkArgv(
+    allocator: std.mem.Allocator,
     linker: []const u8,
     obj_path: []const u8,
     output_path: []const u8,
-) [5][]const u8 {
-    // For 0.1 we link against the platform C runtime explicitly.
-    // This keeps the current backend simple and will be revisited later.
-    return .{ linker, obj_path, "-o", output_path, "-lc" };
+    inputs: []const NativeInput,
+    driver_args: []const []const u8,
+    target: @import("../1_base/target.zig").Config,
+) ![]const []const u8 {
+    var argv: std.ArrayList([]const u8) = .empty;
+    try argv.append(allocator, linker);
+    try argv.appendSlice(allocator, driver_args);
+    try argv.appendSlice(allocator, &.{ obj_path, "-o", output_path });
+    for (inputs) |input| switch (input) {
+        .library => |name| {
+            try argv.appendSlice(allocator, &.{ "-l", name });
+        },
+        .search_path => |path| {
+            try argv.appendSlice(allocator, &.{ "-L", path });
+        },
+        .file => |path| try argv.append(allocator, path),
+        .static_library, .shared_library => unreachable,
+    };
+    // MinGW selects its CRT through the driver; it has no Unix libc archive.
+    if (target.os != .windows) try argv.appendSlice(allocator, &.{ "-lm", "-lc" });
+    return argv.toOwnedSlice(allocator);
+}
+
+// Resolve an explicit mode to an exact artifact before building linker argv.
+// This avoids changing the search mode for later libraries or implicit libc.
+// Search directories apply to every library, as they do for the native linker.
+fn resolveNamedLibrary(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    environ_map: ?*const std.process.Environ.Map,
+    linker: []const u8,
+    inputs: []const NativeInput,
+    name: []const u8,
+    shared: bool,
+    target: @import("../1_base/target.zig").Config,
+    driver_args: []const []const u8,
+) ![]const u8 {
+    if (std.mem.indexOfAny(u8, name, "/\\") != null) {
+        std.debug.print("Error: native library name '{s}' contains a path; use --link-file instead.\n", .{name});
+        return error.LinkFailed;
+    }
+    const suffixes: []const []const u8 = if (!shared)
+        &.{".a"}
+    else if (target.os == .windows)
+        &.{ ".dll.a", ".dll" }
+    else if (target.os.isDarwin())
+        &.{ ".dylib", ".tbd" }
+    else
+        &.{".so"};
+    for (inputs) |input| {
+        if (input != .search_path) continue;
+        for (suffixes) |suffix| {
+            const filename = try std.fmt.allocPrint(allocator, "lib{s}{s}", .{ name, suffix });
+            const path = try std.fs.path.resolve(allocator, &.{ input.search_path, filename });
+            std.Io.Dir.cwd().access(io, path, .{}) catch continue;
+            return try std.Io.Dir.cwd().realPathFileAlloc(io, path, allocator);
+        }
+    }
+    // Ask the selected C driver about its own toolchain paths rather than
+    // hard-coding architecture-specific system library directories.
+    for (suffixes) |suffix| {
+        const filename = try std.fmt.allocPrint(allocator, "lib{s}{s}", .{ name, suffix });
+        const query = try std.fmt.allocPrint(allocator, "-print-file-name={s}", .{filename});
+        var query_argv: std.ArrayList([]const u8) = .empty;
+        try query_argv.append(allocator, linker);
+        try query_argv.appendSlice(allocator, driver_args);
+        try query_argv.append(allocator, query);
+        const result = std.process.run(allocator, io, .{
+            .argv = query_argv.items,
+            .environ_map = environ_map,
+        }) catch |err| {
+            std.debug.print("Error: cannot query native library paths with '{s}': {s}\n", .{ linker, @errorName(err) });
+            return error.LinkFailed;
+        };
+        const path = std.mem.trim(u8, result.stdout, " \t\r\n");
+        if (result.term != .exited or result.term.exited != 0 or
+            path.len == 0 or std.mem.eql(u8, path, filename)) continue;
+        std.Io.Dir.cwd().access(io, path, .{}) catch continue;
+        return try std.Io.Dir.cwd().realPathFileAlloc(io, path, allocator);
+    }
+    std.debug.print("Error: {s} native library '{s}' was not found; add --library-path or select an exact artifact with --link-file.\n", .{ if (shared) "shared" else "static", name });
+    return error.LinkFailed;
+}
+
+// Query the same driver configuration used for library search and final linking.
+// Never accept an unconfigured host driver for a cross-target executable.
+fn validateDriverTarget(allocator: std.mem.Allocator, io: std.Io, environ_map: ?*const std.process.Environ.Map, driver: []const u8, args: []const []const u8, target: @import("../1_base/target.zig").Config) !void {
+    var argv: std.ArrayList([]const u8) = .empty;
+    try argv.append(allocator, driver);
+    try argv.appendSlice(allocator, args);
+    try argv.append(allocator, "-dumpmachine");
+    const result = std.process.run(allocator, io, .{ .argv = argv.items, .environ_map = environ_map }) catch |err| {
+        std.debug.print("Error: cannot query C driver '{s}': {s}\n", .{ driver, @errorName(err) });
+        return error.LinkFailed;
+    };
+    const triple = std.mem.trim(u8, result.stdout, " \t\r\n");
+    var parts = std.mem.splitScalar(u8, triple, '-');
+    const arch = parts.next() orelse "";
+    var linux = false;
+    var gnu = false;
+    while (parts.next()) |part| {
+        linux = linux or std.mem.eql(u8, part, "linux");
+        gnu = gnu or std.mem.eql(u8, part, "gnu");
+    }
+    if (result.term != .exited or result.term.exited != 0 or !std.mem.eql(u8, arch, @tagName(target.arch)) or !linux or !gnu) {
+        std.debug.print("Error: C driver reports '{s}', incompatible with '{s}-{s}-{s}'; configure --cc and --cc-arg for the requested target.\n", .{ triple, @tagName(target.arch), @tagName(target.os), @tagName(target.abi) });
+        return error.LinkFailed;
+    }
 }
 
 fn printLinkCommand(argv: []const []const u8) void {
@@ -161,20 +313,49 @@ pub fn linkWithLibc(
     io: std.Io,
     environ_map: ?*const std.process.Environ.Map,
     optimization_mode: OptimizationMode,
+    inputs: []const NativeInput,
+    options: DriverOptions,
 ) !void {
     var obj_path_buf: [std.fs.max_path_bytes]u8 = undefined;
     const obj_path = try std.fmt.bufPrint(&obj_path_buf, "{s}.o", .{output_path});
-    try emitObjectFile(module, triple, obj_path, optimization_mode);
-
     const cc_env = if (environ_map) |env_map| env_map.get("CC") else null;
-    const linker = chooseLinkerCommand(cc_env);
+    const linker = options.cc orelse chooseLinkerCommand(cc_env);
 
-    const argv_array = buildLinkArgv(linker, obj_path, output_path);
-    const argv = argv_array[0..];
+    var arena = std.heap.ArenaAllocator.init(allocator.*);
+    defer arena.deinit();
+    var driver_args: std.ArrayList([]const u8) = .empty;
+    try driver_args.appendSlice(arena.allocator(), options.args);
+    if (options.sysroot) |root| try driver_args.append(arena.allocator(), try std.fmt.allocPrint(arena.allocator(), "--sysroot={s}", .{root}));
+    if (!options.target.isNative()) try validateDriverTarget(arena.allocator(), io, environ_map, linker, driver_args.items, options.target);
+    try emitObjectFile(module, triple, obj_path, optimization_mode);
+    const resolved = try arena.allocator().dupe(NativeInput, inputs);
+    for (resolved) |*input| switch (input.*) {
+        .static_library => |name| input.* = .{ .file = try resolveNamedLibrary(arena.allocator(), io, environ_map, linker, inputs, name, false, options.target, driver_args.items) },
+        .shared_library => |name| input.* = .{ .file = try resolveNamedLibrary(arena.allocator(), io, environ_map, linker, inputs, name, true, options.target, driver_args.items) },
+        else => {},
+    };
+    // MinGW binutils may interpret Unicode command-line paths through the ANSI
+    // code page. Let process creation select the Unicode output directory and
+    // give the linker local artifact names instead. Resolve other paths before
+    // changing the child directory so relative native inputs keep their meaning.
+    const windows = options.target.os == .windows;
+    const invocation_dir = try std.process.currentPathAlloc(io, arena.allocator());
+    const link_dir = if (windows) try std.fs.path.resolve(arena.allocator(), &.{ invocation_dir, std.fs.path.dirname(output_path) orelse "." }) else null;
+    if (windows) for (resolved) |*input| switch (input.*) {
+        .file => |path| input.* = .{ .file = try std.fs.path.resolve(arena.allocator(), &.{ invocation_dir, path }) },
+        .search_path => |path| input.* = .{ .search_path = try std.fs.path.resolve(arena.allocator(), &.{ invocation_dir, path }) },
+        else => {},
+    };
+    const driver = if (windows and (std.mem.indexOfAny(u8, linker, "/\\") != null))
+        try std.fs.path.resolve(arena.allocator(), &.{linker})
+    else
+        linker;
+    const argv = try buildLinkArgv(arena.allocator(), driver, if (windows) std.fs.path.basename(obj_path) else obj_path, if (windows) std.fs.path.basename(output_path) else output_path, resolved, driver_args.items, options.target);
 
     const result = std.process.run(allocator.*, io, .{
         .argv = argv,
         .environ_map = environ_map,
+        .cwd = if (link_dir) |dir| .{ .path = dir } else .inherit,
     }) catch |err| {
         printLinkerFailure(linker, argv, null, err);
         return error.LinkFailed;
@@ -195,18 +376,20 @@ pub fn linkWithLibc(
 }
 
 test "chooseLinkerCommand prefers CC when provided" {
-    try std.testing.expectEqualStrings("cc", chooseLinkerCommand(null));
-    try std.testing.expectEqualStrings("cc", chooseLinkerCommand(""));
+    try std.testing.expectEqualStrings(if (@import("builtin").os.tag == .windows) "gcc" else "cc", chooseLinkerCommand(null));
+    try std.testing.expectEqualStrings(if (@import("builtin").os.tag == .windows) "gcc" else "cc", chooseLinkerCommand(""));
     try std.testing.expectEqualStrings("clang", chooseLinkerCommand("clang"));
 }
 
 test "buildLinkArgv keeps linker object output and libc order" {
-    const argv = buildLinkArgv("clang", "/tmp/input.o", "/tmp/output");
+    const argv = try buildLinkArgv(std.testing.allocator, "clang", "/tmp/input.o", "/tmp/output", &.{}, &.{}, .{ .arch = .x86_64, .os = .linux, .abi = .gnu });
+    defer std.testing.allocator.free(argv);
     try std.testing.expectEqualStrings("clang", argv[0]);
     try std.testing.expectEqualStrings("/tmp/input.o", argv[1]);
     try std.testing.expectEqualStrings("-o", argv[2]);
     try std.testing.expectEqualStrings("/tmp/output", argv[3]);
-    try std.testing.expectEqualStrings("-lc", argv[4]);
+    try std.testing.expectEqualStrings("-lm", argv[4]);
+    try std.testing.expectEqualStrings("-lc", argv[5]);
 }
 
 test "optimization modes select machine code optimization levels" {
@@ -214,4 +397,11 @@ test "optimization modes select machine code optimization levels" {
     try std.testing.expectEqual(@as(c.LLVMCodeGenOptLevel, c.LLVMCodeGenLevelDefault), OptimizationMode.release.llvmCodeGenLevel());
     try std.testing.expectEqualStrings("none", OptimizationMode.development.llvmCodeGenLevelName());
     try std.testing.expectEqualStrings("default", OptimizationMode.release.llvmCodeGenLevelName());
+}
+
+test "Windows link commands let the MinGW driver select its CRT" {
+    const argv = try buildLinkArgv(std.testing.allocator, "gcc", "input.o", "output.exe", &.{}, &.{}, .{ .arch = .x86_64, .os = .windows, .abi = .gnu });
+    defer std.testing.allocator.free(argv);
+    try std.testing.expectEqual(@as(usize, 4), argv.len);
+    try std.testing.expectEqualStrings("output.exe", argv[3]);
 }

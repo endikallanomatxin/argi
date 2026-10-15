@@ -20,7 +20,7 @@ not choose a move from the value's type: a named source moves only with `~`.
 
 > [!IMPLEMENTATION]
 > The compiler also permits implicit copies of types it judges trivially
-> copyable when they have no explicit `copy` operation, even without an
+> copyable when they have no explicit copy contract, even without an
 > `ImplicitlyCopyable` implementation.
 
 
@@ -54,17 +54,17 @@ source. Argi separates the contract for copying from permission to insert that
 copy implicitly:
 
 ```rg
-InfalliblyCopyable : Abstract = (
-    copy(.self: &Self) -> (.value: Self)
+InfalliblyCopyable#(.Value: Type): Contract = (
+    .copy: (.self: &Value) -> (.value: Value)
 )
 
-FalliblyCopyable#(.reasons: Type) : Abstract = (
-    copy(.self: &Self)
-        -> (.result: Errable#(.t: Self, .reasons: reasons))
+FalliblyCopyable#(.Value: Type, .Provider: Type: Allocator): Contract = (
+    .reasons: Type
+    .copy: (.self: &Value, .allocator: $&Provider)
+        -> (.result: Errable#(Value, reasons))
 )
 
-ImplicitlyCopyable : Abstract = ()
-ImplicitlyCopyable implements InfalliblyCopyable
+ImplicitlyCopyable#(.Value: Type): Contract = ()
 ```
 
 The relationships are:
@@ -77,8 +77,20 @@ FalliblyCopyable   => never copied implicitly
 
 An infallible but expensive type can implement `InfalliblyCopyable` while
 requiring explicit `copy(&value)`. A fallible type such as `String` can
-implement `FalliblyCopyable#(.reasons: (..out_of_memory))`; its failure remains
+implement `FalliblyCopyable#(String, Provider)` with `.reasons = (..out_of_memory)`; its failure remains
 part of `copy`, not a differently named operation.
+
+The allocator provider participates in fallible-copy selection. Associated
+reasons belong to that complete tuple. Qualify calls when necessary:
+`FalliblyCopyable#(String, PageAllocator).copy(&original, .allocator = allocator)`.
+A function merely named `copy` establishes no copy capability and does not
+change implicit-copy permission.
+
+Infallibly copyable values have a generic fallible-copy adapter whose reasons
+conservatively include `..out_of_memory`. The adapter always returns `..ok`,
+performs no allocation and preserves the infallible operation's ownership rules.
+This lets allocating containers use one element-copy protocol; allocation
+failure is already part of their result.
 
 The language has no general `shallow_copy()`. Copying a value that has a
 resource cleanup responsibility must establish independent resources and a
@@ -114,7 +126,7 @@ Values such as `String`, `DynamicArray`, and maps normally require an explicit
 copy, which may fail while allocating independent storage:
 
 ```rg
-copied_result ::= copy(.self = &original)
+copied_result ::= copy(.self = &original, .allocator = allocator)
 match copied_result {
     ..error reason { /* handle the copy failure */ }
     ..ok ~ copied { /* original and copied are independent */ }
@@ -153,7 +165,7 @@ It does not silently become `second := ~first`.
 ## Non-copyable types
 
 Some resources have no meaningful duplication operation, including files,
-sockets, mutexes, devices, and `Allocation`. They implement no copy abstract.
+sockets, mutexes, devices, and `Allocation`. They implement no copy contract.
 They can be borrowed or moved explicitly:
 
 ```rg

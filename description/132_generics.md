@@ -12,8 +12,8 @@
 
 Use `#( … )` to **declare** generic parameters. The binder can appear in:
 
-* declarations of **types** and **abstracts**,
-* **functions** and **operators**.
+* declarations of **types**, **contracts**, and **functions**,
+* **implement** declarations, with the binder immediately after `implement`.
 
 ```argi
 -- Generic type
@@ -33,15 +33,32 @@ let v : Vec#(.t: Float32, .n = 3) = (1.0, 2.0, 3.0)
 let r := max#(.t: Int)(.a = x, .b = y)
 ```
 
-For now the canonical documented form uses named generic arguments. Positional
-generic arguments may still be considered later for ergonomics.
+Type applications accept positional arguments in declaration order. Positional
+arguments form a prefix; named arguments may follow, but a positional argument
+may not follow a named one. Explicit function specializations also accept
+positional type arguments.
+Each parameter can be supplied only once. Unknown names, excess arguments,
+missing required arguments, and mismatched argument kinds are errors.
+
+```argi
+value: Errable#(Int32, (..unavailable)) = ..ok 42
+pair: Pair#(Int32, .right: Bool) = (.left = 1, .right = true)
+bytes: Array#(4, UInt8) = (0, 0, 0, 0)
+```
+
+A positional type argument is written directly; a named type argument uses
+`.name: Type`. In type applications, positional integer expressions begin with a literal or
+a sign; use the
+named `.name = expression` form for a value identified by a comptime binding.
+`Errable#(Value)` omits the reasons just like `Errable#(.t: Value)` and therefore
+has an inferred error set. Supplying a reasons type retains an explicit set.
 
 
 ### Bounds
 
 ```argi
-sum#(.t: Type: Number) (.xs: []t) -> (.result: t)
--- t must implement the Number abstract
+sum#(.t: Type: Number#(t)) (.xs: []t) -> (.result: t)
+-- t must satisfy the Number contract
 ```
 
 ## Constraint Design
@@ -59,8 +76,8 @@ The intended order is:
 This is the compact system:
 
 ```argi
-sum#(.t: Type: Number) (.xs: []t) -> (.result: t)
-BufferedReader#(.base_type: Type: Reader) : Type = ...
+sum#(.t: Type: Number#(t)) (.xs: []t) -> (.result: t)
+BufferedReader#(.base_type: Type: Reader#(base_type)) : Type = ...
 ```
 
 Meaning:
@@ -68,12 +85,12 @@ Meaning:
 - `.t` is still a `Type` parameter
 - `Number` or `Reader` is not the parameter type itself
 - it is a static check saying that the concrete type bound to that parameter
-  must implement the given abstract
+  must satisfy the given contract
 
 This option is attractive because it keeps everything in one place:
 
 - `#(...)` declares the comptime parameters
-- the `: Abstract` suffix expresses a simple implements-check
+- the `: Contract#(participants)` suffix checks selected conformance
 
 This is enough for many useful cases:
 
@@ -122,8 +139,8 @@ For example:
 ```argi
 copy#(.r: Type, .w: Type)
 where(
-    r implements Reader,
-    w implements Writer,
+    Reader#(r),
+    Writer#(w),
 )(
     .reader: $&r,
     .writer: $&w,
@@ -139,7 +156,7 @@ ever taken it should be understood as:
 Its likely value would be cases that become awkward or impossible to express
 cleanly with Option A alone, such as:
 
-- expressing implements-checks outside the parameter declaration itself
+- expressing conformance checks outside the parameter declaration itself
 - arithmetic relations between comptime values when those relations are not
   already encoded naturally in the signature
 - future higher-order constraints if iterators, matrices or algebraic traits end
@@ -155,17 +172,28 @@ needed.
 
 In short:
 
-- implement `#(.t: Type: SomeAbstract)` well
+- implement `#(.t: Type: Capability#(t))` well
 - keep pushing signature-based composition first
 - only add `where(...)` if the simple bounded model is no longer enough
 
 
 ## Interaction with Multiple Dispatch
 
-* **Identity** = `name + parameter type pattern`.
-* The `#(...)` block is **not** part of the identity; it only **declares** the generics used.
-* The same signature cannot be duplicated with or without `#(...)` (redefinition).
+An ordinary function name has one identity in its module, regardless of its
+runtime signature or compile-time parameter shape. Generic declarations may
+specialize that identity, but cannot define overload families. Contract operations
+have identities within their contract; explicit participant patterns select the
+most specific implementation. See [Contract dispatch](131_multiple_dispatch.md).
 
+
+## Constructor parameters
+
+`implement#(.t: Type) Init#(Box#(.t: t), (.value: t))` declares t in the
+implementation scope. The target pattern and Args record select its bindings;
+the requested target supplies known parameters and inputs infer remaining ones.
+Implementation constraints validate those bindings. A bare `Box(.value = value)`
+can infer its target parameters from Args, while Result never supplies missing
+parameters or selects an implementation.
 
 ## Interaction with Virtual types
 

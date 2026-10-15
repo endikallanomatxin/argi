@@ -4,12 +4,12 @@ B : Type = (.value: UInt8, .to_a: $&UInt8)
 
 main(.system: System) -> (.status_code: Int32) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    result_a ::= allocate(.self = $&allocator_storage, .size = 1)
+    result_a ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
     match result_a {
     ..error _ { status_code = 3 }
     ..ok ~ payload_a {
     allocation_a ::= ~payload_a
-    result_b ::= allocate(.self = $&allocator_storage, .size = 1)
+    result_b ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
     match result_b {
     ..error _ { status_code = 4 }
     ..ok ~ payload_b {

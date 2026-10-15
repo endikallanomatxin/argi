@@ -1,8 +1,17 @@
 Resource : Type = ()
 
-init(.res: $&Resource) -> () := {}
+implement Init#(Resource, ()) (
+    .Result: Type = Resource
+    .init = (.args: ()) -> (.result: Result) {
+        result = ()
+    }
+)
 
-deinit(.res: $&Resource) -> () := {}
+implement Deinit#(Resource) (
+    .deinit = (.self: $&Resource) -> () {
+
+    }
+)
 
 consume_ptr(.ptr: &Resource) -> (.status_code: Int32) := {
     status_code = 0

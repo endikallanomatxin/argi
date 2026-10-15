@@ -16,7 +16,7 @@ System : Type = (
     .terminal: $&Terminal
     .args: $&Arguments
     .env_vars: $&EnvironmentVariables
-    .file_sys: $&FileSystem
+    .file_system: $&FileSystem
     .network: $&Network
     .proc_man: $&ProcessManager
     .clock: $&Clock
@@ -29,9 +29,11 @@ The fields expose different kinds of work: memory and allocation, terminal
 I/O, process arguments and environment, files, networking, processes, time,
 randomness, and foreign calls.
 
-> [!IMPLEMENTATION]
-> `Network`, `ProcessManager`, `Clock`, and `RandomNumberGenerator` are
-> currently capability placeholders without general operations.
+`Network` provides [blocking address resolution, TCP, and UDP](168_networking.md).
+
+`RandomNumberGenerator` provides [system entropy](163_randomness.md).
+`Clock` provides [monotonic time, civil time, and blocking sleep](164_time.md).
+`ProcessManager` provides [child processes and their streams](165_processes.md).
 
 Functions receive the capabilities they use through ordinary inputs. They
 may be passed explicitly or supplied through lexical `assume` or a declared
@@ -46,6 +48,39 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
 The allocator created here belongs to `main`'s scope. Its reference may serve
 calls in that scope, but cannot escape after the allocator is cleaned up.
 
+## Program results
+
+`main` returns no values, or one `.status_code: Int32` output when the program
+needs explicit control of its exit code. Normal completion of a no-result main
+exits with `0`; the integer form uses its returned status, including on early
+`return`. There is no special fallible-main contract.
+
+```rg
+main(.system: System) -> () := {
+    assume writer ::= $&system.terminal&.stderr
+    write($&system.terminal&.stdout, "ready\n")!!!
+}
+```
+
+`!!!` unwraps success, or reports the error and returns normally from the
+containing function. It does not set a failure exit code. To exit with `1` on
+such an early return, initialize `.status_code: Int32 = 0` and assign `1` in
+an attached error block:
+
+```rg
+main(.system: System) -> (.status_code: Int32 = 0) := {
+    assume writer ::= $&system.terminal&.stderr
+    write($&system.terminal&.stdout, "ready\n")!!! { status_code = 1 }
+}
+```
+
+Reporting uses the ordinary writer and the tracer stored in the error.
+The checked entry provides a stderr writer and a bounded 4096-byte tracer;
+functions using reporting need a reachable writer or an explicit writer input.
+A locally selected writer or tracer retains its ordinary meaning. Reporting
+finishes before normal return cleanup releases borrowed resources. A failed
+report is not recursively reported and does not alter the pending return.
+
 ## Stream capabilities
 
 `System.terminal` groups the process streams as `stdin`, `stdout`, and
@@ -56,7 +91,10 @@ allocate buffers.
 I/O helpers name their dependencies `reader` for reading and `writer` for
 writing. These names describe the operation rather than a process-specific
 stream. A writer may be a file, buffered writer, or another implementation of
-`Writer`. Error-reporting helpers also take a writer; route them explicitly to
+`Writer`. The unique `write(.self, .value)` entry selects `WriteValue` evidence;
+text writes return Void on success, while byte views return a count. File byte
+writes select native progress rather than the general byte-at-a-time algorithm.
+Error-reporting helpers also take a writer; route them explicitly to
 `system.terminal&.stderr` or select that writer in a nested lexical scope.
 
 ```rg
@@ -71,7 +109,8 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
 For buffered output, borrow the terminal's file and supply a view over an
 initialized byte buffer. Construction is infallible and does not allocate;
 the caller selects local storage, allocated storage, or a reusable buffer.
-`zeroed` constructs numbers and fixed arrays of numbers initialized to zero.
+`zeroed` constructs numeric zeros, null C callbacks, and fixed arrays of those
+values.
 It does not construct references or arbitrary resource-bearing types.
 `view($&array)` creates a writable view; `view(&array)` creates a read-only
 view. Both retain the backing array's validity dependencies.
@@ -95,3 +134,9 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
 Streams may be redirected to files or pipes. A stream implementing `Reader`
 or `Writer` does not by itself promise terminal-specific operations such as
 querying screen dimensions.
+
+A fallible helper can return an error borrowing a tracer supplied by its caller
+or the program entry scope. A tracer created inside the helper cannot escape
+in an `Error` or `ErrorTrace`. Create a custom tracer in the caller, keep its
+buffer and virtual wrapper alive, and pass or reach that capability while the
+caller handles or reports the error.

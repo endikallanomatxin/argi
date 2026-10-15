@@ -90,6 +90,10 @@ pub fn verifyModule(graph: *const graph_mod.ModuleSemanticGraph) !void {
     for (semantic.external_refs.items) |reference| {
         try require(verify.stringFits(reference.name, graph.strings.items));
         if (reference.module_path) |path| try require(verify.stringFits(path, graph.strings.items));
+        try require(verify.optionalIdFits(reference.projection_base, views.typeCount(graph)));
+        try require(verify.optionalIdFits(reference.computed_type, graph.semantic.parameterized_storage.ir.types.items.len));
+        if (reference.computed_arguments) |arguments|
+            try require(verify.rangeFits(arguments, graph.semantic.parameterized_storage.ir.generic_arguments.items.len));
         if (reference.generic_arguments) |arguments|
             try require(verify.rangeFits(arguments, views.genericArgumentCount(graph)));
         try require(verify.sourceFits(reference.source, graph.file_offsets.items.len));
@@ -153,11 +157,12 @@ fn verifyOverlays(graph: *const graph_mod.ModuleSemanticGraph) !void {
         try require(verify.rangeFits(value.input_bindings, graph.semantic.binding_refs.items.len));
         try require(verify.rangeFits(value.output_bindings, graph.semantic.binding_refs.items.len));
         try require(verify.optionalIdFits(value.inferred_error_reasons, views.typeCount(graph)));
+        if (value.foreign_symbol) |name| try require(verify.stringFits(name, graph.strings.items));
     }
     for (graph.semantic.field_semantics.items, 0..) |value, index| {
         try require(verify.idFits(value.field, views.fieldCount(graph)));
         try require(!hasFieldOverlayBefore(graph, index, value.field));
-        try require(verify.optionalIdFits(value.storage_type, views.typeCount(graph)));
+
         try require(verify.optionalIdFits(value.default_value, graph.semantic.nodes.items.len));
     }
     for (graph.semantic.variant_semantics.items, 0..) |value, index| {
@@ -176,8 +181,10 @@ fn verifyPending(graph: *const graph_mod.ModuleSemanticGraph, operation: entitie
             try require(verify.idFits(value.destination, views.typeCount(graph)));
         },
         .resolve_call => |value| {
+            try require(verify.optionalIdFits(value.contract_type, views.typeCount(graph)));
             try require(verify.idFits(value.node, semantic.nodes.items.len));
             try require(verify.idFits(value.callee, semantic.external_refs.items.len));
+            try require(verify.optionalIdFits(value.callee_value, semantic.nodes.items.len));
             try require(semantic.external_refs.items[@intFromEnum(value.callee)].kind == .function);
             try require(verify.idFits(value.input, semantic.nodes.items.len));
             try require(verify.optionalIdFits(value.expected_type, views.typeCount(graph)));
@@ -203,6 +210,9 @@ fn verifyPending(graph: *const graph_mod.ModuleSemanticGraph, operation: entitie
             try require(verify.optionalIdFits(value.owner_function, graph.functions.items.len));
         },
         .resolve_comparison => |value| {
+            try require(verify.optionalIdFits(value.assumed_arguments, semantic.nodes.items.len));
+            try require(verify.rangeFits(value.visible_bindings, semantic.binding_refs.items.len));
+            try require(verify.optionalIdFits(value.owner_function, graph.functions.items.len));
             try require(verify.idFits(value.node, semantic.nodes.items.len));
             try require(verify.idFits(value.left, semantic.nodes.items.len));
             try require(verify.idFits(value.right, semantic.nodes.items.len));
@@ -282,10 +292,10 @@ fn verifyPending(graph: *const graph_mod.ModuleSemanticGraph, operation: entitie
             try require(verify.idFits(value.node, semantic.nodes.items.len));
             try require(verify.stringFits(value.path, graph.strings.items));
         },
-        .resolve_abstract => |value| {
+        .resolve_contract => |value| {
             try require(verify.idFits(value.declaration, graph.declarations.items.len));
-            try require(verify.idFits(value.abstract_ref, semantic.external_refs.items.len));
-            try require(semantic.external_refs.items[@intFromEnum(value.abstract_ref)].kind == .abstract);
+            try require(verify.idFits(value.contract_ref, semantic.external_refs.items.len));
+            try require(semantic.external_refs.items[@intFromEnum(value.contract_ref)].kind == .contract);
         },
         .resolve_copy => |value| {
             try require(verify.idFits(value.node, semantic.nodes.items.len));

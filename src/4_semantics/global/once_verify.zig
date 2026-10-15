@@ -81,6 +81,7 @@ const State = struct {
     fn walkNode(self: *State, node_id: graph_mod.GlobalNodeId) anyerror!void {
         const node = self.graph.nodes.items[@intFromEnum(node_id)];
         switch (node.content) {
+            .function_address => {},
             .declaration,
             .binding_use,
             .reach_directive,
@@ -106,8 +107,12 @@ const State = struct {
                 if (auto.deinit_fn) |callee| try self.walkCall(node_id, callee);
             },
             .function_call => |call| {
+                if (call.callee_value) |value| try self.walkNode(value);
                 try self.walkNode(call.input);
                 if (call.consumes_auto_deinit) |value| try self.walkNode(value);
+                for (call.consumed_auto_deinits) |value| try self.walkNode(value);
+                for (call.initialized_auto_deinits) |value| try self.walkNode(value);
+                for (call.outcome_cleanups) |cleanup| try self.walkNode(cleanup.place);
                 if (call.initializes_auto_deinit) |value| try self.walkNode(value);
                 try self.walkCall(node_id, call.callee);
             },
@@ -120,11 +125,14 @@ const State = struct {
                 try self.walkNode(call.handle);
                 try self.walkNode(call.input);
                 if (call.consumes_auto_deinit) |value| try self.walkNode(value);
+                for (call.consumed_auto_deinits) |value| try self.walkNode(value);
+                for (call.initialized_auto_deinits) |value| try self.walkNode(value);
+                for (call.outcome_cleanups) |cleanup| try self.walkNode(cleanup.place);
                 const registry = self.graph.virtual_registries.items[@intFromEnum(call.safety_methods)];
                 for (self.graph.function_refs.items[registry.implementations.start..][0..registry.implementations.len]) |callee|
                     try self.walkCall(node_id, callee);
             },
-            .code_block => |block| try self.walkBlock(block),
+            .code_block, .value_sequence => |block| try self.walkBlock(block),
             .list_literal => |literal| {
                 for (self.graph.node_refs.items[literal.elements.start..][0..literal.elements.len]) |value|
                     try self.walkNode(value);
@@ -225,10 +233,7 @@ const State = struct {
                 try self.walkNode(assignment.pointer);
                 try self.walkNode(assignment.value);
             },
-            .type_initializer => |initializer| {
-                try self.walkNode(initializer.args);
-                try self.walkCall(node_id, initializer.init_fn);
-            },
+
             .explicit_cast => |cast| try self.walkNode(cast.value),
         }
     }

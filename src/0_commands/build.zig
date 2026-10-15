@@ -60,10 +60,10 @@ fn hasExecutableMain(graph: *const graph_mod.GlobalSemanticGraph) bool {
     for (graph.functions.items) |function| {
         const declaration = graph.declarations.items[@intFromEnum(function.declaration)];
         if (!std.mem.eql(u8, graph.text(declaration.name), "main")) continue;
+        if (function.output.len == 0) return true;
         if (function.output.len != 1) continue;
         const output = graph.fields.items[function.output.start];
-        if (!std.mem.eql(u8, graph.text(output.name), "status_code")) continue;
-        if (types.isBuiltin(graph, output.ty, .Int32)) return true;
+        if (std.mem.eql(u8, graph.text(output.name), "status_code") and types.isBuiltin(graph, output.ty, .Int32)) return true;
     }
     return false;
 }
@@ -73,7 +73,7 @@ fn printMissingMainError(module_dir: []const u8, from_manifest: bool) void {
         std.debug.print("Error: executable module has no valid main function:\n  {s}\n\n", .{module_dir})
     else
         std.debug.print("Error: module has no executable main function:\n  {s}\n\n", .{module_dir});
-    std.debug.print("Expected main() -> (.status_code: Int32).\n", .{});
+    std.debug.print("Expected main() -> () or main() -> (.status_code: Int32).\n", .{});
 }
 
 fn dumpDiagnostics(diagnostics: *diag.Diagnostics, flags: BuildFlags) void {
@@ -98,9 +98,21 @@ fn printStats(
     std.debug.print("  codegen:          {d:.3} ms\n", .{@as(f64, @floatFromInt(codegen_ns)) / 1_000_000.0});
     std.debug.print("  link:             {d:.3} ms\n", .{@as(f64, @floatFromInt(link_ns)) / 1_000_000.0});
 
+    if (pipeline.options.module_cache) |cache| {
+        std.debug.print("Module reuse\n", .{});
+        std.debug.print("  cache hits:          {d}\n", .{pipeline.module_cache_hits});
+        std.debug.print("  cache misses:        {d}\n", .{pipeline.module_cache_misses});
+        std.debug.print("  persistent hits:     {d}\n", .{cache.disk_hits});
+        std.debug.print("  rejected snapshots:  {d}\n", .{cache.disk_rejections});
+        std.debug.print("  cache write failures: {d}\n", .{cache.disk_write_failures});
+    }
+
     std.debug.print("Global semantizing\n", .{});
     std.debug.print("  relocate and link:           {d:.3} ms\n", .{milliseconds(semantic_timings.relocation_ns)});
     std.debug.print("  setup:                       {d:.3} ms\n", .{milliseconds(semantic_timings.setup_ns)});
+    inline for (std.meta.fields(global_semantizer.SetupStage), 0..) |stage, index|
+        std.debug.print("    {s}: {d:.3} ms\n", .{ stage.name, milliseconds(semantic_timings.setup_stages_ns[index]) });
+    std.debug.print("    registration templates: {d:.3} ms; concrete tuples: {d:.3} ms\n", .{ milliseconds(pipeline.global_stats.contracts.registration_templates_ns), milliseconds(pipeline.global_stats.contracts.registration_tuples_ns) });
     std.debug.print("  fixed point:                 {d:.3} ms ({d} rounds, {d} pending attempts)\n", .{
         milliseconds(semantic_timings.fixed_point_ns), semantic.rounds, semantic.pending_attempts,
     });
@@ -154,29 +166,30 @@ fn printStats(
     if (semantic.generic_reachability_tracked)
         std.debug.print("        unreachable after semantizing {d}\n", .{semantic.generic_bodies_unreachable});
     std.debug.print("    full-pool materialization:\n", .{});
-    std.debug.print("      binding defaults:        {d:.3} ms\n", .{milliseconds(semantic_timings.runtime_binding_defaults_ns)});
     std.debug.print("      string literal types:    {d:.3} ms\n", .{milliseconds(semantic_timings.string_literal_types_ns)});
     std.debug.print("      binding types:           {d:.3} ms\n", .{milliseconds(semantic_timings.binding_types_ns)});
     std.debug.print("      assignment values:       {d:.3} ms\n", .{milliseconds(semantic_timings.assignment_values_ns)});
     std.debug.print("      dereferences:            {d:.3} ms\n", .{milliseconds(semantic_timings.dereferences_ns)});
     std.debug.print("      addresses:               {d:.3} ms\n", .{milliseconds(semantic_timings.addresses_ns)});
     std.debug.print("      generic types:           {d:.3} ms\n", .{milliseconds(semantic_timings.known_generic_types_ns)});
-    std.debug.print("      abstract field storage:  {d:.3} ms\n", .{milliseconds(semantic_timings.abstract_field_storage_ns)});
+    std.debug.print("      field access types:      {d:.3} ms\n", .{milliseconds(semantic_timings.field_access_types_ns)});
     std.debug.print("      sugar types:             {d:.3} ms\n", .{milliseconds(semantic_timings.sugar_types_ns)});
     std.debug.print("    error reason inference:    {d:.3} ms\n", .{milliseconds(semantic_timings.error_inference_ns)});
+    std.debug.print("      reason summaries:        {d:.3} ms\n", .{milliseconds(semantic_timings.error_summary_ns)});
+    std.debug.print("      propagation refresh:     {d:.3} ms\n", .{milliseconds(semantic_timings.error_refresh_ns)});
     std.debug.print("    implicit generic constraints: {d:.3} ms\n", .{milliseconds(semantic_timings.generic_constraints_ns)});
     const generic_selection = semantic.generic_selection;
-    std.debug.print("  generic overload selection (phase times are disjoint):\n", .{});
-    std.debug.print("    implicit: {d} calls, {d} candidates; prefilter/inference {d:.3} ms, constraints {d:.3} ms, scoring {d:.3} ms, argument materialization {d:.3} ms, final instantiation {d:.3} ms\n", .{
+    std.debug.print("  generic function applicability (phase times are disjoint):\n", .{});
+    std.debug.print("    implicit: {d} calls, {d} candidates; prefilter/inference {d:.3} ms, constraints {d:.3} ms, applicability {d:.3} ms, argument materialization {d:.3} ms, final instantiation {d:.3} ms\n", .{
         generic_selection.implicit_calls,                                generic_selection.implicit_candidates,
         milliseconds(generic_selection.implicit_prefilter_inference_ns), milliseconds(generic_selection.implicit_constraints_ns),
-        milliseconds(generic_selection.implicit_scoring_ns),             milliseconds(generic_selection.implicit_argument_materialization_ns),
+        milliseconds(generic_selection.implicit_applicability_ns),       milliseconds(generic_selection.implicit_argument_materialization_ns),
         milliseconds(generic_selection.implicit_final_instantiation_ns),
     });
-    std.debug.print("    explicit: {d} calls, {d} candidates; prefilter/inference {d:.3} ms, constraints {d:.3} ms, scoring {d:.3} ms, argument materialization {d:.3} ms, final instantiation {d:.3} ms\n", .{
+    std.debug.print("    explicit: {d} calls, {d} candidates; prefilter/inference {d:.3} ms, constraints {d:.3} ms, applicability {d:.3} ms, argument materialization {d:.3} ms, final instantiation {d:.3} ms\n", .{
         generic_selection.explicit_calls,                                generic_selection.explicit_candidates,
         milliseconds(generic_selection.explicit_prefilter_inference_ns), milliseconds(generic_selection.explicit_constraints_ns),
-        milliseconds(generic_selection.explicit_scoring_ns),             milliseconds(generic_selection.explicit_argument_materialization_ns),
+        milliseconds(generic_selection.explicit_applicability_ns),       milliseconds(generic_selection.explicit_argument_materialization_ns),
         milliseconds(generic_selection.explicit_final_instantiation_ns),
     });
     std.debug.print("      explicit candidates: {d} reached argument materialization, {d} matched; {d} materializations discarded\n", .{
@@ -190,41 +203,15 @@ fn printStats(
     std.debug.print("      implicit destructors:    {d:.3} ms ({d} lookups)\n", .{
         milliseconds(semantic_timings.implicit_destructor_ns), semantic.destructor_lookups,
     });
-    std.debug.print("      generic lookup:          {d:.3} ms\n", .{milliseconds(semantic_timings.implicit_generic_lookup_ns)});
-    const implicit = semantic.implicit_lookup;
-    std.debug.print("  implicit function lookup (matching time excludes completion):\n", .{});
-    std.debug.print("    ordinary: {d:.3} ms, {d} calls, {d} resolved, {d} deferred, {d} no match, {d} ambiguous\n", .{
-        milliseconds(implicit.ordinary_matching_ns), implicit.ordinary_calls,
-        implicit.ordinary_resolved,                  implicit.ordinary_deferred,
-        implicit.ordinary_no_match,                  implicit.ordinary_ambiguous,
-    });
-    std.debug.print("    abstract-compatible: {d:.3} ms, {d} calls, {d} resolved, {d} deferred, {d} no match, {d} ambiguous\n", .{
-        milliseconds(implicit.abstract_compatible_matching_ns), implicit.abstract_compatible_calls,
-        implicit.abstract_compatible_resolved,                  implicit.abstract_compatible_deferred,
-        implicit.abstract_compatible_no_match,                  implicit.abstract_compatible_ambiguous,
-    });
-    std.debug.print("    generic: {d:.3} ms, {d} calls, {d} resolved, {d} deferred, {d} no match, {d} ambiguous\n", .{
-        milliseconds(implicit.generic_matching_ns), implicit.generic_calls,
-        implicit.generic_resolved,                  implicit.generic_deferred,
-        implicit.generic_no_match,                  implicit.generic_ambiguous,
-    });
-    std.debug.print("    completion: {d:.3} ms, {d} calls, {d} deferred\n", .{
-        milliseconds(implicit.ordinary_completion_ns + implicit.abstract_compatible_completion_ns + implicit.generic_completion_ns),
-        implicit.ordinary_completion_calls + implicit.abstract_compatible_completion_calls + implicit.generic_completion_calls,
-        implicit.ordinary_completion_deferred + implicit.abstract_compatible_completion_deferred + implicit.generic_completion_deferred,
-    });
     const destructor = semantic.ownership;
     std.debug.print("  destructor resolution: {d} success, {d} failed\n", .{
         destructor.destructor_successes, destructor.destructor_failures,
     });
     std.debug.print("  post-resolution:             {d:.3} ms\n", .{milliseconds(semantic_timings.post_resolution_ns)});
     std.debug.print("  verify:                      {d:.3} ms\n", .{milliseconds(semantic_timings.verify_ns)});
-    std.debug.print("  abstract implementation cache hits: {d} positive, {d} negative\n", .{
-        semantic.cached_implementation_hits, semantic.cached_nonimplementation_hits,
-    });
-    std.debug.print("  abstract implementation scans: {d:.3} ms, {d} over {d} candidates\n", .{
-        milliseconds(semantic.abstracts.implementation_scan_ns), semantic.abstracts.implementation_scans,
-        semantic.abstracts.implementation_candidates,
+    std.debug.print("  contract implementation scans: {d:.3} ms, {d} over {d} candidates\n", .{
+        milliseconds(semantic.contracts.implementation_scan_ns), semantic.contracts.implementation_scans,
+        semantic.contracts.implementation_candidates,
     });
     std.debug.print("  type interning: {d:.3} ms, {d} calls, {d} candidates\n", .{
         milliseconds(semantic.generics.type_intern_ns), semantic.generics.type_intern_calls,
@@ -263,10 +250,12 @@ fn printStats(
     std.debug.print("    post-states:        {d:.3} ms\n", .{milliseconds(safety.post_state_inference_ns)});
     std.debug.print("    outcomes:           {d:.3} ms\n", .{milliseconds(safety.outcome_inference_ns)});
     std.debug.print("    opaque storage:     {d:.3} ms\n", .{milliseconds(safety.opaque_inference_ns)});
+    std.debug.print("    capabilities:       {d:.3} ms\n", .{milliseconds(safety.capability_inference_ns)});
+    std.debug.print("      flow:             {d:.3} ms\n", .{milliseconds(safety.capability_flow_ns)});
+    std.debug.print("    guards:             {d:.3} ms\n", .{milliseconds(safety.guard_inference_ns)});
     std.debug.print("  summary bytes requested: {d}\n", .{safety.summary_allocated_bytes});
     std.debug.print("  retained worklist bytes: {d}\n", .{safety.summary_worklist_bytes});
-    std.debug.print("  virtual summary time: {d:.3} ms ({d} merges)\n", .{ milliseconds(safety.virtual_summary_ns), safety.virtual_summary_merges });
-    std.debug.print("  virtual receiver lookup: {d:.3} ms\n", .{milliseconds(safety.virtual_receiver_ns)});
+    std.debug.print("  virtual contract summary time: {d:.3} ms\n", .{milliseconds(safety.virtual_summary_ns)});
     std.debug.print("  state copy time:      {d:.3} ms\n", .{milliseconds(safety.state_copy_ns)});
     std.debug.print("  functions:            {d}\n", .{safety.functions});
     std.debug.print("  calls:                {d}\n", .{safety.calls});
@@ -304,7 +293,18 @@ pub fn compileTarget(
         std.debug.print("Error: --output is ambiguous when building multiple executables.\n", .{});
         return error.CompilationFailed;
     }
-    for (plans.items) |plan| try compileResolvedPlan(allocator, plan, flags, options, io, environ_map);
+    var module_cache = frontend.cache.ModuleCache.init(std.heap.page_allocator, .{});
+    defer module_cache.deinit();
+    var compile_options = options;
+    compile_options.frontend_options.target = flags.target;
+    if (!flags.use_cache) {
+        compile_options.frontend_options.module_cache = null;
+    } else if (compile_options.frontend_options.module_cache == null) {
+        const cache_root = try planning.localCacheRoot(allocator);
+        try module_cache.enablePersistence(io, cache_root);
+        compile_options.frontend_options.module_cache = &module_cache;
+    }
+    for (plans.items) |plan| try compileResolvedPlan(allocator, plan, flags, compile_options, io, environ_map);
 }
 
 fn compileResolvedPlan(
@@ -325,6 +325,10 @@ fn compileResolvedPlan(
     else
         null;
     const object_only = flags.just_object_path != null;
+    if (!flags.target.isNative() and !object_only and !options.check_only and flags.cc == null and (environ_map == null or environ_map.?.get("CC") == null)) {
+        std.debug.print("Error: cross-target linking requires an explicit toolchain; select --cc (or CC), or use --just-emit-obj for object emission.\n", .{});
+        return error.CrossLinkToolchainRequired;
+    }
     if (!options.check_only) {
         if (!object_only) try ensureParentDir(io, final_output);
         if (final_ir) |path| try ensureParentDir(io, path);
@@ -334,10 +338,12 @@ fn compileResolvedPlan(
     const files = try sf.collectModuleWithOptions(&allocator, io, .{
         .explicit_sysroot = flags.sysroot_path,
         .environ_map = environ_map,
+        .target = flags.target,
     }, plan.module_dir);
     var diagnostics = diag.Diagnostics.init(&allocator, files.items);
     var frontend_options = options.frontend_options;
     frontend_options.collect_stats = flags.stats;
+    frontend_options.module_jobs = flags.frontend_jobs.resolve();
     frontend_options.entry_module_dir = plan.module_dir;
     var pipeline = frontend.FrontendPipeline.init(allocator, io, &diagnostics, frontend_options);
     defer pipeline.deinit();
@@ -375,6 +381,8 @@ fn compileResolvedPlan(
         if (!diagnostics.hasErrors()) std.debug.print("indexed codegen failed without a diagnostic: {s}\n", .{@errorName(err)});
         return error.CompilationFailed;
     };
+    const triple = try flags.target.llvmTriple(allocator);
+    try link.prepareModule(module, triple, flags.optimization_mode);
     const codegen_ns = elapsedSince(io, codegen_start);
 
     if (!object_only and options.codegen_options.selected_test_name == null and !hasExecutableMain(graph)) {
@@ -383,7 +391,7 @@ fn compileResolvedPlan(
     }
 
     const stem_base = if (object_only) final_obj.? else final_output;
-    const temp_stem = try std.fmt.allocPrint(allocator, "{s}.tmp.{d}", .{ stem_base, nowNs(io) });
+    const temp_stem = try std.fmt.allocPrint(allocator, "{s}.tmp.{d}{s}", .{ stem_base, nowNs(io), if (!object_only and flags.target.os == .windows) ".exe" else "" });
     const temp_ir = if (final_ir != null) try std.fmt.allocPrint(allocator, "{s}.ll", .{temp_stem}) else null;
     const temp_obj = try std.fmt.allocPrint(allocator, "{s}.o", .{temp_stem});
     try ensureParentDir(io, temp_stem);
@@ -399,14 +407,31 @@ fn compileResolvedPlan(
         }
     }
 
-    const triple_message = c.LLVMGetDefaultTargetTriple();
-    defer c.LLVMDisposeMessage(triple_message);
-    const triple = std.mem.span(triple_message);
+    // Manifest paths are resolved from the package root; CLI paths retain the
+    // invoking directory. Keep both lists ordered for archive dependencies.
+    // Native process adapters keep OS launch structures outside the language
+    // ABI. Bundle the selected adapter with the same driver and target flags
+    // as user C inputs, including installed and cross-target builds.
+    const needs_windows_runtime = flags.target.os == .windows;
+    const needs_posix_runtime = flags.target.os == .linux or flags.target.os == .macos;
+    const extra: usize = if (needs_windows_runtime) 3 else if (needs_posix_runtime) 1 else 0;
+    const native_inputs = try allocator.alloc(link.NativeInput, plan.native_inputs.len + flags.native_inputs.len + extra);
+    @memcpy(native_inputs[0..plan.native_inputs.len], plan.native_inputs);
+    @memcpy(native_inputs[plan.native_inputs.len..][0..flags.native_inputs.len], flags.native_inputs);
+    if (needs_windows_runtime) {
+        const core_dir = try sf.resolveToolCoreDir(&allocator, io, .{ .explicit_sysroot = flags.sysroot_path, .environ_map = environ_map });
+        native_inputs[native_inputs.len - 3] = .{ .file = try std.fs.path.join(allocator, &.{ core_dir, "platforms", "windows", "runtime.c" }) };
+        native_inputs[native_inputs.len - 2] = .{ .library = "shell32" };
+        native_inputs[native_inputs.len - 1] = .{ .library = "ws2_32" };
+    } else if (needs_posix_runtime) {
+        const core_dir = try sf.resolveToolCoreDir(&allocator, io, .{ .explicit_sysroot = flags.sysroot_path, .environ_map = environ_map });
+        native_inputs[native_inputs.len - 1] = .{ .file = try std.fs.path.join(allocator, &.{ core_dir, "platforms", "posix", "processes.c" }) };
+    }
     const link_start = nowNs(io);
     if (object_only)
         try link.emitObjectFile(module, triple, temp_obj, flags.optimization_mode)
     else
-        try link.linkWithLibc(module, triple, temp_stem, &allocator, io, environ_map, flags.optimization_mode);
+        try link.linkWithLibc(module, triple, temp_stem, &allocator, io, environ_map, flags.optimization_mode, native_inputs, .{ .target = flags.target, .cc = flags.cc, .args = flags.cc_args, .sysroot = flags.c_sysroot });
     const link_ns = elapsedSince(io, link_start);
 
     if (temp_ir) |src| try replaceFile(io, src, final_ir.?);
@@ -422,15 +447,17 @@ fn compileResolvedPlan(
 }
 
 pub fn compile(io: std.Io, environ_map: ?*const std.process.Environ.Map, args: []const []const u8) !void {
-    const parsed = try planning.parseBuildArgs(args);
+    var arguments = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arguments.deinit();
+    const parsed = try planning.parseBuildArgs(arguments.allocator(), args);
     try compileTarget(parsed.target_path, parsed.flags, .{}, io, environ_map);
 }
 
 pub fn check(io: std.Io, environ_map: ?*const std.process.Environ.Map, args: []const []const u8) !void {
-    const parsed = try planning.parseBuildArgs(args);
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
+    const parsed = try planning.parseBuildArgs(allocator, args);
     const core_dir = try sf.resolveToolCoreDir(&allocator, io, .{
         .explicit_sysroot = parsed.flags.sysroot_path,
         .environ_map = environ_map,

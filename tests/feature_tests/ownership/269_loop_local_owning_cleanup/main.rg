@@ -5,7 +5,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
 
     i :: UIntNative = 0
     while i < 2 {
-        local ::= unwrap_or_abort(.value = String(.allocator = $&allocator_storage, .capacity = 1))
+        local ::= unwrap_or_abort(.value = string_with_capacity(.allocator = $&allocator_storage, .capacity = 1))
         pushed ::= push_byte(.self = $&local, .byte = 65, .allocator = $&allocator_storage)
         if is(.value = pushed, .variant = ..error) {
             status_code = 1
@@ -16,7 +16,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
             status_code = 2
             return
         }
-        deinit(.self = $&local, .allocator = $&allocator_storage)
+        deinit(.self = $&local)
         i = i + 1
     }
 }

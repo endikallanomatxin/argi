@@ -9,9 +9,15 @@ pub fn verifyIR(graph: *const graph_mod.ModuleSemanticGraph) !void {
     const bounds = makeBounds(graph);
 
     for (storage.int_expressions.items) |expression| switch (expression) {
+        .projection => |value| {
+            try require(verify.idFits(value.base, storage.types.items.len));
+            try require(verify.stringFits(value.member, graph.strings.items));
+            try require(verify.sourceFits(value.source, graph.file_offsets.items.len));
+        },
         .literal => {},
         .parameter => |id| try require(verify.idFits(id, graph.semantic.parameterized_storage.comptime_parameters.items.len)),
         .binary => |value| {
+            if (value.source) |source| try require(verify.sourceFits(source, graph.file_offsets.items.len));
             try require(verify.idFits(value.left, storage.int_expressions.items.len));
             try require(verify.idFits(value.right, storage.int_expressions.items.len));
         },
@@ -20,9 +26,14 @@ pub fn verifyIR(graph: *const graph_mod.ModuleSemanticGraph) !void {
     for (storage.types.items) |ty| switch (ty) {
         .concrete => |id| try require(verify.idFits(id, views.typeCount(graph))),
         .parameter => |id| try require(verify.idFits(id, graph.semantic.parameterized_storage.comptime_parameters.items.len)),
-        .abstract_self => {},
+        .projection => |value| {
+            try require(verify.idFits(value.base, storage.types.items.len));
+            try require(verify.stringFits(value.member, graph.strings.items));
+            try require(verify.sourceFits(value.source, graph.file_offsets.items.len));
+        },
         .external => |id| try require(verify.idFits(id, graph.semantic.external_refs.items.len)),
         .array => |value| {
+            if (value.source) |source| try require(verify.sourceFits(source, graph.file_offsets.items.len));
             try require(verify.idFits(value.length, storage.int_expressions.items.len));
             try require(verify.idFits(value.element, storage.types.items.len));
         },
@@ -135,6 +146,7 @@ fn verifyPending(graph: *const graph_mod.ModuleSemanticGraph, pending: ir.Pendin
             try require(verify.rangeFits(value.generic_arguments, storage.generic_arguments.items.len));
             try require(verify.rangeFits(value.match_cases, storage.match_cases.items.len));
             try require(verify.optionalIdFits(value.expected_type, storage.types.items.len));
+            try require(verify.optionalIdFits(value.contract_type, storage.types.items.len));
             try require(verify.sourceFits(value.source, graph.file_offsets.items.len));
         },
         .resolve_copy => |value| try require(verify.idFits(value.value, storage.nodes.items.len)),
@@ -205,7 +217,7 @@ test "parameterized IR verifier accepts semantic variants and qualified generic 
     });
     try graph.semantic.parameterized_storage.comptime_parameters.append(allocator, .{ .name = .{ .start = 0, .len = 0 }, .kind = .comptime_int });
     try graph.semantic.parameterized_storage.ir.int_expressions.append(allocator, .{ .parameter = @enumFromInt(0) });
-    try graph.semantic.parameterized_storage.ir.types.append(allocator, .abstract_self);
+    try graph.semantic.parameterized_storage.ir.types.append(allocator, .{ .resolved = .{ .builtin = .Int32 } });
     try graph.semantic.parameterized_storage.ir.variants.append(allocator, .{ .semantic = .{
         .name = .{ .start = 0, .len = 0 },
         .payload_type = @enumFromInt(0),

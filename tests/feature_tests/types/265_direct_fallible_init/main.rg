@@ -1,19 +1,26 @@
 Widget : Type = (.value: Int32)
 
-init(.p: $&Widget, .fail: Bool) -> (.result: Errable#(.t: Void, .reasons: (..rejected))) := {
-    if fail {
-        result = ..error(.reason = ..rejected)
-        return
+implement Init#(Widget, (.fail: Bool)) (
+    .Result: Type = Errable#(.t: Widget, .reasons: (..rejected))
+    .init = (.args: (.fail: Bool)) -> (.result: Result) {
+        fail ::= ~args.fail
+
+        constructed :: Widget
+
+        if fail {
+            result = ..error(.reason = ..rejected)
+            return
+        }
+        constructed = (.value = 42)
+        result = ..ok ~constructed
     }
-    p& = (.value = 42)
-    result = ..ok Void()
-}
+)
 
 main() -> (.status_code: Int32) := {
     widget :: Widget
-    outcome ::= init(.p = $&widget, .fail = false)
+    outcome ::= Widget(.fail = false)
     match outcome {
-        ..ok _ { status_code = widget.value - 42 }
+        ..ok ~value { widget = ~value status_code = widget.value - 42 }
         ..error _ { status_code = 1 }
     }
 }

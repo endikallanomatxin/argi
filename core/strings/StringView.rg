@@ -1,37 +1,32 @@
-StringView : Type = (
+StringView: Type = (
     .data   : &UInt8
     .length : UIntNative
 )
 
-StringView implements ImplicitlyCopyable
+implement ImplicitlyCopyable#(StringView) ()
 
-string_view_byte_address(
-    .self: &StringView,
-    .index: UIntNative,
-) -> (.reference: &UInt8) := {
+string_view_byte_address(.self: &StringView, .index: UIntNative) -> (.reference: &UInt8) := {
     if index >= self&.length { abort }
     reference = trusted_reference_offset#(.t: UInt8)(.base = self&.data, .elements = index)
 }
 
-bytes_get(
-    .view: &StringView,
-    .index: UIntNative,
-) -> (.byte: UInt8) := {
-    byte = string_view_byte_address(.self = view, .index = index).reference&
+_view_get_byte(.view: &StringView, .index: UIntNative) -> (.byte: UInt8) := {
+    byte = string_view_byte_address(view, .index = index).reference&
 }
 
-equals(
-    .left: StringView,
-    .right: StringView,
-) -> (.ok: Bool) := {
+equals(.left: StringView, .right: StringView) -> (.ok: Bool) := {
     if left.length != right.length {
         ok = false
         return
     }
 
     i :: UIntNative = 0
+
     while i < left.length {
-        if bytes_get(.view = &left, .index = i).byte != bytes_get(.view = &right, .index = i).byte {
+        if [
+            bytes_get(.view = &left, .index = i).byte
+            != bytes_get(.view = &right, .index = i).byte
+        ] {
             ok = false
             return
         }
@@ -41,20 +36,8 @@ equals(
     ok = true
 }
 
-operator ==(
-    .left: StringView,
-    .right: StringView,
-) -> (.ok: Bool) := {
-    ok = equals(.left = left, .right = right).ok
-}
-
-operator !=(
-    .left: StringView,
-    .right: StringView,
-) -> (.ok: Bool) := {
-    if equals(.left = left, .right = right).ok {
-        ok = false
-    } else {
-        ok = true
+implement Equal#(StringView, StringView, (.left: StringView, .right: StringView)) (
+    .equal = (.args: (.left: StringView, .right: StringView)) -> (.ok: Bool) {
+        ok = equals(.left = args.left, .right = args.right).ok
     }
-}
+)

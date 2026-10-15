@@ -2,8 +2,11 @@ Token : Type = (
     .value: Int32,
 )
 
-deinit(.self: $&Token) -> () := {
-}
+implement Deinit#(Token) (
+    .deinit = (.self: $&Token) -> () {
+
+    }
+)
 
 Result : Type = (
     ..ok(.token: Token),

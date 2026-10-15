@@ -3,13 +3,22 @@ Resource : Type = ()
 dummy_counter :: Int32 = 0
 global_counter_ptr :: $&Int32 = $&dummy_counter
 
-init(.p: $&Resource, .counter: $&Int32) -> () := {
-    global_counter_ptr = counter
-}
+implement Init#(Resource, (.counter: $&Int32)) (
+    .Result: Type = Resource
+    .init = (.args: (.counter: $&Int32)) -> (.result: Result) {
+        counter ::= ~args.counter
 
-deinit(.res: $&Resource) -> () := {
-    global_counter_ptr& = global_counter_ptr& + 1
-}
+        result = ()
+
+        global_counter_ptr = counter
+    }
+)
+
+implement Deinit#(Resource) (
+    .deinit = (.self: $&Resource) -> () {
+        global_counter_ptr& = global_counter_ptr& + 1
+    }
+)
 
 create_and_drop(.counter: $&Int32) -> () := {
     handle := Resource(.counter = counter)

@@ -1,6 +1,6 @@
 main() -> () := {
     values : [2]Int32 = (2, 1)
-    view ::= array_view_ro(.array = &values).view
+    borrowed_view ::= view(.array = &values)
     order ::= Int32OrderPolicy()
-    sort(.self = $&view, .order = &order)
+    sort(.self = $&borrowed_view, .order = &order)
 }

@@ -16,7 +16,9 @@ const ReadMessageError = error{
 const UriError = error{UnsupportedUri};
 
 fn repoRootPrefix() ![]u8 {
-    return std.fs.path.resolve(std.testing.allocator, &.{"."});
+    const cwd = try std.process.currentPathAlloc(std.testing.io, std.testing.allocator);
+    defer std.testing.allocator.free(cwd);
+    return std.testing.allocator.dupe(u8, cwd);
 }
 
 pub fn start(io: std.Io) !void {
@@ -99,6 +101,10 @@ const LanguageServer = struct {
                 }
             } else if (std.mem.eql(u8, method, "initialized")) {
                 // No-op
+            } else if (std.mem.eql(u8, method, "textDocument/formatting")) {
+                if (id_value) |id| self.handleFormatting(&writer, id, params_value) catch {
+                    self.respondInternalErrorOrLog(&writer, id, "formatting failed");
+                };
             } else if (std.mem.eql(u8, method, "textDocument/didOpen")) {
                 self.handleDidOpen(&writer, params_value) catch |err| {
                     log.err("didOpen failed: {s}", .{@errorName(err)});
@@ -137,6 +143,11 @@ const LanguageServer = struct {
                 if (id_value) |id| self.handle_completion(&writer, id, params_value) catch |err| {
                     log.err("completion failed: {s}", .{@errorName(err)});
                     self.respondInternalErrorOrLog(&writer, id, "completion failed");
+                };
+            } else if (std.mem.eql(u8, method, "textDocument/documentSymbol")) {
+                if (id_value) |id| self.handleDocumentSymbols(&writer, id, params_value) catch |err| {
+                    log.err("document symbols failed: {s}", .{@errorName(err)});
+                    self.respondInternalErrorOrLog(&writer, id, "document symbols failed");
                 };
             } else if (std.mem.eql(u8, method, "textDocument/hover")) {
                 if (id_value) |id| self.handleHover(&writer, id, params_value) catch |err| {
@@ -371,6 +382,10 @@ const LanguageServer = struct {
         try stream.objectField("resolveProvider");
         try stream.write(false);
         try stream.endObject();
+        try stream.objectField("documentSymbolProvider");
+        try stream.write(true);
+        try stream.objectField("documentFormattingProvider");
+        try stream.write(true);
         try stream.objectField("hoverProvider");
         try stream.write(true);
         try stream.objectField("definitionProvider");
@@ -605,6 +620,33 @@ const LanguageServer = struct {
         }
     }
 
+    fn handleDocumentSymbols(self: *LanguageServer, writer: anytype, id_value: json.Value, params_value: ?json.Value) !void {
+        const params = params_value orelse return self.respondNullResult(writer, id_value);
+        if (params != .object) return self.respondNullResult(writer, id_value);
+        const document = getField(&params.object, "textDocument") orelse return self.respondNullResult(writer, id_value);
+        if (document != .object) return self.respondNullResult(writer, id_value);
+        const uri = getField(&document.object, "uri") orelse return self.respondNullResult(writer, id_value);
+        if (uri != .string) return self.respondNullResult(writer, id_value);
+        const svc = if (self.service) |*value| value else return self.respondNullResult(writer, id_value);
+        const result = svc.documentSymbols(uri.string) catch |err| switch (err) {
+            error.DocumentNotOpen => return self.respondNullResult(writer, id_value),
+            else => return err,
+        };
+        defer result.deinit();
+        var payload = std.Io.Writer.Allocating.init(self.allocator);
+        defer payload.deinit();
+        var stream: json.Stringify = .{ .writer = &payload.writer, .options = .{} };
+        try stream.beginObject();
+        try stream.objectField("jsonrpc");
+        try stream.write("2.0");
+        try stream.objectField("id");
+        try stream.write(id_value);
+        try stream.objectField("result");
+        try stream.write(result.items);
+        try stream.endObject();
+        try self.sendMessage(writer, payload.writer.buffered());
+    }
+
     fn handle_completion(self: *LanguageServer, writer: anytype, id_value: json.Value, params_value: ?json.Value) !void {
         const params = params_value orelse return self.respondNullResult(writer, id_value);
         if (params != .object) return self.respondNullResult(writer, id_value);
@@ -832,6 +874,38 @@ const LanguageServer = struct {
 
             try self.sendMessage(writer, payload.writer.buffered());
         }
+    }
+
+    fn handleFormatting(self: *LanguageServer, writer: anytype, id: json.Value, params_value: ?json.Value) !void {
+        const params = params_value orelse return error.InvalidParams;
+        if (params != .object) return error.InvalidParams;
+        const document = getField(&params.object, "textDocument") orelse return error.InvalidParams;
+        if (document != .object) return error.InvalidParams;
+        const uri = getField(&document.object, "uri") orelse return error.InvalidParams;
+        if (uri != .string) return error.InvalidParams;
+        var edits = if (self.service) |*svc| try svc.formatting(uri.string) else service.TextEditsResult.empty(self.allocator);
+        defer edits.deinit();
+        var payload = std.Io.Writer.Allocating.init(self.allocator);
+        defer payload.deinit();
+        var stream: json.Stringify = .{ .writer = &payload.writer, .options = .{} };
+        try stream.beginObject();
+        try stream.objectField("jsonrpc");
+        try stream.write("2.0");
+        try stream.objectField("id");
+        try stream.write(id);
+        try stream.objectField("result");
+        try stream.beginArray();
+        for (edits.items) |edit| {
+            try stream.beginObject();
+            try stream.objectField("range");
+            try writeRange(&stream, edit.range);
+            try stream.objectField("newText");
+            try stream.write(edit.new_text);
+            try stream.endObject();
+        }
+        try stream.endArray();
+        try stream.endObject();
+        try self.sendMessage(writer, payload.writer.buffered());
     }
 
     fn handleRename(
@@ -1124,6 +1198,7 @@ test "initialize response is framed and flushed" {
     try std.testing.expectEqual(@as(i64, 1), response.value.object.get("id").?.integer);
     try std.testing.expect(response.value.object.get("result").? == .object);
     const capabilities = response.value.object.get("result").?.object.get("capabilities").?.object;
+    try std.testing.expect(capabilities.get("documentSymbolProvider").?.bool);
     try std.testing.expect(capabilities.get("hoverProvider").?.bool);
     try std.testing.expect(capabilities.get("inlayHintProvider").?.bool);
     const completion_provider = capabilities.get("completionProvider").?.object;
@@ -1164,6 +1239,7 @@ test "initialize response advertises hover definition references and rename" {
     try std.testing.expect(root.get("result").? == .object);
 
     const capabilities = root.get("result").?.object.get("capabilities").?.object;
+    try std.testing.expect(capabilities.get("documentSymbolProvider").?.bool);
     try std.testing.expect(capabilities.get("hoverProvider").?.bool);
     try std.testing.expect(capabilities.get("inlayHintProvider").?.bool);
     try std.testing.expect(capabilities.get("definitionProvider").?.bool);
@@ -1203,11 +1279,11 @@ test "didOpen publishes diagnostics" {
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = rel_path, .data = code });
     const abs_path = try test_support.tmpFilePath(&tmp, rel_path);
     defer std.testing.allocator.free(abs_path);
-    const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
+    const uri = try pathToFileUri(std.testing.allocator, abs_path);
     defer std.testing.allocator.free(uri);
     const root_path = try repoRootPrefix();
     defer std.testing.allocator.free(root_path);
-    const root_uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{root_path});
+    const root_uri = try pathToFileUri(std.testing.allocator, root_path);
     defer std.testing.allocator.free(root_uri);
 
     var server = LanguageServer.init(std.testing.allocator, std.testing.io);
@@ -1278,11 +1354,11 @@ test "didChange publishes diagnostics and ignores stale versions" {
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = rel_path, .data = fixed_code });
     const abs_path = try test_support.tmpFilePath(&tmp, rel_path);
     defer std.testing.allocator.free(abs_path);
-    const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
+    const uri = try pathToFileUri(std.testing.allocator, abs_path);
     defer std.testing.allocator.free(uri);
     const root_path = try repoRootPrefix();
     defer std.testing.allocator.free(root_path);
-    const root_uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{root_path});
+    const root_uri = try pathToFileUri(std.testing.allocator, root_path);
     defer std.testing.allocator.free(root_uri);
 
     var server = LanguageServer.init(std.testing.allocator, std.testing.io);
@@ -1405,11 +1481,11 @@ test "didClose publishes empty diagnostics" {
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = rel_path, .data = code });
     const abs_path = try test_support.tmpFilePath(&tmp, rel_path);
     defer std.testing.allocator.free(abs_path);
-    const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
+    const uri = try pathToFileUri(std.testing.allocator, abs_path);
     defer std.testing.allocator.free(uri);
     const root_path = try repoRootPrefix();
     defer std.testing.allocator.free(root_path);
-    const root_uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{root_path});
+    const root_uri = try pathToFileUri(std.testing.allocator, root_path);
     defer std.testing.allocator.free(root_uri);
 
     var server = LanguageServer.init(std.testing.allocator, std.testing.io);
@@ -1494,11 +1570,11 @@ test "definition responds with target location over protocol" {
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = rel_path, .data = code });
     const abs_path = try test_support.tmpFilePath(&tmp, rel_path);
     defer std.testing.allocator.free(abs_path);
-    const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
+    const uri = try pathToFileUri(std.testing.allocator, abs_path);
     defer std.testing.allocator.free(uri);
     const root_path = try repoRootPrefix();
     defer std.testing.allocator.free(root_path);
-    const root_uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{root_path});
+    const root_uri = try pathToFileUri(std.testing.allocator, root_path);
     defer std.testing.allocator.free(root_uri);
 
     var server = LanguageServer.init(std.testing.allocator, std.testing.io);
@@ -1564,12 +1640,12 @@ test "definition responds with target location over protocol" {
     const result = definition_response.value.object.get("result").?.object;
     const target_uri = result.get("uri").?.string;
     try std.testing.expect(std.mem.startsWith(u8, target_uri, "file://"));
-    try std.testing.expect(std.mem.endsWith(u8, target_uri, abs_path));
+    try std.testing.expectEqualStrings(uri, target_uri);
     try std.testing.expectEqual(@as(i64, 0), result.get("range").?.object.get("start").?.object.get("line").?.integer);
 }
 
 fn pathToFileUri(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
-    return std.fmt.allocPrint(allocator, "file://{s}", .{path});
+    return @import("file_uri.zig").encode(allocator, path, @import("builtin").os.tag == .windows);
 }
 
 fn parsePosition(value: json.Value) ?service.Position {
@@ -1590,7 +1666,7 @@ test "LSP completion response uses standard kinds and a full identifier text edi
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.rg", .data = code });
     const path = try test_support.tmpFilePath(&tmp, "main.rg");
     defer std.testing.allocator.free(path);
-    const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{path});
+    const uri = try pathToFileUri(std.testing.allocator, path);
     defer std.testing.allocator.free(uri);
     var server = LanguageServer.init(std.testing.allocator, std.testing.io);
     defer server.deinit();
@@ -1624,4 +1700,34 @@ test "LSP completion response uses standard kinds and a full identifier text edi
         try std.testing.expectEqual(@as(i64, 9), range.get("end").?.object.get("character").?.integer);
     }
     try std.testing.expect(found);
+}
+
+test "document symbols response uses standard LSP names and ranges" {
+    var server = LanguageServer.init(std.testing.allocator, std.testing.io);
+    defer server.deinit();
+    server.service = service.LanguageService.init(std.testing.allocator, std.testing.io);
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const code = "main() -> (.status_code: Int32 = 0) := {}";
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.rg", .data = code });
+    const path = try @import("../test_support.zig").tmpFilePath(&tmp, "main.rg");
+    defer std.testing.allocator.free(path);
+    const diagnostics = try server.service.?.openDocument("file:///symbols.rg", path, 1, code);
+    defer diagnostics.deinit();
+    var params = try json.parseFromSlice(json.Value, std.testing.allocator, "{\"textDocument\":{\"uri\":\"file:///symbols.rg\"}}", .{});
+    defer params.deinit();
+    var out: CapturedResponseWriter = undefined;
+    out.init(std.testing.allocator);
+    defer out.deinit();
+    try server.handleDocumentSymbols(&out.writer, .{ .integer = 42 }, params.value);
+    var response = try json.parseFromSlice(json.Value, std.testing.allocator, try payloadFromLspMessage(out.buffered()), .{});
+    defer response.deinit();
+    try std.testing.expectEqual(@as(i64, 42), response.value.object.get("id").?.integer);
+    const symbols = response.value.object.get("result").?.array.items;
+    try std.testing.expectEqual(@as(usize, 1), symbols.len);
+    const symbol = symbols[0].object;
+    try std.testing.expectEqualStrings("main", symbol.get("name").?.string);
+    try std.testing.expectEqual(@as(i64, 12), symbol.get("kind").?.integer);
+    try std.testing.expectEqual(@as(i64, 4), symbol.get("selectionRange").?.object.get("end").?.object.get("character").?.integer);
+    try std.testing.expect(symbol.get("range") != null);
 }

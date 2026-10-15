@@ -1,4 +1,4 @@
-FixedPoint<i: Type Int, f: Int> : Type = (
+FixedPoint < i: Type Int, f: Int >: Type = (
     -- A fixed-point number with f fractional places.
     -- For representing money, for example.
 )

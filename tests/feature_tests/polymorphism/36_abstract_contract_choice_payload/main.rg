@@ -1,22 +1,13 @@
-DummyWriter : Type = (
-    .count: Int32 = 0
+DummyWriter: Type = (
+    .count : Int32 = 0
 )
 
-write_byte(.self: $&DummyWriter, .byte: UInt8) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
-    self&.count = self&.count + 1
-    byte
-    result = ..ok(.value = Void())
-}
-
-flush(.self: $&DummyWriter) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
-    self
-    result = ..ok(.value = Void())
-}
-
-DummyWriter implements Writer
-
-relay(.writer: $&Writer) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
-    write_byte(.self = writer, .byte = 65)
+relay#(.WriterType: Type: Writer#(WriterType))(
+        .writer : $&WriterType
+    ) -> (
+        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+    ) := {
+    Writer#().write_byte(.self = writer, .byte = 65)
     result = ..ok(.value = Void())
 }
 
@@ -28,3 +19,25 @@ main() -> (.status_code: Int32) := {
         status_code = 1
     }
 }
+
+implement Writer#(DummyWriter)(
+    .write_byte = (
+            .self : $&DummyWriter,
+            .byte : UInt8
+        ) -> (
+            .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        ) {
+        self&.count = self&.count + 1
+        byte
+        result = ..ok(.value = Void())
+    }
+
+    .flush = (
+            .self : $&DummyWriter
+        ) -> (
+            .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        ) {
+        self
+        result = ..ok(.value = Void())
+    }
+)

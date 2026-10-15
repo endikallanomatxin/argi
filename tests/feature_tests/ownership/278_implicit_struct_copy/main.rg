@@ -3,7 +3,7 @@ Pair : Type = (
     .right: Int32
 )
 
-Pair implements ImplicitlyCopyable
+implement ImplicitlyCopyable#(Pair) ()
 
 main() -> (.status_code: Int32) := {
     first :: Pair = (.left = 20, .right = 1)

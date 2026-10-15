@@ -1,10 +1,9 @@
-Backend : Abstract = ()
+Backend#(.Participant: Type): Contract = ()
 
 Concrete : Type = ()
 NotBackend : Type = ()
 
-Concrete implements Backend
-
+implement Backend#(Concrete) ()
 Wrapper #(.backend_type: Type: Backend) : Type = (
     .backend: $&backend_type
 )

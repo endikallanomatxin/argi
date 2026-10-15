@@ -50,7 +50,7 @@ test "deferred function interfaces retain external parameter types" {
 test "constrained generic parameters remain type parameters" {
     const allocator = std.testing.allocator;
     const source =
-        "Capability : Abstract = ()\n" ++
+        "Capability#(.Participant: Type): Contract = ()\n" ++
         "Box#(.t: Type: Capability) : Type = (.value: t)\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
@@ -98,12 +98,13 @@ test "parameterized pools retain immediate children across recursive lowering" {
     defer relocation.deinit(allocator);
     var core_resolver: core.Resolver = .{ .allocator = allocator, .graph = &relocation.graph, .modules = &.{graph}, .offsets = relocation.offsets.items };
     var resolver: generics.Resolver = .{ .allocator = allocator, .graph = &relocation.graph, .modules = &.{graph}, .offsets = relocation.offsets.items, .core = &core_resolver };
+    defer resolver.deinit();
     var substitutions = try generics.Resolver.Bindings.init(allocator, parameterized_storage.comptime_parameters.items.len);
     defer substitutions.deinit(allocator);
     const int_type: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(relocation.graph.types.items.len)));
     try relocation.graph.types.append(allocator, .{ .builtin = .Int32 });
     substitutions.types[parameterized_storage.parameterized_types.items[1].parameters.start] = int_type;
-    const instantiated = try resolver.instantiateParameterizedType(0, body, &substitutions, null);
+    const instantiated = try resolver.instantiateParameterizedType(0, body, &substitutions);
     const global_fields = relocation.graph.types.items[@intFromEnum(instantiated)].structural.fields;
     try std.testing.expectEqualStrings("first", relocation.graph.text(relocation.graph.fields.items[global_fields.start].name));
     try std.testing.expectEqualStrings("second", relocation.graph.text(relocation.graph.fields.items[global_fields.start + 1].name));
@@ -204,7 +205,7 @@ test "module semantic graph owns declarations from all direct files" {
     try std.testing.expectEqualStrings("x", graph.text(graph.fields.items[point_fields.start].name));
 }
 
-test "module symbol index retains overload candidates" {
+test "module symbol index retains duplicate declarations for diagnostics" {
     const allocator = std.testing.allocator;
     const first_source = "convert(.value: Int32) -> () := {}\n";
     const second_source = "convert(.value: Bool) -> () := {}\n";
@@ -456,7 +457,7 @@ test "module semantic graph owns stable file provenance" {
 test "implicit generic calls infer pointer parameters through nested calls" {
     const allocator = std.testing.allocator;
     const source =
-        "empty#(.t: Type)(.storage: $&t, .required: Int32) -> () := { absent() }\n" ++
+        "empty_with_required#(.t: Type)(.storage: $&t, .required: Int32) -> () := { absent() }\n" ++
         "empty#(.t: Type)(.storage: $&t) -> () := {}\n" ++
         "release#(.t: Type)(.self: $&t) -> () := { local ::= self empty(.storage = local) }\n" ++
         "main() -> () := { value :: Int32 = 0 release(.self = $&value) }\n";
@@ -500,6 +501,7 @@ test "failed generic bodies do not publish reusable instances" {
     defer relocation.deinit(allocator);
     var core = @import("../global/core.zig").Resolver{ .allocator = allocator, .graph = &relocation.graph, .modules = &modules, .offsets = relocation.offsets.items };
     var generics = @import("../global/generics.zig").Resolver{ .allocator = allocator, .graph = &relocation.graph, .modules = &modules, .offsets = relocation.offsets.items, .core = &core };
+    defer generics.deinit();
     var functions = @import("../global/generic_functions.zig").Resolver{ .allocator = allocator, .graph = &relocation.graph, .modules = &modules, .offsets = relocation.offsets.items, .core = &core, .generics = &generics };
     const ty = try generics.internType(.{ .builtin = .Int32 });
     const name = try relocation.graph.addString(allocator, "t");
@@ -516,13 +518,13 @@ test "failed generic bodies do not publish reusable instances" {
     }
 }
 
-test "local abstract inputs specialize one body per concrete implementer" {
+test "explicit contract bounds specialize one body per concrete participant" {
     const allocator = std.testing.allocator;
     const source =
-        "Contract : Abstract = ()\n" ++
-        "Int32 implements Contract\n" ++
-        "Char implements Contract\n" ++
-        "use(.value: Contract) -> (.result: Int32) := { result = 1 }\n" ++
+        "Capability#(.Value: Type): Contract = ()\n" ++
+        "implement Capability#(Int32) ()\n" ++
+        "implement Capability#(Char) ()\n" ++
+        "use#(.Value: Type: Capability)(.value: Value) -> (.result: Int32) := { result = 1 }\n" ++
         "main() -> (.result: Int32) := { result = use(.value = 7).result + use(.value = 'A').result }\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
@@ -530,11 +532,12 @@ test "local abstract inputs specialize one body per concrete implementer" {
     var module = try @import("semantizer.zig").build(allocator, "contract", &inputs);
     defer module.graph.deinit(allocator);
     const template = module.graph.semantic.parameterized_storage.parameterized_functions.items[0];
-    try std.testing.expectEqual(@as(@import("parameterized/storage.zig").GenericDispatchKind, .abstract_contract), template.dispatch_kind);
     try std.testing.expectEqual(@as(u32, 1), template.parameters.len);
     const parameter = module.graph.semantic.parameterized_storage.comptime_parameters.items[template.parameters.start];
     try std.testing.expect(parameter.constraint != null);
-    var result = try @import("../global/semantizer.zig").semantize(allocator, &.{module.graph});
+    var arithmetic_core = try buildArithmeticTestCore(allocator);
+    defer arithmetic_core.graph.deinit(allocator);
+    var result = try @import("../global/semantizer.zig").semantize(allocator, &.{ module.graph, arithmetic_core.graph });
     defer result.graph.deinit(allocator);
     var instances: usize = 0;
     for (result.graph.generic_function_instances.items) |instance| {
@@ -544,12 +547,12 @@ test "local abstract inputs specialize one body per concrete implementer" {
     try std.testing.expectEqual(@as(usize, 2), instances);
 }
 
-test "abstract contract nested in a generic type argument becomes a parameter" {
+test "explicit contract bound participates in a nested generic input" {
     const allocator = std.testing.allocator;
     const source =
-        "Contract : Abstract = ()\n" ++
+        "Capability#(.Value: Type): Contract = ()\n" ++
         "Box#(.t: Type) : Type = (.value: t)\n" ++
-        "read(.box: Box#(.t: Contract)) -> () := {}\n";
+        "read#(.Value: Type: Capability)(.box: Box#(.t: Value)) -> () := {}\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
     const files = [_]module_graph.FileInput{.{ .path = "nested_contract/main.rg", .tree = &tree, .source = source }};
@@ -566,8 +569,8 @@ test "abstract contract nested in a generic type argument becomes a parameter" {
 test "virtual type arguments remain runtime contracts in parameterized IR" {
     const allocator = std.testing.allocator;
     const source =
-        "Contract : Abstract = ()\n" ++
-        "take#(.t: Type)(.value: Virtual#(.abstract: Contract)) -> () := {}\n";
+        "Capability#(.Value: Type): Contract = ()\n" ++
+        "take#(.t: Type)(.value: Virtual#(.contract: Capability)) -> () := {}\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
     const files = [_]module_graph.FileInput{.{ .path = "runtime_contract/main.rg", .tree = &tree, .source = source }};
@@ -607,43 +610,42 @@ test "parameterized call defaults preserve reach alternatives" {
     try std.testing.expect(input_binding.initialization != null);
 }
 
-test "imported abstract inputs become constrained templates" {
+test "explicit imported contract bounds become constrained templates" {
     const allocator = std.testing.allocator;
-    const source = "dep := import(\"../dep\")\nwrite#(.t: Type)(.value: t, .writer: $&dep.Writer) -> () := {}\n";
+    const source = "dep := import(\"../dep\")\nwrite#(.t: Type, .Provider: Type: dep.Writer)(.value: t, .writer: $&Provider) -> () := {}\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
-    var module = try @import("semantizer.zig").buildLinked(allocator, "consumer", &.{.{
+    var module = try @import("semantizer.zig").build(allocator, "consumer", &.{.{
         .path = "consumer/main.rg",
         .tree = &tree,
         .source = source,
-    }}, &.{.{ .qualifier = "dep", .name = "Writer" }});
+    }});
     defer module.graph.deinit(allocator);
 
     const templates = module.graph.semantic.parameterized_storage.parameterized_functions.items;
     try std.testing.expectEqual(@as(usize, 1), templates.len);
-    try std.testing.expectEqual(@import("parameterized/storage.zig").GenericDispatchKind.abstract_contract, templates[0].dispatch_kind);
     try std.testing.expectEqual(@as(u32, 2), templates[0].parameters.len);
     const parameter = module.graph.semantic.parameterized_storage.comptime_parameters.items[templates[0].parameters.start + 1];
     try std.testing.expect(parameter.constraint != null);
-    const constraint = module.graph.semantic.parameterized_storage.abstract_constraints.items[@intFromEnum(parameter.constraint.?)];
-    try std.testing.expect(constraint.abstract_ref == .external);
-    const reference = module.graph.semantic.external_refs.items[@intFromEnum(constraint.abstract_ref.external)];
-    try std.testing.expectEqual(@import("entities.zig").ExternalKind.abstract, reference.kind);
+    const constraint = module.graph.semantic.parameterized_storage.contract_constraints.items[@intFromEnum(parameter.constraint.?)];
+    try std.testing.expect(constraint.contract_ref == .external);
+    const reference = module.graph.semantic.external_refs.items[@intFromEnum(constraint.contract_ref.external)];
+    try std.testing.expectEqual(@import("entities.zig").ExternalKind.contract, reference.kind);
     try std.testing.expectEqualStrings("Writer", module.graph.text(reference.name));
 }
 
-test "local concrete type shadows unqualified prelude abstract" {
+test "local concrete type shadows unqualified prelude contract" {
     const allocator = std.testing.allocator;
     const source =
         "Shadowed : Type = ()\n" ++
         "consume(.value: Shadowed) -> () := {}\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
-    var module = try @import("semantizer.zig").buildLinked(allocator, "shadowing", &.{.{
+    var module = try @import("semantizer.zig").build(allocator, "shadowing", &.{.{
         .path = "shadowing/main.rg",
         .tree = &tree,
         .source = source,
-    }}, &.{.{ .qualifier = null, .name = "Shadowed" }});
+    }});
     defer module.graph.deinit(allocator);
 
     try std.testing.expectEqual(
@@ -699,15 +701,19 @@ test "ordinary calls retain caller bindings for reached defaults" {
     try std.testing.expect(found);
 }
 
-test "named call inputs reject unrelated default-only overloads" {
+test "named call inputs reject unrelated default-only operation identities" {
     const allocator = std.testing.allocator;
     const source =
-        "fill(.stdout: Int32 = 1) -> (.result: Int32) := { result = stdout }\n" ++
-        "fill(.self: Int32) -> (.result: Int32) := { result = self }\n" ++
+        "StdoutFill#(.Value: Type): Contract = (.fill: (.stdout: Value = 1) -> (.result: Int32))\n" ++
+        "ReceiverFill#(.Value: Type): Contract = (.fill: (.self: Value) -> (.result: Int32))\n" ++
+        "_fill_stdout := (.stdout: Int32 = 1) -> (.result: Int32) { result = stdout }\n" ++
+        "_fill_self := (.self: Int32) -> (.result: Int32) { result = self }\n" ++
+        "implement StdoutFill#(Int32) (.fill = _fill_stdout)\n" ++
+        "implement ReceiverFill#(Int32) (.fill = _fill_self)\n" ++
         "main() -> (.result: Int32) := { result = fill(.self = 2).result }\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
-    var module = try @import("semantizer.zig").build(allocator, "named_overloads", &.{.{ .path = "named_overloads/main.rg", .tree = &tree, .source = source }});
+    var module = try @import("semantizer.zig").build(allocator, "named_operations", &.{.{ .path = "named_operations/main.rg", .tree = &tree, .source = source }});
     defer module.graph.deinit(allocator);
     var result = try @import("../global/semantizer.zig").semantize(allocator, &.{module.graph});
     defer result.graph.deinit(allocator);
@@ -716,7 +722,7 @@ test "named call inputs reject unrelated default-only overloads" {
     for (result.graph.nodes.items) |node| {
         if (node.content != .function_call) continue;
         const function = result.graph.functions.items[@intFromEnum(node.content.function_call.callee)];
-        if (!std.mem.eql(u8, result.graph.text(result.graph.declaration(function.declaration).name), "fill")) continue;
+        if (!std.mem.eql(u8, result.graph.text(result.graph.declaration(function.declaration).name), "_fill_self")) continue;
         try std.testing.expectEqualStrings("self", result.graph.text(result.graph.fields.items[function.input.start].name));
         matched = true;
     }
@@ -780,4 +786,395 @@ test "reached defaults propagate through an intermediate function" {
         found = true;
     }
     try std.testing.expect(found);
+}
+
+test "callback invocation preserves binding and field editor targets" {
+    const allocator = std.testing.allocator;
+    const source =
+        "Callback() -> (.result: Int32) : CFunctionPointer\n" ++
+        "Holder : Type = (.callback: Callback)\n" ++
+        "main(.callback: Callback, .entry: Holder) -> (.result: Int32) := {\n" ++
+        "    result = callback() + entry.callback()\n" ++
+        "}\n";
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    var module = try module_semantizer.build(allocator, "callback_editor", &.{.{ .path = "callback_editor/main.rg", .tree = &tree, .source = source }});
+    defer module.graph.deinit(allocator);
+    var arithmetic_core = try buildArithmeticTestCore(allocator);
+    defer arithmetic_core.graph.deinit(allocator);
+    var result = try @import("../global/semantizer.zig").semantize(allocator, &.{ module.graph, arithmetic_core.graph });
+    defer result.graph.deinit(allocator);
+    var index = try @import("../../0_commands/lsp_index.zig").Index.build(allocator, &result.graph);
+    defer index.deinit(allocator);
+    const callback_offset = std.mem.indexOf(u8, source, "callback()").?;
+    const entry_offset = std.mem.indexOf(u8, source, "entry.callback()").?;
+    var found_callback = false;
+    var found_entry = false;
+    var found_field = false;
+    for (index.occurrences.items) |occurrence| {
+        if (occurrence.source.offset == callback_offset) {
+            try std.testing.expect(occurrence.target == .binding);
+            try std.testing.expectEqualStrings("callback", result.graph.text(result.graph.binding(occurrence.target.binding).name));
+            found_callback = true;
+        }
+        if (occurrence.source.offset == entry_offset) {
+            try std.testing.expect(occurrence.target == .binding);
+            try std.testing.expectEqualStrings("entry", result.graph.text(result.graph.binding(occurrence.target.binding).name));
+            found_entry = true;
+        }
+        if (occurrence.source.offset == entry_offset + "entry.".len) {
+            try std.testing.expect(occurrence.target == .field);
+            found_field = true;
+        }
+    }
+    try std.testing.expect(found_callback and found_entry and found_field);
+}
+
+test "unary and tuple contracts retain explicit symbolic participants" {
+    const allocator = std.testing.allocator;
+    const source =
+        \\First#(.Participant: Type): Contract = (.Other: Type, .borrow: (.other: &Other, .source: &Participant) -> (.value: &Participant))
+        \\Modern#(.Participant: Type): Contract = (
+        \\    .Other: Type
+        \\    .borrow: (.other: &Other, .source: &Participant) -> (.value: &Participant))
+        \\Pair#(.Left: Type, .Right: Type): Contract = (
+        \\    .combine: (.left: &Left, .right: &Right) -> (.value: Result)
+        \\    .Result: Type
+        \\    .Count: Int
+        \\)
+        \\
+    ;
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    const inputs = [_]module_graph.FileInput{.{ .path = "contracts/main.rg", .tree = &tree, .source = source }};
+    var graph = try module_graph.build(allocator, "contracts", &inputs);
+    defer graph.deinit(allocator);
+    _ = try parameterized_lowerer.lower(allocator, &graph, &inputs);
+    const storage = &graph.semantic.parameterized_storage;
+    try std.testing.expectEqual(@as(usize, 3), storage.contract_definitions.items.len);
+    for (storage.contract_definitions.items[0..2]) |definition| {
+        try std.testing.expect(definition.hasExplicitParticipants());
+        const participant: @import("parameterized/storage.zig").ComptimeParameterId = @enumFromInt(definition.participants.start);
+        try std.testing.expectEqual(@as(u32, 1), definition.participants.len);
+        try std.testing.expectEqual(@intFromEnum(participant), definition.participants.start);
+        try std.testing.expect(participant != @as(@import("parameterized/storage.zig").ComptimeParameterId, @enumFromInt(definition.parameters.start)));
+        const requirement = storage.contract_requirements.items[definition.requirements.start];
+        const fields = storage.ir.types.items[@intFromEnum(requirement.input)].resolved.structural.fields;
+        const other = storage.ir.types.items[@intFromEnum(storage.ir.fields.items[fields.start].ty)].resolved.pointer.child;
+        const receiver = storage.ir.types.items[@intFromEnum(storage.ir.fields.items[fields.start + 1].ty)].resolved.pointer.child;
+        try std.testing.expectEqual(participant, storage.ir.types.items[@intFromEnum(receiver)].parameter);
+        try std.testing.expect(storage.ir.types.items[@intFromEnum(other)].parameter != participant);
+        const output = storage.ir.types.items[@intFromEnum(requirement.output)].resolved.structural.fields;
+        const returned = storage.ir.types.items[@intFromEnum(storage.ir.fields.items[output.start].ty)].resolved.pointer.child;
+        try std.testing.expectEqual(participant, storage.ir.types.items[@intFromEnum(returned)].parameter);
+    }
+    const pair = storage.contract_definitions.items[2];
+    try std.testing.expect(pair.hasExplicitParticipants());
+    try std.testing.expectEqual(@as(u32, 2), pair.participants.len);
+    try std.testing.expectEqual(@as(u32, 2), pair.parameters.len);
+    try std.testing.expect(pair.parameters.start + pair.parameters.len <= pair.participants.start);
+    try std.testing.expectEqualStrings("Result", graph.text(storage.comptime_parameters.items[pair.parameters.start].name));
+    try std.testing.expectEqualStrings("Count", graph.text(storage.comptime_parameters.items[pair.parameters.start + 1].name));
+    try std.testing.expectEqual(.comptime_int, storage.comptime_parameters.items[pair.parameters.start + 1].kind);
+    const pair_requirement = storage.contract_requirements.items[pair.requirements.start];
+    const pair_output = storage.ir.types.items[@intFromEnum(pair_requirement.output)].resolved.structural.fields;
+    const result_type = storage.ir.fields.items[pair_output.start].ty;
+    try std.testing.expectEqual(pair.parameters.start, @intFromEnum(storage.ir.types.items[@intFromEnum(result_type)].parameter));
+    const pair_input = storage.ir.types.items[@intFromEnum(pair_requirement.input)].resolved.structural.fields;
+    const left = storage.ir.types.items[@intFromEnum(storage.ir.fields.items[pair_input.start].ty)].resolved.pointer.child;
+    try std.testing.expectEqual(pair.participants.start, @intFromEnum(storage.ir.types.items[@intFromEnum(left)].parameter));
+}
+
+test "contract participants require ordinary bindings in generic evaluation" {
+    const allocator = std.testing.allocator;
+    const source = "First#(.Input: Type): Contract = (.read: (.source: &Input) -> ())\nExplicit#(.Input: Type): Contract = (.read: (.source: &Input) -> ())\n";
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    const inputs = [_]module_graph.FileInput{.{ .path = "contracts/main.rg", .tree = &tree, .source = source }};
+    var graph = try module_graph.build(allocator, "contracts", &inputs);
+    defer graph.deinit(allocator);
+    _ = try parameterized_lowerer.lower(allocator, &graph, &inputs);
+    const storage = &graph.semantic.parameterized_storage;
+    const globalizer = @import("../global/globalizer.zig");
+    const core = @import("../global/core.zig");
+    const generics = @import("../global/generics.zig");
+    const global_sg = @import("../global/graph.zig");
+    var relocation = try globalizer.relocate(allocator, &.{graph}, .allow_holes);
+    defer relocation.deinit(allocator);
+    var core_resolver: core.Resolver = .{ .allocator = allocator, .graph = &relocation.graph, .modules = &.{graph}, .offsets = relocation.offsets.items };
+    var resolver: generics.Resolver = .{ .allocator = allocator, .graph = &relocation.graph, .modules = &.{graph}, .offsets = relocation.offsets.items, .core = &core_resolver };
+    defer resolver.deinit();
+    const int_type: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(relocation.graph.types.items.len)));
+    try relocation.graph.types.append(allocator, .{ .builtin = .Int32 });
+    for (storage.contract_definitions.items) |definition| {
+        var bindings = try generics.Resolver.Bindings.init(allocator, storage.comptime_parameters.items.len);
+        defer bindings.deinit(allocator);
+        const requirement = storage.contract_requirements.items[definition.requirements.start];
+        const fields = storage.ir.types.items[@intFromEnum(requirement.input)].resolved.structural.fields;
+        const parameter_type = storage.ir.types.items[@intFromEnum(storage.ir.fields.items[fields.start].ty)].resolved.pointer.child;
+        try std.testing.expectError(error.UnboundGenericTypeParameter, resolver.instantiateParameterizedType(0, parameter_type, &bindings));
+        bindings.types[definition.participants.start] = int_type;
+        try std.testing.expectEqual(int_type, try resolver.instantiateParameterizedType(0, parameter_type, &bindings));
+    }
+}
+
+test "unary and tuple conformances publish canonical static evidence" {
+    const allocator = std.testing.allocator;
+    const source =
+        "Readable#(.Value: Type): Contract = (\n.Result: Type\n.Count: Int\n.read: (.source: &Value) -> (.value: Result)\n)\n" ++
+        "Product#(.Left: Type, .Right: Type): Contract = (\n.Result: Type\n.multiply: (.left: &Left, .right: &Right) -> (.value: Result)\n)\n" ++
+        "Cell: Type = (.value: Int32)\n" ++
+        "implement Readable#(Cell) (.Count: Int = 2, .Result: Type = Int32, .read = read)\n" ++
+        "implement Product#(Cell, Cell) (.Result: Type = Int32, .multiply = multiply)\n" ++
+        "read(.source: &Cell) -> (.value: Int32) := { value = source&.value }\n" ++
+        "multiply(.left: &Cell, .right: &Cell) -> (.value: Int32) := { value = left&.value * right&.value }\n";
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    var module = try @import("semantizer.zig").build(allocator, "evidence", &.{.{ .path = "evidence/main.rg", .tree = &tree, .source = source }});
+    defer module.graph.deinit(allocator);
+    var arithmetic_core = try buildArithmeticTestCore(allocator);
+    defer arithmetic_core.graph.deinit(allocator);
+    var result = try @import("../global/semantizer.zig").semantize(allocator, &.{ module.graph, arithmetic_core.graph });
+    defer result.graph.deinit(allocator);
+    var evidence: usize = 0;
+    for (result.graph.contract_conformances.items) |conformance| {
+        if (result.graph.modules.items[@intFromEnum(result.graph.moduleForDeclaration(conformance.declaration).?)].is_bundled_core) continue;
+        evidence += 1;
+        const name = result.graph.text(result.graph.declaration(conformance.declaration).name);
+        const unary = std.mem.eql(u8, name, "Readable");
+        try std.testing.expectEqual(@as(u32, if (unary) 1 else 2), conformance.participants.len);
+        try std.testing.expectEqual(@as(u32, if (unary) 2 else 1), conformance.associated_arguments.len);
+        try std.testing.expectEqual(@as(u32, 1), conformance.operations.len);
+        const associated = result.graph.generic_arguments.items[conformance.associated_arguments.start..][0..conformance.associated_arguments.len];
+        try std.testing.expectEqualStrings("Result", result.graph.text(associated[0].name));
+        if (unary) {
+            try std.testing.expectEqualStrings("Count", result.graph.text(associated[1].name));
+            try std.testing.expectEqual(@as(i64, 2), associated[1].value.comptime_int);
+        }
+        const method = result.graph.function_refs.items[conformance.operations.start];
+        try std.testing.expectEqualStrings(if (unary) "read" else "multiply", result.graph.text(result.graph.declaration(result.graph.function(method).declaration).name));
+    }
+    try std.testing.expectEqual(@as(usize, 2), evidence);
+}
+
+test "qualified operation statements preserve contract identity" {
+    const allocator = std.testing.allocator;
+    const source = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, "tests/feature_tests/contracts/125X_qualified_operation_argument_mismatch/main.rg", allocator, .limited(64 * 1024));
+    defer allocator.free(source);
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    var calls: usize = 0;
+    for (tree.nodes.items(.tag), 0..) |tag, raw| {
+        if (tag != .function_call) continue;
+        const call = tree.functionCall(@enumFromInt(@as(u32, @intCast(raw)))).?;
+        try std.testing.expect(call.contract_type != null);
+        calls += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 1), calls);
+    var module = try @import("semantizer.zig").build(allocator, "scoped", &.{.{ .path = "scoped/main.rg", .tree = &tree, .source = source }});
+    defer module.graph.deinit(allocator);
+    var pending: usize = 0;
+    for (module.graph.semantic.pending_operations.items) |operation| {
+        if (operation != .resolve_call) continue;
+        try std.testing.expect(operation.resolve_call.contract_type != null);
+        pending += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 1), pending);
+}
+
+test "scoped implementation evidence retains call and source identities" {
+    const allocator = std.testing.allocator;
+    const source = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, "tests/feature_tests/contracts/115_inline_operation_bodies/main.rg", allocator, .limited(64 * 1024));
+    defer allocator.free(source);
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    var module = try @import("semantizer.zig").build(allocator, "scoped", &.{.{ .path = "scoped/main.rg", .tree = &tree, .source = source }});
+    defer module.graph.deinit(allocator);
+    const storage = &module.graph.semantic.parameterized_storage;
+    try std.testing.expectEqual(@as(usize, 2), storage.contract_conformances.items.len);
+    for (storage.contract_conformances.items) |conformance| {
+        try std.testing.expectEqual(@as(u32, 2), conformance.participants.len);
+        for (storage.ir.generic_arguments.items[conformance.participants.start..][0..conformance.participants.len]) |argument| {
+            try std.testing.expect(argument.value == .type);
+            try std.testing.expect(storage.ir.types.items[@intFromEnum(argument.value.type)] == .concrete);
+        }
+    }
+    var arithmetic_core = try buildArithmeticTestCore(allocator);
+    defer arithmetic_core.graph.deinit(allocator);
+    var result = try @import("../global/semantizer.zig").semantize(allocator, &.{ module.graph, arithmetic_core.graph });
+    defer result.graph.deinit(allocator);
+    try @import("../global/verify.zig").verifyGlobal(&result.graph);
+    var evidence: usize = 0;
+    var operation_bindings: usize = 0;
+    for (result.graph.contract_conformances.items) |conformance| {
+        if (result.graph.modules.items[@intFromEnum(result.graph.moduleForDeclaration(conformance.declaration).?)].is_bundled_core) continue;
+        evidence += 1;
+        operation_bindings += conformance.operation_bindings.len;
+        try std.testing.expectEqual(@as(u32, 1), conformance.operations.len);
+        try std.testing.expectEqual(@as(u32, 1), conformance.operation_bindings.len);
+        const method = result.graph.function_refs.items[conformance.operations.start];
+        try std.testing.expectEqualStrings("multiply", result.graph.text(result.graph.declarationSourceName(result.graph.function(method).declaration)));
+    }
+    try std.testing.expectEqual(@as(usize, 2), evidence);
+    try std.testing.expectEqual(@as(usize, 2), operation_bindings);
+    var calls: usize = 0;
+    for (result.graph.nodes.items) |node| {
+        if (node.content != .function_call) continue;
+        const call = node.content.function_call;
+        const identity = result.graph.callOperation(call) orelse continue;
+        const contract = result.graph.contract_conformances.items[identity.conformance].declaration;
+        if (result.graph.modules.items[@intFromEnum(result.graph.moduleForDeclaration(contract).?)].is_bundled_core) continue;
+        try std.testing.expectEqualStrings("multiply", result.graph.text(result.graph.callSourceName(call)));
+        calls += 1;
+    }
+    try std.testing.expect(calls >= 3);
+    const saved_bindings = result.graph.contract_operation_bindings.items.len;
+    const saved = result.graph.checkpoint();
+    _ = try result.graph.contract_operation_bindings.addOne(allocator);
+    result.graph.rollback(saved);
+    try std.testing.expectEqual(saved_bindings, result.graph.contract_operation_bindings.items.len);
+}
+
+test "generic contract implementations preserve participant and associated binders" {
+    const allocator = std.testing.allocator;
+    const source =
+        \\Copyable#(.Value: Type): Contract = (
+        \\    .Result: Type
+        \\    .copy: (.value: Value) -> (.result: Result)
+        \\)
+        \\implement#(.T: Type) Copyable#(T) (
+        \\    .Result: Type = T
+        \\    .copy = (.value: T) -> (.result: Result) { result = value }
+        \\)
+    ;
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    var module = try @import("semantizer.zig").build(allocator, "generic", &.{.{ .path = "generic/main.rg", .tree = &tree, .source = source }});
+    defer module.graph.deinit(allocator);
+    const storage = &module.graph.semantic.parameterized_storage;
+    try std.testing.expectEqual(@as(usize, 1), storage.contract_conformances.items.len);
+    const conformance = storage.contract_conformances.items[0];
+    try std.testing.expectEqual(@as(u32, 1), conformance.parameters.len);
+    const participant = storage.ir.generic_arguments.items[conformance.participants.start].value.type;
+    const associated = storage.ir.generic_arguments.items[conformance.associated_arguments.start].value.type;
+    try std.testing.expectEqual(conformance.parameters.start, @intFromEnum(storage.ir.types.items[@intFromEnum(participant)].parameter));
+    try std.testing.expectEqual(conformance.parameters.start, @intFromEnum(storage.ir.types.items[@intFromEnum(associated)].parameter));
+    const relation = tree.contractConformance(tree.roots[1]).?;
+    const members = tree.structTypeLiteral(relation.implementation_members).?;
+    const body = tree.functionDeclaration(tree.structTypeField(members.fields[1]).?.default_value.?).?;
+    try std.testing.expectEqual(@as(usize, 2), body.generic_params.len);
+}
+
+test "generic implementation selection binds associated results and operation bodies" {
+    const allocator = std.testing.allocator;
+    const source =
+        \\Copyable#(.Value: Type): Contract = (.Result: Type, .copy: (.value: Value) -> (.result: Result))
+        \\implement#(.T: Type) Copyable#(T) (
+        \\    .Result: Type = T
+        \\    .copy = (.value: T) -> (.result: Result) { result = value }
+        \\)
+        \\main := () -> (.status_code: Int32 = 0) {
+        \\    first ::= Copyable#(Int32).copy(42).result
+        \\    second ::= Copyable#(UInt8).copy(7).result
+        \\    if first != 42 { abort }
+        \\    if second != 7 { abort }
+        \\}
+    ;
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    var module = try @import("semantizer.zig").build(allocator, "generic", &.{.{ .path = "generic/main.rg", .tree = &tree, .source = source }});
+    defer module.graph.deinit(allocator);
+    var arithmetic_core = try buildArithmeticTestCore(allocator);
+    defer arithmetic_core.graph.deinit(allocator);
+    var result = try @import("../global/semantizer.zig").semantize(allocator, &.{ module.graph, arithmetic_core.graph });
+    defer result.graph.deinit(allocator);
+    try @import("../global/verify.zig").verifyGlobal(&result.graph);
+    var subject_count: usize = 0;
+    for (result.graph.contract_conformances.items) |conformance| {
+        if (@intFromEnum(result.graph.moduleForDeclaration(conformance.declaration).?) == 0) subject_count += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 2), subject_count);
+    for (result.graph.contract_conformances.items) |conformance| {
+        if (@intFromEnum(result.graph.moduleForDeclaration(conformance.declaration).?) != 0) continue;
+        try std.testing.expectEqual(@as(u32, 1), conformance.implementation_arguments.len);
+        try std.testing.expectEqual(@as(u32, 1), conformance.operations.len);
+    }
+}
+
+test "repeated participant specificity is independent of declaration order" {
+    const allocator = std.testing.allocator;
+    const original = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, "tests/feature_tests/contracts/137_repeated_participant_specialization/main.rg", allocator, .limited(64 * 1024));
+    defer allocator.free(original);
+    const first = std.mem.indexOf(u8, original, "implement#(.A").?;
+    const second = std.mem.indexOf(u8, original, "implement#(.T").?;
+    const main = std.mem.indexOf(u8, original, "main :=").?;
+    const reversed = try std.fmt.allocPrint(allocator, "{s}{s}{s}{s}", .{ original[0..first], original[second..main], original[first..second], original[main..] });
+    defer allocator.free(reversed);
+    for ([_][]const u8{ original, reversed }) |source| {
+        var tree = try parseSource(allocator, source, @enumFromInt(0));
+        defer tree.deinit(allocator);
+        var module = try @import("semantizer.zig").build(allocator, "specificity", &.{.{ .path = "specificity/main.rg", .tree = &tree, .source = source }});
+        defer module.graph.deinit(allocator);
+        var arithmetic_core = try buildArithmeticTestCore(allocator);
+        defer arithmetic_core.graph.deinit(allocator);
+        var result = try @import("../global/semantizer.zig").semantize(allocator, &.{ module.graph, arithmetic_core.graph });
+        defer result.graph.deinit(allocator);
+        var subject_count: usize = 0;
+        for (result.graph.contract_conformances.items) |conformance| {
+            if (@intFromEnum(result.graph.moduleForDeclaration(conformance.declaration).?) == 0) subject_count += 1;
+        }
+        try std.testing.expectEqual(@as(usize, 2), subject_count);
+        var specialized: usize = 0;
+        for (result.graph.contract_conformances.items) |conformance| {
+            if (@intFromEnum(result.graph.moduleForDeclaration(conformance.declaration).?) != 0) continue;
+            const arguments = result.graph.generic_arguments.items[conformance.participants.start..][0..conformance.participants.len];
+            if (@import("../global/types.zig").equal(&result.graph, arguments[0].value.type, arguments[1].value.type)) {
+                try std.testing.expectEqual(@as(u32, 1), conformance.implementation_arguments.len);
+                specialized += 1;
+            } else try std.testing.expectEqual(@as(u32, 2), conformance.implementation_arguments.len);
+        }
+        try std.testing.expectEqual(@as(usize, 1), specialized);
+    }
+}
+
+test "nested reference array specificity selects the element parameter" {
+    const allocator = std.testing.allocator;
+    const original = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, "tests/feature_tests/contracts/140_nested_reference_array_patterns/main.rg", allocator, .limited(64 * 1024));
+    defer allocator.free(original);
+    const first = std.mem.indexOf(u8, original, "implement#").?;
+    const second = std.mem.indexOfPos(u8, original, first + 1, "implement#").?;
+    const third = std.mem.indexOfPos(u8, original, second + 1, "implement#").?;
+    const main = std.mem.indexOf(u8, original, "main :=").?;
+    const reversed = try std.fmt.allocPrint(allocator, "{s}{s}{s}{s}{s}", .{ original[0..first], original[third..main], original[second..third], original[first..second], original[main..] });
+    defer allocator.free(reversed);
+    for ([_][]const u8{ original, reversed }) |source| {
+        var tree = try parseSource(allocator, source, @enumFromInt(0));
+        defer tree.deinit(allocator);
+        var module = try @import("semantizer.zig").build(allocator, "nested", &.{.{ .path = "nested/main.rg", .tree = &tree, .source = source }});
+        defer module.graph.deinit(allocator);
+        var arithmetic_core = try buildArithmeticTestCore(allocator);
+        defer arithmetic_core.graph.deinit(allocator);
+        var result = try @import("../global/semantizer.zig").semantize(allocator, &.{ module.graph, arithmetic_core.graph });
+        defer result.graph.deinit(allocator);
+        var subject: ?@TypeOf(result.graph.contract_conformances.items[0]) = null;
+        for (result.graph.contract_conformances.items) |conformance| {
+            if (@intFromEnum(result.graph.moduleForDeclaration(conformance.declaration).?) != 0) continue;
+            try std.testing.expect(subject == null);
+            subject = conformance;
+        }
+        const conformance = subject.?;
+        const element = result.graph.generic_arguments.items[conformance.implementation_arguments.start].value.type;
+        const ty = result.graph.types.items[@intFromEnum(element)];
+        try std.testing.expect(ty == .builtin);
+        try std.testing.expectEqual(@import("../primitives/schema.zig").BuiltinType.Int32, ty.builtin);
+    }
+}
+
+fn buildArithmeticTestCore(allocator: std.mem.Allocator) !module_semantizer.BuildResult {
+    const source = @import("../../test_support.zig").arithmetic_core_source;
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    var result = try module_semantizer.build(allocator, "arithmetic_core", &.{.{ .path = "arithmetic_core/scalar_arithmetic.rg", .tree = &tree, .source = source }});
+    result.graph.is_bundled_core = true;
+    return result;
 }

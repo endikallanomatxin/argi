@@ -1,11 +1,11 @@
-BufferedReader#(.base_type: Type: Reader) : Type = (
+BufferedReader#(.base_type: Type: Reader#(base_type)): Type = (
     --
     -- Owning buffered reader wrapper.
     --
     -- The wrapper owns only its internal byte buffer. The underlying `.base`
     -- stream remains borrowed and is not closed or deinitialized here.
     --
-    -- Bytes returned by `read_byte()` are copied out of the buffer, so callers
+    -- Bytes returned by `Reader#().read_byte()` are copied out of the buffer, so callers
     -- do not borrow storage tied to this wrapper's lifetime.
     --
     .base     : $&base_type
@@ -15,72 +15,95 @@ BufferedReader#(.base_type: Type: Reader) : Type = (
     .end      : UIntNative
 )
 
-init#(.base_type: Type: Reader)(
-    .p: $&BufferedReader#(.base_type: base_type),
-    .allocator: $&Allocator,
-    .base: $&base_type,
-    .capacity: UIntNative,
-) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
-    assume allocator
+implement#(.base_type: Type: Reader#(base_type), .Provider: Type: Allocator) Init#(
+    BufferedReader#(.base_type: base_type),
+    (.allocator: $&Provider = reach allocator, .base: $&base_type, .capacity: UIntNative)
+) (
+    .Result : Type = Errable#(BufferedReader#(.base_type: base_type), (..out_of_memory))
+    .init   = (
+        .args : (
+            .allocator : $&Provider = reach allocator, .base: $&base_type, .capacity: UIntNative
+        )
+    ) -> (.result: Result) {
+        allocator ::= args.allocator
+        base ::= args.base
+        capacity ::= args.capacity
 
-    actual_capacity ::= capacity
-    one :: UIntNative = 1
+        constructed :: BufferedReader#(.base_type: base_type)
 
-    if actual_capacity == 0 {
-        actual_capacity = one
+        assume allocator
+
+        actual_capacity ::= capacity
+        one :: UIntNative = 1
+
+        if actual_capacity == 0 {
+            actual_capacity = one
+        }
+
+        buffer ::= allocate_bytes(allocator, .size = actual_capacity)!
+        -- The refill view contains initialized bytes before any native read.
+        index :: UIntNative = 0
+
+        while index < actual_capacity {
+            byte ::= _trusted_allocation_byte_rw(
+                .allocation = $&buffer, .offset = index
+            ).reference
+            byte&= 0
+            index = index + 1
+        }
+
+        constructed = (
+            .base = base, .buffer = ~buffer, .capacity = actual_capacity, .start = 0, .end = 0
+        )
+
+        result = ..ok ~constructed
     }
+)
 
-    buffer ::= allocate(.self = allocator, .size = actual_capacity)!
-    p& = (
-        .base = base,
-        .buffer = ~buffer,
-        .capacity = actual_capacity,
-        .start = 0,
-        .end = 0,
-    )
-    result = ..ok Void()
-}
-
-deinit#(.base_type: Type: Reader)(
-    .self: $&BufferedReader#(.base_type: base_type),
-    .allocator: $&Allocator,
-) -> () := {
-    assume allocator
-
-    deinit(.self = $&self&.buffer)
-}
-
-read_byte#(.base_type: Type: Reader)(.self: $&BufferedReader#(.base_type: base_type)) -> (.result: Errable#(.t: ReadByte, .reasons: (..stream_read_failed))) := {
-    if self&.start < self&.end {
-        ptr ::= _trusted_allocation_byte_ro(.allocation = &self&.buffer, .offset = self&.start).reference
-        result = ..ok ..ok ptr&
-        self&.start = self&.start + 1
-        return
+implement#(.base_type: Type: Reader#(base_type)) Deinit#(BufferedReader#(.base_type: base_type)) (
+    .deinit = (.self: $&BufferedReader#(.base_type: base_type)) -> () {
+        deinit(.self = $&self&.buffer)
     }
+)
 
-    if self&.capacity == 0 {
-        result = read_byte(.self = self&.base)
-        return
+implement#(.base_type: Type: Reader#(base_type)) Reader#(BufferedReader#(.base_type: base_type)) (
+    .read_byte = (.self: $&BufferedReader#(.base_type: base_type)) -> (
+        .result : Errable#(ReadByte, (..stream_read_failed))
+    ) {
+        if self&.start < self&.end {
+            ptr ::= _trusted_allocation_byte_ro(
+                .allocation = &self&.buffer, .offset = self&.start
+            ).reference
+            result = ..ok ..ok ptr&
+            self&.start = self&.start + 1
+            return
+        }
+
+        if self&.capacity == 0 {
+            result = Reader#().read_byte(self&.base)
+            return
+        }
+
+        storage ::= _trusted_allocation_byte_rw(
+            .allocation = $&self&.buffer, .offset = 0
+        ).reference
+        buffer_view ::= _trusted_array_view#(.t: UInt8)(
+            .data = storage, .length = self&.capacity
+        ).array
+
+        match read(self&.base, .buffer = buffer_view) {
+            ..error _ { result = ..error(.reason = ..stream_read_failed) }
+            ..ok count {
+                if count > self&.capacity { abort }
+                self&.start = 0
+                self&.end = count
+                if count == 0 {
+                    result = ..ok ..end
+                    return
+                }
+                self&.start = 1
+                result = ..ok ..ok storage&
+            }
+        }
     }
-
-    first ::= read_byte(.self = self&.base)
-    if is(.value = first, .variant = ..error) {
-        result = ..error(.reason = first..error.reason)
-        return
-    }
-
-    first_payload ::= first..ok
-    if is(.value = first_payload, .variant = ..end) {
-        result = ..ok ..end
-        return
-    }
-
-    payload ::= first_payload..ok
-    ptr ::= _trusted_allocation_byte_rw(.allocation = $&self&.buffer, .offset = 0).reference
-    ptr& = payload
-    self&.start = 1
-    self&.end = 1
-    result = ..ok ..ok payload
-}
-
-BufferedReader#(.base_type: Type: Reader) implements Reader
+)

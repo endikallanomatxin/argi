@@ -23,21 +23,21 @@ because it is not only about input/output.
 
 ## Runtime as a capability
 
-`Runtime` should probably be an `Abstract` capability:
+`Runtime` should probably be a `Contract` capability:
 
 ```rg
-Runtime : Abstract = (
-    lazy       (.self: $&Self, .task: Task) -> (.task: Task)
-    async      (.self: $&Self, .task: Task) -> (.future: Future)
-    concurrent(.self: $&Self, .task: Task) -> !(.future: Future)
+Runtime#(.Participant: Type): Contract = (
+    .lazy: (.self: $&Participant, .task: Task) -> (.task: Task)
+    .async: (.self: $&Participant, .task: Task) -> (.future: Future)
+    concurrent(.self: $&Participant, .task: Task) -> !(.future: Future)
 
-    await      (.self: $&Self, .future: $&Future) -> !()
-    cancel     (.self: $&Self, .future: $&Future) -> ()
+    .await: (.self: $&Participant, .future: $&Future) -> !()
+    .cancel: (.self: $&Participant, .future: $&Future) -> ()
 
-    yield      (.self: $&Self) -> ()
-    checkpoint (.self: $&Self) -> !()
+    .yield: (.self: $&Participant) -> ()
+    .checkpoint: (.self: $&Participant) -> !()
 
-    sleep      (.self: $&Self, .duration: Duration) -> !()
+    .sleep: (.self: $&Participant, .duration: Duration) -> !()
 )
 ```
 
@@ -99,7 +99,7 @@ default. The following `System` shape is hypothetical:
 System : Type = (
     .allocator : $&Allocator
     .terminal  : $&Terminal
-    .file_sys  : $&FileSystem
+    .file_system  : $&FileSystem
     .network   : $&Network
     .clock     : $&Clock
     .threads   : $&ThreadCapability
@@ -391,7 +391,7 @@ Possible operations:
 ```rg
 Future#(.t: Type) : Type
 
-await (.runtime: $&Runtime, .future: $&Future#(.t: t)) -> !(.value: t)
+.await: (.runtime: $&Runtime, .future: $&Future#(.t: t)) -> !(.value: t)
 cancel(.runtime: $&Runtime, .future: $&Future) -> ()
 ```
 
@@ -620,8 +620,8 @@ Possible channel families:
 
 ```rg
 Channel#(.t: Type) : Abstract = (
-    put(.self: $&Self, .value: t) -> !()
-    get(.self: $&Self) -> !(.value: t)
+    put(.self: $&Participant, .value: t) -> !()
+    get(.self: $&Participant) -> !(.value: t)
 )
 ```
 
@@ -685,8 +685,8 @@ loop {
 
 ```
 Channel#(.t: Type) : Abstract = (
-    put(.self: $&Self, .value: t) -> ()
-    get(.self: $&Self) -> (.value: t)
+    put(.self: $&Participant, .value: t) -> ()
+    get(.self: $&Participant) -> (.value: t)
 )
 Spot implements Channel
 Queue implements Channel
@@ -695,16 +695,16 @@ Channel defaults Spot
 
 
 Queue#(.t: Type) : Abstract = (
-	put(.self: $&Self, .value: t) -> ()
-	get(.self: $&Self) -> (.value: t)
+	put(.self: $&Participant, .value: t) -> ()
+	get(.self: $&Participant) -> (.value: t)
 )
 DynamicQueue#(.t: Type) implements Queue#(.t: t)
 StaticQueue#(.n: UIntNative, .t: Type) implements Queue#(.t: t)
 Queue defaults DynamicQueue
 
 Stack#(.t: Type) : Abstract = (
-	put(.self: $&Self, .value: t) -> ()
-	get(.self: $&Self) -> (.value: t)
+	put(.self: $&Participant, .value: t) -> ()
+	get(.self: $&Participant) -> (.value: t)
 )
 DynamicStack#(.t: Type) implements Stack#(.t: t)
 StaticStack#(.n: UIntNative, .t: Type) implements Stack#(.t: t)
@@ -980,7 +980,7 @@ This is the main reason to route these operations through `Runtime`.
 System:
     allocator
     terminal
-    file_sys
+    file_system
     network
     clock
     proc_man
@@ -1004,7 +1004,7 @@ Example:
 
 ```rg
 read_file(
-    .file_sys: $&FileSystem = reach file_sys, system.file_sys,
+    .file_system: $&FileSystem = reach file_system, system.file_system,
     .runtime: $&Runtime = reach runtime, system.runtime,
     .path: String,
 ) -> !(.content: String) := {

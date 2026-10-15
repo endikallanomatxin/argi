@@ -7,12 +7,12 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
-    first_result ::= allocate(.self = $&allocator_storage, .size = 1, .alignment = allocator_storage.page_size)
+    first_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1, .alignment = allocator_storage.page_size)
     match first_result {
     ..error _ { status_code = 14 }
     ..ok ~ first_payload {
     first ::= ~first_payload
-    second_result ::= allocate(.self = $&allocator_storage, .size = allocator_storage.page_size + 1)
+    second_result ::= allocate_bytes(.self = $&allocator_storage, .size = allocator_storage.page_size + 1)
     match second_result {
     ..error _ { status_code = 15 }
     ..ok ~ second_payload {
@@ -49,7 +49,7 @@ main(.system: System) -> (.status_code: Int32) := {
     deinit(.self = $&first)
     deinit(.self = $&second)
     high_alignment ::= allocator_storage.page_size * 4
-    over_aligned_result ::= allocate(.self = $&allocator_storage, .size = 5, .alignment = high_alignment)
+    over_aligned_result ::= allocate_bytes(.self = $&allocator_storage, .size = 5, .alignment = high_alignment)
     match over_aligned_result {
         ..error _ { status_code = 18
             return }

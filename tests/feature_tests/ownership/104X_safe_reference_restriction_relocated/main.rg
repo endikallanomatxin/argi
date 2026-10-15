@@ -6,11 +6,17 @@ Holder : Type = (
     .reference: &UInt8
 )
 
-deinit(.self: $&Value) -> () := {
-}
+implement Deinit#(Value) (
+    .deinit = (.self: $&Value) -> () {
 
-deinit(.self: $&Holder) -> () := {
-}
+    }
+)
+
+implement Deinit#(Holder) (
+    .deinit = (.self: $&Holder) -> () {
+
+    }
+)
 
 main() -> (.status_code: Int32) := {
     source :: Value = (.number = 0)

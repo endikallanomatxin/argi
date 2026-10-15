@@ -11,7 +11,7 @@ get_erased_marker() -> (.reference: &Any) := {
 main() -> (.status_code: Int32 = 0) := {
     direct ::= get_marker()
     erased ::= get_erased_marker()
-    if direct& != 7 or UIntNative(.value = erased) != UIntNative(.value = direct) {
+    if direct& != 7 or erased | convert#(.to: UIntNative)(_) != direct | convert#(.to: UIntNative)(_) {
         status_code = 1
     }
 }

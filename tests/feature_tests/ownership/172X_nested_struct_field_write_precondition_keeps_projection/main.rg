@@ -6,8 +6,11 @@ Container : Type = (
     .pointer: $&Thing
 )
 
-deinit(.self: $&Thing) -> () := {
-}
+implement Deinit#(Thing) (
+    .deinit = (.self: $&Thing) -> () {
+
+    }
+)
 
 write_nested(.container: $&Container) -> () := {
     container&.pointer&.value = 3

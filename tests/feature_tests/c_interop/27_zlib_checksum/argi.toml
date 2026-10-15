@@ -1,0 +1,5 @@
+[executables.checksum]
+path = "."
+
+[[native]]
+library = "z"

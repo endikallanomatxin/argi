@@ -4,13 +4,16 @@ main(.system: System) -> (.status_code: Int32) := {
     assume backing_allocator ::= $&allocator_storage
 
     arena :: ArenaAllocator
-    initialized ::= init(.p = $&arena, .allocator = $&allocator_storage, .block_size = 0)
-    if is(.value = initialized, .variant = ..error) {
+    initialized ::= ArenaAllocator(.allocator = $&allocator_storage, .block_size = 0)
+    match initialized {
+        ..ok ~constructed_value { arena = ~constructed_value }
+        ..error _ {
         status_code = 1
         return
     }
+    }
 
-    result ::= allocate(.self = $&arena, .size = 0)
+    result ::= allocate_bytes(.self = $&arena, .size = 0)
     match result {
         ..error _ {
             deinit(.self = $&arena)

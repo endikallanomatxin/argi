@@ -58,7 +58,7 @@ are constructed and changed outside that module.
 
 ## Construction
 
-A type may define `init` with a mutable destination and explicit inputs:
+A type can provide construction through the standard Init contract:
 
 ```rg
 Point : Type = (
@@ -66,23 +66,22 @@ Point : Type = (
     .y: Int32
 )
 
-init(.p: $&Point, .x: Int32, .y: Int32) -> () := {
-    p& = (.x = x, .y = y)
-}
+implement Init#(Point, (.x: Int32, .y: Int32)) (
+    .Result: Type = Point
+    .init = (.args: (.x: Int32, .y: Int32)) -> (.result: Result) {
+        result = (.x = args.x, .y = args.y)
+    }
+)
 
 point := Point(.x = 20, .y = 22)
 ```
 
-`Point(...)` selects a visible initializer for `Point`; the destination type
-is already known from the constructor name. Selection is based on the input
-types, not on a function's output type. An initializer must leave a complete
-value on success. When a visible `init` exists, callers construct through
-that operation rather than bypassing it with a field initializer.
-
-An initializer that can fail returns one `Errable#(.t: Void, .reasons: R)`.
-Then `Point(...)` returns `Errable#(.t: Point, .reasons: R)`, and `..ok`
-contains the constructed point. The initializer must leave its destination
-complete on success and empty on error.
+`Point(...)` selects Init evidence using Point and its argument record. The
+associated Result must be Point or `Errable#(Point, R)` when construction can
+fail. Result never selects the implementation. When Init applies, callers
+cannot bypass its requirements through automatic field-wise construction. See
+[Initialization and deinitialization](30_initialization_and_deinitialization.md)
+for generic constructors and cleanup on failure.
 
 ## Structs and behavior
 
@@ -104,8 +103,9 @@ move_x(.point: $&Point, .delta: Int32) -> () := {
 
 `size_of(.type = T)` and `alignment_of(.type = T)` return `UIntNative`
 values. Ordinary struct layout is chosen by the compiler; code must not
-assume field offsets from declaration order. C interoperation also provides
-`CUnion`, whose fields share storage.
+assume field offsets from declaration order. C interoperation provides
+`CStruct`, with the target's C field layout, and `CUnion`, whose fields share
+storage. See [C interoperability](20_c.md).
 
 > [!IDEA]
 > **Explicit struct layout.** A declaration could choose its layout while the
@@ -121,7 +121,7 @@ assume field offsets from declaration order. C interoperation also provides
 >
 > Possible layout choices include `..Optimal` for compiler-selected padding,
 > `..RespectOrder` for declaration order, `..Packed`, `..Aligned(n)`, `..C`
-> for C ABI layout, and a more advanced `..Custom` with explicit offsets and
+> as a layout-based spelling of `CStruct`, and a more advanced `..Custom` with explicit offsets and
 > size. The exact syntax and guarantees still need design. An `offset_of`
 > query and an editor view of field offsets would make the chosen layout
 > inspectable alongside `size_of` and `alignment_of`.

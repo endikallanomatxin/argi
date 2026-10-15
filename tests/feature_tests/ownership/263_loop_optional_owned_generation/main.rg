@@ -2,19 +2,24 @@ Holder : Type = (
     .buffer: String
 )
 
-init(.p: $&Holder, .allocator: $&Allocator) -> () := {
-    assume allocator
+implement#(.AllocatorProvider: Type: Allocator) Init#(Holder, (.allocator: $&AllocatorProvider)) (
+    .Result: Type = Holder
+    .init = (.args: (.allocator: $&AllocatorProvider)) -> (.result: Result) {
+        allocator ::= ~args.allocator
 
-    p&.buffer = unwrap_or_abort(.value = String(.allocator = allocator, .capacity = 1))
-}
+        assume allocator
 
-deinit(.self: $&Holder, .allocator: $&Allocator) -> () := {
-    assume allocator
+        result.buffer = unwrap_or_abort(.value = string_with_capacity(.allocator = allocator, .capacity = 1))
+    }
+)
 
-    deinit(.self = $&self&.buffer, .allocator = allocator)
-}
+implement Deinit#(Holder) (
+    .deinit = (.self: $&Holder) -> () {
+        deinit(.self = $&self&.buffer)
+    }
+)
 
-append(.self: $&Holder, .allocator: $&Allocator) -> () := {
+append#(.AllocatorType: Type: Allocator#(AllocatorType))(.self: $&Holder, .allocator: $&AllocatorType) -> () := {
     assume allocator
 
     _ ::= push_byte(.self = $&self&.buffer, .byte = 65, .allocator = allocator)
@@ -35,5 +40,5 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         status_code = 1
         return
     }
-    deinit(.self = $&holder, .allocator = $&allocator_storage)
+    deinit(.self = $&holder)
 }

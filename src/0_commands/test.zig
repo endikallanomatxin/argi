@@ -147,6 +147,7 @@ pub fn run(
 
         const output_path = try outputPathForTest(allocator, module_dir, test_decl.name);
         const flags = build_plan.BuildFlags{
+            .frontend_jobs = .{ .count = 1 },
             .show_cascade = true,
             .output_path = output_path,
             .sysroot_path = parsed.sysroot_path,

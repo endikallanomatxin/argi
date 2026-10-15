@@ -2,7 +2,7 @@ main(.system: System) -> (.status_code: Int32) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 
-    full :: Path = unwrap_or_abort(.value = Path(
+    full :: Path = unwrap_or_abort(.value = path_with_view(
         .allocator = $&allocator_storage,
         .view = c_string_as_view(.text = "/tmp/demo/file.txt"),
     ))
@@ -53,11 +53,11 @@ main(.system: System) -> (.status_code: Int32) := {
         }
     }
 
-    base :: Path = unwrap_or_abort(.value = Path(
+    base :: Path = unwrap_or_abort(.value = path_with_view(
         .allocator = $&allocator_storage,
         .view = c_string_as_view(.text = "/tmp/demo"),
     ))
-    child :: Path = unwrap_or_abort(.value = Path(
+    child :: Path = unwrap_or_abort(.value = path_with_view(
         .allocator = $&allocator_storage,
         .view = c_string_as_view(.text = "child.txt"),
     ))
@@ -72,7 +72,7 @@ main(.system: System) -> (.status_code: Int32) := {
                 status_code = 8
                 return
             }
-            deinit(.self = $&joined, .allocator = $&allocator_storage)
+            deinit(.self = $&joined)
         }
         ..error _ {
             status_code = 9
@@ -80,8 +80,8 @@ main(.system: System) -> (.status_code: Int32) := {
         }
     }
 
-    deinit(.self = $&child, .allocator = $&allocator_storage)
-    deinit(.self = $&base, .allocator = $&allocator_storage)
-    deinit(.self = $&full, .allocator = $&allocator_storage)
+    deinit(.self = $&child)
+    deinit(.self = $&base)
+    deinit(.self = $&full)
     status_code = 0
 }

@@ -5,8 +5,11 @@ Borrowing : Type = (
 
 external :: UInt8 = 7
 
-deinit(.self: $&Borrowing) -> () := {
-}
+implement Deinit#(Borrowing) (
+    .deinit = (.self: $&Borrowing) -> () {
+
+    }
+)
 
 store_borrow(
     .storage: $&Allocation,
@@ -23,8 +26,8 @@ store_borrow(
 
 main(.system: System) -> (.status_code: Int32) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    unrelated_result ::= allocate(.self = $&allocator_storage, .size = 1)
-    slots_result ::= allocate(.self = $&allocator_storage, .size = size_of(.type = Borrowing))
+    unrelated_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
+    slots_result ::= allocate_bytes(.self = $&allocator_storage, .size = size_of(.type = Borrowing))
     match unrelated_result {
         ..error _ { status_code = 1 }
         ..ok ~ unrelated_payload {

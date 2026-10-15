@@ -1,32 +1,25 @@
+-- Echo complete lines until an empty line or EOF, including a final line without LF.
 main(.system: System) -> (.status_code: Int32 = 0) := {
-    allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    assume allocator ::= $&allocator_storage
-    assume writer ::= $&system.terminal&.stdout
+    assume writer ::= $&system.terminal&.stderr
+    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
+    output ::= $&system.terminal&.stdout
     assume reader ::= $&system.terminal&.stdin
+    #defer {
+        Writer#().flush(output) handle error {
+            status_code = 1
+            report_trace(.tracer = error.tracer, .writer = writer) handle ignored {}
+        }
+    }
 
     while true {
-        next_line_result ::= read_line()
+        match [read_line()!!! { status_code = 1 }] {
+            ..end { break }
+            ..ok ~line {
+                text ::= as_view(&line)
+                if text == "" { break }
 
-        match next_line_result {
-             ..error _ {
-                status_code = 1
-                return
-            }
-             ..ok ~ next_line {
-                match next_line {
-                    ..end {
-                        return
-                    }
-                    ..ok ~ line {
-                        line_text ::= as_view(.self = &line)
-                        if line_text == "" {
-                            return
-                        } else {
-                            print(.value = line_text)
-                            print(.value = "\n")
-                        }
-                    }
-                }
+                print(text, .writer = output)!!! { status_code = 1 }
+                Writer#().flush(output)!!! { status_code = 1 }
             }
         }
     }

@@ -8,6 +8,7 @@ const core_mod = @import("core.zig");
 const dispatch_mod = @import("dispatch.zig");
 const reach_context = @import("reach_context.zig");
 const global_types = @import("types.zig");
+const standard_contracts = @import("standard_contracts.zig");
 const primitives = @import("../primitives/schema.zig");
 
 pub const Stats = struct {
@@ -40,6 +41,7 @@ pub const Resolver = struct {
     denied_copy: ?DeniedCopy = null,
     auto_nodes: std.ArrayList(AutoNode) = .empty,
     empty_block: ?global_sg.GlobalBlockId = null,
+    loop_cleanup_base: ?struct { active: usize, defers: usize } = null,
     stats: Stats = .{},
     profile_io: ?std.Io = null,
     profile_destructor_calls: usize = 0,
@@ -117,12 +119,15 @@ pub const Resolver = struct {
     fn blockReadyForCleanup(self: *const Resolver, block_id: global_sg.GlobalBlockId) bool {
         const block = self.graph.blocks.items[@intFromEnum(block_id)];
         for (self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len]) |node_id| {
-            const node = self.graph.nodes.items[@intFromEnum(node_id)];
+            // Deferred markers hide executable bodies; their local binding
+            // types must resolve before cleanup can be finalized once.
+            const effective_node = self.deferValue(node_id) orelse node_id;
+            const node = self.graph.nodes.items[@intFromEnum(effective_node)];
             switch (node.content) {
                 .binding_declaration => |binding| if (self.graph.isBindingTypeUnresolved(binding)) return false,
                 .binding_use => |binding| if (self.graph.isBindingTypeUnresolved(binding)) return false,
                 .assignment => |assignment| if (self.graph.isBindingTypeUnresolved(assignment.binding)) return false,
-                .code_block => |child| if (!self.blockReadyForCleanup(child)) return false,
+                .code_block, .value_sequence => |child| if (!self.blockReadyForCleanup(child)) return false,
                 .if_statement => |statement| {
                     if (!self.blockReadyForCleanup(statement.then_block)) return false;
                     if (statement.else_block) |child|
@@ -132,8 +137,10 @@ pub const Resolver = struct {
                 .for_statement => |statement| {
                     if (statement.init) |init| {
                         const init_node = self.graph.nodes.items[@intFromEnum(init)];
-                        if (init_node.content == .code_block and !self.blockReadyForCleanup(init_node.content.code_block))
-                            return false;
+                        if (init_node.content == .code_block or init_node.content == .value_sequence) {
+                            const initialization_block = if (init_node.content == .value_sequence) init_node.content.value_sequence else init_node.content.code_block;
+                            if (!self.blockReadyForCleanup(initialization_block)) return false;
+                        }
                     }
                     if (!self.blockReadyForCleanup(statement.body)) return false;
                 },
@@ -193,7 +200,7 @@ pub const Resolver = struct {
             self.graph.nodes.items[@intFromEnum(target)] = self.graph.nodes.items[@intFromEnum(source)];
             return true;
         }
-        if (self.implementsNamedAbstract(ty, "ImplicitlyCopyable")) {
+        if (self.implementsNamedContract(ty, "ImplicitlyCopyable")) {
             const original = self.graph.nodes.items[@intFromEnum(source)];
             self.graph.nodes.items[@intFromEnum(target)] = original;
             self.stats.copies += 1;
@@ -201,12 +208,24 @@ pub const Resolver = struct {
         }
         // An explicit copy contract does not grant permission to insert that
         // operation implicitly. This also keeps fallible copy results visible.
-        if (self.findCopyFunction(ty) != null or !self.triviallyCopyable(ty)) {
+        if (self.hasExplicitCopyCapability(ty) or !self.triviallyCopyable(ty)) {
             // A binding use can still carry a temporal move error that Safety
             // must diagnose before the copy permission. Other expressions may
-            // be part of overload/initializer matching, where failure here
+            // be part of call/initializer matching, where failure here
             // must continue to reject the candidate.
             if (self.graph.nodes.items[@intFromEnum(source)].content != .binding_use) return false;
+            const binding = self.graph.nodes.items[@intFromEnum(source)].content.binding_use;
+            if (std.mem.eql(u8, self.graph.text(self.graph.bindings.items[@intFromEnum(binding)].name), "#pipe_temporary")) {
+                // Stabilizing a produced value must preserve its transfer into
+                // a consuming argument. Repeated consumption remains a move
+                // error, while borrows still use the temporary's storage.
+                self.graph.nodes.items[@intFromEnum(target)] = .{
+                    .source = self.graph.nodes.items[@intFromEnum(source)].source,
+                    .ty = ty,
+                    .content = .{ .move_value = source },
+                };
+                return true;
+            }
             if (self.denied_copy == null) self.denied_copy = .{
                 .source = self.graph.nodes.items[@intFromEnum(source)].source,
                 .ty = ty,
@@ -227,21 +246,23 @@ pub const Resolver = struct {
     /// operation. Match value payloads use this permission even though they do
     /// not pass through a lowered `resolve_copy` node.
     pub fn canImplicitlyCopy(self: *Resolver, ty: global_sg.GlobalTypeId) bool {
-        if (self.implementsNamedAbstract(ty, "ImplicitlyCopyable")) return true;
-        if (self.findCopyFunction(ty) != null) return false;
+        if (self.implementsNamedContract(ty, "ImplicitlyCopyable")) return true;
+        if (self.hasExplicitCopyCapability(ty)) return false;
         return self.triviallyCopyable(ty);
     }
 
-    fn implementsNamedAbstract(self: *Resolver, concrete: global_sg.GlobalTypeId, name: []const u8) bool {
+    fn hasExplicitCopyCapability(self: *Resolver, ty: global_sg.GlobalTypeId) bool {
+        if (self.implementsNamedContract(ty, "InfalliblyCopyable")) return true;
         const dispatch = self.dispatch orelse return false;
-        for (self.graph.declarations.items, 0..) |declaration, raw| {
-            if (declaration.kind != .abstract_type or !std.mem.eql(u8, self.graph.text(declaration.name), name)) continue;
-            const abstract_decl: global_sg.GlobalDeclId = @enumFromInt(@as(u32, @intCast(raw)));
-            for (self.graph.types.items, 0..) |candidate, type_raw| {
-                if (candidate != .declared or candidate.declared != abstract_decl) continue;
-                const abstract_type: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(type_raw)));
-                if (dispatch.abstracts.concreteImplements(concrete, abstract_type)) return true;
-            }
+        return dispatch.contracts.mayImplementFirstParticipant("FalliblyCopyable", ty) catch true;
+    }
+
+    fn implementsNamedContract(self: *Resolver, concrete: global_sg.GlobalTypeId, name: []const u8) bool {
+        const dispatch = self.dispatch orelse return false;
+        const declarations = self.graph.declarationsNamed(self.allocator, name) catch return false;
+        for (declarations) |contract_decl| {
+            if (self.graph.declaration(contract_decl).kind != .contract_type) continue;
+            if (dispatch.contracts.implements(concrete, contract_decl) catch false) return true;
         }
         return false;
     }
@@ -258,95 +279,132 @@ pub const Resolver = struct {
         node_id: global_sg.GlobalNodeId,
         active: []const global_sg.GlobalBindingId,
         defers: []const global_sg.GlobalNodeId,
+        visible: []const global_sg.GlobalBindingId,
+        owner_function: global_sg.GlobalFunctionId,
+        module_index: usize,
     ) anyerror!void {
         const node = self.graph.nodes.items[@intFromEnum(node_id)];
         switch (node.content) {
+            .code_block, .value_sequence => |block| {
+                // Expressions may contain conditional statement effects. Give
+                // their blocks the same lexical cleanup context as source
+                // blocks, including early returns and branch-local owners.
+                var nested_active: std.ArrayList(global_sg.GlobalBindingId) = .empty;
+                defer nested_active.deinit(self.allocator);
+                try nested_active.appendSlice(self.allocator, active);
+                var nested_defers: std.ArrayList(global_sg.GlobalNodeId) = .empty;
+                defer nested_defers.deinit(self.allocator);
+                try nested_defers.appendSlice(self.allocator, defers);
+                var nested_visible: std.ArrayList(global_sg.GlobalBindingId) = .empty;
+                defer nested_visible.deinit(self.allocator);
+                try nested_visible.appendSlice(self.allocator, visible);
+                try self.finalizeBlock(block, &nested_active, &nested_defers, &nested_visible, &.{}, owner_function, module_index);
+            },
+            .return_statement => |ret| if (ret.expression) |value|
+                try self.finalizeExpressionCleanup(value, active, defers, visible, owner_function, module_index),
+            .if_statement => |statement| try self.finalizeExpressionCleanup(statement.condition, active, defers, visible, owner_function, module_index),
+            .while_statement => |statement| try self.finalizeExpressionCleanup(statement.condition, active, defers, visible, owner_function, module_index),
+            .switch_statement => |id| try self.finalizeExpressionCleanup(self.graph.switches.items[@intFromEnum(id)].expression, active, defers, visible, owner_function, module_index),
             .binding_declaration => |binding| {
                 const record = self.graph.bindings.items[@intFromEnum(binding)];
                 if (!record.deferred_initialization) if (record.initialization) |initialization|
-                    try self.finalizeExpressionCleanup(initialization, active, defers);
+                    try self.finalizeExpressionCleanup(initialization, active, defers, visible, owner_function, module_index);
             },
             .error_propagation => |propagation_id| {
-                const propagation = &self.graph.error_propagations.items[@intFromEnum(propagation_id)];
-                try self.finalizeExpressionCleanup(propagation.errable_value, active, defers);
-                propagation.cleanup_nodes = try self.appendCleanup(active, defers);
+                const propagation = self.graph.error_propagations.items[@intFromEnum(propagation_id)];
+                try self.finalizeExpressionCleanup(propagation.errable_value, active, defers, visible, owner_function, module_index);
+                const cleanup = try self.appendCleanup(active, defers);
+                self.graph.error_propagations.items[@intFromEnum(propagation_id)].cleanup_nodes = cleanup;
             },
             .error_context => |context_id| {
-                const context = &self.graph.error_contexts.items[@intFromEnum(context_id)];
-                try self.finalizeExpressionCleanup(context.errable_value, active, defers);
-                try self.finalizeExpressionCleanup(context.context, active, defers);
-                context.cleanup_nodes = try self.appendCleanup(active, defers);
+                const context = self.graph.error_contexts.items[@intFromEnum(context_id)];
+                try self.finalizeExpressionCleanup(context.errable_value, active, defers, visible, owner_function, module_index);
+                try self.finalizeExpressionCleanup(context.context, active, defers, visible, owner_function, module_index);
+                const cleanup = try self.appendCleanup(active, defers);
+                self.graph.error_contexts.items[@intFromEnum(context_id)].cleanup_nodes = cleanup;
             },
-            .move_value, .denied_implicit_copy, .address_of => |child| try self.finalizeExpressionCleanup(child, active, defers),
-            .assignment => |assignment| try self.finalizeExpressionCleanup(assignment.value, active, defers),
-            .function_call => |call| try self.finalizeExpressionCleanup(call.input, active, defers),
+            .move_value, .denied_implicit_copy, .address_of => |child| try self.finalizeExpressionCleanup(child, active, defers, visible, owner_function, module_index),
+            .assignment => |assignment| try self.finalizeExpressionCleanup(assignment.value, active, defers, visible, owner_function, module_index),
+            .function_call => |call| {
+                if (call.callee_value) |value| try self.finalizeExpressionCleanup(value, active, defers, visible, owner_function, module_index);
+                try self.finalizeExpressionCleanup(call.input, active, defers, visible, owner_function, module_index);
+            },
             .virtualize => |virtualize_id| try self.finalizeExpressionCleanup(
                 self.graph.virtualizes.items[@intFromEnum(virtualize_id)].value,
                 active,
                 defers,
+                visible,
+                owner_function,
+                module_index,
             ),
             .virtual_call => |virtual_call_id| {
                 const call = self.graph.virtual_calls.items[@intFromEnum(virtual_call_id)];
-                try self.finalizeExpressionCleanup(call.handle, active, defers);
-                try self.finalizeExpressionCleanup(call.input, active, defers);
+                try self.finalizeExpressionCleanup(call.handle, active, defers, visible, owner_function, module_index);
+                try self.finalizeExpressionCleanup(call.input, active, defers, visible, owner_function, module_index);
             },
             .struct_value_literal => |literal| {
-                for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |field|
-                    try self.finalizeExpressionCleanup(field.value, active, defers);
+                const fields = try self.allocator.dupe(global_sg.ValueField, self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len]);
+                defer self.allocator.free(fields);
+                for (fields) |field|
+                    try self.finalizeExpressionCleanup(field.value, active, defers, visible, owner_function, module_index);
             },
             .list_literal => |literal| {
-                for (self.graph.node_refs.items[literal.elements.start..][0..literal.elements.len]) |element|
-                    try self.finalizeExpressionCleanup(element, active, defers);
+                const elements = try self.allocator.dupe(global_sg.GlobalNodeId, self.graph.node_refs.items[literal.elements.start..][0..literal.elements.len]);
+                defer self.allocator.free(elements);
+                for (elements) |element|
+                    try self.finalizeExpressionCleanup(element, active, defers, visible, owner_function, module_index);
             },
             .array_literal => |literal| {
-                for (self.graph.node_refs.items[literal.elements.start..][0..literal.elements.len]) |element|
-                    try self.finalizeExpressionCleanup(element, active, defers);
+                const elements = try self.allocator.dupe(global_sg.GlobalNodeId, self.graph.node_refs.items[literal.elements.start..][0..literal.elements.len]);
+                defer self.allocator.free(elements);
+                for (elements) |element|
+                    try self.finalizeExpressionCleanup(element, active, defers, visible, owner_function, module_index);
             },
             .choice_literal => |literal| if (literal.payload) |payload|
-                try self.finalizeExpressionCleanup(payload, active, defers),
-            .struct_field_access => |access| try self.finalizeExpressionCleanup(access.value, active, defers),
-            .choice_payload_access => |access| try self.finalizeExpressionCleanup(access.value, active, defers),
+                try self.finalizeExpressionCleanup(payload, active, defers, visible, owner_function, module_index),
+            .struct_field_access => |access| try self.finalizeExpressionCleanup(access.value, active, defers, visible, owner_function, module_index),
+            .choice_payload_access => |access| try self.finalizeExpressionCleanup(access.value, active, defers, visible, owner_function, module_index),
             .nullable_unwrap_or => |unwrap_id| {
                 const unwrap = self.graph.nullable_unwraps.items[@intFromEnum(unwrap_id)];
-                try self.finalizeExpressionCleanup(unwrap.nullable_value, active, defers);
-                try self.finalizeExpressionCleanup(unwrap.fallback_value, active, defers);
+                try self.finalizeExpressionCleanup(unwrap.nullable_value, active, defers, visible, owner_function, module_index);
+                try self.finalizeExpressionCleanup(unwrap.fallback_value, active, defers, visible, owner_function, module_index);
             },
             .array_index => |access| {
-                try self.finalizeExpressionCleanup(access.array_ptr, active, defers);
-                try self.finalizeExpressionCleanup(access.index, active, defers);
+                try self.finalizeExpressionCleanup(access.array_ptr, active, defers, visible, owner_function, module_index);
+                try self.finalizeExpressionCleanup(access.index, active, defers, visible, owner_function, module_index);
             },
             .array_store => |store| {
-                try self.finalizeExpressionCleanup(store.array_ptr, active, defers);
-                try self.finalizeExpressionCleanup(store.index, active, defers);
-                try self.finalizeExpressionCleanup(store.value, active, defers);
+                try self.finalizeExpressionCleanup(store.array_ptr, active, defers, visible, owner_function, module_index);
+                try self.finalizeExpressionCleanup(store.index, active, defers, visible, owner_function, module_index);
+                try self.finalizeExpressionCleanup(store.value, active, defers, visible, owner_function, module_index);
             },
             .struct_field_store => |store| {
-                try self.finalizeExpressionCleanup(store.struct_ptr, active, defers);
-                try self.finalizeExpressionCleanup(store.value, active, defers);
+                try self.finalizeExpressionCleanup(store.struct_ptr, active, defers, visible, owner_function, module_index);
+                try self.finalizeExpressionCleanup(store.value, active, defers, visible, owner_function, module_index);
             },
             .binary_operation => |operation| {
-                try self.finalizeExpressionCleanup(operation.left, active, defers);
-                try self.finalizeExpressionCleanup(operation.right, active, defers);
+                try self.finalizeExpressionCleanup(operation.left, active, defers, visible, owner_function, module_index);
+                try self.finalizeExpressionCleanup(operation.right, active, defers, visible, owner_function, module_index);
             },
             .comparison => |comparison| {
-                try self.finalizeExpressionCleanup(comparison.left, active, defers);
-                try self.finalizeExpressionCleanup(comparison.right, active, defers);
+                try self.finalizeExpressionCleanup(comparison.left, active, defers, visible, owner_function, module_index);
+                try self.finalizeExpressionCleanup(comparison.right, active, defers, visible, owner_function, module_index);
             },
             .logical_operation => |operation| {
-                try self.finalizeExpressionCleanup(operation.left, active, defers);
-                try self.finalizeExpressionCleanup(operation.right, active, defers);
+                try self.finalizeExpressionCleanup(operation.left, active, defers, visible, owner_function, module_index);
+                try self.finalizeExpressionCleanup(operation.right, active, defers, visible, owner_function, module_index);
             },
             .pointer_assignment => |assignment| {
-                try self.finalizeExpressionCleanup(assignment.pointer, active, defers);
-                try self.finalizeExpressionCleanup(assignment.value, active, defers);
+                try self.finalizeExpressionCleanup(assignment.pointer, active, defers, visible, owner_function, module_index);
+                try self.finalizeExpressionCleanup(assignment.value, active, defers, visible, owner_function, module_index);
             },
-            .explicit_cast => |cast| try self.finalizeExpressionCleanup(cast.value, active, defers),
-            .type_initializer => |initializer| try self.finalizeExpressionCleanup(initializer.args, active, defers),
+            .explicit_cast => |cast| try self.finalizeExpressionCleanup(cast.value, active, defers, visible, owner_function, module_index),
+
             .testing_expect_error => |expect_id| {
                 const expect = self.graph.testing_expect_errors.items[@intFromEnum(expect_id)];
-                try self.finalizeExpressionCleanup(expect.expected_reason, active, defers);
-                try self.finalizeExpressionCleanup(expect.actual_result, active, defers);
-                if (expect.test_fail_input) |input| try self.finalizeExpressionCleanup(input, active, defers);
+                try self.finalizeExpressionCleanup(expect.expected_reason, active, defers, visible, owner_function, module_index);
+                try self.finalizeExpressionCleanup(expect.actual_result, active, defers, visible, owner_function, module_index);
+                if (expect.test_fail_input) |input| try self.finalizeExpressionCleanup(input, active, defers, visible, owner_function, module_index);
             },
             else => {},
         }
@@ -392,9 +450,14 @@ pub const Resolver = struct {
         defer self.allocator.free(nodes);
         for (nodes) |node_id| {
             try rebuilt.append(self.allocator, node_id);
-            try self.finalizeExpressionCleanup(node_id, active.items, defers.items);
+            const content = self.graph.node(node_id).content;
+            if (content != .code_block and content != .value_sequence)
+                try self.finalizeExpressionCleanup(node_id, active.items, defers.items, visible.items, owner_function, module_index);
             const node = &self.graph.nodes.items[@intFromEnum(node_id)];
             if (self.deferValue(node_id)) |deferred_value| {
+                // The marker is a no-op, but the deferred body still owns
+                // branch-local bindings and nested deferred actions.
+                try self.finalizeExpressionCleanup(deferred_value, active.items, defers.items, visible.items, owner_function, module_index);
                 try defers.append(self.allocator, deferred_value);
                 continue;
             }
@@ -409,17 +472,34 @@ pub const Resolver = struct {
                     try active.append(self.allocator, binding);
                 },
                 .return_statement => |*ret| ret.cleanup = try self.appendCleanup(active.items, defers.items),
-                .code_block => |child| try self.finalizeBlock(child, &active, &defers, &visible, &.{}, owner_function, module_index),
+                .code_block, .value_sequence => |child| try self.finalizeBlock(child, &active, &defers, &visible, &.{}, owner_function, module_index),
                 .if_statement => |statement| {
                     try self.finalizeBlock(statement.then_block, &active, &defers, &visible, &.{}, owner_function, module_index);
                     if (statement.else_block) |child|
                         try self.finalizeBlock(child, &active, &defers, &visible, &.{}, owner_function, module_index);
                 },
-                .while_statement => |statement| try self.finalizeBlock(statement.body, &active, &defers, &visible, &.{}, owner_function, module_index),
-                .for_statement => |statement| try self.finalizeBlock(statement.body, &active, &defers, &visible, &.{}, owner_function, module_index),
+                .while_statement, .for_statement => {
+                    const previous_loop = self.loop_cleanup_base;
+                    self.loop_cleanup_base = .{ .active = active.items.len, .defers = defers.items.len };
+                    defer self.loop_cleanup_base = previous_loop;
+                    const body = if (node.content == .while_statement) node.content.while_statement.body else node.content.for_statement.body;
+                    try self.finalizeBlock(body, &active, &defers, &visible, &.{}, owner_function, module_index);
+                },
+                .break_statement, .continue_statement => {
+                    if (self.loop_cleanup_base) |base| {
+                        // Loop transfers end nested lexical scopes but retain the
+                        // iterator owner in the surrounding loop scope.
+                        const cleanup = try self.appendCleanup(active.items[base.active..], defers.items[base.defers..]);
+                        _ = rebuilt.pop();
+                        try rebuilt.appendSlice(self.allocator, self.graph.node_refs.items[cleanup.start..][0..cleanup.len]);
+                        try rebuilt.append(self.allocator, node_id);
+                    }
+                },
                 .switch_statement => |switch_id| {
                     const sw = self.graph.switches.items[@intFromEnum(switch_id)];
-                    for (self.graph.switch_cases.items[sw.cases.start..][0..sw.cases.len]) |case| {
+                    const cases = try self.allocator.dupe(global_sg.SwitchCase, self.graph.switch_cases.items[sw.cases.start..][0..sw.cases.len]);
+                    defer self.allocator.free(cases);
+                    for (cases) |case| {
                         const bindings: []const global_sg.GlobalBindingId = if (case.payload_mode == .move)
                             if (case.payload_binding) |*binding| binding[0..1] else &.{}
                         else
@@ -530,31 +610,9 @@ pub const Resolver = struct {
             };
         }
 
-        const fields = global_types.fields(self.graph, ty) orelse return null;
-        var direct_fields: std.ArrayList(global_sg.AutoDeinitField) = .empty;
-        defer direct_fields.deinit(self.allocator);
-        for (0..fields.len) |index| {
-            const field = self.graph.fields.items[fields.start + @as(u32, @intCast(index))];
-            const projected = try self.appendNode(
-                self.graph.nodes.items[@intFromEnum(target)].source,
-                field.ty,
-                .{ .struct_field_access = .{
-                    .value = target,
-                    .field_name = field.name,
-                    .field_index = @intCast(index),
-                } },
-            );
-            if (try self.buildAutoField(@intCast(index), projected, field.ty, context, module_index)) |auto_field|
-                try direct_fields.append(self.allocator, auto_field);
-        }
-        if (direct_fields.items.len == 0) return null;
-        const start: u32 = @intCast(self.graph.auto_deinit_fields.items.len);
-        try self.graph.auto_deinit_fields.appendSlice(self.allocator, direct_fields.items);
-        return .{
-            .binding = binding,
-            .deinit_fn = null,
-            .fields = .{ .start = start, .len = @intCast(direct_fields.items.len) },
-        };
+        const children = try self.buildAutoChildren(target, ty, context, module_index);
+        if (children.len == 0) return null;
+        return .{ .binding = binding, .deinit_fn = null, .fields = children };
     }
 
     fn buildAutoField(
@@ -564,7 +622,7 @@ pub const Resolver = struct {
         ty: global_sg.GlobalTypeId,
         context: reach_context.Context,
         module_index: usize,
-    ) !?global_sg.AutoDeinitField {
+    ) anyerror!?global_sg.AutoDeinitField {
         if (self.graph.semanticType(ty) == .pointer) return null;
         if (try self.resolveDestructor(target, context, module_index)) |resolved| {
             return .{
@@ -574,35 +632,73 @@ pub const Resolver = struct {
                 .self_field_index = resolved.self_field_index,
             };
         }
+        const children = try self.buildAutoChildren(target, ty, context, module_index);
+        if (children.len == 0) return null;
+        return .{ .field_index = field_index, .deinit_fn = null, .fields = children };
+    }
 
-        const fields = global_types.fields(self.graph, ty) orelse return null;
+    fn buildAutoChildren(
+        self: *Resolver,
+        target: global_sg.GlobalNodeId,
+        ty: global_sg.GlobalTypeId,
+        context: reach_context.Context,
+        module_index: usize,
+    ) anyerror!primitives.Range(global_sg.GlobalAutoDeinitFieldId) {
         var children: std.ArrayList(global_sg.AutoDeinitField) = .empty;
         defer children.deinit(self.allocator);
-        for (0..fields.len) |index| {
-            const field = self.graph.fields.items[fields.start + @as(u32, @intCast(index))];
-            const projected = try self.appendNode(
-                self.graph.nodes.items[@intFromEnum(target)].source,
-                field.ty,
-                .{ .struct_field_access = .{
+        const source = self.graph.node(target).source;
+        // Choices own only their active payload. Preserve the variant projection
+        // in cleanup metadata so every consumer observes the same condition.
+        if (global_types.variants(self.graph, ty)) |variants| {
+            for (0..variants.len) |index| {
+                const id: global_sg.GlobalVariantId = @enumFromInt(variants.start + @as(u32, @intCast(index)));
+                const variant = self.graph.variants.items[@intFromEnum(id)];
+                const payload = variant.payload_type orelse continue;
+                const projected = try self.appendNode(source, payload, .{ .choice_payload_access = .{
+                    .value = target,
+                    .variant = id,
+                    .payload_type = payload,
+                } });
+                if (try self.buildAutoField(@intCast(index), projected, payload, context, module_index)) |resolved| {
+                    var child = resolved;
+                    child.is_variant = true;
+                    try children.append(self.allocator, child);
+                }
+            }
+        } else if (global_types.fields(self.graph, ty)) |fields| {
+            for (0..fields.len) |index| {
+                const field = self.graph.fields.items[fields.start + @as(u32, @intCast(index))];
+                const projected = try self.appendNode(source, field.ty, .{ .struct_field_access = .{
                     .value = target,
                     .field_name = field.name,
                     .field_index = @intCast(index),
-                } },
-            );
-            if (try self.buildAutoField(@intCast(index), projected, field.ty, context, module_index)) |child|
-                try children.append(self.allocator, child);
+                } });
+                if (try self.buildAutoField(@intCast(index), projected, field.ty, context, module_index)) |child|
+                    try children.append(self.allocator, child);
+            }
         }
-        if (children.items.len == 0) return null;
-        const child_start: u32 = @intCast(self.graph.auto_deinit_fields.items.len);
+        const start: u32 = @intCast(self.graph.auto_deinit_fields.items.len);
         try self.graph.auto_deinit_fields.appendSlice(self.allocator, children.items);
-        return .{
-            .field_index = field_index,
-            .deinit_fn = null,
-            .fields = .{ .start = child_start, .len = @intCast(children.items.len) },
-        };
+        return .{ .start = start, .len = @intCast(children.items.len) };
     }
 
     fn resolveDestructor(
+        self: *Resolver,
+        target: global_sg.GlobalNodeId,
+        context: reach_context.Context,
+        module_index: usize,
+    ) !?ResolvedDestructor {
+        if (try self.resolveDestructorInScope(target, context, module_index)) |call| return call;
+        const ty = self.graph.node(target).ty orelse return null;
+        const owner = global_types.nominalTypeOwner(self.graph, ty) orelse return null;
+        if (@intFromEnum(owner) == module_index or self.graph.modules.items[@intFromEnum(owner)].is_bundled_core) return null;
+        // A resource keeps its defining module's cleanup when passed to a
+        // caller in another module. Reached arguments still come from the
+        // caller's captured context, not from the defining module's locals.
+        return self.resolveDestructorInScope(target, context, @intFromEnum(owner));
+    }
+
+    fn resolveDestructorInScope(
         self: *Resolver,
         target: global_sg.GlobalNodeId,
         context: reach_context.Context,
@@ -624,90 +720,21 @@ pub const Resolver = struct {
         const source = self.graph.nodes.items[@intFromEnum(target)].source;
         const address = try self.appendNode(source, pointer_ty, .{ .address_of = target });
 
-        var receiver_names = std.StringHashMap(void).init(self.allocator);
-        defer receiver_names.deinit();
-        try self.collectDestructorReceiverNames(module_index, &receiver_names);
-
-        var selected: ?ResolvedDestructor = null;
-        var names = receiver_names.keyIterator();
-        while (names.next()) |name_ptr| {
-            const input = try self.singleNamedInput(name_ptr.*, address, source);
-            if (context == .global) self.graph.nodes.items[@intFromEnum(input)].content.struct_value_literal.assumed_fields = context.global.assumed_fields;
-            const dispatch_result = dispatch.resolveImplicitFunction(
-                module_index,
-                "deinit",
-                input,
-                context,
-            );
-            const call = dispatch_result catch |err| switch (err) {
-                error.DeferredImplicitFunction => continue,
-                error.AmbiguousImplicitFunction => return err,
-                else => return err,
-            } orelse continue;
-            const self_index = self.findReceiverIndex(call.function, call.input, target) orelse continue;
-            const candidate = ResolvedDestructor{
-                .function = call.function,
-                .input = call.input,
-                .self_field_index = self_index,
-            };
-            if (selected) |previous| {
-                if (previous.function != candidate.function or previous.self_field_index != candidate.self_field_index)
-                    return error.AmbiguousImplicitDestructor;
-            } else {
-                selected = candidate;
-            }
-        }
-        succeeded = selected != null;
-        if (selected) |call| try self.core.trackReachedCall(call.function, call.input, context, false);
-        return selected;
-    }
-
-    fn collectDestructorReceiverNames(
-        self: *Resolver,
-        module_index: usize,
-        names: *std.StringHashMap(void),
-    ) !void {
-        for (try self.graph.functionsNamed(self.allocator, "deinit")) |function_id| {
-            const function = self.graph.functions.items[@intFromEnum(function_id)];
-            if (!function.flags.is_deinit) continue;
-            if (!self.core.declarationVisible(module_index, function.declaration, null)) continue;
-            for (self.graph.fields.items[function.input.start..][0..function.input.len]) |field| {
-                const pointer = switch (self.graph.semanticType(field.ty)) {
-                    .pointer => |value| value,
-                    else => continue,
-                };
-                if (pointer.mutability != .read_write) continue;
-                try names.put(self.graph.text(field.name), {});
+        if (standard_contracts.standardDeclaration(self.graph, "Deinit")) |declaration| {
+            if (try dispatch.contracts.implements(target_ty, declaration)) {
+                const input = try self.singleNamedInput("self", address, source);
+                var participants = [_]global_sg.GlobalTypeId{target_ty};
+                const node = try dispatch.contracts.callOperationCandidate(module_index, .{
+                    .declaration = declaration,
+                    .participants = &participants,
+                }, "deinit", input, context, source) orelse return error.DeferredImplicitFunction;
+                const call = node.content.function_call;
+                succeeded = true;
+                return .{ .function = call.callee, .input = call.input, .self_field_index = 0 };
             }
         }
 
-        for (try self.graph.parameterizedFunctionsNamed(self.allocator, self.modules, "deinit")) |candidate| {
-            const candidate_index: usize = @intCast(candidate.module_index);
-            const candidate_module = &self.modules[candidate_index];
-            const storage = &candidate_module.semantic.parameterized_storage;
-            const function = storage.parameterized_functions.items[@as(usize, @intCast(candidate.function_index))];
-            if (!function.is_deinit) continue;
-            const declaration = globalizer.globalDecl(self.offsets[candidate_index], function.declaration);
-            if (!self.core.declarationVisible(module_index, declaration, null)) continue;
-            const shape = switch (storage.ir.types.items[@intFromEnum(function.input)]) {
-                .resolved => |ty| switch (ty) {
-                    .structural => |value| value,
-                    else => continue,
-                },
-                else => continue,
-            };
-            for (storage.ir.fields.items[shape.fields.start..][0..shape.fields.len]) |field| {
-                const pointer = switch (storage.ir.types.items[@intFromEnum(field.ty)]) {
-                    .resolved => |ty| switch (ty) {
-                        .pointer => |value| value,
-                        else => continue,
-                    },
-                    else => continue,
-                };
-                if (pointer.mutability != .read_write) continue;
-                try names.put(candidate_module.text(field.name), {});
-            }
-        }
+        return null;
     }
 
     fn singleNamedInput(
@@ -726,26 +753,6 @@ pub const Resolver = struct {
         } });
     }
 
-    fn findReceiverIndex(
-        self: *const Resolver,
-        function_id: global_sg.GlobalFunctionId,
-        input: global_sg.GlobalNodeId,
-        target: global_sg.GlobalNodeId,
-    ) ?u32 {
-        const function = self.graph.functions.items[@intFromEnum(function_id)];
-        const literal = switch (self.graph.nodes.items[@intFromEnum(input)].content) {
-            .struct_value_literal => |value| value,
-            else => return null,
-        };
-        if (literal.fields.len != function.input.len) return null;
-        for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len], 0..) |field, index| {
-            const node = self.graph.nodes.items[@intFromEnum(field.value)];
-            if (node.content != .address_of or node.content.address_of != target) continue;
-            return @intCast(index);
-        }
-        return null;
-    }
-
     fn appendNode(
         self: *Resolver,
         source: primitives.SourceRef,
@@ -755,24 +762,6 @@ pub const Resolver = struct {
         const id: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.graph.nodes.items.len)));
         try self.graph.nodes.append(self.allocator, .{ .source = source, .ty = ty, .content = content });
         return id;
-    }
-
-    fn findCopyFunction(self: *Resolver, ty: global_sg.GlobalTypeId) ?global_sg.GlobalFunctionId {
-        // Explicit copy contracts can require resources such as an allocator.
-        // Those extra inputs do not grant permission for an implicit copy.
-        for (self.graph.functions.items, 0..) |function, raw| {
-            const declaration = self.graph.declarations.items[@intFromEnum(function.declaration)];
-            if (!std.mem.eql(u8, self.graph.text(declaration.name), "copy")) continue;
-            for (self.graph.fields.items[function.input.start..][0..function.input.len]) |field| {
-                if (!std.mem.eql(u8, self.graph.text(field.name), "self")) continue;
-                const receiver = switch (self.graph.semanticType(field.ty)) {
-                    .pointer => |pointer| pointer.child,
-                    else => field.ty,
-                };
-                if (global_types.equal(self.graph, receiver, ty)) return @enumFromInt(@as(u32, @intCast(raw)));
-            }
-        }
-        return null;
     }
 
     fn triviallyCopyable(self: *Resolver, ty: global_sg.GlobalTypeId) bool {
@@ -786,7 +775,8 @@ pub const Resolver = struct {
                     if (!self.triviallyCopyable(field.ty)) break :blk false;
                 break :blk true;
             },
-            .declared => blk: {
+            .declared => |id| blk: {
+                if (self.graph.declaration(id).struct_layout == .c_function_pointer) break :blk true;
                 if (global_types.fields(self.graph, ty)) |fields|
                     break :blk self.fieldsTriviallyCopyable(fields);
                 if (global_types.variants(self.graph, ty)) |variants|
@@ -822,7 +812,7 @@ pub const Resolver = struct {
         return true;
     }
 
-    fn deferValue(self: *Resolver, marker: global_sg.GlobalNodeId) ?global_sg.GlobalNodeId {
+    fn deferValue(self: *const Resolver, marker: global_sg.GlobalNodeId) ?global_sg.GlobalNodeId {
         for (self.deferred.items) |entry| if (entry.marker == marker) return entry.value;
         return null;
     }
@@ -934,7 +924,7 @@ test "error propagation cleanup captures active lexical obligations" {
     };
     defer resolver.deinit();
 
-    try resolver.finalizeExpressionCleanup(assignment_node, &.{}, &.{deferred_node});
+    try resolver.finalizeExpressionCleanup(assignment_node, &.{}, &.{deferred_node}, &.{}, @enumFromInt(0), 0);
     const cleanup = graph.error_propagations.items[0].cleanup_nodes;
     try std.testing.expectEqual(@as(u32, 1), cleanup.len);
     try std.testing.expectEqual(deferred_node, graph.node_refs.items[cleanup.start]);

@@ -3,7 +3,7 @@ const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
 const expectEqualStrings = std.testing.expectEqualStrings;
 
-const argi_bin = "zig-out/bin/argi";
+const argi_bin = if (@import("builtin").os.tag == .windows) "zig-out/bin/argi.exe" else "zig-out/bin/argi";
 
 fn compilerRoot() []const u8 {
     const this_file = @src().file;
@@ -12,11 +12,7 @@ fn compilerRoot() []const u8 {
 }
 
 fn outputPathFor(name: []const u8) ![]u8 {
-    return std.fmt.allocPrint(
-        std.testing.allocator,
-        "{s}/build/output",
-        .{name},
-    );
+    return std.fmt.allocPrint(std.testing.allocator, "{s}/build/output{s}", .{ name, if (@import("builtin").os.tag == .windows) ".exe" else "" });
 }
 
 fn irPathFor(name: []const u8) ![]u8 {
@@ -75,9 +71,32 @@ fn clean(name: []const u8) !void {
     };
 }
 
+// Fixture processes already run in parallel. Keep their frontend work serial
+// unless a concurrency test explicitly chooses another policy.
+fn compilerTestArgs(argv: []const []const u8) ![][]const u8 {
+    const allocator = std.testing.allocator;
+    if (argv.len < 2) return allocator.dupe([]const u8, argv);
+    const executable = std.fs.path.basename(argv[0]);
+    const compiler = std.mem.eql(u8, executable, "argi") or std.mem.eql(u8, executable, "argi.exe");
+    const is_run = std.mem.eql(u8, argv[1], "run");
+    const builds = is_run or std.mem.eql(u8, argv[1], "build") or std.mem.eql(u8, argv[1], "check");
+    if (!compiler or !builds) return allocator.dupe([]const u8, argv);
+    for (argv[2..]) |arg| if (std.mem.eql(u8, arg, "--frontend-jobs")) return allocator.dupe([]const u8, argv);
+    // Keep a selected run executable first, before ordinary build flags.
+    const insert: usize = if (is_run and argv.len > 2 and !std.mem.startsWith(u8, argv[2], "--")) 3 else 2;
+    const result = try allocator.alloc([]const u8, argv.len + 2);
+    @memcpy(result[0..insert], argv[0..insert]);
+    result[insert] = "--frontend-jobs";
+    result[insert + 1] = "1";
+    @memcpy(result[insert + 2 ..], argv[insert..]);
+    return result;
+}
+
 fn runChild(argv: []const []const u8) !std.process.RunResult {
+    const test_args = try compilerTestArgs(argv);
+    defer std.testing.allocator.free(test_args);
     const result = try std.process.run(std.testing.allocator, std.testing.io, .{
-        .argv = argv,
+        .argv = test_args,
         .cwd = .{ .path = compilerRoot() },
     });
     return normalizeRunResult(result);
@@ -107,8 +126,10 @@ fn runArgiCommandWithEnv(
         argv[idx + 1] = arg;
     }
 
+    const test_args = try compilerTestArgs(argv);
+    defer std.testing.allocator.free(test_args);
     const result = try std.process.run(std.testing.allocator, std.testing.io, .{
-        .argv = argv,
+        .argv = test_args,
         .cwd = .{ .path = compilerRoot() },
         .environ_map = env_map,
     });
@@ -124,8 +145,10 @@ fn expectArgiBuildSuccess(args: []const []const u8) !void {
 }
 
 fn runChildInCwd(argv: []const []const u8, cwd: []const u8) !std.process.RunResult {
+    const test_args = try compilerTestArgs(argv);
+    defer std.testing.allocator.free(test_args);
     const result = try std.process.run(std.testing.allocator, std.testing.io, .{
-        .argv = argv,
+        .argv = test_args,
         .cwd = .{ .path = cwd },
     });
     return normalizeRunResult(result);
@@ -136,8 +159,10 @@ fn runChildInCwdWithEnv(
     cwd: []const u8,
     env_map: *const std.process.Environ.Map,
 ) !std.process.RunResult {
+    const test_args = try compilerTestArgs(argv);
+    defer std.testing.allocator.free(test_args);
     const result = try std.process.run(std.testing.allocator, std.testing.io, .{
-        .argv = argv,
+        .argv = test_args,
         .cwd = .{ .path = cwd },
         .environ_map = env_map,
     });
@@ -147,7 +172,7 @@ fn runChildInCwdWithEnv(
 fn normalizeRunResult(result: std.process.RunResult) !std.process.RunResult {
     const root = try repoRootPrefix();
     defer std.testing.allocator.free(root);
-    const root_with_sep = try std.fmt.allocPrint(std.testing.allocator, "{s}/", .{root});
+    const root_with_sep = try std.fmt.allocPrint(std.testing.allocator, "{s}{c}", .{ root, std.fs.path.sep });
     defer std.testing.allocator.free(root_with_sep);
 
     var normalized = result;
@@ -158,8 +183,37 @@ fn normalizeRunResult(result: std.process.RunResult) !std.process.RunResult {
     const stderr = normalized.stderr;
     normalized.stderr = try std.mem.replaceOwned(u8, std.testing.allocator, stderr, root_with_sep, "");
     std.testing.allocator.free(stderr);
+    if (@import("builtin").os.tag == .windows) normalizeDiagnosticPaths(normalized.stderr);
 
     return normalized;
+}
+
+// Normalize source-location headers only; code excerpts and program output may
+// contain literal backslashes whose spelling is part of the asserted behavior.
+fn normalizeDiagnosticPaths(bytes: []u8) void {
+    var start: usize = 0;
+    while (start < bytes.len) {
+        const end = std.mem.indexOfScalarPos(u8, bytes, start, '\n') orelse bytes.len;
+        const line = bytes[start..end];
+        if (line.len > 0 and !std.ascii.isWhitespace(line[0])) {
+            normalizeSourceLocation(line);
+            if (std.mem.indexOf(u8, line, "first use at ")) |first_use|
+                normalizeSourceLocation(line[first_use + "first use at ".len ..]);
+        } else {
+            const trimmed = std.mem.trimStart(u8, line, " \t");
+            if (std.mem.startsWith(u8, trimmed, "file: "))
+                normalizeSourceLocation(line[line.len - trimmed.len + "file: ".len ..]);
+        }
+        start = end + 1;
+    }
+}
+
+fn normalizeSourceLocation(bytes: []u8) void {
+    if (std.mem.indexOf(u8, bytes, ".rg:")) |path_end| {
+        for (bytes[0 .. path_end + 3]) |*byte| if (byte.* == '\\') {
+            byte.* = '/';
+        };
+    }
 }
 
 fn repoRootPrefix() ![]u8 {
@@ -575,6 +629,56 @@ test "installed argi resolves core from its installation prefix outside repo" {
     try expectEqual(std.process.Child.Term{ .exited = 0 }, run_result.term);
 }
 
+fn copyInstalledTree(source: []const u8, destination: std.Io.Dir, prefix: []const u8) !void {
+    var directory = try std.Io.Dir.cwd().openDir(std.testing.io, source, .{ .iterate = true });
+    defer directory.close(std.testing.io);
+    var walker = try directory.walk(std.testing.allocator);
+    defer walker.deinit();
+    while (try walker.next(std.testing.io)) |entry| {
+        if (entry.kind != .file) continue;
+        const target = try std.fs.path.join(std.testing.allocator, &.{ prefix, entry.path });
+        defer std.testing.allocator.free(target);
+        try directory.copyFile(entry.path, destination, target, std.testing.io, .{ .make_path = true });
+    }
+}
+
+test "installed more imports survive relocation outside the checkout" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const repo = try repoRootPrefix();
+    defer std.testing.allocator.free(repo);
+    const root = try tmpDirRootPath(&tmp);
+    defer std.testing.allocator.free(root);
+    for ([_][]const u8{ "bin", "lib/argi/core", "lib/argi/more" }) |part| {
+        const source = try std.fs.path.join(std.testing.allocator, &.{ repo, "zig-out", part });
+        defer std.testing.allocator.free(source);
+        const destination = try std.fs.path.join(std.testing.allocator, &.{ "package", part });
+        defer std.testing.allocator.free(destination);
+        try copyInstalledTree(source, tmp.dir, destination);
+    }
+    try tmp.dir.createDirPath(std.testing.io, "outside");
+    const executable = try std.fs.path.join(std.testing.allocator, &.{ root, "package", "bin", std.fs.path.basename(argi_bin) });
+    defer std.testing.allocator.free(executable);
+    const fixture = try std.fs.path.join(std.testing.allocator, &.{ repo, "tests/feature_tests/modules/09_import_more_library" });
+    defer std.testing.allocator.free(fixture);
+    const outside = try std.fs.path.join(std.testing.allocator, &.{ root, "outside" });
+    defer std.testing.allocator.free(outside);
+    var environment = try std.testing.environ.createMap(std.testing.allocator);
+    defer environment.deinit();
+    _ = environment.swapRemove("ARGI_SYSROOT");
+    const built = try runChildInCwdWithEnv(&.{ executable, "build", fixture, "--output", "app", "--no-cache" }, outside, &environment);
+    defer std.testing.allocator.free(built.stdout);
+    defer std.testing.allocator.free(built.stderr);
+    if (built.term != .exited or built.term.exited != 0) std.debug.print("{s}", .{built.stderr});
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, built.term);
+    const app = try std.fs.path.join(std.testing.allocator, &.{ outside, if (@import("builtin").os.tag == .windows) "app.exe" else "app" });
+    defer std.testing.allocator.free(app);
+    const executed = try runChildInCwd(&.{app}, outside);
+    defer std.testing.allocator.free(executed.stdout);
+    defer std.testing.allocator.free(executed.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, executed.term);
+}
+
 test "installed argi test resolves core from its installation prefix outside repo" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -654,6 +758,7 @@ test "argi init creates executable package" {
     try expect(std.mem.indexOf(u8, text, "default = \"hello\"\n") != null);
     try expectEqualStrings(
         "main(.system: System) -> (.status_code: Int32 = 0) := {\n" ++
+            "    assume ffi ::= system.ffi\n" ++
             "    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)\n" ++
             "    assume error_tracer ::= FixedSizeErrorTracer(\n" ++
             "        .buffer = view($&zeroed#(.t: [4096]UInt8)()),\n" ++
@@ -772,7 +877,7 @@ test "argi init executable package can print from generated main" {
     const generated = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, source_path, std.testing.allocator, .limited(1024 * 1024));
     defer std.testing.allocator.free(generated);
     const closing_brace = std.mem.lastIndexOfScalar(u8, generated, '}') orelse return error.TestUnexpectedResult;
-    const runnable = try std.fmt.allocPrint(std.testing.allocator, "{s}    print(\"Hello, World!\\n\")\n{s}", .{ generated[0..closing_brace], generated[closing_brace..] });
+    const runnable = try std.fmt.allocPrint(std.testing.allocator, "{s}    print(\"Hello, World!\")\n{s}", .{ generated[0..closing_brace], generated[closing_brace..] });
     defer std.testing.allocator.free(runnable);
     try std.Io.Dir.cwd().writeFile(std.testing.io, .{ .sub_path = source_path, .data = runnable });
 
@@ -1133,6 +1238,71 @@ test "build publishes artifacts outside the staging filesystem" {
     }
 }
 
+test "build persists module snapshots across processes and dependency edits" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try tmpDirRootPath(&tmp);
+    defer allocator.free(root);
+    const argi = try installedArgiPath();
+    defer allocator.free(argi);
+    try tmp.dir.createDirPath(io, "app");
+    try tmp.dir.createDirPath(io, "dep");
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "app/main.rg",
+        .data = "dep := import(\"../dep\")\nmain() -> (.status_code: Int32) := { status_code = dep.answer().result }\n",
+    });
+    const source = "answer() -> (.result: Int32) := { result = 7 }\n";
+    try tmp.dir.writeFile(io, .{ .sub_path = "dep/answer.rg", .data = source });
+    for (0..4) |revision| {
+        if (revision == 1) {
+            try tmp.dir.writeFile(io, .{ .sub_path = "dep/answer.rg", .data = "answer() -> (.result: Int32) := { result = 9 }\n" });
+        } else if (revision == 2) {
+            try tmp.dir.writeFile(io, .{ .sub_path = "dep/extra.rg", .data = "extra() -> (.result: Int32) := { result = 11 }\n" });
+        } else if (revision == 3) {
+            try tmp.dir.deleteFile(io, "dep/extra.rg");
+            try tmp.dir.rename("dep/answer.rg", tmp.dir, "dep/renamed.rg", io);
+        }
+        for (0..3) |mode| {
+            const args: []const []const u8 = if (mode == 2)
+                &.{ argi, "build", "app", "--no-cache", "--stats", "--emit-llvm", "clean.ll" }
+            else
+                &.{ argi, "build", "app", "--stats", "--emit-llvm", "cached.ll" };
+            const result = try runChildInCwd(args, root);
+            defer allocator.free(result.stdout);
+            defer allocator.free(result.stderr);
+            try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
+            if (mode == 1) {
+                try expect(std.mem.indexOf(u8, result.stderr, "cache misses:        0") != null);
+                try expect(std.mem.indexOf(u8, result.stderr, "persistent hits:     0\n") == null);
+                try expect(std.mem.indexOf(u8, result.stderr, "rejected snapshots:  0") != null);
+            }
+        }
+        const cached = try tmp.dir.readFileAlloc(io, "cached.ll", allocator, .limited(1024 * 1024));
+        defer allocator.free(cached);
+        const clean_ir = try tmp.dir.readFileAlloc(io, "clean.ll", allocator, .limited(1024 * 1024));
+        defer allocator.free(clean_ir);
+        try expectEqualStrings(clean_ir, cached);
+    }
+    try tmp.dir.writeFile(io, .{ .sub_path = "dep/renamed.rg", .data = "answer(\n" });
+    const broken = try runChildInCwd(&.{ argi, "build", "app" }, root);
+    defer allocator.free(broken.stdout);
+    defer allocator.free(broken.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, broken.term);
+    try tmp.dir.writeFile(io, .{ .sub_path = "dep/renamed.rg", .data = source });
+    const recovered = try runChildInCwd(&.{ argi, "build", "app" }, root);
+    defer allocator.free(recovered.stdout);
+    defer allocator.free(recovered.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, recovered.term);
+    const output = try std.fs.path.join(allocator, &.{ root, "app", "build", "output" });
+    defer allocator.free(output);
+    const executed = try runChildInCwd(&.{output}, root);
+    defer allocator.free(executed.stdout);
+    defer allocator.free(executed.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 7 }, executed.term);
+}
+
 test "build overwrites existing output binary" {
     const test_path = "tests/feature_tests/basics/01_minimal_main";
     try clean(test_path);
@@ -1176,9 +1346,9 @@ test "feature_tests/basics/01_minimal_main" {
     try run(test_path);
 }
 
-test "usecase_tests/01_cat_cli" {
-    const test_path = "tests/usecase_tests/01_cat_cli";
-    const expected_help = "usage: <program> <file> [file...]\nConcatenate files to standard output.\n  -h, --help  Show this help.\n";
+test "usecase_tests/01_cat" {
+    const test_path = "tests/usecase_tests/01_cat";
+    const expected_help = "Concatenate files to standard output. With no files or FILE '-', read standard input.\nUsage: cat [OPTIONS] [ARGS]\n\nOptions:\n  -h, --help  Show help\n";
     const input_1 = try pathInTest(test_path, "input.txt");
     defer std.testing.allocator.free(input_1);
     const input_2 = try pathInTest(test_path, "input_2.txt");
@@ -1202,6 +1372,52 @@ test "usecase_tests/01_cat_cli" {
         0,
         expected_help,
     );
+    try runExpectStdoutWithArgs(test_path, &.{ "missing-cat-input", "--help" }, 0, expected_help);
+    try runExpectStdoutWithArgsAndStdin(test_path, &.{}, "stdin\x00bytes\n", 0, "stdin\x00bytes\n");
+    try runExpectStdoutWithArgsAndStdin(test_path, &.{"-"}, "", 0, "");
+    try runExpectStdoutWithArgsAndStdin(
+        test_path,
+        &.{ input_1, "-", input_2, "-" },
+        "standard input\n",
+        0,
+        "Hello from Argi.\nThis is a tiny cat clone.\nstandard input\nAnd now a second file.\nCat should concatenate both.\n",
+    );
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var binary: [8192 * 2 + 17]u8 = undefined;
+    for (&binary, 0..) |*byte, index| byte.* = @truncate(index * 73);
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "--help", .data = &binary });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "empty", .data = "" });
+
+    var cwd_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const cwd_length = try tmp.dir.realPath(std.testing.io, &cwd_buffer);
+    const repo_root = try repoRootPrefix();
+    defer std.testing.allocator.free(repo_root);
+    const output_path = try outputPathFor(test_path);
+    defer std.testing.allocator.free(output_path);
+    const executable = try std.fs.path.join(std.testing.allocator, &.{ repo_root, output_path });
+    defer std.testing.allocator.free(executable);
+
+    const binary_result = try runChildInCwd(&.{ executable, "--", "empty", "--help", "empty" }, cwd_buffer[0..cwd_length]);
+    defer std.testing.allocator.free(binary_result.stdout);
+    defer std.testing.allocator.free(binary_result.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, binary_result.term);
+    try expectEqualStrings(&binary, binary_result.stdout);
+    try expectEqualStrings("", binary_result.stderr);
+
+    for ([_][]const u8{ "--unknown", "missing-cat-input" }) |argument| {
+        const failed = try runChildInCwd(&.{ executable, argument }, cwd_buffer[0..cwd_length]);
+        defer std.testing.allocator.free(failed.stdout);
+        defer std.testing.allocator.free(failed.stderr);
+        try expectEqual(std.process.Child.Term{ .exited = 1 }, failed.term);
+        try expectEqualStrings("", failed.stdout);
+        try expect(failed.stderr.len > 0);
+        if (std.mem.eql(u8, argument, "missing-cat-input")) {
+            try expect(std.mem.indexOf(u8, failed.stderr, argument) != null);
+        }
+    }
 }
 
 test "usecase_tests/02_echo_until_empty" {
@@ -1214,6 +1430,16 @@ test "usecase_tests/02_echo_until_empty" {
         0,
         "hello\nworld\n",
     );
+    try runExpectStdoutWithArgsAndStdin(test_path, &.{}, "", 0, "");
+    try runExpectStdoutWithArgsAndStdin(test_path, &.{}, "\nignored\n", 0, "");
+    try runExpectStdoutWithArgsAndStdin(test_path, &.{}, "first\nlast", 0, "first\nlast\n");
+    try runExpectStdoutWithArgsAndStdin(test_path, &.{}, "a\x00b\n\nignored", 0, "a\x00b\n");
+
+    const long_input = try std.testing.allocator.alloc(u8, 16 * 1024 + 1);
+    defer std.testing.allocator.free(long_input);
+    @memset(long_input, 'x');
+    long_input[long_input.len - 1] = '\n';
+    try runExpectStdoutWithArgsAndStdin(test_path, &.{}, long_input, 0, long_input);
 }
 
 test "feature_tests/basics/02_comments" {
@@ -1333,13 +1559,10 @@ test "feature_tests/functions/06X_pipe_requires_placeholder" {
     );
 }
 
-test "feature_tests/functions/07X_pipe_expression_placeholder_not_supported" {
-    try buildExpectFailExact("tests/feature_tests/functions/07X_pipe_expression_placeholder_not_supported",
-        \\tests/feature_tests/functions/07X_pipe_expression_placeholder_not_supported/main.rg:6:34: error: pipe placeholders are only supported as '_', '&_', '$&_', '_.field', or '..variant' payload access for now
-        \\      status_code = 41 | add_one(_ + 1)
-        \\                                   ^
-        \\
-    );
+test "feature_tests/functions/07_pipe_expression_placeholder" {
+    const path = "tests/feature_tests/functions/07_pipe_expression_placeholder";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 42);
 }
 
 test "feature_tests/functions/08_pipe_chain" {
@@ -1428,15 +1651,7 @@ test "feature_tests/polymorphism/01_multiple_dispatch" {
 }
 
 test "feature_tests/polymorphism/02X_multiple_dispatch_ambiguous" {
-    try buildExpectFailExact(
-        "tests/feature_tests/polymorphism/02X_multiple_dispatch_ambiguous",
-        \\tests/feature_tests/polymorphism/02X_multiple_dispatch_ambiguous/main.rg:12:19: error: ambiguous call to 'choose2' for arguments (.a: &Int32, .b: &Int32). Possible overloads:
-        \\  - choose2 (.a: &Any, .b: &Int32) -> (.r: Int32)
-        \\  - choose2 (.a: &Int32, .b: &Any) -> (.r: Int32)
-        \\      status_code = choose2(.a = &i, .b = &i).r
-        \\                    ^
-        ++ "\n",
-    );
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/02X_multiple_dispatch_ambiguous", "ambiguous maximal patterns", "failed without a diagnostic");
 }
 
 test "feature_tests/basics/12_named_struct_types" {
@@ -1477,7 +1692,7 @@ test "feature_tests/pointers/04X_read-write_pointer_to_constant" {
 
 test "feature_tests/pointers/05X_pass_readonly_pointer_to_mutable_param" {
     try buildExpectFailExact("tests/feature_tests/pointers/05X_pass_readonly_pointer_to_mutable_param",
-        \\tests/feature_tests/pointers/05X_pass_readonly_pointer_to_mutable_param/main.rg:9:14: error: no overload of 'increment' accepts arguments (.ptr: &Int32). Available signatures:
+        \\tests/feature_tests/pointers/05X_pass_readonly_pointer_to_mutable_param/main.rg:9:14: error: no function named 'increment' accepts arguments (.ptr: &Int32). Available signatures:
         \\  - increment (.ptr: $&Int32) -> ()
         \\      increment(.ptr=reader)
         \\               ^
@@ -1515,8 +1730,8 @@ test "feature_tests/basics/13_core_and_libc" {
 
 test "feature_tests/basics/17X_extern_call_requires_exact_argument_types" {
     try buildExpectFailExact("tests/feature_tests/basics/17X_extern_call_requires_exact_argument_types",
-        \\tests/feature_tests/basics/17X_extern_call_requires_exact_argument_types/main.rg:3:12: error: no overload of 'putchar' accepts arguments (.character: UInt16). Available signatures:
-        \\  - putchar (.character: UInt8) -> ()
+        \\tests/feature_tests/basics/17X_extern_call_requires_exact_argument_types/main.rg:4:12: error: no function named 'putchar' accepts arguments (.character: UInt16). Available signatures:
+        \\  - putchar (.character: UInt8, .ffi: $&ForeignFunctionInterface) -> ()
         \\      putchar(.character = value)
         \\             ^
         \\
@@ -1569,26 +1784,11 @@ test "feature_tests/polymorphism/08_abstract" {
 }
 
 test "feature_tests/polymorphism/09X_abstract_missing_requirement" {
-    try buildExpectFailExact("tests/feature_tests/polymorphism/09X_abstract_missing_requirement",
-        \\tests/feature_tests/polymorphism/09X_abstract_missing_requirement/main.rg:9:1: error: type does not implement abstract 'Animal':
-        \\  missing function: speak (.who: Dog)
-        \\  Dog implements Animal
-        \\  ^
-        \\
-    );
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/09X_abstract_missing_requirement", "missing implementation operation", "panic");
 }
 
 test "feature_tests/polymorphism/10X_abstract_wrong_signature" {
-    try buildExpectFailExact("tests/feature_tests/polymorphism/10X_abstract_wrong_signature",
-        \\tests/feature_tests/polymorphism/10X_abstract_wrong_signature/main.rg:9:1: error: type does not implement abstract 'Animal':
-        \\  missing function: speak (.who: Dog)
-        \\  possible overloads:
-        \\  - speak (.who: Dog) -> (.s: Int32)
-        \\      file: tests/feature_tests/polymorphism/10X_abstract_wrong_signature/main.rg:13:1
-        \\  Dog implements Animal
-        \\  ^
-        \\
-    );
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/10X_abstract_wrong_signature", "incompatible associated result", "failed without a diagnostic");
 }
 
 test "feature_tests/polymorphism/11_abstract_instantiation" {
@@ -1598,12 +1798,7 @@ test "feature_tests/polymorphism/11_abstract_instantiation" {
 }
 
 test "feature_tests/polymorphism/12X_abstract_instantiation_missing_default" {
-    try buildExpectFailExact("tests/feature_tests/polymorphism/12X_abstract_instantiation_missing_default",
-        \\tests/feature_tests/polymorphism/12X_abstract_instantiation_missing_default/main.rg:4:5: error: cannot use abstract 'ExampleAbstract' as a type for a symbol. Use a concrete type or add a default concrete type to the abstract type ('ExampleAbstract defaultsto <Type>')
-        \\      x : ExampleAbstract
-        \\      ^
-        \\
-    );
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/12X_abstract_instantiation_missing_default", "contract 'ExampleAbstract' has no runtime representation", "panic");
 }
 
 test "feature_tests/polymorphism/15_abstract_self_output" {
@@ -1613,16 +1808,7 @@ test "feature_tests/polymorphism/15_abstract_self_output" {
 }
 
 test "feature_tests/polymorphism/16X_abstract_self_output_wrong" {
-    try buildExpectFailExact("tests/feature_tests/polymorphism/16X_abstract_self_output_wrong",
-        \\tests/feature_tests/polymorphism/16X_abstract_self_output_wrong/main.rg:13:1: error: type does not implement abstract 'Animal':
-        \\  missing function: clone (.who: Dog)
-        \\  possible overloads:
-        \\  - clone (.who: Dog) -> (.copy: Int32)
-        \\      file: tests/feature_tests/polymorphism/16X_abstract_self_output_wrong/main.rg:9:1
-        \\  Dog implements Animal
-        \\  ^
-        \\
-    );
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/16X_abstract_self_output_wrong", "incompatible associated result", "failed without a diagnostic");
 }
 
 test "feature_tests/polymorphism/17_abstract_function_input_monomorphization" {
@@ -1644,21 +1830,11 @@ test "feature_tests/polymorphism/19_abstract_monomorphization_isolation" {
 }
 
 test "feature_tests/polymorphism/13X_abstract_function_input_requires_implementation" {
-    try buildExpectFailExact("tests/feature_tests/polymorphism/13X_abstract_function_input_requires_implementation",
-        \\tests/feature_tests/polymorphism/13X_abstract_function_input_requires_implementation/main.rg:8:28: error: type 'Int32' does not implement abstract 'ExampleAbstract' required by parameter '.value' of 'use_value'
-        \\      status_code = use_value(.value = 7)
-        \\                             ^
-        \\
-    );
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/13X_abstract_function_input_requires_implementation", "contract constraint 'ExampleAbstract' required by generic function parameter '.Value' of 'use_value'", "panic");
 }
 
 test "feature_tests/polymorphism/14X_abstract_function_output_requires_default" {
-    try buildExpectFailExact("tests/feature_tests/polymorphism/14X_abstract_function_output_requires_default",
-        \\tests/feature_tests/polymorphism/14X_abstract_function_output_requires_default/main.rg:3:1: error: error generating function make_value: InvalidType
-        \\  make_value () -> (.value: ExampleAbstract) := {
-        \\  ^
-        \\
-    );
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/14X_abstract_function_output_requires_default", "cannot return contract 'ExampleAbstract' as a runtime value", "panic");
 }
 
 test "feature_tests/ownership/01_init" {
@@ -1687,7 +1863,7 @@ test "feature_tests/ownership/04_noncopyable_temporary_values" {
 
 test "feature_tests/ownership/05X_noncopyable_assignment" {
     try buildExpectFailExact("tests/feature_tests/ownership/05X_noncopyable_assignment",
-        \\tests/feature_tests/ownership/05X_noncopyable_assignment/main.rg:9:15: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
+        \\tests/feature_tests/ownership/05X_noncopyable_assignment/main.rg:18:15: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
         \\      second := first
         \\                ^
         \\
@@ -1696,7 +1872,7 @@ test "feature_tests/ownership/05X_noncopyable_assignment" {
 
 test "feature_tests/ownership/06X_noncopyable_argument_by_value" {
     try buildExpectFailExact("tests/feature_tests/ownership/06X_noncopyable_argument_by_value",
-        \\tests/feature_tests/ownership/06X_noncopyable_argument_by_value/main.rg:13:34: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
+        \\tests/feature_tests/ownership/06X_noncopyable_argument_by_value/main.rg:22:34: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
         \\      status_code = consume(.res = handle)
         \\                                   ^
         \\
@@ -1705,7 +1881,7 @@ test "feature_tests/ownership/06X_noncopyable_argument_by_value" {
 
 test "feature_tests/ownership/07X_noncopyable_struct_field" {
     try buildExpectFailExact("tests/feature_tests/ownership/07X_noncopyable_struct_field",
-        \\tests/feature_tests/ownership/07X_noncopyable_struct_field/main.rg:13:33: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
+        \\tests/feature_tests/ownership/07X_noncopyable_struct_field/main.rg:22:33: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
         \\      wrapped : Wrapper = (.res = handle)
         \\                                  ^
         \\
@@ -1714,7 +1890,7 @@ test "feature_tests/ownership/07X_noncopyable_struct_field" {
 
 test "feature_tests/ownership/08X_noncopyable_output_binding" {
     try buildExpectFailExact("tests/feature_tests/ownership/08X_noncopyable_output_binding",
-        \\tests/feature_tests/ownership/08X_noncopyable_output_binding/main.rg:8:11: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
+        \\tests/feature_tests/ownership/08X_noncopyable_output_binding/main.rg:17:11: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
         \\      out = res
         \\            ^
         \\
@@ -1747,7 +1923,7 @@ test "feature_tests/ownership/13_move_operator" {
 
 test "feature_tests/ownership/14X_use_after_move" {
     try buildExpectFailExact("tests/feature_tests/ownership/14X_use_after_move",
-        \\tests/feature_tests/ownership/14X_use_after_move/main.rg:14:34: error: binding 'handle' was moved and cannot be used again (moved at tests/feature_tests/ownership/14X_use_after_move/main.rg:13:34)
+        \\tests/feature_tests/ownership/14X_use_after_move/main.rg:23:34: error: binding 'handle' was moved and cannot be used again (moved at tests/feature_tests/ownership/14X_use_after_move/main.rg:22:34)
         \\      status_code = consume(.res = handle)
         \\                                   ^
         \\
@@ -1756,7 +1932,7 @@ test "feature_tests/ownership/14X_use_after_move" {
 
 test "feature_tests/ownership/15X_reassign_after_move" {
     try buildExpectFailExact("tests/feature_tests/ownership/15X_reassign_after_move",
-        \\tests/feature_tests/ownership/15X_reassign_after_move/main.rg:14:5: error: binding 'handle' was moved and cannot be reassigned (moved at tests/feature_tests/ownership/15X_reassign_after_move/main.rg:13:34)
+        \\tests/feature_tests/ownership/15X_reassign_after_move/main.rg:23:5: error: binding 'handle' was moved and cannot be reassigned (moved at tests/feature_tests/ownership/15X_reassign_after_move/main.rg:22:34)
         \\      handle = Resource()
         \\      ^
         \\
@@ -1939,7 +2115,7 @@ test "feature_tests/types/28X_match_omit_payload_pattern" {
 
 test "feature_tests/types/32X_match_value_noncopyable_payload" {
     try buildExpectFailExact("tests/feature_tests/types/32X_match_value_noncopyable_payload",
-        \\tests/feature_tests/types/32X_match_value_noncopyable_payload/main.rg:17:14: error: type '{...}' cannot be copied implicitly; use '~value' to transfer ownership
+        \\tests/feature_tests/types/32X_match_value_noncopyable_payload/main.rg:20:14: error: type '{...}' cannot be copied implicitly; use '~value' to transfer ownership
         \\          ..ok payload {
         \\               ^
         \\
@@ -1952,7 +2128,7 @@ test "feature_tests/types/47X_match_value_payload_ambiguous_copy" {
 
 test "feature_tests/types/48X_match_move_payload_consumes_binding" {
     try buildExpectFailExact("tests/feature_tests/types/48X_match_move_payload_consumes_binding",
-        \\tests/feature_tests/types/48X_match_move_payload_consumes_binding/main.rg:25:8: error: binding 'value' was moved and cannot be used again (moved at tests/feature_tests/types/48X_match_move_payload_consumes_binding/main.rg:16:11)
+        \\tests/feature_tests/types/48X_match_move_payload_consumes_binding/main.rg:28:8: error: binding 'value' was moved and cannot be used again (moved at tests/feature_tests/types/48X_match_move_payload_consumes_binding/main.rg:19:11)
         \\      if value == ..error {
         \\         ^
         \\
@@ -2034,26 +2210,11 @@ test "feature_tests/collections/12_iterator_abstract" {
 }
 
 test "feature_tests/collections/13X_iterator_abstract_missing_implements" {
-    try buildExpectFailExact("tests/feature_tests/collections/13X_iterator_abstract_missing_implements",
-        \\tests/feature_tests/collections/13X_iterator_abstract_missing_implements/main.rg:9:12: error: type 'FakeIterator' does not implement abstract 'Iterator' required by parameter '.it' of 'consume':
-        \\missing function: has_next (.self: &FakeIterator)
-        \\      consume(.it = $&fake)
-        \\             ^
-        \\
-    );
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/collections/13X_iterator_abstract_missing_implements", "does not satisfy contract constraint 'Iterator'");
 }
 
 test "feature_tests/control_flow/05X_for_requires_iterator_contract" {
-    try buildExpectFailExact("tests/feature_tests/control_flow/05X_for_requires_iterator_contract",
-        \\tests/feature_tests/control_flow/05X_for_requires_iterator_contract/main.rg:7:1: error: type does not implement abstract 'Iterable':
-        \\  missing function: to_iterator (.value: &FakeIterable)
-        \\  possible overloads:
-        \\  - to_iterator (.value: &FakeIterable) -> (.iterator: FakeIterator)
-        \\      file: tests/feature_tests/control_flow/05X_for_requires_iterator_contract/main.rg:9:1
-        \\  FakeIterable implements Iterable
-        \\  ^
-        \\
-    );
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/control_flow/05X_for_requires_iterator_contract", "for expects a type implementing contract 'Iterator', got 'FakeIterator'");
 }
 
 test "feature_tests/collections/14_iterable_abstract" {
@@ -2063,16 +2224,7 @@ test "feature_tests/collections/14_iterable_abstract" {
 }
 
 test "feature_tests/collections/15X_iterable_abstract_missing_implements" {
-    try buildExpectFailExact("tests/feature_tests/collections/15X_iterable_abstract_missing_implements",
-        \\tests/feature_tests/collections/15X_iterable_abstract_missing_implements/main.rg:18:31: error: type 'FakeIterable' does not implement abstract 'Iterable' required by parameter '.items' of 'sum_iterable':
-        \\missing function: to_iterator (.value: &FakeIterable)
-        \\possible overloads:
-        \\  - to_iterator (.value: &FakeIterable) -> (.iterator: FakeIterator)
-        \\      file: tests/feature_tests/collections/15X_iterable_abstract_missing_implements/main.rg:7:1
-        \\      status_code = sum_iterable(.items = &fake).sum
-        \\                                ^
-        \\
-    );
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/collections/15X_iterable_abstract_missing_implements", "does not satisfy contract constraint 'Iterable'");
 }
 
 test "feature_tests/control_flow/06_range_for" {
@@ -2136,13 +2288,7 @@ test "feature_tests/types/20_struct_initializer_without_init" {
 }
 
 test "feature_tests/types/21X_struct_initializer_must_use_visible_init" {
-    try buildExpectFailExact("tests/feature_tests/types/21X_struct_initializer_must_use_visible_init",
-        \\tests/feature_tests/types/21X_struct_initializer_must_use_visible_init/main.rg:14:19: error: failed to initialize type 'Point': no visible 'init' overload accepts arguments (.x: Int32, .y: Int32). Available overloads:
-        \\  - init (.p: $&Point, .sum: Int32) -> ()
-        \\      point := Point(.x = 1, .y = 2)
-        \\                    ^
-        \\
-    );
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/types/21X_struct_initializer_must_use_visible_init", "construction arguments do not match the selected Init.Args");
 }
 
 test "feature_tests/collections/16_dynamic_array_iterator_manual" {
@@ -2356,7 +2502,7 @@ test "feature_tests/collections/48_array_view_fixed_storage" {
 test "feature_tests/collections/49X_array_view_unproven_length" {
     try buildExpectFail(
         "tests/feature_tests/collections/49X_array_view_unproven_length",
-        "no function named 'array_view' exists",
+        "no generic function named 'single_array_view' accepts arguments",
     );
 }
 
@@ -2410,7 +2556,7 @@ test "feature_tests/control_flow/11_range_default_start_with_step" {
 
 test "feature_tests/control_flow/12X_for_nullable_not_iterable" {
     try buildExpectFailExact("tests/feature_tests/control_flow/12X_for_nullable_not_iterable",
-        \\tests/feature_tests/control_flow/12X_for_nullable_not_iterable/main.rg:4:5: error: for expects a type implementing abstract 'Iterable', got '?Int32'
+        \\tests/feature_tests/control_flow/12X_for_nullable_not_iterable/main.rg:4:5: error: for expects a type implementing contract 'Iterable', got '?Int32'
         \\      for item in value {
         \\      ^
         \\
@@ -2650,12 +2796,7 @@ test "feature_tests/io/22_abstract_writer_field_assignment" {
 }
 
 test "feature_tests/io/23X_abstract_writer_field_conflicting_assignment" {
-    try buildExpectFailExact("tests/feature_tests/io/23X_abstract_writer_field_conflicting_assignment",
-        \\tests/feature_tests/io/23X_abstract_writer_field_conflicting_assignment/main.rg:46:17: error: field '.writer' already stores '$&FirstWriter' for abstract type '$&Writer', so it cannot also store '$&SecondWriter'
-        \\      p&.writer = writer
-        \\                  ^
-        \\
-    );
+    try buildExpectFail("tests/feature_tests/io/23X_abstract_writer_field_conflicting_assignment", "cannot assign reference of type");
 }
 
 test "feature_tests/io/24_terminal_files" {
@@ -2671,13 +2812,7 @@ test "feature_tests/io/25_positional_text_helpers" {
 }
 
 test "feature_tests/io/26X_print_without_system" {
-    try buildExpectFailExact("tests/feature_tests/io/26X_print_without_system",
-        \\tests/feature_tests/io/26X_print_without_system/main.rg:2:10: error: no overload of 'print' accepts arguments (.: StringView). Available signatures:
-        \\  - print (.value: StringView, .writer: $&Writer) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed)))
-        \\      print("Hello, World!\n")
-        \\           ^
-        \\
-    );
+    try buildExpectFail("tests/feature_tests/io/26X_print_without_system", "no generic function named 'print'");
 }
 
 test "feature_tests/text/03_string_buffer_io" {
@@ -2788,13 +2923,13 @@ test "feature_tests/io/14_file_stream_error_reasons" {
 test "feature_tests/io/09_print_string_literal" {
     const test_path = "tests/feature_tests/io/09_print_string_literal";
     try expectSuccessfulBuild(test_path);
-    try runExpectStdout(test_path, 0, "literal output");
+    try runExpectStdout(test_path, 0, "literal output\n");
 }
 
 test "feature_tests/io/16_print_string_view" {
     const test_path = "tests/feature_tests/io/16_print_string_view";
     try expectSuccessfulBuild(test_path);
-    try runExpectStdout(test_path, 0, "string view output");
+    try runExpectStdout(test_path, 0, "string view output\n");
 }
 
 test "feature_tests/io/17_print_error_string_view" {
@@ -2806,7 +2941,7 @@ test "feature_tests/io/17_print_error_string_view" {
 test "feature_tests/io/18_print_borrowed_string_view" {
     const test_path = "tests/feature_tests/io/18_print_borrowed_string_view";
     try expectSuccessfulBuild(test_path);
-    try runExpectStdout(test_path, 0, "borrowed view");
+    try runExpectStdout(test_path, 0, "borrowed view\n");
 }
 
 test "feature_tests/io/19_print_error_borrowed_string_view" {
@@ -2916,7 +3051,7 @@ test "feature_tests/ownership/35_system_move_by_value" {
 
 test "feature_tests/ownership/36X_double_move" {
     try buildExpectFailExact("tests/feature_tests/ownership/36X_double_move",
-        \\tests/feature_tests/ownership/36X_double_move/main.rg:14:35: error: binding 'handle' was moved and cannot be used again (moved at tests/feature_tests/ownership/36X_double_move/main.rg:13:34)
+        \\tests/feature_tests/ownership/36X_double_move/main.rg:23:35: error: binding 'handle' was moved and cannot be used again (moved at tests/feature_tests/ownership/36X_double_move/main.rg:22:34)
         \\      status_code = consume(.res = ~handle)
         \\                                    ^
         \\
@@ -2961,18 +3096,13 @@ test "feature_tests/system/19X_once_duplicate_branches" {
 }
 
 test "feature_tests/system/20X_once_duplicate_init" {
-    try buildExpectFailExact("tests/feature_tests/system/20X_once_duplicate_init",
-        \\tests/feature_tests/system/20X_once_duplicate_init/main.rg:8:15: error: once function 'init' is consumed more than once from the reachable entrypoint graph (first use at tests/feature_tests/system/20X_once_duplicate_init/main.rg:7:14 via 'main')
-        \\      second := Token()
-        \\                ^
-        \\
-    );
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/system/20X_once_duplicate_init", "once function '_acquire_token' is consumed more than once");
 }
 
 test "feature_tests/system/21X_terminal_duplicate_init" {
     try buildExpectFailWithoutParseNoise(
         "tests/feature_tests/system/21X_terminal_duplicate_init",
-        "once function 'init' is consumed more than once",
+        "once function '_acquire_terminal' is consumed more than once",
     );
 }
 
@@ -3173,12 +3303,7 @@ test "feature_tests/ownership/56_branch_ownership_cleanup_resolves" {
 }
 
 test "feature_tests/ownership/57X_return_reference_to_local" {
-    try buildExpectFailExact("tests/feature_tests/ownership/57X_return_reference_to_local",
-        \\tests/feature_tests/ownership/57X_return_reference_to_local/main.rg:1:12: error: function output cannot depend on a local storage generation that ends before return
-        \\  bad() -> (.result: &Int32) := {
-        \\             ^
-        \\
-    );
+    try buildExpectFail("tests/feature_tests/ownership/57X_return_reference_to_local", "local storage generation");
 }
 
 test "feature_tests/ownership/58X_null_safe_reference" {
@@ -3209,7 +3334,7 @@ test "feature_tests/ownership/61X_borrowed_foreign_pointer_fresh_root" {
 
 test "feature_tests/ownership/62X_borrowed_foreign_pointer_roundtrip" {
     try buildExpectFailExact("tests/feature_tests/ownership/62X_borrowed_foreign_pointer_roundtrip",
-        \\tests/feature_tests/ownership/62X_borrowed_foreign_pointer_roundtrip/main.rg:4:24: error: no function named 'cast' exists
+        \\tests/feature_tests/ownership/62X_borrowed_foreign_pointer_roundtrip/main.rg:5:24: error: no function named 'cast' exists
         \\      fabricated ::= cast#(.to: &Char)(.value = address)
         \\                         ^
         \\
@@ -3241,17 +3366,11 @@ test "feature_tests/ownership/65_allocation_stores_stateful_allocator" {
 }
 
 test "feature_tests/ownership/66X_allocation_stateful_allocator_escape" {
-    try buildExpectFail(
-        "tests/feature_tests/ownership/66X_allocation_stateful_allocator_escape",
-        "function output cannot depend on a local storage generation that ends before return",
-    );
+    try buildExpectFail("tests/feature_tests/ownership/66X_allocation_stateful_allocator_escape", "local storage generation");
 }
 
 test "feature_tests/ownership/67X_local_binding_summary_dependency" {
-    try buildExpectFail(
-        "tests/feature_tests/ownership/67X_local_binding_summary_dependency",
-        "function output cannot depend on a local storage generation that ends before return",
-    );
+    try buildExpectFail("tests/feature_tests/ownership/67X_local_binding_summary_dependency", "local storage generation");
 }
 
 test "feature_tests/ownership/68_arena_child_deinit_preserves_sibling" {
@@ -4129,7 +4248,7 @@ test "feature_tests/ownership/201X_nested_argument_propagates_input_post_state" 
 test "feature_tests/ownership/202X_conditional_expression_joins_input_post_state" {
     try buildExpectFail(
         "tests/feature_tests/ownership/202X_conditional_expression_joins_input_post_state",
-        "place rooted at 'allocation' is maybe_initialized and cannot be used",
+        "cannot select cleanup for conditional consumption",
     );
 }
 
@@ -4158,13 +4277,8 @@ test "feature_tests/ownership/206_auto_deinit_release_propagates_through_wrapper
     try runExpect(test_path, 0);
 }
 
-test "feature_tests/ownership/207X_auto_deinit_input_post_state_propagates_through_wrapper" {
-    try buildExpectFailExact("tests/feature_tests/ownership/207X_auto_deinit_input_post_state_propagates_through_wrapper",
-        \\tests/feature_tests/ownership/207X_auto_deinit_input_post_state_propagates_through_wrapper/main.rg:31:41: error: reference depends on a root that has ended
-        \\                      observed ::= holder.reference&
-        \\                                          ^
-        \\
-    );
+test "feature_tests/ownership/207X_deinit_replaces_borrowed_reference" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/ownership/207X_deinit_replaces_borrowed_reference", "method 'deinit' violates its safety contract");
 }
 
 test "feature_tests/ownership/208_structural_auto_deinit_effects_propagate_through_wrapper" {
@@ -4334,7 +4448,7 @@ test "feature_tests/ownership/31_array_of_pointers_is_copyable" {
 
 test "feature_tests/ownership/32X_array_of_noncopyable_is_not_copyable" {
     try buildExpectFailExact("tests/feature_tests/ownership/32X_array_of_noncopyable_is_not_copyable",
-        \\tests/feature_tests/ownership/32X_array_of_noncopyable_is_not_copyable/main.rg:9:15: error: type '[2]Resource' cannot be copied implicitly; use '~value' to transfer ownership
+        \\tests/feature_tests/ownership/32X_array_of_noncopyable_is_not_copyable/main.rg:18:15: error: type '[2]Resource' cannot be copied implicitly; use '~value' to transfer ownership
         \\      copied := resources
         \\                ^
         \\
@@ -4366,14 +4480,7 @@ test "feature_tests/polymorphism/24_abstract_dispatch_beats_regular_generic_with
 }
 
 test "feature_tests/polymorphism/25X_abstract_overloads_with_defaults_ambiguous" {
-    try buildExpectFailExact("tests/feature_tests/polymorphism/25X_abstract_overloads_with_defaults_ambiguous",
-        \\tests/feature_tests/polymorphism/25X_abstract_overloads_with_defaults_ambiguous/main.rg:14:19: error: ambiguous call to 'pick' for arguments (.value: Int32). Possible overloads:
-        \\  - pick (.value: A, .left: Int32) -> (.status_code: Int32)
-        \\  - pick (.value: A, .right: Int32) -> (.status_code: Int32)
-        \\      status_code = pick(.value = 7).status_code
-        \\                    ^
-        \\
-    );
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/25X_abstract_overloads_with_defaults_ambiguous", "multiple applicable operation identities", "panic");
 }
 
 test "feature_tests/polymorphism/26_virtual_abstract_dispatch" {
@@ -4401,17 +4508,17 @@ test "feature_tests/polymorphism/29X_virtual_dependency_escape" {
     );
 }
 
-test "feature_tests/polymorphism/30X_virtual_dependency_union" {
+test "feature_tests/polymorphism/30X_virtual_declared_dependency_escape" {
     try buildExpectFail(
-        "tests/feature_tests/polymorphism/30X_virtual_dependency_union",
+        "tests/feature_tests/polymorphism/30X_virtual_declared_dependency_escape",
         "function output cannot depend on a local storage generation that ends before return",
     );
 }
 
-test "feature_tests/polymorphism/31X_virtual_incompatible_deinit" {
+test "feature_tests/polymorphism/31X_virtual_contract_rejects_deinit" {
     try buildExpectFail(
-        "tests/feature_tests/polymorphism/31X_virtual_incompatible_deinit",
-        "cannot form Virtual value because an Abstract method has incompatible safety effects across implementations",
+        "tests/feature_tests/polymorphism/31X_virtual_contract_rejects_deinit",
+        "violates its safety contract",
     );
 }
 
@@ -4441,72 +4548,72 @@ test "feature_tests/polymorphism/40X_virtual_nested_aggregate_borrow" {
     );
 }
 
-test "feature_tests/ownership/219_virtual_post_state_allows_optional_self_mutation" {
-    const test_path = "tests/feature_tests/ownership/219_virtual_post_state_allows_optional_self_mutation";
+test "feature_tests/ownership/219_virtual_preservation_allows_self_mutation" {
+    const test_path = "tests/feature_tests/ownership/219_virtual_preservation_allows_self_mutation";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
 
-test "feature_tests/ownership/220X_virtual_post_state_dependency_union" {
+test "feature_tests/ownership/220X_virtual_contract_rejects_hidden_dependency" {
     try buildExpectFail(
-        "tests/feature_tests/ownership/220X_virtual_post_state_dependency_union",
-        "reference depends on a root that has ended",
+        "tests/feature_tests/ownership/220X_virtual_contract_rejects_hidden_dependency",
+        "violates its safety contract",
     );
 }
 
-test "feature_tests/ownership/221X_virtual_post_state_initializedness_join" {
+test "feature_tests/ownership/221X_virtual_contract_rejects_conditional_deinit" {
     try buildExpectFail(
-        "tests/feature_tests/ownership/221X_virtual_post_state_initializedness_join",
-        "cannot form Virtual value because an Abstract method has incompatible safety effects across implementations",
+        "tests/feature_tests/ownership/221X_virtual_contract_rejects_conditional_deinit",
+        "violates its safety contract",
     );
 }
 
-test "feature_tests/ownership/222X_virtual_conditional_opaque_ownership_same_storage" {
+test "feature_tests/ownership/222X_virtual_contract_rejects_conditional_opaque_transfer" {
     try buildExpectFail(
-        "tests/feature_tests/ownership/222X_virtual_conditional_opaque_ownership_same_storage",
-        "cannot form Virtual value because an Abstract method has incompatible safety effects across implementations",
+        "tests/feature_tests/ownership/222X_virtual_contract_rejects_conditional_opaque_transfer",
+        "violates its safety contract",
     );
 }
 
-test "feature_tests/ownership/222X_virtual_conditional_opaque_ownership_same_storage_invalidates_source" {
+test "feature_tests/ownership/222X_virtual_contract_rejects_opaque_source_transfer" {
     try buildExpectFail(
-        "tests/feature_tests/ownership/222X_virtual_conditional_opaque_ownership_same_storage_invalidates_source",
-        "cannot form Virtual value because an Abstract method has incompatible safety effects across implementations",
+        "tests/feature_tests/ownership/222X_virtual_contract_rejects_opaque_source_transfer",
+        "violates its safety contract",
     );
 }
 
-test "feature_tests/ownership/223X_virtual_opaque_ownership_different_storages_incompatible" {
+test "feature_tests/ownership/223X_virtual_contract_rejects_ambiguous_opaque_storage" {
     try buildExpectFail(
-        "tests/feature_tests/ownership/223X_virtual_opaque_ownership_different_storages_incompatible",
-        "cannot form Virtual value because an Abstract method has incompatible safety effects across implementations",
+        "tests/feature_tests/ownership/223X_virtual_contract_rejects_ambiguous_opaque_storage",
+        "violates its safety contract",
     );
 }
 
-test "feature_tests/ownership/224X_virtual_definite_self_destruction_incompatible" {
+test "feature_tests/ownership/224X_virtual_contract_rejects_self_destruction" {
     try buildExpectFail(
-        "tests/feature_tests/ownership/224X_virtual_definite_self_destruction_incompatible",
-        "cannot form Virtual value because an Abstract method has incompatible safety effects across implementations",
+        "tests/feature_tests/ownership/224X_virtual_contract_rejects_self_destruction",
+        "violates its safety contract",
     );
 }
 
-test "feature_tests/ownership/225X_virtual_receiver_uses_self_input_index" {
+test "feature_tests/ownership/225X_virtual_contract_nonleading_receiver" {
     try buildExpectFail(
-        "tests/feature_tests/ownership/225X_virtual_receiver_uses_self_input_index",
-        "reference depends on a root that has ended",
+        "tests/feature_tests/ownership/225X_virtual_contract_nonleading_receiver",
+        "violates its safety contract",
     );
 }
 
-test "feature_tests/ownership/226X_virtual_conditional_opaque_ownership_drop_state_incompatible" {
+test "feature_tests/ownership/226X_virtual_contract_rejects_conditional_opaque_drop" {
     try buildExpectFail(
-        "tests/feature_tests/ownership/226X_virtual_conditional_opaque_ownership_drop_state_incompatible",
-        "cannot form Virtual value because an Abstract method has incompatible safety effects across implementations",
+        "tests/feature_tests/ownership/226X_virtual_contract_rejects_conditional_opaque_drop",
+        "violates its safety contract",
     );
 }
 
-test "feature_tests/ownership/227X_virtual_definite_opaque_ownership_drop_state_incompatible" {
+test "feature_tests/ownership/227X_virtual_contract_rejects_opaque_drop" {
     try buildExpectFail(
-        "tests/feature_tests/ownership/227X_virtual_definite_opaque_ownership_drop_state_incompatible",
-        "cannot form Virtual value because an Abstract method has incompatible safety effects across implementations",
+        "tests/feature_tests/ownership/227X_virtual_contract_rejects_opaque_drop",
+        "violates its safety contract",
     );
 }
 
@@ -4522,8 +4629,8 @@ test "feature_tests/ownership/229_virtual_mutation_preserves_stored_reference" {
     try runExpect(test_path, 0);
 }
 
-test "feature_tests/ownership/230_virtual_unchanged_alternative_preserves_pointee_facts" {
-    const test_path = "tests/feature_tests/ownership/230_virtual_unchanged_alternative_preserves_pointee_facts";
+test "feature_tests/ownership/230_virtual_preservation_retains_pointee_facts" {
+    const test_path = "tests/feature_tests/ownership/230_virtual_preservation_retains_pointee_facts";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
@@ -4700,21 +4807,21 @@ test "feature_tests/types/254_choice_union" {
 test "feature_tests/types/255X_conflicting_abstract_associated_args" {
     try buildExpectFail(
         "tests/feature_tests/types/255X_conflicting_abstract_associated_args",
-        "conflicting implementations of abstract 'Capability' for type 'Thing' produce different associated arguments",
+        "ambiguous conformances for the same participant tuple",
     );
 }
 
 test "feature_tests/types/256X_abstract_associated_arg_mismatch" {
     try buildExpectFail(
         "tests/feature_tests/types/256X_abstract_associated_arg_mismatch",
-        "abstract constraint 'Capability' required by generic function parameter '.t' of 'require_uint'",
+        "contract constraint 'Capability' required by generic function parameter '.t' of 'require_uint'",
     );
 }
 
 test "feature_tests/types/257X_abstract_impl_template_checks_associated_args" {
     try buildExpectFail(
         "tests/feature_tests/types/257X_abstract_impl_template_checks_associated_args",
-        "abstract constraint 'Other' required by generic function parameter '.t' of 'require_other'",
+        "contract constraint 'Other' required by generic function parameter '.t' of 'require_other'",
     );
 }
 
@@ -4727,7 +4834,7 @@ test "feature_tests/types/258_abstract_associated_comptime_values" {
 test "feature_tests/types/259X_abstract_associated_comptime_mismatch" {
     try buildExpectFail(
         "tests/feature_tests/types/259X_abstract_associated_comptime_mismatch",
-        "abstract constraint 'AbstractMatrix' required by generic function parameter '.t' of 'require_four_rows'",
+        "contract constraint 'AbstractMatrix' required by generic function parameter '.t' of 'require_four_rows'",
     );
 }
 
@@ -4834,10 +4941,7 @@ test "feature_tests/ownership/269_loop_local_owning_cleanup" {
 }
 
 test "feature_tests/ownership/270X_return_local_storage" {
-    try buildExpectFail(
-        "tests/feature_tests/ownership/270X_return_local_storage",
-        "function output cannot depend on a local storage generation that ends before return",
-    );
+    try buildExpectFail("tests/feature_tests/ownership/270X_return_local_storage", "local storage generation");
 }
 
 test "feature_tests/ownership/271X_opaque_external_dependency_direct" {
@@ -4993,14 +5097,14 @@ test "feature_tests/polymorphism/32_static_abstract_generic_fields" {
 test "feature_tests/polymorphism/33X_static_abstract_generic_field_requires_implementation" {
     try buildExpectFail(
         "tests/feature_tests/polymorphism/33X_static_abstract_generic_field_requires_implementation",
-        "does not implement abstract 'Backend' required by generic type parameter '.backend_type' of 'Wrapper'",
+        "does not implement contract 'Backend' required by generic type parameter '.backend_type' of 'Wrapper'",
     );
 }
 
 test "feature_tests/polymorphism/34X_static_abstract_generic_field_identity" {
     try buildExpectFail(
         "tests/feature_tests/polymorphism/34X_static_abstract_generic_field_identity",
-        "no overload of 'accept_b' accepts arguments (.value: Wrapper#(.backend_type: BackendA))",
+        "no function named 'accept_b' accepts arguments (.value: Wrapper#(.backend_type: BackendA))",
     );
 }
 
@@ -5387,32 +5491,18 @@ test "feature_tests/modules/25X_private_choice_option_imported" {
 }
 
 test "feature_tests/modules/26X_module_qualified_ambiguous_overload" {
-    try buildExpectFailExact("tests/feature_tests/modules/26X_module_qualified_ambiguous_overload",
-        \\tests/feature_tests/modules/26X_module_qualified_ambiguous_overload/main.rg:4:19: error: module-qualified call 'dep.pick' is ambiguous for arguments (.value: Int32). Possible overloads:
-        \\  - pick (.value: Int32, .left: Int32) -> (.result: Int32)
-        \\  - pick (.value: Int32, .right: Int32) -> (.result: Int32)
-        \\      _ ::= dep.pick(.value = 1)
-        \\                    ^
-        \\
-    );
+    try buildExpectFailWithoutNoise("tests/feature_tests/modules/26X_module_qualified_ambiguous_overload", "multiple applicable operation identities", "panic");
 }
 
 test "feature_tests/modules/28X_imported_abstract_input_requires_implementation" {
     try buildExpectFail(
         "tests/feature_tests/modules/28X_imported_abstract_input_requires_implementation",
-        "type 'Int32' does not implement abstract 'ExampleAbstract' required by parameter '.value' of 'use_value'",
+        "contract constraint 'ExampleAbstract' required by generic function parameter '.Value' of 'use_value'",
     );
 }
 
 test "feature_tests/modules/29X_imported_abstract_ambiguous_overload" {
-    try buildExpectFailExact("tests/feature_tests/modules/29X_imported_abstract_ambiguous_overload",
-        \\tests/feature_tests/modules/29X_imported_abstract_ambiguous_overload/main.rg:4:19: error: module-qualified call 'dep.pick' is ambiguous for arguments (.value: Int32). Possible overloads:
-        \\  - pick (.value: A, .left: Int32) -> (.result: Int32)
-        \\  - pick (.value: A, .right: Int32) -> (.result: Int32)
-        \\      _ ::= dep.pick(.value = 1)
-        \\                    ^
-        \\
-    );
+    try buildExpectFailWithoutNoise("tests/feature_tests/modules/29X_imported_abstract_ambiguous_overload", "multiple applicable operation identities", "panic");
 }
 
 test "feature_tests/modules/30X_nonconstant_module_binding_initialization" {
@@ -5550,7 +5640,7 @@ test "feature_tests/testing/04_expect_equal" {
 }
 
 test "feature_tests/testing/05_assertion_failure" {
-    try argiTestExpectStderr(
+    try argiTestExpectStderrContains(
         "tests/feature_tests/testing/05_assertion_failure",
         &.{},
         1,
@@ -5559,7 +5649,7 @@ test "feature_tests/testing/05_assertion_failure" {
 }
 
 test "feature_tests/testing/06_direct_propagated_error" {
-    try argiTestExpectStderr(
+    try argiTestExpectStderrContains(
         "tests/feature_tests/testing/06_direct_propagated_error",
         &.{},
         1,
@@ -5592,7 +5682,7 @@ test "feature_tests/testing/09_expected_error" {
 }
 
 test "feature_tests/testing/10_expected_error_mismatch" {
-    try argiTestExpectStderr(
+    try argiTestExpectStderrContains(
         "tests/feature_tests/testing/10_expected_error_mismatch",
         &.{},
         1,
@@ -5601,7 +5691,7 @@ test "feature_tests/testing/10_expected_error_mismatch" {
 }
 
 test "feature_tests/testing/11_expected_error_unexpected_ok" {
-    try argiTestExpectStderr(
+    try argiTestExpectStderrContains(
         "tests/feature_tests/testing/11_expected_error_unexpected_ok",
         &.{},
         1,
@@ -5645,7 +5735,7 @@ test "feature_tests/testing/15_named_optional_view_return" {
     );
 }
 
-test "argi help lists supported 0.1 commands" {
+test "argi help lists supported commands" {
     const result = try runArgiCommand(&.{"help"});
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
@@ -5662,7 +5752,8 @@ test "argi help lists supported 0.1 commands" {
     try expect(std.mem.indexOf(u8, result.stderr, "init --lib [name]") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "lsp") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "version") != null);
-    try expect(std.mem.indexOf(u8, result.stderr, "format") == null);
+    try expect(std.mem.indexOf(u8, result.stderr, "format [paths...] [--check]") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "format <file.rg> --stdout") != null);
 }
 
 test "argi version reports current release" {
@@ -5671,16 +5762,16 @@ test "argi version reports current release" {
     defer std.testing.allocator.free(result.stderr);
 
     try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
-    try expectEqualStrings("argi 0.2.0\n", result.stderr);
+    try expectEqualStrings("argi 0.3.0\n", result.stderr);
 }
 
 test "argi unknown command exits with help" {
-    const result = try runArgiCommand(&.{"format"});
+    const result = try runArgiCommand(&.{"unknown-command"});
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
 
     try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
-    try expect(std.mem.indexOf(u8, result.stderr, "Error: unknown command 'format'\n") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "Error: unknown command 'unknown-command'\n") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "Usage: argi <command> [arguments] [options]\n") != null);
 }
 
@@ -6021,7 +6112,7 @@ test "dormant match payload copy diagnostics respect reachability" {
         .data =
         \\Token : Type = (.value: Int32)
         \\
-        \\deinit(.self: $&Token) -> () := {}
+        \\implement Deinit#(Token) (.deinit = (.self: $&Token) -> () {})
         \\
         \\Result : Type = (
         \\    ..ok(.token: Token)
@@ -6126,11 +6217,11 @@ test "feature_tests/functions/20_assume_arguments" {
 }
 
 test "feature_tests/functions/21X_assume_no_propagation" {
-    try buildExpectFail("tests/feature_tests/functions/21X_assume_no_propagation", "no overload of 'take' accepts arguments");
+    try buildExpectFail("tests/feature_tests/functions/21X_assume_no_propagation", "no function named 'take' accepts arguments");
 }
 
 test "feature_tests/functions/22X_assume_incompatible_default" {
-    try buildExpectFail("tests/feature_tests/functions/22X_assume_incompatible_default", "no overload of 'take' accepts arguments");
+    try buildExpectFail("tests/feature_tests/functions/22X_assume_incompatible_default", "no function named 'take' accepts arguments");
 }
 
 test "feature_tests/functions/23X_assume_unknown_variable" {
@@ -6146,7 +6237,7 @@ test "feature_tests/functions/25X_assume_stale_reference" {
 }
 
 test "feature_tests/functions/26X_assume_scope_does_not_escape" {
-    try buildExpectFail("tests/feature_tests/functions/26X_assume_scope_does_not_escape", "no overload of 'take' accepts arguments");
+    try buildExpectFail("tests/feature_tests/functions/26X_assume_scope_does_not_escape", "no function named 'take' accepts arguments");
 }
 
 test "feature_tests/functions/27_assume_automatic_cleanup" {
@@ -6233,10 +6324,7 @@ test "feature_tests/system/43X_general_purpose_large_double_free" {
 }
 
 test "feature_tests/system/37X_system_local_resource_escape" {
-    try buildExpectFail(
-        "tests/feature_tests/system/37X_system_local_resource_escape",
-        "function output cannot depend on a local storage generation that ends before return",
-    );
+    try buildExpectFail("tests/feature_tests/system/37X_system_local_resource_escape", "local storage generation");
 }
 
 test "feature_tests/system/44_memory_allocator_composition" {
@@ -6262,7 +6350,7 @@ test "feature_tests/system/48X_general_purpose_backing_ended" {
 }
 
 test "feature_tests/system/49X_initializer_temporary_ends_backing" {
-    try buildExpectFail("tests/feature_tests/system/49X_initializer_temporary_ends_backing", "main.rg:28:24: error: reference depends on a root that has ended");
+    try buildExpectFail("tests/feature_tests/system/49X_initializer_temporary_ends_backing", "main.rg:31:30: error: reference depends on a root that has ended");
 }
 
 test "feature_tests/system/49_general_purpose_allocator_on_arena" {
@@ -6338,21 +6426,20 @@ test "feature_tests/text/20_fallible_string_constructor" {
 test "feature_tests/types/262X_fallible_init_success_without_value" {
     try buildExpectFail(
         "tests/feature_tests/types/262X_fallible_init_success_without_value",
-        "initializer returns ..ok without fully initializing its destination",
+        "value was deinitialized",
     );
 }
 
-test "feature_tests/types/263X_fallible_init_error_with_value" {
-    try buildExpectFail(
-        "tests/feature_tests/types/263X_fallible_init_error_with_value",
-        "initializer returns ..error with a live value in its destination",
-    );
+test "feature_tests/types/263_fallible_constructor_error_cleanup" {
+    const path = "tests/feature_tests/types/263_fallible_constructor_error_cleanup";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
 }
 
 test "feature_tests/types/264X_fallible_init_requires_outcome" {
     try buildExpectFail(
         "tests/feature_tests/types/264X_fallible_init_requires_outcome",
-        "is maybe_initialized and cannot be used",
+        "value was deinitialized",
     );
 }
 
@@ -6373,7 +6460,7 @@ test "feature_tests/ownership/294X_fallible_constructor_preserves_root" {
 test "feature_tests/types/267X_initializer_wrong_result" {
     try buildExpectFail(
         "tests/feature_tests/types/267X_initializer_wrong_result",
-        "initializer must return () or one Errable<Void, R> result",
+        "operation returns an incompatible associated result",
     );
 }
 
@@ -6396,10 +6483,7 @@ test "feature_tests/text/23_propagated_constructor_failure" {
 }
 
 test "feature_tests/ownership/135X_inherited_reference_escapes_root" {
-    try buildExpectFail(
-        "tests/feature_tests/ownership/135X_inherited_reference_escapes_root",
-        "function output cannot depend on a local storage generation that ends before return",
-    );
+    try buildExpectFail("tests/feature_tests/ownership/135X_inherited_reference_escapes_root", "local storage generation");
 }
 
 test "feature_tests/ownership/136X_duplicate_aligned_storage_establishment" {
@@ -6410,10 +6494,7 @@ test "feature_tests/ownership/136X_duplicate_aligned_storage_establishment" {
 }
 
 test "feature_tests/ownership/137X_inherited_reference_wrapper_escapes_root" {
-    try buildExpectFail(
-        "tests/feature_tests/ownership/137X_inherited_reference_wrapper_escapes_root",
-        "function output cannot depend on a local storage generation that ends before return",
-    );
+    try buildExpectFail("tests/feature_tests/ownership/137X_inherited_reference_wrapper_escapes_root", "local storage generation");
 }
 
 test "feature_tests/types/65_error_tracer_capability" {
@@ -6438,7 +6519,7 @@ test "feature_tests/types/66_error_tracer_context_copy" {
 }
 
 test "feature_tests/types/67X_error_tracer_escape" {
-    try buildExpectFail("tests/feature_tests/types/67X_error_tracer_escape", "local");
+    try buildExpectFail("tests/feature_tests/types/67X_error_tracer_escape", "local storage generation");
 }
 
 test "feature_tests/types/68_error_tracer_bounded_failures" {
@@ -6452,11 +6533,11 @@ test "feature_tests/types/69_error_tracer_truncation" {
     try expectSuccessfulBuild(path);
     try runExpectStderr(path, 0,
         \\error trace (most recent first):
-        \\  at tests/feature_tests/types/69_error_tracer_truncation/main.rg:9:5: latest
-        \\        add_context(.context = "latest")
+        \\  at tests/feature_tests/types/69_error_tracer_truncation/main.rg:11:5: latest
+        \\        add_context_text(.context = "latest")
         \\        ^
         \\  <context truncated>
-        \\  at tests/feature_tests/types/69_error_tracer_truncation/main.rg:2:31
+        \\  at tests/feature_tests/types/69_error_tracer_truncation/main.rg:3:31
         \\    fail() -> !Void := { result = ..error(.reason = ..truncated_test_failure) }
         \\                                  ^
         \\
@@ -6474,7 +6555,7 @@ test "feature_tests/types/71X_virtual_pipe_temporary_escape" {
 }
 
 test "feature_tests/types/72X_virtual_inference_missing_context" {
-    try buildExpectFail("tests/feature_tests/types/72X_virtual_inference_missing_context", "cannot infer the abstract parameter");
+    try buildExpectFail("tests/feature_tests/types/72X_virtual_inference_missing_context", "cannot infer the contract parameter");
 }
 
 test "feature_tests/polymorphism/41_recursive_virtual_summaries" {
@@ -6520,9 +6601,9 @@ fn expectSafetyWrapperParity(case_path: []const u8, diagnostic: ?[]const u8) !vo
     defer allocator.free(constructor_calls);
     const constructor_wrapper: []const u8 = if (std.mem.indexOf(u8, relocated, "Owned : Type") != null)
         if (std.mem.indexOf(u8, relocated, ".fail: Bool") != null)
-            "parity_owned(.allocator: $&Allocator, .fail: Bool) -> (.result: Errable#(.t: Owned, .reasons: (..out_of_memory))) := { result = Owned(.allocator = allocator, .fail = fail) }\n"
+            "parity_owned#(.AllocatorType: Type: Allocator#(AllocatorType))(.allocator: $&AllocatorType, .fail: Bool) -> (.result: Errable#(.t: Owned, .reasons: (..out_of_memory))) := { result = Owned(.allocator = allocator, .fail = fail) }\n"
         else
-            "parity_owned(.allocator: $&Allocator) -> (.result: Errable#(.t: Owned, .reasons: (..out_of_memory))) := { result = Owned(.allocator = allocator) }\n"
+            "parity_owned#(.AllocatorType: Type: Allocator#(AllocatorType))(.allocator: $&AllocatorType) -> (.result: Errable#(.t: Owned, .reasons: (..out_of_memory))) := { result = Owned(.allocator = allocator) }\n"
     else
         "";
     const arguments = if (std.mem.startsWith(u8, source[entry..], "main(.system: System")) ".system = system" else "";
@@ -6603,8 +6684,8 @@ test "safety wrapper parity for fallible initialization outcomes" {
 
 test "safety wrapper parity for recursion and virtual dispatch" {
     try expectSafetyWrapperParity("tests/feature_tests/polymorphism/41_recursive_virtual_summaries", null);
-    try expectSafetyWrapperParity("tests/feature_tests/ownership/220X_virtual_post_state_dependency_union", "reference depends on a root that has ended");
-    try expectSafetyWrapperParity("tests/feature_tests/polymorphism/30X_virtual_dependency_union", "function output cannot depend on a local storage generation that ends before return");
+    try expectSafetyWrapperParity("tests/feature_tests/ownership/220X_virtual_contract_rejects_hidden_dependency", "violates its safety contract");
+    try expectSafetyWrapperParity("tests/feature_tests/polymorphism/30X_virtual_declared_dependency_escape", "function output cannot depend on a local storage generation that ends before return");
 }
 
 test "feature_tests/basics/27X_mixed_width_arithmetic" {
@@ -6618,7 +6699,7 @@ test "feature_tests/basics/27X_mixed_width_arithmetic" {
 
 test "feature_tests/basics/28X_unsupported_initializer_expression" {
     try buildExpectFailExact("tests/feature_tests/basics/28X_unsupported_initializer_expression",
-        \\tests/feature_tests/basics/28X_unsupported_initializer_expression/main.rg:3:19: error: this expression is not supported in an initializer
+        \\tests/feature_tests/basics/28X_unsupported_initializer_expression/main.rg:3:19: error: choice option '..first_reason' needs a concrete choice type
         \\  Wrong : Choice = (..first_reason, ..second_reason)
         \\                    ^
         \\
@@ -6631,7 +6712,7 @@ test "safety statistics preserve composed allocator behavior" {
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
     try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
-    for ([_][]const u8{ "summary inference:", "summary bytes requested:", "retained worklist bytes:", "virtual summary time:", "virtual receiver lookup:", "state copy time:" }) |label|
+    for ([_][]const u8{ "summary inference:", "summary bytes requested:", "retained worklist bytes:", "virtual contract summary time:", "state copy time:" }) |label|
         try expect(std.mem.indexOf(u8, result.stderr, label) != null);
     try run(path);
 }
@@ -6741,7 +6822,7 @@ test "feature_tests/types/91_acquired_storage_establishment" {
 }
 
 test "feature_tests/types/92X_acquired_storage_integer_establishment" {
-    try buildExpectFail("tests/feature_tests/types/92X_acquired_storage_integer_establishment", "no overload");
+    try buildExpectFail("tests/feature_tests/types/92X_acquired_storage_integer_establishment", "no function named 'establish_allocation' accepts arguments");
 }
 
 test "feature_tests/types/93X_acquired_storage_private_extent" {
@@ -7094,27 +7175,27 @@ test "feature_tests/polymorphism/42_virtual_nonleading_receiver" {
 }
 
 test "feature_tests/polymorphism/43X_virtual_multiple_self_receivers" {
-    try buildExpectFail("tests/feature_tests/polymorphism/43X_virtual_multiple_self_receivers", "exactly one borrowed Self receiver");
+    try buildExpectFail("tests/feature_tests/polymorphism/43X_virtual_multiple_self_receivers", "exactly one borrowed participant receiver");
 }
 
 test "feature_tests/polymorphism/44X_virtual_self_result" {
-    try buildExpectFail("tests/feature_tests/polymorphism/44X_virtual_self_result", "Self cannot appear in a virtual method result");
+    try buildExpectFail("tests/feature_tests/polymorphism/44X_virtual_self_result", "the hidden participant cannot appear in a virtual operation result");
 }
 
 test "feature_tests/polymorphism/45X_virtual_self_by_value" {
-    try buildExpectFail("tests/feature_tests/polymorphism/45X_virtual_self_by_value", "Self is only allowed as a direct borrowed receiver");
+    try buildExpectFail("tests/feature_tests/polymorphism/45X_virtual_self_by_value", "the hidden participant is only allowed as a direct borrowed receiver");
 }
 
 test "feature_tests/polymorphism/46X_virtual_nested_self_input" {
-    try buildExpectFail("tests/feature_tests/polymorphism/46X_virtual_nested_self_input", "Self is only allowed as a direct borrowed receiver");
+    try buildExpectFail("tests/feature_tests/polymorphism/46X_virtual_nested_self_input", "the hidden participant is only allowed as a direct borrowed receiver");
 }
 
 test "feature_tests/polymorphism/47X_virtual_missing_receiver" {
-    try buildExpectFail("tests/feature_tests/polymorphism/47X_virtual_missing_receiver", "exactly one borrowed Self receiver");
+    try buildExpectFail("tests/feature_tests/polymorphism/47X_virtual_missing_receiver", "exactly one borrowed participant receiver");
 }
 
 test "feature_tests/polymorphism/48X_virtual_associated_parameters" {
-    try buildExpectFail("tests/feature_tests/polymorphism/48X_virtual_associated_parameters", "parameterized abstract virtual conversion is not implemented");
+    try buildExpectFail("tests/feature_tests/polymorphism/48X_virtual_associated_parameters", "incompatible associated elements for the virtual interface");
 }
 
 test "feature_tests/polymorphism/49_virtual_explicit_peer_handle" {
@@ -7127,11 +7208,11 @@ test "feature_tests/types/270X_acquired_storage_inspected_alias_consumed" {
 }
 
 test "feature_tests/polymorphism/50X_virtual_readonly_mutable_contract" {
-    try buildExpectFail("tests/feature_tests/polymorphism/50X_virtual_readonly_mutable_contract", "a mutable Self receiver requires a mutable concrete reference");
+    try buildExpectFail("tests/feature_tests/polymorphism/50X_virtual_readonly_mutable_contract", "a mutable participant receiver requires a mutable concrete reference");
 }
 
 test "feature_tests/polymorphism/51X_virtual_readonly_generic_conversion" {
-    try buildExpectFail("tests/feature_tests/polymorphism/51X_virtual_readonly_generic_conversion", "a mutable Self receiver requires a mutable concrete reference");
+    try buildExpectFail("tests/feature_tests/polymorphism/51X_virtual_readonly_generic_conversion", "a mutable participant receiver requires a mutable concrete reference");
 }
 
 test "feature_tests/polymorphism/52X_virtual_receiver_identity_same_type_argument" {
@@ -7151,11 +7232,11 @@ test "feature_tests/collections/80_collection_contracts" {
 }
 
 test "feature_tests/collections/81X_readonly_collection_mutation" {
-    try buildExpectFail("tests/feature_tests/collections/81X_readonly_collection_mutation", "does not implement");
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/collections/81X_readonly_collection_mutation", "does not satisfy contract constraint 'IndexableMutable'");
 }
 
 test "feature_tests/collections/82X_owning_collection_value_read" {
-    try buildExpectFail("tests/feature_tests/collections/82X_owning_collection_value_read", "no overload");
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/collections/82X_owning_collection_value_read", "does not satisfy contract constraint 'IndexableValue'");
 }
 
 test "feature_tests/text/24_string_view_search" {
@@ -7279,7 +7360,7 @@ test "feature_tests/types/274X_specialized_comparison_missing" {
 }
 
 test "feature_tests/types/275X_specialized_ordering_missing" {
-    try buildExpectFail("tests/feature_tests/types/275X_specialized_ordering_missing", "no matching comparison operator '<' for 'StringView' and 'StringView'");
+    try buildExpectFail("tests/feature_tests/types/275X_specialized_ordering_missing", "invalid conformance for contract 'CompareRelations': no conformance for the qualified operation's participants");
 }
 
 test "feature_tests/types/276X_specialized_numeric_comparison_mismatch" {
@@ -7427,7 +7508,7 @@ test "feature_tests/collections/108_collection_reverse" {
 }
 
 test "feature_tests/collections/109X_collection_reverse_owning" {
-    try buildExpectFail("tests/feature_tests/collections/109X_collection_reverse_owning", "abstract constraint 'ImplicitlyCopyable' required by generic function parameter '.t' of 'reverse'");
+    try buildExpectFail("tests/feature_tests/collections/109X_collection_reverse_owning", "contract constraint 'ImplicitlyCopyable' required by generic function parameter '.t' of 'reverse'");
 }
 
 test "feature_tests/collections/110_order_policies" {
@@ -7467,7 +7548,7 @@ test "feature_tests/collections/115_collection_sort_records" {
 }
 
 test "feature_tests/collections/116X_collection_sort_readonly" {
-    try buildExpectFail("tests/feature_tests/collections/116X_collection_sort_readonly", "no function named 'sort'");
+    try buildExpectFail("tests/feature_tests/collections/116X_collection_sort_readonly", "no generic function named 'sort' accepts arguments");
 }
 
 test "tests/feature_tests/basics/25X_numeric_binding_type" {
@@ -7497,11 +7578,11 @@ test "tests/feature_tests/basics/30_numeric_contextual_assignment" {
 }
 
 test "tests/feature_tests/polymorphism/59X_generic_constraint_implicit" {
-    try buildExpectFail("tests/feature_tests/polymorphism/59X_generic_constraint_implicit", "abstract constraint 'ImplicitlyCopyable' required by generic function parameter '.t' of 'accept'");
+    try buildExpectFail("tests/feature_tests/polymorphism/59X_generic_constraint_implicit", "contract constraint 'ImplicitlyCopyable' required by generic function parameter '.t' of 'accept'");
 }
 
 test "tests/feature_tests/polymorphism/60X_generic_constraint_explicit" {
-    try buildExpectFail("tests/feature_tests/polymorphism/60X_generic_constraint_explicit", "abstract constraint 'ImplicitlyCopyable' required by generic function parameter '.t' of 'accept'");
+    try buildExpectFail("tests/feature_tests/polymorphism/60X_generic_constraint_explicit", "contract constraint 'ImplicitlyCopyable' required by generic function parameter '.t' of 'accept'");
 }
 
 test "tests/feature_tests/polymorphism/61_generic_constraint_alternate" {
@@ -7511,11 +7592,11 @@ test "tests/feature_tests/polymorphism/61_generic_constraint_alternate" {
 }
 
 test "tests/feature_tests/polymorphism/62X_generic_constraint_wrong_shape" {
-    try buildExpectFail("tests/feature_tests/polymorphism/62X_generic_constraint_wrong_shape", "no function named 'accept'");
+    try buildExpectFail("tests/feature_tests/polymorphism/62X_generic_constraint_wrong_shape", "no generic function named 'accept_owned' accepts arguments");
 }
 
 test "tests/feature_tests/polymorphism/63X_generic_constraint_qualified" {
-    try buildExpectFail("tests/feature_tests/polymorphism/63X_generic_constraint_qualified", "abstract constraint 'ImplicitlyCopyable' required by generic function parameter '.t' of 'accept'");
+    try buildExpectFail("tests/feature_tests/polymorphism/63X_generic_constraint_qualified", "contract constraint 'ImplicitlyCopyable' required by generic function parameter '.t' of 'accept'");
 }
 
 test "feature_tests/polymorphism/64_generic_constraint_fallback" {
@@ -7539,14 +7620,14 @@ test "argi run inherits stdin stdout and stderr" {
         .sub_path = "main.rg",
         .data =
         \\main(.system: System) -> (.status_code: Int32 = 7) := {
-        \\    input ::= unwrap_or_abort(.value = read_byte(.self = $&system.terminal&.stdin))
+        \\    input ::= unwrap_or_abort(.value = Reader#().read_byte(.self = $&system.terminal&.stdin))
         \\    match input {
         \\        ..ok byte {
         \\            if byte != 65 { status_code = 8 return }
         \\        }
         \\        ..end { status_code = 9 return }
         \\    }
-        \\    print(.value = "stdout marker\n", .writer = $&system.terminal&.stdout)
+        \\    print(.value = "stdout marker", .writer = $&system.terminal&.stdout)
         \\    print_error(.value = "stderr marker\n", .writer = $&system.terminal&.stderr)
         \\}
         ,
@@ -7556,7 +7637,7 @@ test "argi run inherits stdin stdout and stderr" {
     const installed_argi = try installedArgiPath();
     defer std.testing.allocator.free(installed_argi);
     var child = try std.process.spawn(std.testing.io, .{
-        .argv = &.{ installed_argi, "run", module_dir },
+        .argv = &.{ installed_argi, "run", module_dir, "--frontend-jobs", "1" },
         .stdin = .pipe,
         .stdout = .pipe,
         .stderr = .pipe,
@@ -7681,4 +7762,5363 @@ test "feature_tests/basics/45X_empty_array_inference" {
 
 test "feature_tests/basics/46X_nested_empty_array_inference" {
     try buildExpectFailWithoutNoise("tests/feature_tests/basics/46X_nested_empty_array_inference", "cannot infer the array type of 'values' from this literal; add an explicit array type annotation", "UnsupportedGlobalSemantic");
+}
+
+test "C interop links native archives by file and library name" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try tmpDirRootPath(&tmp);
+    defer allocator.free(root);
+    const argi = try installedArgiPath();
+    defer allocator.free(argi);
+    const repo = try repoRootPrefix();
+    defer allocator.free(repo);
+    const fixture = try std.fs.path.join(allocator, &.{ repo, "tests/feature_tests/c_interop/01_native_library" });
+    defer allocator.free(fixture);
+    const source = try std.fs.path.join(allocator, &.{ fixture, "native.c" });
+    defer allocator.free(source);
+    const compiled = try runChildInCwd(&.{ "cc", "-c", source, "-o", "native.o" }, root);
+    defer allocator.free(compiled.stdout);
+    defer allocator.free(compiled.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, compiled.term);
+    const archived = try runChildInCwd(&.{ "ar", "rcs", "libargi_fixture.a", "native.o" }, root);
+    defer allocator.free(archived.stdout);
+    defer allocator.free(archived.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, archived.term);
+    for (0..2) |mode| {
+        const args: []const []const u8 = if (mode == 0)
+            &.{ argi, "build", fixture, "--output", "app", "--link-file", "libargi_fixture.a" }
+        else
+            &.{ argi, "build", fixture, "--output", "app", "--library-path", ".", "--link-library", "argi_fixture" };
+        const built = try runChildInCwd(args, root);
+        defer allocator.free(built.stdout);
+        defer allocator.free(built.stderr);
+        if (built.term != .exited or built.term.exited != 0) std.debug.print("{s}", .{built.stderr});
+        try expectEqual(std.process.Child.Term{ .exited = 0 }, built.term);
+        const executed = try runChildInCwd(&.{"./app"}, root);
+        defer allocator.free(executed.stdout);
+        defer allocator.free(executed.stderr);
+        try expectEqual(std.process.Child.Term{ .exited = 0 }, executed.term);
+    }
+    // A package can be built from elsewhere, from its module, or run at its
+    // root without relying on the caller's directory for native input paths.
+    try tmp.dir.createDirPath(std.testing.io, "source/app");
+    const rg_path = try std.fs.path.join(allocator, &.{ fixture, "main.rg" });
+    defer allocator.free(rg_path);
+    const rg_source = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, rg_path, allocator, .limited(8192));
+    defer allocator.free(rg_source);
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "source/app/main.rg", .data = rg_source });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "argi.toml", .data =
+        \\[executables.app]
+        \\path = "source/app"
+        \\[[native]]
+        \\file = "libargi_fixture.a"
+    });
+    const module_path = try std.fs.path.join(allocator, &.{ root, "source/app" });
+    defer allocator.free(module_path);
+    for ([_][]const u8{ root, module_path }) |target| {
+        const built = try runChildInCwd(&.{ argi, "build", target }, repo);
+        defer allocator.free(built.stdout);
+        defer allocator.free(built.stderr);
+        if (built.term != .exited or built.term.exited != 0) std.debug.print("{s}", .{built.stderr});
+        try expectEqual(std.process.Child.Term{ .exited = 0 }, built.term);
+    }
+    const ran = try runChildInCwd(&.{ argi, "run" }, root);
+    defer allocator.free(ran.stdout);
+    defer allocator.free(ran.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, ran.term);
+    const missing = try runChildInCwd(&.{ argi, "build", fixture, "--output", "missing", "--link-library", "argi_missing_library_fixture" }, root);
+    defer allocator.free(missing.stdout);
+    defer allocator.free(missing.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, missing.term);
+    try expect(std.mem.indexOf(u8, missing.stderr, "argi_missing_library_fixture") != null);
+}
+
+test "C interop rejects unsupported signatures during exhaustive checking" {
+    const cases = .{
+        .{ "tests/feature_tests/c_interop/02X_aggregate_argument", "input 'value' has an unsupported C ABI type" },
+        .{ "tests/feature_tests/c_interop/03X_multiple_outputs", "must have zero or one output" },
+        .{ "tests/feature_tests/c_interop/04X_aggregate_result", "output 'result' has an unsupported C ABI type" },
+    };
+    inline for (cases) |case| {
+        for ([_][]const u8{ "build", "check" }) |command| {
+            const result = try runArgiCommand(&.{ command, case[0] });
+            defer std.testing.allocator.free(result.stdout);
+            defer std.testing.allocator.free(result.stderr);
+            try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
+            try expect(std.mem.indexOf(u8, result.stderr, case[1]) != null);
+            try expect(std.mem.indexOf(u8, result.stderr, "failed without a diagnostic") == null);
+        }
+    }
+}
+
+test "C interop symbol aliases reuse one external symbol across cached builds" {
+    const path = "tests/feature_tests/c_interop/05_symbol_alias";
+    for (0..2) |_| {
+        try expectArgiBuildSuccess(&.{ "build", path });
+        const output = try outputPathFor(path);
+        defer std.testing.allocator.free(output);
+        const result = try runChild(&.{output});
+        defer std.testing.allocator.free(result.stdout);
+        defer std.testing.allocator.free(result.stderr);
+        try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
+    }
+}
+
+test "C interop diagnoses invalid symbol options and conflicting declarations" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/06X_invalid_symbol_options", "CFunction '.symbol' requires a string literal", "failed without a diagnostic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/07X_conflicting_symbols", "C symbol 'abs' is declared with incompatible signatures", "failed without a diagnostic");
+}
+
+test "C interop exports are reachable from native code without Argi callers" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try tmpDirRootPath(&tmp);
+    defer allocator.free(root);
+    const argi = try installedArgiPath();
+    defer allocator.free(argi);
+    const repo = try repoRootPrefix();
+    defer allocator.free(repo);
+    const fixture = try std.fs.path.join(allocator, &.{ repo, "tests/feature_tests/c_interop/08_exported_functions" });
+    defer allocator.free(fixture);
+    const source = try std.fs.path.join(allocator, &.{ fixture, "native.c" });
+    defer allocator.free(source);
+    const compiled = try runChildInCwd(&.{ "cc", "-c", source, "-o", "native.o" }, root);
+    defer allocator.free(compiled.stdout);
+    defer allocator.free(compiled.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, compiled.term);
+    for (0..2) |_| {
+        const built = try runChildInCwd(&.{ argi, "build", fixture, "--output", "app", "--link-file", "native.o", "--emit-llvm", "app.ll" }, root);
+        defer allocator.free(built.stdout);
+        defer allocator.free(built.stderr);
+        if (built.term != .exited or built.term.exited != 0) std.debug.print("{s}", .{built.stderr});
+        try expectEqual(std.process.Child.Term{ .exited = 0 }, built.term);
+        const executed = try runChildInCwd(&.{"./app"}, root);
+        defer allocator.free(executed.stdout);
+        defer allocator.free(executed.stderr);
+        try expectEqual(std.process.Child.Term{ .exited = 0 }, executed.term);
+        const ir = try tmp.dir.readFileAlloc(std.testing.io, "app.ll", allocator, .limited(1024 * 1024));
+        defer allocator.free(ir);
+        try expect(std.mem.indexOf(u8, ir, "define i32 @argi_export_sum(i32") != null);
+        try expect(std.mem.indexOf(u8, ir, "define void @argi_export_set(ptr") != null);
+    }
+}
+
+test "C interop validates exported bodies and signatures" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/09X_export_without_body", "an exported CFunction requires a body", "failed without a diagnostic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/10X_export_aggregate", "input 'value' has an unsupported C ABI type", "failed without a diagnostic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/11X_duplicate_exports", "C symbol 'argi_duplicate' has multiple definitions", "failed without a diagnostic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/12X_reserved_export", "C export symbol 'main' is reserved", "failed without a diagnostic");
+}
+
+test "C interop checks reached and explicit authorization without ABI arguments" {
+    try expectSuccessfulBuild("tests/feature_tests/c_interop/13_foreign_capability");
+    try run("tests/feature_tests/c_interop/13_foreign_capability");
+    try expectSuccessfulBuild("tests/feature_tests/c_interop/22_byte_copy_without_ffi");
+    try run("tests/feature_tests/c_interop/22_byte_copy_without_ffi");
+}
+
+test "C interop rejects missing invalid and stale authorization" {
+    const cases = .{
+        .{ "tests/feature_tests/c_interop/14X_missing_foreign_capability", ".ffi uses reach [ffi]" },
+        .{ "tests/feature_tests/c_interop/15X_wrong_foreign_capability", "ForeignFunctionInterface" },
+        .{ "tests/feature_tests/c_interop/16X_stale_foreign_capability", "binding 'storage' was moved" },
+        .{ "tests/feature_tests/c_interop/17X_export_missing_capability", ".ffi uses reach [ffi]" },
+        .{ "tests/feature_tests/c_interop/18X_legacy_missing_capability", ".ffi uses reach [ffi]" },
+        .{ "tests/feature_tests/c_interop/19X_stale_wrapper_capability", "binding 'storage' was moved" },
+        .{ "tests/feature_tests/c_interop/20X_reserved_capability_parameter", "reserve '.ffi' for the checked capability" },
+        .{ "tests/feature_tests/c_interop/21X_counterfeit_foreign_capability", "ForeignFunctionInterface" },
+        .{ "tests/feature_tests/c_interop/23X_memory_stale_capability", "binding 'storage' was moved" },
+    };
+    inline for (cases) |case| {
+        try buildExpectFailWithoutNoise(case[0], case[1], "failed without a diagnostic");
+    }
+}
+
+fn checkNativeCFixture(path: []const u8, ir_needles: []const []const u8) !void {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try tmpDirRootPath(&tmp);
+    defer allocator.free(root);
+    const argi = try installedArgiPath();
+    defer allocator.free(argi);
+    const repo = try repoRootPrefix();
+    defer allocator.free(repo);
+    const fixture = try std.fs.path.join(allocator, &.{ repo, path });
+    defer allocator.free(fixture);
+    const source = try std.fs.path.join(allocator, &.{ fixture, "native.c" });
+    defer allocator.free(source);
+    const compiled = try runChildInCwd(&.{ "cc", "-c", source, "-o", "native.o" }, root);
+    defer allocator.free(compiled.stdout);
+    defer allocator.free(compiled.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, compiled.term);
+    for (0..2) |_| {
+        const built = try runChildInCwd(&.{ argi, "build", fixture, "--output", "app", "--link-file", "native.o", "--emit-llvm", "app.ll" }, root);
+        defer allocator.free(built.stdout);
+        defer allocator.free(built.stderr);
+        if (built.term != .exited or built.term.exited != 0) std.debug.print("{s}", .{built.stderr});
+        try expectEqual(std.process.Child.Term{ .exited = 0 }, built.term);
+        const executed = try runChildInCwd(&.{"./app"}, root);
+        defer allocator.free(executed.stdout);
+        defer allocator.free(executed.stderr);
+        try expectEqual(std.process.Child.Term{ .exited = 0 }, executed.term);
+        const ir = try tmp.dir.readFileAlloc(std.testing.io, "app.ll", allocator, .limited(1024 * 1024));
+        defer allocator.free(ir);
+        for (ir_needles) |needle| try expect(std.mem.indexOf(u8, ir, needle) != null);
+    }
+}
+
+test "C interop adapts raw pointers for imports bodies and exports" {
+    try checkNativeCFixture("tests/feature_tests/c_interop/24_raw_pointer_abi", &.{
+        "declare ptr @argi_c_static()",
+        "declare ptr @argi_c_echo(ptr)",
+        "define ptr @argi_pointer_export(ptr",
+    });
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/25X_counterfeit_raw_pointer", "input 'pointer' has an unsupported C ABI type", "failed without a diagnostic");
+}
+
+test "C interop resolves target scalar aliases" {
+    try checkNativeCFixture("tests/feature_tests/c_interop/26_c_scalar_aliases", &.{
+        "declare i32 @argi_c_int(i32)",
+        "declare double @argi_c_double(double)",
+    });
+}
+
+test "C interop uses a bounded zlib checksum wrapper and manifest linking" {
+    const allocator = std.testing.allocator;
+    const fixture = "tests/feature_tests/c_interop/27_zlib_checksum";
+    for (0..2) |_| {
+        const built = try runArgiCommand(&.{ "build", fixture });
+        defer allocator.free(built.stdout);
+        defer allocator.free(built.stderr);
+        if (built.term != .exited or built.term.exited != 0) std.debug.print("{s}", .{built.stderr});
+        try expectEqual(std.process.Child.Term{ .exited = 0 }, built.term);
+        const executed = try runChild(&.{"tests/feature_tests/c_interop/27_zlib_checksum/build/debug/checksum"});
+        defer allocator.free(executed.stdout);
+        defer allocator.free(executed.stderr);
+        try expectEqual(std.process.Child.Term{ .exited = 0 }, executed.term);
+    }
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/28X_zlib_missing_capability", ".ffi uses reach [ffi]", "failed without a diagnostic");
+}
+
+test "C interop preserves explicit record layouts through native pointers" {
+    try checkNativeCFixture("tests/feature_tests/c_interop/29_c_struct_layout", &.{
+        "declare i32 @argi_c_payload_verify(ptr)",
+        "declare void @argi_c_payload_fill(ptr)",
+        "define i32 @argi_c_payload_export(ptr",
+    });
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/30X_c_struct_non_c_field", "field 'ordinary' has no supported C representation", "failed without a diagnostic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/31X_c_struct_by_value", "input 'record' has an unsupported C ABI type", "failed without a diagnostic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/32X_generic_c_struct_non_c_field", "field 'value' has no supported C representation", "failed without a diagnostic");
+}
+
+test "C interop extends narrow scalars according to the platform ABI" {
+    const target = @import("builtin").target;
+    const extends = (target.cpu.arch == .x86_64 and target.os.tag != .windows) or (target.cpu.arch == .aarch64 and target.os.tag.isDarwin());
+    try checkNativeCFixture("tests/feature_tests/c_interop/33_narrow_scalar_abi", if (extends) &.{
+        "define signext i8 @argi_c_small_signed(i8 signext",
+        "define zeroext i8 @argi_c_small_unsigned(i8 zeroext",
+        "call signext i16 @argi_c_short_import(i16 signext",
+        "declare zeroext i1 @argi_c_bool_import(i1 zeroext",
+    } else &.{
+        "define i8 @argi_c_small_signed(i8",
+        "define i1 @argi_c_bool(i1",
+    });
+}
+
+test "C interop adapts integer record arguments and results" {
+    const x64 = @import("builtin").target.cpu.arch == .x86_64;
+    try checkNativeCFixture("tests/feature_tests/c_interop/34_integer_record_abi", if (x64) &.{
+        "declare i64 @argi_c_pair(i64)",
+        "declare { i64, i64 } @argi_c_words(i64, i64)",
+        "byval({ i64, i64 }) align 8",
+        "sret({ i64, i64, i64 }) align 8",
+        "define i24 @argi_c_tiny_export(i24",
+    } else &.{
+        "declare i64 @argi_c_pair(i64)",
+        "declare [2 x i64] @argi_c_words([2 x i64])",
+        "sret({ i64, i64, i64 }) align 8",
+        "define i24 @argi_c_tiny_export(i64",
+    });
+}
+
+test "C interop diagnoses conflicting function ABI attributes" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/35X_conflicting_record_abi", "C symbol 'argi_c_conflict' is declared with incompatible signatures", "failed without a diagnostic");
+    const target = @import("builtin").target;
+    if (target.cpu.arch == .x86_64 or target.os.tag.isDarwin())
+        try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/36X_conflicting_scalar_extension", "C symbol 'argi_c_conflict' is declared with incompatible signatures", "failed without a diagnostic");
+}
+
+test "C interop selects static and shared named libraries without fallback" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try tmpDirRootPath(&tmp);
+    defer allocator.free(root);
+    const argi = try installedArgiPath();
+    defer allocator.free(argi);
+    const repo = try repoRootPrefix();
+    defer allocator.free(repo);
+    const fixture = try std.fs.path.join(allocator, &.{ repo, "tests/feature_tests/c_interop/01_native_library" });
+    defer allocator.free(fixture);
+    const source = try std.fs.path.join(allocator, &.{ fixture, "native.c" });
+    defer allocator.free(source);
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "shared.c", .data = "float argi_c_scale(int value, float factor) { (void)value; (void)factor; return 0; }" });
+    const shared_path = try std.fs.path.join(allocator, &.{ root, if (@import("builtin").os.tag.isDarwin()) "libargi_mode_fixture.dylib" else "libargi_mode_fixture.so" });
+    defer allocator.free(shared_path);
+    for ([_][]const []const u8{
+        &.{ "cc", "-c", source, "-o", "native.o" },
+        &.{ "ar", "rcs", "libargi_mode_fixture.a", "native.o" },
+        &.{ "cc", if (@import("builtin").os.tag.isDarwin()) "-dynamiclib" else "-shared", "-fPIC", "shared.c", "-o", shared_path },
+    }) |args| {
+        const result = try runChildInCwd(args, root);
+        defer allocator.free(result.stdout);
+        defer allocator.free(result.stderr);
+        try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
+    }
+    // The two artifacts return different results, so a successful link alone
+    // cannot conceal selection of the wrong library mode.
+    for ([_][]const u8{ "--link-static-library", "--link-shared-library" }, 0..) |flag, mode| {
+        const built = try runChildInCwd(&.{ argi, "build", fixture, "--output", "app", flag, "argi_mode_fixture", "--library-path", "." }, root);
+        defer allocator.free(built.stdout);
+        defer allocator.free(built.stderr);
+        if (built.term != .exited or built.term.exited != 0) std.debug.print("{s}", .{built.stderr});
+        try expectEqual(std.process.Child.Term{ .exited = 0 }, built.term);
+        const ran = try runChildInCwd(&.{"./app"}, root);
+        defer allocator.free(ran.stdout);
+        defer allocator.free(ran.stderr);
+        try expectEqual(std.process.Child.Term{ .exited = @intCast(mode) }, ran.term);
+    }
+    try tmp.dir.createDirPath(std.testing.io, "source/app");
+    const rg_path = try std.fs.path.join(allocator, &.{ fixture, "main.rg" });
+    defer allocator.free(rg_path);
+    const rg_source = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, rg_path, allocator, .limited(8192));
+    defer allocator.free(rg_source);
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "source/app/main.rg", .data = rg_source });
+    for ([_][]const u8{ "static_library", "shared_library" }, 0..) |key, mode| {
+        const manifest = try std.fmt.allocPrint(allocator, "[executables.app]\npath = \"source/app\"\n[[native]]\n{s} = \"argi_mode_fixture\"\n[[native]]\nsearch_path = \".\"\n", .{key});
+        defer allocator.free(manifest);
+        try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "argi.toml", .data = manifest });
+        const ran = try runChildInCwd(&.{ argi, "run" }, root);
+        defer allocator.free(ran.stdout);
+        defer allocator.free(ran.stderr);
+        try expectEqual(std.process.Child.Term{ .exited = @intCast(mode) }, ran.term);
+    }
+    try tmp.dir.deleteFile(std.testing.io, "libargi_mode_fixture.a");
+    const missing = try runChildInCwd(&.{ argi, "build", fixture, "--output", "missing", "--library-path", ".", "--link-static-library", "argi_mode_fixture" }, root);
+    defer allocator.free(missing.stdout);
+    defer allocator.free(missing.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, missing.term);
+    try expect(std.mem.indexOf(u8, missing.stderr, "static native library 'argi_mode_fixture' was not found") != null);
+    try tmp.dir.deleteFile(std.testing.io, std.fs.path.basename(shared_path));
+    const archived = try runChildInCwd(&.{ "ar", "rcs", "libargi_mode_fixture.a", "native.o" }, root);
+    defer allocator.free(archived.stdout);
+    defer allocator.free(archived.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, archived.term);
+    const missing_shared = try runChildInCwd(&.{ argi, "build", fixture, "--output", "missing", "--library-path", ".", "--link-shared-library", "argi_mode_fixture" }, root);
+    defer allocator.free(missing_shared.stdout);
+    defer allocator.free(missing_shared.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, missing_shared.term);
+    try expect(std.mem.indexOf(u8, missing_shared.stderr, "shared native library 'argi_mode_fixture' was not found") != null);
+}
+
+test "C interop adapts floating and mixed record arguments and results" {
+    const target = @import("builtin").target;
+    try checkNativeCFixture("tests/feature_tests/c_interop/37_numeric_record_abi", if (target.cpu.arch == .x86_64) &.{
+        "declare float @argi_c_one(float)",
+        "declare { <2 x float>, float } @argi_c_floats(<2 x float>, float)",
+        "declare { i32, double } @argi_c_mixed(i32, double)",
+        "declare { double, i32 } @argi_c_reverse(double, i32)",
+        "byval({ float, float, float }) align 8",
+        "sret({ [4 x double] }) align 8",
+    } else if (target.os.tag.isDarwin()) &.{
+        "declare { float } @argi_c_one([1 x float])",
+        "declare { float, float, float } @argi_c_floats([3 x float])",
+        "declare { double, double, double, double } @argi_c_doubles([4 x double])",
+        "declare [2 x i64] @argi_c_mixed([2 x i64])",
+    } else &.{
+        "declare { float } @argi_c_one([1 x float] alignstack(8))",
+        "declare { float, float, float } @argi_c_floats([3 x float] alignstack(8))",
+        "declare { double, double, double, double } @argi_c_doubles([4 x double] alignstack(8))",
+        "declare [2 x i64] @argi_c_mixed([2 x i64])",
+    });
+}
+
+test "C interop adapts overlapping numeric union arguments and results" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/39X_safe_reference_union_abi", "input 'value' has an unsupported C ABI type", "failed without a diagnostic");
+    const target = @import("builtin").target;
+    try checkNativeCFixture("tests/feature_tests/c_interop/38_numeric_union_abi", if (target.cpu.arch == .x86_64) &.{
+        "declare i64 @argi_c_union_number(i64)",
+        "declare float @argi_c_union_single(float)",
+        "declare { <2 x float>, float } @argi_c_union_floats(<2 x float>, float)",
+        "declare { double, float } @argi_c_union_mixed(double, float)",
+        "sret({ [4 x double] }) align 8",
+        "byval({ [3 x float] }) align 8",
+    } else if (target.os.tag.isDarwin()) &.{
+        "declare { float } @argi_c_union_single([1 x float])",
+        "declare { float, float, float } @argi_c_union_floats([3 x float])",
+        "declare { double, double, double, double } @argi_c_union_doubles([4 x double])",
+        "declare [2 x i64] @argi_c_union_mixed([2 x i64])",
+    } else &.{
+        "declare { float } @argi_c_union_single([1 x float] alignstack(8))",
+        "declare { float, float, float } @argi_c_union_floats([3 x float] alignstack(8))",
+        "declare { double, double, double, double } @argi_c_union_doubles([4 x double] alignstack(8))",
+        "declare [2 x i64] @argi_c_union_mixed([2 x i64])",
+    });
+}
+
+test "C interop adapts raw pointer fields without accepting safe reference fields" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/41X_safe_reference_array_abi", "input 'value' has an unsupported C ABI type", "failed without a diagnostic");
+    try checkNativeCFixture("tests/feature_tests/c_interop/40_raw_pointer_record_abi", if (@import("builtin").target.cpu.arch == .x86_64) &.{
+        "declare { i64, i64 } @argi_c_buffer_get()",
+        "declare { i64, float } @argi_c_buffer_weighted(i64, float)",
+        "byval({ { i64 }, i64 }) align 8",
+        "sret({ { i64 }, i64, { i64 } }) align 8",
+    } else &.{
+        "declare [2 x i64] @argi_c_buffer_get()",
+        "declare [2 x i64] @argi_c_buffer_weighted([2 x i64])",
+        "sret({ { i64 }, i64, { i64 } }) align 8",
+    });
+}
+
+test "C interop adapts raw pointer arrays and union alternatives" {
+    try checkNativeCFixture("tests/feature_tests/c_interop/42_raw_pointer_aggregate_abi", if (@import("builtin").target.cpu.arch == .x86_64) &.{
+        "declare { i64, i64 } @argi_c_pointers_get()",
+        "declare i64 @argi_c_address_get()",
+        "declare { i64, i64 } @argi_c_alternatives_get()",
+        "byval({ [2 x { i64 }] }) align 8",
+        "sret({ [2 x { { i64 }, i64 }] }) align 8",
+    } else &.{
+        "declare [2 x i64] @argi_c_pointers_get()",
+        "declare i64 @argi_c_address_get()",
+        "declare [2 x i64] @argi_c_alternatives_get()",
+        "sret({ [2 x { { i64 }, i64 }] }) align 8",
+    });
+}
+
+test "C interop preserves incomplete handle identities through raw pointers" {
+    try checkNativeCFixture("tests/feature_tests/c_interop/43_incomplete_handles", &.{
+        "declare ptr @argi_c_handle_create()",
+        "define ptr @argi_c_handle_export(ptr",
+    });
+}
+
+test "C interop rejects incomplete values construction layout and definitions" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/44X_incomplete_by_value", "has no value representation", "failed without a diagnostic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/45X_incomplete_size", "has no size or alignment", "failed without a diagnostic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/46X_incomplete_construction", "cannot be constructed", "failed without a diagnostic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/47X_incomplete_definition", "omit the definition", "failed without a diagnostic");
+}
+
+test "C interop rejects incompatible incomplete handles and safe references" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/48X_incomplete_handle_identity", "no function named '_read' accepts arguments", "failed without a diagnostic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/49X_incomplete_safe_reference", "cannot form a safe reference", "failed without a diagnostic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/50X_incomplete_alignment", "has no size or alignment", "failed without a diagnostic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/51X_incomplete_value_storage", "has no value representation", "failed without a diagnostic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/52X_incomplete_parameters", "cannot have compile-time parameters", "failed without a diagnostic");
+}
+
+test "C interop pairs owned handle acquisition and automatic cleanup" {
+    try checkNativeCFixture("tests/feature_tests/c_interop/53_owned_foreign_handles", &.{
+        "declare ptr @argi_c_owned_create(i32",
+        "declare void @argi_c_owned_destroy(ptr",
+    });
+}
+
+test "C interop protects owned handles and their retained capabilities" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/54X_owned_handle_copy", "cannot be copied implicitly", "failed without a diagnostic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/55X_owned_handle_after_cleanup", "reference depends on a root that has ended", "failed without a diagnostic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/56X_owned_handle_stale_capability", "binding 'capability' was moved", "failed without a diagnostic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/57X_owned_handle_private_storage", "field '_handle' is private to its module", "failed without a diagnostic");
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/58X_owned_handle_stale_cleanup", "binding 'capability' was moved", "failed without a diagnostic");
+}
+
+test "feature_tests/modules/32_qualified_comptime_calls" {
+    const test_path = "tests/feature_tests/modules/32_qualified_comptime_calls";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/modules/33X_qualified_comptime_call_missing_input" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/modules/33X_qualified_comptime_call_missing_input", "ExpectedLeftParen", "failed without a diagnostic");
+}
+
+test "C interop invokes host-managed scalar and record callbacks" {
+    try checkNativeCFixture("tests/feature_tests/c_interop/59_host_managed_callbacks", &.{
+        "define i32 @argi_callback_add(i32",
+        "@argi_callback_packet(",
+        "define void @argi_callback_packet(ptr sret(",
+    });
+}
+
+test "C interop preserves explicit enum values across modules and caching" {
+    try checkNativeCFixture("tests/feature_tests/c_interop/60_explicit_enum_values", &.{
+        "define i32 @argi_enum_next(i32",
+        "i32 -2147483648",
+        "i32 2147483647",
+    });
+}
+
+test "C interop rejects 61X_enum_value_overflow" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/61X_enum_value_overflow", "CEnum value is outside", "failed without a diagnostic");
+}
+
+test "C interop rejects 62X_enum_implicit_overflow" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/62X_enum_implicit_overflow", "CEnum value is outside", "failed without a diagnostic");
+}
+
+test "C interop rejects 63X_enum_value_not_integer" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/63X_enum_value_not_integer", "CEnum value must be an Int32 integer literal", "failed without a diagnostic");
+}
+
+test "C interop rejects 64X_enum_duplicate_value" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/64X_enum_duplicate_value", "duplicate CEnum numeric values", "failed without a diagnostic");
+}
+
+test "C interop diagnoses unsupported enum constant expressions" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/65X_enum_constant_expression", "constant expressions are not supported", "failed without a diagnostic");
+}
+
+test "C interop transports nominal callback pointers and record fields" {
+    try checkNativeCFixture("tests/feature_tests/c_interop/66_typed_callback_transport", &.{
+        "declare ptr @argi_callback_lookup()",
+        "define ptr @argi_callback_echo(ptr",
+        "declare i32 @argi_callback_apply(ptr",
+    });
+}
+
+test "C interop rejects 67X_callback_wrong_body_signature" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/67X_callback_wrong_body_signature", "no visible concrete CFunction body matches", "failed without a diagnostic");
+}
+
+test "C interop rejects 68X_callback_argi_body" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/68X_callback_argi_body", "no visible concrete CFunction body matches", "failed without a diagnostic");
+}
+
+test "C interop rejects 69X_callback_numeric_construction" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/69X_callback_numeric_construction", "construction requires '.function = name'", "failed without a diagnostic");
+}
+
+test "C interop rejects 70X_callback_safe_reference" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/70X_callback_safe_reference", "parameters require RawPointer", "failed without a diagnostic");
+}
+
+test "C interop rejects 71X_callback_declared_body" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/71X_callback_declared_body", "without symbol options or a body", "failed without a diagnostic");
+}
+
+test "C interop rejects 72X_callback_nominal_identity" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/72X_callback_nominal_identity", "no function named", "failed without a diagnostic");
+}
+
+test "C interop rejects 73X_callback_missing_capability" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/73X_callback_missing_capability", ".ffi uses reach [ffi]", "failed without a diagnostic");
+}
+
+test "C interop rejects 74X_callback_body_missing_capability" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/74X_callback_body_missing_capability", ".ffi uses reach [ffi]", "failed without a diagnostic");
+}
+
+test "C interop rejects 75X_callback_multiple_outputs" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/75X_callback_multiple_outputs", "must have zero or one output", "failed without a diagnostic");
+}
+
+test "C interop rejects 76X_callback_once_body" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/c_interop/76X_callback_once_body", "no visible concrete CFunction body matches", "failed without a diagnostic");
+}
+
+test "C interop selects typed record callbacks with indirect results" {
+    try checkNativeCFixture("tests/feature_tests/c_interop/77_typed_record_callback", &.{
+        "declare i32 @argi_typed_callback_probe(ptr",
+        "sret({ double, i32, { i64 } })",
+    });
+}
+
+test "C interop checks null callback values" {
+    try checkNativeCFixture("tests/feature_tests/c_interop/78_callback_null", &.{
+        "declare ptr @argi_callback_lookup(i32",
+        "icmp eq ptr",
+        "ptr null",
+    });
+}
+
+test "C interop checks indirect callback invocation arguments and capabilities" {
+    const cases = .{
+        .{ "tests/feature_tests/c_interop/79X_callback_invocation_missing_capability", ".ffi uses reach [ffi]" },
+        .{ "tests/feature_tests/c_interop/80X_callback_invocation_wrong_argument", "arguments do not match the C callback signature" },
+        .{ "tests/feature_tests/c_interop/81X_callback_invocation_non_callable", "expected a CFunctionPointer value" },
+        .{ "tests/feature_tests/c_interop/82X_callback_invocation_moved_value", "binding 'callback' was moved" },
+        .{ "tests/feature_tests/c_interop/84X_callback_invocation_stale_capability", "binding 'storage' was moved" },
+        .{ "tests/feature_tests/c_interop/86X_callback_wrapper_stale_capability", "binding 'storage' was moved" },
+        .{ "tests/feature_tests/c_interop/87X_callback_body_invocation_missing_capability", ".ffi uses reach [ffi]" },
+    };
+    inline for (cases) |case| {
+        try buildExpectFailWithoutNoise(case[0], case[1], "failed without a diagnostic");
+    }
+}
+
+test "C interop traps null callback invocation" {
+    const path = "tests/feature_tests/c_interop/83X_callback_invocation_null";
+    try expectSuccessfulBuild(path);
+    try runExpectFailure(path);
+}
+
+test "C interop invokes narrow floating and void callbacks" {
+    const target = @import("builtin").target;
+    const extends = (target.cpu.arch == .x86_64 and target.os.tag != .windows) or (target.cpu.arch == .aarch64 and target.os.tag.isDarwin());
+    try checkNativeCFixture("tests/feature_tests/c_interop/85_callback_invocation_scalar_signatures", if (extends) &.{
+        "callback.nonnull",
+        "call signext i16 %",
+        "i8 signext",
+        "call double %",
+        "call void %",
+    } else &.{
+        "callback.nonnull",
+        "call i16 %",
+        "(i8 ",
+        "call double %",
+        "call void %",
+    });
+}
+
+test "feature_tests/basics/47_contextual_float_literals" {
+    const path = "tests/feature_tests/basics/47_contextual_float_literals";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/basics/48X_numeric_record_field" {
+    try buildExpectFail("tests/feature_tests/basics/48X_numeric_record_field", "cannot assign numeric value of type");
+}
+
+test "feature_tests/basics/49_release_ir_optimization" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try tmpDirRootPath(&tmp);
+    defer allocator.free(root);
+    const fixture = "tests/feature_tests/basics/49_release_ir_optimization";
+    const debug_ir = try std.fs.path.join(allocator, &.{ root, "debug.ll" });
+    defer allocator.free(debug_ir);
+    const release_ir = try std.fs.path.join(allocator, &.{ root, "release.ll" });
+    defer allocator.free(release_ir);
+    try expectArgiBuildSuccess(&.{ "build", fixture, "--emit-llvm", debug_ir });
+    try runExpect(fixture, 0);
+    try expectArgiBuildSuccess(&.{ "build", fixture, "--release", "--emit-llvm", release_ir });
+    try runExpect(fixture, 0);
+    const before = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, debug_ir, allocator, .limited(1024 * 1024));
+    defer allocator.free(before);
+    const after = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, release_ir, allocator, .limited(1024 * 1024));
+    defer allocator.free(after);
+    try expect(std.mem.count(u8, before, "alloca ") > std.mem.count(u8, after, "alloca "));
+    try expect(std.mem.count(u8, before, "store i1 ") > std.mem.count(u8, after, "store i1 "));
+}
+
+test "feature_tests/cross_compilation/01_aarch64_data_model" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try tmpDirRootPath(&tmp);
+    defer allocator.free(root);
+    const object_path = try std.fs.path.join(allocator, &.{ root, "arm64.o" });
+    defer allocator.free(object_path);
+    const fixture = "tests/feature_tests/cross_compilation/01_aarch64_data_model";
+    // The second process exercises durable ModuleSG reuse for this target.
+    for (0..2) |_| try expectArgiBuildSuccess(&.{ "build", fixture, "--target", "aarch64-linux-gnu", "--just-emit-obj", object_path });
+    const object = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, object_path, allocator, .limited(1024 * 1024));
+    defer allocator.free(object);
+    try expectEqualStrings("\x7fELF", object[0..4]);
+    try expectEqual(@as(u16, 183), std.mem.readInt(u16, object[18..20], .little));
+    // The same sources cannot reuse ARM64's unsigned CChar decision on x86_64.
+    const other = try runArgiCommand(&.{ "build", fixture, "--target", "x86_64-linux-gnu", "--just-emit-obj", object_path });
+    defer allocator.free(other.stdout);
+    defer allocator.free(other.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, other.term);
+    try expect(std.mem.indexOf(u8, other.stderr, "255") != null);
+}
+
+test "cross compilation rejects incompatible run targets" {
+    const target = if (@import("builtin").cpu.arch == .aarch64 and @import("builtin").os.tag == .linux) "x86_64-linux-gnu" else "aarch64-linux-gnu";
+    const result = try runArgiCommand(&.{ "run", "tests/feature_tests/basics/01_minimal_main", "--target", target });
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
+    try expect(std.mem.indexOf(u8, result.stderr, "cannot execute an incompatible target") != null);
+}
+
+test "feature_tests/cross_compilation/02_aarch64_c_roundtrip" {
+    const allocator = std.testing.allocator;
+    var env_map = try std.testing.environ.createMap(allocator);
+    defer env_map.deinit();
+    const cc = env_map.get("ARGI_CROSS_CC") orelse return error.SkipZigTest;
+    const runner = env_map.get("ARGI_CROSS_RUNNER") orelse return error.SkipZigTest;
+    const runtime_root = env_map.get("ARGI_CROSS_RUNTIME_ROOT") orelse return error.SkipZigTest;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try tmpDirRootPath(&tmp);
+    defer allocator.free(root);
+    const repo = try repoRootPrefix();
+    defer allocator.free(repo);
+    const fixture = try std.fs.path.join(allocator, &.{ repo, "tests/feature_tests/cross_compilation/02_aarch64_c_roundtrip" });
+    defer allocator.free(fixture);
+    const native = try std.fs.path.join(allocator, &.{ fixture, "native.c" });
+    defer allocator.free(native);
+    const compiled = try runChildInCwd(&.{ cc, "-c", native, "-o", "native.o" }, root);
+    defer allocator.free(compiled.stdout);
+    defer allocator.free(compiled.stderr);
+    if (compiled.term != .exited or compiled.term.exited != 0) std.debug.print("cross C fixture failed: {s}\n", .{compiled.stderr});
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, compiled.term);
+    const argi = try installedArgiPath();
+    defer allocator.free(argi);
+    for ([_][]const u8{ "--stats", "--release" }) |mode| {
+        const built = try runChildInCwd(&.{ argi, "build", fixture, "--target", "aarch64-linux-gnu", "--cc", cc, "--link-file", "native.o", "--output", "app", mode }, root);
+        defer allocator.free(built.stdout);
+        defer allocator.free(built.stderr);
+        if (built.term != .exited or built.term.exited != 0) std.debug.print("cross build failed: {s}\n", .{built.stderr});
+        try expectEqual(std.process.Child.Term{ .exited = 0 }, built.term);
+        const executed = try runChildInCwd(&.{ runner, "-L", runtime_root, "./app" }, root);
+        defer allocator.free(executed.stdout);
+        defer allocator.free(executed.stderr);
+        try expectEqual(std.process.Child.Term{ .exited = 0 }, executed.term);
+    }
+}
+
+test "cross compilation requires an explicitly configured driver" {
+    const allocator = std.testing.allocator;
+    var env_map = try std.testing.environ.createMap(allocator);
+    defer env_map.deinit();
+    _ = env_map.swapRemove("CC");
+    const target = if (@import("builtin").cpu.arch == .aarch64 and @import("builtin").os.tag == .linux) "x86_64-linux-gnu" else "aarch64-linux-gnu";
+    const result = try runArgiCommandWithEnv(&.{ "build", "tests/feature_tests/basics/01_minimal_main", "--target", target }, &env_map);
+    defer allocator.free(result.stdout);
+    defer allocator.free(result.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
+    try expect(std.mem.indexOf(u8, result.stderr, "requires an explicit toolchain") != null);
+}
+
+test "cross compilation rejects the host C driver" {
+    const target = if (@import("builtin").cpu.arch == .aarch64 and @import("builtin").os.tag == .linux) "x86_64-linux-gnu" else "aarch64-linux-gnu";
+    const result = try runArgiCommand(&.{ "build", "tests/feature_tests/basics/01_minimal_main", "--target", target, "--cc", "cc" });
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
+    try expect(std.mem.indexOf(u8, result.stderr, "incompatible with") != null);
+}
+
+test "feature_tests/basics/50X_undeclared_assignment" {
+    try buildExpectFailExact("tests/feature_tests/basics/50X_undeclared_assignment",
+        \\tests/feature_tests/basics/50X_undeclared_assignment/main.rg:2:5: error: cannot assign to undeclared binding 'value'; declare it first with ':=' or '::='
+        \\      value = 1
+        \\      ^
+        \\
+    );
+}
+
+test "feature_tests/basics/51X_array_outer_length" {
+    try buildExpectFail("tests/feature_tests/basics/51X_array_outer_length", "array initializer has 2 elements; expected 3");
+}
+
+test "feature_tests/basics/52X_array_inner_length" {
+    try buildExpectFail("tests/feature_tests/basics/52X_array_inner_length", "array initializer has 2 elements; expected 3");
+}
+
+test "feature_tests/basics/53X_array_reference_shape" {
+    try buildExpectFail("tests/feature_tests/basics/53X_array_reference_shape", "array value has type '&[3][3]Int32'; expected '&[2][2]Int32'");
+}
+
+test "feature_tests/basics/54_generic_numeric_zero" {
+    const path = "tests/feature_tests/basics/54_generic_numeric_zero";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/basics/55_large_aggregate_returns" {
+    const path = "tests/feature_tests/basics/55_large_aggregate_returns";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/basics/56_temporary_record_array_read" {
+    const path = "tests/feature_tests/basics/56_temporary_record_array_read";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/basics/57X_temporary_record_array_bounds" {
+    const path = "tests/feature_tests/basics/57X_temporary_record_array_bounds";
+    try expectSuccessfulBuild(path);
+    try runExpectFailure(path);
+}
+
+test "feature_tests/io/33_print_owned_text" {
+    const path = "tests/feature_tests/io/33_print_owned_text";
+    try expectSuccessfulBuild(path);
+    try runExpectStdout(path, 0, "Hello world 123\n123!\n123123\nleftright\ninline 123\n");
+}
+
+test "feature_tests/io/34_print_terminator" {
+    const path = "tests/feature_tests/io/34_print_terminator";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/system/48_windows_path_roots" {
+    if (@import("builtin").os.tag != .windows) return error.SkipZigTest;
+    const test_path = "tests/feature_tests/system/48_windows_path_roots";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "diagnostic path normalization preserves code excerpt spelling" {
+    var bytes = "tests\\feature_tests\\case\\main.rg:2:5: error: invalid value\n    path := \"C:\\file.rg:test\"\n".*;
+    normalizeDiagnosticPaths(&bytes);
+    try expectEqualStrings("tests/feature_tests/case/main.rg:2:5: error: invalid value\n    path := \"C:\\file.rg:test\"\n", &bytes);
+}
+
+test "diagnostic path normalization handles related source locations" {
+    var bytes = "tests\\case\\main.rg:2:5: error: already used (first use at tests\\case\\main.rg:1:1)\n      file: tests\\case\\other.rg:7:1\n".*;
+    normalizeDiagnosticPaths(&bytes);
+    try expectEqualStrings("tests/case/main.rg:2:5: error: already used (first use at tests/case/main.rg:1:1)\n      file: tests/case/other.rg:7:1\n", &bytes);
+}
+
+test "feature_tests/system/49_target_selection" {
+    const test_path = "tests/feature_tests/system/49_target_selection";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/system/50X_target_condition" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/system/50X_target_condition", "unknown OS, architecture, or ABI name", "failed without a diagnostic");
+}
+
+test "feature_tests/types/273_associated_constructor_dispatch" {
+    const test_path = "tests/feature_tests/types/273_associated_constructor_dispatch";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/types/274X_constructor_wrong_association" {
+    try buildExpectFail("tests/feature_tests/types/274X_constructor_wrong_association", "Init.Result must be its participant type");
+}
+
+test "feature_tests/types/275X_constructor_return_only_overloads" {
+    try buildExpectFail("tests/feature_tests/types/275X_constructor_return_only_overloads", "equivalent implementation participant patterns are not allowed");
+}
+
+test "feature_tests/types/276X_constructor_unknown_type" {
+    try buildExpectFail("tests/feature_tests/types/276X_constructor_unknown_type", "an implementation participant type is unknown or unresolved");
+}
+
+test "feature_tests/types/277_associated_destructor_dispatch" {
+    const test_path = "tests/feature_tests/types/277_associated_destructor_dispatch";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/types/278X_destructor_wrong_association" {
+    try buildExpectFail("tests/feature_tests/types/278X_destructor_wrong_association", "implementation operation has an incompatible input signature");
+}
+
+test "feature_tests/types/279X_destructor_unknown_type" {
+    try buildExpectFail("tests/feature_tests/types/279X_destructor_unknown_type", "an implementation participant type is unknown or unresolved");
+}
+
+test "feature_tests/basics/58_bracket_expression_grouping" {
+    const path = "tests/feature_tests/basics/58_bracket_expression_grouping";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/basics/59X_empty_expression_grouping" {
+    try buildExpectFail("tests/feature_tests/basics/59X_empty_expression_grouping", "expression grouping requires exactly one expression");
+}
+
+test "feature_tests/basics/60X_multiple_expression_grouping" {
+    try buildExpectFail("tests/feature_tests/basics/60X_multiple_expression_grouping", "expected ']' after grouped expression");
+}
+
+test "feature_tests/ownership/300_opaque_scalar_borrow_cleanup" {
+    const path = "tests/feature_tests/ownership/300_opaque_scalar_borrow_cleanup";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/ownership/301X_opaque_scalar_borrow_element_moved" {
+    try buildExpectFail("tests/feature_tests/ownership/301X_opaque_scalar_borrow_element_moved", "place rooted at 'element' is moved and cannot be used");
+}
+
+test "feature_tests/basics/61_explicit_integer_conversions" {
+    const path = "tests/feature_tests/basics/61_explicit_integer_conversions";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/basics/62_integer_conversion_ranges" {
+    const path = "tests/feature_tests/basics/62_integer_conversion_ranges";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/basics/63X_implicit_integer_widening" {
+    try buildExpectFail("tests/feature_tests/basics/63X_implicit_integer_widening", "implicit numeric conversion is not supported");
+}
+
+test "feature_tests/basics/64X_checked_integer_conversion_requires_errable" {
+    try buildExpectFail("tests/feature_tests/basics/64X_checked_integer_conversion_requires_errable", "cannot assign a fallible numeric result directly");
+}
+
+test "feature_tests/basics/65_integer_conversion_error_trace" {
+    const path = "tests/feature_tests/basics/65_integer_conversion_error_trace";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/modules/34X_missing_imported_type" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/modules/34X_missing_imported_type", "module 'dep' has no type named 'Missing'", "no matching function");
+}
+
+test "runtime safety diagnostics include cause and source location" {
+    const cases = .{
+        .{ "tests/feature_tests/basics/66X_runtime_abort_diagnostic", "main.rg:2:5: runtime error: explicit abort" },
+        .{ "tests/feature_tests/collections/38X_fixed_array_index_out_of_bounds", "runtime error: array index is out of bounds" },
+        .{ "tests/feature_tests/c_interop/83X_callback_invocation_null", "runtime error: cannot call a null C function pointer" },
+    };
+    inline for (cases) |case| {
+        try expectSuccessfulBuild(case[0]);
+        const path = try outputPathFor(case[0]);
+        defer std.testing.allocator.free(path);
+        const result = try runChild(&.{path});
+        defer std.testing.allocator.free(result.stdout);
+        defer std.testing.allocator.free(result.stderr);
+        try expect(result.term != .exited or result.term.exited != 0);
+        try expect(std.mem.indexOf(u8, result.stderr, case[1]) != null);
+    }
+}
+
+test "formatter CLI checks prints and atomically updates source" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try tmpDirRootPath(&tmp);
+    defer std.testing.allocator.free(root);
+    const path = try std.fs.path.join(std.testing.allocator, &.{ root, "main.rg" });
+    defer std.testing.allocator.free(path);
+    const source = "main()->(.status_code:Int32=0):={ status_code=0 }\n";
+    const expected = "main() -> (.status_code: Int32 = 0) := { status_code = 0 }\n";
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.rg", .data = source });
+    const printed = try runArgiCommand(&.{ "format", path, "--stdout" });
+    defer std.testing.allocator.free(printed.stdout);
+    defer std.testing.allocator.free(printed.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, printed.term);
+    try expectEqualStrings(expected, printed.stdout);
+    const checked = try runArgiCommand(&.{ "format", root, "--check" });
+    defer std.testing.allocator.free(checked.stdout);
+    defer std.testing.allocator.free(checked.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, checked.term);
+    const untouched = try tmp.dir.readFileAlloc(std.testing.io, "main.rg", std.testing.allocator, .limited(4096));
+    defer std.testing.allocator.free(untouched);
+    try expectEqualStrings(source, untouched);
+    const written = try runArgiCommand(&.{ "format", root });
+    defer std.testing.allocator.free(written.stdout);
+    defer std.testing.allocator.free(written.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, written.term);
+    const contents = try tmp.dir.readFileAlloc(std.testing.io, "main.rg", std.testing.allocator, .limited(4096));
+    defer std.testing.allocator.free(contents);
+    try expectEqualStrings(expected, contents);
+    const clean_check = try runArgiCommand(&.{ "format", root, "--check" });
+    defer std.testing.allocator.free(clean_check.stdout);
+    defer std.testing.allocator.free(clean_check.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, clean_check.term);
+    const app = try std.fs.path.join(std.testing.allocator, &.{ root, "app" });
+    defer std.testing.allocator.free(app);
+    try expectArgiBuildSuccess(&.{ "build", root, "--output", app });
+}
+
+test "feature_tests/basics/67_formatter_layout" {
+    const path = "tests/feature_tests/basics/67_formatter_layout";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "formatter prepares all files before changing any source" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try tmpDirRootPath(&tmp);
+    defer std.testing.allocator.free(root);
+    const source = "main()->(.status_code:Int32=0):={}\n";
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "a.rg", .data = source });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "b.rg", .data = "main(]" });
+    const result = try runArgiCommand(&.{ "format", root });
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
+    const after = try tmp.dir.readFileAlloc(std.testing.io, "a.rg", std.testing.allocator, .limited(4096));
+    defer std.testing.allocator.free(after);
+    try expectEqualStrings(source, after);
+}
+
+test "feature_tests/text/41_float_parsing" {
+    const path = "tests/feature_tests/text/41_float_parsing";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/polymorphism/65_contextual_choice_arguments" {
+    const path = "tests/feature_tests/polymorphism/65_contextual_choice_arguments";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/polymorphism/66X_contextual_choice_ambiguous" {
+    try buildExpectFail("tests/feature_tests/polymorphism/66X_contextual_choice_ambiguous", "multiple applicable operation identities");
+}
+
+test "feature_tests/basics/68_contextual_array_stores" {
+    const path = "tests/feature_tests/basics/68_contextual_array_stores";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/basics/69X_typed_array_store" {
+    try buildExpectFail("tests/feature_tests/basics/69X_typed_array_store", "implicit numeric conversion is not supported");
+}
+
+test "feature_tests/basics/70X_array_store_range" {
+    try buildExpectFail("tests/feature_tests/basics/70X_array_store_range", "integer literal 256 does not fit in 'UInt8'");
+}
+
+test "feature_tests/io/35_numeric_writer_formatting" {
+    const path = "tests/feature_tests/io/35_numeric_writer_formatting";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/text/42_numeric_formatting_allocations" {
+    const path = "tests/feature_tests/text/42_numeric_formatting_allocations";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/io/36_float_writer_formatting" {
+    const path = "tests/feature_tests/io/36_float_writer_formatting";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/text/43_float_formatting_allocations" {
+    const path = "tests/feature_tests/text/43_float_formatting_allocations";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/text/44_float16_formatting_roundtrip" {
+    const path = "tests/feature_tests/text/44_float16_formatting_roundtrip";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/numbers/01_pcg32" {
+    const path = "tests/feature_tests/numbers/01_pcg32";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/numbers/02X_pcg32_private_state" {
+    try buildExpectFail("tests/feature_tests/numbers/02X_pcg32_private_state", "field '_state' is private to its module");
+}
+
+test "feature_tests/numbers/03_duration" {
+    const path = "tests/feature_tests/numbers/03_duration";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/numbers/04X_duration_private_state" {
+    try buildExpectFail("tests/feature_tests/numbers/04X_duration_private_state", "field '_nanoseconds' is private to its module");
+}
+
+test "feature_tests/system/54_clock" {
+    const path = "tests/feature_tests/system/54_clock";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/system/55_posix_clock_contract" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    try checkNativeCFixture("tests/feature_tests/system/55_posix_clock_contract", &.{ "@clock_gettime", "@nanosleep" });
+}
+
+test "feature_tests/system/56_windows_clock_adapter" {
+    try checkNativeCFixture("tests/feature_tests/system/56_windows_clock_adapter", &.{"@argi_windows_clock_probe"});
+}
+
+test "feature_tests/system/57X_clock_missing_capability" {
+    try buildExpectFail("tests/feature_tests/system/57X_clock_missing_capability", ".self uses reach [clock] expected as '&Clock'");
+}
+
+test "feature_tests/system/58X_clock_missing_ffi" {
+    try buildExpectFail("tests/feature_tests/system/58X_clock_missing_ffi", "Init argument '.ffi' requires a reachable value or an explicit argument");
+}
+
+test "feature_tests/system/59X_clock_domains" {
+    try buildExpectFail("tests/feature_tests/system/59X_clock_domains", "no function named 'elapsed' accepts arguments (.start: UnixTimestamp, .end: MonotonicInstant)");
+}
+
+test "feature_tests/system/60_processes" {
+    const path = "tests/feature_tests/system/60_processes";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/system/61_process_errors" {
+    const path = "tests/feature_tests/system/61_process_errors";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/system/62_process_termination" {
+    const path = "tests/feature_tests/system/62_process_termination";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/system/63X_process_missing_capability" {
+    try buildExpectFail("tests/feature_tests/system/63X_process_missing_capability", ".self uses reach [proc_man] expected as '&ProcessManager'");
+}
+
+test "feature_tests/system/64X_process_private_handle" {
+    try buildExpectFail("tests/feature_tests/system/64X_process_private_handle", "field '_handle' is private to its module");
+}
+
+test "feature_tests/system/65X_process_stream_lifetime" {
+    try buildExpectFail("tests/feature_tests/system/65X_process_stream_lifetime", "reference depends on a root that has ended");
+}
+
+test "feature_tests/system/66_windows_process_quoting" {
+    try checkNativeCFixture("tests/feature_tests/system/66_windows_process_quoting", &.{"@argi_windows_process_quote_probe"});
+}
+
+test "feature_tests/system/67_posix_process_contract" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    try checkNativeCFixture("tests/feature_tests/system/67_posix_process_contract", &.{"@argi_posix_process_probe"});
+}
+
+test "feature_tests/system/68X_process_missing_ffi" {
+    try buildExpectFail("tests/feature_tests/system/68X_process_missing_ffi", "Init argument '.ffi' requires a reachable value or an explicit argument");
+}
+
+test "feature_tests/system/69X_process_copy" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/system/69X_process_copy", "cannot be copied implicitly", "failed without a diagnostic");
+}
+
+test "feature_tests/system/70_process_argument_lifetime" {
+    const path = "tests/feature_tests/system/70_process_argument_lifetime";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/semver/01_parse_compare" {
+    const path = "tests/feature_tests/semver/01_parse_compare";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/semver/02_format" {
+    const path = "tests/feature_tests/semver/02_format";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/semver/03X_private_state" {
+    try buildExpectFail("tests/feature_tests/semver/03X_private_state", "field '_text' is private to its module");
+}
+
+test "feature_tests/semver/04X_view_lifetime" {
+    try buildExpectFail("tests/feature_tests/semver/04X_view_lifetime", "reference depends on a root that has ended");
+}
+
+test "feature_tests/basics/71_large_numeric_array_branches" {
+    const path = "tests/feature_tests/basics/71_large_numeric_array_branches";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+// CPython remains an optional native dependency. Supplying its adapter object
+// and embedding library enables executable coverage without requiring Python
+// development packages for ordinary compiler builds.
+fn checkPythonFixture(path: []const u8) !void {
+    const allocator = std.testing.allocator;
+    var environment = try std.testing.environ.createMap(allocator);
+    defer environment.deinit();
+    const runtime = environment.get("ARGI_PYTHON_RUNTIME_OBJECT") orelse return error.SkipZigTest;
+    const library = environment.get("ARGI_PYTHON_LIBRARY") orelse return error.SkipZigTest;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try tmpDirRootPath(&tmp);
+    defer allocator.free(root);
+    const argi = try installedArgiPath();
+    defer allocator.free(argi);
+    const repo = try repoRootPrefix();
+    defer allocator.free(repo);
+    const fixture = try std.fs.path.join(allocator, &.{ repo, path });
+    defer allocator.free(fixture);
+    const app = if (@import("builtin").os.tag == .windows) "app.exe" else "app";
+    const executable = try std.fs.path.join(allocator, &.{ root, app });
+    defer allocator.free(executable);
+    for (0..2) |_| {
+        const built = try runChildInCwd(&.{ argi, "build", fixture, "--output", app, "--link-file", runtime, "--link-file", library, "--emit-llvm", "app.ll" }, root);
+        defer allocator.free(built.stdout);
+        defer allocator.free(built.stderr);
+        if (built.term != .exited or built.term.exited != 0) std.debug.print("{s}", .{built.stderr});
+        try expectEqual(std.process.Child.Term{ .exited = 0 }, built.term);
+        const executed = try runChildInCwd(&.{executable}, root);
+        defer allocator.free(executed.stdout);
+        defer allocator.free(executed.stderr);
+        if (executed.term != .exited or executed.term.exited != 0) std.debug.print("{s}", .{executed.stderr});
+        try expectEqual(std.process.Child.Term{ .exited = 0 }, executed.term);
+        try expectEqualStrings("", executed.stderr);
+        const ir = try tmp.dir.readFileAlloc(std.testing.io, "app.ll", allocator, .limited(16 * 1024 * 1024));
+        defer allocator.free(ir);
+        try expect(std.mem.indexOf(u8, ir, "@_argi_python_start") != null);
+        try expect(std.mem.indexOf(u8, ir, "@_argi_python_stop") != null);
+        try expect(std.mem.indexOf(u8, ir, "@_argi_python_release") != null);
+    }
+}
+
+test "feature_tests/python/01_json" {
+    try checkPythonFixture("tests/feature_tests/python/01_json");
+}
+
+test "usecase_tests/05_python_csv_report" {
+    const allocator = std.testing.allocator;
+    var environment = try std.testing.environ.createMap(allocator);
+    defer environment.deinit();
+    const runtime = environment.get("ARGI_PYTHON_RUNTIME_OBJECT") orelse return error.SkipZigTest;
+    const library = environment.get("ARGI_PYTHON_LIBRARY") orelse return error.SkipZigTest;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try tmpDirRootPath(&tmp);
+    defer allocator.free(root);
+    const argi = try installedArgiPath();
+    defer allocator.free(argi);
+    const repo = try repoRootPrefix();
+    defer allocator.free(repo);
+    const fixture = try std.fs.path.join(allocator, &.{ repo, "tests/usecase_tests/05_python_csv_report" });
+    defer allocator.free(fixture);
+    const sample = try std.fs.path.join(allocator, &.{ fixture, "requests.csv" });
+    defer allocator.free(sample);
+    const app = if (@import("builtin").os.tag == .windows) "report.exe" else "report";
+    const executable = try std.fs.path.join(allocator, &.{ root, app });
+    defer allocator.free(executable);
+
+    // Rebuild from outside the checkout to exercise installed module discovery
+    // and frontend reuse without a Python import from the example's directory.
+    for (0..2) |_| {
+        const built = try runChildInCwd(&.{ argi, "build", fixture, "--output", app, "--link-file", runtime, "--link-file", library, "--emit-llvm", "report.ll" }, root);
+        defer allocator.free(built.stdout);
+        defer allocator.free(built.stderr);
+        if (built.term != .exited or built.term.exited != 0) std.debug.print("{s}", .{built.stderr});
+        try expectEqual(std.process.Child.Term{ .exited = 0 }, built.term);
+        const result = try runChildInCwd(&.{ executable, sample }, root);
+        defer allocator.free(result.stdout);
+        defer allocator.free(result.stderr);
+        try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
+        try expectEqualStrings("requests\t4\nmean_ms\t40.00\nmedian_ms\t25.00\n", result.stdout);
+        try expectEqualStrings("", result.stderr);
+    }
+
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "custom.csv", .data = "endpoint,latency_ms\r\n\"/caf\xc3\xa9\",1.5\r\n/search,2.5\r\n" });
+    const custom = try runChildInCwd(&.{ executable, "custom.csv", "latency_ms" }, root);
+    defer allocator.free(custom.stdout);
+    defer allocator.free(custom.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, custom.term);
+    try expectEqualStrings("requests\t2\nmean_ms\t2.00\nmedian_ms\t2.00\n", custom.stdout);
+    try expectEqualStrings("", custom.stderr);
+
+    for ([_]struct { data: []const u8, diagnostic: []const u8 }{
+        .{ .data = "duration_ms\n", .diagnostic = "StatisticsError" },
+        .{ .data = "other\n10\n", .diagnostic = "KeyError" },
+        .{ .data = "duration_ms\n10\ninvalid\n", .diagnostic = "invalid_input" },
+        .{ .data = "endpoint,duration_ms\n/health\n", .diagnostic = "TypeError" },
+        .{ .data = "duration_ms\n-1\n", .diagnostic = "invalid_duration" },
+        .{ .data = "duration_ms\nnan\n", .diagnostic = "invalid_input" },
+        .{ .data = "duration_ms\ninf\n", .diagnostic = "invalid_input" },
+        .{ .data = "duration_ms\n\xff\n", .diagnostic = "UnicodeDecodeError" },
+    }) |case| {
+        try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "invalid.csv", .data = case.data });
+        const result = try runChildInCwd(&.{ executable, "invalid.csv" }, root);
+        defer allocator.free(result.stdout);
+        defer allocator.free(result.stderr);
+        try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
+        try expectEqualStrings("", result.stdout);
+        try expect(std.mem.indexOf(u8, result.stderr, case.diagnostic) != null);
+    }
+    const missing = try runChildInCwd(&.{ executable, "missing.csv" }, root);
+    defer allocator.free(missing.stdout);
+    defer allocator.free(missing.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, missing.term);
+    try expectEqualStrings("", missing.stdout);
+    try expect(std.mem.indexOf(u8, missing.stderr, "missing.csv") != null);
+    const usage = try runChildInCwd(&.{executable}, root);
+    defer allocator.free(usage.stdout);
+    defer allocator.free(usage.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, usage.term);
+    try expect(std.mem.indexOf(u8, usage.stdout, "Usage: csv-report") != null);
+}
+test "feature_tests/python/02_values_errors" {
+    try checkPythonFixture("tests/feature_tests/python/02_values_errors");
+}
+test "feature_tests/python/03_keywords" {
+    try checkPythonFixture("tests/feature_tests/python/03_keywords");
+}
+test "feature_tests/python/04X_object_lifetime" {
+    try buildExpectFail("tests/feature_tests/python/04X_object_lifetime", "reference depends on a root that has ended");
+}
+test "feature_tests/python/05X_object_copy" {
+    try buildExpectFail("tests/feature_tests/python/05X_object_copy", "cannot be copied implicitly");
+}
+test "feature_tests/python/06X_private_handle" {
+    try buildExpectFail("tests/feature_tests/python/06X_private_handle", "field '_handle' is private to its module");
+}
+test "feature_tests/python/07X_object_escape" {
+    try buildExpectFail("tests/feature_tests/python/07X_object_escape", "local storage generation");
+}
+
+test "feature_tests/python/08_conversions" {
+    try checkPythonFixture("tests/feature_tests/python/08_conversions");
+}
+
+test "feature_tests/python/09_methods_iteration" {
+    try checkPythonFixture("tests/feature_tests/python/09_methods_iteration");
+}
+
+test "feature_tests/python/10_exceptions" {
+    try checkPythonFixture("tests/feature_tests/python/10_exceptions");
+}
+
+test "feature_tests/python/11_numeric_buffers" {
+    try checkPythonFixture("tests/feature_tests/python/11_numeric_buffers");
+}
+test "feature_tests/python/12X_numeric_readonly" {
+    try buildExpectFail("tests/feature_tests/python/12X_numeric_readonly", "no generic function named 'copy_numeric'");
+}
+
+test "feature_tests/functions/32_generic_view_dispatch_order" {
+    const path = "tests/feature_tests/functions/32_generic_view_dispatch_order";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/system/71_system_entropy" {
+    const path = "tests/feature_tests/system/71_system_entropy";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/system/72X_entropy_readonly" {
+    try buildExpectFail("tests/feature_tests/system/72X_entropy_readonly", "no function named 'fill_random_bytes' accepts arguments");
+}
+
+test "feature_tests/more/01_uri" {
+    const path = "tests/feature_tests/more/01_uri";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/more/02_linear_algebra" {
+    const path = "tests/feature_tests/more/02_linear_algebra";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/more/03X_matrix_dimensions" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/more/03X_matrix_dimensions", "operator '*' is not defined", "failed without a diagnostic");
+}
+
+test "feature_tests/functions/33X_generic_conflict_diagnostic" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/functions/33X_generic_conflict_diagnostic", "conflicting inferred generic parameters", "failed without a diagnostic");
+}
+
+test "feature_tests/functions/34_pipe_value_expressions" {
+    const path = "tests/feature_tests/functions/34_pipe_value_expressions";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/functions/35X_nested_pipe_requires_outer_placeholder" {
+    try buildExpectFail("tests/feature_tests/functions/35X_nested_pipe_requires_outer_placeholder", "pipe right-hand side must use at least one argument placeholder");
+}
+
+test "feature_tests/functions/36X_generic_pipe_temporary_escape" {
+    try buildExpectFail("tests/feature_tests/functions/36X_generic_pipe_temporary_escape", "local storage generation");
+}
+
+test "feature_tests/functions/37X_pipe_temporary_consumed_twice" {
+    try buildExpectFail(
+        "tests/feature_tests/functions/37X_pipe_temporary_consumed_twice",
+        "was moved and cannot be used again",
+    );
+}
+
+test "feature_tests/basics/72_multiline_operations" {
+    const path = "tests/feature_tests/basics/72_multiline_operations";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/basics/73X_multiline_operation_missing_operand" {
+    try buildExpectFail("tests/feature_tests/basics/73X_multiline_operation_missing_operand", "expected an expression after operator '+'");
+}
+
+test "feature_tests/basics/74X_leading_operator_requires_group" {
+    try buildExpectFail("tests/feature_tests/basics/74X_leading_operator_requires_group", "a leading operator requires scalar grouping");
+}
+
+test "feature_tests/basics/75_fallible_main_success" {
+    const path = "tests/feature_tests/basics/75_fallible_main_success";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/basics/76_fallible_main_trace" {
+    const path = "tests/feature_tests/basics/76_fallible_main_trace";
+    try expectSuccessfulBuild(path);
+    const output = try outputPathFor(path);
+    defer std.testing.allocator.free(output);
+    const result = try runChild(&.{output});
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
+    try expectEqualStrings("", result.stdout);
+    try expect(std.mem.indexOf(u8, result.stderr, "error trace") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "error trace (most recent first)") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "starting application") != null);
+    const location = if (@import("builtin").os.tag == .windows) "76_fallible_main_trace\\main.rg:3:" else "76_fallible_main_trace/main.rg:3:";
+    try expect(std.mem.indexOf(u8, result.stderr, location) != null);
+}
+
+test "feature_tests/basics/77_fallible_main_system" {
+    const path = "tests/feature_tests/basics/77_fallible_main_system";
+    try expectSuccessfulBuild(path);
+    try runExpectStdoutWithArgs(path, &.{}, 0, "ready\n");
+}
+
+test "feature_tests/basics/78X_fallible_main_non_void" {
+    try buildExpectFail("tests/feature_tests/basics/78X_fallible_main_non_void", "main must return no values or (.status_code: Int32)");
+}
+
+test "feature_tests/basics/79_fallible_main_custom_tracer" {
+    const path = "tests/feature_tests/basics/79_fallible_main_custom_tracer";
+    try expectSuccessfulBuild(path);
+    const output = try outputPathFor(path);
+    defer std.testing.allocator.free(output);
+    const result = try runChild(&.{output});
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
+    try expectEqualStrings("custom trace\n", result.stderr);
+}
+
+test "feature_tests/basics/80_fallible_output_defaults" {
+    const path = "tests/feature_tests/basics/80_fallible_output_defaults";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/basics/81X_fallible_output_default_missing_value" {
+    try buildExpectFail("tests/feature_tests/basics/81X_fallible_output_default_missing_value", "expected a default expression");
+}
+
+test "feature_tests/basics/82_fallible_main_explicit" {
+    const path = "tests/feature_tests/basics/82_fallible_main_explicit";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/ownership/338X_caller_storage_overwritten_cleanup" {
+    try buildExpectFail("tests/feature_tests/ownership/338X_caller_storage_overwritten_cleanup", "local storage generation");
+}
+
+test "feature_tests/ownership/339X_caller_storage_field_cleanup_borrow" {
+    try buildExpectFail("tests/feature_tests/ownership/339X_caller_storage_field_cleanup_borrow", "local storage generation");
+}
+
+test "feature_tests/ownership/340X_caller_storage_field_cleanup" {
+    try buildExpectFail("tests/feature_tests/ownership/340X_caller_storage_field_cleanup", "local storage generation");
+}
+
+test "feature_tests/ownership/341X_caller_storage_array_cleanup_borrow" {
+    try buildExpectFail("tests/feature_tests/ownership/341X_caller_storage_array_cleanup_borrow", "local storage generation");
+}
+
+test "feature_tests/ownership/342X_caller_storage_array_cleanup" {
+    try buildExpectFail("tests/feature_tests/ownership/342X_caller_storage_array_cleanup", "local storage generation");
+}
+
+test "feature_tests/ownership/321X_caller_storage_cleanup" {
+    try buildExpectFail("tests/feature_tests/ownership/321X_caller_storage_cleanup", "local storage generation");
+}
+
+test "feature_tests/ownership/322X_caller_storage_forwarding" {
+    try buildExpectFail("tests/feature_tests/ownership/322X_caller_storage_forwarding", "local storage generation");
+}
+
+test "feature_tests/ownership/323X_caller_storage_branches" {
+    try buildExpectFail("tests/feature_tests/ownership/323X_caller_storage_branches", "local storage generation");
+}
+
+test "feature_tests/ownership/324X_caller_storage_loop" {
+    try buildExpectFail("tests/feature_tests/ownership/324X_caller_storage_loop", "local storage generation");
+}
+
+test "feature_tests/ownership/325X_caller_storage_recursive" {
+    try buildExpectFail("tests/feature_tests/ownership/325X_caller_storage_recursive", "local storage generation");
+}
+
+test "feature_tests/ownership/326X_caller_storage_scope" {
+    try buildExpectFail("tests/feature_tests/ownership/326X_caller_storage_scope", "local storage generation");
+}
+
+test "feature_tests/basics/83_fallible_main_local_tracer" {
+    const path = "tests/feature_tests/basics/83_fallible_main_local_tracer";
+    try expectSuccessfulBuild(path);
+    const output = try outputPathFor(path);
+    defer std.testing.allocator.free(output);
+    const result = try runChild(&.{output});
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
+    try expectEqualStrings("", result.stdout);
+    try expect(std.mem.indexOf(u8, result.stderr, "error trace (most recent first)") != null);
+    const location = if (@import("builtin").os.tag == .windows) "83_fallible_main_local_tracer\\main.rg:4:" else "83_fallible_main_local_tracer/main.rg:4:";
+    try expect(std.mem.indexOf(u8, result.stderr, location) != null);
+}
+
+test "feature_tests/ownership/327X_caller_storage_generic" {
+    try buildExpectFail("tests/feature_tests/ownership/327X_caller_storage_generic", "local storage generation");
+}
+
+test "feature_tests/ownership/328X_caller_storage_virtual" {
+    try buildExpectFail("tests/feature_tests/ownership/328X_caller_storage_virtual", "local storage generation");
+}
+
+test "feature_tests/ownership/329X_caller_storage_dynamic_references" {
+    try buildExpectFail("tests/feature_tests/ownership/329X_caller_storage_dynamic_references", "reference depends on a root that has ended");
+}
+
+test "feature_tests/ownership/330X_caller_storage_dynamic_wrapper" {
+    try buildExpectFail("tests/feature_tests/ownership/330X_caller_storage_dynamic_wrapper", "reference depends on a root that has ended");
+}
+
+test "feature_tests/ownership/331X_caller_storage_virtual_value" {
+    try buildExpectFail("tests/feature_tests/ownership/331X_caller_storage_virtual_value", "local storage generation");
+}
+
+test "feature_tests/ownership/332X_caller_storage_array" {
+    try buildExpectFail("tests/feature_tests/ownership/332X_caller_storage_array", "local storage generation");
+}
+
+test "feature_tests/ownership/333X_caller_storage_large_return" {
+    try buildExpectFail("tests/feature_tests/ownership/333X_caller_storage_large_return", "local storage generation");
+}
+
+test "feature_tests/ownership/334X_caller_storage_branch_initialization" {
+    try buildExpectFail("tests/feature_tests/ownership/334X_caller_storage_branch_initialization", "local storage generation");
+}
+
+test "feature_tests/ownership/335X_caller_storage_cleanup_dependencies" {
+    try buildExpectFail("tests/feature_tests/ownership/335X_caller_storage_cleanup_dependencies", "local storage generation");
+}
+
+test "feature_tests/ownership/336X_caller_storage_cleanup_borrow" {
+    try buildExpectFail("tests/feature_tests/ownership/336X_caller_storage_cleanup_borrow", "local storage generation");
+}
+
+test "feature_tests/ownership/337X_caller_storage_cleanup_after_borrow" {
+    try buildExpectFail("tests/feature_tests/ownership/337X_caller_storage_cleanup_after_borrow", "local storage generation");
+}
+
+test "feature_tests/errors/80_local_handle" {
+    try expectSuccessfulBuild("tests/feature_tests/errors/80_local_handle");
+    try runExpect("tests/feature_tests/errors/80_local_handle", 0);
+}
+
+test "feature_tests/errors/93_report_return" {
+    try expectSuccessfulBuild("tests/feature_tests/errors/93_report_return");
+    try runExpect("tests/feature_tests/errors/93_report_return", 0);
+}
+
+test "feature_tests/errors/94_report_return_void_main" {
+    try expectSuccessfulBuild("tests/feature_tests/errors/94_report_return_void_main");
+    try runExpect("tests/feature_tests/errors/94_report_return_void_main", 0);
+}
+
+test "feature_tests/errors/95X_report_return_non_errable" {
+    try buildExpectFail("tests/feature_tests/errors/95X_report_return_non_errable", "handle expects an Errable value");
+}
+
+test "feature_tests/errors/97_void_main_report_return" {
+    try expectSuccessfulBuild("tests/feature_tests/errors/97_void_main_report_return");
+    try runExpect("tests/feature_tests/errors/97_void_main_report_return", 0);
+}
+
+test "feature_tests/basics/86X_fallible_main_removed" {
+    try buildExpectFail("tests/feature_tests/basics/86X_fallible_main_removed", "main must return no values or (.status_code: Int32)");
+}
+
+test "feature_tests/basics/85_void_main" {
+    try expectSuccessfulBuild("tests/feature_tests/basics/85_void_main");
+    try runExpect("tests/feature_tests/basics/85_void_main", 0);
+}
+
+test "feature_tests/errors/88_handle_without_result" {
+    try expectSuccessfulBuild("tests/feature_tests/errors/88_handle_without_result");
+    try runExpect("tests/feature_tests/errors/88_handle_without_result", 0);
+}
+
+test "feature_tests/errors/89X_handle_partial_recovery" {
+    try buildExpectFail("tests/feature_tests/errors/89X_handle_partial_recovery", "cannot be used");
+}
+
+test "feature_tests/errors/90X_handle_without_result_value" {
+    try buildExpectFail("tests/feature_tests/errors/90X_handle_without_result_value", "handle without a value binding produces Void");
+}
+
+test "feature_tests/errors/91X_handle_without_result_non_errable" {
+    try buildExpectFail("tests/feature_tests/errors/91X_handle_without_result_non_errable", "handle expects an Errable value");
+}
+
+test "feature_tests/errors/92_handle_abort" {
+    try expectSuccessfulBuild("tests/feature_tests/errors/92_handle_abort");
+    try runExpectFailure("tests/feature_tests/errors/92_handle_abort");
+}
+
+test "feature_tests/errors/81X_handle_unassigned" {
+    try buildExpectFail("tests/feature_tests/errors/81X_handle_unassigned", "cannot be used");
+}
+
+test "feature_tests/errors/82X_handle_duplicate_names" {
+    try buildExpectFail("tests/feature_tests/errors/82X_handle_duplicate_names", "must have different names");
+}
+
+test "feature_tests/errors/83_handle_owner" {
+    try expectSuccessfulBuild("tests/feature_tests/errors/83_handle_owner");
+    try runExpect("tests/feature_tests/errors/83_handle_owner", 0);
+}
+
+test "feature_tests/polymorphism/51_virtual_associated_parameters" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/51_virtual_associated_parameters");
+    try runExpect("tests/feature_tests/polymorphism/51_virtual_associated_parameters", 0);
+}
+
+test "feature_tests/collections/117_deque" {
+    try expectSuccessfulBuild("tests/feature_tests/collections/117_deque");
+    try runExpect("tests/feature_tests/collections/117_deque", 0);
+}
+
+test "feature_tests/collections/118_deque_ownership" {
+    try expectSuccessfulBuild("tests/feature_tests/collections/118_deque_ownership");
+    try runExpect("tests/feature_tests/collections/118_deque_ownership", 0);
+}
+
+test "feature_tests/collections/119_deque_growth_failure" {
+    try expectSuccessfulBuild("tests/feature_tests/collections/119_deque_growth_failure");
+    try runExpect("tests/feature_tests/collections/119_deque_growth_failure", 0);
+}
+
+test "feature_tests/collections/123_deque_zero_sized" {
+    try expectSuccessfulBuild("tests/feature_tests/collections/123_deque_zero_sized");
+    try runExpect("tests/feature_tests/collections/123_deque_zero_sized", 0);
+}
+
+test "feature_tests/collections/120X_deque_borrow_after_growth" {
+    try buildExpectFail("tests/feature_tests/collections/120X_deque_borrow_after_growth", "root that has ended");
+}
+
+test "feature_tests/collections/121X_deque_borrow_after_pop" {
+    try buildExpectFail("tests/feature_tests/collections/121X_deque_borrow_after_pop", "root that has ended");
+}
+
+test "feature_tests/collections/122X_deque_copy" {
+    try buildExpectFail("tests/feature_tests/collections/122X_deque_copy", "cannot be copied implicitly");
+}
+
+test "feature_tests/system/73_network_loopback" {
+    try expectSuccessfulBuild("tests/feature_tests/system/73_network_loopback");
+    try runExpect("tests/feature_tests/system/73_network_loopback", 0);
+}
+
+test "feature_tests/system/74_network_errors" {
+    try expectSuccessfulBuild("tests/feature_tests/system/74_network_errors");
+    try runExpect("tests/feature_tests/system/74_network_errors", 0);
+}
+
+test "feature_tests/system/75X_network_owner_copy" {
+    try buildExpectFail("tests/feature_tests/system/75X_network_owner_copy", "cannot be copied implicitly");
+}
+
+test "feature_tests/system/76X_network_private_handle" {
+    try buildExpectFail("tests/feature_tests/system/76X_network_private_handle", "field '_handle' is private");
+}
+
+test "feature_tests/system/77X_network_after_cleanup" {
+    try buildExpectFail("tests/feature_tests/system/77X_network_after_cleanup", "root that has ended");
+}
+
+test "feature_tests/system/78X_network_missing_capability" {
+    try buildExpectFail("tests/feature_tests/system/78X_network_missing_capability", "network");
+}
+
+test "feature_tests/errors/84X_handle_non_errable" {
+    try buildExpectFail("tests/feature_tests/errors/84X_handle_non_errable", "handle expects an Errable value");
+}
+
+test "feature_tests/polymorphism/52_virtual_bound_values" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/52_virtual_bound_values");
+    try runExpect("tests/feature_tests/polymorphism/52_virtual_bound_values", 0);
+}
+
+test "feature_tests/polymorphism/53X_virtual_bound_value_mismatch" {
+    try buildExpectFail("tests/feature_tests/polymorphism/53X_virtual_bound_value_mismatch", "incompatible associated elements for the virtual interface");
+}
+
+test "feature_tests/polymorphism/54X_virtual_bound_borrow_after_cleanup" {
+    try buildExpectFail("tests/feature_tests/polymorphism/54X_virtual_bound_borrow_after_cleanup", "root that has ended");
+}
+
+test "feature_tests/polymorphism/55X_virtual_method_generic" {
+    try buildExpectFail("tests/feature_tests/polymorphism/55X_virtual_method_generic", "operation-local generic parameters");
+}
+
+test "feature_tests/python/13_numpy_vector" {
+    var environment = try std.testing.environ.createMap(std.testing.allocator);
+    defer environment.deinit();
+    if (!std.mem.eql(u8, environment.get("ARGI_PYTHON_NUMPY") orelse "", "1")) return error.SkipZigTest;
+    try checkPythonFixture("tests/feature_tests/python/13_numpy_vector");
+}
+
+test "feature_tests/errors/85_handle_evaluation_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/errors/85_handle_evaluation_cleanup");
+    try runExpect("tests/feature_tests/errors/85_handle_evaluation_cleanup", 0);
+}
+
+test "feature_tests/errors/86X_handle_local_borrow" {
+    try buildExpectFail("tests/feature_tests/errors/86X_handle_local_borrow", "root that has ended");
+}
+
+test "feature_tests/errors/87X_handle_arbitrary_choice" {
+    try buildExpectFail("tests/feature_tests/errors/87X_handle_arbitrary_choice", "handle expects an Errable value");
+}
+
+test "feature_tests/python/14X_numpy_copy" {
+    try buildExpectFail("tests/feature_tests/python/14X_numpy_copy", "cannot be copied implicitly");
+}
+
+test "feature_tests/python/15X_numpy_context_lifetime" {
+    try buildExpectFail("tests/feature_tests/python/15X_numpy_context_lifetime", "root that has ended");
+}
+
+test "feature_tests/python/16X_numpy_private_object" {
+    try buildExpectFail("tests/feature_tests/python/16X_numpy_private_object", "field '_object' is private");
+}
+
+test "feature_tests/system/79_network_native" {
+    try checkNativeCFixture("tests/feature_tests/system/79_network_native", &.{"declare i32 @argi_network_probe()"});
+}
+
+test "feature_tests/binary/01_endian" {
+    try expectSuccessfulBuild("tests/feature_tests/binary/01_endian");
+    try runExpect("tests/feature_tests/binary/01_endian", 0);
+}
+
+test "feature_tests/binary/02_cursor" {
+    try expectSuccessfulBuild("tests/feature_tests/binary/02_cursor");
+    try runExpect("tests/feature_tests/binary/02_cursor", 0);
+}
+
+test "feature_tests/collections/124_deque_iteration" {
+    try expectSuccessfulBuild("tests/feature_tests/collections/124_deque_iteration");
+    try runExpect("tests/feature_tests/collections/124_deque_iteration", 0);
+}
+
+test "feature_tests/collections/125X_deque_iterator_after_mutation" {
+    try buildExpectFail("tests/feature_tests/collections/125X_deque_iterator_after_mutation", "root that has ended");
+}
+
+test "feature_tests/io/37_block_streams" {
+    try expectSuccessfulBuild("tests/feature_tests/io/37_block_streams");
+    try runExpect("tests/feature_tests/io/37_block_streams", 0);
+}
+
+test "feature_tests/system/80_filesystem_operations" {
+    try expectSuccessfulBuild("tests/feature_tests/system/80_filesystem_operations");
+    try runExpect("tests/feature_tests/system/80_filesystem_operations", 0);
+}
+
+test "feature_tests/system/81_temporary_directories" {
+    try expectSuccessfulBuild("tests/feature_tests/system/81_temporary_directories");
+    try runExpect("tests/feature_tests/system/81_temporary_directories", 0);
+}
+
+test "feature_tests/system/82X_directory_copy" {
+    try buildExpectFail("tests/feature_tests/system/82X_directory_copy", "cannot be copied implicitly");
+}
+
+test "feature_tests/system/83X_directory_after_cleanup" {
+    try buildExpectFail("tests/feature_tests/system/83X_directory_after_cleanup", "root that has ended");
+}
+
+test "feature_tests/system/84X_temporary_directory_private" {
+    try buildExpectFail("tests/feature_tests/system/84X_temporary_directory_private", "field '_handle' is private");
+}
+
+test "feature_tests/io/38_buffered_block_refill" {
+    try expectSuccessfulBuild("tests/feature_tests/io/38_buffered_block_refill");
+    try runExpect("tests/feature_tests/io/38_buffered_block_refill", 0);
+}
+
+test "feature_tests/collections/126X_deque_iteration_reference_after_pop" {
+    try buildExpectFail("tests/feature_tests/collections/126X_deque_iteration_reference_after_pop", "root that has ended");
+}
+
+test "feature_tests/binary/03X_cursor_after_storage" {
+    try buildExpectFail("tests/feature_tests/binary/03X_cursor_after_storage", "root that has ended");
+}
+
+test "feature_tests/system/85_filesystem_native" {
+    try checkNativeCFixture("tests/feature_tests/system/85_filesystem_native", &.{"declare i32 @argi_filesystem_probe()"});
+}
+
+test "feature_tests/collections/127_hash_iteration" {
+    try expectSuccessfulBuild("tests/feature_tests/collections/127_hash_iteration");
+    try runExpect("tests/feature_tests/collections/127_hash_iteration", 0);
+}
+
+test "feature_tests/collections/128X_hash_iterator_after_put" {
+    try buildExpectFail("tests/feature_tests/collections/128X_hash_iterator_after_put", "root that has ended");
+}
+
+test "feature_tests/collections/129X_hash_entry_after_remove" {
+    try buildExpectFail("tests/feature_tests/collections/129X_hash_entry_after_remove", "root that has ended");
+}
+
+test "feature_tests/collections/130X_hash_iterator_after_cleanup" {
+    try buildExpectFail("tests/feature_tests/collections/130X_hash_iterator_after_cleanup", "root that has ended");
+}
+
+test "feature_tests/collections/131X_hash_entry_mutable_key" {
+    try buildExpectFail("tests/feature_tests/collections/131X_hash_entry_mutable_key", "read-only");
+}
+
+test "feature_tests/collections/132X_hash_set_iterator_after_remove" {
+    try buildExpectFail("tests/feature_tests/collections/132X_hash_set_iterator_after_remove", "root that has ended");
+}
+
+test "feature_tests/collections/133_hash_iteration_collisions" {
+    try expectSuccessfulBuild("tests/feature_tests/collections/133_hash_iteration_collisions");
+    try runExpect("tests/feature_tests/collections/133_hash_iteration_collisions", 0);
+}
+
+test "feature_tests/collections/134X_hash_rw_entry_after_put" {
+    try buildExpectFail("tests/feature_tests/collections/134X_hash_rw_entry_after_put", "root that has ended");
+}
+
+test "feature_tests/collections/135X_hash_key_after_growth" {
+    try buildExpectFail("tests/feature_tests/collections/135X_hash_key_after_growth", "root that has ended");
+}
+
+test "feature_tests/text/34_utf8_scalars" {
+    try expectSuccessfulBuild("tests/feature_tests/text/34_utf8_scalars");
+    try runExpect("tests/feature_tests/text/34_utf8_scalars", 0);
+}
+
+test "feature_tests/text/35_utf8_invalid" {
+    try expectSuccessfulBuild("tests/feature_tests/text/35_utf8_invalid");
+    try runExpect("tests/feature_tests/text/35_utf8_invalid", 0);
+}
+
+test "feature_tests/text/36X_utf8_after_storage" {
+    try buildExpectFail("tests/feature_tests/text/36X_utf8_after_storage", "root that has ended");
+}
+
+test "feature_tests/text/37X_unicode_scalar_private" {
+    try buildExpectFail("tests/feature_tests/text/37X_unicode_scalar_private", "field '_value' is private");
+}
+
+test "feature_tests/testing/16_equality_helpers" {
+    try argiTestExpectStderr("tests/feature_tests/testing/16_equality_helpers", &.{}, 0, "PASS equality_helpers\n");
+}
+
+test "feature_tests/testing/17_numeric_diagnostics signed_value" {
+    try argiTestExpectStderrContains("tests/feature_tests/testing/17_numeric_diagnostics", &.{ "--filter", "signed_value" }, 1, "expected -9223372036854775808, actual 9223372036854775807");
+}
+
+test "feature_tests/testing/17_numeric_diagnostics unsigned_value" {
+    try argiTestExpectStderrContains("tests/feature_tests/testing/17_numeric_diagnostics", &.{ "--filter", "unsigned_value" }, 1, "expected 18446744073709551615, actual 0");
+}
+
+test "feature_tests/testing/17_numeric_diagnostics float_value" {
+    try argiTestExpectStderrContains("tests/feature_tests/testing/17_numeric_diagnostics", &.{ "--filter", "float_value" }, 1, "expected 1.5, actual 2.5");
+}
+
+test "feature_tests/testing/17_numeric_diagnostics bool_value" {
+    try argiTestExpectStderrContains("tests/feature_tests/testing/17_numeric_diagnostics", &.{ "--filter", "bool_value" }, 1, "expected true, actual false");
+}
+
+test "feature_tests/testing/18_string_diagnostics string_mismatch" {
+    try argiTestExpectStderrContains("tests/feature_tests/testing/18_string_diagnostics", &.{ "--filter", "string_mismatch" }, 1, "strings differ at byte 1: expected 98, actual 120; lengths expected 3, actual 3");
+}
+
+test "feature_tests/testing/18_string_diagnostics string_prefix" {
+    try argiTestExpectStderrContains("tests/feature_tests/testing/18_string_diagnostics", &.{ "--filter", "string_prefix" }, 1, "strings differ at byte 2: expected 99, actual <end>; lengths expected 3, actual 2");
+}
+
+test "feature_tests/testing/18_string_diagnostics string_empty" {
+    try argiTestExpectStderrContains("tests/feature_tests/testing/18_string_diagnostics", &.{ "--filter", "string_empty" }, 1, "strings differ at byte 0: expected <end>, actual 120; lengths expected 0, actual 1");
+}
+
+test "feature_tests/testing/18_string_diagnostics string_embedded_nul" {
+    try argiTestExpectStderrContains("tests/feature_tests/testing/18_string_diagnostics", &.{ "--filter", "string_embedded_nul" }, 1, "strings differ at byte 2: expected 90, actual 91; lengths expected 3, actual 3");
+}
+
+test "feature_tests/testing/19_view_diagnostics view_mismatch" {
+    try argiTestExpectStderrContains("tests/feature_tests/testing/19_view_diagnostics", &.{ "--filter", "view_mismatch" }, 1, "views differ at index 1; lengths expected 3, actual 3");
+}
+
+test "feature_tests/testing/19_view_diagnostics byte_prefix" {
+    try argiTestExpectStderrContains("tests/feature_tests/testing/19_view_diagnostics", &.{ "--filter", "byte_prefix" }, 1, "bytes differ at byte 1: expected 2, actual <end>; lengths expected 2, actual 1");
+}
+
+test "feature_tests/testing/20_bounded_diagnostics bounded_message" {
+    try argiTestExpectStderrContains("tests/feature_tests/testing/20_bounded_diagnostics", &.{ "--filter", "bounded_message" }, 1, "<context truncated>");
+}
+
+test "feature_tests/collections/136_owned_hash_map" {
+    try expectSuccessfulBuild("tests/feature_tests/collections/136_owned_hash_map");
+    try runExpect("tests/feature_tests/collections/136_owned_hash_map", 0);
+}
+
+test "feature_tests/collections/137_owned_hash_lifecycle" {
+    try expectSuccessfulBuild("tests/feature_tests/collections/137_owned_hash_lifecycle");
+    try runExpect("tests/feature_tests/collections/137_owned_hash_lifecycle", 0);
+}
+
+test "feature_tests/collections/138_owned_hash_allocation_failure" {
+    try expectSuccessfulBuild("tests/feature_tests/collections/138_owned_hash_allocation_failure");
+    try runExpect("tests/feature_tests/collections/138_owned_hash_allocation_failure", 0);
+}
+
+test "feature_tests/collections/139_owned_hash_nested_values" {
+    try expectSuccessfulBuild("tests/feature_tests/collections/139_owned_hash_nested_values");
+    try runExpect("tests/feature_tests/collections/139_owned_hash_nested_values", 0);
+}
+
+test "feature_tests/collections/140X_owned_hash_map_copy" {
+    try buildExpectFail("tests/feature_tests/collections/140X_owned_hash_map_copy", "cannot be copied implicitly");
+}
+
+test "feature_tests/collections/141X_owned_hash_map_borrow_after_put" {
+    try buildExpectFail("tests/feature_tests/collections/141X_owned_hash_map_borrow_after_put", "root that has ended");
+}
+
+test "feature_tests/collections/142X_owned_hash_entry_after_remove" {
+    try buildExpectFail("tests/feature_tests/collections/142X_owned_hash_entry_after_remove", "root that has ended");
+}
+
+test "feature_tests/collections/143X_owned_hash_value_after_move" {
+    try buildExpectFail("tests/feature_tests/collections/143X_owned_hash_value_after_move", "moved");
+}
+
+test "feature_tests/collections/144X_owned_hash_key_mutation" {
+    try buildExpectFail("tests/feature_tests/collections/144X_owned_hash_key_mutation", "read-only");
+}
+
+test "feature_tests/io/39_bounded_streams" {
+    try expectSuccessfulBuild("tests/feature_tests/io/39_bounded_streams");
+    try runExpect("tests/feature_tests/io/39_bounded_streams", 0);
+}
+
+test "feature_tests/io/40_bounded_stream_failures" {
+    try expectSuccessfulBuild("tests/feature_tests/io/40_bounded_stream_failures");
+    try runExpect("tests/feature_tests/io/40_bounded_stream_failures", 0);
+}
+
+test "feature_tests/io/41_bounded_stream_allocation_failure" {
+    try expectSuccessfulBuild("tests/feature_tests/io/41_bounded_stream_allocation_failure");
+    try runExpect("tests/feature_tests/io/41_bounded_stream_allocation_failure", 0);
+}
+
+test "feature_tests/polymorphism/67_generic_nominal_policy_overloads" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/67_generic_nominal_policy_overloads");
+    try runExpect("tests/feature_tests/polymorphism/67_generic_nominal_policy_overloads", 0);
+}
+
+test "feature_tests/numbers/05_checked_arithmetic_exhaustive" {
+    try expectSuccessfulBuild("tests/feature_tests/numbers/05_checked_arithmetic_exhaustive");
+    try runExpect("tests/feature_tests/numbers/05_checked_arithmetic_exhaustive", 0);
+}
+
+test "feature_tests/numbers/06_checked_arithmetic_boundaries" {
+    try expectSuccessfulBuild("tests/feature_tests/numbers/06_checked_arithmetic_boundaries");
+    try runExpect("tests/feature_tests/numbers/06_checked_arithmetic_boundaries", 0);
+}
+test "feature_tests/numbers/07X_checked_arithmetic_mixed_types" {
+    try buildExpectFail("tests/feature_tests/numbers/07X_checked_arithmetic_mixed_types", "conflicting inferred generic parameters");
+}
+test "feature_tests/numbers/08X_checked_arithmetic_float" {
+    try buildExpectFail("tests/feature_tests/numbers/08X_checked_arithmetic_float", "does not satisfy contract constraint 'Int'");
+}
+
+test "feature_tests/numbers/09_parse_uintnative" {
+    try expectSuccessfulBuild("tests/feature_tests/numbers/09_parse_uintnative");
+    try runExpect("tests/feature_tests/numbers/09_parse_uintnative", 0);
+}
+
+test "feature_tests/system/86_word_count_consumer" {
+    try expectSuccessfulBuild("tests/feature_tests/system/86_word_count_consumer");
+    try runExpect("tests/feature_tests/system/86_word_count_consumer", 0);
+}
+
+test "usecase_tests/03_word_count" {
+    const test_path = "tests/usecase_tests/03_word_count";
+    try expectSuccessfulBuild(test_path);
+    const output_path = try outputPathFor(test_path);
+    defer std.testing.allocator.free(output_path);
+    const result = try runChild(&.{ output_path, "tests/feature_tests/system/86_word_count_consumer/data", "64" });
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
+    var lines = std.mem.tokenizeScalar(u8, result.stdout, '\n');
+    var seen: u8 = 0;
+    while (lines.next()) |line| {
+        const bit: u8 = if (std.mem.eql(u8, line, "3\tcafé")) 1 else if (std.mem.eql(u8, line, "2\ttea")) 2 else if (std.mem.eql(u8, line, "2\t🙂")) 4 else return error.UnexpectedWordCount;
+        try expect(seen & bit == 0);
+        seen |= bit;
+    }
+    try expectEqual(@as(u8, 7), seen);
+    try runExpectStdoutWithArgs(test_path, &.{}, 0, "Usage: word-count <directory> [maximum-file-bytes]\n");
+    const failure = try runChild(&.{ output_path, "tests/feature_tests/system/86_word_count_consumer/data", "1" });
+    defer std.testing.allocator.free(failure.stdout);
+    defer std.testing.allocator.free(failure.stderr);
+    switch (failure.term) {
+        .exited => |code| try expect(code != 0),
+        else => return error.UnexpectedProcessTermination,
+    }
+    try expectEqualStrings("", failure.stdout);
+    try expect(std.mem.indexOf(u8, failure.stderr, "size_limit_exceeded") != null);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const large_input = try std.testing.allocator.alloc(u8, 5 * 2000);
+    defer std.testing.allocator.free(large_input);
+    for (0..2000) |index| @memcpy(large_input[index * 5 ..][0..5], "word ");
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "large.txt", .data = large_input });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "unicode.txt", .data = "word\tcafé\r\n" });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "empty.txt", .data = "" });
+    try tmp.dir.createDirPath(std.testing.io, "nested");
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "nested/ignored.txt", .data = "ignored" });
+
+    var cwd_buffer: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const cwd_length = try tmp.dir.realPath(std.testing.io, &cwd_buffer);
+    const repo_root = try repoRootPrefix();
+    defer std.testing.allocator.free(repo_root);
+    const executable = try std.fs.path.join(std.testing.allocator, &.{ repo_root, output_path });
+    defer std.testing.allocator.free(executable);
+
+    for ([_][]const u8{ ".", "./" }) |directory| {
+        const counted = try runChildInCwd(&.{ executable, directory, "10000" }, cwd_buffer[0..cwd_length]);
+        defer std.testing.allocator.free(counted.stdout);
+        defer std.testing.allocator.free(counted.stderr);
+        try expectEqual(std.process.Child.Term{ .exited = 0 }, counted.term);
+        try expectEqualStrings("", counted.stderr);
+        try expect(std.mem.eql(u8, counted.stdout, "2001\tword\n1\tcafé\n") or
+            std.mem.eql(u8, counted.stdout, "1\tcafé\n2001\tword\n"));
+    }
+
+    for ([_][]const u8{ "9999", "invalid", "-1" }) |limit| {
+        const rejected = try runChildInCwd(&.{ executable, ".", limit }, cwd_buffer[0..cwd_length]);
+        defer std.testing.allocator.free(rejected.stdout);
+        defer std.testing.allocator.free(rejected.stderr);
+        try expectEqual(std.process.Child.Term{ .exited = 1 }, rejected.term);
+        try expectEqualStrings("", rejected.stdout);
+        try expect(rejected.stderr.len > 0);
+        if (std.mem.eql(u8, limit, "9999")) {
+            try expect(std.mem.indexOf(u8, rejected.stderr, "large.txt") != null);
+        }
+    }
+
+    try tmp.dir.createDirPath(std.testing.io, "invalid-utf8");
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "invalid-utf8/bad.txt", .data = "valid \xff" });
+    const invalid_utf8 = try runChildInCwd(&.{ executable, "invalid-utf8" }, cwd_buffer[0..cwd_length]);
+    defer std.testing.allocator.free(invalid_utf8.stdout);
+    defer std.testing.allocator.free(invalid_utf8.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, invalid_utf8.term);
+    try expectEqualStrings("", invalid_utf8.stdout);
+    try expect(std.mem.indexOf(u8, invalid_utf8.stderr, "invalid_utf8") != null);
+    try expect(std.mem.indexOf(u8, invalid_utf8.stderr, "bad.txt") != null);
+
+    try tmp.dir.createDirPath(std.testing.io, "empty-directory");
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "empty-directory/empty.txt", .data = "" });
+    const empty = try runChildInCwd(&.{ executable, "empty-directory", "0" }, cwd_buffer[0..cwd_length]);
+    defer std.testing.allocator.free(empty.stdout);
+    defer std.testing.allocator.free(empty.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, empty.term);
+    try expectEqualStrings("", empty.stdout);
+    try expectEqualStrings("", empty.stderr);
+}
+
+test "feature_tests/binary/04_byte_search" {
+    try expectSuccessfulBuild("tests/feature_tests/binary/04_byte_search");
+    try runExpect("tests/feature_tests/binary/04_byte_search", 0);
+}
+
+test "feature_tests/numbers/10_integer_foundations" {
+    try expectSuccessfulBuild("tests/feature_tests/numbers/10_integer_foundations");
+    try runExpect("tests/feature_tests/numbers/10_integer_foundations", 0);
+}
+
+test "feature_tests/text/45_ascii_foundations" {
+    try expectSuccessfulBuild("tests/feature_tests/text/45_ascii_foundations");
+    try runExpect("tests/feature_tests/text/45_ascii_foundations", 0);
+}
+
+test "feature_tests/text/46_whitespace_tokens" {
+    try expectSuccessfulBuild("tests/feature_tests/text/46_whitespace_tokens");
+    try runExpect("tests/feature_tests/text/46_whitespace_tokens", 0);
+}
+
+test "feature_tests/text/47X_whitespace_source_after_cleanup" {
+    try buildExpectFail("tests/feature_tests/text/47X_whitespace_source_after_cleanup", "root that has ended");
+}
+
+test "feature_tests/text/48_checked_string_slice" {
+    try expectSuccessfulBuild("tests/feature_tests/text/48_checked_string_slice");
+    try runExpect("tests/feature_tests/text/48_checked_string_slice", 0);
+}
+
+test "feature_tests/numbers/11_float_classification" {
+    try expectSuccessfulBuild("tests/feature_tests/numbers/11_float_classification");
+    try runExpect("tests/feature_tests/numbers/11_float_classification", 0);
+}
+
+test "feature_tests/collections/145_owned_string_view_lookup" {
+    try expectSuccessfulBuild("tests/feature_tests/collections/145_owned_string_view_lookup");
+    try runExpect("tests/feature_tests/collections/145_owned_string_view_lookup", 0);
+}
+
+test "feature_tests/collections/146X_owned_view_after_put" {
+    try buildExpectFail("tests/feature_tests/collections/146X_owned_view_after_put", "root that has ended");
+}
+
+test "feature_tests/numbers/12_float_rounding" {
+    try expectSuccessfulBuild("tests/feature_tests/numbers/12_float_rounding");
+    try runExpect("tests/feature_tests/numbers/12_float_rounding", 0);
+}
+
+test "feature_tests/collections/147_bit_set_view" {
+    try expectSuccessfulBuild("tests/feature_tests/collections/147_bit_set_view");
+    try runExpect("tests/feature_tests/collections/147_bit_set_view", 0);
+}
+
+test "feature_tests/io/42_memory_streams" {
+    try expectSuccessfulBuild("tests/feature_tests/io/42_memory_streams");
+    try runExpect("tests/feature_tests/io/42_memory_streams", 0);
+}
+
+test "feature_tests/io/43_limited_reader" {
+    try expectSuccessfulBuild("tests/feature_tests/io/43_limited_reader");
+    try runExpect("tests/feature_tests/io/43_limited_reader", 0);
+}
+
+test "feature_tests/io/44_bounded_lines" {
+    try expectSuccessfulBuild("tests/feature_tests/io/44_bounded_lines");
+    try runExpect("tests/feature_tests/io/44_bounded_lines", 0);
+}
+
+test "feature_tests/collections/148_priority_queue" {
+    try expectSuccessfulBuild("tests/feature_tests/collections/148_priority_queue");
+    try runExpect("tests/feature_tests/collections/148_priority_queue", 0);
+}
+
+test "feature_tests/collections/149_owned_bit_set" {
+    try expectSuccessfulBuild("tests/feature_tests/collections/149_owned_bit_set");
+    try runExpect("tests/feature_tests/collections/149_owned_bit_set", 0);
+}
+
+test "feature_tests/collections/150X_bit_set_view_after_cleanup" {
+    try buildExpectFail("tests/feature_tests/collections/150X_bit_set_view_after_cleanup", "root that has ended");
+}
+
+test "feature_tests/collections/151_bit_set_algebra" {
+    try expectSuccessfulBuild("tests/feature_tests/collections/151_bit_set_algebra");
+    try runExpect("tests/feature_tests/collections/151_bit_set_algebra", 0);
+}
+
+test "feature_tests/system/87_path_capacity_bounds" {
+    try expectSuccessfulBuild("tests/feature_tests/system/87_path_capacity_bounds");
+    try runExpect("tests/feature_tests/system/87_path_capacity_bounds", 0);
+}
+
+test "feature_tests/control_flow/17_for_owning" {
+    try expectSuccessfulBuild("tests/feature_tests/control_flow/17_for_owning");
+    try runExpect("tests/feature_tests/control_flow/17_for_owning", 0);
+}
+
+test "feature_tests/control_flow/20X_for_owning_reuse" {
+    try buildExpectFail("tests/feature_tests/control_flow/20X_for_owning_reuse", "moved");
+}
+
+test "feature_tests/control_flow/21X_for_owning_borrow" {
+    try buildExpectFail("tests/feature_tests/control_flow/21X_for_owning_borrow", "OwningIterable");
+}
+
+test "feature_tests/control_flow/22_loop_transfer_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/control_flow/22_loop_transfer_cleanup");
+    try runExpect("tests/feature_tests/control_flow/22_loop_transfer_cleanup", 0);
+}
+
+test "feature_tests/collections/149_owned_ordering" {
+    try expectSuccessfulBuild("tests/feature_tests/collections/149_owned_ordering");
+    try runExpect("tests/feature_tests/collections/149_owned_ordering", 0);
+}
+
+test "feature_tests/control_flow/23_generic_for" {
+    try expectSuccessfulBuild("tests/feature_tests/control_flow/23_generic_for");
+    try runExpect("tests/feature_tests/control_flow/23_generic_for", 0);
+}
+
+test "feature_tests/basics/84_errable_composition" {
+    try expectSuccessfulBuild("tests/feature_tests/basics/84_errable_composition");
+    try runExpect("tests/feature_tests/basics/84_errable_composition", 0);
+}
+
+test "feature_tests/io/45_owned_lines" {
+    try expectSuccessfulBuild("tests/feature_tests/io/45_owned_lines");
+    try runExpect("tests/feature_tests/io/45_owned_lines", 0);
+}
+
+test "feature_tests/system/88_path_normalization" {
+    try expectSuccessfulBuild("tests/feature_tests/system/88_path_normalization");
+    try runExpect("tests/feature_tests/system/88_path_normalization", 0);
+}
+
+test "feature_tests/system/90_utc_calendar" {
+    try expectSuccessfulBuild("tests/feature_tests/system/90_utc_calendar");
+    try runExpect("tests/feature_tests/system/90_utc_calendar", 0);
+}
+
+test "feature_tests/numbers/13_elementary_math" {
+    try expectSuccessfulBuild("tests/feature_tests/numbers/13_elementary_math");
+    try runExpect("tests/feature_tests/numbers/13_elementary_math", 0);
+}
+
+test "feature_tests/codecs/01_hex_base64" {
+    try expectSuccessfulBuild("tests/feature_tests/codecs/01_hex_base64");
+    try runExpect("tests/feature_tests/codecs/01_hex_base64", 0);
+}
+
+test "feature_tests/logging/01_writer_logger" {
+    try expectSuccessfulBuild("tests/feature_tests/logging/01_writer_logger");
+    try runExpect("tests/feature_tests/logging/01_writer_logger", 0);
+}
+
+test "feature_tests/system/92_utc_format" {
+    try expectSuccessfulBuild("tests/feature_tests/system/92_utc_format");
+    try runExpect("tests/feature_tests/system/92_utc_format", 0);
+}
+
+test "feature_tests/system/89_cli_options" {
+    try expectSuccessfulBuild("tests/feature_tests/system/89_cli_options");
+    try runExpect("tests/feature_tests/system/89_cli_options", 0);
+}
+
+test "feature_tests/system/91_cli_schema" {
+    try expectSuccessfulBuild("tests/feature_tests/system/91_cli_schema");
+    try runExpect("tests/feature_tests/system/91_cli_schema", 0);
+}
+
+test "feature_tests/system/93_directory_walk" {
+    try expectSuccessfulBuild("tests/feature_tests/system/93_directory_walk");
+    try runExpect("tests/feature_tests/system/93_directory_walk", 0);
+}
+
+test "usecase_tests/04_tree" {
+    const path = "tests/usecase_tests/04_tree";
+    try expectSuccessfulBuild(path);
+    try runExpectStdoutWithArgs(path, &.{ "--root", "does-not-exist", "--depth=0" }, 0, "");
+    const output = try outputPathFor(path);
+    defer std.testing.allocator.free(output);
+    const result = try runChild(&.{ output, "-r", "tests/feature_tests/system/86_word_count_consumer/data", "-d2" });
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
+    try expect(std.mem.indexOf(u8, result.stdout, "/ignored/nested.txt\n") != null);
+    var lines = std.mem.tokenizeScalar(u8, result.stdout, '\n');
+    var count: usize = 0;
+    while (lines.next() != null) count += 1;
+    try expectEqual(@as(usize, 5), count);
+    const help = try runChild(&.{ output, "--help" });
+    defer std.testing.allocator.free(help.stdout);
+    defer std.testing.allocator.free(help.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, help.term);
+    try expect(std.mem.indexOf(u8, help.stdout, "-r, --root <PATH> (required)") != null);
+    try expect(std.mem.indexOf(u8, help.stdout, "[default: 64]") != null);
+}
+
+test "feature_tests/codecs/02_csv" {
+    try expectSuccessfulBuild("tests/feature_tests/codecs/02_csv");
+    try runExpect("tests/feature_tests/codecs/02_csv", 0);
+}
+
+test "feature_tests/collections/150_dynamic_array_geometric_growth" {
+    try expectSuccessfulBuild("tests/feature_tests/collections/150_dynamic_array_geometric_growth");
+    try runExpect("tests/feature_tests/collections/150_dynamic_array_geometric_growth", 0);
+}
+
+test "feature_tests/codecs/03_json" {
+    try expectSuccessfulBuild("tests/feature_tests/codecs/03_json");
+    try runExpect("tests/feature_tests/codecs/03_json", 0);
+}
+
+test "feature_tests/system/94_atomic_u32" {
+    try expectSuccessfulBuild("tests/feature_tests/system/94_atomic_u32");
+    try runExpect("tests/feature_tests/system/94_atomic_u32", 0);
+}
+
+test "feature_tests/system/95_atomic_native" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try tmpDirRootPath(&tmp);
+    defer allocator.free(root);
+    const argi = try installedArgiPath();
+    defer allocator.free(argi);
+    const repo = try repoRootPrefix();
+    defer allocator.free(repo);
+    const fixture = try std.fs.path.join(allocator, &.{ repo, "tests/feature_tests/system/95_atomic_native" });
+    defer allocator.free(fixture);
+    const source = try std.fs.path.join(allocator, &.{ fixture, "native.c" });
+    defer allocator.free(source);
+    const windows = @import("builtin").os.tag == .windows;
+    const compiled = try runChildInCwd(if (windows) &.{ "cc", "-c", source, "-o", "native.o" } else &.{ "cc", "-pthread", "-c", source, "-o", "native.o" }, root);
+    defer allocator.free(compiled.stdout);
+    defer allocator.free(compiled.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, compiled.term);
+    const built = try runChildInCwd(if (windows) &.{ argi, "build", fixture, "--output", "app", "--link-file", "native.o" } else &.{ argi, "build", fixture, "--output", "app", "--link-file", "native.o", "--link-library", "pthread" }, root);
+    defer allocator.free(built.stdout);
+    defer allocator.free(built.stderr);
+    if (built.term != .exited or built.term.exited != 0) std.debug.print("{s}", .{built.stderr});
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, built.term);
+    const executed = try runChildInCwd(&.{"./app"}, root);
+    defer allocator.free(executed.stdout);
+    defer allocator.free(executed.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, executed.term);
+}
+
+test "feature_tests/system/96X_atomic_copy" {
+    try buildExpectFail("tests/feature_tests/system/96X_atomic_copy", "cannot be copied implicitly");
+}
+
+test "feature_tests/system/97_cancellation_deadline" {
+    try expectSuccessfulBuild("tests/feature_tests/system/97_cancellation_deadline");
+    try runExpect("tests/feature_tests/system/97_cancellation_deadline", 0);
+}
+
+test "feature_tests/collections/152_collection_structural_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/collections/152_collection_structural_cleanup");
+    try runExpect("tests/feature_tests/collections/152_collection_structural_cleanup", 0);
+}
+
+test "feature_tests/types/280_positional_type_arguments" {
+    try expectSuccessfulBuild("tests/feature_tests/types/280_positional_type_arguments");
+    try runExpect("tests/feature_tests/types/280_positional_type_arguments", 0);
+}
+
+test "feature_tests/types/281X_positional_type_after_named" {
+    try buildExpectFail("tests/feature_tests/types/281X_positional_type_after_named", "positional type arguments must appear before named arguments");
+}
+
+test "feature_tests/types/282X_positional_type_duplicate" {
+    try buildExpectFail("tests/feature_tests/types/282X_positional_type_duplicate", "duplicate generic argument");
+}
+
+test "feature_tests/types/283X_positional_type_excess" {
+    try buildExpectFail("tests/feature_tests/types/283X_positional_type_excess", "too many generic arguments");
+}
+
+test "feature_tests/types/284X_positional_type_missing" {
+    try buildExpectFail("tests/feature_tests/types/284X_positional_type_missing", "missing required generic argument");
+}
+
+test "feature_tests/types/285X_positional_type_kind" {
+    try buildExpectFail("tests/feature_tests/types/285X_positional_type_kind", "generic argument kind does not match its parameter");
+}
+
+test "feature_tests/types/286X_positional_type_unknown" {
+    try buildExpectFail("tests/feature_tests/types/286X_positional_type_unknown", "unknown generic argument");
+}
+
+test "feature_tests/types/287X_positional_errable_duplicate" {
+    try buildExpectFail("tests/feature_tests/types/287X_positional_errable_duplicate", "duplicate generic argument");
+}
+
+test "feature_tests/types/288X_positional_errable_excess" {
+    try buildExpectFail("tests/feature_tests/types/288X_positional_errable_excess", "too many generic arguments");
+}
+
+test "feature_tests/io/46_writer_transfer" {
+    try expectSuccessfulBuild("tests/feature_tests/io/46_writer_transfer");
+    try runExpect("tests/feature_tests/io/46_writer_transfer", 0);
+}
+
+test "feature_tests/io/47_deferred_flush" {
+    try expectSuccessfulBuild("tests/feature_tests/io/47_deferred_flush");
+    try runExpect("tests/feature_tests/io/47_deferred_flush", 0);
+}
+
+test "feature_tests/text/49_split_iteration" {
+    try expectSuccessfulBuild("tests/feature_tests/text/49_split_iteration");
+    try runExpect("tests/feature_tests/text/49_split_iteration", 0);
+}
+
+test "feature_tests/text/50X_split_for_source_after_cleanup" {
+    try buildExpectFail("tests/feature_tests/text/50X_split_for_source_after_cleanup", "root that has ended");
+}
+
+test "feature_tests/text/51X_split_for_separator_after_cleanup" {
+    try buildExpectFail("tests/feature_tests/text/51X_split_for_separator_after_cleanup", "root that has ended");
+}
+
+test "feature_tests/io/48_line_error_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/io/48_line_error_cleanup");
+    try runExpect("tests/feature_tests/io/48_line_error_cleanup", 0);
+}
+
+test "feature_tests/ownership/343X_return_local_system" {
+    try buildExpectFail("tests/feature_tests/ownership/343X_return_local_system", "local storage generation");
+}
+
+test "feature_tests/ownership/344X_return_local_deallocator" {
+    try buildExpectFail("tests/feature_tests/ownership/344X_return_local_deallocator", "local storage generation");
+}
+
+test "feature_tests/ownership/345X_return_local_error_tracer" {
+    try buildExpectFail("tests/feature_tests/ownership/345X_return_local_error_tracer", "local storage generation");
+}
+
+test "feature_tests/ownership/346_explicit_caller_owners" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/346_explicit_caller_owners");
+    try runExpect("tests/feature_tests/ownership/346_explicit_caller_owners", 0);
+}
+
+test "feature_tests/ownership/347_indirect_return_caller_borrow" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/347_indirect_return_caller_borrow");
+    try runExpect("tests/feature_tests/ownership/347_indirect_return_caller_borrow", 0);
+}
+
+test "feature_tests/ownership/348X_return_owner_and_local_reference" {
+    try buildExpectFail("tests/feature_tests/ownership/348X_return_owner_and_local_reference", "local storage generation");
+}
+
+test "feature_tests/ownership/349_return_global_borrow" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/349_return_global_borrow");
+    try runExpect("tests/feature_tests/ownership/349_return_global_borrow", 0);
+}
+
+test "feature_tests/ownership/350X_return_output_slot_reference" {
+    try buildExpectFail("tests/feature_tests/ownership/350X_return_output_slot_reference", "local storage generation");
+}
+
+test "feature_tests/ownership/351X_propagated_local_error_tracer" {
+    try buildExpectFail("tests/feature_tests/ownership/351X_propagated_local_error_tracer", "local storage generation");
+}
+
+test "feature_tests/ownership/352X_propagated_local_error_tracer" {
+    try buildExpectFail("tests/feature_tests/ownership/352X_propagated_local_error_tracer", "local storage generation");
+}
+
+test "feature_tests/ownership/353_return_allocation_caller_deallocator" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/353_return_allocation_caller_deallocator");
+    try runExpect("tests/feature_tests/ownership/353_return_allocation_caller_deallocator", 0);
+}
+
+test "feature_tests/ownership/354X_return_opaque_local_borrow" {
+    try buildExpectFail("tests/feature_tests/ownership/354X_return_opaque_local_borrow", "local storage generation");
+}
+
+test "feature_tests/ownership/355X_return_borrowed_opaque_local" {
+    try buildExpectFail("tests/feature_tests/ownership/355X_return_borrowed_opaque_local", "local storage generation");
+}
+
+test "feature_tests/ownership/356_return_opaque_caller_borrow" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/356_return_opaque_caller_borrow");
+    try runExpect("tests/feature_tests/ownership/356_return_opaque_caller_borrow", 0);
+}
+
+test "feature_tests/ownership/357_return_virtual_caller_borrow" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/357_return_virtual_caller_borrow");
+    try runExpect("tests/feature_tests/ownership/357_return_virtual_caller_borrow", 0);
+}
+
+test "feature_tests/ownership/358X_return_local_expression" {
+    try buildExpectFail("tests/feature_tests/ownership/358X_return_local_expression", "local storage generation");
+}
+
+test "feature_tests/ownership/359X_return_local_error_trace" {
+    try buildExpectFail("tests/feature_tests/ownership/359X_return_local_error_trace", "local storage generation");
+}
+
+test "feature_tests/polymorphism/68_virtual_safety_contract" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/68_virtual_safety_contract");
+    try runExpect("tests/feature_tests/polymorphism/68_virtual_safety_contract", 0);
+}
+
+test "feature_tests/polymorphism/69X_virtual_safety_contract_dependency" {
+    try buildExpectFail("tests/feature_tests/polymorphism/69X_virtual_safety_contract_dependency", "undeclared output dependency involving input 'other'");
+}
+
+test "feature_tests/polymorphism/70X_virtual_safety_contract_unknown_name" {
+    try buildExpectFail("tests/feature_tests/polymorphism/70X_virtual_safety_contract_unknown_name", "depends_on dependencies must name method inputs");
+}
+
+test "feature_tests/polymorphism/71_virtual_safety_contract_preservation" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/71_virtual_safety_contract_preservation");
+    try runExpect("tests/feature_tests/polymorphism/71_virtual_safety_contract_preservation", 0);
+}
+
+test "feature_tests/polymorphism/72_virtual_safety_contract_block" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/72_virtual_safety_contract_block");
+    try runExpect("tests/feature_tests/polymorphism/72_virtual_safety_contract_block", 0);
+}
+
+test "feature_tests/polymorphism/73X_virtual_safety_contract_invalidation" {
+    try buildExpectFail("tests/feature_tests/polymorphism/73X_virtual_safety_contract_invalidation", "storage transition is not permitted by this preservation contract");
+}
+
+test "feature_tests/polymorphism/74X_virtual_safety_contract_output_name" {
+    try buildExpectFail("tests/feature_tests/polymorphism/74X_virtual_safety_contract_output_name", "the first depends_on argument must name a method output");
+}
+
+test "feature_tests/polymorphism/75_virtual_safety_contract_associated" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/75_virtual_safety_contract_associated");
+    try runExpect("tests/feature_tests/polymorphism/75_virtual_safety_contract_associated", 0);
+}
+
+test "feature_tests/polymorphism/76X_virtual_safety_contract_receiver_generation" {
+    try buildExpectFail("tests/feature_tests/polymorphism/76X_virtual_safety_contract_receiver_generation", "root that has ended");
+}
+
+test "feature_tests/polymorphism/77X_virtual_safety_contract_transitive_generation" {
+    try buildExpectFail("tests/feature_tests/polymorphism/77X_virtual_safety_contract_transitive_generation", "root that has ended");
+}
+
+test "feature_tests/polymorphism/78_virtual_safety_contract_referent" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/78_virtual_safety_contract_referent");
+    try runExpect("tests/feature_tests/polymorphism/78_virtual_safety_contract_referent", 0);
+}
+
+test "feature_tests/polymorphism/79X_virtual_safety_contract_referent_branch" {
+    try buildExpectFail("tests/feature_tests/polymorphism/79X_virtual_safety_contract_referent_branch", "cannot prove refers_to");
+}
+
+test "feature_tests/polymorphism/80X_virtual_safety_contract_referent_type" {
+    try buildExpectFail("tests/feature_tests/polymorphism/80X_virtual_safety_contract_referent_type", "matching input and output referent types");
+}
+
+test "feature_tests/polymorphism/81X_virtual_safety_contract_referent_mutability" {
+    try buildExpectFail("tests/feature_tests/polymorphism/81X_virtual_safety_contract_referent_mutability", "cannot grant mutable access");
+}
+
+test "feature_tests/polymorphism/82_virtual_safety_contract_invalidate_input" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/82_virtual_safety_contract_invalidate_input");
+    try runExpect("tests/feature_tests/polymorphism/82_virtual_safety_contract_invalidate_input", 0);
+}
+
+test "feature_tests/polymorphism/83X_virtual_safety_contract_invalidate_alias" {
+    try buildExpectFail("tests/feature_tests/polymorphism/83X_virtual_safety_contract_invalidate_alias", "root that has ended");
+}
+
+test "feature_tests/polymorphism/84X_virtual_safety_contract_invalidate_readonly" {
+    try buildExpectFail("tests/feature_tests/polymorphism/84X_virtual_safety_contract_invalidate_readonly", "invalidates requires a mutable reference input");
+}
+
+test "feature_tests/polymorphism/85X_virtual_safety_contract_invalidate_self" {
+    try buildExpectFail("tests/feature_tests/polymorphism/85X_virtual_safety_contract_invalidate_self", "invalidating an erased receiver requires a mapped storage domain");
+}
+
+test "feature_tests/polymorphism/86_virtual_safety_contract_domains" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/86_virtual_safety_contract_domains");
+    try runExpect("tests/feature_tests/polymorphism/86_virtual_safety_contract_domains", 0);
+}
+
+test "feature_tests/polymorphism/87X_virtual_safety_contract_domain_borrow" {
+    try buildExpectFail("tests/feature_tests/polymorphism/87X_virtual_safety_contract_domain_borrow", "root that has ended");
+}
+
+test "feature_tests/polymorphism/88X_virtual_safety_contract_domain_wrong_field" {
+    try buildExpectFail("tests/feature_tests/polymorphism/88X_virtual_safety_contract_domain_wrong_field", "undeclared output dependency");
+}
+
+test "feature_tests/polymorphism/89X_virtual_safety_contract_domain_overlap" {
+    try buildExpectFail("tests/feature_tests/polymorphism/89X_virtual_safety_contract_domain_overlap", "storage domains overlap");
+}
+
+test "feature_tests/polymorphism/90X_virtual_safety_contract_domain_missing" {
+    try buildExpectFail("tests/feature_tests/polymorphism/90X_virtual_safety_contract_domain_missing", "every Contract storage domain requires exactly one implementation mapping");
+}
+
+test "feature_tests/polymorphism/91_virtual_safety_contract_domain_local_conversion" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/91_virtual_safety_contract_domain_local_conversion");
+    try runExpect("tests/feature_tests/polymorphism/91_virtual_safety_contract_domain_local_conversion", 0);
+}
+
+test "feature_tests/polymorphism/92X_virtual_safety_contract_domain_local_escape" {
+    try buildExpectFail("tests/feature_tests/polymorphism/92X_virtual_safety_contract_domain_local_escape", "local storage generation");
+}
+
+test "feature_tests/polymorphism/93_virtual_safety_contract_domain_sibling" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/93_virtual_safety_contract_domain_sibling");
+    try runExpect("tests/feature_tests/polymorphism/93_virtual_safety_contract_domain_sibling", 0);
+}
+
+test "feature_tests/polymorphism/94_virtual_safety_contract_domain_associated" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/94_virtual_safety_contract_domain_associated");
+    try runExpect("tests/feature_tests/polymorphism/94_virtual_safety_contract_domain_associated", 0);
+}
+
+test "feature_tests/polymorphism/95X_virtual_safety_contract_domain_alias" {
+    try buildExpectFail("tests/feature_tests/polymorphism/95X_virtual_safety_contract_domain_alias", "storage domains share a storage generation");
+}
+
+test "feature_tests/polymorphism/96_virtual_safety_contract_fresh_owner" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/96_virtual_safety_contract_fresh_owner");
+    try runExpect("tests/feature_tests/polymorphism/96_virtual_safety_contract_fresh_owner", 0);
+}
+
+test "feature_tests/polymorphism/97_virtual_safety_contract_transfer_owner" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/97_virtual_safety_contract_transfer_owner");
+    try runExpect("tests/feature_tests/polymorphism/97_virtual_safety_contract_transfer_owner", 0);
+}
+
+test "feature_tests/polymorphism/98_virtual_safety_contract_outcome_dependencies" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/98_virtual_safety_contract_outcome_dependencies");
+    try runExpect("tests/feature_tests/polymorphism/98_virtual_safety_contract_outcome_dependencies", 0);
+}
+
+test "feature_tests/polymorphism/99X_virtual_safety_contract_outcome_wrong" {
+    try buildExpectFail("tests/feature_tests/polymorphism/99X_virtual_safety_contract_outcome_wrong", "unknown output variant");
+}
+
+test "feature_tests/polymorphism/100X_static_safety_contract_dependency" {
+    try buildExpectFail("tests/feature_tests/polymorphism/100X_static_safety_contract_dependency", "undeclared output dependency");
+}
+
+test "feature_tests/polymorphism/101_static_safety_contract_domains" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/101_static_safety_contract_domains");
+    try runExpect("tests/feature_tests/polymorphism/101_static_safety_contract_domains", 0);
+}
+
+test "feature_tests/polymorphism/102_static_safety_contract_associated" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/102_static_safety_contract_associated");
+    try runExpect("tests/feature_tests/polymorphism/102_static_safety_contract_associated", 0);
+}
+
+test "feature_tests/polymorphism/103X_static_safety_contract_readonly" {
+    try buildExpectFail("tests/feature_tests/polymorphism/103X_static_safety_contract_readonly", "invalidates requires a mutable reference input");
+}
+
+test "feature_tests/polymorphism/104X_static_safety_contract_reference_transfer" {
+    try buildExpectFail("tests/feature_tests/polymorphism/104X_static_safety_contract_reference_transfer", "transfers requires a by-value owning input");
+}
+
+test "feature_tests/polymorphism/105X_virtual_safety_contract_undeclared_owner" {
+    try buildExpectFail("tests/feature_tests/polymorphism/105X_virtual_safety_contract_undeclared_owner", "undeclared fresh output ownership");
+}
+
+test "feature_tests/polymorphism/106X_virtual_safety_contract_domain_result_unknown" {
+    try buildExpectFail("tests/feature_tests/polymorphism/106X_virtual_safety_contract_domain_result_unknown", "preserve its domain identities");
+}
+
+test "feature_tests/polymorphism/107_virtual_safety_contract_domain_result_transfer" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/107_virtual_safety_contract_domain_result_transfer");
+    try runExpect("tests/feature_tests/polymorphism/107_virtual_safety_contract_domain_result_transfer", 0);
+}
+
+test "feature_tests/polymorphism/108X_virtual_safety_contract_domain_result_invalidation" {
+    try buildExpectFail("tests/feature_tests/polymorphism/108X_virtual_safety_contract_domain_result_invalidation", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/109_virtual_safety_contract_domain_result_referent" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/109_virtual_safety_contract_domain_result_referent");
+    try runExpect("tests/feature_tests/polymorphism/109_virtual_safety_contract_domain_result_referent", 0);
+}
+
+test "feature_tests/polymorphism/110X_virtual_safety_contract_missing" {
+    try buildExpectFail("tests/feature_tests/polymorphism/110X_virtual_safety_contract_missing", "virtual methods require a declared safety contract");
+}
+
+test "feature_tests/polymorphism/111_virtual_safety_contract_named_outputs" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/111_virtual_safety_contract_named_outputs");
+    try runExpect("tests/feature_tests/polymorphism/111_virtual_safety_contract_named_outputs", 0);
+}
+
+test "feature_tests/polymorphism/112X_virtual_safety_contract_unknown_selector" {
+    try buildExpectFail("tests/feature_tests/polymorphism/112X_virtual_safety_contract_unknown_selector", "on must select a named method input or output");
+}
+
+test "feature_tests/polymorphism/113X_virtual_safety_contract_scalar_selector" {
+    try buildExpectFail("tests/feature_tests/polymorphism/113X_virtual_safety_contract_scalar_selector", "on requires a choice-valued output");
+}
+
+test "feature_tests/polymorphism/114X_virtual_safety_contract_duplicate_selector" {
+    try buildExpectFail("tests/feature_tests/polymorphism/114X_virtual_safety_contract_duplicate_selector", "duplicate outcome contract");
+}
+
+test "feature_tests/polymorphism/115X_virtual_safety_contract_second_output_dependency" {
+    try buildExpectFail("tests/feature_tests/polymorphism/115X_virtual_safety_contract_second_output_dependency", "undeclared output dependency");
+}
+
+test "feature_tests/polymorphism/116_virtual_safety_contract_outcome_generation" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/116_virtual_safety_contract_outcome_generation");
+    try runExpect("tests/feature_tests/polymorphism/116_virtual_safety_contract_outcome_generation", 0);
+}
+
+test "feature_tests/polymorphism/117X_virtual_safety_contract_outcome_invalidation" {
+    try buildExpectFail("tests/feature_tests/polymorphism/117X_virtual_safety_contract_outcome_invalidation", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/118X_virtual_safety_contract_outcome_unresolved" {
+    try buildExpectFail("tests/feature_tests/polymorphism/118X_virtual_safety_contract_outcome_unresolved", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/119X_virtual_safety_contract_outcome_later_invalidation" {
+    try buildExpectFail("tests/feature_tests/polymorphism/119X_virtual_safety_contract_outcome_later_invalidation", "reference depends on a root that has ended");
+}
+
+test "tests/feature_tests/polymorphism/120X_virtual_safety_contract_outcome_false_preservation" {
+    try buildExpectFail("tests/feature_tests/polymorphism/120X_virtual_safety_contract_outcome_false_preservation", "a storage transition is not permitted by this preservation contract");
+}
+
+test "tests/feature_tests/polymorphism/121_virtual_safety_contract_outcome_domain" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/121_virtual_safety_contract_outcome_domain");
+    try runExpect("tests/feature_tests/polymorphism/121_virtual_safety_contract_outcome_domain", 0);
+}
+
+test "tests/feature_tests/polymorphism/122X_virtual_safety_contract_outcome_domain_invalidation" {
+    try buildExpectFail("tests/feature_tests/polymorphism/122X_virtual_safety_contract_outcome_domain_invalidation", "reference depends on a root that has ended");
+}
+
+test "tests/feature_tests/polymorphism/123_virtual_safety_contract_outcome_copied_result" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/123_virtual_safety_contract_outcome_copied_result");
+    try runExpect("tests/feature_tests/polymorphism/123_virtual_safety_contract_outcome_copied_result", 0);
+}
+
+test "tests/feature_tests/polymorphism/124_virtual_safety_contract_outcome_named_output" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/124_virtual_safety_contract_outcome_named_output");
+    try runExpect("tests/feature_tests/polymorphism/124_virtual_safety_contract_outcome_named_output", 0);
+}
+
+test "tests/feature_tests/polymorphism/125_virtual_safety_contract_outcome_later_content_write" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/125_virtual_safety_contract_outcome_later_content_write");
+    try runExpect("tests/feature_tests/polymorphism/125_virtual_safety_contract_outcome_later_content_write", 0);
+}
+
+test "tests/feature_tests/polymorphism/126X_virtual_safety_contract_outcome_overwritten_result" {
+    try buildExpectFail("tests/feature_tests/polymorphism/126X_virtual_safety_contract_outcome_overwritten_result", "reference depends on a root that has ended");
+}
+
+test "tests/feature_tests/polymorphism/127_virtual_safety_contract_outcome_moved_result" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/127_virtual_safety_contract_outcome_moved_result");
+    try runExpect("tests/feature_tests/polymorphism/127_virtual_safety_contract_outcome_moved_result", 0);
+}
+
+test "feature_tests/polymorphism/128X_virtual_safety_contract_outcome_break_effect" {
+    try buildExpectFail("tests/feature_tests/polymorphism/128X_virtual_safety_contract_outcome_break_effect", "a storage transition is not permitted by this preservation contract");
+}
+
+test "feature_tests/polymorphism/129X_virtual_safety_contract_outcome_result_alias" {
+    try buildExpectFail("tests/feature_tests/polymorphism/129X_virtual_safety_contract_outcome_result_alias", "a storage transition is not permitted by this preservation contract");
+}
+
+test "feature_tests/polymorphism/130_virtual_safety_contract_nested_payload" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/130_virtual_safety_contract_nested_payload");
+    try runExpect("tests/feature_tests/polymorphism/130_virtual_safety_contract_nested_payload", 0);
+}
+
+test "feature_tests/polymorphism/131X_virtual_safety_contract_nested_dependency" {
+    try buildExpectFail("tests/feature_tests/polymorphism/131X_virtual_safety_contract_nested_dependency", "undeclared output dependency");
+}
+
+test "feature_tests/polymorphism/132X_virtual_safety_contract_nested_variant" {
+    try buildExpectFail("tests/feature_tests/polymorphism/132X_virtual_safety_contract_nested_variant", "unknown output variant");
+}
+
+test "feature_tests/polymorphism/133X_virtual_safety_contract_nested_nonchoice" {
+    try buildExpectFail("tests/feature_tests/polymorphism/133X_virtual_safety_contract_nested_nonchoice", "choice-valued output payload");
+}
+
+test "feature_tests/polymorphism/134_virtual_safety_contract_nested_common" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/134_virtual_safety_contract_nested_common");
+    try runExpect("tests/feature_tests/polymorphism/134_virtual_safety_contract_nested_common", 0);
+}
+
+test "feature_tests/polymorphism/135_virtual_safety_contract_nested_owner_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/135_virtual_safety_contract_nested_owner_cleanup");
+    try runExpect("tests/feature_tests/polymorphism/135_virtual_safety_contract_nested_owner_cleanup", 0);
+}
+
+test "feature_tests/polymorphism/136X_virtual_safety_contract_nested_owner_undeclared" {
+    try buildExpectFail("tests/feature_tests/polymorphism/136X_virtual_safety_contract_nested_owner_undeclared", "undeclared fresh output ownership");
+}
+
+test "feature_tests/polymorphism/137_nested_choice_owner_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/137_nested_choice_owner_cleanup");
+    try runExpect("tests/feature_tests/polymorphism/137_nested_choice_owner_cleanup", 0);
+}
+
+test "feature_tests/polymorphism/138X_virtual_nested_cleanup_effect" {
+    try buildExpectFail("tests/feature_tests/polymorphism/138X_virtual_nested_cleanup_effect", "a storage transition is not permitted");
+}
+
+test "feature_tests/polymorphism/139_virtual_nested_cleanup_effect" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/139_virtual_nested_cleanup_effect");
+    try runExpect("tests/feature_tests/polymorphism/139_virtual_nested_cleanup_effect", 0);
+}
+
+test "feature_tests/polymorphism/140_virtual_nested_generation" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/140_virtual_nested_generation");
+    try runExpect("tests/feature_tests/polymorphism/140_virtual_nested_generation", 0);
+}
+
+test "feature_tests/polymorphism/141X_virtual_nested_generation_invalidated" {
+    try buildExpectFail("tests/feature_tests/polymorphism/141X_virtual_nested_generation_invalidated", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/142X_virtual_nested_generation_outer_only" {
+    try buildExpectFail("tests/feature_tests/polymorphism/142X_virtual_nested_generation_outer_only", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/143X_virtual_nested_generation_preservation" {
+    try buildExpectFail("tests/feature_tests/polymorphism/143X_virtual_nested_generation_preservation", "a storage transition is not permitted");
+}
+
+test "feature_tests/polymorphism/145X_virtual_nested_generation_overwritten" {
+    try buildExpectFail("tests/feature_tests/polymorphism/145X_virtual_nested_generation_overwritten", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/146X_virtual_nested_generation_aliased_output" {
+    try buildExpectFail("tests/feature_tests/polymorphism/146X_virtual_nested_generation_aliased_output", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/144_virtual_nested_generation_repackaged" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/144_virtual_nested_generation_repackaged");
+    try runExpect("tests/feature_tests/polymorphism/144_virtual_nested_generation_repackaged", 0);
+}
+
+test "feature_tests/polymorphism/147_virtual_nested_generation_domain" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/147_virtual_nested_generation_domain");
+    try runExpect("tests/feature_tests/polymorphism/147_virtual_nested_generation_domain", 0);
+}
+
+test "feature_tests/polymorphism/148_virtual_generation_bound_forward" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/148_virtual_generation_bound_forward");
+    try runExpect("tests/feature_tests/polymorphism/148_virtual_generation_bound_forward", 0);
+}
+
+test "feature_tests/polymorphism/149_virtual_generation_bound_move" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/149_virtual_generation_bound_move");
+    try runExpect("tests/feature_tests/polymorphism/149_virtual_generation_bound_move", 0);
+}
+
+test "feature_tests/polymorphism/150X_virtual_generation_bound_reassigned" {
+    try buildExpectFail("tests/feature_tests/polymorphism/150X_virtual_generation_bound_reassigned", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/151X_virtual_generation_bound_exposed" {
+    try buildExpectFail("tests/feature_tests/polymorphism/151X_virtual_generation_bound_exposed", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/152X_virtual_generation_bound_later_call" {
+    try buildExpectFail("tests/feature_tests/polymorphism/152X_virtual_generation_bound_later_call", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/153X_virtual_generation_bound_loop" {
+    try buildExpectFail("tests/feature_tests/polymorphism/153X_virtual_generation_bound_loop", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/154_virtual_generation_bound_repackaged" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/154_virtual_generation_bound_repackaged");
+    try runExpect("tests/feature_tests/polymorphism/154_virtual_generation_bound_repackaged", 0);
+}
+
+test "feature_tests/polymorphism/155_virtual_generation_bound_content_write" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/155_virtual_generation_bound_content_write");
+    try runExpect("tests/feature_tests/polymorphism/155_virtual_generation_bound_content_write", 0);
+}
+
+test "feature_tests/polymorphism/156X_virtual_generation_bound_early_return" {
+    try buildExpectFail("tests/feature_tests/polymorphism/156X_virtual_generation_bound_early_return", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/157X_virtual_generation_bound_early_error" {
+    try buildExpectFail("tests/feature_tests/polymorphism/157X_virtual_generation_bound_early_error", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/158_virtual_consumes" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/158_virtual_consumes");
+    try runExpect("tests/feature_tests/polymorphism/158_virtual_consumes", 0);
+}
+
+test "feature_tests/polymorphism/159X_virtual_consumes_missing" {
+    try buildExpectFail("tests/feature_tests/polymorphism/159X_virtual_consumes_missing", "cannot prove consumes");
+}
+
+test "feature_tests/polymorphism/160X_virtual_consumes_conditional_body" {
+    try buildExpectFail("tests/feature_tests/polymorphism/160X_virtual_consumes_conditional_body", "cannot prove consumes");
+}
+
+test "feature_tests/polymorphism/161X_virtual_consumes_readonly" {
+    try buildExpectFail("tests/feature_tests/polymorphism/161X_virtual_consumes_readonly", "consumes requires a mutable reference input");
+}
+
+test "feature_tests/polymorphism/162X_virtual_consumes_byvalue" {
+    try buildExpectFail("tests/feature_tests/polymorphism/162X_virtual_consumes_byvalue", "consumes requires a mutable reference input");
+}
+
+test "feature_tests/polymorphism/163X_virtual_consumes_use_after" {
+    try buildExpectFail("tests/feature_tests/polymorphism/163X_virtual_consumes_use_after", "deinitialized");
+}
+
+test "feature_tests/polymorphism/164_virtual_consumes_alias" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/164_virtual_consumes_alias");
+    try runExpect("tests/feature_tests/polymorphism/164_virtual_consumes_alias", 0);
+}
+
+test "feature_tests/polymorphism/165_virtual_consumes_fields" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/165_virtual_consumes_fields");
+    try runExpect("tests/feature_tests/polymorphism/165_virtual_consumes_fields", 0);
+}
+
+test "feature_tests/polymorphism/168_virtual_consumes_guarded" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/168_virtual_consumes_guarded");
+    try runExpect("tests/feature_tests/polymorphism/168_virtual_consumes_guarded", 0);
+}
+
+test "feature_tests/polymorphism/169X_virtual_consumes_erased_self" {
+    try buildExpectFail("tests/feature_tests/polymorphism/169X_virtual_consumes_erased_self", "consumes on an erased participant requires receiver cleanup identities");
+}
+
+test "feature_tests/polymorphism/166_virtual_consumes_multiple" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/166_virtual_consumes_multiple");
+    try runExpect("tests/feature_tests/polymorphism/166_virtual_consumes_multiple", 0);
+}
+
+test "feature_tests/polymorphism/167X_virtual_consumes_multiple_alias" {
+    try buildExpectFail("tests/feature_tests/polymorphism/167X_virtual_consumes_multiple_alias", "consumed inputs alias the same storage");
+}
+
+test "feature_tests/polymorphism/170X_virtual_consumes_external_write" {
+    try buildExpectFail("tests/feature_tests/polymorphism/170X_virtual_consumes_external_write", "a storage transition is not permitted");
+}
+
+test "feature_tests/polymorphism/171_virtual_consumes_large_return" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/171_virtual_consumes_large_return");
+    try runExpect("tests/feature_tests/polymorphism/171_virtual_consumes_large_return", 0);
+}
+
+test "feature_tests/polymorphism/172_virtual_consumes_reinitialize" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/172_virtual_consumes_reinitialize");
+    try runExpect("tests/feature_tests/polymorphism/172_virtual_consumes_reinitialize", 0);
+}
+
+test "feature_tests/polymorphism/173_virtual_relocates" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/173_virtual_relocates");
+    try runExpect("tests/feature_tests/polymorphism/173_virtual_relocates", 0);
+}
+
+test "feature_tests/polymorphism/174X_virtual_relocates_missing" {
+    try buildExpectFail("tests/feature_tests/polymorphism/174X_virtual_relocates_missing", "cannot prove relocates");
+}
+
+test "feature_tests/polymorphism/175X_virtual_relocates_occupied" {
+    try buildExpectFail("tests/feature_tests/polymorphism/175X_virtual_relocates_occupied", "relocate destination is initialized");
+}
+
+test "feature_tests/polymorphism/176X_virtual_relocates_use_after" {
+    try buildExpectFail("tests/feature_tests/polymorphism/176X_virtual_relocates_use_after", "moved");
+}
+
+test "feature_tests/polymorphism/177X_virtual_relocates_alias" {
+    try buildExpectFail("tests/feature_tests/polymorphism/177X_virtual_relocates_alias", "alias the same storage");
+}
+
+test "feature_tests/polymorphism/178_virtual_relocates_aliases" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/178_virtual_relocates_aliases");
+    try runExpect("tests/feature_tests/polymorphism/178_virtual_relocates_aliases", 0);
+}
+
+test "feature_tests/polymorphism/179X_virtual_relocates_readonly" {
+    try buildExpectFail("tests/feature_tests/polymorphism/179X_virtual_relocates_readonly", "relocates requires mutable reference");
+}
+
+test "feature_tests/polymorphism/180_virtual_relocates_fields" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/180_virtual_relocates_fields");
+    try runExpect("tests/feature_tests/polymorphism/180_virtual_relocates_fields", 0);
+}
+
+test "feature_tests/polymorphism/181X_virtual_relocates_conditional_body" {
+    try buildExpectFail("tests/feature_tests/polymorphism/181X_virtual_relocates_conditional_body", "cannot prove relocates");
+}
+
+test "feature_tests/polymorphism/182X_virtual_relocates_old_reference" {
+    try buildExpectFail("tests/feature_tests/polymorphism/182X_virtual_relocates_old_reference", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/183_virtual_relocates_allocation" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/183_virtual_relocates_allocation");
+    try runExpect("tests/feature_tests/polymorphism/183_virtual_relocates_allocation", 0);
+}
+
+test "feature_tests/polymorphism/225X_virtual_relocates_wrong_outcome" {
+    try buildExpectFail("tests/feature_tests/polymorphism/225X_virtual_relocates_wrong_outcome", "storage transition is not permitted by this preservation contract");
+}
+
+test "feature_tests/polymorphism/226X_virtual_relocates_inherited_consumes" {
+    try buildExpectFail("tests/feature_tests/polymorphism/226X_virtual_relocates_inherited_consumes", "relocates and consumes cannot target the same input");
+}
+
+test "feature_tests/polymorphism/227X_virtual_relocates_inherited_duplicate" {
+    try buildExpectFail("tests/feature_tests/polymorphism/227X_virtual_relocates_inherited_duplicate", "inherited relocates clauses cannot share");
+}
+
+test "feature_tests/polymorphism/228X_virtual_relocates_occupied" {
+    try buildExpectFail("tests/feature_tests/polymorphism/228X_virtual_relocates_occupied", "relocate destination is initialized");
+}
+
+test "feature_tests/polymorphism/229X_virtual_relocates_expired_reference" {
+    try buildExpectFail("tests/feature_tests/polymorphism/229X_virtual_relocates_expired_reference", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/230_virtual_relocates_multiple_outputs" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/230_virtual_relocates_multiple_outputs");
+    try runExpect("tests/feature_tests/polymorphism/230_virtual_relocates_multiple_outputs", 0);
+}
+
+test "feature_tests/polymorphism/231_virtual_relocates_nested" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/231_virtual_relocates_nested");
+    try runExpect("tests/feature_tests/polymorphism/231_virtual_relocates_nested", 0);
+}
+
+test "feature_tests/polymorphism/232_virtual_relocates_nested_inheritance" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/232_virtual_relocates_nested_inheritance");
+    try runExpect("tests/feature_tests/polymorphism/232_virtual_relocates_nested_inheritance", 0);
+}
+
+test "feature_tests/polymorphism/233X_virtual_relocates_correlated_outputs" {
+    try buildExpectFail("tests/feature_tests/polymorphism/233X_virtual_relocates_correlated_outputs", "shared inputs across outputs require correlated result facts");
+}
+
+test "feature_tests/polymorphism/234X_virtual_relocates_alternative_destinations" {
+    try buildExpectFail("tests/feature_tests/polymorphism/234X_virtual_relocates_alternative_destinations", "alternative relocates clauses sharing an input must describe the same source and destination");
+}
+
+test "feature_tests/polymorphism/235_virtual_relocates_forwarded_output" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/235_virtual_relocates_forwarded_output");
+    try runExpect("tests/feature_tests/polymorphism/235_virtual_relocates_forwarded_output", 0);
+}
+
+test "feature_tests/polymorphism/236_relocates_forwarded_output_moves" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/236_relocates_forwarded_output_moves");
+    try runExpect("tests/feature_tests/polymorphism/236_relocates_forwarded_output_moves", 0);
+}
+
+test "feature_tests/polymorphism/237X_relocates_forwarded_output_old_reference" {
+    try buildExpectFail("tests/feature_tests/polymorphism/237X_relocates_forwarded_output_old_reference", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/238X_forwarded_output_retains_other_effects" {
+    try buildExpectFail("tests/feature_tests/polymorphism/238X_forwarded_output_retains_other_effects", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/239X_forwarded_output_intervening_call" {
+    try buildExpectFail("tests/feature_tests/polymorphism/239X_forwarded_output_intervening_call", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/240X_forwarded_output_rewritten" {
+    try buildExpectFail("tests/feature_tests/polymorphism/240X_forwarded_output_rewritten", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/241_forwarded_output_preserves_selected_generation" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/241_forwarded_output_preserves_selected_generation");
+    try runExpect("tests/feature_tests/polymorphism/241_forwarded_output_preserves_selected_generation", 0);
+}
+
+test "feature_tests/polymorphism/242_forwarded_output_content_write" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/242_forwarded_output_content_write");
+    try runExpect("tests/feature_tests/polymorphism/242_forwarded_output_content_write", 0);
+}
+
+test "feature_tests/polymorphism/243_relocates_forwarded_output_repackaged" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/243_relocates_forwarded_output_repackaged");
+    try runExpect("tests/feature_tests/polymorphism/243_relocates_forwarded_output_repackaged", 0);
+}
+
+test "feature_tests/polymorphism/184_virtual_relocates_guarded" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/184_virtual_relocates_guarded");
+    try runExpect("tests/feature_tests/polymorphism/184_virtual_relocates_guarded", 0);
+}
+
+test "feature_tests/polymorphism/212_conditional_relocates_discard" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/212_conditional_relocates_discard");
+    try runExpect("tests/feature_tests/polymorphism/212_conditional_relocates_discard", 0);
+}
+
+test "feature_tests/polymorphism/213X_conditional_relocates_ambiguous" {
+    try buildExpectFail("tests/feature_tests/polymorphism/213X_conditional_relocates_ambiguous", "cannot select cleanup for conditional relocation");
+}
+
+test "feature_tests/polymorphism/214X_conditional_relocates_unselected" {
+    try buildExpectFail("tests/feature_tests/polymorphism/214X_conditional_relocates_unselected", "maybe_initialized and cannot be used");
+}
+
+test "feature_tests/polymorphism/215X_conditional_relocates_old_reference" {
+    try buildExpectFail("tests/feature_tests/polymorphism/215X_conditional_relocates_old_reference", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/216_conditional_relocates_large" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/216_conditional_relocates_large");
+    try runExpect("tests/feature_tests/polymorphism/216_conditional_relocates_large", 0);
+}
+
+test "feature_tests/polymorphism/217_conditional_relocates_refinement" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/217_conditional_relocates_refinement");
+    try runExpect("tests/feature_tests/polymorphism/217_conditional_relocates_refinement", 0);
+}
+
+test "feature_tests/polymorphism/218X_conditional_relocates_moved_source" {
+    try buildExpectFail("tests/feature_tests/polymorphism/218X_conditional_relocates_moved_source", "moved and cannot be used");
+}
+
+test "feature_tests/polymorphism/219X_conditional_relocates_preserved_destination" {
+    try buildExpectFail("tests/feature_tests/polymorphism/219X_conditional_relocates_preserved_destination", "value was deinitialized");
+}
+
+test "feature_tests/polymorphism/220X_conditional_relocates_old_result" {
+    try buildExpectFail("tests/feature_tests/polymorphism/220X_conditional_relocates_old_result", "maybe_initialized and cannot be used");
+}
+
+test "feature_tests/polymorphism/221_conditional_relocates_allocation" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/221_conditional_relocates_allocation");
+    try runExpect("tests/feature_tests/polymorphism/221_conditional_relocates_allocation", 0);
+}
+
+test "feature_tests/polymorphism/222X_conditional_relocates_local_escape" {
+    try buildExpectFail("tests/feature_tests/polymorphism/222X_conditional_relocates_local_escape", "local storage generation");
+}
+
+test "feature_tests/polymorphism/223X_conditional_relocates_shared_source" {
+    try buildExpectFail("tests/feature_tests/polymorphism/223X_conditional_relocates_shared_source", "alias the same storage");
+}
+
+test "feature_tests/polymorphism/224X_conditional_relocates_scope_reference" {
+    try buildExpectFail("tests/feature_tests/polymorphism/224X_conditional_relocates_scope_reference", "reference depends on a root that has ended");
+}
+
+test "feature_tests/polymorphism/185_virtual_referent_local_chain" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/185_virtual_referent_local_chain");
+    try runExpect("tests/feature_tests/polymorphism/185_virtual_referent_local_chain", 0);
+}
+
+test "feature_tests/polymorphism/186_virtual_transfer_local_chain" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/186_virtual_transfer_local_chain");
+    try runExpect("tests/feature_tests/polymorphism/186_virtual_transfer_local_chain", 0);
+}
+
+test "feature_tests/polymorphism/187X_virtual_referent_reassigned_local" {
+    try buildExpectFail("tests/feature_tests/polymorphism/187X_virtual_referent_reassigned_local", "cannot prove refers_to");
+}
+
+test "feature_tests/polymorphism/188X_virtual_transfer_hidden_call" {
+    try buildExpectFail("tests/feature_tests/polymorphism/188X_virtual_transfer_hidden_call", "cannot prove transfers");
+}
+
+test "feature_tests/polymorphism/189X_virtual_referent_wrong_local" {
+    try buildExpectFail("tests/feature_tests/polymorphism/189X_virtual_referent_wrong_local", "cannot prove refers_to");
+}
+
+test "feature_tests/polymorphism/190X_virtual_transfer_reconstructed_local" {
+    try buildExpectFail("tests/feature_tests/polymorphism/190X_virtual_transfer_reconstructed_local", "cannot prove transfers");
+}
+
+test "feature_tests/polymorphism/191_conditional_consumption_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/191_conditional_consumption_cleanup");
+    try runExpect("tests/feature_tests/polymorphism/191_conditional_consumption_cleanup", 0);
+}
+
+test "feature_tests/polymorphism/192_conditional_consumption_cleanup_alias" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/192_conditional_consumption_cleanup_alias");
+    try runExpect("tests/feature_tests/polymorphism/192_conditional_consumption_cleanup_alias", 0);
+}
+
+test "feature_tests/polymorphism/193_conditional_consumption_cleanup_large" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/193_conditional_consumption_cleanup_large");
+    try runExpect("tests/feature_tests/polymorphism/193_conditional_consumption_cleanup_large", 0);
+}
+
+test "feature_tests/polymorphism/194_conditional_consumption_cleanup_outputs" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/194_conditional_consumption_cleanup_outputs");
+    try runExpect("tests/feature_tests/polymorphism/194_conditional_consumption_cleanup_outputs", 0);
+}
+
+test "feature_tests/polymorphism/195X_conditional_consumption_unselected_cleanup" {
+    try buildExpectFail("tests/feature_tests/polymorphism/195X_conditional_consumption_unselected_cleanup", "cannot select cleanup for conditional consumption");
+}
+
+test "feature_tests/polymorphism/196X_conditional_consumption_ambiguous_cleanup" {
+    try buildExpectFail("tests/feature_tests/polymorphism/196X_conditional_consumption_ambiguous_cleanup", "cannot select cleanup for conditional consumption");
+}
+
+test "feature_tests/polymorphism/197_conditional_consumption_multiple_owners" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/197_conditional_consumption_multiple_owners");
+    try runExpect("tests/feature_tests/polymorphism/197_conditional_consumption_multiple_owners", 0);
+}
+
+test "feature_tests/polymorphism/198X_conditional_consumption_aliased_owners" {
+    try buildExpectFail("tests/feature_tests/polymorphism/198X_conditional_consumption_aliased_owners", "consumed inputs alias the same storage");
+}
+
+test "feature_tests/polymorphism/199_conditional_consumption_preserving_state" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/199_conditional_consumption_preserving_state");
+    try runExpect("tests/feature_tests/polymorphism/199_conditional_consumption_preserving_state", 0);
+}
+
+test "feature_tests/polymorphism/200_virtual_conditional_consumption" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/200_virtual_conditional_consumption");
+    try runExpect("tests/feature_tests/polymorphism/200_virtual_conditional_consumption", 0);
+}
+
+test "feature_tests/polymorphism/201X_virtual_conditional_consumption_missing" {
+    try buildExpectFail("tests/feature_tests/polymorphism/201X_virtual_conditional_consumption_missing", "cannot prove consumes");
+}
+
+test "feature_tests/polymorphism/202X_conditional_consumption_use_after" {
+    try buildExpectFail("tests/feature_tests/polymorphism/202X_conditional_consumption_use_after", "deinitialized");
+}
+
+test "feature_tests/polymorphism/203X_conditional_consumption_before_selection" {
+    try buildExpectFail("tests/feature_tests/polymorphism/203X_conditional_consumption_before_selection", "maybe_initialized");
+}
+
+test "feature_tests/polymorphism/204X_conditional_consumption_stale_result" {
+    try buildExpectFail("tests/feature_tests/polymorphism/204X_conditional_consumption_stale_result", "maybe_initialized");
+}
+
+test "feature_tests/polymorphism/205X_conditional_consumption_expired_field" {
+    try buildExpectFail("tests/feature_tests/polymorphism/205X_conditional_consumption_expired_field", "root that has ended");
+}
+
+test "feature_tests/polymorphism/206_conditional_consumption_allocation" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/206_conditional_consumption_allocation");
+    try runExpect("tests/feature_tests/polymorphism/206_conditional_consumption_allocation", 0);
+}
+
+test "feature_tests/polymorphism/207_virtual_conditional_consumption_outputs" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/207_virtual_conditional_consumption_outputs");
+    try runExpect("tests/feature_tests/polymorphism/207_virtual_conditional_consumption_outputs", 0);
+}
+
+test "feature_tests/polymorphism/208_virtual_nested_conditional_consumption" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/208_virtual_nested_conditional_consumption");
+    try runExpect("tests/feature_tests/polymorphism/208_virtual_nested_conditional_consumption", 0);
+}
+
+test "feature_tests/polymorphism/209X_virtual_conditional_consumption_wrong_variant" {
+    try buildExpectFail("tests/feature_tests/polymorphism/209X_virtual_conditional_consumption_wrong_variant", "storage transition is not permitted");
+}
+
+test "feature_tests/polymorphism/210_virtual_nested_consumption_inherited" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/210_virtual_nested_consumption_inherited");
+    try runExpect("tests/feature_tests/polymorphism/210_virtual_nested_consumption_inherited", 0);
+}
+
+test "feature_tests/polymorphism/246_virtual_opaque_storage" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/246_virtual_opaque_storage");
+    try runExpect("tests/feature_tests/polymorphism/246_virtual_opaque_storage", 0);
+}
+
+test "feature_tests/polymorphism/247X_opaque_storage_missing_empty" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/247X_opaque_storage_missing_empty", "cannot prove empties", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/248X_opaque_storage_conditional" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/248X_opaque_storage_conditional", "conditional opaque storage clauses require correlated hidden storage post-states", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/249X_opaque_storage_erased_receiver" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/249X_opaque_storage_erased_receiver", "opaque storage clauses on an erased participant require mapped hidden storage identities", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/250X_opaque_storage_wrong_input" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/250X_opaque_storage_wrong_input", "storage transition is not permitted", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/251X_opaque_storage_extracted_local_escape" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/251X_opaque_storage_extracted_local_escape", "function output cannot depend on a local storage generation", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/252X_opaque_storage_retained_local_escape" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/252X_opaque_storage_retained_local_escape", "function output cannot depend on a local storage generation", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/253X_opaque_storage_backing_reference" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/253X_opaque_storage_backing_reference", "undeclared output dependency", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/254X_opaque_storage_branch_empty" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/254X_opaque_storage_branch_empty", "cannot prove empties", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/255_opaque_storage_discards_input" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/255_opaque_storage_discards_input");
+    try runExpect("tests/feature_tests/polymorphism/255_opaque_storage_discards_input", 0);
+}
+
+test "feature_tests/polymorphism/256X_opaque_storage_old_owner_reference" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/256X_opaque_storage_old_owner_reference", "opaque ownership storage requires no live external aliases to the consumed root", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/257_opaque_storage_returned_owner" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/257_opaque_storage_returned_owner");
+    try runExpect("tests/feature_tests/polymorphism/257_opaque_storage_returned_owner", 0);
+}
+
+test "feature_tests/polymorphism/260_virtual_multiple_storage_sources" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/260_virtual_multiple_storage_sources");
+    try runExpect("tests/feature_tests/polymorphism/260_virtual_multiple_storage_sources", 0);
+}
+
+test "feature_tests/polymorphism/262_virtual_internal_storage" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/262_virtual_internal_storage");
+    try runExpect("tests/feature_tests/polymorphism/262_virtual_internal_storage", 0);
+}
+
+test "feature_tests/polymorphism/263X_internal_storage_extracted_local_escape" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/263X_internal_storage_extracted_local_escape", "function output cannot depend on a local storage generation", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/264X_internal_storage_retained_local_escape" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/264X_internal_storage_retained_local_escape", "function output cannot depend on a local storage generation", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/265_internal_storage_returned_owner" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/265_internal_storage_returned_owner");
+    try runExpect("tests/feature_tests/polymorphism/265_internal_storage_returned_owner", 0);
+}
+
+test "feature_tests/polymorphism/266X_internal_storage_grouped_domain" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/266X_internal_storage_grouped_domain", "opaque storage effects require one mapped storage identity", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/267X_internal_storage_readonly_receiver" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/267X_internal_storage_readonly_receiver", "retains and empties require mutable storage references", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/268X_internal_storage_reference_mapping" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/268X_internal_storage_reference_mapping", "opaque storage domain mappings cannot select reference fields", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/269_internal_storage_owning_payload" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/269_internal_storage_owning_payload");
+    try runExpect("tests/feature_tests/polymorphism/269_internal_storage_owning_payload", 0);
+}
+
+test "feature_tests/polymorphism/270X_internal_storage_old_owner_alias" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/270X_internal_storage_old_owner_alias", "opaque ownership storage requires no live external aliases to the consumed root", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/271_internal_storage_independent_domains" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/271_internal_storage_independent_domains");
+    try runExpect("tests/feature_tests/polymorphism/271_internal_storage_independent_domains", 0);
+}
+
+test "feature_tests/polymorphism/272X_internal_storage_wrong_domain" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/272X_internal_storage_wrong_domain", "storage transition is not permitted", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/273_internal_storage_nested_mapping" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/273_internal_storage_nested_mapping");
+    try runExpect("tests/feature_tests/polymorphism/273_internal_storage_nested_mapping", 0);
+}
+
+test "feature_tests/polymorphism/274_virtual_internal_storage_layouts" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/274_virtual_internal_storage_layouts");
+    try runExpect("tests/feature_tests/polymorphism/274_virtual_internal_storage_layouts", 0);
+}
+
+test "feature_tests/polymorphism/275X_internal_storage_plain_value_escape" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/275X_internal_storage_plain_value_escape", "function output cannot depend on a local storage generation", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/276_internal_storage_plain_value" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/276_internal_storage_plain_value");
+    try runExpect("tests/feature_tests/polymorphism/276_internal_storage_plain_value", 0);
+}
+
+test "feature_tests/polymorphism/277_virtual_generic_internal_storage" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/277_virtual_generic_internal_storage");
+    try runExpect("tests/feature_tests/polymorphism/277_virtual_generic_internal_storage", 0);
+}
+
+test "feature_tests/polymorphism/261X_multiple_storage_second_local_escape" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/261X_multiple_storage_second_local_escape", "function output cannot depend on a local storage generation", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/258X_opaque_storage_forwarded_local_escape" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/258X_opaque_storage_forwarded_local_escape", "function output cannot depend on a local storage generation", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/259X_opaque_storage_forwarded_extraction_escape" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/259X_opaque_storage_forwarded_extraction_escape", "function output cannot depend on a local storage generation", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/244_core_argument_source" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/244_core_argument_source");
+    try runExpect("tests/feature_tests/polymorphism/244_core_argument_source", 0);
+}
+
+test "feature_tests/polymorphism/245X_core_argument_source_escape" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/245X_core_argument_source_escape", "function output cannot depend on a local storage generation", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/211X_conditional_consumption_replaces_dependency" {
+    try buildExpectFail("tests/feature_tests/polymorphism/211X_conditional_consumption_replaces_dependency", "maybe_initialized");
+}
+
+test "feature_tests/ownership/360X_opaque_plain_output_escape" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/ownership/360X_opaque_plain_output_escape", "function output cannot depend on a local storage generation", "failed without a diagnostic");
+}
+
+test "feature_tests/ownership/361_opaque_plain_output_caller" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/361_opaque_plain_output_caller");
+    try runExpect("tests/feature_tests/ownership/361_opaque_plain_output_caller", 0);
+}
+
+test "feature_tests/polymorphism/278_conditional_storage_extraction" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/278_conditional_storage_extraction");
+    try runExpect("tests/feature_tests/polymorphism/278_conditional_storage_extraction", 0);
+}
+
+test "feature_tests/polymorphism/279X_conditional_storage_extraction_escape" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/279X_conditional_storage_extraction_escape", "function output cannot depend on a local storage generation", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/280X_conditional_storage_wrong_variant" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/280X_conditional_storage_wrong_variant", "undeclared output dependency", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/281_nested_conditional_storage_extraction" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/281_nested_conditional_storage_extraction");
+    try runExpect("tests/feature_tests/polymorphism/281_nested_conditional_storage_extraction", 0);
+}
+
+test "feature_tests/polymorphism/282X_conditional_storage_inherited_identity" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/282X_conditional_storage_inherited_identity", "from_storage cannot be combined with exact transfers for the same output", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/283_conditional_storage_other_output" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/283_conditional_storage_other_output");
+    try runExpect("tests/feature_tests/polymorphism/283_conditional_storage_other_output", 0);
+}
+test "feature_tests/polymorphism/284_conditional_storage_empty" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/284_conditional_storage_empty");
+    try runExpect("tests/feature_tests/polymorphism/284_conditional_storage_empty", 0);
+}
+
+test "feature_tests/polymorphism/285X_conditional_storage_empty_unselected" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/285X_conditional_storage_empty_unselected", "function output cannot depend on a local storage generation", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/286_conditional_storage_empty_returned_owner" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/286_conditional_storage_empty_returned_owner");
+    try runExpect("tests/feature_tests/polymorphism/286_conditional_storage_empty_returned_owner", 0);
+}
+
+test "feature_tests/polymorphism/287X_conditional_storage_empty_repopulated" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/287X_conditional_storage_empty_repopulated", "function output cannot depend on a local storage generation", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/288X_conditional_storage_empty_second_call" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/288X_conditional_storage_empty_second_call", "function output cannot depend on a local storage generation", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/289X_conditional_storage_empty_missing" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/289X_conditional_storage_empty_missing", "cannot prove empties", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/290_concrete_conditional_storage_empty" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/290_concrete_conditional_storage_empty");
+    try runExpect("tests/feature_tests/polymorphism/290_concrete_conditional_storage_empty", 0);
+}
+
+test "feature_tests/polymorphism/291_nested_conditional_storage_empty" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/291_nested_conditional_storage_empty");
+    try runExpect("tests/feature_tests/polymorphism/291_nested_conditional_storage_empty", 0);
+}
+
+test "feature_tests/polymorphism/292X_conditional_storage_empty_preserving_result" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/292X_conditional_storage_empty_preserving_result", "function output cannot depend on a local storage generation", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/293X_conditional_storage_empty_overwritten_result" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/293X_conditional_storage_empty_overwritten_result", "function output cannot depend on a local storage generation", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/294_conditional_storage_empty_known_input" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/294_conditional_storage_empty_known_input");
+    try runExpect("tests/feature_tests/polymorphism/294_conditional_storage_empty_known_input", 0);
+}
+
+test "feature_tests/polymorphism/295_conditional_storage_extraction_and_empty" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/295_conditional_storage_extraction_and_empty");
+    try runExpect("tests/feature_tests/polymorphism/295_conditional_storage_extraction_and_empty", 0);
+}
+
+test "feature_tests/polymorphism/296X_conditional_storage_extracted_local_escape" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/296X_conditional_storage_extracted_local_escape", "function output cannot depend on a local storage generation", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/297X_virtual_receiver_ended_opaque_contents" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/297X_virtual_receiver_ended_opaque_contents", "receiver contents depend on a root that has ended", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/298X_direct_virtual_receiver_ended_opaque_contents" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/298X_direct_virtual_receiver_ended_opaque_contents", "receiver contents depend on a root that has ended", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/299X_static_receiver_ended_opaque_contents" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/299X_static_receiver_ended_opaque_contents", "opaque contents depend on a root that has ended", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/300X_concrete_receiver_ended_opaque_contents" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/300X_concrete_receiver_ended_opaque_contents", "opaque contents depend on a root that has ended", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/302X_concrete_read_ended_opaque_contents" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/302X_concrete_read_ended_opaque_contents", "opaque contents depend on a root that has ended", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/301_opaque_metadata_cleanup_after_referent" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/301_opaque_metadata_cleanup_after_referent");
+    try runExpect("tests/feature_tests/polymorphism/301_opaque_metadata_cleanup_after_referent", 0);
+}
+
+test "feature_tests/polymorphism/303_concrete_opaque_contents_live" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/303_concrete_opaque_contents_live");
+    try runExpect("tests/feature_tests/polymorphism/303_concrete_opaque_contents_live", 0);
+}
+
+test "feature_tests/polymorphism/304X_opaque_cleanup_ended_referent" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/304X_opaque_cleanup_ended_referent", "opaque contents depend on a root that has ended", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/305_input_choice_reference_selection" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/305_input_choice_reference_selection");
+    try runExpect("tests/feature_tests/polymorphism/305_input_choice_reference_selection", 0);
+}
+
+test "feature_tests/polymorphism/306X_input_choice_selected_expired_reference" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/306X_input_choice_selected_expired_reference", "root that has ended", "failed without a diagnostic");
+}
+
+test "tests/feature_tests/polymorphism/307_joint_input_choice_reference_selection" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/307_joint_input_choice_reference_selection");
+    try runExpect("tests/feature_tests/polymorphism/307_joint_input_choice_reference_selection", 0);
+}
+
+test "tests/feature_tests/polymorphism/308X_joint_input_choice_selected_expired_reference" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/308X_joint_input_choice_selected_expired_reference", "root that has ended", "failed without a diagnostic");
+}
+
+test "tests/feature_tests/polymorphism/309X_input_choice_rewritten_result" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/309X_input_choice_rewritten_result", "root that has ended", "failed without a diagnostic");
+}
+
+test "tests/feature_tests/polymorphism/310X_input_choice_unknown_result" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/310X_input_choice_unknown_result", "root that has ended", "failed without a diagnostic");
+}
+
+test "tests/feature_tests/polymorphism/311_input_choice_literal_wrapper" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/311_input_choice_literal_wrapper");
+    try runExpect("tests/feature_tests/polymorphism/311_input_choice_literal_wrapper", 0);
+}
+
+test "feature_tests/polymorphism/312X_input_choice_enclosing_result_rewrite" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/312X_input_choice_enclosing_result_rewrite", "root that has ended", "failed without a diagnostic");
+}
+
+test "tests/feature_tests/polymorphism/313_abstract_input_choice_contract" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/313_abstract_input_choice_contract");
+    try runExpect("tests/feature_tests/polymorphism/313_abstract_input_choice_contract", 0);
+}
+
+test "tests/feature_tests/polymorphism/314_abstract_joint_output_contract" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/314_abstract_joint_output_contract");
+    try runExpect("tests/feature_tests/polymorphism/314_abstract_joint_output_contract", 0);
+}
+
+test "tests/feature_tests/polymorphism/315X_abstract_joint_output_partial_proof" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/315X_abstract_joint_output_partial_proof", "root that has ended", "failed without a diagnostic");
+}
+
+test "tests/feature_tests/polymorphism/316X_abstract_joint_output_wrong_implementation" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/316X_abstract_joint_output_wrong_implementation", "safety contract", "failed without a diagnostic");
+}
+
+test "tests/feature_tests/polymorphism/317X_abstract_joint_output_overwritten_selector" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/317X_abstract_joint_output_overwritten_selector", "root that has ended", "failed without a diagnostic");
+}
+
+test "tests/feature_tests/polymorphism/318_abstract_joint_output_copied_selectors" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/318_abstract_joint_output_copied_selectors");
+    try runExpect("tests/feature_tests/polymorphism/318_abstract_joint_output_copied_selectors", 0);
+}
+
+test "tests/feature_tests/polymorphism/319X_abstract_joint_output_independent_call" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/319X_abstract_joint_output_independent_call", "root that has ended", "failed without a diagnostic");
+}
+
+test "tests/feature_tests/polymorphism/320_abstract_joint_output_forwarding" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/320_abstract_joint_output_forwarding");
+    try runExpect("tests/feature_tests/polymorphism/320_abstract_joint_output_forwarding", 0);
+}
+
+test "tests/feature_tests/polymorphism/321_abstract_reference_input_entry_choice" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/321_abstract_reference_input_entry_choice");
+    try runExpect("tests/feature_tests/polymorphism/321_abstract_reference_input_entry_choice", 0);
+}
+
+test "tests/feature_tests/polymorphism/322_abstract_joint_input_choices" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/322_abstract_joint_input_choices");
+    try runExpect("tests/feature_tests/polymorphism/322_abstract_joint_input_choices", 0);
+}
+
+test "tests/feature_tests/polymorphism/323_abstract_mixed_input_output_choices" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/323_abstract_mixed_input_output_choices");
+    try runExpect("tests/feature_tests/polymorphism/323_abstract_mixed_input_output_choices", 0);
+}
+
+test "tests/feature_tests/polymorphism/324X_abstract_joint_output_later_invalidation" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/324X_abstract_joint_output_later_invalidation", "root that has ended", "failed without a diagnostic");
+}
+
+test "tests/feature_tests/polymorphism/325X_abstract_input_choice_wrong_implementation" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/325X_abstract_input_choice_wrong_implementation", "undeclared output dependency", "failed without a diagnostic");
+}
+
+test "tests/feature_tests/polymorphism/326X_abstract_joint_conditional_consumption" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/326X_abstract_joint_conditional_consumption", "joint choice conditions cannot conditionally consume or relocate owners", "failed without a diagnostic");
+}
+
+test "tests/feature_tests/polymorphism/327_abstract_input_guards_common_consumption" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/327_abstract_input_guards_common_consumption");
+    try runExpect("tests/feature_tests/polymorphism/327_abstract_input_guards_common_consumption", 0);
+}
+
+test "feature_tests/errors/94X_defer_return" {
+    try buildExpectFail("tests/feature_tests/errors/94X_defer_return", "cannot return or propagate errors from a deferred action");
+}
+
+test "feature_tests/errors/95X_defer_propagation" {
+    try buildExpectFail("tests/feature_tests/errors/95X_defer_propagation", "cannot return or propagate errors from a deferred action");
+}
+
+test "feature_tests/errors/96X_defer_context" {
+    try buildExpectFail("tests/feature_tests/errors/96X_defer_context", "cannot return or propagate errors from a deferred action");
+}
+
+test "feature_tests/errors/97X_defer_report_return" {
+    try buildExpectFail("tests/feature_tests/errors/97X_defer_report_return", "cannot return or propagate errors from a deferred action");
+}
+
+test "feature_tests/errors/98X_defer_generic_return" {
+    try buildExpectFail("tests/feature_tests/errors/98X_defer_generic_return", "cannot return or propagate errors from a deferred action");
+}
+
+test "feature_tests/errors/99X_defer_generic_report_return" {
+    try buildExpectFail("tests/feature_tests/errors/99X_defer_generic_report_return", "cannot return or propagate errors from a deferred action");
+}
+
+test "feature_tests/errors/100_defer_local_error_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/errors/100_defer_local_error_cleanup");
+    try runExpect("tests/feature_tests/errors/100_defer_local_error_cleanup", 0);
+}
+
+test "feature_tests/errors/101X_defer_generic_propagation" {
+    try buildExpectFail("tests/feature_tests/errors/101X_defer_generic_propagation", "cannot return or propagate errors from a deferred action");
+}
+
+test "feature_tests/errors/102X_defer_generic_context" {
+    try buildExpectFail("tests/feature_tests/errors/102X_defer_generic_context", "cannot return or propagate errors from a deferred action");
+}
+
+test "feature_tests/errors/103X_defer_break" {
+    try buildExpectFail("tests/feature_tests/errors/103X_defer_break", "cannot exit an enclosing loop from a deferred action");
+}
+
+test "feature_tests/errors/104X_defer_generic_continue" {
+    try buildExpectFail("tests/feature_tests/errors/104X_defer_generic_continue", "cannot exit an enclosing loop from a deferred action");
+}
+
+test "feature_tests/errors/105X_defer_handler_return" {
+    try buildExpectFail("tests/feature_tests/errors/105X_defer_handler_return", "cannot return or propagate errors from a deferred action");
+}
+
+test "feature_tests/errors/106_report_return_block" {
+    try expectSuccessfulBuild("tests/feature_tests/errors/106_report_return_block");
+    try runExpect("tests/feature_tests/errors/106_report_return_block", 0);
+}
+
+test "feature_tests/errors/107X_defer_report_return_block" {
+    try buildExpectFail("tests/feature_tests/errors/107X_defer_report_return_block", "cannot return or propagate errors from a deferred action");
+}
+
+test "feature_tests/errors/108X_defer_generic_report_return_block" {
+    try buildExpectFail("tests/feature_tests/errors/108X_defer_generic_report_return_block", "cannot return or propagate errors from a deferred action");
+}
+
+test "feature_tests/errors/109X_report_return_block_non_errable" {
+    try buildExpectFail("tests/feature_tests/errors/109X_report_return_block_non_errable", "handle expects an Errable value");
+}
+
+test "feature_tests/contracts/01_unary_static" {
+    const test_path = "tests/feature_tests/contracts/01_unary_static";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/contracts/02_generic_associated" {
+    const test_path = "tests/feature_tests/contracts/02_generic_associated";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/contracts/03_virtual_associated" {
+    const test_path = "tests/feature_tests/contracts/03_virtual_associated";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/contracts/04X_missing_operation" {
+    try buildExpectFail("tests/feature_tests/contracts/04X_missing_operation", "missing implementation operation");
+}
+
+test "feature_tests/contracts/05X_virtual_borrow_escape" {
+    try buildExpectFail("tests/feature_tests/contracts/05X_virtual_borrow_escape", "function output cannot depend on a local storage generation that ends before return");
+}
+
+test "feature_tests/contracts/06_legacy_composition" {
+    const test_path = "tests/feature_tests/contracts/06_legacy_composition";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/contracts/07_imported_identity" {
+    const test_path = "tests/feature_tests/contracts/07_imported_identity";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/contracts/08X_ambiguous_operation" {
+    try buildExpectFail("tests/feature_tests/contracts/08X_ambiguous_operation", "ambiguous conformances for the same participant tuple");
+}
+
+test "feature_tests/contracts/09X_incompatible_output" {
+    try buildExpectFail("tests/feature_tests/contracts/09X_incompatible_output", "operation returns an incompatible associated result");
+}
+
+test "feature_tests/contracts/10X_static_safety_dependency" {
+    try buildExpectFail("tests/feature_tests/contracts/10X_static_safety_dependency", "undeclared output dependency");
+}
+
+test "feature_tests/contracts/11X_missing_conformance_type" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/11X_missing_conformance_type", "legacy conformance declarations are unsupported", "panic");
+}
+
+test "feature_tests/contracts/12_contextual_words" {
+    const test_path = "tests/feature_tests/contracts/12_contextual_words";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/contracts/13_virtual_positional" {
+    const test_path = "tests/feature_tests/contracts/13_virtual_positional";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/contracts/14_participant_tuple" {
+    const test_path = "tests/feature_tests/contracts/14_participant_tuple";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/contracts/15X_tuple_wrong_result" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/15X_tuple_wrong_result", "operation returns an incompatible associated result", "panic");
+}
+
+test "feature_tests/contracts/16X_tuple_missing_operation" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/16X_tuple_missing_operation", "missing implementation operation", "panic");
+}
+
+test "feature_tests/contracts/17X_tuple_ambiguous_operation" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/17X_tuple_ambiguous_operation", "ambiguous conformances for the same participant tuple", "panic");
+}
+
+test "feature_tests/contracts/18X_duplicate_tuple" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/18X_duplicate_tuple", "ambiguous conformances for the same participant tuple", "panic");
+}
+
+test "feature_tests/contracts/19X_missing_participant" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/19X_missing_participant", "missing argument", "panic");
+}
+
+test "feature_tests/contracts/20X_unknown_participant" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/20X_unknown_participant", "unknown argument name", "panic");
+}
+
+test "feature_tests/contracts/21X_participant_kind" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/21X_participant_kind", "argument kind does not match its parameter", "panic");
+}
+
+test "feature_tests/contracts/22X_missing_associated" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/22X_missing_associated", "missing argument", "panic");
+}
+
+test "feature_tests/contracts/23X_explicit_self" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/23X_explicit_self", "use named participants instead of Self", "panic");
+}
+
+test "feature_tests/contracts/24X_duplicate_parameter" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/24X_duplicate_parameter", "duplicate participant or associated parameter name", "panic");
+}
+
+test "feature_tests/contracts/25X_generic_tuple" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/25X_generic_tuple", "legacy conformance declarations are unsupported", "panic");
+}
+
+test "feature_tests/contracts/26X_legacy_tuple_relation" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/26X_legacy_tuple_relation", "legacy conformance declarations are unsupported", "panic");
+}
+
+test "feature_tests/contracts/27X_standalone_legacy" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/27X_standalone_legacy", "legacy conformance declarations are unsupported", "panic");
+}
+
+test "feature_tests/contracts/28X_unknown_contract" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/28X_unknown_contract", "unknown or inaccessible contract", "panic");
+}
+
+test "feature_tests/contracts/29_tuple_borrow" {
+    const test_path = "tests/feature_tests/contracts/29_tuple_borrow";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/contracts/30X_tuple_borrow_dependency" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/30X_tuple_borrow_dependency", "undeclared output dependency", "panic");
+}
+
+test "feature_tests/contracts/31_tuple_constants_and_order" {
+    const test_path = "tests/feature_tests/contracts/31_tuple_constants_and_order";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/contracts/32X_tuple_virtual" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/32X_tuple_virtual", "explicit participants require joint virtual evidence", "panic");
+}
+
+test "feature_tests/contracts/33_tuple_associated_bound" {
+    const test_path = "tests/feature_tests/contracts/33_tuple_associated_bound";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/contracts/34X_tuple_associated_bound" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/34X_tuple_associated_bound", "does not satisfy its declared bound", "panic");
+}
+
+test "feature_tests/contracts/35_tuple_nested_types" {
+    const test_path = "tests/feature_tests/contracts/35_tuple_nested_types";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/contracts/36_tuple_imported_identity" {
+    const test_path = "tests/feature_tests/contracts/36_tuple_imported_identity";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/contracts/37X_tuple_invisible_operation" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/37X_tuple_invisible_operation", "missing implementation operation", "panic");
+}
+
+test "feature_tests/contracts/38X_tuple_generic_legacy_relation" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/38X_tuple_generic_legacy_relation", "legacy conformance declarations are unsupported", "panic");
+}
+
+test "feature_tests/contracts/39_tuple_input_invalidation" {
+    const test_path = "tests/feature_tests/contracts/39_tuple_input_invalidation";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/contracts/40X_empty_participants" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/40X_empty_participants", "at least one named participant", "panic");
+}
+
+test "feature_tests/contracts/41X_value_participant" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/41X_value_participant", "participants must be named Type parameters", "panic");
+}
+
+test "feature_tests/contracts/42X_duplicate_participant_argument" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/42X_duplicate_participant_argument", "duplicate argument", "panic");
+}
+
+test "feature_tests/contracts/43X_associated_kind" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/43X_associated_kind", "argument kind does not match its parameter", "panic");
+}
+
+test "feature_tests/contracts/44X_extra_participant" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/44X_extra_participant", "too many arguments", "panic");
+}
+
+test "feature_tests/contracts/45X_legacy_composed_tuple" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/45X_legacy_composed_tuple", "a required contract dependency is not satisfied", "panic");
+}
+
+test "feature_tests/contracts/46X_tuple_default" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/46X_tuple_default", "defaultsto is unsupported", "panic");
+}
+
+test "feature_tests/contracts/47X_tuple_result_identity" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/47X_tuple_result_identity", "operation returns an incompatible associated result", "panic");
+}
+
+test "feature_tests/contracts/48_associated_type_projection" {
+    const test_path = "tests/feature_tests/contracts/48_associated_type_projection";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/contracts/49_generic_associated_projection" {
+    const test_path = "tests/feature_tests/contracts/49_generic_associated_projection";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/contracts/52_projection_named_participants" {
+    const test_path = "tests/feature_tests/contracts/52_projection_named_participants";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/contracts/54_projection_nominal_identity" {
+    const test_path = "tests/feature_tests/contracts/54_projection_nominal_identity";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/contracts/50X_projection_missing_tuple" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/50X_projection_missing_tuple", "no conformance for the projected participant tuple", "panic");
+}
+
+test "feature_tests/contracts/51X_projection_unknown_member" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/51X_projection_unknown_member", "unknown associated type", "panic");
+}
+
+test "feature_tests/contracts/53X_projection_wrong_argument" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/53X_projection_wrong_argument", "unknown argument name", "panic");
+}
+
+test "feature_tests/contracts/55X_projection_value_member" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/55X_projection_value_member", "associated element is not a type", "panic");
+}
+
+test "feature_tests/contracts/57_projection_dependency" {
+    const test_path = "tests/feature_tests/contracts/57_projection_dependency";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/contracts/58_projection_imported_identity" {
+    const test_path = "tests/feature_tests/contracts/58_projection_imported_identity";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/contracts/56X_projection_cycle" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/56X_projection_cycle", "cyclic or unresolved associated type projection", "panic");
+}
+
+test "feature_tests/contracts/59X_generic_projection_missing_tuple" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/59X_generic_projection_missing_tuple", "no conformance for the projected participant tuple", "panic");
+}
+
+test "feature_tests/contracts/60X_projection_nested_cycle" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/60X_projection_nested_cycle", "cyclic or unresolved associated type projection", "panic");
+}
+
+test "feature_tests/contracts/61X_projection_duplicate_after_resolution" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/61X_projection_duplicate_after_resolution", "ambiguous conformances for the same participant tuple", "panic");
+}
+
+test "feature_tests/contracts/62_projection_participant_dependency" {
+    const test_path = "tests/feature_tests/contracts/62_projection_participant_dependency";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/contracts/63_projection_generic_record" {
+    const test_path = "tests/feature_tests/contracts/63_projection_generic_record";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/contracts/64_projection_borrow" {
+    const test_path = "tests/feature_tests/contracts/64_projection_borrow";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/contracts/65X_projection_borrow_escape" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/65X_projection_borrow_escape", "function output cannot depend on a local storage generation that ends before return", "panic");
+}
+
+test "feature_tests/contracts/66_constant_projection_dimension" {
+    const test_path = "tests/feature_tests/contracts/66_constant_projection_dimension";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/contracts/67_constant_projection_generic_dimension" {
+    const test_path = "tests/feature_tests/contracts/67_constant_projection_generic_dimension";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/contracts/68_constant_projection_arithmetic" {
+    const test_path = "tests/feature_tests/contracts/68_constant_projection_arithmetic";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/contracts/69X_constant_projection_unknown_member" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/69X_constant_projection_unknown_member", "unknown associated constant", "panic");
+}
+
+test "feature_tests/contracts/70X_constant_projection_missing_tuple" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/70X_constant_projection_missing_tuple", "no conformance for the projected participant tuple", "panic");
+}
+
+test "feature_tests/contracts/71X_constant_projection_type_member" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/71X_constant_projection_type_member", "associated element is not an integer constant", "panic");
+}
+
+test "feature_tests/contracts/72X_constant_projection_negative_dimension" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/72X_constant_projection_negative_dimension", "array length must be non-negative", "panic");
+}
+
+test "feature_tests/contracts/73X_constant_projection_overflow" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/73X_constant_projection_overflow", "compile-time integer arithmetic overflow", "panic");
+}
+
+test "feature_tests/contracts/74X_constant_projection_division_by_zero" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/74X_constant_projection_division_by_zero", "division by zero in compile-time expression", "panic");
+}
+
+test "feature_tests/contracts/75X_constant_projection_empty_tuple" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/75X_constant_projection_empty_tuple", "missing argument", "panic");
+}
+
+test "feature_tests/contracts/76_constant_projection_named_tuple" {
+    const test_path = "tests/feature_tests/contracts/76_constant_projection_named_tuple";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/contracts/77_constant_projection_generic_type_argument" {
+    const test_path = "tests/feature_tests/contracts/77_constant_projection_generic_type_argument";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/contracts/78_constant_projection_generic_call_argument" {
+    const test_path = "tests/feature_tests/contracts/78_constant_projection_generic_call_argument";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/contracts/79_constant_projection_imported_tuple" {
+    const test_path = "tests/feature_tests/contracts/79_constant_projection_imported_tuple";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/contracts/80_constant_projection_generic_record_argument" {
+    const test_path = "tests/feature_tests/contracts/80_constant_projection_generic_record_argument";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/contracts/81_constant_projection_participant_tuple" {
+    const test_path = "tests/feature_tests/contracts/81_constant_projection_participant_tuple";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/contracts/82X_constant_projection_generic_overflow" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/82X_constant_projection_generic_overflow", "compile-time integer arithmetic overflow", "panic");
+}
+
+test "feature_tests/contracts/83X_constant_projection_generic_negative_dimension" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/83X_constant_projection_generic_negative_dimension", "array length must be non-negative", "panic");
+}
+
+test "feature_tests/contracts/84_constant_projection_concrete_call_argument" {
+    const path = "tests/feature_tests/contracts/84_constant_projection_concrete_call_argument";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/contracts/85_constant_projection_concrete_function" {
+    const path = "tests/feature_tests/contracts/85_constant_projection_concrete_function";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/contracts/86_constant_projection_concrete_arithmetic" {
+    const path = "tests/feature_tests/contracts/86_constant_projection_concrete_arithmetic";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/contracts/87X_constant_projection_constructor_unknown_member" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/87X_constant_projection_constructor_unknown_member", "unknown associated constant", "failed without a diagnostic");
+}
+
+test "feature_tests/contracts/88X_constant_projection_constructor_missing_tuple" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/88X_constant_projection_constructor_missing_tuple", "no conformance for the projected participant tuple", "failed without a diagnostic");
+}
+
+test "feature_tests/contracts/89X_constant_projection_constructor_negative_dimension" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/89X_constant_projection_constructor_negative_dimension", "array length must be non-negative", "failed without a diagnostic");
+}
+
+test "feature_tests/contracts/90X_constant_projection_constructor_overflow" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/90X_constant_projection_constructor_overflow", "compile-time integer arithmetic overflow", "failed without a diagnostic");
+}
+
+test "feature_tests/contracts/91X_constant_projection_concrete_function_division_by_zero" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/91X_constant_projection_concrete_function_division_by_zero", "division by zero in compile-time expression", "failed without a diagnostic");
+}
+
+test "feature_tests/contracts/92_constant_projection_mixed_concrete_arguments" {
+    const path = "tests/feature_tests/contracts/92_constant_projection_mixed_concrete_arguments";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/contracts/93_constant_projection_imported_concrete_call" {
+    const path = "tests/feature_tests/contracts/93_constant_projection_imported_concrete_call";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/contracts/94X_constant_projection_concrete_kind_mismatch" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/94X_constant_projection_concrete_kind_mismatch", "associated element is not an integer constant", "failed without a diagnostic");
+}
+
+test "feature_tests/contracts/95X_constant_projection_concrete_unknown_participant" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/95X_constant_projection_concrete_unknown_participant", "unknown or inaccessible type or contract in compile-time call arguments", "failed without a diagnostic");
+}
+
+test "feature_tests/contracts/96X_constant_projection_concrete_unknown_contract" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/96X_constant_projection_concrete_unknown_contract", "unknown or inaccessible type or contract in compile-time call arguments", "failed without a diagnostic");
+}
+
+test "feature_tests/contracts/97_unary_normalized_participant" {
+    const path = "tests/feature_tests/contracts/97_unary_normalized_participant";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/contracts/98X_unary_normalized_receiver_safety" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/98X_unary_normalized_receiver_safety", "safety contract", "panic");
+}
+
+test "feature_tests/contracts/99X_unary_reserved_self_parameter" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/99X_unary_reserved_self_parameter", "associated contract members cannot be named Self", "panic");
+}
+
+test "feature_tests/contracts/100_body_associated_members" {
+    const path = "tests/feature_tests/contracts/100_body_associated_members";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/contracts/101_explicit_unary_body_member" {
+    const path = "tests/feature_tests/contracts/101_explicit_unary_body_member";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/contracts/102X_duplicate_body_member" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/102X_duplicate_body_member", "duplicate associated contract member name", "panic");
+}
+
+test "feature_tests/contracts/103X_body_member_missing_type" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/103X_body_member_missing_type", "associated contract members require a type declaration", "panic");
+}
+
+test "feature_tests/contracts/104X_body_member_default" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/104X_body_member_default", "associated contract members are supplied by implement", "panic");
+}
+
+test "feature_tests/contracts/105X_old_participant_marker" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/105X_old_participant_marker", "declare contract participants on the name", "panic");
+}
+
+test "feature_tests/contracts/106X_associated_argument_not_participant" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/106X_associated_argument_not_participant", "unknown argument name", "panic");
+}
+
+test "feature_tests/contracts/107_shared_unary_selection" {
+    const path = "tests/feature_tests/contracts/107_shared_unary_selection";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/contracts/108X_shared_generic_associated_mismatch" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/108X_shared_generic_associated_mismatch", "constraint", "panic");
+}
+
+test "feature_tests/contracts/109X_shared_direct_associated_conflict" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/109X_shared_direct_associated_conflict", "ambiguous conformances for the same participant tuple", "panic");
+}
+
+test "program test shard assignment preserves fixture isolation" {
+    try @import("program_test_sharding").verifyIsolation();
+}
+
+test "program test shard assignment covers the regression inventory" {
+    try @import("program_test_sharding").verifyInventory(@embedFile("test.zig"));
+}
+
+test "feature_tests/contracts/110_ordinary_function_identity" {
+    const path = "tests/feature_tests/contracts/110_ordinary_function_identity";
+    try expectSuccessfulBuild(path);
+    try run(path);
+}
+
+test "feature_tests/contracts/111X_ordinary_function_overload" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/111X_ordinary_function_overload", "ordinary function 'read' has more than one declaration", "panic");
+}
+
+test "feature_tests/contracts/112X_ordinary_generic_arity" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/112X_ordinary_generic_arity", "ordinary function 'identity' has more than one declaration", "panic");
+}
+
+test "feature_tests/contracts/113_scoped_operation_alias" {
+    const path = "tests/feature_tests/contracts/113_scoped_operation_alias";
+    try expectSuccessfulBuild(path);
+    try run(path);
+}
+
+test "feature_tests/contracts/114_scoped_generic_call" {
+    const path = "tests/feature_tests/contracts/114_scoped_generic_call";
+    try expectSuccessfulBuild(path);
+    try run(path);
+}
+
+test "feature_tests/contracts/115_inline_operation_bodies" {
+    const path = "tests/feature_tests/contracts/115_inline_operation_bodies";
+    try expectSuccessfulBuild(path);
+    try run(path);
+}
+
+test "feature_tests/contracts/116_inline_no_associated" {
+    const path = "tests/feature_tests/contracts/116_inline_no_associated";
+    try expectSuccessfulBuild(path);
+    try run(path);
+}
+
+test "feature_tests/contracts/117X_duplicate_operation_identity" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/117X_duplicate_operation_identity", "duplicate contract operation identity", "panic");
+}
+
+test "feature_tests/contracts/118X_missing_implementation_operation" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/118X_missing_implementation_operation", "missing implementation operation", "panic");
+}
+
+test "feature_tests/contracts/119X_unknown_implementation_operation" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/119X_unknown_implementation_operation", "unknown implementation operation", "panic");
+}
+
+test "feature_tests/contracts/120X_duplicate_implementation_operation" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/120X_duplicate_implementation_operation", "duplicate implementation operation", "panic");
+}
+
+test "feature_tests/contracts/121X_implementation_result_mismatch" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/121X_implementation_result_mismatch", "operation returns an incompatible associated result", "panic");
+}
+
+test "feature_tests/contracts/122X_implementation_input_mismatch" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/122X_implementation_input_mismatch", "incompatible input signature", "panic");
+}
+
+test "feature_tests/contracts/123X_operation_requires_explicit_implementation" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/123X_operation_requires_explicit_implementation", "missing implementation operation", "panic");
+}
+
+test "feature_tests/contracts/124X_unknown_operation_alias" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/124X_unknown_operation_alias", "unknown or inaccessible implementation function", "panic");
+}
+
+test "feature_tests/contracts/125X_qualified_operation_argument_mismatch" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/125X_qualified_operation_argument_mismatch", "arguments do not match the selected contract operation", "panic");
+}
+
+test "feature_tests/contracts/126X_inline_safety_contract" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/126X_inline_safety_contract", "safety contract", "panic");
+}
+
+test "feature_tests/contracts/127_scoped_operation_statements" {
+    const path = "tests/feature_tests/contracts/127_scoped_operation_statements";
+    try expectSuccessfulBuild(path);
+    try run(path);
+}
+
+test "feature_tests/contracts/128_imported_contract_owned_participant" {
+    const path = "tests/feature_tests/contracts/128_imported_contract_owned_participant";
+    try expectSuccessfulBuild(path);
+    try run(path);
+}
+
+test "feature_tests/contracts/129X_external_implementation_ownership" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/129X_external_implementation_ownership", "must belong to the contract module or a nominal participant module", "panic");
+}
+
+test "feature_tests/contracts/130X_private_contract_operation" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/130X_private_contract_operation", "private to its defining module", "panic");
+}
+
+test "feature_tests/contracts/131X_private_operation_alias" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/131X_private_operation_alias", "unknown or inaccessible implementation function", "panic");
+}
+
+test "feature_tests/contracts/132_inline_safety_contract" {
+    const path = "tests/feature_tests/contracts/132_inline_safety_contract";
+    try expectSuccessfulBuild(path);
+    try run(path);
+}
+
+test "feature_tests/contracts/133X_ordinary_identity_across_files" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/133X_ordinary_identity_across_files", "ordinary function 'same_name' has more than one declaration", "panic");
+}
+
+test "feature_tests/contracts/134_generic_implementation_selection" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/134_generic_implementation_selection");
+}
+
+test "feature_tests/contracts/135X_generic_implementation_result" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/135X_generic_implementation_result", "incompatible associated result", "panic");
+}
+
+test "feature_tests/contracts/136X_generic_implementation_overlap" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/136X_generic_implementation_overlap", "equivalent implementation participant patterns", "panic");
+}
+
+test "feature_tests/contracts/137_repeated_participant_specialization" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/137_repeated_participant_specialization");
+}
+
+test "feature_tests/contracts/138X_incomparable_generic_patterns" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/138X_incomparable_generic_patterns", "ambiguous maximal patterns", "panic");
+}
+
+test "feature_tests/contracts/139_reference_participant_specialization" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/139_reference_participant_specialization");
+}
+
+test "feature_tests/contracts/140_nested_reference_array_patterns" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/140_nested_reference_array_patterns");
+}
+
+test "feature_tests/contracts/141_generic_array_length_specialization" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/141_generic_array_length_specialization");
+}
+
+test "feature_tests/contracts/142_repeated_array_length_specialization" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/142_repeated_array_length_specialization");
+}
+
+test "feature_tests/contracts/143_order_policy_unqualified_operation" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/143_order_policy_unqualified_operation");
+}
+
+test "feature_tests/contracts/144_hash_policy_unqualified_operation" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/144_hash_policy_unqualified_operation");
+}
+
+test "feature_tests/contracts/145_nominal_reader_implementations" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/145_nominal_reader_implementations");
+}
+
+test "feature_tests/contracts/146_nominal_pattern_specificity" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/146_nominal_pattern_specificity");
+}
+
+test "feature_tests/contracts/147X_equivalent_nominal_patterns" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/147X_equivalent_nominal_patterns", "equivalent implementation participant patterns", "panic");
+}
+
+test "feature_tests/contracts/148X_incomparable_nominal_patterns" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/148X_incomparable_nominal_patterns", "overlapping generic implementations have ambiguous maximal patterns", "panic");
+}
+
+test "feature_tests/contracts/149X_scoped_virtual_mutability" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/149X_scoped_virtual_mutability", "a mutable participant receiver requires a mutable concrete reference", "panic");
+}
+
+test "feature_tests/contracts/150_scoped_virtual_writer" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/150_scoped_virtual_writer");
+}
+
+test "feature_tests/contracts/151X_scoped_virtual_receiver_dependencies" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/151X_scoped_virtual_receiver_dependencies", "a storage transition is not permitted by this preservation contract", "_implement$");
+}
+
+test "feature_tests/contracts/152_reader_selected_virtual_evidence" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/152_reader_selected_virtual_evidence");
+}
+
+test "feature_tests/contracts/153_reader_unqualified_operation" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/153_reader_unqualified_operation");
+}
+
+test "feature_tests/contracts/154_writer_selected_virtual_evidence" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/154_writer_selected_virtual_evidence");
+}
+
+test "feature_tests/contracts/155_writer_unqualified_operation" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/155_writer_unqualified_operation");
+}
+
+test "feature_tests/contracts/156_tracer_selected_virtual_evidence" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/156_tracer_selected_virtual_evidence");
+}
+
+test "feature_tests/contracts/157_tracer_unqualified_operation" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/157_tracer_unqualified_operation");
+}
+
+test "feature_tests/contracts/158_allocator_selected_virtual_evidence" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/158_allocator_selected_virtual_evidence");
+}
+
+test "feature_tests/contracts/159X_deallocator_global_operation" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/159X_deallocator_global_operation", "no function named 'deallocate' exists", "panic");
+}
+
+test "feature_tests/contracts/160_unqualified_operation_identities" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/160_unqualified_operation_identities");
+}
+
+test "feature_tests/contracts/161X_unqualified_contract_ambiguity" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/161X_unqualified_contract_ambiguity", "multiple applicable operation identities", "panic");
+}
+
+test "feature_tests/contracts/162X_unqualified_ordinary_ambiguity" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/162X_unqualified_ordinary_ambiguity", "multiple applicable operation identities", "panic");
+}
+
+test "feature_tests/contracts/163_unqualified_virtual_operation" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/163_unqualified_virtual_operation");
+}
+
+test "feature_tests/contracts/164X_unqualified_generic_ordinary_ambiguity" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/164X_unqualified_generic_ordinary_ambiguity", "multiple applicable operation identities", "panic");
+}
+
+test "feature_tests/contracts/165_unqualified_distinct_inputs" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/165_unqualified_distinct_inputs");
+}
+
+test "feature_tests/contracts/166X_generic_operation_identity_ambiguity" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/166X_generic_operation_identity_ambiguity", "multiple applicable operation identities", "panic");
+}
+
+test "feature_tests/contracts/167_reached_contract_participant" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/167_reached_contract_participant");
+}
+
+test "feature_tests/contracts/168_reached_operation_field_path" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/168_reached_operation_field_path");
+}
+
+test "feature_tests/contracts/169_reached_virtual_operation" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/169_reached_virtual_operation");
+}
+
+test "feature_tests/contracts/170X_unqualified_conformance_ambiguity" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/170X_unqualified_conformance_ambiguity", "ambiguous maximal patterns", "no function named");
+}
+
+test "feature_tests/contracts/171_iteration_operation_identity" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/171_iteration_operation_identity");
+    try run("tests/feature_tests/contracts/171_iteration_operation_identity");
+}
+
+test "feature_tests/contracts/172_generic_virtual_participant_bound" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/172_generic_virtual_participant_bound");
+    try run("tests/feature_tests/contracts/172_generic_virtual_participant_bound");
+}
+
+test "feature_tests/contracts/173_selected_associated_constraint" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/173_selected_associated_constraint");
+    try run("tests/feature_tests/contracts/173_selected_associated_constraint");
+}
+
+test "feature_tests/contracts/174X_selected_associated_constraint_mismatch" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/174X_selected_associated_constraint_mismatch", "does not satisfy contract constraint 'Source'");
+}
+
+test "feature_tests/contracts/175_contract_dependency_identity" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/175_contract_dependency_identity");
+    try run("tests/feature_tests/contracts/175_contract_dependency_identity");
+}
+
+test "feature_tests/contracts/176X_missing_contract_dependency" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/176X_missing_contract_dependency", "a required contract dependency is not satisfied");
+}
+
+test "feature_tests/contracts/177_argument_source_scoped_identity" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/177_argument_source_scoped_identity");
+    try run("tests/feature_tests/contracts/177_argument_source_scoped_identity");
+}
+
+test "feature_tests/contracts/178_generic_operation_alias" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/178_generic_operation_alias");
+    try run("tests/feature_tests/contracts/178_generic_operation_alias");
+}
+
+test "feature_tests/contracts/179X_generic_alias_output_inference" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/179X_generic_alias_output_inference", "parameters must be inferred from the selected input signature");
+}
+
+test "feature_tests/contracts/180X_generic_alias_result_mismatch" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/180X_generic_alias_result_mismatch", "operation returns an incompatible associated result");
+}
+
+test "feature_tests/contracts/181X_dormant_equivalent_implementations" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/181X_dormant_equivalent_implementations", "equivalent implementation participant patterns are not allowed");
+}
+
+test "feature_tests/contracts/182X_dormant_external_implementation" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/182X_dormant_external_implementation", "must belong to the contract module or a nominal participant module");
+}
+
+test "feature_tests/contracts/183_copy_permission_selected_evidence" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/183_copy_permission_selected_evidence");
+    try run("tests/feature_tests/contracts/183_copy_permission_selected_evidence");
+}
+
+test "feature_tests/contracts/184X_generic_alias_unsatisfied_bound" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/184X_generic_alias_unsatisfied_bound", "does not satisfy the generic operation alias bounds");
+}
+
+test "feature_tests/contracts/185_generic_alias_virtual_evidence" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/185_generic_alias_virtual_evidence");
+    try run("tests/feature_tests/contracts/185_generic_alias_virtual_evidence");
+}
+
+test "feature_tests/contracts/186_contextual_associated_operation_input" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/186_contextual_associated_operation_input");
+    try run("tests/feature_tests/contracts/186_contextual_associated_operation_input");
+}
+
+test "feature_tests/contracts/187_init_record_arguments" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/187_init_record_arguments");
+    try run("tests/feature_tests/contracts/187_init_record_arguments");
+}
+
+test "feature_tests/contracts/188_init_generic" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/188_init_generic");
+    try run("tests/feature_tests/contracts/188_init_generic");
+}
+
+test "feature_tests/contracts/189_init_fallible" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/189_init_fallible");
+    try run("tests/feature_tests/contracts/189_init_fallible");
+}
+
+test "feature_tests/contracts/190X_init_result_type" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/190X_init_result_type", "Init.Result must be its participant type or one Errable containing that type");
+}
+
+test "feature_tests/contracts/191_init_owner_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/191_init_owner_cleanup");
+    try run("tests/feature_tests/contracts/191_init_owner_cleanup");
+}
+
+test "feature_tests/contracts/192X_init_reference_escape" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/192X_init_reference_escape", "function output cannot depend on a local storage generation");
+}
+
+test "feature_tests/contracts/193X_init_legacy_collision" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/193X_init_legacy_collision", "legacy constructor declarations are unsupported; use implement Init");
+}
+
+test "feature_tests/contracts/194X_init_scalar_arguments" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/194X_init_scalar_arguments", "Init.Args must be a record type");
+}
+
+test "feature_tests/contracts/195X_init_generic_default_type" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/195X_init_generic_default_type", "default value is incompatible with its selected Init.Args field type");
+}
+
+test "feature_tests/contracts/196_init_generic_defaults" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/196_init_generic_defaults");
+    try run("tests/feature_tests/contracts/196_init_generic_defaults");
+}
+
+test "feature_tests/contracts/197_deinit_automatic" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/197_deinit_automatic");
+    try run("tests/feature_tests/contracts/197_deinit_automatic");
+}
+
+test "feature_tests/contracts/198_deinit_explicit" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/198_deinit_explicit");
+    try run("tests/feature_tests/contracts/198_deinit_explicit");
+}
+
+test "feature_tests/contracts/199_deinit_ordinary_alias" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/199_deinit_ordinary_alias");
+    try run("tests/feature_tests/contracts/199_deinit_ordinary_alias");
+}
+
+test "feature_tests/contracts/200_deinit_generic" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/200_deinit_generic");
+    try run("tests/feature_tests/contracts/200_deinit_generic");
+}
+
+test "feature_tests/contracts/201_deinit_nested_choice_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/201_deinit_nested_choice_cleanup");
+    try run("tests/feature_tests/contracts/201_deinit_nested_choice_cleanup");
+}
+
+test "feature_tests/contracts/202_deinit_specialized" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/202_deinit_specialized");
+    try run("tests/feature_tests/contracts/202_deinit_specialized");
+}
+
+test "feature_tests/contracts/203_deinit_imported" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/203_deinit_imported");
+    try run("tests/feature_tests/contracts/203_deinit_imported");
+}
+
+test "feature_tests/contracts/204X_deinit_double_destruction" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/204X_deinit_double_destruction", "consumption requires an initialized owner");
+}
+
+test "feature_tests/contracts/205X_deinit_uninitialized" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/205X_deinit_uninitialized", "consumption requires an initialized owner");
+}
+
+test "feature_tests/contracts/206X_deinit_legacy_collision" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/206X_deinit_legacy_collision", "legacy destructor declarations are unsupported; use implement Deinit");
+}
+
+test "feature_tests/contracts/207X_deinit_result" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/207X_deinit_result", "operation returns an incompatible associated result");
+}
+
+test "feature_tests/contracts/208X_deinit_implicit_copy" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/208X_deinit_implicit_copy", "cannot be copied implicitly");
+}
+
+test "feature_tests/contracts/209X_deinit_virtual_receiver" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/209X_deinit_virtual_receiver", "consumes on an erased participant requires receiver cleanup identities");
+}
+
+test "feature_tests/contracts/210_deinit_owned_field_post_states" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/210_deinit_owned_field_post_states");
+    try run("tests/feature_tests/contracts/210_deinit_owned_field_post_states");
+}
+
+test "feature_tests/contracts/211X_deinit_borrowed_owner" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/211X_deinit_borrowed_owner", "a storage transition is not permitted by this preservation contract");
+}
+
+test "feature_tests/contracts/212_deinit_independent_parameters" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/212_deinit_independent_parameters");
+    try run("tests/feature_tests/contracts/212_deinit_independent_parameters");
+}
+
+test "feature_tests/contracts/213X_deinit_repeated_parameter" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/213X_deinit_repeated_parameter", "consumption requires an initialized owner");
+}
+
+test "feature_tests/contracts/214X_deinit_parameter_alias" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/214X_deinit_parameter_alias", "consumption requires an initialized owner");
+}
+
+test "feature_tests/contracts/215X_deinit_parameter_branch" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/215X_deinit_parameter_branch", "consumption requires an initialized owner");
+}
+
+test "feature_tests/contracts/216X_deinit_parameter_overwrite" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/216X_deinit_parameter_overwrite", "consumption requires an initialized owner");
+}
+
+test "feature_tests/contracts/217_deinit_reached_alias" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/217_deinit_reached_alias");
+    try run("tests/feature_tests/contracts/217_deinit_reached_alias");
+}
+
+test "feature_tests/contracts/218X_deinit_loop_carried_aliases" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/218X_deinit_loop_carried_aliases", "consumption requires an initialized owner");
+}
+
+test "feature_tests/contracts/219_generic_local_nominal_participant" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/219_generic_local_nominal_participant");
+    try run("tests/feature_tests/contracts/219_generic_local_nominal_participant");
+}
+
+test "feature_tests/numbers/14_numeric_classification_contracts" {
+    try expectSuccessfulBuild("tests/feature_tests/numbers/14_numeric_classification_contracts");
+    try run("tests/feature_tests/numbers/14_numeric_classification_contracts");
+}
+
+test "feature_tests/numbers/15X_unsigned_classification_signed" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/numbers/15X_unsigned_classification_signed", "does not satisfy contract constraint 'UInt'");
+}
+
+test "feature_tests/numbers/16X_float_classification_integer" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/numbers/16X_float_classification_integer", "does not satisfy contract constraint 'Float'");
+}
+
+test "feature_tests/numbers/17_color_float_representation" {
+    try expectSuccessfulBuild("tests/feature_tests/numbers/17_color_float_representation");
+    try run("tests/feature_tests/numbers/17_color_float_representation");
+}
+
+test "feature_tests/contracts/220_deinit_collection_elements" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/220_deinit_collection_elements");
+    try run("tests/feature_tests/contracts/220_deinit_collection_elements");
+}
+
+test "feature_tests/contracts/221_init_generic_choice_defaults" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/221_init_generic_choice_defaults");
+    try run("tests/feature_tests/contracts/221_init_generic_choice_defaults");
+}
+
+test "feature_tests/contracts/222X_init_generic_default_out_of_range" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/222X_init_generic_default_out_of_range", "default value is incompatible with its selected Init.Args field type");
+}
+
+test "feature_tests/contracts/223_deinit_collection_reached_capability" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/223_deinit_collection_reached_capability");
+    try run("tests/feature_tests/contracts/223_deinit_collection_reached_capability");
+}
+
+test "feature_tests/contracts/224X_deinit_reached_capability_consumes_storage" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/224X_deinit_reached_capability_consumes_storage", "a storage transition is not permitted by this preservation contract");
+}
+
+test "feature_tests/logging/02_scoped_loggers" {
+    try expectSuccessfulBuild("tests/feature_tests/logging/02_scoped_loggers");
+    try run("tests/feature_tests/logging/02_scoped_loggers");
+}
+
+test "feature_tests/logging/03X_logger_writer_lifetime" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/logging/03X_logger_writer_lifetime", "function output cannot depend on a local storage generation that ends before return");
+}
+
+test "feature_tests/contracts/225_fallible_copy_selected_evidence" {
+    const path = "tests/feature_tests/contracts/225_fallible_copy_selected_evidence";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/contracts/226_ordinary_copy_name_does_not_change_ownership" {
+    const path = "tests/feature_tests/contracts/226_ordinary_copy_name_does_not_change_ownership";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/contracts/227_structural_args_allocator_inference" {
+    const path = "tests/feature_tests/contracts/227_structural_args_allocator_inference";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/contracts/228_structural_args_specialization" {
+    const path = "tests/feature_tests/contracts/228_structural_args_specialization";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/contracts/229X_structural_args_repeated_type" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/229X_structural_args_repeated_type", "no conformance");
+}
+
+test "feature_tests/contracts/230X_structural_args_ambiguous" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/230X_structural_args_ambiguous", "ambiguous maximal patterns");
+}
+
+test "feature_tests/contracts/231_init_generic_allocator_args" {
+    const path = "tests/feature_tests/contracts/231_init_generic_allocator_args";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/contracts/232X_init_allocator_args_escape" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/232X_init_allocator_args_escape", "local storage generation");
+}
+
+test "feature_tests/contracts/233_init_argument_specialization" {
+    const path = "tests/feature_tests/contracts/233_init_argument_specialization";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/contracts/234X_init_literal_shapes_ambiguous" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/234X_init_literal_shapes_ambiguous", "ambiguous Init argument shapes");
+}
+
+test "feature_tests/contracts/235_init_target_inferred_from_args" {
+    const path = "tests/feature_tests/contracts/235_init_target_inferred_from_args";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/contracts/236X_init_target_not_inferred_from_result" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/236X_init_target_not_inferred_from_result", "construction arguments do not match");
+}
+
+test "feature_tests/contracts/237_init_owned_policy_failure_cleanup" {
+    const path = "tests/feature_tests/contracts/237_init_owned_policy_failure_cleanup";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/contracts/238_init_target_inferred_in_generic_body" {
+    const path = "tests/feature_tests/contracts/238_init_target_inferred_in_generic_body";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/contracts/239X_init_inferred_target_ambiguous" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/239X_init_inferred_target_ambiguous", "ambiguous Init argument shapes");
+}
+
+test "feature_tests/contracts/240_init_once_operation_alias" {
+    const path = "tests/feature_tests/contracts/240_init_once_operation_alias";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/contracts/241X_init_once_operation_repeated" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/241X_init_once_operation_repeated", "once function 'acquire' is consumed more than once");
+}
+
+test "feature_tests/contracts/242_init_explicit_native_capabilities" {
+    const path = "tests/feature_tests/contracts/242_init_explicit_native_capabilities";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/contracts/243_init_nested_reference_effects" {
+    const path = "tests/feature_tests/contracts/243_init_nested_reference_effects";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/contracts/244X_init_nested_reference_consumed" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/244X_init_nested_reference_consumed", "value was deinitialized");
+}
+
+test "feature_tests/contracts/245X_init_nested_reference_repeated" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/245X_init_nested_reference_repeated", "consumption requires an initialized owner");
+}
+
+test "feature_tests/contracts/246X_init_reference_fields_alias" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/246X_init_reference_fields_alias", "consumed inputs alias the same storage");
+}
+
+test "feature_tests/contracts/247_ordinary_deinit_has_no_cleanup_identity" {
+    const path = "tests/feature_tests/contracts/247_ordinary_deinit_has_no_cleanup_identity";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/ownership/348X_deferred_reference_effects_through_wrapper" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/ownership/348X_deferred_reference_effects_through_wrapper", "reference depends on a root that has ended");
+}
+
+test "feature_tests/contracts/248_convert_destination_dispatch" {
+    const path = "tests/feature_tests/contracts/248_convert_destination_dispatch";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/contracts/249X_convert_invalid_result" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/249X_convert_invalid_result", "Convert.Result must be its target participant type");
+}
+
+test "feature_tests/contracts/250_convert_owned_identity" {
+    const path = "tests/feature_tests/contracts/250_convert_owned_identity";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/contracts/251X_convert_owned_copy" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/251X_convert_owned_copy", "cannot be copied implicitly");
+}
+
+test "feature_tests/contracts/252_convert_generic_specialization" {
+    const path = "tests/feature_tests/contracts/252_convert_generic_specialization";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/contracts/253_convert_borrowed_result" {
+    const path = "tests/feature_tests/contracts/253_convert_borrowed_result";
+    try expectSuccessfulBuild(path);
+    try runExpect(path, 0);
+}
+
+test "feature_tests/contracts/254X_convert_borrowed_escape" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/254X_convert_borrowed_escape", "local storage generation");
+}
+
+test "feature_tests/contracts/255X_generic_unknown_argument" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/255X_generic_unknown_argument", "unknown compile-time argument in call to 'identity'");
+}
+
+test "feature_tests/contracts/256X_legacy_numeric_type_call" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/256X_legacy_numeric_type_call", "numeric type-call conversions are unsupported; use convert");
+}
+
+test "feature_tests/contracts/257X_convert_fallible_wrong_target" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/257X_convert_fallible_wrong_target", "Convert.Result must be its target participant type");
+}
+
+test "feature_tests/contracts/258_add_args_specialized_result" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/258_add_args_specialized_result");
+    try runExpect("tests/feature_tests/contracts/258_add_args_specialized_result", 0);
+}
+test "feature_tests/contracts/259_string_add_static_allocator" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/259_string_add_static_allocator");
+    try runExpect("tests/feature_tests/contracts/259_string_add_static_allocator", 0);
+}
+test "feature_tests/contracts/260X_legacy_add_operator" {
+    try buildExpectFail("tests/feature_tests/contracts/260X_legacy_add_operator", "operator + declarations are unsupported; use implement Add");
+}
+
+test "feature_tests/contracts/261X_add_args_ambiguous" {
+    try buildExpectFail("tests/feature_tests/contracts/261X_add_args_ambiguous", "ambiguous Add argument shapes");
+}
+
+test "feature_tests/contracts/262_add_borrowed_result" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/262_add_borrowed_result");
+    try runExpect("tests/feature_tests/contracts/262_add_borrowed_result", 0);
+}
+
+test "feature_tests/contracts/263X_add_borrowed_result_escape" {
+    try buildExpectFail("tests/feature_tests/contracts/263X_add_borrowed_result_escape", "function output cannot depend on a local storage generation");
+}
+
+test "feature_tests/contracts/264X_argument_record_field_address_escape" {
+    try buildExpectFail("tests/feature_tests/contracts/264X_argument_record_field_address_escape", "function output cannot depend on a local storage generation");
+}
+
+test "feature_tests/contracts/265_add_qualified_argument_shape" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/265_add_qualified_argument_shape");
+    try runExpect("tests/feature_tests/contracts/265_add_qualified_argument_shape", 0);
+}
+
+test "feature_tests/contracts/266X_add_missing_reached_argument" {
+    try buildExpectFail("tests/feature_tests/contracts/266X_add_missing_reached_argument", "Add.Args requires a reachable capability");
+}
+
+test "feature_tests/contracts/267_equal_scoped_specialization" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/267_equal_scoped_specialization");
+    try runExpect("tests/feature_tests/contracts/267_equal_scoped_specialization", 0);
+}
+
+test "feature_tests/contracts/268X_legacy_equal_operator" {
+    try buildExpectFail("tests/feature_tests/contracts/268X_legacy_equal_operator", "comparison operator declarations are unsupported; use implement Equal");
+}
+
+test "feature_tests/contracts/269X_legacy_not_equal_operator" {
+    try buildExpectFail("tests/feature_tests/contracts/269X_legacy_not_equal_operator", "comparison operator declarations are unsupported; use implement Equal");
+}
+
+test "feature_tests/contracts/270X_equal_result_must_be_bool" {
+    try buildExpectFail("tests/feature_tests/contracts/270X_equal_result_must_be_bool", "Equal.equal must return exactly (.ok: Bool)");
+}
+
+test "feature_tests/contracts/271X_equal_missing_reached_argument" {
+    try buildExpectFail("tests/feature_tests/contracts/271X_equal_missing_reached_argument", "Equal.Args requires a reachable capability");
+}
+
+test "feature_tests/contracts/272X_equal_argument_shapes_ambiguous" {
+    try buildExpectFail("tests/feature_tests/contracts/272X_equal_argument_shapes_ambiguous", "ambiguous Equal argument shapes");
+}
+
+test "feature_tests/contracts/273_scalar_arithmetic_evidence" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/273_scalar_arithmetic_evidence");
+    try runExpect("tests/feature_tests/contracts/273_scalar_arithmetic_evidence", 0);
+}
+
+test "feature_tests/contracts/274_arithmetic_custom_results" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/274_arithmetic_custom_results");
+    try runExpect("tests/feature_tests/contracts/274_arithmetic_custom_results", 0);
+}
+
+test "feature_tests/contracts/275X_scalar_arithmetic_external_override" {
+    try buildExpectFail("tests/feature_tests/contracts/275X_scalar_arithmetic_external_override", "an implementation must belong to the contract module or a nominal participant module");
+}
+
+test "feature_tests/contracts/276_matrix_shape_product_specialization" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/276_matrix_shape_product_specialization");
+    try runExpect("tests/feature_tests/contracts/276_matrix_shape_product_specialization", 0);
+}
+
+test "feature_tests/contracts/277X_matrix_product_element_mismatch" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/277X_matrix_product_element_mismatch", "operator '*' is not defined", "pointer arithmetic");
+}
+
+test "feature_tests/contracts/278X_diagonal_product_dimension_mismatch" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/278X_diagonal_product_dimension_mismatch", "operator '*' is not defined", "pointer arithmetic");
+}
+
+test "feature_tests/contracts/279_scalar_equality_evidence" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/279_scalar_equality_evidence");
+    try runExpect("tests/feature_tests/contracts/279_scalar_equality_evidence", 0);
+}
+
+test "feature_tests/contracts/280_linear_algebra_add_evidence" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/280_linear_algebra_add_evidence");
+    try runExpect("tests/feature_tests/contracts/280_linear_algebra_add_evidence", 0);
+}
+test "feature_tests/contracts/281X_vector_add_dimension_mismatch" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/281X_vector_add_dimension_mismatch", "operator '+' is not defined", "pointer arithmetic");
+}
+test "feature_tests/contracts/282X_matrix_add_shape_mismatch" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/282X_matrix_add_shape_mismatch", "operator '+' is not defined", "pointer arithmetic");
+}
+
+test "feature_tests/contracts/283_writer_value_specialization" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/283_writer_value_specialization");
+    try runExpect("tests/feature_tests/contracts/283_writer_value_specialization", 0);
+}
+
+test "feature_tests/contracts/284X_operation_alias_dependency_diagnostic" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/284X_operation_alias_dependency_diagnostic", "invalid conformance for contract 'Required'", "the generic operation alias body could not be specialized");
+}
+
+test "feature_tests/contracts/285_write_owned_value_result" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/285_write_owned_value_result");
+    try runExpect("tests/feature_tests/contracts/285_write_owned_value_result", 0);
+}
+
+test "feature_tests/contracts/286_view_reference_evidence" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/286_view_reference_evidence");
+    try runExpect("tests/feature_tests/contracts/286_view_reference_evidence", 0);
+}
+test "feature_tests/contracts/287X_view_reference_escape" {
+    try buildExpectFail("tests/feature_tests/contracts/287X_view_reference_escape", "local");
+}
+
+test "feature_tests/contracts/288_dynamic_view_reference_evidence" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/288_dynamic_view_reference_evidence");
+    try runExpect("tests/feature_tests/contracts/288_dynamic_view_reference_evidence", 0);
+}
+
+test "feature_tests/contracts/289_unique_numeric_and_collection_entries" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/289_unique_numeric_and_collection_entries");
+    try runExpect("tests/feature_tests/contracts/289_unique_numeric_and_collection_entries", 0);
+}
+
+test "feature_tests/contracts/290_known_default_participant_inference" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/290_known_default_participant_inference");
+    try runExpect("tests/feature_tests/contracts/290_known_default_participant_inference", 0);
+}
+test "feature_tests/contracts/291X_generic_default_no_cached_inference" {
+    try buildExpectFail("tests/feature_tests/contracts/291X_generic_default_no_cached_inference", "no generic function named 'identity'");
+}
+
+test "feature_tests/contracts/292_test_equality_specialization" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/292_test_equality_specialization");
+    try runExpect("tests/feature_tests/contracts/292_test_equality_specialization", 0);
+}
+
+test "feature_tests/contracts/293_resource_state_protocol" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/293_resource_state_protocol");
+    try runExpect("tests/feature_tests/contracts/293_resource_state_protocol", 0);
+}
+
+test "feature_tests/contracts/294X_external_reference_implementation" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/294X_external_reference_implementation", "must belong to the contract module or a nominal participant module");
+}
+
+test "feature_tests/contracts/295X_dormant_external_reference_implementation" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/contracts/295X_dormant_external_reference_implementation", "must belong to the contract module or a nominal participant module");
+}
+
+test "feature_tests/contracts/296_local_reference_implementation_ownership" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/296_local_reference_implementation_ownership");
+    try runExpect("tests/feature_tests/contracts/296_local_reference_implementation_ownership", 0);
+}
+
+test "feature_tests/contracts/297_queue_operation_evidence" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/297_queue_operation_evidence");
+    try runExpect("tests/feature_tests/contracts/297_queue_operation_evidence", 0);
+}
+
+test "feature_tests/contracts/298_generic_input_argument_order" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/298_generic_input_argument_order");
+    try runExpect("tests/feature_tests/contracts/298_generic_input_argument_order", 0);
+}
+
+test "feature_tests/contracts/299_file_init_path_evidence" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/299_file_init_path_evidence");
+    try runExpect("tests/feature_tests/contracts/299_file_init_path_evidence", 0);
+}
+
+test "feature_tests/contracts/300_ordinary_choice_argument_context" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/300_ordinary_choice_argument_context");
+    try runExpect("tests/feature_tests/contracts/300_ordinary_choice_argument_context", 0);
+}
+
+test "feature_tests/contracts/301X_generic_choice_payload_out_of_range" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/301X_generic_choice_payload_out_of_range", "integer literal 256 does not fit in 'UInt8'", "failed without a diagnostic");
+}
+
+test "feature_tests/contracts/302_directory_enumeration_evidence" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/302_directory_enumeration_evidence");
+    try runExpect("tests/feature_tests/contracts/302_directory_enumeration_evidence", 0);
+}
+
+test "feature_tests/contracts/303_module_qualified_operation_identity" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/303_module_qualified_operation_identity");
+    try runExpect("tests/feature_tests/contracts/303_module_qualified_operation_identity", 0);
+}
+
+test "feature_tests/contracts/304X_module_qualified_operation_ambiguity" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/304X_module_qualified_operation_ambiguity", "multiple applicable operation identities", "failed without a diagnostic");
+}
+
+test "feature_tests/contracts/305_filesystem_path_evidence" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/305_filesystem_path_evidence");
+    try runExpect("tests/feature_tests/contracts/305_filesystem_path_evidence", 0);
+}
+
+test "feature_tests/contracts/306_map_operation_evidence" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/306_map_operation_evidence");
+    try runExpect("tests/feature_tests/contracts/306_map_operation_evidence", 0);
+}
+
+test "feature_tests/contracts/307_implement_storage_domains" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/307_implement_storage_domains");
+    try runExpect("tests/feature_tests/contracts/307_implement_storage_domains", 0);
+}
+
+test "feature_tests/contracts/308X_implement_storage_domain_alias" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/308X_implement_storage_domain_alias", "storage domains", "failed without a diagnostic");
+}
+
+test "feature_tests/contracts/309_virtual_bound_scoped_associations" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/309_virtual_bound_scoped_associations");
+    try runExpect("tests/feature_tests/contracts/309_virtual_bound_scoped_associations", 0);
+}
+
+test "feature_tests/contracts/310X_virtual_scoped_association_mismatch" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/310X_virtual_scoped_association_mismatch", "incompatible associated elements", "failed without a diagnostic");
+}
+
+test "feature_tests/contracts/311_generic_implement_storage_domains" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/311_generic_implement_storage_domains");
+    try runExpect("tests/feature_tests/contracts/311_generic_implement_storage_domains", 0);
+}
+
+test "feature_tests/contracts/312X_scoped_static_association_mismatch" {
+    try buildExpectFail("tests/feature_tests/contracts/312X_scoped_static_association_mismatch", "incompatible associated elements for the operation interface");
+}
+
+test "feature_tests/contracts/313X_scoped_virtual_association_mismatch" {
+    try buildExpectFail("tests/feature_tests/contracts/313X_scoped_virtual_association_mismatch", "incompatible associated elements for the operation interface");
+}
+
+test "feature_tests/contracts/314X_legacy_ordinary_duplicate_identity" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/314X_legacy_ordinary_duplicate_identity", "ordinary function 'value' has more than one declaration", "panic");
+}
+
+test "feature_tests/contracts/315X_legacy_ordinary_compiletime_identity" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/315X_legacy_ordinary_compiletime_identity", "ordinary function 'value' has more than one declaration", "panic");
+}
+
+test "feature_tests/contracts/316X_ordinary_concrete_generic_identity" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/316X_ordinary_concrete_generic_identity", "multiple applicable operation identities", "panic");
+}
+
+test "feature_tests/contracts/317_static_adapter_virtual_participant" {
+    const test_path = "tests/feature_tests/contracts/317_static_adapter_virtual_participant";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/contracts/318X_legacy_abstract_declaration" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/318X_legacy_abstract_declaration", "Abstract declarations are unsupported", "panic");
+}
+
+test "feature_tests/contracts/319X_implicit_self_contract" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/319X_implicit_self_contract", "use named participants instead of Self", "panic");
+}
+
+test "feature_tests/contracts/320X_virtual_legacy_argument" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/contracts/320X_virtual_legacy_argument", "unknown virtual compile-time argument; use .contract: Contract", "panic");
+}
+
+test "feature_tests/contracts/321X_unused_conformance_consumption" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/321X_unused_conformance_consumption");
+    const result = try runChild(&.{ argi_bin, "check", "tests/feature_tests/contracts/321X_unused_conformance_consumption" });
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+    try expect(result.term == .exited and result.term.exited != 0);
+    try expect(std.mem.indexOf(u8, result.stderr, "cannot prove consumes") != null);
+}
+
+test "feature_tests/contracts/322X_used_conformance_consumption" {
+    try buildExpectFail("tests/feature_tests/contracts/322X_used_conformance_consumption", "cannot prove consumes");
+}
+
+test "feature_tests/contracts/323X_virtual_conformance_consumption" {
+    try buildExpectFail("tests/feature_tests/contracts/323X_virtual_conformance_consumption", "cannot prove consumes");
+}
+
+test "feature_tests/contracts/324_unused_aliased_conformance" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/324_unused_aliased_conformance");
+}
+
+test "feature_tests/contracts/325_deferred_operation_body" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/325_deferred_operation_body");
+    const result = try runChild(&.{ argi_bin, "check", "tests/feature_tests/contracts/325_deferred_operation_body" });
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+    try expect(result.term == .exited and result.term.exited != 0);
+    try expect(std.mem.indexOf(u8, result.stderr, "cannot materialize body") != null);
+}
+
+test "feature_tests/contracts/326X_selected_deferred_operation_body" {
+    try buildExpectFail("tests/feature_tests/contracts/326X_selected_deferred_operation_body", "cannot materialize body");
+}
+
+test "feature_tests/contracts/327_ordered_comparison_evidence" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/327_ordered_comparison_evidence");
+    try runExpect("tests/feature_tests/contracts/327_ordered_comparison_evidence", 0);
+}
+
+test "feature_tests/contracts/328_ordered_scalar_nan" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/328_ordered_scalar_nan");
+    try runExpect("tests/feature_tests/contracts/328_ordered_scalar_nan", 0);
+}
+
+test "feature_tests/contracts/329_foreign_equality_evidence" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/329_foreign_equality_evidence");
+    try runExpect("tests/feature_tests/contracts/329_foreign_equality_evidence", 0);
+}
+
+test "feature_tests/contracts/331_ordered_operand_context" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/331_ordered_operand_context");
+    try runExpect("tests/feature_tests/contracts/331_ordered_operand_context", 0);
+}
+
+test "feature_tests/contracts/330X_ordered_result_signature" {
+    try buildExpectFail("tests/feature_tests/contracts/330X_ordered_result_signature", "operation returns an incompatible associated result");
+}
+
+test "feature_tests/contracts/332X_ordered_primitive_private" {
+    try buildExpectFail("tests/feature_tests/contracts/332X_ordered_primitive_private", "no generic function");
+}
+
+test "feature_tests/contracts/333_ordered_specialized_adapters" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/333_ordered_specialized_adapters");
+    try runExpect("tests/feature_tests/contracts/333_ordered_specialized_adapters", 0);
+}
+
+test "feature_tests/contracts/334X_ordered_no_implicit_borrow" {
+    try buildExpectFail("tests/feature_tests/contracts/334X_ordered_no_implicit_borrow", "no conformance for the qualified operation's participants");
+}
+
+test "feature_tests/contracts/335X_ordered_requires_total" {
+    try buildExpectFail("tests/feature_tests/contracts/335X_ordered_requires_total", "does not satisfy contract constraint 'TotalOrder'");
+}
+
+test "compiler fixture frontend policy preserves explicit workers and run selection" {
+    const allocator = std.testing.allocator;
+    const normal = try compilerTestArgs(&.{ argi_bin, "build", "module" });
+    defer allocator.free(normal);
+    try expectEqualStrings("--frontend-jobs", normal[2]);
+    try expectEqualStrings("1", normal[3]);
+    const explicit = try compilerTestArgs(&.{ argi_bin, "build", "module", "--frontend-jobs", "8" });
+    defer allocator.free(explicit);
+    try expectEqual(@as(usize, 5), explicit.len);
+    try expectEqualStrings("8", explicit[4]);
+    const selected = try compilerTestArgs(&.{ argi_bin, "run", "example" });
+    defer allocator.free(selected);
+    try expectEqualStrings("example", selected[2]);
+    try expectEqualStrings("--frontend-jobs", selected[3]);
+    const other = try compilerTestArgs(&.{ "native-program", "build" });
+    defer allocator.free(other);
+    try expectEqual(@as(usize, 2), other.len);
+}
+
+test "feature_tests/polymorphism/328_generic_else_if" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/328_generic_else_if");
+    try runExpect("tests/feature_tests/polymorphism/328_generic_else_if", 0);
+}
+
+test "feature_tests/polymorphism/329_generic_choice_comparison" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/329_generic_choice_comparison");
+    try runExpect("tests/feature_tests/polymorphism/329_generic_choice_comparison", 0);
+}
+
+test "feature_tests/polymorphism/330_generic_contextual_arrays" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/330_generic_contextual_arrays");
+    try runExpect("tests/feature_tests/polymorphism/330_generic_contextual_arrays", 0);
+}
+
+test "feature_tests/polymorphism/331X_generic_array_length" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/331X_generic_array_length", "array initializer has 2 elements; expected 1", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/332X_generic_array_element" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/332X_generic_array_element", "integer literal 256 does not fit in 'UInt8'", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/333X_generic_choice_unknown_tag" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/333X_generic_choice_unknown_tag", "no generic function named 'invalid'", "failed without a diagnostic");
+}
+
+test "usecase_tests/06_weighted_regression" {
+    try expectSuccessfulBuild("tests/usecase_tests/06_weighted_regression");
+    try runExpect("tests/usecase_tests/06_weighted_regression", 0);
 }

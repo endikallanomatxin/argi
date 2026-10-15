@@ -5,7 +5,7 @@ main (.system: System) -> (.status_code: Int32) := {
     #defer deinit(.self = $&values)
 
     index :: UIntNative = 0
-    set_result ::= set(.self = $&values, .index = index, .value = 42, .allocator = $&allocator_storage).result
+    set_result ::= replace(.self = $&values, .index = index, .value = 42, .allocator = $&allocator_storage).result
     if is(.value = set_result, .variant = ..error) {
         if is(.value = set_result..error.reason, .variant = ..out_of_bounds) {
             status_code = 0

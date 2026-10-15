@@ -1,4 +1,4 @@
-ExampleAbstract : Abstract = ()
+ExampleAbstract#(.Participant: Type): Contract = ()
 
 foo#(.t: Int32: ExampleAbstract)(.value: Int32) -> (.result: Int32) := {
     result = value

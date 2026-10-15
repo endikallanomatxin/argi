@@ -13,8 +13,8 @@ replace(.holder: $&Holder, .condition: Bool, .first: $&UInt8, .second: $&UInt8) 
 
 main(.system: System, .condition: Bool = false) -> (.status_code: Int32) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    first_result ::= allocate(.self = $&allocator_storage, .size = 1)
-    second_result ::= allocate(.self = $&allocator_storage, .size = 1)
+    first_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
+    second_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
     match first_result {
         ..error _ { status_code = 1 }
         ..ok ~ first_payload {

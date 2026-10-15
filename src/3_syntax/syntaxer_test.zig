@@ -15,7 +15,9 @@ fn parseTestFile(path: []const u8) !syntax_tree.FileSyntaxTree {
     var diagnostics = diagnostic.Diagnostics.init(&allocator, &files);
     defer diagnostics.deinit();
 
-    var tokenizer_context = tokenizer.Tokenizer.init(allocator, &diagnostics, source, diagnostics.source_db.fileId(0));
+    var error_offset: usize = 0;
+    const selected = try @import("../1_base/target_selection.zig").select(allocator, source, .{}, &error_offset);
+    var tokenizer_context = tokenizer.Tokenizer.init(allocator, &diagnostics, selected, diagnostics.source_db.fileId(0));
     _ = try tokenizer_context.tokenize();
     const tokens = tokenizer_context.takeTokens();
 
@@ -124,6 +126,7 @@ test "compact syntaxing preserves adversarial grammar distinctions" {
         .reach_directive,
         .reach_alternative,
     });
+    try expectTags("tests/feature_tests/control_flow/17_for_owning/main.rg", &.{.for_move});
     try expectTags("tests/feature_tests/control_flow/04_for_dynamic_array/main.rg", &.{.for_value});
     try expectTags("tests/feature_tests/control_flow/13_for_borrowed_array/main.rg", &.{.for_borrow});
     try expectTags("tests/feature_tests/control_flow/14_for_mut_borrowed_dynamic_array/main.rg", &.{.for_mut_borrow});
@@ -177,4 +180,8 @@ test "compact syntax views preserve semantic distinctions" {
     defer returns.deinit(std.testing.allocator);
     const return_node = firstNodeWithTag(&returns, .return_statement);
     try std.testing.expect(returns.returnStatement(return_node).?.value == null);
+}
+
+test "generic type applications retain positional arguments" {
+    try expectTags("tests/feature_tests/types/280_positional_type_arguments/main.rg", &.{ .generic_type_instantiation, .positional_type_field });
 }

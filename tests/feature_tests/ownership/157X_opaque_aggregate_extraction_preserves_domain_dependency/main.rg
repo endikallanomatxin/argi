@@ -5,18 +5,21 @@ Borrowing : Type = (
 
 external :: UInt8 = 7
 
-deinit(.self: $&Borrowing) -> () := {
-}
+implement Deinit#(Borrowing) (
+    .deinit = (.self: $&Borrowing) -> () {
 
-copy(.self: &Borrowing) -> (.value: Borrowing) := {
-    value = (.reference = self&.reference)
-}
+    }
+)
 
-Borrowing implements InfalliblyCopyable
+implement InfalliblyCopyable#(Borrowing) (
+    .copy = (.self: &Borrowing) -> (.value: Borrowing) {
+        value = (.reference = self&.reference)
+    }
+)
 
 main(.system: System) -> (.status_code: Int32) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    allocation_result ::= allocate(.self = $&allocator_storage, .size = size_of(.type = Borrowing))
+    allocation_result ::= allocate_bytes(.self = $&allocator_storage, .size = size_of(.type = Borrowing))
     match allocation_result {
         ..error _ { status_code = 1 }
         ..ok ~ allocation_payload {

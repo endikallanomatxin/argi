@@ -1,14 +1,23 @@
 # Allocators and raw storage
 
-An `Allocator` reserves storage by size and alignment. It does not construct
+`Allocator#(Provider)` reserves storage by size and alignment. It does not construct
 values or know their type:
 
 ```rg
-Allocator : Abstract = (
-    allocate(.self: $&Self, .size: UIntNative, .alignment: UIntNative)
-        -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory)))
+Allocator#(.Provider: Type): Contract = (
+    .allocate: (.self: $&Provider, .size: UIntNative, .alignment: UIntNative)
+        -> (.result: Errable#(Allocation, (..out_of_memory)))
 )
 ```
+
+Calls use `Allocator#(Provider).allocate(...)`, or `Allocator#().allocate(...)`
+to infer the provider from its input. `implement` supplies the operation;
+virtual handles retain selected evidence. `Deallocator#(Provider)` similarly
+provides scoped physical cleanup.
+
+The ordinary `allocate_bytes` helper accepts size and optional alignment.
+The unique typed `allocate#(T)` helper accepts an optional count, defaulting
+to one; neither creates initialized values.
 
 The low-level alignment must be a nonzero power of two. Implementations check
 this precondition and `abort` if it is violated; an invalid alignment is not
@@ -36,7 +45,7 @@ Allocation : Type = (
     .size: UIntNative
     .alignment: UIntNative
     .anchor: &Any
-    .deallocator: Virtual#(.abstract: Deallocator)
+    .deallocator: Virtual#(.contract: Deallocator)
     ._storage_address: UIntNative
     ._storage_size: UIntNative
     ._storage_alignment: UIntNative

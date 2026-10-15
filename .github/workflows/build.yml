@@ -37,7 +37,7 @@ jobs:
           wget -q https://apt.llvm.org/llvm.sh
           chmod +x llvm.sh
           sudo ./llvm.sh 21
-          sudo apt-get install -y llvm-21-dev patchelf
+          sudo apt-get install -y llvm-21-dev patchelf zlib1g-dev
           llvm-config-21 --version
 
       - name: Install LLVM 21 on macOS
@@ -50,13 +50,34 @@ jobs:
           echo "LLVM_LIB_DIR=$("$llvm_config" --libdir)" >> "$GITHUB_ENV"
           echo "LLVM_LIBS=$("$llvm_config" --libs)" >> "$GITHUB_ENV"
 
+      - name: Install Linux ARM64 cross-validation tools
+        if: matrix.target == 'linux-x86_64'
+        run: |
+          sudo apt-get install -y gcc-aarch64-linux-gnu qemu-user
+          echo "ARGI_CROSS_CC=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+          echo "ARGI_CROSS_RUNNER=qemu-aarch64" >> "$GITHUB_ENV"
+          echo "ARGI_CROSS_RUNTIME_ROOT=/usr/aarch64-linux-gnu" >> "$GITHUB_ENV"
+
       - name: Check publication guards
         if: inputs.package
         run: python .github/scripts/test_release.py
 
-      - name: Run tests
-        timeout-minutes: 30
-        run: zig build -j1 -Dtest-progress=true test --summary all
+      - name: Run compiler unit tests in Debug
+        timeout-minutes: 45
+        run: zig build test-internal -j2 -Dtest-jobs=2 -Dtest-progress=true --summary all
+
+      - name: Run program fixtures with the optimized compiler
+        timeout-minutes: 45
+        run: zig build test-programs -Doptimize=ReleaseSafe -j2 -Dtest-jobs=2 -Dtest-progress=true --summary all
+
+      - name: Upload program test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: program-tests-${{ matrix.target }}
+          path: .zig-cache/program-tests/
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Build binary distribution
         if: inputs.package
@@ -83,18 +104,18 @@ jobs:
               with tarfile.open(archive) as source:
                   source.extractall(directory, filter='data')
               package, = Path(directory).iterdir()
-              subprocess.run(['python', '.github/scripts/smoke_release.py', str(package)], check=True)
+              subprocess.run(['python', '.github/scripts/smoke_release.py', str(package), '--usecases', 'tests/usecase_tests'], check=True)
           PY
 
       - name: Exercise Linux distribution without installed LLVM
         if: inputs.package && runner.os == 'Linux'
         run: |
-          docker run --rm -v "$PWD/dist:/packages:ro" -v "$PWD/.github/scripts:/scripts:ro" ubuntu:24.04 sh -ec '
+          docker run --rm -v "$PWD/dist:/packages:ro" -v "$PWD/.github/scripts:/scripts:ro" -v "$PWD/tests/usecase_tests:/usecases:ro" ubuntu:24.04 sh -ec '
             apt-get update -qq
             apt-get install -y --no-install-recommends gcc libc6-dev python3
             mkdir /consumer
             tar -xzf /packages/*.tar.gz -C /consumer
-            python3 /scripts/smoke_release.py /consumer/argi-*
+            python3 /scripts/smoke_release.py /consumer/argi-* --usecases /usecases
           '
 
       - uses: actions/upload-artifact@v4

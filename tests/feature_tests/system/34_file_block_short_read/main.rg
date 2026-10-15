@@ -4,8 +4,8 @@ main(.system: System) -> (.status_code: Int32) := {
 
     path ::= from_literal(.data = "tests/feature_tests/system/34_file_block_short_read_temp.bin")
 
-    if exists(.self = system.file_sys, .path = path).ok {
-        removed ::= remove(.self = system.file_sys, .path = path)
+    if exists(.self = system.file_system, .path = path).ok {
+        removed ::= remove(.self = system.file_system, .path = path)
         if is(.value = removed, .variant = ..ok) {
         } else {
             status_code = 1
@@ -13,16 +13,16 @@ main(.system: System) -> (.status_code: Int32) := {
         }
     }
 
-    create_result ::= open_write(.self = system.file_sys, .path = path)
+    create_result ::= File(.file_system = system.file_system, .path = path, .mode = ..write)
     if is(.value = create_result, .variant = ..ok) {
     } else {
         status_code = 2
         return
     }
-    file ::= ~create_result..ok
+    file ::= ~create_result ..ok
 
-    write_bytes : Array#(.n = 2, .t: UInt8) = (0, 0)
-    write_buffer ::= array_view(.array = $&write_bytes)
+    write_bytes: Array#(.n = 2, .t: UInt8) = (0, 0)
+    write_buffer ::= view(.array = $&write_bytes)
     first_set ::= set#(.t: UInt8)(.self = $&write_buffer, .index = 0, .value = 41).result
     second_set ::= set#(.t: UInt8)(.self = $&write_buffer, .index = 1, .value = 42).result
     if is(.value = first_set, .variant = ..error) or is(.value = second_set, .variant = ..error) {
@@ -31,7 +31,7 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
-    write_result ::= write(.self = $&file, .buffer = write_buffer)
+    write_result ::= write(.self = $&file, .value = write_buffer)
 
     if is(.value = write_result, .variant = ..ok) {
     } else {
@@ -40,7 +40,7 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
-    if write_result..ok != 2 {
+    if write_result ..ok != 2 {
         close(.self = $&file)
         status_code = 5
         return
@@ -48,16 +48,16 @@ main(.system: System) -> (.status_code: Int32) := {
 
     close(.self = $&file)
 
-    open_result ::= open_read(.self = system.file_sys, .path = path)
+    open_result ::= File(.file_system = system.file_system, .path = path, .mode = ..read)
     if is(.value = open_result, .variant = ..ok) {
     } else {
         status_code = 6
         return
     }
-    file = ~open_result..ok
+    file = ~open_result ..ok
 
-    read_bytes : Array#(.n = 4, .t: UInt8) = (0, 0, 0, 0)
-    read_buffer ::= array_view(.array = $&read_bytes)
+    read_bytes: Array#(.n = 4, .t: UInt8) = (0, 0, 0, 0)
+    read_buffer ::= view(.array = $&read_bytes)
 
     read_result ::= read(.self = $&file, .buffer = read_buffer)
     close(.self = $&file)
@@ -68,33 +68,33 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
-    count ::= read_result..ok
+    count ::= read_result ..ok
     if count != 2 {
         status_code = 9
         return
     }
 
-    first_read ::= get#(.t: UInt8)(.self = &read_buffer, .index = 0).result
+    first_read ::= get(.self = &read_buffer, .index = 0).result
     if is(.value = first_read, .variant = ..error) {
         status_code = 10
         return
     }
-    if first_read..ok != 41 {
+    if first_read ..ok != 41 {
         status_code = 10
         return
     }
 
-    second_read ::= get#(.t: UInt8)(.self = &read_buffer, .index = 1).result
+    second_read ::= get(.self = &read_buffer, .index = 1).result
     if is(.value = second_read, .variant = ..error) {
         status_code = 11
         return
     }
-    if second_read..ok != 42 {
+    if second_read ..ok != 42 {
         status_code = 11
         return
     }
 
-    removed ::= remove(.self = system.file_sys, .path = path)
+    removed ::= remove(.self = system.file_system, .path = path)
     if is(.value = removed, .variant = ..ok) {
         status_code = 0
     } else {

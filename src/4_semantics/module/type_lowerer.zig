@@ -1,3 +1,4 @@
+const type_arguments = @import("type_arguments.zig");
 const std = @import("std");
 const syn = @import("../../3_syntax/syntax_tree.zig");
 const graph_mod = @import("graph.zig");
@@ -11,7 +12,7 @@ pub const LexicalModuleAlias = struct {
     path: primitives.StringRange,
 };
 
-// Virtual is a language-level runtime type constructor. Its abstract
+// Virtual is a language-level runtime type constructor. Its contract
 // argument describes a vtable contract, unlike an ordinary generic argument
 // whose type can be specialized from a concrete call input.
 pub fn isRuntimeVirtualType(tree: *const syn.FileSyntaxTree, source: []const u8, generic: syn.GenericType) bool {
@@ -56,6 +57,17 @@ pub const Context = struct {
             .struct_literal => |literal| self.lowerStructural(node, literal),
             .choice_literal => |literal| self.lowerChoice(node, literal),
             .generic => |generic| self.lowerGeneric(node, generic),
+            .projection => |projection| blk: {
+                const base = try self.lower(projection.base);
+                const external = try self.writer.addExternalRef(.{
+                    .kind = .type,
+                    .module_path = null,
+                    .name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, projection.member_token)),
+                    .projection_base = base,
+                    .source = self.sourceRef(node),
+                });
+                break :blk try self.writer.addExternalType(external);
+            },
         };
     }
 
@@ -68,7 +80,7 @@ pub const Context = struct {
     ) !entities.ModuleTypeId {
         const name_text = self.tree.tokenTextFromSource(self.source, name_token);
         if (qualifier_token == null and generic_arguments == null) {
-            if (builtinFromName(name_text)) |builtin| return self.internBuiltin(builtin);
+            if (primitives.builtinTypeNamedForTarget(name_text, self.graph.target.stdTarget())) |builtin| return self.internBuiltin(builtin);
             if (self.localTypeDeclaration(name_text)) |declaration| {
                 return self.graph.declarations.items[@intFromEnum(declaration)].type_id orelse error.LocalTypeNotPredeclared;
             }
@@ -142,7 +154,7 @@ pub const Context = struct {
                 .payload_type = payload_type,
                 .option_decl = option_decl,
                 .source = .{ .file_index = self.file_index, .offset = self.tree.tokenLocation(variant.name_token).offset },
-                .value = @intCast(count),
+                .value = variant.value orelse @intCast(count),
             });
             if (first == null) first = id;
             count += 1;
@@ -155,8 +167,34 @@ pub const Context = struct {
     }
 
     fn lowerGeneric(self: *Context, owner: syn.NodeIndex, generic: syn.GenericType) anyerror!entities.ModuleTypeId {
+        if (self.hasAssociatedConstant(generic.arguments)) {
+            const external_start = self.graph.semantic.external_refs.items.len;
+            const computed = try @import("parameterized/lowerer.zig").lowerConcreteTypeExpression(self.graph, self.writer, self.file_index, self.tree, self.source, owner);
+            // Preserve lexical import aliases in the anonymous expression.
+            for (self.graph.semantic.external_refs.items[external_start..]) |*external| {
+                const path = external.module_path orelse continue;
+                var alias_index = self.module_aliases.len;
+                while (alias_index != 0) {
+                    alias_index -= 1;
+                    const alias = self.module_aliases[alias_index];
+                    if (std.mem.eql(u8, self.graph.text(path), self.graph.text(alias.name))) {
+                        external.module_path = alias.path;
+                        break;
+                    }
+                }
+            }
+            const reference = try self.writer.addExternalRef(.{
+                .kind = .type,
+                .module_path = null,
+                .name = try self.writer.addString("compile-time type"),
+                .computed_type = computed,
+                .source = self.sourceRef(owner),
+            });
+            return self.writer.addExternalType(reference);
+        }
         const arguments_literal = self.tree.structTypeLiteral(generic.arguments) orelse return error.InvalidGenericArguments;
         const base = self.tree.syntaxType(generic.base) orelse return error.InvalidGenericBase;
+        const base_name = if (base == .name and base.name.qualifier_token == null) self.tree.tokenTextFromSource(self.source, base.name.name_token) else "";
         if (base == .name and base.name.qualifier_token == null and
             std.mem.eql(u8, self.tree.tokenTextFromSource(self.source, base.name.name_token), "Array"))
         {
@@ -164,7 +202,7 @@ pub const Context = struct {
             var element: ?entities.ModuleTypeId = null;
             for (arguments_literal.fields) |field_node| {
                 const field = self.tree.structTypeField(field_node) orelse return error.InvalidArrayArguments;
-                const name = self.tree.tokenTextFromSource(self.source, field.name_token);
+                const name = type_arguments.name(self.tree, self.source, field, base_name);
                 if (std.mem.eql(u8, name, "n")) {
                     if (length != null or field.default_value == null) return error.InvalidArrayArguments;
                     length = std.math.cast(u64, try self.evalComptimeInt(field.default_value.?)) orelse return error.InvalidArrayLength;
@@ -179,28 +217,23 @@ pub const Context = struct {
         if (base == .name and base.name.qualifier_token == null and
             std.mem.eql(u8, self.tree.tokenTextFromSource(self.source, base.name.name_token), "Errable"))
         {
-            var result_type: ?entities.ModuleTypeId = null;
-            var has_reasons = false;
-            for (arguments_literal.fields) |field_node| {
-                const field = self.tree.structTypeField(field_node) orelse return error.InvalidGenericArgument;
-                const name = self.tree.tokenTextFromSource(self.source, field.name_token);
-                if (std.mem.eql(u8, name, "t")) {
-                    if (result_type != null or field.type_node == null) return error.InvalidGenericArgument;
-                    result_type = try self.lower(field.type_node.?);
-                } else if (std.mem.eql(u8, name, "reasons")) {
-                    has_reasons = true;
+            // Only a lone value type requests inferred reasons. Other argument
+            // lists go through ordinary binding, which diagnoses duplicates,
+            // unknown names and kind mismatches consistently for every family.
+            if (arguments_literal.fields.len == 1) {
+                const field = self.tree.structTypeField(arguments_literal.fields[0]) orelse return error.InvalidGenericArgument;
+                if (std.mem.eql(u8, type_arguments.name(self.tree, self.source, field, base_name), "t")) {
+                    const child = try self.lower(field.type_node orelse return error.InvalidGenericArgument);
+                    return self.writer.addResolvedType(.{ .inferred_errable = child });
                 }
             }
-            // Omitting `.reasons` is the explicit spelling of an open error
-            // set. Keep it as sugar until GlobalSema materializes and grows it.
-            if (!has_reasons) return self.writer.addResolvedType(.{ .inferred_errable = result_type orelse return error.InvalidGenericArgument });
         }
         if (isRuntimeVirtualType(self.tree, self.source, generic)) {
             if (arguments_literal.fields.len != 1) return error.InvalidVirtualArguments;
             const field = self.tree.structTypeField(arguments_literal.fields[0]) orelse return error.InvalidVirtualArguments;
-            if (!std.mem.eql(u8, self.tree.tokenTextFromSource(self.source, field.name_token), "abstract")) return error.InvalidVirtualArguments;
-            const abstract_type = try self.lower(field.type_node orelse return error.InvalidVirtualArguments);
-            return self.writer.addResolvedType(.{ .virtual = abstract_type });
+            if (!type_arguments.isVirtualContractParameter(type_arguments.name(self.tree, self.source, field, base_name))) return error.InvalidVirtualArguments;
+            const contract_type = try self.lower(field.type_node orelse return error.InvalidVirtualArguments);
+            return self.writer.addResolvedType(.{ .virtual = contract_type });
         }
         // Nested generic types may append to the same argument pool. Buffer
         // this level until their complete ranges have been published.
@@ -208,7 +241,7 @@ pub const Context = struct {
         defer arguments.deinit();
         for (arguments_literal.fields) |field_node| {
             const field = self.tree.structTypeField(field_node) orelse return error.InvalidGenericArgument;
-            const name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, field.name_token));
+            const name = try self.writer.addString(type_arguments.name(self.tree, self.source, field, base_name));
             const value: entities.GenericArgument.Value = if (field.type_node) |type_node|
                 .{ .type = try self.lower(type_node) }
             else if (field.default_value) |value_node|
@@ -225,6 +258,19 @@ pub const Context = struct {
             .name => |name| self.lowerName(owner, name.name_token, name.qualifier_token, range),
             else => error.InvalidGenericBase,
         };
+    }
+
+    fn hasAssociatedConstant(self: *const Context, node: syn.NodeIndex) bool {
+        if (self.tree.tag(node) == .associated_type_projection) return true;
+        if (self.tree.binaryOperation(node)) |operation|
+            return self.hasAssociatedConstant(operation.lhs) or self.hasAssociatedConstant(operation.rhs);
+        if (self.tree.structTypeLiteral(node)) |literal| {
+            for (literal.fields) |field_node| {
+                const field = self.tree.structTypeField(field_node) orelse continue;
+                if (field.default_value) |value| if (self.hasAssociatedConstant(value)) return true;
+            }
+        }
+        return false;
     }
 
     fn evalComptimeInt(self: *Context, node: syn.NodeIndex) anyerror!i64 {
@@ -263,7 +309,7 @@ pub const Context = struct {
 
     fn localTypeDeclaration(self: *const Context, name: []const u8) ?entities.ModuleDeclId {
         for (self.graph.declarationsNamed(name)) |declaration| switch (self.graph.declarations.items[@intFromEnum(declaration)].kind) {
-            .type, .abstract_type => return declaration,
+            .type, .contract_type => return declaration,
             else => {},
         };
         return null;
@@ -290,12 +336,6 @@ pub const Context = struct {
         return .{ .file_index = self.file_index, .offset = self.tree.location(node).offset };
     }
 };
-
-fn builtinFromName(name: []const u8) ?graph_mod.BuiltinType {
-    inline for (@typeInfo(graph_mod.BuiltinType).@"enum".fields) |field|
-        if (std.mem.eql(u8, name, field.name)) return @enumFromInt(field.value);
-    return null;
-}
 
 test "module type lowerer preserves imported generic arguments without syntax" {
     const allocator = std.testing.allocator;

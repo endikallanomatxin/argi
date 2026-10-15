@@ -8,3 +8,6 @@ output*
 
 dist/
 __pycache__/
+
+# Feature cases with package manifests produce named executables here.
+tests/feature_tests/**/build/

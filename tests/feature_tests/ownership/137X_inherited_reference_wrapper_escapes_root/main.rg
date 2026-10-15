@@ -4,7 +4,7 @@ inherit(.raw: RawPointer#(.t: Int32), .root: &Any) -> (.reference: $&Int32) := {
 
 escape() -> (.reference: $&Int32) := {
     value :: Int32 = 7
-    raw ::= raw_pointer#(.t: Int32)(.address = UIntNative(.value = $&value)).raw
+    raw ::= raw_pointer#(.t: Int32)(.address = $&value | convert#(.to: UIntNative)(_)).raw
     reference = inherit(
         .raw = raw,
         .root = erase_mutable_reference#(.t: Int32)(.base = $&value).reference,

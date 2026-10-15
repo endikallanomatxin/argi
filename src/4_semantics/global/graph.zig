@@ -1,7 +1,6 @@
 const std = @import("std");
 const primitives = @import("../primitives/schema.zig");
 const semantic_strings = @import("../primitives/strings.zig");
-const callable = @import("../primitives/callable.zig");
 const type_shapes = @import("../primitives/type_shapes.zig");
 const module_sg = @import("../module/graph.zig");
 
@@ -83,6 +82,45 @@ pub const AutoDeinit = primitives.AutoDeinit(Ids);
 pub const VirtualMethodRegistry = primitives.VirtualMethodRegistry(Ids);
 pub const Virtualize = primitives.Virtualize(Ids);
 pub const VirtualCall = primitives.VirtualCall(Ids);
+/// Static contract selection checks the declaration without creating runtime
+/// erasure. This metadata is recorded transactionally with selected functions
+/// and consumed after their safety summaries converge.
+pub const ContractSafetyConformance = struct {
+    selection: primitives.ContractOperationIdentity,
+    // Finalized from selected operation use, independently of body aliases.
+    // Exhaustive semantizing leaves every materialized proof enabled.
+    safety_required: bool = true,
+    method: GlobalFunctionId,
+    contract: primitives.MethodSafetyContract,
+    receiver_input_index: ?u32,
+    domains: []const primitives.StorageDomainMapping = &.{},
+    source: primitives.SourceRef,
+};
+// Static conformance evidence owns canonical declaration-order arguments. It has no
+// erased receiver and participates in the ordinary append-only checkpoints.
+pub const ContractOperationBindingId = enum(u32) { _ };
+pub const ContractOperationBinding = struct {
+    contract_declaration: GlobalDeclId,
+    requirement_index: u32,
+    requirement_source: primitives.SourceRef,
+    implementation_source: primitives.SourceRef,
+    alias_source: ?primitives.SourceRef = null,
+    name: StringRange,
+    declaration: GlobalDeclId,
+    instantiate_associated: bool = false,
+};
+pub const ContractConformance = struct {
+    // Declaration/signature validation is separate from the later safety proof.
+    declaration_validated: bool = false,
+    implementation_arguments: primitives.Range(GlobalGenericArgId) = .{ .start = 0, .len = 0 },
+    operation_bindings: primitives.Range(ContractOperationBindingId) = .{ .start = 0, .len = 0 },
+    context: GlobalModuleId = @enumFromInt(0),
+    declaration: GlobalDeclId,
+    participants: primitives.Range(GlobalGenericArgId),
+    associated_arguments: primitives.Range(GlobalGenericArgId),
+    operations: primitives.Range(GlobalFunctionId) = .{ .start = 0, .len = 0 },
+    source: primitives.SourceRef,
+};
 pub const ReachAlternative = primitives.ReachAlternative(Ids);
 pub const Reach = primitives.Reach(Ids);
 pub const NullableUnwrap = primitives.NullableUnwrap(Ids);
@@ -150,15 +188,21 @@ pub const GlobalSemanticGraph = struct {
         indexed_declarations: usize,
         type_resolution_len: usize,
         binding_type_resolution_len: usize,
+        type_argument_rewrites_len: usize,
     };
 
     const ConstructionState = struct {
         type_resolution: std.ArrayList(TypeResolutionState) = .empty,
         binding_type_resolution: std.ArrayList(TypeResolutionState) = .empty,
+        type_argument_rewrites: std.ArrayList(struct {
+            type_id: GlobalTypeId,
+            previous: primitives.Range(GlobalGenericArgId),
+        }) = .empty,
 
         fn deinit(self: *ConstructionState, allocator: std.mem.Allocator) void {
             self.type_resolution.deinit(allocator);
             self.binding_type_resolution.deinit(allocator);
+            self.type_argument_rewrites.deinit(allocator);
             self.* = .{};
         }
     };
@@ -178,7 +222,6 @@ pub const GlobalSemanticGraph = struct {
                 entry.value_ptr.deinit(allocator);
             }
             self.function_names.deinit(allocator);
-
             var declarations = self.declaration_names.iterator();
             while (declarations.next()) |entry| {
                 allocator.free(entry.key_ptr.*);
@@ -196,7 +239,7 @@ pub const GlobalSemanticGraph = struct {
         }
     };
 
-
+    target: @import("../../1_base/target.zig").Config = .{},
     modules: std.ArrayList(Module) = .empty,
     module_aliases: std.ArrayList(ModuleAlias) = .empty,
     files: std.ArrayList(File) = .empty,
@@ -206,7 +249,6 @@ pub const GlobalSemanticGraph = struct {
     types: std.ArrayList(GlobalType) = .empty,
     generic_instances: std.ArrayList(GenericInstance) = .empty,
     functions: std.ArrayList(Function) = .empty,
-    function_operators: std.ArrayList(?callable.OperatorKind) = .empty,
     generic_function_instances: std.ArrayList(GenericFunctionInstance) = .empty,
     bindings: std.ArrayList(Binding) = .empty,
     nodes: std.ArrayList(Node) = .empty,
@@ -221,6 +263,9 @@ pub const GlobalSemanticGraph = struct {
     auto_deinits: std.ArrayList(AutoDeinit) = .empty,
     virtual_registries: std.ArrayList(VirtualMethodRegistry) = .empty,
     virtualizes: std.ArrayList(Virtualize) = .empty,
+    contract_safety_conformances: std.ArrayList(ContractSafetyConformance) = .empty,
+    contract_conformances: std.ArrayList(ContractConformance) = .empty,
+    contract_operation_bindings: std.ArrayList(ContractOperationBinding) = .empty,
     virtual_calls: std.ArrayList(VirtualCall) = .empty,
     reach_segments: std.ArrayList(StringRange) = .empty,
     reach_alternatives: std.ArrayList(ReachAlternative) = .empty,
@@ -238,7 +283,6 @@ pub const GlobalSemanticGraph = struct {
 
     strings: std.ArrayList(u8) = .empty,
     roots: std.ArrayList(GlobalNodeId) = .empty,
-
 
     // Transient lookup state used while building/querying GlobalSema. The
     // append-only semantic pools remain the source of truth; these indexes are
@@ -260,6 +304,7 @@ pub const GlobalSemanticGraph = struct {
             .indexed_declarations = self.lookup.indexed_declarations,
             .type_resolution_len = self.construction.type_resolution.items.len,
             .binding_type_resolution_len = self.construction.binding_type_resolution.items.len,
+            .type_argument_rewrites_len = self.construction.type_argument_rewrites.items.len,
         };
         inline for (pools, 0..) |pool, index| if (comptime switch (@typeInfo(pool.type)) {
             .@"struct" => @hasField(pool.type, "items"),
@@ -271,10 +316,15 @@ pub const GlobalSemanticGraph = struct {
     }
 
     /// Drop indexed IDs before truncating the append-only pools they reference.
-    /// In-place mutations of pre-existing entries are outside this checkpoint.
+    /// Canonical generic argument rewrites are restored before their pools shrink.
+    /// Other in-place mutations of pre-existing entries remain outside this checkpoint.
     pub fn rollback(self: *GlobalSemanticGraph, saved: Checkpoint) void {
         const pools = @typeInfo(GlobalSemanticGraph).@"struct".fields;
         self.discardIndexedTail(saved.indexed_functions, saved.indexed_declarations);
+        while (self.construction.type_argument_rewrites.items.len > saved.type_argument_rewrites_len) {
+            const rewrite = self.construction.type_argument_rewrites.pop().?;
+            self.types.items[@intFromEnum(rewrite.type_id)].generic.arguments = rewrite.previous;
+        }
         self.construction.type_resolution.shrinkRetainingCapacity(saved.type_resolution_len);
         self.construction.binding_type_resolution.shrinkRetainingCapacity(saved.binding_type_resolution_len);
         inline for (pools, 0..) |pool, index| if (comptime switch (@typeInfo(pool.type)) {
@@ -289,29 +339,60 @@ pub const GlobalSemanticGraph = struct {
         self.lookup.deinit(allocator);
         self.construction.deinit(allocator);
         inline for (.{
-            &self.modules,            &self.module_aliases,          &self.files,                 &self.declarations,
-            &self.symbols,            &self.symbol_declarations,     &self.types,                 &self.generic_instances,
-            &self.functions,          &self.function_operators,      &self.generic_function_instances,
-            &self.bindings,           &self.nodes,                   &self.blocks,
-            &self.fields,             &self.variants,                &self.generic_arguments,     &self.value_fields,
-            &self.switch_cases,       &self.switches,                &self.auto_deinit_fields,    &self.auto_deinits,
-            &self.virtual_registries, &self.virtualizes,             &self.virtual_calls,         &self.reach_segments,
-            &self.reach_alternatives, &self.reaches,                 &self.nullable_unwraps,      &self.testing_expect_errors,
-            &self.error_propagations, &self.error_contexts,          &self.node_refs,             &self.type_refs,
-            &self.binding_refs,       &self.function_refs,           &self.virtual_registry_refs, &self.strings,
-            &self.roots,
+            &self.modules,                     &self.module_aliases,             &self.files,                        &self.declarations,
+            &self.symbols,                     &self.symbol_declarations,        &self.types,                        &self.generic_instances,
+            &self.functions,                   &self.generic_function_instances, &self.bindings,                     &self.nodes,
+            &self.blocks,                      &self.fields,                     &self.variants,                     &self.generic_arguments,
+            &self.value_fields,                &self.switch_cases,               &self.switches,                     &self.auto_deinit_fields,
+            &self.auto_deinits,                &self.virtual_registries,         &self.virtualizes,                  &self.virtual_calls,
+            &self.reach_segments,              &self.reach_alternatives,         &self.reaches,                      &self.nullable_unwraps,
+            &self.testing_expect_errors,       &self.error_propagations,         &self.error_contexts,               &self.node_refs,
+            &self.type_refs,                   &self.binding_refs,               &self.function_refs,                &self.virtual_registry_refs,
+            &self.strings,                     &self.roots,                      &self.contract_safety_conformances, &self.contract_conformances,
+            &self.contract_operation_bindings,
         }) |list| list.deinit(allocator);
         self.* = .{};
+    }
+
+    pub fn declarationSourceName(self: *const GlobalSemanticGraph, id: GlobalDeclId) StringRange {
+        for (self.contract_operation_bindings.items) |operation_binding|
+            if (operation_binding.instantiate_associated and operation_binding.declaration == id) return operation_binding.name;
+        return self.declaration(id).name;
+    }
+
+    pub fn callOperation(self: *const GlobalSemanticGraph, call: anytype) ?primitives.ContractOperationIdentity {
+        _ = self;
+        if (call.contract_operation.conformance == std.math.maxInt(u32)) return null;
+        return call.contract_operation;
+    }
+
+    pub fn callSourceName(self: *const GlobalSemanticGraph, call: anytype) StringRange {
+        if (self.callOperation(call)) |identity| {
+            const selected = @import("contract_evidence.zig").selectedOperation(self, identity) orelse unreachable;
+            return selected.binding.name;
+        }
+        return self.declarationSourceName(self.function(call.callee).declaration);
     }
 
     pub fn text(self: *const GlobalSemanticGraph, range: StringRange) []const u8 {
         return self.strings.items[range.start..][0..range.len];
     }
 
+    fn isNamedFunction(callable: Function) bool {
+        return !callable.flags.is_generic_instantiation and !callable.flags.is_c_function_pointer;
+    }
+
+    /// Named lookup indexes callable declarations, never cached specializations
+    /// or C callback prototypes. Concrete instances keep their FunctionIds.
     pub fn functionsNamed(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, name: []const u8) ![]const GlobalFunctionId {
         while (self.lookup.indexed_functions < self.functions.items.len) {
             const raw = self.lookup.indexed_functions;
-            const decl = self.declarations.items[@intFromEnum(self.functions.items[raw].declaration)];
+            const callable = self.functions.items[raw];
+            if (!isNamedFunction(callable)) {
+                self.lookup.indexed_functions += 1;
+                continue;
+            }
+            const decl = self.declarations.items[@intFromEnum(callable.declaration)];
             const spelling = self.text(decl.name);
             if (self.lookup.function_names.getPtr(spelling) == null) {
                 const owned = try allocator.dupe(u8, spelling);
@@ -321,6 +402,7 @@ pub const GlobalSemanticGraph = struct {
                 };
             }
             try self.lookup.function_names.getPtr(spelling).?.append(allocator, @enumFromInt(@as(u32, @intCast(raw))));
+
             self.lookup.indexed_functions += 1;
         }
         return if (self.lookup.function_names.get(name)) |matches| matches.items else &.{};
@@ -343,12 +425,20 @@ pub const GlobalSemanticGraph = struct {
         return if (self.lookup.declaration_names.get(name)) |matches| matches.items else &.{};
     }
 
+    /// Read an already complete name index without allocating during queries.
+    /// A null result asks the caller to use its ordinary traversal instead.
+    pub fn indexedDeclarationsNamed(self: *const GlobalSemanticGraph, name: []const u8) ?[]const GlobalDeclId {
+        if (self.lookup.indexed_declarations != self.declarations.items.len) return null;
+        return if (self.lookup.declaration_names.get(name)) |matches| matches.items else &.{};
+    }
+
     /// Speculative resolution can append functions and declarations before
     /// rolling their pools back. Remove those IDs before truncating the pools.
     pub fn discardIndexedTail(self: *GlobalSemanticGraph, function_count: usize, declaration_count: usize) void {
         while (self.lookup.indexed_functions > function_count) {
             self.lookup.indexed_functions -= 1;
             const entry = self.functions.items[self.lookup.indexed_functions];
+            if (!isNamedFunction(entry)) continue;
             const name = self.text(self.declarations.items[@intFromEnum(entry.declaration)].name);
             _ = self.lookup.function_names.getPtr(name).?.pop();
         }
@@ -378,6 +468,7 @@ pub const GlobalSemanticGraph = struct {
                             return err;
                         };
                     }
+
                     try self.lookup.parameterized_function_names.getPtr(spelling).?.append(allocator, .{
                         .module_index = @intCast(module_index),
                         .function_index = @intCast(function_index),
@@ -432,6 +523,17 @@ pub const GlobalSemanticGraph = struct {
             self.construction.type_resolution.items[raw] = .resolved;
     }
 
+    /// Keep canonicalization of existing types transactional: the new argument
+    /// range may belong to an append-only pool that a speculative probe rolls back.
+    pub fn replaceTypeArguments(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, id: GlobalTypeId, arguments: primitives.Range(GlobalGenericArgId)) !void {
+        const raw: usize = @intFromEnum(id);
+        if (raw >= self.types.items.len or self.types.items[raw] != .generic) return error.InvalidGlobalTypeId;
+        const previous = self.types.items[raw].generic.arguments;
+        if (previous.start == arguments.start and previous.len == arguments.len) return;
+        try self.construction.type_argument_rewrites.append(allocator, .{ .type_id = id, .previous = previous });
+        self.types.items[raw].generic.arguments = arguments;
+    }
+
     pub fn hasUnresolvedTypes(self: *const GlobalSemanticGraph) bool {
         for (self.construction.type_resolution.items) |state| if (state == .unresolved) return true;
         return false;
@@ -444,6 +546,8 @@ pub const GlobalSemanticGraph = struct {
         if (self.hasUnresolvedTypes()) return error.UnresolvedGlobalTypeSlots;
         self.construction.type_resolution.deinit(allocator);
         self.construction.type_resolution = .empty;
+        self.construction.type_argument_rewrites.deinit(allocator);
+        self.construction.type_argument_rewrites = .empty;
     }
 
     fn ensureTypeResolutionCovers(self: *GlobalSemanticGraph, allocator: std.mem.Allocator, count: usize) !void {
@@ -454,10 +558,6 @@ pub const GlobalSemanticGraph = struct {
 
     pub fn function(self: *const GlobalSemanticGraph, id: GlobalFunctionId) Function {
         return self.functions.items[@intFromEnum(id)];
-    }
-
-    pub fn functionOperator(self: *const GlobalSemanticGraph, id: GlobalFunctionId) ?callable.OperatorKind {
-        return self.function_operators.items[@intFromEnum(id)];
     }
 
     pub fn binding(self: *const GlobalSemanticGraph, id: GlobalBindingId) Binding {
@@ -555,7 +655,6 @@ pub const GlobalSemanticGraph = struct {
             self.construction.type_resolution.items.len * @sizeOf(TypeResolutionState) +
             self.generic_instances.items.len * @sizeOf(GenericInstance) +
             self.functions.items.len * @sizeOf(Function) +
-            self.function_operators.items.len * @sizeOf(?callable.OperatorKind) +
             self.generic_function_instances.items.len * @sizeOf(GenericFunctionInstance) +
             self.bindings.items.len * @sizeOf(Binding) +
             self.construction.binding_type_resolution.items.len * @sizeOf(TypeResolutionState) +
@@ -571,6 +670,9 @@ pub const GlobalSemanticGraph = struct {
             self.auto_deinits.items.len * @sizeOf(AutoDeinit) +
             self.virtual_registries.items.len * @sizeOf(VirtualMethodRegistry) +
             self.virtualizes.items.len * @sizeOf(Virtualize) +
+            self.contract_safety_conformances.items.len * @sizeOf(ContractSafetyConformance) +
+            self.contract_conformances.items.len * @sizeOf(ContractConformance) +
+            self.contract_operation_bindings.items.len * @sizeOf(ContractOperationBinding) +
             self.virtual_calls.items.len * @sizeOf(VirtualCall) +
             self.reach_segments.items.len * @sizeOf(StringRange) +
             self.reach_alternatives.items.len * @sizeOf(ReachAlternative) +
@@ -615,11 +717,9 @@ test "global semantic graph derives symbol module ownership from declarations" {
         .input = .{ .start = 0, .len = 0 },
         .output = .{ .start = 0, .len = 0 },
     });
-    try graph.function_operators.append(allocator, .add);
 
     try std.testing.expectEqual(@as(u32, 0), @intFromEnum(graph.moduleForSymbol(symbol).?));
     try std.testing.expectEqualStrings("Thing", graph.text(type_name));
-    try std.testing.expectEqual(callable.OperatorKind.add, graph.functionOperator(@enumFromInt(0)).?);
 }
 
 test "name indexes discard speculative functions before IDs are reused" {
@@ -698,6 +798,12 @@ test "semantic graph checkpoint restores append-only pools and name indexes" {
         .ty = null,
         .content = .break_statement,
     });
+    try graph.contract_conformances.append(allocator, .{
+        .declaration = @enumFromInt(0),
+        .participants = .{ .start = 0, .len = 0 },
+        .associated_arguments = .{ .start = 0, .len = 0 },
+        .source = .{ .file_index = 0, .offset = 0 },
+    });
     _ = try graph.declarationsNamed(allocator, "discarded");
     _ = try graph.functionsNamed(allocator, "discarded");
 
@@ -705,6 +811,7 @@ test "semantic graph checkpoint restores append-only pools and name indexes" {
     try std.testing.expectEqual(@as(usize, 1), graph.declarations.items.len);
     try std.testing.expectEqual(@as(usize, 1), graph.functions.items.len);
     try std.testing.expectEqual(@as(usize, 0), graph.nodes.items.len);
+    try std.testing.expectEqual(@as(usize, 0), graph.contract_conformances.items.len);
     try std.testing.expectEqual(@as(usize, 0), (try graph.declarationsNamed(allocator, "discarded")).len);
     try std.testing.expectEqual(@as(usize, 0), (try graph.functionsNamed(allocator, "discarded")).len);
 
@@ -737,4 +844,85 @@ test "unresolved global type slots are construction state, not Any" {
     try std.testing.expect(!graph.hasUnresolvedTypes());
     try graph.finishTypeResolution(allocator);
     try std.testing.expect(graph.constructionStateEmpty());
+}
+
+test "generic argument rewrites restore existing types across nested checkpoints" {
+    const allocator = std.testing.allocator;
+    var graph = GlobalSemanticGraph{};
+    defer graph.deinit(allocator);
+    try graph.generic_arguments.append(allocator, .{ .name = .{ .start = 0, .len = 0 }, .value = .{ .type = @enumFromInt(0) } });
+    try graph.types.append(allocator, .{ .builtin = .Int32 });
+    try graph.types.append(allocator, .{ .generic = .{ .base = @enumFromInt(0), .arguments = .{ .start = 0, .len = 1 } } });
+    const outer = graph.checkpoint();
+    try graph.generic_arguments.append(allocator, graph.generic_arguments.items[0]);
+    try graph.replaceTypeArguments(allocator, @enumFromInt(1), .{ .start = 1, .len = 1 });
+    const inner = graph.checkpoint();
+    try graph.generic_arguments.append(allocator, graph.generic_arguments.items[0]);
+    try graph.replaceTypeArguments(allocator, @enumFromInt(1), .{ .start = 2, .len = 1 });
+    graph.rollback(inner);
+    try std.testing.expectEqual(@as(u32, 1), graph.types.items[1].generic.arguments.start);
+    try std.testing.expectEqual(@as(usize, 2), graph.generic_arguments.items.len);
+    graph.rollback(outer);
+    try std.testing.expectEqual(@as(u32, 0), graph.types.items[1].generic.arguments.start);
+    try std.testing.expectEqual(@as(usize, 1), graph.generic_arguments.items.len);
+    try std.testing.expectEqual(@as(usize, 0), graph.construction.type_argument_rewrites.items.len);
+}
+
+test "named function lookup excludes instances and callback prototypes across rollback" {
+    const allocator = std.testing.allocator;
+    var graph: GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    const name = try graph.addString(allocator, "identity");
+    try graph.declarations.append(allocator, .{
+        .kind = .function,
+        .name = name,
+        .source = .{ .file_index = 0, .offset = 0 },
+    });
+    const callable = Function{
+        .declaration = @enumFromInt(0),
+        .input = .{ .start = 0, .len = 0 },
+        .output = .{ .start = 0, .len = 0 },
+    };
+    try graph.functions.append(allocator, callable);
+    const saved = graph.checkpoint();
+    var instance = callable;
+    instance.flags.is_generic_instantiation = true;
+    try graph.functions.append(allocator, instance);
+    const callback_name = try graph.addString(allocator, "Callback");
+    try graph.declarations.append(allocator, .{
+        .kind = .type,
+        .name = callback_name,
+        .source = .{ .file_index = 0, .offset = 0 },
+    });
+    var prototype = callable;
+    prototype.declaration = @enumFromInt(1);
+    prototype.flags.is_c_function_pointer = true;
+    try graph.functions.append(allocator, prototype);
+    try std.testing.expectEqual(@as(usize, 0), (try graph.functionsNamed(allocator, "Callback")).len);
+    const names = try graph.functionsNamed(allocator, "identity");
+    try std.testing.expectEqual(@as(usize, 1), names.len);
+    try std.testing.expectEqual(@as(GlobalFunctionId, @enumFromInt(0)), names[0]);
+    // Cached bodies remain addressable for codegen, without joining name lookup.
+    try std.testing.expect(graph.function(@enumFromInt(1)).flags.is_generic_instantiation);
+    try std.testing.expect(graph.function(@enumFromInt(2)).flags.is_c_function_pointer);
+    graph.rollback(saved);
+    try graph.functions.append(allocator, callable);
+    try std.testing.expectEqual(@as(usize, 2), (try graph.functionsNamed(allocator, "identity")).len);
+}
+
+test "selected call evidence stays compact and distinguishes aliased operations" {
+    var graph: GlobalSemanticGraph = .{};
+    // Keep the shared node union within its compact representation budget.
+    try std.testing.expect(@sizeOf(Node) <= 112);
+    const ordinary = Node.Content{ .function_call = .{ .callee = @enumFromInt(0), .input = @enumFromInt(0) } };
+    try std.testing.expect(graph.callOperation(ordinary.function_call) == null);
+    var first = ordinary.function_call;
+    first.contract_operation = .{ .conformance = 3, .index = 2 };
+    var second = first;
+    second.contract_operation = .{ .conformance = 5, .index = 1 };
+    try std.testing.expectEqual(first.callee, second.callee);
+    try std.testing.expectEqual(@as(u32, 3), graph.callOperation(first).?.conformance);
+    try std.testing.expectEqual(@as(u32, 2), graph.callOperation(first).?.index);
+    try std.testing.expectEqual(@as(u32, 5), graph.callOperation(second).?.conformance);
+    try std.testing.expectEqual(@as(u32, 1), graph.callOperation(second).?.index);
 }

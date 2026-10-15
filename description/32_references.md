@@ -8,8 +8,9 @@ inspect(.value = &x)
 change(.value = $&x)
 ```
 
-A reference does not keep its referent alive or acquire its cleanup
-responsibilities. A `$&T` may reach a place whose current value has such
+Borrowing does not by itself extend existing storage or acquire its cleanup
+responsibilities. A function cannot return a reference that depends on storage
+ending when it returns. A `$&T` may reach a place whose current value has cleanup
 responsibilities; mutating or deinitializing that value changes the place.
 Aliases are checked when they are used. Mutable references may alias in
 sequential code: `$&T` does not imply exclusive access or `noalias`.
@@ -41,6 +42,43 @@ The prefix applies to the whole place. Postfix `&` dereferences a pointer, so
 operation that moves or replaces an element may invalidate a reference to
 that element even while the container remains live.
 
+## Returning values and references
+
+A function output cannot depend on a local storage generation that ends when
+it returns. This includes references to local variables, by-value input slots,
+local arrays, and temporary expression results. Wrapping a reference in a
+struct, choice, virtual value, or owning container does not extend its lifetime.
+The rule also applies to hidden dependencies: an `Allocation` cannot escape
+with a local deallocator, and an `Error` cannot escape with a local tracer.
+
+Return an owned value when the caller should receive ownership. If the result
+must borrow storage, create the owner in the caller and pass its reference to
+the helper:
+
+```rg
+NumberBox: Type = (.value: Int32)
+
+number(.box: &NumberBox) -> (.result: &Int32) := {
+    result = &box&.value
+}
+
+main() -> () := {
+    box ::= NumberBox(7)
+    reference ::= number(&box)
+}
+```
+
+Borrows derived from inputs or globals remain valid while their original
+owners and resources remain valid. Returning an owner transfers its ordinary
+cleanup responsibilities; references inside that owner must still obey the
+same lifetime rule. Returning an owner together with a reference to its local
+slot does not establish an address-stability or pinning guarantee.
+
+Large values may use destination passing or an indirect return as an ABI
+choice. This does not extend local lifetimes or permit references to local
+storage to escape. There is no implicit heap allocation or hidden storage
+retention for borrowed outputs.
+
 ## References to expression results
 
 An expression that produces a value can be borrowed directly. Argi gives the
@@ -56,7 +94,7 @@ calls or pipes. Taking a reference does not turn the constructed value into a
 pointer value or transfer its cleanup responsibilities to the reference.
 The temporary remains alive while the surrounding expression uses it, then
 is cleaned up, including on short-circuit and loop-condition exits. A
-reference to it cannot escape into a longer-lived binding or function result.
+reference to it cannot escape through a function result.
 Moving the temporary value into a destination instead transfers its cleanup
 responsibilities there.
 

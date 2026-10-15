@@ -6,17 +6,27 @@ dummy_status :: Int32 = 0
 global_counter_ptr :: $&Int32 = $&dummy_counter
 global_status_ptr :: $&Int32 = $&dummy_status
 
-init(.p: $&Resource, .counter: $&Int32, .status: $&Int32) -> () := {
-    puts(.string="Initializing resource\n")
-    global_counter_ptr = counter
-    global_status_ptr = status
-}
+implement Init#(Resource, (.counter: $&Int32, .status: $&Int32)) (
+    .Result: Type = Resource
+    .init = (.args: (.counter: $&Int32, .status: $&Int32)) -> (.result: Result) {
+        counter ::= ~args.counter
+        status ::= ~args.status
 
-deinit(.res: $&Resource) -> () := {
-    puts(.string="Deinitializing resource\n")
-    global_counter_ptr& = global_counter_ptr& + 1
-    global_status_ptr& = 0
-}
+        result = ()
+
+        puts(.string="Initializing resource\n")
+        global_counter_ptr = counter
+        global_status_ptr = status
+    }
+)
+
+implement Deinit#(Resource) (
+    .deinit = (.self: $&Resource) -> () {
+        puts(.string="Deinitializing resource\n")
+        global_counter_ptr& = global_counter_ptr& + 1
+        global_status_ptr& = 0
+    }
+)
 
 verify(.counter: $&Int32, .status: $&Int32) -> () := {
     puts(.string="Verifying resource\n")
@@ -27,6 +37,7 @@ verify(.counter: $&Int32, .status: $&Int32) -> () := {
 }
 
 main (.system: System) -> (.status_code: Int32) := {
+    assume ffi := system.ffi
     allocator_storage :: CAllocator = CAllocator(.ffi = system.ffi)
     assume allocator ::= $&allocator_storage
     counter :: Int32 = 0

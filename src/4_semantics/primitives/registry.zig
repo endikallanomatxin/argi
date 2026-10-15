@@ -13,9 +13,11 @@ pub const Spec = struct {
     name: []const u8,
     signatures: []const []const u8,
     declaration: enum { body, extern_function } = .body,
+    operating_systems: []const std.Target.Os.Tag = &.{},
 };
 
 pub const specs = [_]Spec{
+    .{ .primitive = .float_math, .path = "core/numbers/math.rg", .name = "_float_math", .signatures = &.{"#(.t: Type: Float)(.operation: UInt32, .left: t, .right: t) -> (.result: t)"} },
     .{ .primitive = .establish_inherited_reference, .path = "core/memory/heap_allocation/RawPointer.rg", .name = "trusted_establish_inherited_reference", .signatures = &.{"#(.t: Type)(.raw: RawPointer#(.t: t), .root: &Any) -> (.reference: $&t)"} },
     .{ .primitive = .establish_inherited_storage, .path = "core/memory/heap_allocation/RawPointer.rg", .name = "trusted_establish_inherited_storage", .signatures = &.{"(.address: UIntNative, .root: &Any) -> (.raw: RawPointer#(.t: UInt8))"} },
     .{ .primitive = .reference_offset, .path = "core/memory/heap_allocation/RawPointer.rg", .name = "trusted_reference_offset", .signatures = &.{"#(.t: Type)(.base: &t, .elements: UIntNative) -> (.reference: &t)"} },
@@ -23,9 +25,10 @@ pub const specs = [_]Spec{
     .{ .primitive = .reinterpret_reference, .path = "core/memory/heap_allocation/RawPointer.rg", .name = "trusted_reinterpret_reference", .signatures = &.{"#(.from: Type, .to: Type)(.base: &from) -> (.reference: &to)"} },
     .{ .primitive = .mutable_reinterpret_reference, .path = "core/memory/heap_allocation/RawPointer.rg", .name = "trusted_mutable_reinterpret_reference", .signatures = &.{"#(.from: Type, .to: Type)(.base: $&from) -> (.reference: $&to)"} },
     .{ .primitive = .read_reference, .path = "core/memory/heap_allocation/RawPointer.rg", .name = "read_reference", .signatures = &.{"#(.t: Type)(.base: $&t) -> (.reference: &t)"} },
-    .{ .primitive = .establish_allocation, .path = "core/memory/heap_allocation/Allocator.rg", .name = "trusted_establish_allocation", .signatures = &.{"(.storage: UIntNative, .size: UIntNative, .alignment: UIntNative, .deallocator: Virtual#(.abstract: Deallocator), .anchor: &Any = erase_reference#(.t: UInt8)(.base = &allocation_static_anchor).reference) -> (.allocation: Allocation)"} },
-    .{ .primitive = .establish_allocation_slot, .path = "core/memory/heap_allocation/Allocator.rg", .name = "trusted_establish_allocation_slot", .signatures = &.{"#(.t: Type)(.allocation: &Allocation, .slot: RawPointer#(.t: t), .anchor: &Any) -> (.reference: $&t)"} },
-    .{ .primitive = .native_allocated_storage, .path = "core/platforms/posix/page_mapping.rg", .name = "_memory_map_anonymous", .signatures = &.{"(.length: UIntNative) -> (.address: UIntNative)"} },
+    .{ .primitive = .establish_allocation, .path = "core/memory/heap_allocation/Allocation.rg", .name = "trusted_establish_allocation", .signatures = &.{"(.storage: UIntNative, .size: UIntNative, .alignment: UIntNative, .deallocator: Virtual#(.contract: Deallocator), .anchor: &Any = erase_reference#(.t: UInt8)(.base = &allocation_static_anchor).reference) -> (.allocation: Allocation)"} },
+    .{ .primitive = .establish_allocation_slot, .path = "core/memory/heap_allocation/allocation_slots.rg", .name = "trusted_establish_allocation_slot", .signatures = &.{"#(.t: Type)(.allocation: &Allocation, .slot: RawPointer#(.t: t), .anchor: &Any) -> (.reference: $&t)"} },
+    .{ .primitive = .native_allocated_storage, .operating_systems = &.{ .linux, .macos }, .path = "core/platforms/posix/page_mapping.rg", .name = "_memory_map_anonymous", .signatures = &.{"(.length: UIntNative) -> (.address: UIntNative)"} },
+    .{ .primitive = .native_allocated_storage, .operating_systems = &.{.windows}, .path = "core/platforms/windows/page_mapping.rg", .name = "_memory_acquire_aligned", .signatures = &.{"(.length: UIntNative, .alignment: UIntNative) -> (.address: UIntNative)"}, .declaration = .extern_function },
     .{ .primitive = .acquisition_subaddress, .path = "core/memory/heap_allocation/Memory.rg", .name = "_trusted_acquisition_subaddress", .signatures = &.{"(.base: UIntNative, .address: UIntNative) -> (.result: UIntNative)"} },
     .{ .primitive = .relocate, .path = "core/memory/relocation.rg", .name = "relocate", .signatures = &.{"#(.t: Type)(.source: $&t, .destination: $&t) -> ()"} },
     .{ .primitive = .restrict_reference, .path = "core/memory/validity_dependency.rg", .name = "restrict_reference", .signatures = &.{"#(.t: Type)(.input: t, .on: &Any) -> (.reference: t)"} },
@@ -36,7 +39,6 @@ pub const specs = [_]Spec{
     .{ .primitive = .trusted_opaque_relocate, .path = "core/memory/opaque_ownership.rg", .name = "trusted_opaque_relocate", .signatures = &.{"#(.t: Type)(.source: $&t, .destination: $&t) -> ()"} },
     .{ .primitive = .trusted_opaque_drop, .path = "core/memory/opaque_ownership.rg", .name = "trusted_opaque_drop", .signatures = &.{
         "#(.t: Type)(.slot: $&t) -> ()",
-        "#(.t: Type)(.slot: $&t, .allocator: $&Allocator) -> ()",
     } },
     .{ .primitive = .trusted_opaque_mark_empty, .path = "core/memory/opaque_ownership.rg", .name = "trusted_opaque_mark_empty", .signatures = &.{"#(.t: Type)(.storage: $&t) -> ()"} },
     .{ .primitive = .raw_allocated_storage, .path = "core/libc/libc.rg", .name = "_malloc", .signatures = &.{"(.size: UIntNative) -> (.address: UIntNative)"}, .declaration = .extern_function },
@@ -71,7 +73,15 @@ pub fn findBundled(name: []const u8, path: []const u8) ?Spec {
 }
 
 pub fn matchesPath(spec: Spec, path: []const u8) bool {
-    return std.mem.endsWith(u8, path, spec.path);
+    if (path.len < spec.path.len) return false;
+    const start = path.len - spec.path.len;
+    if (start > 0 and path[start - 1] != '/' and path[start - 1] != '\\') return false;
+    for (path[start..], spec.path) |actual, expected| {
+        if (actual == expected) continue;
+        if (expected == '/' and actual == '\\') continue;
+        return false;
+    }
+    return true;
 }
 
 pub fn signatureMatches(spec: Spec, tree: *const syntax.FileSyntaxTree, source: []const u8, function: syntax.FunctionDeclaration) bool {
@@ -195,7 +205,7 @@ pub const Transfer = struct {
 
 pub fn forPrimitive(primitive: primitives.SafetyPrimitive) Transfer {
     return switch (primitive) {
-        .none => .{ .value = .empty },
+        .none, .float_math => .{ .value = .empty },
         .raw_allocated_storage => .{ .value = .raw_storage },
         // Body-backed page acquisition retains the Argi UIntNative ABI;
         // libc acquisition identity also selects its pointer-return ABI.
@@ -251,4 +261,12 @@ pub fn opaqueMoveOperands(argument_count: usize) ?OpaqueMoveOperands {
         3 => .{ .owner = 2, .storage = 0 },
         else => null,
     };
+}
+
+test "trusted primitive paths accept native separators without weakening identity" {
+    const name = "trusted_reinterpret_reference";
+    try std.testing.expect(findBundled(name, "C:\\argi\\lib\\argi\\core\\memory\\heap_allocation\\RawPointer.rg") != null);
+    try std.testing.expect(findBundled(name, "/opt/argi/core/memory/heap_allocation/RawPointer.rg") != null);
+    try std.testing.expect(findBundled(name, "/opt/argi/othercore/memory/heap_allocation/RawPointer.rg") == null);
+    try std.testing.expect(findBundled(name, "C:\\argi\\core\\memory\\RawPointer.rg") == null);
 }

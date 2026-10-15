@@ -33,7 +33,7 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
-    if length#(.t: Int32)(.self = &arr).count != 2 {
+    if length(.self = &arr).count != 2 {
         status_code = 2
         return
     }

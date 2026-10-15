@@ -20,19 +20,19 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     map ::= StringHashMap#(.value: Int32)(.capacity = 1)
     index = 0
     while index < 32 {
-        put#(.value: Int32)(.self = $&map, .key = &keys[index], .value = 7)
+        put(.self = $&map, .key = &keys[index], .value = 7)
         index = index + 1
     }
     index = 0
     while index < 32 {
-        match get#(.value: Int32)(.self = &map, .key = &keys[index]).value {
+        match get(.self = &map, .key = &keys[index]).result {
             ..none { abort }
             ..some payload { if payload.value != 7 { abort } }
         }
         index = index + 1
     }
-    put#(.value: Int32)(.self = $&map, .key = &keys[15], .value = 9)
-    match get#(.value: Int32)(.self = &map, .key = &keys[15]).value {
+    put(.self = $&map, .key = &keys[15], .value = 9)
+    match get(.self = &map, .key = &keys[15]).result {
         ..none { abort }
         ..some payload { if payload.value != 9 { abort } }
     }

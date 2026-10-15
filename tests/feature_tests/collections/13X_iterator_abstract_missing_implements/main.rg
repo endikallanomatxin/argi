@@ -2,7 +2,7 @@ FakeIterator : Type = (
     .index: UIntNative
 )
 
-consume(.it: $&Iterator#(.t: Int32)) -> () := {}
+consume#(.T: Type: Iterator#(T))(.it: $&T) -> () := {}
 
 main () -> (.status_code: Int32) := {
     fake :: FakeIterator = (.index = 0)

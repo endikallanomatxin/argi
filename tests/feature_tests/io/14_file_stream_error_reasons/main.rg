@@ -1,40 +1,41 @@
-main() -> (.status_code: Int32) := {
+main(.system: System) -> (.status_code: Int32) := {
+    assume ffi := system.ffi
     file ::= File(.stream_address = 0, .should_close = 0 == 1)
 
-    read_result ::= read_byte(.self = $&file)
+    read_result ::= Reader#().read_byte(.self = $&file)
     if is(.value = read_result, .variant = ..error) {
     } else {
         status_code = 1
         return
     }
 
-    if is(.value = read_result..error.reason, .variant = ..stream_read_failed) {
+    if is(.value = read_result ..error.reason, .variant = ..stream_read_failed) {
     } else {
         status_code = 2
         return
     }
 
-    write_result ::= write_byte(.self = $&file, .byte = 65)
+    write_result ::= Writer#().write_byte(.self = $&file, .byte = 65)
     if is(.value = write_result, .variant = ..error) {
     } else {
         status_code = 3
         return
     }
 
-    if is(.value = write_result..error.reason, .variant = ..stream_write_failed) {
+    if is(.value = write_result ..error.reason, .variant = ..stream_write_failed) {
     } else {
         status_code = 4
         return
     }
 
-    flush_result ::= flush(.self = $&file)
+    flush_result ::= Writer#().flush(.self = $&file)
     if is(.value = flush_result, .variant = ..error) {
     } else {
         status_code = 5
         return
     }
 
-    if is(.value = flush_result..error.reason, .variant = ..stream_flush_failed) {
+    if is(.value = flush_result ..error.reason, .variant = ..stream_flush_failed) {
     } else {
         status_code = 6
         return

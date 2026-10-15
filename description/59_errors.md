@@ -47,11 +47,11 @@ held by the configured tracer, not embedded in each error value.
 ```rg
 Error#(.reasons: Choice) : Type = (
     .reason: reasons
-    .trace: ErrorTrace
+    .tracer: $&Virtual#(.contract: ErrorTracer)
 )
 ```
 
-`.reason` must be a `choice` without payloads. `ErrorTrace` retains a reference
+`.reason` must be a `choice` without payloads. The `.tracer` field retains a reference
 to the original virtual `ErrorTracer`. The bundled policies use a shared log,
 so the reference itself is the complete handle.
 Creating an error records its origin through that tracer. The tracer must
@@ -80,11 +80,11 @@ Example:
 ..file_not_found
 ..permission_denied
 
-read_file() -> (.result: Errable#(.t: Int32, .reasons: (..file_not_found))) := {
+read_file() -> (.result: Errable#(Int32, (..file_not_found))) := {
     result = ..error(.reason = ..file_not_found)
 }
 
-load_file() -> (.result: Errable#(.t: Int32, .reasons: (..file_not_found, ..permission_denied))) := {
+load_file() -> (.result: Errable#(Int32, (..file_not_found, ..permission_denied))) := {
     value := read_file()!
     result = ..ok value
 }
@@ -103,18 +103,41 @@ load_file() -> !Int32 := {
 returning `T`. In this special form, the compiler infers the reasons from the
 body and closes the return `Errable` after semantic analysis.
 
-The same inference path is also available when the output is written
-explicitly as `Errable#(.t: T)` and omits `.reasons`:
+The shorthand can declare an explicit default for its `result` binding:
 
 ```rg
-load_file() -> (.result: Errable#(.t: Int32)) := {
+work() -> !Void = ..ok Void() := {
+    perform_step()!
+}
+```
+
+The default initializes the output before the body executes. Reaching the end
+or using a bare `return` retains that value unless the body replaces it;
+propagation with `!` or `!!` replaces it with the error. Defaults participate in
+reason inference, and this syntax also applies to non-`Void` and generic
+functions. `-> !Void` alone does not declare a success default.
+
+> [!IMPLEMENTATION]
+> An error-producing output default currently needs an explicit `.tracer`;
+> automatic creation from the function's reached tracer is not available in
+> output initializers. Success defaults such as `..ok Void()` need no tracer.
+
+The same inference path is also available when the output is written
+explicitly as `Errable#(T)` and omits `.reasons`:
+
+```rg
+load_file() -> (.result: Errable#(Int32)) := {
     value := read_file()!
     result = ..ok value
 }
 ```
 
-This is currently accepted only in function outputs. Outside function output
-positions, `Errable#(.t: T)` still requires an explicit `.reasons`.
+Omitting the reasons requests an inferred error set. Function outputs infer
+that set from their body; other positions need enough context to determine it.
+
+> [!IMPLEMENTATION]
+> Generic consumers requiring a nominal Errable can still reject inferred error
+> envelopes. Direct matching remains available for those values.
 
 The compiler can also infer a narrower subset of the declared reasons by
 looking at the actual propagation and return sites in the function body. That
@@ -133,20 +156,20 @@ stream failures:
 ..stream_close_failed
 ..out_of_memory
 
-open_read(.p: $&File, .path: &Char)
-    -> (.result: Errable#(.t: Bool, .reasons: (..file_open_failed)))
+open(.p: $&File, .path: &Char, .mode: FileOpenMode)
+    -> (.result: Errable#(Bool, (..file_open_failed)))
 
 read_file(.self: &FileSystem, .path: StringView)
     -> (.result: Errable#(
-        .t: String,
-        .reasons: (..path_open_failed, ..stream_read_failed, ..stream_close_failed, ..out_of_memory),
+        String,
+        (..path_open_failed, ..stream_read_failed, ..stream_close_failed, ..out_of_memory)
     ))
 
 read_byte(.self: $&Reader)
-    -> (.result: Errable#(.t: ReadByte, .reasons: (..stream_read_failed)))
+    -> (.result: Errable#(ReadByte, (..stream_read_failed)))
 
 write_byte(.self: $&Writer, .byte: UInt8)
-    -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed)))
+    -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed)))
 ```
 
 `read_line()` and `read_file()` explicitly propagate `..out_of_memory`.
@@ -158,9 +181,9 @@ longer:
 - a `Bool` indicating whether allocation succeeded
 
 Instead, use:
-- `allocate(...) -> Errable#(.t: Allocation, .reasons: (..out_of_memory))`
+- `allocate(...) -> Errable#(Allocation, (..out_of_memory))`
 - helpers such as `string_with_capacity(...)`
-- growth operations returning `Errable#(.t: Void, .reasons: (..out_of_memory))`
+- growth operations returning `Errable#(Void, (..out_of_memory))`
 
 This is already used in `String` and the fallible paths of `DynamicArray`
 (`push_growing`, `insert_growing`, `dynamic_array_grow_growing`).
@@ -200,15 +223,58 @@ that retains the context copies it, so the entry does not borrow a temporary
 string. A tracer that emits the entry immediately can use the text during the
 call.
 
-## Error tracing
+### Reporting and returning
 
-`ErrorTracer` is an `Abstract` for the tracing policy:
+`expr!!!` accepts an `Errable#(T, Reasons)`. It evaluates the operand once and
+moves the success payload out as `T`. On error it reports the stored trace
+through the ordinary reachable writer and returns from the containing function.
+It is shorthand for recovery whose error branch reports and executes a bare
+`return`, not propagation into the function's Errable output.
+
+The enclosing function's output defaults and explicit assignments determine its
+return value. Normal owner and defer cleanup runs on that return. A reporting
+failure is discarded rather than recursively reported. Functions that use this
+operator require the same writer capability as ordinary error reporting.
+Reporting and returning with `!!!` is forbidden inside a deferred action; use
+local `handle` recovery there so all remaining cleanup still executes.
+`!` and `!! context` retain their propagation behavior.
+
+An optional block after `!!!` runs only on failure, after reporting and before
+the containing function returns:
 
 ```rg
-ErrorTracer : Abstract = (
-    add_context(.self: $&Self, .location: SourceLocationId, .context: StringView) -> ()
-    reset_context(...) -- infallible: clear retained context and reuse storage
-    report(...)  -- write a trace; may return an I/O error
+main(.system: System) -> (.status_code: Int32 = 0) := {
+    assume writer ::= $&system.terminal&.stderr
+    write($&system.terminal&.stdout, "ready\n")!!! { status_code = 1 }
+}
+```
+
+Success still yields the unwrapped payload without executing the block. The
+block has its own lexical scope and normal cleanup; its assignments to output
+bindings determine the containing function's return value. A reporting failure
+does not prevent this block from running. Both forms of `!!!` remain forbidden
+inside deferred actions; use explicit local `handle` recovery there.
+
+In an `if`, `while`, `for`, or `match` header, square brackets disambiguate an
+attached error block from the control statement's body:
+
+```rg
+if [ready()!!! { status_code = 1 }] { do_work() }
+```
+
+A no-result `main` exits with `0`, including when `!!!` returns early. Use an
+explicit `.status_code: Int32` output to select another exit status. `main`
+returning an Errable has no special entry-wrapper support.
+
+## Error tracing
+
+`ErrorTracer#(Tracer)` is a contract for the tracing policy:
+
+```rg
+ErrorTracer#(.Tracer: Type): Contract = (
+    .add_context: (.self: $&Tracer, .location: SourceLocationId, .context: StringView) -> ()
+    .reset_context: (...) -- infallible: clear retained context and reuse storage
+    .report: (...)  -- write a trace; may return an I/O error
 )
 ```
 
@@ -218,7 +284,7 @@ the location and context. `add_context` cannot return an error: propagation must
 still succeed when tracing cannot retain or emit an entry. A policy may
 allocate or write during `add_context`, but must handle those failures internally.
 `report` resolves locations and writes the trace; it may return an I/O error.
-The capability has type `$&Virtual#(.abstract: ErrorTracer)`. A tracer may
+The capability has type `$&Virtual#(.contract: ErrorTracer)`. A tracer may
 be supplied through `reach error_tracer`, so intermediate
 functions need not list it manually. This capability selects the tracer when
 an error is created. Later propagation and reporting use the reference in
@@ -233,7 +299,7 @@ run()
 ```
 
 The positional comptime argument of `to_virtual#(ErrorTracer)` selects the
-abstract. Alternatively, a declared `$&Virtual#(.abstract: ErrorTracer)`
+contract. Alternatively, a declared `$&Virtual#(.contract: ErrorTracer)`
 capability type permits `to_virtual($&_)` through contextual inference. The
 concrete tracer and virtual wrapper temporaries remain alive for the enclosing
 `assume` scope. The capability is still a pointer to the virtual wrapper.
@@ -311,7 +377,7 @@ Current direction for reason inference:
 - The signature still spells out the complete declared set.
 - `-> !T` already allows `.reasons` to be omitted in the special case of a
   single `result` output.
-- `Errable#(.t: T)` without `.reasons` is also accepted in explicit function
+- `Errable#(T)` without `.reasons` is also accepted in explicit function
   outputs.
 - Semantizing infers a subset from `return`, output assignments, and `!` / `!!`
   propagation.
@@ -332,35 +398,35 @@ This enables:
 
 `handle` provides a shorter form for handling an `Errable`:
 
-> [!IMPLEMENTATION]
-> The `handle` form is not implemented yet.
-
-```argi
-my_thing := fallible() handle value, error {
+```rg
+my_thing := fallible() handle error, value {
     match error.reason {
         ..file_not_found {
             value = 0
         }
         ..permission_denied {
-            report(.trace = &error.trace)!
+            report_trace(.tracer = error.tracer)!
             value = 1
         }
     }
 }
 ```
 
-Expected semantics:
-- `handle` would be syntactic sugar specific to `Errable`.
-- The expression on the left must have type `Errable#(.t: T, ...)`.
-- `value` would be the shared result slot.
+The recovery form converts `Errable#(T, Reasons)` into `T`.
+
+Semantics:
+- `handle` is syntactic sugar specific to `Errable`.
+- The expression on the left must have type `Errable#(T, ...)`.
+- `value` is the shared result slot.
 - If the `Errable` is `..ok x`, then `value = x`.
 - If it is `..error(...)`, the block runs with `error` bound to the complete
   error payload.
 - Use regular `match` on `error.reason` inside the block.
 - The block does not return a value specially; it only assigns to `value`.
 - The complete construct produces `value`.
-- The compiler should require `value` to be assigned on every path through the
-  error block.
+- The compiler requires `value` to be initialized on every path through the
+  error block that continues past the handler. Paths that return, abort, or
+  propagate an error do not need to initialize it.
 
 Motivation:
 - It does not introduce a new `match` form.
@@ -370,3 +436,37 @@ Motivation:
   locally and producing a final value.
 - It covers the common case where a function handles an `Errable` locally
   instead of propagating it.
+
+The operand is evaluated once. Success transfers its payload into the result;
+error handling binds the complete error payload only inside the handler. The
+result and error names must differ. Handler-local declarations and defers have
+ordinary block lifetimes, and `return`, `abort`, and propagation retain their
+ordinary meaning. Owning results are moved out of the construct; `handle` does
+not make them implicitly copyable. Generic function bodies support the same
+form. The result binding is private to the construct and cannot be used later
+by its handler name.
+
+### Handling without a result
+
+Omit the value binding to handle an error and continue without recovering a value:
+
+```rg
+save() handle error {
+    report_trace(.tracer = error.tracer)!
+}
+continue_work()
+```
+
+`expr handle error { ... }` evaluates an Errable operand once. On success it
+releases the success payload without running the block. On error it binds the
+complete error payload, runs the block, and continues after normal block exit.
+This variant produces no recovered value (its expression type is Void).
+Both forms keep `return`, `abort`, `!`, and other control transfers relative to
+the enclosing function or loop; a handler is an ordinary lexical block, not a
+new function. Owned payloads and handler locals receive ordinary cleanup on
+normal continuation and on control transfers.
+
+The ordinary `add_context` helper accepts a `StringView`; `add_context_text`
+accepts zero-terminated text. Both reach the tracer capability and call its
+scoped operation. Direct operations use `ErrorTracer#(T).add_context(...)`,
+`reset_context` and `report`; virtual calls use `ErrorTracer#()` instead.

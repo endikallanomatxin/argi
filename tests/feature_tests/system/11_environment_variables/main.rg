@@ -1,4 +1,5 @@
 main(.system: System) -> (.status_code: Int32) := {
+    assume ffi := system.ffi
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 
@@ -23,7 +24,7 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
-    home_result ::= get(.self = system.env_vars, .key = home_key)
+    home_result ::= lookup_environment(.self = system.env_vars, .key = home_key)
     if is(.value = home_result, .variant = ..error) {
         status_code = 6
         return
@@ -39,7 +40,7 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
-    missing_result ::= get(.self = system.env_vars, .key = missing_key)
+    missing_result ::= lookup_environment(.self = system.env_vars, .key = missing_key)
     if is(.value = missing_result, .variant = ..error) {
         status_code = 7
         return

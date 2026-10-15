@@ -50,14 +50,43 @@ left to right. Thus `index * stride + header_size` adds the header after
 multiplying the index, and `total - used - reserved` subtracts both amounts.
 Arithmetic binds more tightly than comparisons.
 
-Parenthesized values use the struct/value syntax; a single parenthesized
-expression is not currently a scalar grouping construct. Use intermediate
-bindings when a calculation needs a different grouping.
+Square brackets group exactly one expression: `[total + extra] * scale`
+evaluates the addition before multiplication. Grouping creates neither a value
+container nor a lexical scope. It preserves the expression's type, contextual
+literal typing, ownership, and place identity, so `$&[value]` borrows the same
+place as `$&value`.
 
-> [!QUESTION]
-> Define scalar grouping syntax without making single-field values ambiguous.
-> The relationship between richer pipe expressions and arithmetic also needs
-> to remain explicit as the pipe model grows.
+An opening bracket at the start of an expression groups it; a bracket after an
+expression indexes it. For example, `values[[index + 1] * stride]` groups part
+of an index, while `[values][index]` indexes a grouped array. Empty brackets
+and comma-separated expressions are not grouping constructs.
+
+Inside scalar grouping brackets, expressions may continue with an infix
+operator at the start of the next line. The operator can be arithmetic, a
+comparison, `and`, `or`, a pipe, or `unwrap_or`. Precedence, associativity, and
+short-circuit evaluation are unchanged:
+
+```rg
+total = [
+    base
+    + supplements
+    - discounts
+]
+```
+
+A break after an infix operator also continues the expression, with or without
+outer grouping brackets. Outside scalar grouping, a completed expression ends
+at its newline; a leading operator on the next line does not continue it.
+Newline-separated fields in calls and collections retain their own boundaries,
+even inside an outer grouping. An individual multiline field expression uses
+its own scalar brackets. Lexical blocks also retain statement boundaries.
+
+Parentheses retain their struct, list, array, and input syntax. Braces retain
+lexical blocks and do not gain an implicit result from grouping.
+
+Pipes retain call/postfix precedence above multiplication and addition. Group
+whole calculations or right-hand arithmetic with square brackets; see
+[pipe evaluation](40_functions.md#pipe-evaluation-and-placeholder-scope).
 
 ## Types and values
 
@@ -91,7 +120,7 @@ x := point_ref&.x
 `&Point` is a read-only reference type; `$&Point` is its mutable counterpart.
 References cannot be null. An optional reference uses `?&Point`. Reference
 arithmetic is not allowed. Low-level address calculations use
-`UIntNative(.value = reference)`. A calculated address becomes a reference
+`reference | convert#(.to: UIntNative)(_)`. A calculated address becomes a reference
 only through a core operation that establishes its validity root.
 
 References are checked when used and do not keep their referent alive. See
@@ -138,10 +167,10 @@ and [Multiple Dispatch](131_multiple_dispatch.md).
 
 ## Construction and cleanup
 
-A type may define `init` to construct a value in a destination place and
-`deinit` to clean up a live value. Both operations are optional. `T(...)`
-uses a visible initializer when one is defined; a fallible initializer
-produces `Errable#(.t: T, .reasons: R)` through the constructor call.
+A type may provide `implement Init#(T, Args)` to construct a value and
+`implement Deinit#(T)` to clean up a live value. Both contracts are optional.
+`T(...)` selects Init evidence from its target and argument record; its
+associated Result is T or `Errable#(T, R)` when construction can fail.
 Local values that need cleanup are cleaned at scope exit.
 
 See [Initialization and deinitialization](30_initialization_and_deinitialization.md),

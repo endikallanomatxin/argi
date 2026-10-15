@@ -16,10 +16,10 @@ DenseLayer : Type = (
 
 DenseLayer implements Layer
 
-init(.p: $&DenseLayer, .input_size: Int, .output_size: Int) -> () := {
+DenseLayer init(.input_size: Int, .output_size: Int) -> (.result: DenseLayer) := {
 	weights = NDVector((input_size, output_size))
 	biases  = NDVector((output_size))
-	p& = (
+	result = (
 		._weights = weights,
 		._biases = biases,
 	)

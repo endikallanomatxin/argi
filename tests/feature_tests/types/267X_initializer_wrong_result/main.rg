@@ -1,9 +1,11 @@
 Widget : Type = (.value: Int32)
 
-init(.p: $&Widget) -> (.value: Int32) := {
-    p& = (.value = 1)
-    value = 1
-}
+implement Init#(Widget, ()) (
+    .Result: Type = Int32
+    .init = (.args: ()) -> (.value: Int32) {
+        value = 1
+    }
+)
 
 main() -> (.status_code: Int32 = 0) := {
     widget ::= Widget()

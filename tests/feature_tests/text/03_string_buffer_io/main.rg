@@ -2,7 +2,7 @@ main(.system: System) -> (.status_code: Int32) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 
-    buffer ::= unwrap_or_abort(.value = String(.allocator = $&allocator_storage, .capacity = 8))
+    buffer ::= unwrap_or_abort(.value = string_with_capacity(.allocator = $&allocator_storage, .capacity = 8))
 
     match push_byte(.self = $&buffer, .byte = 79) {
         ..ok _ {
@@ -27,18 +27,18 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
-    first ::= bytes_get(.string = &buffer, .index = 0).byte
+    first ::= bytes_get(.view = &buffer, .index = 0).byte
     if first != 79 {
         status_code = 2
         return
     }
 
-    second ::= bytes_get(.string = &buffer, .index = 1).byte
+    second ::= bytes_get(.view = &buffer, .index = 1).byte
     if second != 75 {
         status_code = 3
         return
     }
 
-    deinit(.self = $&buffer, .allocator = $&allocator_storage)
+    deinit(.self = $&buffer)
     status_code = 0
 }

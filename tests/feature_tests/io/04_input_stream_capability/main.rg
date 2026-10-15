@@ -1,37 +1,35 @@
-DummyInput : Type = (
-    .index: Int32 = 0
+DummyInput: Type = (
+    .index : Int32 = 0
 )
 
-read_byte(
-    .self: $&DummyInput,
- ) -> (.result: Errable#(.t: ReadByte, .reasons: (..stream_read_failed))) := {
-    if self&.index == 0 {
-        self& = (
-            .index = 1
-        )
-        result = ..ok ..ok 79
-        return
+implement Reader#(DummyInput)(
+    .read_byte = (
+            .self : $&DummyInput,
+        ) -> (
+            .result : Errable#(.t: ReadByte, .reasons: (..stream_read_failed))
+        ) {
+        if self&.index == 0 {
+            self&.index = 1
+            result = ..ok ..ok 79
+            return
+        }
+
+        if self&.index == 1 {
+            self&.index = 2
+            result = ..ok ..ok 75
+            return
+        }
+
+        result = ..ok ..end
     }
-
-    if self&.index == 1 {
-        self& = (
-            .index = 2
-        )
-        result = ..ok ..ok 75
-        return
-    }
-
-    result = ..ok ..end
-}
-
-DummyInput implements Reader
+)
 
 main() -> (.status_code: Int32) := {
     stdin_storage :: DummyInput = DummyInput()
     assume reader ::= $&stdin_storage
-    first_result ::= read_byte(.self = $&stdin_storage)
-    second_result ::= read_byte(.self = $&stdin_storage)
-    third_result ::= read_byte(.self = $&stdin_storage)
+    first_result ::= Reader#().read_byte(.self = $&stdin_storage)
+    second_result ::= Reader#().read_byte(.self = $&stdin_storage)
+    third_result ::= Reader#().read_byte(.self = $&stdin_storage)
     first :: UInt8 = 0
     second :: UInt8 = 0
 

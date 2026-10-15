@@ -2,8 +2,11 @@ Thing : Type = (
     .value: Int32
 )
 
-deinit(.self: $&Thing) -> () := {
-}
+implement Deinit#(Thing) (
+    .deinit = (.self: $&Thing) -> () {
+
+    }
+)
 
 write(.p: $&Thing) -> () := {
     p&.value = 3

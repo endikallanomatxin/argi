@@ -1,5 +1,6 @@
 local_system(.system: System) -> (.result: System) := {
-    local_args :: Arguments = (.count = 1, .address = 0)
+    local_args :: Arguments = system.args&
+    local_args.count = 1
     result = system
     result.args = $&local_args
 }

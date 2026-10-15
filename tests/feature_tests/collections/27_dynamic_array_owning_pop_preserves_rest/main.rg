@@ -6,16 +6,18 @@ Tracked : Type = (
 first_drops :: Int32 = 0
 second_drops :: Int32 = 0
 
-deinit(.self: $&Tracked) -> () := {
-    if self&.id == 1 { first_drops = first_drops + 1 }
-    if self&.id == 2 { second_drops = second_drops + 1 }
-    deinit(.self = $&self&.allocation)
-}
+implement Deinit#(Tracked) (
+    .deinit = (.self: $&Tracked) -> () {
+        if self&.id == 1 { first_drops = first_drops + 1 }
+        if self&.id == 2 { second_drops = second_drops + 1 }
+        deinit(.self = $&self&.allocation)
+    }
+)
 
-make_tracked(.allocator: $&Allocator, .id: Int32) -> (.result: Errable#(.t: Tracked, .reasons: (..out_of_memory))) := {
+make_tracked#(.AllocatorType: Type: Allocator#(AllocatorType))(.allocator: $&AllocatorType, .id: Int32) -> (.result: Errable#(.t: Tracked, .reasons: (..out_of_memory))) := {
     assume allocator
 
-    allocated ::= allocate(.self = allocator, .size = 1)
+    allocated ::= allocate_bytes(.self = allocator, .size = 1)
     match allocated {
         ..error _ { result = ..error(.reason = ..out_of_memory) }
         ..ok ~ payload {
@@ -42,14 +44,14 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
                     second ::= ~second_payload
                     push_assume_capacity#(.t: Tracked)(.self = $&array, .value = ~first)
                     push_assume_capacity#(.t: Tracked)(.self = $&array, .value = ~second)
-                    popped_result ::= pop#(.t: Tracked)(.self = $&array).result
+                    popped_result ::= pop(.self = $&array).result
                     if is(.value = popped_result, .variant = ..error) {
                         status_code = 3
                         return
                     }
                     popped ::= ~popped_result..ok
 
-                    deinit#(.t: Tracked)(.self = $&array)
+                    deinit(.self = $&array)
                     if first_drops != 1 or second_drops != 0 {
                         status_code = 3
                         return

@@ -4,7 +4,12 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const test_filters = b.option([]const []const u8, "test-filter", "Only run tests whose name contains this text (repeatable)") orelse &.{};
-    const test_progress = b.option(bool, "test-progress", "Print each test as it runs") orelse false;
+    const default_test_jobs: u32 = @intCast(@max(1, @min(16, std.Thread.getCpuCount() catch 4)));
+    const test_jobs = b.option(u32, "test-jobs", "Program test workers (default: CPU count capped at 16; 1 selects serial)") orelse default_test_jobs;
+    if (test_jobs == 0 or test_jobs > 64) @panic("test-jobs must be between 1 and 64");
+    const test_progress = b.option(bool, "test-progress", "Show active tests and record per-worker progress") orelse false;
+    const frontend_build_options = b.addOptions();
+    frontend_build_options.addOption([32]u8, "cache_build_id", compilerFingerprint(b) catch @panic("cannot fingerprint compiler sources"));
 
     const llvm_include_path, const llvm_lib_path, const llvm_libs_raw = prepareLlvm(b) catch |err| {
         if (err != error.LlvmNotFound) {
@@ -34,6 +39,7 @@ pub fn build(b: *std.Build) void {
     llvm_c.addIncludePath(llvm_include_path);
     const llvm_c_mod = llvm_c.createModule();
     exe_mod.addImport("llvm_c", llvm_c_mod);
+    exe_mod.addOptions("frontend_build_options", frontend_build_options);
 
     const exe = b.addExecutable(.{
         .name = "argi",
@@ -46,11 +52,12 @@ pub fn build(b: *std.Build) void {
     linkLlvmModule(exe_mod, llvm_lib_path, llvm_libs_raw);
 
     b.installArtifact(exe);
-    const installed_core_path = b.getInstallPath(.prefix, "lib/argi/core");
-    if (!std.mem.endsWith(u8, installed_core_path, "lib/argi/core")) {
+    const core_suffix = std.fs.path.join(b.allocator, &.{ "lib", "argi", "core" }) catch @panic("out of memory");
+    const installed_core_path = b.getInstallPath(.prefix, core_suffix);
+    if (!std.mem.endsWith(u8, installed_core_path, core_suffix)) {
         @panic("refusing to clean an unexpected core installation path");
     }
-    const clean_installed_core = CleanInstalledCore.create(b, installed_core_path);
+    const clean_installed_core = CleanInstalledLibrary.create(b, installed_core_path, "clean installed core");
     const install_core = b.addInstallDirectory(.{
         .source_dir = b.path("core"),
         .install_dir = .prefix,
@@ -58,6 +65,20 @@ pub fn build(b: *std.Build) void {
     });
     install_core.step.dependOn(&clean_installed_core.step);
     b.getInstallStep().dependOn(&install_core.step);
+
+    const more_suffix = std.fs.path.join(b.allocator, &.{ "lib", "argi", "more" }) catch @panic("out of memory");
+    const installed_more_path = b.getInstallPath(.prefix, more_suffix);
+    if (!std.mem.endsWith(u8, installed_more_path, more_suffix)) {
+        @panic("refusing to clean an unexpected more installation path");
+    }
+    const clean_installed_more = CleanInstalledLibrary.create(b, installed_more_path, "clean installed more");
+    const install_more = b.addInstallDirectory(.{
+        .source_dir = b.path("more"),
+        .install_dir = .prefix,
+        .install_subdir = "lib/argi/more",
+    });
+    install_more.step.dependOn(&clean_installed_more.step);
+    b.getInstallStep().dependOn(&install_more.step);
 
     //
     // INSTALL AND RUN EXECUTABLE ---------------------------------------------
@@ -82,12 +103,45 @@ pub fn build(b: *std.Build) void {
     tests_mod.addImport("llvm_c", llvm_c_mod);
     linkLlvmModule(tests_mod, llvm_lib_path, llvm_libs_raw);
 
+    const program_options = b.addOptions();
+    program_options.addOption(u32, "workers", test_jobs);
+    program_options.addOption(bool, "progress", test_progress);
+    tests_mod.addOptions("program_test_options", program_options);
+    tests_mod.addImport("program_test_sharding", b.createModule(.{ .root_source_file = b.path("tests/sharding.zig"), .target = target, .optimize = optimize }));
     const exe_tests = b.addTest(.{
         .root_module = tests_mod,
         .filters = test_filters,
+        .test_runner = if (test_jobs > 1) .{ .path = b.path("tests/parallel_runner.zig"), .mode = .simple } else null,
     });
-    const run_exe_tests = addTestRun(b, exe_tests, test_progress);
-    run_exe_tests.step.dependOn(b.getInstallStep());
+    const program_test_step = b.step("test-programs", "Run Argi program tests");
+    if (test_jobs == 1) {
+        const run_exe_tests = addTestRun(b, exe_tests, test_progress);
+        run_exe_tests.step.dependOn(b.getInstallStep());
+        program_test_step.dependOn(&run_exe_tests.step);
+    } else {
+        const serial = b.addRunArtifact(exe_tests);
+        serial.addArg("serial");
+        serial.step.name = "program tests: shared state";
+        serial.expectExitCode(0);
+        serial.expectStdOutMatch("[programs serial]");
+        serial.has_side_effects = true;
+        serial.addArg(".zig-cache/program-tests/serial.log");
+        serial.step.dependOn(b.getInstallStep());
+        program_test_step.dependOn(&serial.step);
+        for (0..test_jobs) |worker| {
+            const run_shard = b.addRunArtifact(exe_tests);
+            run_shard.addArg(b.fmt("{d}", .{worker}));
+            // Inherited stdio takes Zig's terminal lock and would serialize
+            // workers. Capture diagnostics, but always rerun mutable fixtures.
+            run_shard.step.name = b.fmt("program tests: worker {d}", .{worker});
+            run_shard.expectExitCode(0);
+            run_shard.expectStdOutMatch("[programs ");
+            run_shard.has_side_effects = true;
+            run_shard.addArg(b.fmt(".zig-cache/program-tests/worker-{d}.log", .{worker}));
+            run_shard.step.dependOn(&serial.step);
+            program_test_step.dependOn(&run_shard.step);
+        }
+    }
 
     const internal_tests_mod = b.createModule(.{
         .root_source_file = b.path("src/internal_tests.zig"),
@@ -95,6 +149,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     internal_tests_mod.addImport("llvm_c", llvm_c_mod);
+    internal_tests_mod.addOptions("frontend_build_options", frontend_build_options);
     linkLlvmModule(internal_tests_mod, llvm_lib_path, llvm_libs_raw);
     const internal_tests = b.addTest(.{
         .root_module = internal_tests_mod,
@@ -105,9 +160,21 @@ pub fn build(b: *std.Build) void {
     const internal_test_step = b.step("test-internal", "Run compiler unit tests");
     internal_test_step.dependOn(&run_internal_tests.step);
 
-    const program_test_step = b.step("test-programs", "Run Argi program tests");
-    program_test_step.dependOn(&run_exe_tests.step);
-    program_test_step.dependOn(b.getInstallStep());
+    const benchmark_mod = b.createModule(.{
+        .root_source_file = b.path("src/frontend_benchmark.zig"),
+        .target = target,
+        .optimize = optimize,
+        .error_tracing = if (optimize == .Debug) false else null,
+    });
+    benchmark_mod.addOptions("frontend_build_options", frontend_build_options);
+    const benchmark_exe = b.addExecutable(.{ .name = "frontend-benchmark", .root_module = benchmark_mod });
+    const benchmark_install = b.addInstallArtifact(benchmark_exe, .{});
+    const benchmark_build = b.step("build-frontend-benchmark", "Build and install the frontend benchmark without running it");
+    benchmark_build.dependOn(&benchmark_install.step);
+    const benchmark_run = b.addRunArtifact(benchmark_exe);
+    if (b.args) |args| benchmark_run.addArgs(args);
+    const benchmark_step = b.step("benchmark-frontend", "Measure clean and reused frontend compilations");
+    benchmark_step.dependOn(&benchmark_run.step);
 
     const test_step = b.step("test", "Run all tests");
     test_step.dependOn(internal_test_step);
@@ -125,18 +192,18 @@ fn addTestRun(b: *std.Build, tests: *std.Build.Step.Compile, progress: bool) *st
     return run;
 }
 
-// Core installation must discard removed source files before copying the
+// Library installation must discard removed source files before copying the
 // current bundle. Use the build runner's I/O rather than a host shell utility.
-const CleanInstalledCore = struct {
+const CleanInstalledLibrary = struct {
     step: std.Build.Step,
     path: []const u8,
 
-    fn create(b: *std.Build, path: []const u8) *CleanInstalledCore {
-        const clean = b.allocator.create(CleanInstalledCore) catch @panic("OOM");
+    fn create(b: *std.Build, path: []const u8, name: []const u8) *CleanInstalledLibrary {
+        const clean = b.allocator.create(CleanInstalledLibrary) catch @panic("OOM");
         clean.* = .{
             .step = std.Build.Step.init(.{
                 .id = .custom,
-                .name = "clean installed core",
+                .name = name,
                 .owner = b,
                 .makeFn = make,
             }),
@@ -147,7 +214,7 @@ const CleanInstalledCore = struct {
 
     fn make(step: *std.Build.Step, options: std.Build.Step.MakeOptions) !void {
         _ = options;
-        const clean: *CleanInstalledCore = @fieldParentPtr("step", step);
+        const clean: *CleanInstalledLibrary = @fieldParentPtr("step", step);
         try std.Io.Dir.cwd().deleteTree(step.owner.graph.io, clean.path);
     }
 };
@@ -180,17 +247,18 @@ fn prepareLlvm(b: *std.Build) !struct { std.Build.LazyPath, std.Build.LazyPath, 
             printMissingLlvmHelp(tried_llvm_configs);
             return error.LlvmNotFound;
         };
-        break :blk std.mem.trim(u8, b.run(&.{ llvm_config, "--libs" }), "\n");
+        break :blk std.mem.trim(u8, b.run(&.{ llvm_config, "--libs", "--system-libs" }), " \r\n\t");
     };
 
-    const llvm_include_path = std.Build.LazyPath{ .cwd_relative = std.mem.trim(u8, include_dir_raw, " \n") };
-    const llvm_lib_path = std.Build.LazyPath{ .cwd_relative = std.mem.trim(u8, lib_dir_raw, " \n") };
+    const llvm_include_path = std.Build.LazyPath{ .cwd_relative = std.mem.trim(u8, include_dir_raw, " \r\n\t") };
+    const llvm_lib_path = std.Build.LazyPath{ .cwd_relative = std.mem.trim(u8, lib_dir_raw, " \r\n\t") };
 
     return .{ llvm_include_path, llvm_lib_path, llvm_libs_raw };
 }
 
 const llvm_config_candidates = [_][]const u8{
     "llvm-config-21",
+    "llvm-config.exe",
     "llvm-config",
     "llvm-config-20",
     "llvm-config-19",
@@ -230,10 +298,54 @@ fn linkLlvmModule(module: *std.Build.Module, lib_path: std.Build.LazyPath, libs_
 }
 
 fn linkLlvm(module: *std.Build.Module, libs_str: []const u8) void {
-    var it = std.mem.tokenizeScalar(u8, libs_str, ' ');
+    // llvm-config uses -l names on Unix and .lib names on Windows. Explicit
+    // LLVM_LIBS accepts either form; preserve system dependencies for static
+    // LLVM installations as well as monolithic shared builds.
+    var it = std.mem.tokenizeAny(u8, libs_str, " \r\n\t");
     while (it.next()) |tok| {
         if (std.mem.startsWith(u8, tok, "-l")) {
             module.linkSystemLibrary(tok[2..], .{});
+        } else if (std.mem.endsWith(u8, tok, ".lib")) {
+            if (std.fs.path.isAbsolute(tok)) {
+                module.addObjectFile(.{ .cwd_relative = tok });
+            } else {
+                module.linkSystemLibrary(tok[0 .. tok.len - 4], .{});
+            }
         }
     }
+}
+
+// Persistent modules must not survive a compiler/schema change even when the
+// public language version is unchanged during development. Use relative source
+// paths and content, not mtimes or the checkout location, for the build identity.
+fn compilerFingerprint(b: *std.Build) ![32]u8 {
+    const io = b.graph.io;
+    var dir = try std.Io.Dir.cwd().openDir(io, b.pathFromRoot("src"), .{ .iterate = true });
+    defer dir.close(io);
+    var walker = try dir.walk(b.allocator);
+    defer walker.deinit();
+    var paths: std.ArrayList([]const u8) = .empty;
+    while (try walker.next(io)) |entry| {
+        if (entry.kind != .file) continue;
+        if (!std.mem.endsWith(u8, entry.path, ".zig") and !std.mem.endsWith(u8, entry.path, ".rg")) continue;
+        try paths.append(b.allocator, try b.allocator.dupe(u8, entry.path));
+    }
+    std.mem.sort([]const u8, paths.items, {}, struct {
+        fn lessThan(_: void, lhs: []const u8, rhs: []const u8) bool {
+            return std.mem.lessThan(u8, lhs, rhs);
+        }
+    }.lessThan);
+    var hash = std.crypto.hash.Blake3.init(.{});
+    for (paths.items) |path| {
+        const contents = try dir.readFileAlloc(io, path, b.allocator, .limited(16 * 1024 * 1024));
+        const length: u64 = @intCast(path.len);
+        hash.update(std.mem.asBytes(&length));
+        hash.update(path);
+        const content_length: u64 = @intCast(contents.len);
+        hash.update(std.mem.asBytes(&content_length));
+        hash.update(contents);
+    }
+    var fingerprint: [32]u8 = undefined;
+    hash.final(&fingerprint);
+    return fingerprint;
 }

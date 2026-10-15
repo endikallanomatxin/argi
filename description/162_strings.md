@@ -14,7 +14,7 @@ A string should be explicitly viewable in several forms:
 - `graphemes`: visual units perceived by the user.
 
 `String` should not be directly indexable by default. This mixes two
-preguntas distintas:
+distinct questions:
 
 - byte access,
 - text-unit access.
@@ -94,21 +94,32 @@ API convention for borrowed text:
 - raw `&Char` is the C-string / low-level interop boundary, not the general
   string-like input type for high-level APIs.
 
-Avoid adding overloads only to accept every adjacent representation
+Avoid adding operation implementations only to accept every adjacent representation
 (`StringView`, `&StringView`, `&String`, `&Char`) unless those representations
-carry genuinely different semantics. Too many convenience overloads make
+carry genuinely different semantics. Too many convenience implementations make
 multiple dispatch encode API adapter noise instead of domain meaning.
 
-For example, terminal text helpers such as `print` / `print_error` and
-formatting helpers such as `format` / `format_into` accept `StringView` for
-text. Callers with an owning `String` should call `as_view(...)` explicitly, and
-raw `&Char` values should cross through the C-string conversion helpers before
-reaching high-level text APIs.
+Text algorithms and formatting helpers such as `format` / `format_into`
+accept `StringView` for borrowed text. Raw `&Char` values cross through the
+C-string conversion helpers before reaching high-level text APIs.
+
+The display and concatenation entrypoints also accept explicit borrows of
+`String`, keeping conversion inside the library: `print(&text)` borrows without
+allocating, and `concat("prefix", &text)` returns a fallible owning `String`.
+`concat` accepts views by value and owning strings by reference on either side.
+These entrypoints share the view-based implementation; they do not require
+implicit borrowing or conversions in ordinary call resolution.
+
+`print` is a line-oriented convenience API: `.terminator: StringView` defaults
+to `"\n"`. Pass `.terminator = ""` for no suffix or another view for a custom
+suffix. Writing the value and terminator preserves the writer's error reasons;
+`print` does not request a flush. Use `write(.self = writer, .value = text)` for
+exact text output without a terminator, and explicit `flush` when needed.
 
 Text equality follows the same rule: the byte-wise comparison primitive and
-`==` / `!=` overloads work on `StringView` values. Callers with owning `String`
+`==` / `!=` select Equal evidence on `StringView` values. Callers with owning `String`
 or raw `&Char` values should convert them explicitly instead of relying on
-high-level adapter overloads.
+implicit high-level adapters.
 
 Borrowed byte utilities preserve the backing storage lifetime:
 
@@ -120,7 +131,9 @@ Borrowed byte utilities preserve the backing storage lifetime:
   and embedded NULs, and leave non-ASCII whitespace unchanged. Empty results
   need no one-past reference.
 - `split(.self, .separator)` returns a fallible `StringSplitIterator` that
-  implements `Iterator<StringView>`. The iterator borrows both text and
+  implements `Iterator<StringView>` and `Iterable<StringView>`. A `for` loop
+  copies its current cursor without advancing the original. The iterator
+  borrows both text and
   separator; both backing stores must remain live while it is used. Matching
   is byte-wise and non-overlapping. An empty separator is `empty_separator`;
   an empty input produces one empty segment. Leading, consecutive, and
@@ -180,7 +193,7 @@ The text model uses these conventions:
 - raw `&Char` stays as the explicit C-string boundary, reached through helpers
   such as `as_c_string(...)` / `as_view(...)` instead of being the default
   language-level type of `"..."`.
-- `init(.p = $&string, .length = n)` allocates exactly `n` bytes.
+- `String(.length = n)` returns the result of allocating exactly `n` bytes.
 - `deinit(.self = $&string)` releases the backing allocation.
 - `copy(.self = string)` allocates a second backing buffer and copies the
   bytes, so value semantics stay independent.
@@ -247,3 +260,150 @@ returning the first encountered invalid digit or range failure. Every
 multiply/add or subtract is checked against the target range before execution.
 Signed minima and the full unsigned maximum are representable without first
 converting their magnitude to a signed intermediate.
+
+## Floating-point parsing
+
+`parse_float16`, `parse_float32`, and `parse_float64` accept `.text: StringView`
+and return an `Errable` containing the named target type. Parsing consumes
+exactly the recorded byte extent, uses no allocator, and is independent of
+locale. Supported input is ASCII decimal notation: an optional leading sign,
+at least one digit before or after an optional decimal point, and an optional
+`e` or `E` exponent with an optional sign and at least one digit. Examples
+include `12`, `-0.5`, `.5`, `5.`, and `+3.25e-2`.
+
+Whitespace, separators, radix prefixes, embedded zero bytes, trailing bytes,
+and special spellings such as `nan` and `inf` produce `invalid_input`. The
+complete input grammar is checked before determining range, so a malformed
+suffix remains `invalid_input` even after an enormous exponent.
+
+Valid decimal inputs round directly to the target's IEEE binary format using
+round-to-nearest, ties-to-even. Finite subnormal results are accepted. A
+nonzero input that rounds to zero or infinity produces `out_of_range`;
+representable rounded finite values are accepted even when the exact input
+is slightly outside their range. Exact zero accepts any exponent and preserves
+its sign, including negative zero. The decimal-to-binary conversion never
+passes through a wider floating-point type, avoiding double rounding.
+
+## Integer formatting
+
+`format(.value: T, .allocator: $&Allocator)` returns an owning `String` for
+`Int8`, `Int16`, `Int32`, `Int64`, `UInt8`, `UInt16`, `UInt32`, `UInt64`, and
+`UIntNative`. Decimal output uses ASCII digits, no separators, and a leading
+minus sign only for negative values. Zero is `"0"`; signed minima and unsigned
+maxima retain their full range. The result uses one allocation sized for the
+text and its zero terminator.
+
+`format_into(.out: $&String, .value: T, .allocator: $&Allocator)` appends the
+same representation. Decimal conversion uses fixed local storage; only growth
+of the destination string can allocate. A failed reservation leaves the
+existing string unchanged. String formatting returns `out_of_memory` on an
+allocation failure.
+
+`WriteValue#(Stream, T).write_value(.self: $&Stream, .value: T)` sends the same decimal bytes to a writer
+without an allocator or an intermediate owning string. Participants are explicit
+in qualified calls; generic callers retain their stream and value type parameters.
+The contract permits specialization for a concrete stream/value pair.
+`print(.value: T,
+.writer: $&Writer, .terminator: StringView = "\n")` adds the usual terminator;
+a locally assumed writer can satisfy its writer input. These operations
+preserve `stream_write_failed` and `stream_flush_failed`, stop at the first
+failed byte, and leave the successfully written prefix in the destination.
+A value failure prevents writing the terminator. They request no implicit
+flush; a writer may flush internally while accepting bytes.
+
+## Floating-point formatting
+
+The same string `format` / `format_into`, stream `WriteValue.write_value`, and
+`print` inputs accept `Float16`,
+`Float32`, and `Float64`. Each finite value uses the shortest decimal
+significand that reads back as exactly that value at its original width under
+round-to-nearest, ties-to-even. Among equally short candidates, formatting
+chooses the closest decimal value; an exact tie chooses an even decimal
+significand. Formatting does not widen the float before choosing its text.
+
+All widths use fixed notation when the decimal exponent of the leading digit
+is between -4 and 15, inclusive, and scientific notation otherwise. Fixed
+integral values retain `.0`. Scientific notation uses a lowercase `e`, no
+positive exponent sign, and no exponent padding. Examples include `0.1`,
+`1.0`, `0.0001`, `1e-5`, and `1e16`. Zero preserves its sign as `0.0` or
+`-0.0`. Positive and negative infinity use `inf` and `-inf`; every NaN uses
+`nan`, without preserving its sign or payload. The finite decimal parser
+continues to reject these special-value spellings.
+
+Formatting uses bounded local storage, independent of locale and the host C
+library. Writer formatting needs no allocator, requests no implicit flush,
+and follows the integer formatter's prefix and error propagation contract.
+An owning string requires one allocation for the resulting bytes and their
+zero terminator; appending to a string allocates only when its capacity grows.
+
+## Strict UTF-8 operations
+
+Byte-oriented `String` and `StringView` operations do not establish valid UTF-8.
+Text decoding is explicit and accepts bounded views, including embedded NULs.
+
+`UnicodeScalar(.value: UInt32)` checks the Unicode scalar range: zero through
+U+10FFFF, excluding U+D800 through U+DFFF. Invalid input reports
+`invalid_codepoint`; `scalar_value(.self)` returns the checked UInt32 value.
+The scalar representation is private and implicitly copyable.
+
+`utf8_decode(.text, .offset = 0)` returns `Utf8Decoded` with `.scalar` and the
+consumed `.width` in bytes. An offset at or beyond the end reports
+`out_of_bounds`. Invalid leading or continuation bytes, truncated sequences,
+overlong encodings, surrogate encodings, and values above U+10FFFF report
+`invalid_utf8`. Decoding does not replace invalid bytes or skip them.
+
+`validate_utf8(.text)` checks the complete view and returns its scalar count.
+Empty text is valid and has count zero. `utf8_encoded_length(.scalar)` returns
+one through four. `utf8_encode(.scalar, .buffer, .offset = 0)` writes the shortest
+UTF-8 encoding to initialized mutable byte storage and returns its width. It
+checks the whole destination first; `out_of_bounds` leaves every byte unchanged,
+including for oversized offsets. These operations allocate no storage.
+
+`Utf8Decoder(.text)` borrows a byte view and starts at offset zero.
+`next_codepoint(.self)` returns an errable optional scalar: none at end,
+`invalid_utf8` on malformed input, or a scalar and an advanced byte position on
+success. `position(.self)` reports that byte position. Failure preserves the
+position; end remains stable. This checked cursor can handle unvalidated input
+without pretending that fallible decoding is an infallible iterator operation.
+
+`Utf8View(.text)` or `codepoints(.text)` validates all bytes once and returns a
+borrowed, implicitly copyable text view. `length(.self)` counts scalars, and
+`utf8_bytes(.self)` retrieves the original byte view. `for scalar in view`
+iterates `UnicodeScalar` values without allocation. Iterators retain backing
+storage lifetimes; copied scalars are independent values. `next` requires a
+successful `has_next` and aborts at end.
+
+Validation does not freeze backing storage. Keep its bytes unchanged while
+using a validated view or iterator. Iteration rechecks each encoding and aborts
+if that obligation is violated by malformed content. UTF-8 decoding performs no
+normalization, case folding, grapheme segmentation, or display-width calculation;
+a scalar count is not a count of user-perceived characters.
+
+`parse_uintnative(.text, .base = 10)` reads an unsigned integer using the
+compilation target's pointer width. It has the same digit and error contracts
+as the fixed-width integer parsers; out-of-range values never truncate.
+
+ASCII byte helpers classify ASCII, digits, lower/upper letters, letters,
+alphanumeric bytes and whitespace through `ascii_is_ascii`, `ascii_is_digit`,
+`ascii_is_lower`, `ascii_is_upper`, `ascii_is_alpha`, `ascii_is_alphanumeric`
+and `ascii_is_whitespace`. Whitespace includes space and bytes 9 through 13.
+`ascii_to_lower` and `ascii_to_upper` preserve nonletters and non-ASCII bytes;
+they do not perform Unicode case folding. Trimming uses the same whitespace
+classification. `find_last(.self, .pattern)` returns the last matching byte
+offset; the empty pattern matches at the end of the view.
+
+`split_whitespace(.self)` returns a borrowed `StringWhitespaceIterator`.
+Use `has_next` and `next` to consume nonempty tokens separated by ASCII
+whitespace. Leading, repeated and trailing whitespace is skipped. Empty or
+all-whitespace input has no tokens. Returned tokens retain their source
+lifetime and remain valid when the iterator advances. Unicode whitespace is
+not a separator; UTF-8 bytes and embedded NULs otherwise remain unchanged.
+
+`slice(.self: StringView, .start, .count)` checks byte ranges and returns an
+`Errable` view with `out_of_bounds` on failure. It does not require codepoint
+boundaries or UTF-8 validation. Empty slices at the extent succeed without
+forming a one-past reference. Oversized counts and offsets cannot wrap.
+
+Whitespace iterators also support `for token in split_whitespace(.self = text)`.
+Iteration copies the remaining cursor state; it does not advance the original
+iterator. The copy retains the same source lifetime.

@@ -36,14 +36,13 @@ pub const Lowerer = struct {
     }
 
     fn builtinType(self: *Lowerer, builtin: primitives.BuiltinType) Error!llvm.c.LLVMTypeRef {
-        _ = self;
         return switch (builtin) {
             .Void => c.LLVMStructType(null, 0, 0),
             .Int8, .UInt8, .Char => c.LLVMInt8Type(),
             .Int16, .UInt16 => c.LLVMInt16Type(),
             .Int32, .UInt32 => c.LLVMInt32Type(),
             .Int64, .UInt64 => c.LLVMInt64Type(),
-            .UIntNative => switch (types.pointer_size_bytes) {
+            .UIntNative => switch (self.graph.target.pointerBytes()) {
                 2 => c.LLVMInt16Type(),
                 4 => c.LLVMInt32Type(),
                 8 => c.LLVMInt64Type(),
@@ -60,6 +59,7 @@ pub const Lowerer = struct {
 
     fn declaredType(self: *Lowerer, decl_id: graph_mod.GlobalDeclId) Error!llvm.c.LLVMTypeRef {
         const declaration = self.graph.declarations.items[@intFromEnum(decl_id)];
+        if (declaration.struct_layout == .c_function_pointer) return c.LLVMPointerType(c.LLVMInt8Type(), 0);
         if (declaration.struct_fields) |fields| return self.structType(fields, declaration.struct_layout);
         if (declaration.choice_variants) |variants| return self.choiceType(variants, declaration.choice_layout);
         return Error.InvalidType;
@@ -81,18 +81,18 @@ pub const Lowerer = struct {
         const field_types = self.allocator.alloc(llvm.c.LLVMTypeRef, range.len) catch return Error.OutOfMemory;
         defer self.allocator.free(field_types);
         for (self.graph.fields.items[range.start..][0..range.len], 0..) |field, index|
-            field_types[index] = try self.toLLVMType(types.effectiveFieldType(field));
+            field_types[index] = try self.toLLVMType(field.ty);
         return c.LLVMStructType(field_types.ptr, @intCast(range.len), 0);
     }
 
     fn unionType(self: *Lowerer, range: graph_mod.FieldRange) Error!llvm.c.LLVMTypeRef {
         if (range.len == 0) return c.LLVMStructType(null, 0, 0);
         var best = self.graph.fields.items[range.start];
-        var best_layout = types.layoutOf(self.graph, types.effectiveFieldType(best)) catch return Error.InvalidType;
+        var best_layout = types.layoutOf(self.graph, best.ty) catch return Error.InvalidType;
         var max_size = best_layout.size;
         var max_alignment = best_layout.alignment;
         for (self.graph.fields.items[range.start + 1 ..][0 .. range.len - 1]) |field| {
-            const layout = types.layoutOf(self.graph, types.effectiveFieldType(field)) catch return Error.InvalidType;
+            const layout = types.layoutOf(self.graph, field.ty) catch return Error.InvalidType;
             max_size = @max(max_size, layout.size);
             max_alignment = @max(max_alignment, layout.alignment);
             if (layout.alignment > best_layout.alignment or (layout.alignment == best_layout.alignment and layout.size > best_layout.size)) {
@@ -102,7 +102,7 @@ pub const Lowerer = struct {
         }
         const remainder = if (max_alignment == 0) 0 else max_size % max_alignment;
         const total_size = if (remainder == 0) max_size else max_size + max_alignment - remainder;
-        const storage_ty = try self.toLLVMType(types.effectiveFieldType(best));
+        const storage_ty = try self.toLLVMType(best.ty);
         if (best_layout.size >= total_size) {
             var one = [_]llvm.c.LLVMTypeRef{storage_ty};
             return c.LLVMStructType(&one, 1, 0);
@@ -203,9 +203,9 @@ pub const Lowerer = struct {
                     .comptime_int => |value| try self.appendPrint(buffer, "_n{d}", .{value}),
                 };
             },
-            .virtual => |abstract_type| {
+            .virtual => |contract_type| {
                 try buffer.appendSlice("virtual_");
-                try self.encodeType(buffer, abstract_type);
+                try self.encodeType(buffer, contract_type);
             },
             .nullable, .inferred_errable => return Error.InvalidType,
         }
@@ -236,5 +236,35 @@ pub const Lowerer = struct {
 
 test "global codegen type layer is independent from pointer-based semantic graph" {
     try std.testing.expect(@sizeOf(graph_mod.GlobalTypeId) == 4);
-    try std.testing.expect(types.pointer_size_bytes == @sizeOf(*usize));
+    try std.testing.expect((@import("../1_base/target.zig").Config{}).pointerBytes() == @sizeOf(*usize));
+}
+
+test "choice copy layout matches LLVM storage for empty and large variants" {
+    const allocator = std.testing.allocator;
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    try graph.types.append(allocator, .{ .builtin = .Int32 });
+    try graph.types.append(allocator, .{ .array = .{ .element = @enumFromInt(0), .length = 128 } });
+    var lowerer: Lowerer = .{ .allocator = allocator, .graph = &graph };
+    const data = c.LLVMCreateTargetData("e-i32:32-i64:64");
+    defer c.LLVMDisposeTargetData(data);
+    // Exercise empty alternatives before, after and between payloads. An
+    // underestimated size silently truncates memcpy of indirect call results.
+    for (0..3) |empty_index| {
+        graph.variants.clearRetainingCapacity();
+        for (0..3) |index| {
+            try graph.variants.append(allocator, .{
+                .name = .{ .start = 0, .len = 0 },
+                .source = .{ .file_index = 0, .offset = 0 },
+                .value = @intCast(index),
+                .payload_type = if (index == empty_index) null else @enumFromInt(1),
+            });
+        }
+        const ty: graph_mod.GlobalTypeId = @enumFromInt(graph.types.items.len);
+        try graph.types.append(allocator, .{ .structural_choice = .{ .variants = .{ .start = 0, .len = 3 }, .layout = .regular } });
+        const layout = try types.layoutOf(&graph, ty);
+        const lowered = try lowerer.toLLVMType(ty);
+        try std.testing.expectEqual(c.LLVMABISizeOfType(data, lowered), layout.size);
+        try std.testing.expectEqual(@as(u64, c.LLVMABIAlignmentOfType(data, lowered)), layout.alignment);
+    }
 }

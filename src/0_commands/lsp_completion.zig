@@ -26,9 +26,18 @@ const TypeRef = struct { file: *const File, node: st.NodeIndex };
 // unfinished call in the editor does not hide core or sibling declarations.
 pub fn complete(allocator: std.mem.Allocator, io: std.Io, sources: []const sf.SourceFile, path: []const u8, offset: usize) !Result {
     var arena = std.heap.ArenaAllocator.init(allocator);
-    errdefer arena.deinit();
+    defer arena.deinit();
     const work = arena.allocator();
     const files = try syntax.load_files(work, sources);
+    return completeFiles(allocator, io, files, path, offset);
+}
+
+// Results own their display strings; syntax files remain borrowed only for the
+// duration of this call and can therefore come from the service's file cache.
+pub fn completeFiles(allocator: std.mem.Allocator, io: std.Io, files: []File, path: []const u8, offset: usize) !Result {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    errdefer arena.deinit();
+    const work = arena.allocator();
     var current: ?*File = null;
     for (files) |*file| if (std.mem.eql(u8, file.source.path, path)) {
         current = file;
@@ -202,10 +211,10 @@ fn scope_close(file: *const File, open: usize) usize {
 
 fn add_declarations(builder: *Builder, file: *const File, private: bool) !void {
     for (file.tree.roots) |node| {
-        const name_token: st.TokenIndex = if (file.tree.functionDeclaration(node)) |function| function.name_token else if (file.tree.typeDeclaration(node)) |ty| ty.name_token else if (file.tree.abstractDeclaration(node)) |abstract| abstract.name_token else if (file.tree.cEnumDeclaration(node)) |ty| ty.name_token else if (file.tree.cUnionDeclaration(node)) |ty| ty.name_token else if (file.tree.symbolDeclaration(node)) |binding| binding.name_token else continue;
+        const name_token: st.TokenIndex = if (file.tree.functionDeclaration(node)) |function| function.name_token else if (file.tree.typeDeclaration(node)) |ty| ty.name_token else if (file.tree.contractDeclaration(node)) |contract| contract.name_token else if (file.tree.cEnumDeclaration(node)) |ty| ty.name_token else if (file.tree.cUnionDeclaration(node)) |ty| ty.name_token else if (file.tree.symbolDeclaration(node)) |binding| binding.name_token else continue;
         const name = file.tree.tokenTextFromSource(file.source.code, name_token);
         if (!private and std.mem.startsWith(u8, name, "_")) continue;
-        const kind: Kind = if (file.tree.functionDeclaration(node) != null) .function else if (file.tree.typeDeclaration(node) != null or file.tree.abstractDeclaration(node) != null or
+        const kind: Kind = if (file.tree.functionDeclaration(node) != null) .function else if (file.tree.typeDeclaration(node) != null or file.tree.contractDeclaration(node) != null or
             file.tree.cEnumDeclaration(node) != null or file.tree.cUnionDeclaration(node) != null) .type_ else blk: {
             const binding = file.tree.symbolDeclaration(node) orelse break :blk .variable;
             const value = binding.value orelse break :blk .variable;
@@ -290,6 +299,7 @@ fn binding_type(files: []const File, file: *const File, name: []const u8, offset
     for (0..file.tree.nodes.len) |raw| {
         const node: st.NodeIndex = @enumFromInt(@as(u32, @intCast(raw)));
         const field = file.tree.structTypeField(node) orelse continue;
+        if (field.position != null) continue;
         const index = @intFromEnum(field.name_token);
         if (index < begin or index >= open) continue;
         if (!std.mem.eql(u8, file.tree.tokenTextFromSource(file.source.code, field.name_token), name)) continue;
@@ -303,6 +313,7 @@ fn add_fields(builder: *Builder, files: []const File, value: TypeRef, caller: *c
     const fields = resolved.file.tree.structTypeLiteral(resolved.node) orelse return;
     for (fields.fields) |node| {
         const field = resolved.file.tree.structTypeField(node) orelse continue;
+        if (field.position != null) continue;
         const name = resolved.file.tree.tokenTextFromSource(resolved.file.source.code, field.name_token);
         if (!same_module(resolved.file.source.path, caller.source.path) and std.mem.startsWith(u8, name, "_")) continue;
         const insertion = if (arguments) try std.fmt.allocPrint(builder.allocator, "{s} = ", .{name}) else name;
@@ -406,6 +417,7 @@ fn add_members(builder: *Builder, io: std.Io, files: []const File, file: *const 
         var next: ?TypeRef = null;
         for (fields.fields) |node| {
             const field = resolved.file.tree.structTypeField(node) orelse continue;
+            if (field.position != null) continue;
             const name = resolved.file.tree.tokenTextFromSource(resolved.file.source.code, field.name_token);
             if (std.mem.eql(u8, name, chain.items[remaining])) {
                 if (!same_module(resolved.file.source.path, file.source.path) and std.mem.startsWith(u8, name, "_")) return;
@@ -422,10 +434,18 @@ fn test_completion(marked: []const u8, dependencies: []const sf.SourceFile) !Res
     const text = try std.mem.concat(std.testing.allocator, u8, &.{ marked[0..offset], marked[offset + 1 ..] });
     defer std.testing.allocator.free(text);
     var sources: std.array_list.Managed(sf.SourceFile) = .init(std.testing.allocator);
-    defer sources.deinit();
-    try sources.append(.{ .path = "/project/main.rg", .code = text });
-    try sources.appendSlice(dependencies);
-    return complete(std.testing.allocator, std.testing.io, sources.items, "/project/main.rg", offset);
+    defer {
+        for (sources.items) |source| std.testing.allocator.free(source.path);
+        sources.deinit();
+    }
+    const path = try std.fs.path.resolve(std.testing.allocator, &.{"/project/main.rg"});
+    try sources.append(.{ .path = path, .code = text });
+    for (dependencies) |dependency| {
+        var source = dependency;
+        source.path = try std.fs.path.resolve(std.testing.allocator, &.{dependency.path});
+        try sources.append(source);
+    }
+    return complete(std.testing.allocator, std.testing.io, sources.items, path, offset);
 }
 
 fn item_named(result: Result, name: []const u8) ?Item {
@@ -464,7 +484,7 @@ test "LSP completion filters names and preserves scopes in unfinished code" {
         try std.testing.expect(item_named(result, name) == null);
 }
 
-test "LSP completion replaces whole identifier and deduplicates overloads" {
+test "LSP completion replaces whole identifier and deduplicates invalid duplicate declarations" {
     var result = try test_completion("main() -> () := { pri|nt }", &.{.{ .path = "/bundle/core/print.rg", .origin = .bundled_core, .code =
         \\print(.value: Int32) -> () := {}
         \\print(.value: Bool) -> () := {}

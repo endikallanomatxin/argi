@@ -160,11 +160,11 @@ LoginForm : Type = [
 	.password : String
 ]
 
-init(t==LoginForm) := {
-	return LoginForm[
+LoginForm init() -> (.result: LoginForm) := {
+	result = (
 		.email = ""
 		.password = ""
-	]
+	)
 }
 
 view(e: &LoginForm) := [

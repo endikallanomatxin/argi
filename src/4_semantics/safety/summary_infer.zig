@@ -1,3 +1,4 @@
+const standard_contracts = @import("../global/standard_contracts.zig");
 const std = @import("std");
 const profile = @import("../../1_base/profile.zig");
 const graph_mod = @import("../global/graph.zig");
@@ -6,8 +7,10 @@ const primitives = @import("../primitives/schema.zig");
 const facts = @import("facts.zig");
 const summaries = @import("summaries.zig");
 const value_state = @import("value_state.zig");
+const outcome_selectors = @import("outcome_selectors.zig");
+const contracts = @import("contracts.zig");
+const cleanup_activation = @import("cleanup_activation.zig");
 const primitive_transfer = @import("../primitives/registry.zig");
-const initializer_contract = @import("../global/initializer_contract.zig");
 
 /// Symbolic SafetySummary inference over the compact GlobalSG.
 ///
@@ -16,15 +19,23 @@ const initializer_contract = @import("../global/initializer_contract.zig");
 /// recursive effects: this pass describes outputs in terms of function inputs
 /// and lets `summaries.Engine` iterate callers/SCCs to a fixed point.
 pub const Infer = struct {
+    cleanup: ?*const cleanup_activation.Activation = null,
+    cleanup_activations: std.AutoHashMap(graph_mod.GlobalFunctionId, cleanup_activation.Activation),
     profile_io: ?std.Io = null,
     output_ns: u64 = 0,
     required_live_ns: u64 = 0,
+    // Both requirement scans share control-flow and cleanup traversal. Their
+    // obligations remain separate so metadata access does not read elements.
+    collecting_opaque_requirements: bool = false,
     post_state_ns: u64 = 0,
     outcome_ns: u64 = 0,
     opaque_ns: u64 = 0,
+    capability_ns: u64 = 0,
+    capability_flow_ns: u64 = 0,
+    guards_ns: u64 = 0,
+    unbound_opaque_dependencies: facts.ValueEffect = .{},
+    opaque_empty_seen: bool = false,
     virtual_summary_ns: u64 = 0,
-    virtual_receiver_ns: u64 = 0,
-    virtual_summary_merges: u64 = 0,
     evaluations: u64 = 0,
     summary_changes: u64 = 0,
     allocator: std.mem.Allocator,
@@ -33,8 +44,25 @@ pub const Infer = struct {
     bindings: std.AutoHashMap(graph_mod.GlobalBindingId, facts.ValueEffect),
     place_bindings: std.AutoHashMap(graph_mod.GlobalBindingId, []const facts.InputPath),
     local_address_bindings: std.AutoHashMap(graph_mod.GlobalBindingId, []const graph_mod.GlobalNodeId),
+    addressed_outputs: std.AutoHashMap(graph_mod.GlobalBindingId, void),
     virtual_summaries: std.AutoHashMap(graph_mod.GlobalVirtualRegistryId, facts.SafetySummary),
-    invalid_virtual_summaries: std.AutoHashMap(graph_mod.GlobalVirtualRegistryId, void),
+    domain_invalidations: std.array_list.Managed(facts.InputDomain),
+    requested_selectors: std.AutoHashMap(graph_mod.GlobalFunctionId, []const outcome_selectors.Selector),
+    selected_outcome: ?struct { output_index: u32, parent_variants: []const u32 = &.{}, variant_index: u32, binding: graph_mod.GlobalBindingId } = null,
+    forwarded_outcome: ?outcome_selectors.Selector = null,
+    forwarded_leaf_selected: bool = false,
+    selected_forward: ?struct { call: graph_mod.GlobalNodeId, selector: outcome_selectors.Selector } = null,
+    selected_forward_applied: bool = false,
+
+    post_domain_sink: ?*std.array_list.Managed(facts.InputDomain) = null,
+    loop_post_effects: ?*InputPostStateFlow = null,
+
+    const ForwardOrigin = struct {
+        call: graph_mod.GlobalNodeId,
+        // A multi-output call is a result record until one field is selected.
+        output_index: ?u32 = 0,
+        parent_variants: []const u32 = &.{},
+    };
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -42,29 +70,39 @@ pub const Infer = struct {
         engine: *summaries.Engine,
     ) Infer {
         return .{
+            .requested_selectors = .init(allocator),
+            .cleanup_activations = .init(allocator),
             .allocator = allocator,
             .graph = graph,
             .engine = engine,
             .bindings = std.AutoHashMap(graph_mod.GlobalBindingId, facts.ValueEffect).init(allocator),
             .place_bindings = std.AutoHashMap(graph_mod.GlobalBindingId, []const facts.InputPath).init(allocator),
             .local_address_bindings = std.AutoHashMap(graph_mod.GlobalBindingId, []const graph_mod.GlobalNodeId).init(allocator),
+            .addressed_outputs = std.AutoHashMap(graph_mod.GlobalBindingId, void).init(allocator),
             .virtual_summaries = std.AutoHashMap(graph_mod.GlobalVirtualRegistryId, facts.SafetySummary).init(allocator),
-            .invalid_virtual_summaries = std.AutoHashMap(graph_mod.GlobalVirtualRegistryId, void).init(allocator),
+            .domain_invalidations = std.array_list.Managed(facts.InputDomain).init(allocator),
         };
     }
 
     pub fn deinit(self: *Infer) void {
+        var activations = self.cleanup_activations.valueIterator();
+        while (activations.next()) |activation| activation.deinit();
+        self.cleanup_activations.deinit();
+        self.requested_selectors.deinit();
         self.bindings.deinit();
         self.place_bindings.deinit();
         self.local_address_bindings.deinit();
+        self.addressed_outputs.deinit();
         self.virtual_summaries.deinit();
-        self.invalid_virtual_summaries.deinit();
+        self.domain_invalidations.deinit();
     }
 
     /// Infer every SafetySummary dimension until reverse dependencies are stable:
-    /// outputs, required-live inputs, input/outcome post-states, and opaque effects.
-    /// Reading a previous approximation records a dependency, including the
-    /// function's own approximation and implementations merged for virtual calls.
+    /// outputs, pointer/opaque-content requirements, input/outcome post-states,
+    /// and opaque effects.
+    /// Reading a previous output approximation records a dependency, including
+    /// the function's own approximation. Virtual effects come from fixed contracts,
+    /// independently of implementation reachability and conformance checks.
     pub fn inferSafetySummariesFixedPoint(self: *Infer) !void {
         var functions = std.array_list.Managed(graph_mod.GlobalFunctionId).init(self.allocator);
         defer functions.deinit();
@@ -74,7 +112,20 @@ pub const Infer = struct {
             if (!self.engine.summaries.contains(id)) {
                 const outputs = try self.allocator.alloc(facts.ValueEffect, function.output_bindings.len);
                 @memset(outputs, .{});
+                if (function.flags.is_c_abi and !function.flags.has_declared_body and outputs.len == 1) {
+                    const ty = self.graph.fields.items[function.output.start].ty;
+                    outputs[0] = try @import("foreign_result.zig").value(facts.ValueEffect, self.allocator, self.graph, ty);
+                }
                 try self.engine.summaries.put(id, .{ .outputs = outputs });
+            }
+            if (function.flags.has_foreign_capability) {
+                // Authorization must remain live even for imports whose other
+                // storage effects are unknown. Callers compose this requirement
+                // through the same summary dependency paths as dereferences.
+                self.engine.summaries.getPtr(id).?.required_live_inputs = try self.allocator.dupe(facts.InputPath, &.{.{ .input_index = function.input.len - 1, .projections = &.{} }});
+            }
+            if (function.safety_primitive == .trusted_opaque_drop) {
+                self.engine.summaries.getPtr(id).?.required_opaque_inputs = try self.oneInputPath(0, &.{});
             }
             // These declarations retain their initial summary. Primitive
             // transfers are instantiated at calls with call-site identities;
@@ -85,13 +136,21 @@ pub const Infer = struct {
         // All dimensions read callee approximations through summaryFor. The
         // engine records those reads and the read of our own prior outputs,
         // so a change schedules every observer, including recursive callers.
-        try self.engine.seed(functions.items);
+        // Concrete summaries need enough selectors to prove their declarations.
+        // These hints select precision only; they never infer virtual effects
+        // from concrete implementations or depend on their final summaries.
+        for (self.graph.contract_safety_conformances.items) |proof| if (proof.safety_required) try self.requestContractSelectors(proof.method, proof.contract);
+        for (self.graph.virtualizes.items) |virtualize| {
+            if (!virtualize.safety_required) continue;
+            for (self.graph.virtual_registry_refs.items[virtualize.safety_methods.start..][0..virtualize.safety_methods.len], 0..) |registry_id, index| {
+                const declared = self.graph.virtual_registries.items[@intFromEnum(registry_id)].safety_contract orelse continue;
+                try self.requestContractSelectors(self.graph.function_refs.items[virtualize.methods.start + index], declared);
+            }
+        }
+        const order = try @import("../global/reachability.zig").dependencyOrder(self.allocator, self.graph, functions.items);
+        defer self.allocator.free(order);
+        try self.engine.seed(order);
         while (self.engine.nextDirty()) |function| {
-            // Successful and unrepresentable virtual merges both depend on
-            // concrete summary approximations. Recompute them for each worklist
-            // evaluation so changes cannot leave either kind of cache stale.
-            self.virtual_summaries.clearRetainingCapacity();
-            self.invalid_virtual_summaries.clearRetainingCapacity();
             self.evaluations += 1;
             self.engine.beginInference(function);
             const next = self.inferFunction(function) catch |err| {
@@ -101,11 +160,6 @@ pub const Infer = struct {
             try self.engine.endInference();
             if (try self.engine.updateSummary(function, next)) self.summary_changes += 1;
         }
-        // A virtual summary may have been cached while one of its concrete
-        // implementations still held an earlier fixed-point approximation.
-        // Runtime validation must merge the final summaries.
-        self.virtual_summaries.clearRetainingCapacity();
-        self.invalid_virtual_summaries.clearRetainingCapacity();
     }
 
     pub fn virtualSummary(
@@ -114,95 +168,368 @@ pub const Infer = struct {
     ) !?facts.SafetySummary {
         const start = profile.timestamp(self.profile_io);
         defer profile.accumulate(self.profile_io, start, &self.virtual_summary_ns);
-        if (self.invalid_virtual_summaries.contains(registry_id)) return null;
         if (self.virtual_summaries.get(registry_id)) |summary| return summary;
         const registry = self.graph.virtual_registries.items[@intFromEnum(registry_id)];
-        const implementations = self.graph.function_refs.items[registry.implementations.start..][0..registry.implementations.len];
-        if (implementations.len == 0) return null;
-        self.virtual_summary_merges += 1;
-
-        const receiver = self.virtualReceiverIndex(registry_id);
-        var merged = (try self.virtualImplementationSummary(implementations[0], receiver)) orelse return null;
-        if (!virtualInputPostStatesRuntimeRepresentable(merged.input_post_states)) {
-            try self.invalid_virtual_summaries.put(registry_id, {});
-            return null;
-        }
-        for (implementations[1..]) |implementation| {
-            const next = (try self.virtualImplementationSummary(implementation, receiver)) orelse return null;
-            if (!virtualInputPostStatesRuntimeRepresentable(next.input_post_states)) {
-                try self.invalid_virtual_summaries.put(registry_id, {});
-                return null;
+        if (registry.contract_input_count) |input_count| {
+            const declared = registry.safety_contract orelse return error.MissingVirtualSafetyContract;
+            // This summary depends on the declaration and fixed signature only.
+            // Concrete summaries are read separately for conformance after the
+            // fixed point. Only an explicit referent clause can select an input's
+            // storage; dependency permissions alone never establish aliases.
+            const contract = try @import("contracts.zig").fromDeclaration(self.allocator, declared);
+            if (contract.general_conditions) {
+                const result = try self.generalVirtualSummary(registry_id, contract);
+                try self.virtual_summaries.put(registry_id, result);
+                return result;
             }
-            merged = (try self.mergeVirtualSafetySummary(merged, next)) orelse {
-                try self.invalid_virtual_summaries.put(registry_id, {});
-                return null;
-            };
-        }
-        try self.virtual_summaries.put(registry_id, merged);
-        return merged;
-    }
-
-    pub fn virtualReceiverIndex(self: *Infer, registry_id: graph_mod.GlobalVirtualRegistryId) ?u32 {
-        const start = profile.timestamp(self.profile_io);
-        defer profile.accumulate(self.profile_io, start, &self.virtual_receiver_ns);
-        return self.graph.virtual_registries.items[@intFromEnum(registry_id)].receiver_input_index;
-    }
-
-    pub fn virtualizeReceiverIndex(self: *const Infer, virtualize: graph_mod.Virtualize, method_index: usize) u32 {
-        const registry = self.graph.virtual_registry_refs.items[virtualize.safety_methods.start + method_index];
-        return self.graph.virtual_registries.items[@intFromEnum(registry)].receiver_input_index;
-    }
-
-    fn virtualImplementationSummary(self: *Infer, implementation: graph_mod.GlobalFunctionId, receiver: ?u32) !?facts.SafetySummary {
-        var summary = self.engine.summaryFor(implementation) orelse return null;
-        var states = std.array_list.Managed(facts.PlacePostState).init(self.allocator);
-        const function = self.graph.function(implementation);
-        const outputs = try self.allocator.alloc(facts.ValueEffect, summary.outputs.len);
-        for (summary.outputs, 0..) |output, index| {
-            const erased = try self.eraseScalarOwnershipTransfers(function, output);
-            outputs[index] = if (receiver) |receiver_index|
-                try self.borrowVirtualReceiverGenerations(erased, receiver_index)
-            else
-                erased;
-        }
-        for (summary.storage_capability_uses) |use| {
-            if (receiver != null and use.target.input_index == receiver.? and use.target.projections.len != 0) return null;
-        }
-        summary.outputs = outputs;
-        for (summary.input_post_states) |state| {
-            var ty = self.graph.fields.items[function.input.start + state.target.input_index].ty;
-            var scalar_field = receiver != null and state.target.input_index == receiver.? and state.target.projections.len != 0;
-            for (state.target.projections) |projection| {
-                if (self.graph.semanticType(ty) == .pointer) ty = self.graph.semanticType(ty).pointer.child;
-                switch (projection) {
-                    .field => |index| {
-                        const fields = types.fields(self.graph, ty) orelse {
-                            scalar_field = false;
-                            break;
-                        };
-                        if (index >= fields.len) {
-                            scalar_field = false;
-                            break;
-                        }
-                        ty = types.effectiveFieldType(self.graph.fields.items[fields.start + index]);
-                    },
-                    else => {
-                        scalar_field = false;
-                        break;
-                    },
+            const outputs = try self.allocator.alloc(facts.ValueEffect, contract.outputs.len);
+            for (contract.outputs, outputs, 0..) |allowed, *output, index| {
+                if (registry.contract_output_type) |ty| {
+                    const fields = types.fields(self.graph, ty) orelse return error.InvalidContractOutput;
+                    const field = self.graph.fields.items[fields.start + index];
+                    output.* = try @import("contract_outputs.zig").build(self.allocator, self.graph, field.ty, allowed, @as(usize, @truncate(std.hash.Wyhash.hash(@intFromEnum(registry_id), std.mem.asBytes(&index)))));
+                } else {
+                    const dependencies = try self.allocator.alloc(facts.InputDependency, allowed.dependencies.len);
+                    for (allowed.dependencies, dependencies) |path, *dependency| dependency.* = .{
+                        .path = path,
+                        .validity_only = if (allowed.referent) |referent| path.input_index != referent.input_index else true,
+                    };
+                    output.* = .{ .input_dependencies = dependencies, .input_domains = allowed.domains, .opaque_storage_dependencies = allowed.storage_sources, .explicit_dependency = dependencies.len != 0 or allowed.domains.len != 0 };
                 }
             }
-            // Scalar receiver fields are implementation details, not fields of
-            // the erased Virtual handle. They carry no published borrow state.
-            if (scalar_field and !self.typeContainsPointer(ty) and
-                state.initializedness == .initialized and state.opaque_ownership == .none and
-                !state.ends_previous_roots and !state.refreshes_storage_generation and
-                !state.requires_available_destination and !state.value.explicit_dependency and
-                state.value.fresh_owned_roots.len == 0 and state.value.fresh_dependencies.len == 0 and
-                state.value.fresh_storage_capabilities.len == 0) continue;
-            try states.append(state);
+            for (outputs) |*output| output.* = try self.bindVirtualReceiverValues(output.*, registry.receiver_input_index);
+            var required_inputs = std.array_list.Managed(facts.InputPath).init(self.allocator);
+            for (0..input_count) |index| {
+                var destination = false;
+                for (contract.relocations) |relocation| if (relocation.destination.input_index == index) {
+                    destination = true;
+                    break;
+                };
+                for (contract.outcomes) |outcome| for (outcome.effects.relocations) |relocation| {
+                    if (relocation.destination.input_index == index) destination = true;
+                };
+                if (!destination) try required_inputs.append(.{ .input_index = @intCast(index) });
+            }
+            const required = try required_inputs.toOwnedSlice();
+            const post_states = try self.allocator.alloc(facts.PlacePostState, contract.invalidates.len + contract.consumed_inputs.len + contract.relocations.len * 2 + contract.retained_inputs.len);
+            for (contract.invalidates, post_states[0..contract.invalidates.len]) |path, *post_state| post_state.* = .{
+                .target = path,
+                .initializedness = .initialized,
+                .refreshes_storage_generation = true,
+            };
+            for (contract.consumed_inputs, post_states[contract.invalidates.len..][0..contract.consumed_inputs.len]) |path, *post_state| post_state.* = .{
+                .target = path,
+                .initializedness = .deinitialized,
+                .ends_previous_roots = true,
+            };
+            for (contract.relocations, 0..) |relocation, index| {
+                const offset = contract.invalidates.len + contract.consumed_inputs.len + index * 2;
+                post_states[offset] = .{ .target = relocation.source, .initializedness = .moved };
+                post_states[offset + 1] = .{
+                    .target = relocation.destination,
+                    .initializedness = .initialized,
+                    .value = .{ .input_place_values = try self.allocator.dupe(facts.InputPath, &.{relocation.source}) },
+                    .requires_available_destination = true,
+                    .refreshes_storage_generation = true,
+                };
+            }
+            for (contract.retained_inputs, post_states[contract.invalidates.len + contract.consumed_inputs.len + contract.relocations.len * 2 ..]) |retention, *post| post.* = .{
+                .target = retention.input,
+                .initializedness = .initialized,
+                .opaque_ownership = .conditional,
+                .opaque_storage = retention.storage,
+            };
+            const invalidated_domains = try self.allocator.alloc(facts.InputDomain, declared.invalidated_domains.len);
+            for (declared.invalidated_domains, invalidated_domains) |domain, *effect| effect.* = .{ .path = .{ .input_index = domain.input_index }, .domain_index = domain.domain_index };
+            var conditional = std.array_list.Managed(facts.OutcomePostStates).init(self.allocator);
+            // Every variant gets a record, including preservation alternatives.
+            // Effect guards describe inputs independently of output payload facts.
+            var wanted = std.array_list.Managed(outcome_selectors.Selector).init(self.allocator);
+            defer wanted.deinit();
+            for (contract.outcomes) |outcome| try wanted.append(.{ .output_index = outcome.output_index, .parent_variants = outcome.parent_variants, .variant_index = outcome.variant_index });
+            for (outputs, 0..) |_, output_index| {
+                var guarded_generation = false;
+                for (contract.outcomes) |outcome| if (outcome.output_index == output_index and (outcome.effects.invalidates.len != 0 or outcome.effects.invalidated_domains.len != 0 or outcome.effects.consumed_inputs.len != 0 or outcome.effects.relocations.len != 0 or outcome.effects.emptied_inputs.len != 0)) {
+                    guarded_generation = true;
+                    break;
+                };
+                if (!guarded_generation) continue;
+                const output_ty = registry.contract_output_type orelse continue;
+                const fields = types.fields(self.graph, output_ty) orelse continue;
+                const ty = self.graph.fields.items[fields.start + @as(u32, @intCast(output_index))].ty;
+                for (try outcome_selectors.partition(self.allocator, self.graph, @intCast(output_index), ty, wanted.items)) |selector| {
+                    const effects = contracts.effectsForSelector(contract, selector);
+                    var states = std.array_list.Managed(facts.PlacePostState).init(self.allocator);
+                    for (effects.invalidates) |path| try states.append(.{ .target = path, .initializedness = .initialized, .refreshes_storage_generation = true });
+                    for (effects.consumed_inputs) |path| try states.append(.{ .target = path, .initializedness = .deinitialized, .ends_previous_roots = true });
+                    for (effects.relocations) |relocation| {
+                        try states.append(.{ .target = relocation.source, .initializedness = .moved });
+                        try states.append(.{ .target = relocation.destination, .initializedness = .initialized, .value = .{ .input_place_values = try self.allocator.dupe(facts.InputPath, &.{relocation.source}) }, .requires_available_destination = true, .refreshes_storage_generation = true });
+                    }
+                    try conditional.append(.{ .output_index = selector.output_index, .parent_variants = selector.parent_variants, .variant_index = selector.variant_index, .input_post_states = try states.toOwnedSlice(), .invalidated_domains = effects.invalidated_domains, .opaque_storage_empties = effects.emptied_inputs });
+                }
+            }
+            var fallback_states = std.array_list.Managed(facts.PlacePostState).init(self.allocator);
+            try fallback_states.appendSlice(post_states);
+            var fallback_domains = std.array_list.Managed(facts.InputDomain).init(self.allocator);
+            try fallback_domains.appendSlice(invalidated_domains);
+            for (conditional.items) |outcome| {
+                for (outcome.input_post_states) |post| {
+                    if (self.findInputPostState(fallback_states.items, post.target) == null) {
+                        var fallback = post;
+                        if (fallback.initializedness == .deinitialized or fallback.initializedness == .moved or fallback.requires_available_destination) fallback.initializedness = .maybe_initialized;
+                        try fallback_states.append(fallback);
+                    }
+                }
+                for (outcome.invalidated_domains) |domain| try appendDomain(&fallback_domains, domain);
+            }
+            var retained = std.array_list.Managed(facts.OpaqueStorageEffect).init(self.allocator);
+            for (contract.retained_inputs) |retention| try retained.append(.{
+                .storage = retention.storage,
+                .hidden_dependencies = .{ .input_dependencies = try self.allocator.dupe(facts.InputDependency, &.{.{ .path = retention.input, .transfers_ownership = true }}) },
+            });
+            const result = try summaries.withOutcomeGuards(self.allocator, facts.SafetySummary{ .outputs = outputs, .required_live_inputs = required, .input_post_states = try fallback_states.toOwnedSlice(), .invalidated_domains = try fallback_domains.toOwnedSlice(), .outcome_post_states = try conditional.toOwnedSlice(), .opaque_storage_effects = try retained.toOwnedSlice(), .opaque_storage_empties = contract.emptied_inputs });
+            try self.virtual_summaries.put(registry_id, result);
+            return result;
         }
-        summary.input_post_states = try states.toOwnedSlice();
+        return error.MissingVirtualSafetyContract;
+    }
+
+    fn generalVirtualSummary(self: *Infer, registry_id: graph_mod.GlobalVirtualRegistryId, contract: contracts.Contract) !facts.SafetySummary {
+        var result = try self.generalContractEffects(registry_id, try contracts.possibleEffects(self.allocator, contract));
+        const guarded = try self.allocator.alloc(facts.GuardedSafetyEffects, contract.guarded_effects.len);
+        for (contract.guarded_effects, guarded) |clause, *target| {
+            const effects = try self.allocator.create(facts.SafetySummary);
+            effects.* = try self.generalContractEffects(registry_id, try contracts.effectsUnderConditions(self.allocator, contract, clause.conditions));
+            target.* = .{ .conditions = clause.conditions, .effects = effects };
+        }
+        result.guarded_effects = guarded;
+        return result;
+    }
+
+    fn generalContractEffects(self: *Infer, registry_id: graph_mod.GlobalVirtualRegistryId, contract: contracts.Contract) !facts.SafetySummary {
+        const registry = self.graph.virtual_registries.items[@intFromEnum(registry_id)];
+        const output_ty = registry.contract_output_type orelse return error.InvalidContractOutput;
+        const fields = types.fields(self.graph, output_ty) orelse return error.InvalidContractOutput;
+        const outputs = try self.allocator.alloc(facts.ValueEffect, contract.outputs.len);
+        for (contract.outputs, outputs, 0..) |allowed, *output, index| {
+            output.* = try @import("contract_outputs.zig").build(self.allocator, self.graph, self.graph.fields.items[fields.start + index].ty, allowed, @as(usize, @truncate(std.hash.Wyhash.hash(@intFromEnum(registry_id), std.mem.asBytes(&index)))));
+            output.* = try self.bindVirtualReceiverValues(output.*, registry.receiver_input_index);
+        }
+        var required: std.ArrayList(facts.InputPath) = .empty;
+        for (0..registry.contract_input_count orelse return error.InvalidContractInput) |index| {
+            var destination = false;
+            for (contract.relocations) |relocation| if (relocation.destination.input_index == index) {
+                destination = true;
+                break;
+            };
+            if (!destination) try required.append(self.allocator, .{ .input_index = @intCast(index) });
+        }
+        var states: std.ArrayList(facts.PlacePostState) = .empty;
+        for (contract.invalidates) |path| try states.append(self.allocator, .{ .target = path, .initializedness = .initialized, .refreshes_storage_generation = true });
+        for (contract.consumed_inputs) |path| try states.append(self.allocator, .{ .target = path, .initializedness = .deinitialized, .ends_previous_roots = true });
+        for (contract.relocations) |relocation| {
+            try states.append(self.allocator, .{ .target = relocation.source, .initializedness = .moved });
+            try states.append(self.allocator, .{ .target = relocation.destination, .initializedness = .initialized, .value = .{ .input_place_values = try self.allocator.dupe(facts.InputPath, &.{relocation.source}) }, .requires_available_destination = true, .refreshes_storage_generation = true });
+        }
+        var retained: std.ArrayList(facts.OpaqueStorageEffect) = .empty;
+        for (contract.retained_inputs) |retention| {
+            try states.append(self.allocator, .{ .target = retention.input, .initializedness = .initialized, .opaque_ownership = .conditional, .opaque_storage = retention.storage });
+            try retained.append(self.allocator, .{ .storage = retention.storage, .hidden_dependencies = .{ .input_dependencies = try self.allocator.dupe(facts.InputDependency, &.{.{ .path = retention.input, .transfers_ownership = true }}) } });
+        }
+        return .{ .outputs = outputs, .required_live_inputs = try required.toOwnedSlice(self.allocator), .input_post_states = try states.toOwnedSlice(self.allocator), .invalidated_domains = contract.invalidated_domains, .opaque_storage_empties = contract.emptied_inputs, .opaque_storage_effects = try retained.toOwnedSlice(self.allocator) };
+    }
+
+    fn requestContractSelectors(self: *Infer, method: graph_mod.GlobalFunctionId, declared: primitives.MethodSafetyContract) !void {
+        if (declared.outcomes.len == 0 or declared.general_conditions) return;
+        const contract = try contracts.fromDeclaration(self.allocator, declared);
+        var wanted = std.array_list.Managed(outcome_selectors.Selector).init(self.allocator);
+        try wanted.appendSlice(self.requested_selectors.get(method) orelse &.{});
+        for (contract.outcomes) |outcome| {
+            if (outcome.effects.invalidates.len == 0 and outcome.effects.invalidated_domains.len == 0 and outcome.effects.consumed_inputs.len == 0 and outcome.effects.relocations.len == 0 and outcome.effects.emptied_inputs.len == 0) continue;
+            const selector = outcome_selectors.Selector{ .output_index = outcome.output_index, .parent_variants = outcome.parent_variants, .variant_index = outcome.variant_index };
+            var duplicate = false;
+            for (wanted.items) |existing| if (existing.output_index == selector.output_index and existing.variant_index == selector.variant_index and std.mem.eql(u32, existing.parent_variants, selector.parent_variants)) {
+                duplicate = true;
+                break;
+            };
+            if (!duplicate) try wanted.append(selector);
+        }
+        try self.requested_selectors.put(method, try wanted.toOwnedSlice());
+    }
+
+    /// Stable lexical definitions preserve the identity of one returned call.
+    /// Select that call before visiting its effects; never undo a joined caller
+    /// state when a later binding use reveals its tag. Subsequent calls and
+    /// writes still contribute their ordinary effects in source order.
+    fn forwardOrigin(self: *Infer, value: graph_mod.GlobalNodeId, parents: []const u32, seen: *std.array_list.Managed(graph_mod.GlobalBindingId)) anyerror!?ForwardOrigin {
+        return switch (self.graph.node(value).content) {
+            .function_call => |call| .{ .call = value, .output_index = if (self.graph.function(call.callee).output.len == 1) 0 else null, .parent_variants = parents },
+            .virtual_call => |id| blk: {
+                const call = self.graph.virtual_calls.items[@intFromEnum(id)];
+                const contract = self.graph.virtual_registries.items[@intFromEnum(call.safety_methods)].safety_contract orelse break :blk null;
+                break :blk .{ .call = value, .output_index = if (contract.output_count == 1) 0 else null, .parent_variants = parents };
+            },
+            .struct_field_access => |field| blk: {
+                var origin = try self.forwardOrigin(field.value, parents, seen) orelse break :blk null;
+                // Only the call's result record selects an output. A field
+                // inside a returned value does not inherit its discriminant.
+                if (origin.output_index != null or origin.parent_variants.len != parents.len) break :blk null;
+                origin.output_index = field.field_index;
+                break :blk origin;
+            },
+            .binding_use => |binding| blk: {
+                if (std.mem.indexOfScalar(graph_mod.GlobalBindingId, seen.items, binding) != null) break :blk null;
+                const initialization = if (self.cleanup) |cleanup| cleanup.stableInitializer(binding) else null;
+                try seen.append(binding);
+                break :blk if (initialization) |initializer| try self.forwardOrigin(initializer, parents, seen) else null;
+            },
+            .move_value, .denied_implicit_copy => |child| try self.forwardOrigin(child, parents, seen),
+            .choice_literal => |literal| if (literal.payload) |payload|
+                try self.forwardOrigin(payload, try std.mem.concat(self.allocator, u32, &.{ parents, &.{self.variantIndex(literal.choice_type, literal.variant) orelse return null} }), seen)
+            else
+                null,
+            else => null,
+        };
+    }
+
+    fn expressionForwardOrigin(self: *Infer, value: graph_mod.GlobalNodeId) !?ForwardOrigin {
+        var seen = std.array_list.Managed(graph_mod.GlobalBindingId).init(self.allocator);
+        defer seen.deinit();
+        return self.forwardOrigin(value, &.{}, &seen);
+    }
+
+    fn selectForwardedCall(self: *Infer, function: graph_mod.GlobalFunctionId, block_id: graph_mod.GlobalBlockId) anyerror!void {
+        const selected = self.selected_outcome orelse return;
+        if (self.addressed_outputs.contains(selected.binding) or self.cleanup == null or !self.cleanup.?.canForward(selected.binding)) return;
+        const block = self.graph.blocks.items[@intFromEnum(block_id)];
+        for (self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len]) |id| switch (self.graph.node(id).content) {
+            .assignment => |assignment| {
+                if (assignment.binding != selected.binding) continue;
+                const origin = try self.expressionForwardOrigin(assignment.value) orelse continue;
+                const origin_output = origin.output_index orelse continue;
+                if (origin.parent_variants.len > selected.parent_variants.len or
+                    !std.mem.eql(u32, origin.parent_variants, selected.parent_variants[0..origin.parent_variants.len])) continue;
+                self.selected_forward = .{ .call = origin.call, .selector = .{
+                    .output_index = origin_output,
+                    .parent_variants = selected.parent_variants[origin.parent_variants.len..],
+                    .variant_index = selected.variant_index,
+                } };
+            },
+            .if_statement => |statement| {
+                try self.selectForwardedCall(function, statement.then_block);
+                if (statement.else_block) |child| try self.selectForwardedCall(function, child);
+            },
+            .switch_statement => |id_switch| {
+                const statement = self.graph.switches.items[@intFromEnum(id_switch)];
+                for (self.graph.switch_cases.items[statement.cases.start..][0..statement.cases.len]) |case| try self.selectForwardedCall(function, case.body);
+                if (statement.default_block) |child| try self.selectForwardedCall(function, child);
+            },
+            .code_block, .value_sequence => |child| try self.selectForwardedCall(function, child),
+            else => {},
+        };
+    }
+
+    fn knownOutcome(self: *Infer, effect: facts.ValueEffect, parents: []const u32) anyerror!struct { mismatch: bool = false, variant: ?u32 = null } {
+        var current = effect;
+        for (parents) |parent| {
+            const known = current.known_choice_variant orelse return .{};
+            if (known != parent) return .{ .mismatch = true };
+            var payload: ?facts.ValueEffect = null;
+            for (current.variants) |variant| if (variant.index == parent) {
+                payload = variant.value.*;
+                break;
+            };
+            current = payload orelse return .{};
+        }
+        _ = self;
+        return .{ .variant = current.known_choice_variant };
+    }
+
+    fn forwardingSelectors(self: *Infer, function: graph_mod.GlobalFunctionId, block_id: graph_mod.GlobalBlockId, wanted: *std.array_list.Managed(outcome_selectors.Selector)) anyerror!void {
+        const block = self.graph.blocks.items[@intFromEnum(block_id)];
+        for (self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len]) |id| switch (self.graph.node(id).content) {
+            .assignment => |assignment| if (self.outputIndex(function, assignment.binding)) |index| {
+                try self.forwardingExpressionSelectors(assignment.value, @intCast(index), &.{}, wanted);
+            },
+            .if_statement => |statement| {
+                try self.forwardingSelectors(function, statement.then_block, wanted);
+                if (statement.else_block) |child| try self.forwardingSelectors(function, child, wanted);
+            },
+            .while_statement => |statement| try self.forwardingSelectors(function, statement.body, wanted),
+            .for_statement => |statement| try self.forwardingSelectors(function, statement.body, wanted),
+            .switch_statement => |switch_id| {
+                const statement = self.graph.switches.items[@intFromEnum(switch_id)];
+                for (self.graph.switch_cases.items[statement.cases.start..][0..statement.cases.len]) |case| try self.forwardingSelectors(function, case.body, wanted);
+                if (statement.default_block) |child| try self.forwardingSelectors(function, child, wanted);
+            },
+            .code_block, .value_sequence => |child| try self.forwardingSelectors(function, child, wanted),
+            else => {},
+        };
+    }
+
+    fn forwardingExpressionSelectors(self: *Infer, value: graph_mod.GlobalNodeId, output_index: u32, parents: []const u32, wanted: *std.array_list.Managed(outcome_selectors.Selector)) anyerror!void {
+        const origin = try self.expressionForwardOrigin(value) orelse return;
+        const origin_output = origin.output_index orelse return;
+        const enclosing = try std.mem.concat(self.allocator, u32, &.{ parents, origin.parent_variants });
+        const summary = switch (self.graph.node(origin.call).content) {
+            .function_call => |call| self.engine.summaryFor(call.callee),
+            .virtual_call => |id| try self.virtualSummary(self.graph.virtual_calls.items[@intFromEnum(id)].safety_methods),
+            else => unreachable,
+        } orelse return;
+        if (origin_output >= summary.outputs.len) return;
+        for (summary.outcome_post_states) |outcome| {
+            if (outcome.output_index != origin_output) continue;
+            try wanted.append(.{ .output_index = output_index, .parent_variants = try std.mem.concat(self.allocator, u32, &.{ enclosing, outcome.parent_variants }), .variant_index = outcome.variant_index });
+        }
+    }
+
+    fn bindVirtualReceiverValues(self: *Infer, effect: facts.ValueEffect, receiver: u32) anyerror!facts.ValueEffect {
+        var result = effect;
+        var dependencies = std.array_list.Managed(facts.InputDependency).init(self.allocator);
+        var receivers = std.array_list.Managed(facts.InputPath).init(self.allocator);
+        for (effect.input_dependencies) |dependency| {
+            if (dependency.path.input_index == receiver and dependency.validity_only) {
+                try appendInputPath(&receivers, dependency.path);
+            } else try appendInputDependency(&dependencies, dependency);
+        }
+        result.input_dependencies = try dependencies.toOwnedSlice();
+        result.input_receiver_values = try receivers.toOwnedSlice();
+        if (effect.fields.len != 0) {
+            const fields = try self.allocator.dupe(facts.OutputFieldEffect, effect.fields);
+            for (fields) |*field| {
+                const value = try self.allocator.create(facts.ValueEffect);
+                value.* = try self.bindVirtualReceiverValues(field.value.*, receiver);
+                field.value = value;
+            }
+            result.fields = fields;
+        }
+        if (effect.variants.len != 0) {
+            const variants = try self.allocator.dupe(facts.OutputVariantEffect, effect.variants);
+            for (variants) |*variant| {
+                const value = try self.allocator.create(facts.ValueEffect);
+                value.* = try self.bindVirtualReceiverValues(variant.value.*, receiver);
+                variant.value = value;
+            }
+            result.variants = variants;
+        }
+        return result;
+    }
+
+    pub fn contractImplementationSummary(self: *Infer, implementation: graph_mod.GlobalFunctionId, receiver: ?u32) !?facts.SafetySummary {
+        return self.implementationSummary(implementation, receiver);
+    }
+
+    fn implementationSummary(self: *Infer, implementation: graph_mod.GlobalFunctionId, receiver: ?u32) !?facts.SafetySummary {
+        var summary = self.engine.summaryFor(implementation) orelse return null;
+        const function = self.graph.function(implementation);
+        const outputs = try self.allocator.alloc(facts.ValueEffect, summary.outputs.len);
+        for (summary.outputs, 0..) |output, index| outputs[index] = try self.eraseScalarOwnershipTransfers(function, output);
+        summary.outputs = outputs;
+        summary.input_post_states = try self.normalizeContractPostStates(function, receiver, summary.input_post_states);
+        const outcomes = try self.allocator.dupe(facts.OutcomePostStates, summary.outcome_post_states);
+        for (outcomes) |*outcome| outcome.input_post_states = try self.normalizeContractPostStates(function, receiver, outcome.input_post_states);
+        summary.outcome_post_states = outcomes;
         // Receiver layout disappears at dispatch. Its liveness requirement
         // covers the full receiver contents, which the concrete checker
         // validates before applying this erased summary. This also keeps
@@ -214,7 +541,90 @@ pub const Infer = struct {
             try appendInputPath(&required, erased);
         }
         summary.required_live_inputs = try required.toOwnedSlice();
-        return summary;
+        const guards = try self.allocator.dupe(facts.GuardedSafetyEffects, summary.guarded_effects);
+        for (guards) |*guard| {
+            if (guard.origin != .general) continue;
+            const effects = try self.allocator.create(facts.SafetySummary);
+            effects.* = guard.effects.*;
+            const guarded_outputs = try self.allocator.alloc(facts.ValueEffect, effects.outputs.len);
+            for (effects.outputs, guarded_outputs) |output, *target| target.* = try self.eraseScalarOwnershipTransfers(function, output);
+            effects.outputs = guarded_outputs;
+            effects.input_post_states = try self.normalizeContractPostStates(function, receiver, effects.input_post_states);
+            guard.effects = effects;
+        }
+        summary.guarded_effects = guards;
+        // Derived outcome records must use the normalized concrete view too.
+        return try summaries.refreshOutcomeGuards(self.allocator, summary);
+    }
+
+    fn normalizeContractPostStates(self: *Infer, function: graph_mod.Function, receiver: ?u32, post_states: []const facts.PlacePostState) ![]const facts.PlacePostState {
+        var states = std.array_list.Managed(facts.PlacePostState).init(self.allocator);
+        for (post_states) |original_state| {
+            var state = original_state;
+            var ty = self.graph.fields.items[function.input.start + state.target.input_index].ty;
+            var scalar_field = receiver != null and state.target.input_index == receiver.? and state.target.projections.len != 0;
+            for (state.target.projections) |projection| {
+                if (projection != .dereference and self.graph.semanticType(ty) == .pointer) ty = self.graph.semanticType(ty).pointer.child;
+                switch (projection) {
+                    .field => |index| {
+                        const fields = types.fields(self.graph, ty) orelse {
+                            scalar_field = false;
+                            break;
+                        };
+                        if (index >= fields.len) {
+                            scalar_field = false;
+                            break;
+                        }
+                        ty = (self.graph.fields.items[fields.start + index]).ty;
+                    },
+                    .dereference => {
+                        const current = self.graph.semanticType(ty);
+                        if (current != .pointer) {
+                            scalar_field = false;
+                            break;
+                        }
+                        ty = current.pointer.child;
+                    },
+                    .static_index, .dynamic_index => {
+                        ty = types.arrayElement(self.graph, ty) orelse {
+                            scalar_field = false;
+                            break;
+                        };
+                    },
+                    else => {
+                        scalar_field = false;
+                        break;
+                    },
+                }
+            }
+            // A numeric content write cannot introduce hidden dependencies
+            // when its value has no capability or lifetime facts. Conservative
+            // opaque-access markers are not additional storage permissions.
+            const numeric_contents = switch (self.graph.semanticType(ty)) {
+                .builtin => |builtin| switch (builtin) {
+                    .Int8, .Int16, .Int32, .Int64, .UIntNative, .UInt8, .UInt16, .UInt32, .UInt64, .Float16, .Float32, .Float64, .Char, .Bool => true,
+                    else => false,
+                },
+                else => false,
+            };
+            // Numeric place origins retain selector evidence, not hidden
+            // lifetime or acquisition permissions. Keep them on the post-value
+            // for identity checking, but exclude them from this occupancy test.
+            var content_permissions = state.value;
+            content_permissions.input_place_values = &.{};
+            if (numeric_contents and facts.isEmptyValue(content_permissions))
+                state.may_repopulate_opaque_storage = false;
+            // Scalar receiver fields are implementation details, not fields of
+            // the erased Virtual handle. They carry no published borrow state.
+            if (scalar_field and !self.typeContainsPointer(ty) and
+                state.initializedness == .initialized and state.opaque_ownership == .none and
+                !state.ends_previous_roots and !state.refreshes_storage_generation and
+                !state.requires_available_destination and !state.value.explicit_dependency and
+                !state.value.fresh_cleanup_obligation and state.value.fresh_owned_roots.len == 0 and state.value.fresh_dependencies.len == 0 and
+                state.value.fresh_storage_capabilities.len == 0) continue;
+            try states.append(state);
+        }
+        return states.toOwnedSlice();
     }
 
     fn eraseScalarOwnershipTransfers(
@@ -260,362 +670,13 @@ pub const Infer = struct {
         return result;
     }
 
-    pub fn virtualSummaryInvalid(self: *const Infer, registry_id: graph_mod.GlobalVirtualRegistryId) bool {
-        return self.invalid_virtual_summaries.contains(registry_id);
-    }
-
-    fn mergeVirtualSafetySummary(
-        self: *Infer,
-        left: facts.SafetySummary,
-        right: facts.SafetySummary,
-    ) !?facts.SafetySummary {
-        if (left.outputs.len != right.outputs.len) return null;
-        if (!virtualInputPostStatesRuntimeRepresentable(left.input_post_states) or
-            !virtualInputPostStatesRuntimeRepresentable(right.input_post_states)) return null;
-
-        const input_post_states = (try self.mergeVirtualInputPostStates(
-            left.input_post_states,
-            right.input_post_states,
-        )) orelse return null;
-
-        var fresh_map = std.AutoHashMap(facts.FreshEffectSource, facts.FreshEffectSource).init(self.allocator);
-        defer fresh_map.deinit();
-        // Match identities throughout the output before merging any field:
-        // an optional root in an early field may be shared with a root that
-        // both implementations expose in a later field.
-        for (left.outputs, right.outputs) |left_output, right_output|
-            if (!try self.prealignVirtualFreshSources(left_output, right_output, &fresh_map)) return null;
-        const outputs = try self.allocator.alloc(facts.ValueEffect, left.outputs.len);
-        for (left.outputs, right.outputs, 0..) |left_output, right_output, index|
-            outputs[index] = (try self.mergeVirtualValueEffect(left_output, right_output, &fresh_map)) orelse return null;
-
-        var opaque_storage_effects = std.array_list.Managed(facts.OpaqueStorageEffect).init(self.allocator);
-        for (left.opaque_storage_effects) |effect|
-            try self.recordOpaqueStorageEffect(&opaque_storage_effects, effect.storage, effect.hidden_dependencies);
-        for (right.opaque_storage_effects) |effect|
-            try self.recordOpaqueStorageEffect(&opaque_storage_effects, effect.storage, effect.hidden_dependencies);
-
-        const empty_intersection = try self.intersectInputPaths(left.opaque_storage_empties, right.opaque_storage_empties);
-        var opaque_storage_empties = std.array_list.Managed(facts.InputPath).init(self.allocator);
-        for (empty_intersection) |empty| {
-            var repopulated = false;
-            for (opaque_storage_effects.items) |effect| if (self.inputPathEqual(empty, effect.storage)) {
-                repopulated = true;
-                break;
-            };
-            if (!repopulated) try appendInputPath(&opaque_storage_empties, empty);
-        }
-
-        var required_live_inputs = std.array_list.Managed(facts.InputPath).init(self.allocator);
-        for (left.required_live_inputs) |input| try appendInputPath(&required_live_inputs, input);
-        for (right.required_live_inputs) |input| try appendInputPath(&required_live_inputs, input);
-        var left_capabilities = CapabilityFlow.init(self.allocator);
-        defer left_capabilities.deinit();
-        var right_capabilities = CapabilityFlow.init(self.allocator);
-        defer right_capabilities.deinit();
-        for (left.storage_capability_uses) |use| try self.add_capability_count(&left_capabilities, .{ .input = use.target }, use.minimum, use.maximum);
-        for (right.storage_capability_uses) |use| try self.add_capability_count(&right_capabilities, .{ .input = use.target }, use.minimum, use.maximum);
-        for (left.storage_capability_conflicts) |pair| try self.record_capability_conflict(&left_capabilities, .{ .input = pair.first }, .{ .input = pair.second });
-        for (right.storage_capability_conflicts) |pair| try self.record_capability_conflict(&right_capabilities, .{ .input = pair.first }, .{ .input = pair.second });
-        var joined_capabilities = CapabilityFlow.init(self.allocator);
-        defer joined_capabilities.deinit();
-        try self.join_capability_flows(&joined_capabilities, &left_capabilities, &right_capabilities);
-        var capability_uses = std.array_list.Managed(facts.StorageCapabilityUse).init(self.allocator);
-        for (joined_capabilities.counts.items) |count| try capability_uses.append(.{ .target = count.source.input, .minimum = count.minimum, .maximum = count.maximum });
-        var capability_conflicts = std.array_list.Managed(facts.StorageCapabilityConflict).init(self.allocator);
-        for (joined_capabilities.conflicts.items) |pair| try capability_conflicts.append(.{ .first = pair.first.input, .second = pair.second.input });
-        return .{
-            .outputs = outputs,
-            .storage_capability_uses = try capability_uses.toOwnedSlice(),
-            .storage_capability_conflicts = try capability_conflicts.toOwnedSlice(),
-
-            .required_live_inputs = try required_live_inputs.toOwnedSlice(),
-            .input_post_states = input_post_states,
-            .opaque_storage_effects = try opaque_storage_effects.toOwnedSlice(),
-            .opaque_storage_empties = try opaque_storage_empties.toOwnedSlice(),
-        };
-    }
-
-    fn prealignVirtualFreshSources(
-        self: *Infer,
-        left: facts.ValueEffect,
-        right: facts.ValueEffect,
-        mapping: *std.AutoHashMap(facts.FreshEffectSource, facts.FreshEffectSource),
-    ) !bool {
-        if (left.fresh_dependencies.len != 0 and right.fresh_dependencies.len != 0 and
-            (left.fresh_dependencies.len != right.fresh_dependencies.len or
-                !try alignFreshSources(left.fresh_dependencies, right.fresh_dependencies, mapping))) return false;
-        if (left.fresh_owned_roots.len != 0 and right.fresh_owned_roots.len != 0 and
-            (left.fresh_owned_roots.len != right.fresh_owned_roots.len or
-                !try alignFreshSources(left.fresh_owned_roots, right.fresh_owned_roots, mapping))) return false;
-        if (left.fresh_storage_capabilities.len != 0 and right.fresh_storage_capabilities.len != 0 and
-            (left.fresh_storage_capabilities.len != right.fresh_storage_capabilities.len or
-                !try alignFreshSources(left.fresh_storage_capabilities, right.fresh_storage_capabilities, mapping))) return false;
-        for (left.fields) |left_field| for (right.fields) |right_field| {
-            if (left_field.index == right_field.index and
-                !try self.prealignVirtualFreshSources(left_field.value.*, right_field.value.*, mapping)) return false;
-        };
-        for (left.variants) |left_variant| for (right.variants) |right_variant| {
-            if (left_variant.index == right_variant.index and
-                !try self.prealignVirtualFreshSources(left_variant.value.*, right_variant.value.*, mapping)) return false;
-        };
-        return true;
-    }
-
-    fn mergeVirtualInputPostStates(
-        self: *Infer,
-        left: []const facts.PlacePostState,
-        right: []const facts.PlacePostState,
-    ) !?[]const facts.PlacePostState {
-        var merged = std.array_list.Managed(facts.PlacePostState).init(self.allocator);
-        for (left) |left_state| {
-            const right_state = self.findInputPostState(right, left_state.target) orelse facts.PlacePostState{
-                .target = left_state.target,
-                .initializedness = .initialized,
-                .value = try self.inputPlaceValueEffect(left_state.target),
-            };
-            try merged.append((try self.mergeVirtualPlacePostState(left_state, right_state)) orelse return null);
-        }
-        for (right) |right_state| if (self.findInputPostState(left, right_state.target) == null) {
-            const unchanged = facts.PlacePostState{
-                .target = right_state.target,
-                .initializedness = .initialized,
-                .value = try self.inputPlaceValueEffect(right_state.target),
-            };
-            try merged.append((try self.mergeVirtualPlacePostState(unchanged, right_state)) orelse return null);
-        };
-        return try merged.toOwnedSlice();
-    }
-
-    fn mergeVirtualPlacePostState(
-        self: *Infer,
-        left: facts.PlacePostState,
-        right: facts.PlacePostState,
-    ) !?facts.PlacePostState {
-        if (!self.inputPathEqual(left.target, right.target)) return null;
-        if (!virtualInputPostStateRuntimeRepresentable(left) or
-            !virtualInputPostStateRuntimeRepresentable(right)) return null;
-
-        const value = if (summaries.valueEffectEql(left.value, right.value))
-            left.value
-        else blk: {
-            if (outputEffectHasFreshRole(left.value) or outputEffectHasFreshRole(right.value) or
-                outputEffectTransfersOwnership(left.value) or outputEffectTransfersOwnership(right.value)) return null;
-            break :blk try self.mergeValueEffects(left.value, right.value);
-        };
-        var result = facts.PlacePostState{
-            .target = left.target,
-            .initializedness = joinInitializedness(left.initializedness, right.initializedness),
-            .value = value,
-            .ends_previous_roots = left.ends_previous_roots or right.ends_previous_roots,
-            .refreshes_storage_generation = left.refreshes_storage_generation or right.refreshes_storage_generation,
-            .requires_available_destination = left.requires_available_destination or right.requires_available_destination,
-            .may_repopulate_opaque_storage = left.may_repopulate_opaque_storage or right.may_repopulate_opaque_storage,
-        };
-        if (!self.mergeVirtualOpaqueOwnershipEffect(&result, left, right)) return null;
-        return result;
-    }
-
-    fn mergeVirtualOpaqueOwnershipEffect(
-        self: *Infer,
-        merged: *facts.PlacePostState,
-        left: facts.PlacePostState,
-        right: facts.PlacePostState,
-    ) bool {
-        const left_ownership = left.opaque_ownership;
-        const right_ownership = right.opaque_ownership;
-        if (left_ownership == .ambiguous or right_ownership == .ambiguous) return false;
-        if (left_ownership == .none and right_ownership == .none) {
-            merged.opaque_ownership = .none;
-            merged.opaque_storage = null;
-            return true;
-        }
-        const left_storage = if (left_ownership == .none) right.opaque_storage else left.opaque_storage;
-        const right_storage = if (right_ownership == .none) left.opaque_storage else right.opaque_storage;
-        if (!self.optionalInputPathEqual(left_storage, right_storage)) return false;
-        merged.opaque_storage = left_storage;
-        merged.opaque_ownership = if (left_ownership == .none or right_ownership == .none or
-            left_ownership == .conditional or right_ownership == .conditional)
-            .conditional
-        else
-            .definite;
-        return true;
-    }
-
-    fn borrowVirtualReceiverGenerations(self: *Infer, effect: facts.ValueEffect, receiver_index: u32) !facts.ValueEffect {
-        // Private receiver projections cannot be instantiated against an
-        // erased Virtual handle. Carry their lifetime through the handle's
-        // value and collapse opaque provenance paths before fixed-point
-        // inference can extend them through recursive allocator wrappers.
-        var result = effect;
-        var private_receiver_borrow = false;
-        var places = std.array_list.Managed(facts.InputPath).init(self.allocator);
-        for (effect.input_places) |path| {
-            if (path.input_index == receiver_index and path.projections.len != 0) {
-                private_receiver_borrow = true;
-            } else try appendInputPath(&places, path);
-        }
-        result.input_places = try places.toOwnedSlice();
-        var generations = std.array_list.Managed(facts.InputPath).init(self.allocator);
-        for (effect.input_generation_dependencies) |path| {
-            if (path.input_index == receiver_index and path.projections.len != 0) {
-                private_receiver_borrow = true;
-            } else try appendInputPath(&generations, path);
-        }
-        result.input_generation_dependencies = try generations.toOwnedSlice();
-        var storage_capabilities = std.array_list.Managed(facts.InputPath).init(self.allocator);
-        for (effect.input_storage_capabilities) |path| {
-            var erased = path;
-            if (path.input_index == receiver_index) erased.projections = &.{};
-            try appendInputPath(&storage_capabilities, erased);
-        }
-        result.input_storage_capabilities = try storage_capabilities.toOwnedSlice();
-        var receiver_values = std.array_list.Managed(facts.InputPath).init(self.allocator);
-        for (effect.input_place_values) |path| {
-            if (path.input_index == receiver_index and path.projections.len != 0) {
-                private_receiver_borrow = true;
-            } else try appendInputPath(&receiver_values, path);
-        }
-        if (private_receiver_borrow)
-            try appendInputPath(&receiver_values, .{ .input_index = receiver_index });
-        result.input_place_values = try receiver_values.toOwnedSlice();
-        var opaque_generations = std.array_list.Managed(facts.InputPath).init(self.allocator);
-        for (effect.opaque_generation_dependencies) |path| {
-            // The erased receiver has no implementation-specific fields.
-            // Its opaque provenance is carried by the whole Virtual value.
-            const erased = if (path.input_index == receiver_index and path.projections.len != 0)
-                facts.InputPath{ .input_index = receiver_index }
-            else
-                path;
-            try appendInputPath(&opaque_generations, erased);
-        }
-        result.opaque_generation_dependencies = try opaque_generations.toOwnedSlice();
-        if (effect.fields.len != 0) {
-            const fields = try self.allocator.alloc(facts.OutputFieldEffect, effect.fields.len);
-            for (effect.fields, 0..) |field, index| {
-                const value = try self.allocator.create(facts.ValueEffect);
-                value.* = try self.borrowVirtualReceiverGenerations(field.value.*, receiver_index);
-                fields[index] = .{ .index = field.index, .value = value };
-            }
-            result.fields = fields;
-        }
-        if (effect.variants.len != 0) {
-            const variants = try self.allocator.alloc(facts.OutputVariantEffect, effect.variants.len);
-            for (effect.variants, 0..) |variant, index| {
-                const value = try self.allocator.create(facts.ValueEffect);
-                value.* = try self.borrowVirtualReceiverGenerations(variant.value.*, receiver_index);
-                variants[index] = .{ .index = variant.index, .value = value };
-            }
-            result.variants = variants;
-        }
-        return result;
-    }
-
-    fn mergeVirtualValueEffect(
-        self: *Infer,
-        left: facts.ValueEffect,
-        right: facts.ValueEffect,
-        fresh_map: *std.AutoHashMap(facts.FreshEffectSource, facts.FreshEffectSource),
-    ) !?facts.ValueEffect {
-        if (left.integer_address != right.integer_address or
-            left.foreign_storage != right.foreign_storage or
-            left.fresh_storage_capabilities.len != right.fresh_storage_capabilities.len or
-            left.variants.len != right.variants.len) return null;
-
-        const fresh_dependencies = (try mergeVirtualFreshRoots(self.allocator, left.fresh_dependencies, right.fresh_dependencies, fresh_map)) orelse return null;
-        const fresh_owned_roots = (try mergeVirtualFreshRoots(self.allocator, left.fresh_owned_roots, right.fresh_owned_roots, fresh_map)) orelse return null;
-        if (!try alignFreshSources(left.fresh_storage_capabilities, right.fresh_storage_capabilities, fresh_map)) return null;
-
-        var dependencies = std.array_list.Managed(facts.InputDependency).init(self.allocator);
-        for (left.input_dependencies) |dependency| try appendInputDependency(&dependencies, dependency);
-        for (right.input_dependencies) |dependency| {
-            if (dependency.transfers_ownership and !containsInputDependency(left.input_dependencies, dependency)) return null;
-            try appendInputDependency(&dependencies, dependency);
-        }
-        for (left.input_dependencies) |dependency| {
-            if (dependency.transfers_ownership and !containsInputDependency(right.input_dependencies, dependency)) return null;
-        }
-
-        var input_places = std.array_list.Managed(facts.InputPath).init(self.allocator);
-        for (left.input_places) |input| try appendInputPath(&input_places, input);
-        for (right.input_places) |input| try appendInputPath(&input_places, input);
-        var input_generations = std.array_list.Managed(facts.InputPath).init(self.allocator);
-        for (left.input_generation_dependencies) |input| try appendInputPath(&input_generations, input);
-        for (right.input_generation_dependencies) |input| try appendInputPath(&input_generations, input);
-        var input_place_values = std.array_list.Managed(facts.InputPath).init(self.allocator);
-        for (left.input_place_values) |input| try appendInputPath(&input_place_values, input);
-        for (right.input_place_values) |input| try appendInputPath(&input_place_values, input);
-        var input_owned_roots = std.array_list.Managed(facts.InputPath).init(self.allocator);
-        for (left.input_owned_roots) |input| try appendInputPath(&input_owned_roots, input);
-        for (right.input_owned_roots) |input| try appendInputPath(&input_owned_roots, input);
-        var opaque_generations = std.array_list.Managed(facts.InputPath).init(self.allocator);
-        for (left.opaque_generation_dependencies) |input| try appendInputPath(&opaque_generations, input);
-        for (right.opaque_generation_dependencies) |input| try appendInputPath(&opaque_generations, input);
-        var opaque_storages = std.array_list.Managed(facts.InputPath).init(self.allocator);
-        for (left.opaque_storage_dependencies) |input| try appendInputPath(&opaque_storages, input);
-        for (right.opaque_storage_dependencies) |input| try appendInputPath(&opaque_storages, input);
-
-        var fields = std.array_list.Managed(facts.OutputFieldEffect).init(self.allocator);
-        for (left.fields) |left_field| {
-            const right_value = blk: {
-                for (right.fields) |right_field| if (right_field.index == left_field.index) break :blk right_field.value.*;
-                break :blk try self.projectValueEffect(right, .{ .field = left_field.index });
-            };
-            const value = try self.allocator.create(facts.ValueEffect);
-            value.* = (try self.mergeVirtualValueEffect(left_field.value.*, right_value, fresh_map)) orelse return null;
-            try fields.append(.{ .index = left_field.index, .value = value });
-        }
-        for (right.fields) |right_field| {
-            var found = false;
-            for (left.fields) |left_field| if (left_field.index == right_field.index) {
-                found = true;
-                break;
-            };
-            if (found) continue;
-            const left_value = try self.projectValueEffect(left, .{ .field = right_field.index });
-            const value = try self.allocator.create(facts.ValueEffect);
-            value.* = (try self.mergeVirtualValueEffect(left_value, right_field.value.*, fresh_map)) orelse return null;
-            try fields.append(.{ .index = right_field.index, .value = value });
-        }
-        const variants = try self.allocator.alloc(facts.OutputVariantEffect, left.variants.len);
-        for (left.variants, right.variants, 0..) |left_variant, right_variant, index| {
-            if (left_variant.index != right_variant.index) return null;
-            const value = try self.allocator.create(facts.ValueEffect);
-            value.* = (try self.mergeVirtualValueEffect(left_variant.value.*, right_variant.value.*, fresh_map)) orelse return null;
-            variants[index] = .{ .index = left_variant.index, .value = value };
-        }
-        const right_unavailable = try self.allocator.alloc(facts.FreshStorageCapabilityState, right.unavailable_fresh_storage.len);
-        for (right.unavailable_fresh_storage, 0..) |entry, index| {
-            right_unavailable[index] = entry;
-            right_unavailable[index].source = fresh_map.get(entry.source) orelse entry.source;
-            right_unavailable[index].maybe_consumed = true;
-        }
-        const unavailable = try self.merge_unavailable_fresh_storage(left.unavailable_fresh_storage, right_unavailable);
-        return .{
-            .input_dependencies = try dependencies.toOwnedSlice(),
-            .input_storage_capabilities = try self.union_input_paths(left.input_storage_capabilities, right.input_storage_capabilities),
-            .input_places = try input_places.toOwnedSlice(),
-            .input_generation_dependencies = try input_generations.toOwnedSlice(),
-            .input_place_values = try input_place_values.toOwnedSlice(),
-            .input_owned_roots = try input_owned_roots.toOwnedSlice(),
-            .opaque_generation_dependencies = try opaque_generations.toOwnedSlice(),
-            .opaque_storage_dependencies = try opaque_storages.toOwnedSlice(),
-            .fields = try fields.toOwnedSlice(),
-            .variants = variants,
-            .known_choice_variant = if (left.known_choice_variant == right.known_choice_variant) left.known_choice_variant else null,
-            .fresh_dependencies = fresh_dependencies,
-            .fresh_owned_roots = fresh_owned_roots,
-            .fresh_storage_capabilities = left.fresh_storage_capabilities,
-            .unavailable_fresh_storage = unavailable,
-            .integer_address = left.integer_address,
-            .explicit_dependency = left.explicit_dependency or right.explicit_dependency,
-            .foreign_storage = left.foreign_storage,
-        };
-    }
-
     fn inferFunction(self: *Infer, function_id: graph_mod.GlobalFunctionId) !facts.SafetySummary {
         const function = self.graph.function(function_id);
-        const previous = self.engine.summaryFor(function_id) orelse return error.MissingSafetySummary;
+        const stored = self.engine.summaries.get(function_id) orelse return error.MissingSafetySummary;
+        // Only output approximation reuse creates a dependency on ourselves.
+        // With no outputs every dimension is computed from the body/callees;
+        // recursive calls still record their own dependencies normally.
+        const previous = if (stored.outputs.len == 0) stored else self.engine.summaryFor(function_id).?;
         const outputs = try self.allocator.dupe(facts.ValueEffect, previous.outputs);
 
         // Primitive effects are instantiated at the call site so their fresh
@@ -624,6 +685,7 @@ pub const Infer = struct {
         if (function.safety_primitive != .none or function.body == null) return .{
             .outputs = outputs,
             .required_live_inputs = previous.required_live_inputs,
+            .required_opaque_inputs = previous.required_opaque_inputs,
             .storage_capability_uses = previous.storage_capability_uses,
             .storage_capability_conflicts = previous.storage_capability_conflicts,
             .input_post_states = previous.input_post_states,
@@ -632,9 +694,22 @@ pub const Infer = struct {
             .opaque_storage_empties = previous.opaque_storage_empties,
         };
 
+        // Drop activation depends only on the finalized GlobalSG. Cache it
+        // across fixed-point reevaluations, independently of inferred effects.
+        if (!self.cleanup_activations.contains(function_id)) {
+            var activation = try cleanup_activation.collect(self.allocator, self.graph, function_id);
+            errdefer activation.deinit();
+            try self.cleanup_activations.put(function_id, activation);
+        }
+        self.cleanup = self.cleanup_activations.getPtr(function_id).?;
+        defer self.cleanup = null;
+
         self.bindings.clearRetainingCapacity();
         self.place_bindings.clearRetainingCapacity();
         self.local_address_bindings.clearRetainingCapacity();
+        self.addressed_outputs.clearRetainingCapacity();
+        self.domain_invalidations.clearRetainingCapacity();
+        self.unbound_opaque_dependencies = .{};
         var start = profile.timestamp(self.profile_io);
         try self.inferBlock(function_id, function.body.?, outputs);
         profile.accumulate(self.profile_io, start, &self.output_ns);
@@ -642,6 +717,12 @@ pub const Infer = struct {
         var required_live_inputs = std.array_list.Managed(facts.InputPath).init(self.allocator);
         start = profile.timestamp(self.profile_io);
         try self.inferRequiredLiveInputsBlock(function_id, function.body.?, &required_live_inputs);
+        var required_opaque_inputs = std.array_list.Managed(facts.InputPath).init(self.allocator);
+        {
+            self.collecting_opaque_requirements = true;
+            defer self.collecting_opaque_requirements = false;
+            try self.inferRequiredLiveInputsBlock(function_id, function.body.?, &required_opaque_inputs);
+        }
         profile.accumulate(self.profile_io, start, &self.required_live_ns);
 
         var post_flow = InputPostStateFlow.init(self.allocator);
@@ -650,7 +731,7 @@ pub const Infer = struct {
         defer if (post_exits) |*exits| exits.deinit();
         start = profile.timestamp(self.profile_io);
         try self.inferInputPostStates(function_id, function.body.?, &post_flow, &post_exits);
-        if (post_flow.reachable) try self.recordInputPostStateExit(&post_exits, &post_flow.states);
+        if (post_flow.reachable) try self.recordOutcomeExit(&post_exits, &post_flow);
 
         var post_states = if (post_exits) |*exits|
             try self.cloneInputPostStates(exits)
@@ -660,21 +741,91 @@ pub const Infer = struct {
 
         profile.accumulate(self.profile_io, start, &self.post_state_ns);
         start = profile.timestamp(self.profile_io);
-        const outcome_post_states = if (self.isFallibleInitializer(function_id))
-            try self.inferInitializerOutcomePostStates(function_id, function.body.?)
-        else
-            &.{};
-
-        profile.accumulate(self.profile_io, start, &self.outcome_ns);
-        start = profile.timestamp(self.profile_io);
         var opaque_storage_effects = std.array_list.Managed(facts.OpaqueStorageEffect).init(self.allocator);
         defer opaque_storage_effects.deinit();
+        self.opaque_empty_seen = false;
         const opaque_storage_empties = try self.inferOpaqueStorageEffects(
             function_id,
             function.body.?,
             &opaque_storage_effects,
         );
+        const has_opaque_empty_effect = self.opaque_empty_seen;
         profile.accumulate(self.profile_io, start, &self.opaque_ns);
+        start = profile.timestamp(self.profile_io);
+        // Each choice is considered independently. We never construct a product
+        // of unrelated discriminants; unknown tags retain the common may-effects.
+        var outcomes = std.array_list.Managed(facts.OutcomePostStates).init(self.allocator);
+        defer outcomes.deinit();
+        const common_domains = try self.allocator.dupe(facts.InputDomain, self.domain_invalidations.items);
+        const requested_outcomes = if (self.requested_selectors.get(function_id)) |requested| requested.len != 0 else false;
+        var forwarded_selectors = std.array_list.Managed(outcome_selectors.Selector).init(self.allocator);
+        defer forwarded_selectors.deinit();
+        try self.forwardingSelectors(function_id, function.body.?, &forwarded_selectors);
+        if (post_states.items.len != 0 or common_domains.len != 0 or requested_outcomes or has_opaque_empty_effect or forwarded_selectors.items.len != 0) {
+            for (0..function.output.len) |output_index| {
+                const output_ty = self.graph.fields.items[function.output.start + @as(u32, @intCast(output_index))].ty;
+                var wanted = std.array_list.Managed(outcome_selectors.Selector).init(self.allocator);
+                defer wanted.deinit();
+                try wanted.appendSlice(self.requested_selectors.get(function_id) orelse &.{});
+                for (previous.outcome_post_states) |outcome| try wanted.append(.{ .output_index = outcome.output_index, .parent_variants = outcome.parent_variants, .variant_index = outcome.variant_index });
+                try wanted.appendSlice(forwarded_selectors.items);
+                for (try outcome_selectors.partition(self.allocator, self.graph, @intCast(output_index), output_ty, wanted.items)) |selector| {
+                    self.selected_outcome = .{ .output_index = @intCast(output_index), .parent_variants = selector.parent_variants, .variant_index = selector.variant_index, .binding = self.graph.binding_refs.items[function.output_bindings.start + @as(u32, @intCast(output_index))] };
+                    defer self.selected_outcome = null;
+                    self.selected_forward = null;
+                    self.selected_forward_applied = false;
+                    defer self.selected_forward = null;
+                    try self.selectForwardedCall(function_id, function.body.?);
+                    self.domain_invalidations.clearRetainingCapacity();
+                    var outcome_flow = InputPostStateFlow.init(self.allocator);
+                    defer outcome_flow.deinit();
+                    var outcome_exits: ?std.array_list.Managed(facts.PlacePostState) = null;
+                    defer if (outcome_exits) |*exits| exits.deinit();
+                    try self.inferInputPostStates(function_id, function.body.?, &outcome_flow, &outcome_exits);
+                    if (outcome_flow.reachable) try self.recordOutcomeExit(&outcome_exits, &outcome_flow);
+                    // The same selected call is interpreted at its original position.
+                    // Empty-state guarantees intersect returning exits independently
+                    // of generation may-effects and never recover caller snapshots.
+                    const selected_domains = try self.allocator.dupe(facts.InputDomain, self.domain_invalidations.items);
+                    self.selected_forward_applied = false;
+                    var selected_opaque_effects = std.array_list.Managed(facts.OpaqueStorageEffect).init(self.allocator);
+                    defer selected_opaque_effects.deinit();
+                    const selected_empties = if (has_opaque_empty_effect)
+                        try self.inferOpaqueStorageEffects(function_id, function.body.?, &selected_opaque_effects)
+                    else
+                        opaque_storage_empties;
+                    try outcomes.append(.{
+                        .reachable = outcome_exits != null,
+                        .output_index = @intCast(output_index),
+                        .parent_variants = selector.parent_variants,
+                        .variant_index = selector.variant_index,
+                        .input_post_states = if (outcome_exits) |exits| try self.allocator.dupe(facts.PlacePostState, exits.items) else &.{},
+                        .invalidated_domains = selected_domains,
+                        .opaque_storage_empties = selected_empties,
+                    });
+                }
+            }
+        }
+        self.domain_invalidations.clearRetainingCapacity();
+        try self.domain_invalidations.appendSlice(common_domains);
+        const outcome_post_states = try outcomes.toOwnedSlice();
+
+        profile.accumulate(self.profile_io, start, &self.outcome_ns);
+        start = profile.timestamp(self.profile_io);
+        // Local hidden domains have no input path. Until exact returned-domain
+        // identity is represented, retain their possible input provenance on
+        // owning or reference-containing outputs. Cleanup obligations alone
+        // cannot identify hidden borrows: plain records can carry them too.
+        // This is a conservative union, never fresh ownership.
+        // Effects are indexed by lexical output bindings, so their types are
+        // the corresponding source of output shape information.
+        const output_binding_ids = self.graph.binding_refs.items[function.output_bindings.start..][0..function.output_bindings.len];
+        const has_hidden_dependencies = !facts.isEmptyValue(self.unbound_opaque_dependencies);
+        for (outputs, output_binding_ids) |*output, binding| if (effectOwnsValue(output.*) or
+            (has_hidden_dependencies and self.typeContainsPointer(self.graph.binding(binding).ty)))
+        {
+            output.* = try self.mergeValueEffects(output.*, self.unbound_opaque_dependencies);
+        };
 
         if (function.flags.is_deinit) {
             const input_fields = self.graph.fields.items[function.input.start..][0..function.input.len];
@@ -686,6 +837,21 @@ pub const Infer = struct {
                 };
                 if (!mutable_pointer) continue;
                 const target = facts.InputPath{ .input_index = @intCast(index) };
+                // The final whole-receiver destruction supersedes post-values
+                // of its owned fields. Keep effects through borrowed references:
+                // those address other storage, which this destructor cannot end.
+                var post_index: usize = 0;
+                while (post_index < post_states.items.len) {
+                    const path = post_states.items[post_index].target;
+                    const owned_field = path.input_index == index and path.storage_domain == null and
+                        path.projections.len != 0 and for (path.projections) |projection|
+                    {
+                        if (projection == .dereference) break false;
+                    } else true;
+                    if (owned_field) {
+                        _ = post_states.orderedRemove(post_index);
+                    } else post_index += 1;
+                }
                 try self.recordInputPostState(
                     &post_states,
                     &.{target},
@@ -703,12 +869,14 @@ pub const Infer = struct {
         // This finite domain tracks authorization separately from lifetime:
         // counts saturate at two, so recursion can express repeated consumption
         // without growing symbolic histories or introducing another scheduler.
+        start = profile.timestamp(self.profile_io);
         var capability_flow = CapabilityFlow.init(self.allocator);
         defer capability_flow.deinit();
         var capability_exits: ?CapabilityFlow = null;
         defer if (capability_exits) |*exit| exit.deinit();
         try self.infer_capability_block(function_id, function.body.?, &capability_flow, &capability_exits);
         if (capability_flow.reachable) try self.record_capability_exit(&capability_flow, &capability_exits);
+        profile.accumulate(self.profile_io, start, &self.capability_flow_ns);
         const counts = if (capability_exits) |exit| exit.counts.items else capability_flow.counts.items;
         var capability_uses = std.array_list.Managed(facts.StorageCapabilityUse).init(self.allocator);
         for (counts) |count| if (count.source == .input) {
@@ -732,16 +900,305 @@ pub const Infer = struct {
             post.value = try self.mark_unavailable_fresh_storage(post.value, counts);
         };
 
-        return .{
+        profile.accumulate(self.profile_io, start, &self.capability_ns);
+        var summary: facts.SafetySummary = .{
             .outputs = outputs,
             .storage_capability_uses = try capability_uses.toOwnedSlice(),
             .storage_capability_conflicts = try capability_conflicts.toOwnedSlice(),
             .required_live_inputs = try required_live_inputs.toOwnedSlice(),
+            .required_opaque_inputs = try required_opaque_inputs.toOwnedSlice(),
             .input_post_states = try post_states.toOwnedSlice(),
             .outcome_post_states = outcome_post_states,
             .opaque_storage_effects = try opaque_storage_effects.toOwnedSlice(),
             .opaque_storage_empties = opaque_storage_empties,
+            .invalidated_domains = try self.domain_invalidations.toOwnedSlice(),
         };
+        start = profile.timestamp(self.profile_io);
+        defer profile.accumulate(self.profile_io, start, &self.guards_ns);
+        summary.guarded_effects = try self.inferEntryChoiceOutputGuards(function_id, summary, &summary.guarded_returns_complete);
+        if (summary.guarded_effects.len == 0) summary.guarded_effects = try self.inferForwardedGeneralGuards(function_id, summary, &summary.guarded_returns_complete);
+        return summaries.refreshOutcomeGuards(self.allocator, summary);
+    }
+
+    /// Forward exact outputs of one call through a straight-line wrapper.
+    /// Reject additional effects: entry selectors describe the original call,
+    /// and cannot be reconstructed from a mutable argument at a later use.
+    fn inferForwardedGeneralGuards(self: *Infer, function_id: graph_mod.GlobalFunctionId, summary: facts.SafetySummary, complete: *bool) ![]const facts.GuardedSafetyEffects {
+        const function = self.graph.function(function_id);
+        if (function.body == null or summary.outputs.len == 0) return &.{};
+        const block = self.graph.blocks.items[@intFromEnum(function.body.?)];
+        const origins = try self.allocator.alloc(?ForwardOrigin, summary.outputs.len);
+        @memset(origins, null);
+        var source_call: ?graph_mod.GlobalNodeId = null;
+        for (self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len]) |node| switch (self.graph.node(node).content) {
+            .binding_declaration => |binding| {
+                const declaration = self.graph.binding(binding);
+                if (declaration.deferred_initialization or declaration.initialization == null) continue;
+                const initializer = declaration.initialization.?;
+                const origin = try self.expressionForwardOrigin(initializer) orelse {
+                    if (!self.entryOutputExpressionSafe(initializer)) return &.{};
+                    continue;
+                };
+                if (source_call != null and source_call.? != origin.call) return &.{};
+                source_call = origin.call;
+            },
+            .assignment => |assignment| {
+                const index = self.outputIndex(function_id, assignment.binding) orelse return &.{};
+                if (origins[index] != null) return &.{};
+                const origin = try self.expressionForwardOrigin(assignment.value) orelse return &.{};
+                if (origin.output_index == null or origin.parent_variants.len != 0) return &.{};
+                if (source_call != null and source_call.? != origin.call) return &.{};
+                source_call = origin.call;
+                origins[index] = origin;
+            },
+            .auto_deinit_binding => |id| {
+                const cleanup = self.graph.auto_deinits.items[@intFromEnum(id)];
+                if (cleanup.deinit_fn != null or cleanup.fields.len != 0) return &.{};
+            },
+            .return_statement => |ret| if (ret.expression != null or ret.cleanup.len != 0) return &.{},
+            else => return &.{},
+        };
+        for (origins) |origin| if (origin == null) return &.{};
+        const call_node = source_call orelse return &.{};
+        const called = switch (self.graph.node(call_node).content) {
+            .function_call => |call| .{ self.engine.summaryFor(call.callee) orelse return &.{}, call.input },
+            .virtual_call => |id| blk: {
+                const call = self.graph.virtual_calls.items[@intFromEnum(id)];
+                break :blk .{ try self.virtualSummary(call.safety_methods) orelse return &.{}, call.input };
+            },
+            else => return &.{},
+        };
+        const arguments = self.structArguments(called[1]) orelse return &.{};
+        for (arguments) |argument| if (!self.entryOutputExpressionSafe(argument.value)) return &.{};
+        var guards: std.ArrayList(facts.GuardedSafetyEffects) = .empty;
+        for (called[0].guarded_effects) |guarded| {
+            if (guarded.origin != .general or guarded.conditions.impossible) continue;
+            var terms: std.ArrayList(facts.ChoiceCondition) = .empty;
+            var supported = true;
+            for (guarded.conditions.terms) |condition| {
+                if (condition.subject == .output) {
+                    var mapped = false;
+                    for (origins, 0..) |origin, index| if (origin.?.output_index.? == condition.index) {
+                        var term = condition;
+                        term.index = @intCast(index);
+                        try terms.append(self.allocator, term);
+                        mapped = true;
+                    };
+                    if (!mapped) {
+                        supported = false;
+                        break;
+                    }
+                } else {
+                    if (condition.index >= arguments.len) {
+                        supported = false;
+                        break;
+                    }
+                    const argument = arguments[condition.index].value;
+                    const paths = try self.inferInputPaths(function_id, argument);
+                    if (paths.len != 1 or paths[0].storage_domain != null) {
+                        supported = false;
+                        break;
+                    }
+                    var term = condition;
+                    term.index = paths[0].input_index;
+                    term.projections = try std.mem.concat(self.allocator, facts.Projection, &.{ paths[0].projections, condition.projections });
+                    try terms.append(self.allocator, term);
+                }
+            }
+            if (!supported) return &.{};
+            const outputs = try self.allocator.alloc(facts.ValueEffect, origins.len);
+            for (origins, outputs) |origin, *output| {
+                const effect = guarded.effects.outputs[origin.?.output_index.?];
+                output.* = try self.rebaseFreshSources(try self.substituteOutput(function_id, effect, arguments), call_node);
+            }
+            const effects = try self.allocator.create(facts.SafetySummary);
+            effects.* = summary;
+            effects.outputs = outputs;
+            effects.guarded_effects = &.{};
+            try guards.append(self.allocator, .{ .conditions = try @import("choice_conditions.zig").normalize(self.allocator, terms.items), .effects = effects });
+        }
+        complete.* = called[0].guarded_returns_complete;
+        return try guards.toOwnedSlice(self.allocator);
+    }
+
+    const EntryOutputFlow = struct {
+        conditions: facts.ChoiceConditions = .{},
+        outputs: []facts.ValueEffect,
+        initialized: []bool,
+        reachable: bool = true,
+
+        fn clone(self: EntryOutputFlow, allocator: std.mem.Allocator) !EntryOutputFlow {
+            var result = self;
+            result.outputs = try allocator.dupe(facts.ValueEffect, self.outputs);
+            result.initialized = try allocator.dupe(bool, self.initialized);
+            return result;
+        }
+    };
+
+    /// Stable selection bodies can publish entry guards without symbolic
+    /// execution of arbitrary operations. Other dimensions retain the ordinary
+    /// conservative summary; unsupported control flow discards this precision.
+    fn inferEntryChoiceOutputGuards(self: *Infer, function_id: graph_mod.GlobalFunctionId, summary: facts.SafetySummary, complete: *bool) ![]const facts.GuardedSafetyEffects {
+        const function = self.graph.function(function_id);
+        if (summary.outputs.len == 0 or function.input.start + function.input.len > self.graph.fields.items.len) return &.{};
+        const output_facts = try self.allocator.alloc(facts.ValueEffect, summary.outputs.len);
+        @memset(output_facts, .{});
+        const initialized = try self.allocator.alloc(bool, summary.outputs.len);
+        @memset(initialized, false);
+        var flow = EntryOutputFlow{ .outputs = output_facts, .initialized = initialized };
+        var guards: std.ArrayList(facts.GuardedSafetyEffects) = .empty;
+        defer guards.deinit(self.allocator);
+        if (!try self.inferEntryOutputBlock(function_id, function.body.?, &flow, summary, &guards)) return &.{};
+        if (flow.reachable) try self.recordEntryOutputGuard(flow, summary, &guards);
+        // Avoid publishing a duplicate unconditional record for simple bodies.
+        var conditional = false;
+        for (guards.items) |guard| conditional = conditional or guard.conditions.terms.len != 0;
+        if (!conditional) return &.{};
+        complete.* = true;
+        return guards.toOwnedSlice(self.allocator);
+    }
+
+    fn recordEntryOutputGuard(self: *Infer, flow: EntryOutputFlow, summary: facts.SafetySummary, guards: *std.ArrayList(facts.GuardedSafetyEffects)) !void {
+        if (flow.conditions.impossible) return;
+        for (flow.initialized) |initialized| if (!initialized) return;
+        const conditions = try @import("choice_conditions.zig").conjoin(self.allocator, flow.conditions, try contracts.knownOutputConditions(self.allocator, flow.outputs));
+        // Keep one complete approximation for each established entry relation.
+        // Multiple exits with the same relation must join their output facts.
+        for (guards.items) |guarded| if (guarded.conditions.eql(conditions)) {
+            const effects = @constCast(guarded.effects);
+            const outputs = try self.allocator.dupe(facts.ValueEffect, effects.outputs);
+            for (outputs, flow.outputs) |*output, other| output.* = try self.mergeValueEffects(output.*, other);
+            effects.outputs = outputs;
+            return;
+        };
+        const effects = try self.allocator.create(facts.SafetySummary);
+        effects.* = summary;
+        effects.guarded_effects = &.{};
+        effects.outputs = try self.allocator.dupe(facts.ValueEffect, flow.outputs);
+        try guards.append(self.allocator, .{ .conditions = conditions, .effects = effects });
+    }
+
+    fn entryOutputExpressionSafe(self: *Infer, value: graph_mod.GlobalNodeId) bool {
+        return switch (self.graph.node(value).content) {
+            .binding_use, .int_literal, .float_literal, .char_literal, .bool_literal => true,
+            .dereference => |read| self.entryOutputExpressionSafe(read.pointer),
+            .denied_implicit_copy => |child| self.entryOutputExpressionSafe(child),
+            .choice_literal => |literal| if (literal.payload) |child| self.entryOutputExpressionSafe(child) else true,
+            .struct_value_literal => |literal| blk: {
+                for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |field|
+                    if (!self.entryOutputExpressionSafe(field.value)) break :blk false;
+                break :blk true;
+            },
+            else => false,
+        };
+    }
+
+    fn entryConditionExpressionSafe(self: *Infer, node_id: graph_mod.GlobalNodeId) bool {
+        if (self.entryOutputExpressionSafe(node_id)) return true;
+        return switch (self.graph.node(node_id).content) {
+            .comparison => |op| self.entryConditionExpressionSafe(op.left) and self.entryConditionExpressionSafe(op.right),
+            .logical_operation => |op| self.entryConditionExpressionSafe(op.left) and self.entryConditionExpressionSafe(op.right),
+            else => false,
+        };
+    }
+
+    fn entryOutputSuffixSafe(self: *Infer, node_id: graph_mod.GlobalNodeId) bool {
+        return switch (self.graph.node(node_id).content) {
+            .return_statement => |ret| ret.expression == null and ret.cleanup.len == 0,
+            .auto_deinit_binding => |id| blk: {
+                const cleanup = self.graph.auto_deinits.items[@intFromEnum(id)];
+                break :blk cleanup.deinit_fn == null and cleanup.fields.len == 0;
+            },
+            else => false,
+        };
+    }
+
+    fn inferEntryOutputBlock(self: *Infer, function_id: graph_mod.GlobalFunctionId, block_id: graph_mod.GlobalBlockId, flow: *EntryOutputFlow, summary: facts.SafetySummary, guards: *std.ArrayList(facts.GuardedSafetyEffects)) anyerror!bool {
+        const block = self.graph.blocks.items[@intFromEnum(block_id)];
+        const nodes = self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len];
+        // Source blocks identify their last statement as ret_val too. Its
+        // ordered effects are handled below; an independent expression result
+        // would require a separate proof before this precision can apply.
+        if (block.ret_val) |value| if (std.mem.indexOfScalar(graph_mod.GlobalNodeId, nodes, value) == null) return false;
+        for (self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len]) |node_id| {
+            if (!flow.reachable) {
+                if (!self.entryOutputSuffixSafe(node_id)) return false;
+                continue;
+            }
+            switch (self.graph.node(node_id).content) {
+                .binding_declaration => |binding| {
+                    const record = self.graph.binding(binding);
+                    if (record.initialization) |value| if (!record.deferred_initialization and !self.entryOutputExpressionSafe(value)) return false;
+                },
+                .assignment => |assignment| {
+                    const output = self.outputIndex(function_id, assignment.binding) orelse return false;
+                    if (!self.entryOutputExpressionSafe(assignment.value)) return false;
+                    // Reassigning an output remains conservative: another
+                    // branch may already have established a different value.
+                    if (flow.initialized[output]) return false;
+                    flow.outputs[output] = try self.inferExpression(function_id, assignment.value);
+                    flow.initialized[output] = true;
+                },
+                .if_statement => |statement| {
+                    if (!self.entryConditionExpressionSafe(statement.condition)) return false;
+                    var left = try flow.clone(self.allocator);
+                    if (!try self.inferEntryOutputBlock(function_id, statement.then_block, &left, summary, guards)) return false;
+                    var right = try flow.clone(self.allocator);
+                    if (statement.else_block) |child| {
+                        if (!try self.inferEntryOutputBlock(function_id, child, &right, summary, guards)) return false;
+                    }
+                    for ([_]EntryOutputFlow{ left, right }) |branch| if (branch.reachable) {
+                        for (branch.initialized) |initialized| if (!initialized) return false;
+                        try self.recordEntryOutputGuard(branch, summary, guards);
+                    };
+                    flow.reachable = false;
+                },
+                .switch_statement => |switch_id| {
+                    const statement = self.graph.switches.items[@intFromEnum(switch_id)];
+                    const paths = try self.inferInputPaths(function_id, statement.expression);
+                    if (paths.len != 1 or paths[0].storage_domain != null) return false;
+                    for (paths[0].projections) |projection| if (projection == .dynamic_index) return false;
+                    const ty = self.inputPathType(function_id, paths[0]) orelse return false;
+                    if (types.variants(self.graph, ty) == null or !statement.exhaustive or statement.default_block != null) return false;
+                    for (self.graph.switch_cases.items[statement.cases.start..][0..statement.cases.len]) |case| {
+                        const variant = self.variantIndex(ty, case.variant) orelse return false;
+                        var branch = try flow.clone(self.allocator);
+                        // Summary input paths address a reference's referent;
+                        // selector coordinates explicitly distinguish its slot.
+                        const input_type = self.graph.fields.items[self.graph.function(function_id).input.start + paths[0].input_index].ty;
+                        const selector_path = if (self.graph.semanticType(input_type) == .pointer)
+                            try std.mem.concat(self.allocator, facts.Projection, &.{ &.{.dereference}, paths[0].projections })
+                        else
+                            paths[0].projections;
+                        branch.conditions = try @import("choice_conditions.zig").conjoin(self.allocator, flow.conditions, try @import("choice_conditions.zig").normalize(self.allocator, &.{.{ .subject = .entry_input, .index = paths[0].input_index, .projections = selector_path, .variant_index = variant }}));
+                        if (!try self.inferEntryOutputBlock(function_id, case.body, &branch, summary, guards)) return false;
+                        if (branch.reachable) {
+                            // A suffix after the switch needs a general
+                            // control-flow join; retain only terminal selections.
+                            var terminal = true;
+                            for (branch.initialized) |initialized| terminal = terminal and initialized;
+                            if (!terminal) return false;
+                            try self.recordEntryOutputGuard(branch, summary, guards);
+                        }
+                    }
+                    // Only final cleanup or bare returns may follow this
+                    // selection. An intervening effect loses the relation.
+                    flow.reachable = false;
+                },
+                .code_block => |child| if (!try self.inferEntryOutputBlock(function_id, child, flow, summary, guards)) return false,
+                .return_statement => |ret| {
+                    if (ret.expression != null or ret.cleanup.len != 0) return false;
+                    try self.recordEntryOutputGuard(flow.*, summary, guards);
+                    flow.reachable = false;
+                },
+                .auto_deinit_binding => |id| {
+                    const cleanup = self.graph.auto_deinits.items[@intFromEnum(id)];
+                    if (cleanup.deinit_fn != null or cleanup.fields.len != 0) return false;
+                },
+                else => return false,
+            }
+        }
+        return true;
     }
 
     fn inferBlock(
@@ -779,6 +1236,16 @@ pub const Infer = struct {
                         try self.place_bindings.put(assignment.binding, try self.inferInputPaths(function_id, assignment.value));
                     }
                 },
+                .struct_field_store => |store| {
+                    const targets = try self.localAddressTargets(store.struct_ptr);
+                    if (targets.len != 0) for (targets) |target| {
+                        try self.storeOutputProjection(function_id, target, &.{.{ .field = store.field_index }}, store.value, outputs);
+                    } else try self.storeOutputProjection(function_id, store.struct_ptr, &.{.{ .field = store.field_index }}, store.value, outputs);
+                },
+                .pointer_assignment => |store| {
+                    for (try self.localAddressTargets(store.pointer)) |target|
+                        try self.storeOutputProjection(function_id, target, &.{}, store.value, outputs);
+                },
                 .if_statement => |statement| {
                     try self.inferBlock(function_id, statement.then_block, outputs);
                     if (statement.else_block) |child| try self.inferBlock(function_id, child, outputs);
@@ -799,7 +1266,7 @@ pub const Infer = struct {
                     }
                     if (statement.default_block) |child| try self.inferBlock(function_id, child, outputs);
                 },
-                .code_block => |child| try self.inferBlock(function_id, child, outputs),
+                .code_block, .value_sequence => |child| try self.inferBlock(function_id, child, outputs),
                 else => {},
             }
         }
@@ -932,6 +1399,10 @@ pub const Infer = struct {
     fn capability_address_targets(self: *Infer, node: graph_mod.GlobalNodeId, flow: *CapabilityFlow) ![]const graph_mod.GlobalNodeId {
         return switch (self.graph.node(node).content) {
             .address_of => |value| self.allocator.dupe(graph_mod.GlobalNodeId, &.{value}),
+            .value_sequence => |block| blk: {
+                const value = self.graph.blocks.items[@intFromEnum(block)].ret_val orelse break :blk &.{};
+                break :blk try self.capability_address_targets(value, flow);
+            },
             .binding_use => |binding| flow.addresses.get(binding) orelse &.{},
             .move_value, .denied_implicit_copy => |value| self.capability_address_targets(value, flow),
             else => &.{},
@@ -981,6 +1452,10 @@ pub const Infer = struct {
             return current;
         }
         return switch (self.graph.node(node).content) {
+            .value_sequence => |block| blk: {
+                const value = self.graph.blocks.items[@intFromEnum(block)].ret_val orelse break :blk .{};
+                break :blk try self.capability_value(function, value, flow);
+            },
             .binding_use => |binding| if (flow.bindings.get(binding)) |value| value else self.inferExpression(function, node),
             .dereference => |read| blk: {
                 const local = try self.capability_address_targets(read.pointer, flow);
@@ -1113,7 +1588,7 @@ pub const Infer = struct {
 
     fn infer_capability_node(self: *Infer, function: graph_mod.GlobalFunctionId, node: graph_mod.GlobalNodeId, flow: *CapabilityFlow, exits: *?CapabilityFlow) anyerror!void {
         const content = self.graph.node(node).content;
-        if (content == .function_call or content == .virtual_call or content == .type_initializer) {
+        if (content == .function_call or content == .virtual_call) {
             // Block result expressions can reference an already evaluated call
             // node. Codegen caches that value; do not consume it a second time.
             if (flow.calls.contains(node)) return;
@@ -1134,6 +1609,7 @@ pub const Infer = struct {
                 try flow.addresses.put(assignment.binding, try self.capability_address_targets(assignment.value, flow));
             },
             .function_call => |call| {
+                if (call.callee_value) |value| try self.infer_capability_node(function, value, flow, exits);
                 try self.infer_capability_node(function, call.input, flow, exits);
                 if (self.structArguments(call.input)) |arguments| try self.infer_capability_call(function, call.callee, arguments, flow);
             },
@@ -1143,10 +1619,7 @@ pub const Infer = struct {
                 const summary = try self.virtualSummary(call.safety_methods) orelse return;
                 if (self.structArguments(call.input)) |arguments| try self.substitute_capability_uses(function, summary, arguments, flow);
             },
-            .type_initializer => |initializer| {
-                try self.infer_capability_node(function, initializer.args, flow, exits);
-                try self.infer_capability_call(function, initializer.init_fn, try self.initializerArguments(initializer.args), flow);
-            },
+
             .if_statement => |branch| {
                 try self.infer_capability_node(function, branch.condition, flow, exits);
                 var left = try flow.clone(self.allocator);
@@ -1284,11 +1757,13 @@ pub const Infer = struct {
                 for (self.graph.node_refs.items[context.cleanup_nodes.start..][0..context.cleanup_nodes.len]) |value| try self.infer_capability_node(function, value, flow, exits);
             },
             .auto_deinit_binding => |id| {
+                if (self.cleanup) |active| if (!active.roots.contains(id)) return;
                 const cleanup = self.graph.auto_deinits.items[@intFromEnum(id)];
                 if (cleanup.input) |input| {
                     try self.infer_capability_node(function, input, flow, exits);
                     if (cleanup.deinit_fn) |callee| if (self.structArguments(input)) |arguments| try self.infer_capability_call(function, callee, arguments, flow);
                 }
+                try self.infer_cleanup_capabilities(function, cleanup.fields, flow, exits);
             },
             .return_statement => |ret| {
                 if (ret.expression) |value| try self.infer_capability_node(function, value, flow, exits);
@@ -1307,7 +1782,7 @@ pub const Infer = struct {
                 flow.reachable = false;
                 flow.breaks_loop = true;
             },
-            .code_block => |block| try self.infer_capability_block(function, block, flow, exits),
+            .code_block, .value_sequence => |block| try self.infer_capability_block(function, block, flow, exits),
             .move_value, .denied_implicit_copy, .address_of => |value| try self.infer_capability_node(function, value, flow, exits),
             .dereference => |read| try self.infer_capability_node(function, read.pointer, flow, exits),
             .struct_field_access => |field| try self.infer_capability_node(function, field.value, flow, exits),
@@ -1335,6 +1810,12 @@ pub const Infer = struct {
     }
 
     fn mark_unavailable_fresh_storage(self: *Infer, effect: facts.ValueEffect, counts: []const CapabilityCount) anyerror!facts.ValueEffect {
+        // Input-capability consumption cannot change availability of fresh
+        // storage. Preserve the immutable tree when this pass has no updates.
+        const consumes_fresh = for (counts) |count| {
+            if (count.source == .fresh and count.maximum != 0) break true;
+        } else false;
+        if (!consumes_fresh) return effect;
         var result = effect;
         var unavailable = std.array_list.Managed(facts.FreshStorageCapabilityState).init(self.allocator);
         try unavailable.appendSlice(effect.unavailable_fresh_storage);
@@ -1370,6 +1851,37 @@ pub const Infer = struct {
         return result;
     }
 
+    fn infer_cleanup_capabilities(self: *Infer, function: graph_mod.GlobalFunctionId, fields: primitives.Range(graph_mod.GlobalAutoDeinitFieldId), flow: *CapabilityFlow, exits: *?CapabilityFlow) anyerror!void {
+        const children = self.graph.auto_deinit_fields.items[fields.start..][0..fields.len];
+        if (children.len != 0 and children[0].is_variant) {
+            var joined = try flow.clone(self.allocator);
+            defer joined.deinit();
+            for (children, 0..) |field, index| {
+                if (self.cleanup) |active| if (!active.fields.contains(@enumFromInt(fields.start + @as(u32, @intCast(index))))) continue;
+                var branch = try flow.clone(self.allocator);
+                defer branch.deinit();
+                try self.infer_cleanup_capability_field(function, field, &branch, exits);
+                // Payload alternatives are mutually exclusive. Taking the
+                // maximum use count must not add their consumptions together.
+                try self.join_capability_flows(&joined, &joined, &branch);
+            }
+            try self.join_capability_flows(flow, &joined, &joined);
+            return;
+        }
+        for (children, 0..) |field, index| {
+            if (self.cleanup) |active| if (!active.fields.contains(@enumFromInt(fields.start + @as(u32, @intCast(index))))) continue;
+            try self.infer_cleanup_capability_field(function, field, flow, exits);
+        }
+    }
+
+    fn infer_cleanup_capability_field(self: *Infer, function: graph_mod.GlobalFunctionId, field: graph_mod.AutoDeinitField, flow: *CapabilityFlow, exits: *?CapabilityFlow) anyerror!void {
+        if (field.input) |input| {
+            try self.infer_capability_node(function, input, flow, exits);
+            if (field.deinit_fn) |callee| if (self.structArguments(input)) |arguments| try self.infer_capability_call(function, callee, arguments, flow);
+        }
+        try self.infer_cleanup_capabilities(function, field.fields, flow, exits);
+    }
+
     const SymbolicInputOverride = struct {
         input_index: u32,
         effect: facts.ValueEffect,
@@ -1379,200 +1891,32 @@ pub const Infer = struct {
         states: std.array_list.Managed(facts.PlacePostState),
         reachable: bool = true,
         outcome_variant: ?u32 = null,
+        outcome_parent_mismatch: bool = false,
+        domains: std.array_list.Managed(facts.InputDomain),
 
         fn init(allocator: std.mem.Allocator) InputPostStateFlow {
-            return .{ .states = std.array_list.Managed(facts.PlacePostState).init(allocator) };
+            return .{ .states = std.array_list.Managed(facts.PlacePostState).init(allocator), .domains = std.array_list.Managed(facts.InputDomain).init(allocator) };
         }
 
         fn deinit(self: *InputPostStateFlow) void {
             self.states.deinit();
+            self.domains.deinit();
         }
 
         fn clone(self: *const InputPostStateFlow, allocator: std.mem.Allocator) !InputPostStateFlow {
             var states = std.array_list.Managed(facts.PlacePostState).init(allocator);
             try states.appendSlice(self.states.items);
-            return .{ .states = states, .reachable = self.reachable, .outcome_variant = self.outcome_variant };
+            var domains = std.array_list.Managed(facts.InputDomain).init(allocator);
+            try domains.appendSlice(self.domains.items);
+            return .{ .states = states, .domains = domains, .reachable = self.reachable, .outcome_variant = self.outcome_variant, .outcome_parent_mismatch = self.outcome_parent_mismatch };
         }
     };
-
-    const OutcomeFlowSet = struct {
-        flows: std.array_list.Managed(InputPostStateFlow),
-
-        fn init(allocator: std.mem.Allocator) OutcomeFlowSet {
-            return .{ .flows = std.array_list.Managed(InputPostStateFlow).init(allocator) };
-        }
-
-        fn deinit(self: *OutcomeFlowSet) void {
-            for (self.flows.items) |*flow| flow.deinit();
-            self.flows.deinit();
-        }
-    };
-
-    fn isFallibleInitializer(self: *Infer, function_id: graph_mod.GlobalFunctionId) bool {
-        const function = self.graph.function(function_id);
-        if (function.input.len == 0 or function.output.len != 1) return false;
-        if (!std.mem.eql(u8, self.graph.text(self.graph.declaration(function.declaration).name), "init")) return false;
-        const destination = self.graph.semanticType(self.graph.fields.items[function.input.start].ty);
-        if (destination != .pointer or destination.pointer.mutability != .read_write) return false;
-        return initializer_contract.classify(self.graph, function_id) == .fallible;
-    }
-
-    fn inferInitializerOutcomePostStates(
-        self: *Infer,
-        function_id: graph_mod.GlobalFunctionId,
-        body: graph_mod.GlobalBlockId,
-    ) ![]const facts.OutcomePostStates {
-        const function = self.graph.function(function_id);
-        const result_ty = self.graph.fields.items[function.output.start].ty;
-        const ok = types.findVariant(self.graph, result_ty, "ok") orelse return error.InvalidInitializerResult;
-        const failure = types.findVariant(self.graph, result_ty, "error") orelse return error.InvalidInitializerResult;
-        const output_binding = self.graph.binding_refs.items[function.output_bindings.start];
-        var initial = InputPostStateFlow.init(self.allocator);
-        defer initial.deinit();
-        try initial.states.append(.{ .target = .{ .input_index = 0 }, .initializedness = .deinitialized });
-        var exits = [_]?std.array_list.Managed(facts.PlacePostState){ null, null };
-        defer for (&exits) |*entry| if (entry.*) |*states| states.deinit();
-        var remaining = try self.inferOutcomeBlock(function_id, body, output_binding, initial, .{ ok.index, failure.index }, &exits);
-        defer remaining.deinit();
-        for (remaining.flows.items) |*flow|
-            try self.recordOutcomeExit(flow, .{ ok.index, failure.index }, &exits);
-        var results = std.array_list.Managed(facts.OutcomePostStates).init(self.allocator);
-        for (exits, 0..) |entry, index| if (entry) |states| {
-            try results.append(.{
-                .variant_index = if (index == 0) ok.index else failure.index,
-                .input_post_states = try self.allocator.dupe(facts.PlacePostState, states.items),
-            });
-        };
-        return results.toOwnedSlice();
-    }
-
-    fn recordOutcomeExit(
-        self: *Infer,
-        flow: *const InputPostStateFlow,
-        variants: [2]u32,
-        exits: *[2]?std.array_list.Managed(facts.PlacePostState),
-    ) !void {
-        if (!flow.reachable) return;
-        for (variants, 0..) |variant, index| {
-            if (flow.outcome_variant != null and flow.outcome_variant.? != variant) continue;
-            try self.recordInputPostStateExit(&exits[index], &flow.states);
-        }
-    }
-
-    fn appendOutcomeFlow(self: *Infer, set: *OutcomeFlowSet, source: *const InputPostStateFlow) !void {
-        if (!source.reachable) return;
-        for (set.flows.items) |*existing| if (existing.outcome_variant == source.outcome_variant) {
-            var merged = std.array_list.Managed(facts.PlacePostState).init(self.allocator);
-            defer merged.deinit();
-            try self.joinInputPostStates(&merged, &existing.states, &source.states);
-            existing.states.clearRetainingCapacity();
-            try existing.states.appendSlice(merged.items);
-            return;
-        };
-        try set.flows.append(try source.clone(self.allocator));
-    }
-
-    fn inferOutcomeBlock(
-        self: *Infer,
-        function_id: graph_mod.GlobalFunctionId,
-        block_id: graph_mod.GlobalBlockId,
-        output_binding: graph_mod.GlobalBindingId,
-        initial: InputPostStateFlow,
-        variants: [2]u32,
-        exits: *[2]?std.array_list.Managed(facts.PlacePostState),
-    ) anyerror!OutcomeFlowSet {
-        var active = OutcomeFlowSet.init(self.allocator);
-        try self.appendOutcomeFlow(&active, &initial);
-        const block = self.graph.blocks.items[@intFromEnum(block_id)];
-        for (self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len]) |node_id| {
-            var next = OutcomeFlowSet.init(self.allocator);
-            errdefer next.deinit();
-            const node = self.graph.node(node_id);
-            for (active.flows.items) |*flow| {
-                var branch = try flow.clone(self.allocator);
-                defer branch.deinit();
-                var early_exits: ?std.array_list.Managed(facts.PlacePostState) = null;
-                defer if (early_exits) |*states| states.deinit();
-                switch (node.content) {
-                    .if_statement => |statement| {
-                        try self.inferInputPostStatesExpression(function_id, statement.condition, &branch.states, &early_exits);
-                        var then_flows = try self.inferOutcomeBlock(function_id, statement.then_block, output_binding, branch, variants, exits);
-                        defer then_flows.deinit();
-                        for (then_flows.flows.items) |*child| try self.appendOutcomeFlow(&next, child);
-                        if (statement.else_block) |else_block| {
-                            var else_flows = try self.inferOutcomeBlock(function_id, else_block, output_binding, branch, variants, exits);
-                            defer else_flows.deinit();
-                            for (else_flows.flows.items) |*child| try self.appendOutcomeFlow(&next, child);
-                        } else try self.appendOutcomeFlow(&next, &branch);
-                    },
-                    .switch_statement => |switch_id| {
-                        const statement = self.graph.switches.items[@intFromEnum(switch_id)];
-                        try self.inferInputPostStatesExpression(function_id, statement.expression, &branch.states, &early_exits);
-                        for (self.graph.switch_cases.items[statement.cases.start..][0..statement.cases.len]) |case| {
-                            var child_flows = try self.inferOutcomeBlock(function_id, case.body, output_binding, branch, variants, exits);
-                            defer child_flows.deinit();
-                            for (child_flows.flows.items) |*child| try self.appendOutcomeFlow(&next, child);
-                        }
-                        if (statement.default_block) |default_block| {
-                            var child_flows = try self.inferOutcomeBlock(function_id, default_block, output_binding, branch, variants, exits);
-                            defer child_flows.deinit();
-                            for (child_flows.flows.items) |*child| try self.appendOutcomeFlow(&next, child);
-                        } else if (!statement.exhaustive) try self.appendOutcomeFlow(&next, &branch);
-                    },
-                    .code_block => |child| {
-                        var children = try self.inferOutcomeBlock(function_id, child, output_binding, branch, variants, exits);
-                        defer children.deinit();
-                        for (children.flows.items) |*child_flow| try self.appendOutcomeFlow(&next, child_flow);
-                    },
-                    .return_statement => |statement| {
-                        if (statement.expression) |expression| {
-                            try self.inferInputPostStatesExpression(function_id, expression, &branch.states, &early_exits);
-                            branch.outcome_variant = (try self.inferExpression(function_id, expression)).known_choice_variant;
-                        }
-                        try self.inferInputPostStatesRange(function_id, statement.cleanup, &branch, &early_exits);
-                        try self.recordOutcomeExit(&branch, variants, exits);
-                    },
-                    else => {
-                        try self.inferInputPostStatesNode(function_id, node_id, &branch, &early_exits);
-                        // The ordinary loop transfer joins iterations without
-                        // retaining which result variant each iteration chose.
-                        // Both outcomes must therefore satisfy the contract.
-                        if (node.content == .while_statement or node.content == .for_statement)
-                            branch.outcome_variant = null;
-                        if (node.content == .assignment and node.content.assignment.binding == output_binding)
-                            branch.outcome_variant = (try self.inferExpression(function_id, node.content.assignment.value)).known_choice_variant;
-                        try self.appendOutcomeFlow(&next, &branch);
-                    },
-                }
-                if (early_exits) |states| {
-                    var early = InputPostStateFlow.init(self.allocator);
-                    defer early.deinit();
-                    try early.states.appendSlice(states.items);
-                    early.outcome_variant = variants[1];
-                    try self.recordOutcomeExit(&early, variants, exits);
-                }
-            }
-            active.deinit();
-            active = next;
-        }
-        if (block.ret_val) |value| for (active.flows.items) |*flow| {
-            var early_exits: ?std.array_list.Managed(facts.PlacePostState) = null;
-            defer if (early_exits) |*states| states.deinit();
-            try self.inferInputPostStatesExpression(function_id, value, &flow.states, &early_exits);
-            if (early_exits) |states| {
-                var early = InputPostStateFlow.init(self.allocator);
-                defer early.deinit();
-                try early.states.appendSlice(states.items);
-                early.outcome_variant = variants[1];
-                try self.recordOutcomeExit(&early, variants, exits);
-            }
-        };
-        return active;
-    }
 
     const OpaqueEmptyState = struct {
         emptied: std.array_list.Managed(facts.InputPath),
         reachable: bool = true,
+        outcome_variant: ?u32 = null,
+        outcome_parent_mismatch: bool = false,
 
         fn init(allocator: std.mem.Allocator) OpaqueEmptyState {
             return .{ .emptied = std.array_list.Managed(facts.InputPath).init(allocator) };
@@ -1587,6 +1931,8 @@ pub const Infer = struct {
             errdefer result.deinit();
             try result.emptied.appendSlice(self.emptied.items);
             result.reachable = self.reachable;
+            result.outcome_variant = self.outcome_variant;
+            result.outcome_parent_mismatch = self.outcome_parent_mismatch;
             return result;
         }
     };
@@ -1598,6 +1944,9 @@ pub const Infer = struct {
         flow: *InputPostStateFlow,
         exits: *?std.array_list.Managed(facts.PlacePostState),
     ) anyerror!void {
+        const previous_sink = self.post_domain_sink;
+        self.post_domain_sink = &flow.domains;
+        defer self.post_domain_sink = previous_sink;
         const block = self.graph.blocks.items[@intFromEnum(block_id)];
         for (self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len]) |node_id| {
             if (!flow.reachable) break;
@@ -1622,14 +1971,31 @@ pub const Infer = struct {
                 if (!record.deferred_initialization) if (record.initialization) |initialization|
                     try self.inferInputPostStatesExpression(function_id, initialization, states, exits);
             },
-            .assignment => |assignment| try self.inferInputPostStatesExpression(function_id, assignment.value, states, exits),
+            .assignment => |assignment| {
+                const previous_forwarded = self.forwarded_outcome;
+                const previous_leaf = self.forwarded_leaf_selected;
+                defer self.forwarded_outcome = previous_forwarded;
+                defer self.forwarded_leaf_selected = previous_leaf;
+                self.forwarded_outcome = null;
+                self.forwarded_leaf_selected = false;
+                try self.inferInputPostStatesExpression(function_id, assignment.value, states, exits);
+                if (self.selected_outcome) |selected| if (self.outputIndex(function_id, assignment.binding)) |index| {
+                    if (index == selected.output_index) {
+                        const known = try self.knownOutcome(try self.inferExpression(function_id, assignment.value), selected.parent_variants);
+                        flow.outcome_parent_mismatch = known.mismatch;
+                        const origin = try self.expressionForwardOrigin(assignment.value);
+                        const selected_origin = if (self.selected_forward) |forwarded| if (origin) |actual| actual.call == forwarded.call and actual.output_index == forwarded.selector.output_index else false else false;
+                        flow.outcome_variant = if (selected_origin and self.selected_forward_applied and !known.mismatch) selected.variant_index else known.variant;
+                    }
+                };
+            },
             .function_call, .virtual_call => try self.inferInputPostStatesExpression(function_id, node_id, states, exits),
             .pointer_assignment => |assignment| {
                 try self.inferInputPostStatesExpression(function_id, assignment.pointer, states, exits);
                 try self.inferInputPostStatesExpression(function_id, assignment.value, states, exits);
                 try self.recordInputPostState(
                     states,
-                    try self.inferInputPaths(function_id, assignment.pointer),
+                    try self.inferPointeePaths(function_id, assignment.pointer),
                     .initialized,
                     try self.inferExpression(function_id, assignment.value),
                     false,
@@ -1692,22 +2058,48 @@ pub const Infer = struct {
             },
             .while_statement => |statement| {
                 try self.inferInputPostStatesExpression(function_id, statement.condition, states, exits);
+                var transfers = InputPostStateFlow.init(self.allocator);
+                defer transfers.deinit();
+                const previous_loop = self.loop_post_effects;
+                self.loop_post_effects = &transfers;
+                defer self.loop_post_effects = previous_loop;
                 var body_flow = try flow.clone(self.allocator);
                 defer body_flow.deinit();
                 try self.inferInputPostStates(function_id, statement.body, &body_flow, exits);
+                try self.joinInputPostStates(&body_flow.states, &body_flow.states, &transfers.states);
                 try self.joinInputPostStates(states, states, &body_flow.states);
+                for (body_flow.domains.items) |domain| try appendDomain(&flow.domains, domain);
+                for (transfers.domains.items) |domain| try appendDomain(&flow.domains, domain);
+                flow.outcome_variant = null;
+                flow.outcome_parent_mismatch = false;
             },
             .for_statement => |statement| {
                 if (statement.init) |initialization|
                     try self.inferInputPostStatesNode(function_id, initialization, flow, exits);
                 if (!flow.reachable) return;
                 try self.inferInputPostStatesExpression(function_id, statement.condition, states, exits);
+                var transfers = InputPostStateFlow.init(self.allocator);
+                defer transfers.deinit();
+                const previous_loop = self.loop_post_effects;
+                self.loop_post_effects = &transfers;
+                defer self.loop_post_effects = previous_loop;
                 var body_flow = try flow.clone(self.allocator);
                 defer body_flow.deinit();
                 try self.inferInputPostStates(function_id, statement.body, &body_flow, exits);
-                if (body_flow.reachable) if (statement.increment) |increment|
+                if (statement.increment) |increment| {
+                    // A continue still executes the increment. Joining it for
+                    // every loop alternative is conservative for break paths.
+                    const previous_sink = self.post_domain_sink;
+                    self.post_domain_sink = &body_flow.domains;
+                    defer self.post_domain_sink = previous_sink;
                     try self.inferInputPostStatesNode(function_id, increment, &body_flow, exits);
+                }
+                try self.joinInputPostStates(&body_flow.states, &body_flow.states, &transfers.states);
                 try self.joinInputPostStates(states, states, &body_flow.states);
+                for (body_flow.domains.items) |domain| try appendDomain(&flow.domains, domain);
+                for (transfers.domains.items) |domain| try appendDomain(&flow.domains, domain);
+                flow.outcome_variant = null;
+                flow.outcome_parent_mismatch = false;
             },
             .switch_statement => |switch_id| {
                 const statement = self.graph.switches.items[@intFromEnum(switch_id)];
@@ -1738,11 +2130,18 @@ pub const Infer = struct {
                 if (statement.expression) |expression|
                     try self.inferInputPostStatesExpression(function_id, expression, states, exits);
                 try self.inferInputPostStatesRange(function_id, statement.cleanup, flow, exits);
-                if (flow.reachable) try self.recordInputPostStateExit(exits, states);
+                if (flow.reachable) try self.recordOutcomeExit(exits, flow);
                 flow.reachable = false;
             },
-            .code_block => |child| try self.inferInputPostStates(function_id, child, flow, exits),
-            .break_statement, .continue_statement, .abort_statement => flow.reachable = false,
+            .code_block, .value_sequence => |child| try self.inferInputPostStates(function_id, child, flow, exits),
+            .break_statement, .continue_statement => {
+                if (self.loop_post_effects) |transfers| {
+                    try self.joinInputPostStates(&transfers.states, &transfers.states, states);
+                    for (flow.domains.items) |domain| try appendDomain(&transfers.domains, domain);
+                }
+                flow.reachable = false;
+            },
+            .abort_statement => flow.reachable = false,
             .auto_deinit_binding => |auto_id| try self.applyAutoDeinitInputPostStates(function_id, auto_id, states),
             else => try self.inferInputPostStatesExpression(function_id, node_id, states, exits),
         }
@@ -1755,6 +2154,9 @@ pub const Infer = struct {
         flow: *InputPostStateFlow,
         exits: *?std.array_list.Managed(facts.PlacePostState),
     ) anyerror!void {
+        const previous_sink = self.post_domain_sink;
+        self.post_domain_sink = &flow.domains;
+        defer self.post_domain_sink = previous_sink;
         for (self.graph.node_refs.items[range.start..][0..range.len]) |node| {
             if (!flow.reachable) break;
             try self.inferInputPostStatesNode(function_id, node, flow, exits);
@@ -1770,7 +2172,21 @@ pub const Infer = struct {
     ) anyerror!void {
         const node = self.graph.node(node_id);
         switch (node.content) {
-            .move_value, .denied_implicit_copy, .address_of => |value| try self.inferInputPostStatesExpression(function_id, value, states, exits),
+            .value_sequence => |block| {
+                var flow = InputPostStateFlow.init(self.allocator);
+                flow.states.deinit();
+                flow.states = states.*;
+                defer states.* = flow.states;
+                defer flow.domains.deinit();
+                if (self.post_domain_sink) |sink| try flow.domains.appendSlice(sink.items);
+                try self.inferInputPostStates(function_id, block, &flow, exits);
+                if (self.post_domain_sink) |sink| for (flow.domains.items) |domain| try appendDomain(sink, domain);
+            },
+            .move_value, .denied_implicit_copy => |value| try self.inferInputPostStatesExpression(function_id, value, states, exits),
+            .address_of => |value| {
+                try self.markAddressedOutput(function_id, value);
+                try self.inferInputPostStatesExpression(function_id, value, states, exits);
+            },
             .dereference => |value| try self.inferInputPostStatesExpression(function_id, value.pointer, states, exits),
             .struct_value_literal => |literal| {
                 for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |field|
@@ -1785,8 +2201,17 @@ pub const Infer = struct {
                     try self.inferInputPostStatesExpression(function_id, element, states, exits);
             },
             .choice_literal => |literal| {
-                if (literal.payload) |payload|
-                    try self.inferInputPostStatesExpression(function_id, payload, states, exits);
+                const forwarded = self.forwarded_outcome;
+                defer self.forwarded_outcome = forwarded;
+                self.forwarded_outcome = null;
+                if (forwarded) |selector| if (selector.parent_variants.len != 0) {
+                    if ((self.variantIndex(literal.choice_type, literal.variant) orelse 0) == selector.parent_variants[0]) {
+                        var inner = selector;
+                        inner.parent_variants = inner.parent_variants[1..];
+                        self.forwarded_outcome = inner;
+                    }
+                };
+                if (literal.payload) |payload| try self.inferInputPostStatesExpression(function_id, payload, states, exits);
             },
             .struct_field_access => |access| try self.inferInputPostStatesExpression(function_id, access.value, states, exits),
             .choice_payload_access => |access| try self.inferInputPostStatesExpression(function_id, access.value, states, exits),
@@ -1824,11 +2249,9 @@ pub const Infer = struct {
                 var error_flow = InputPostStateFlow.init(self.allocator);
                 defer error_flow.deinit();
                 try error_flow.states.appendSlice(states.items);
-                for (self.graph.node_refs.items[propagation.cleanup_nodes.start..][0..propagation.cleanup_nodes.len]) |cleanup| {
-                    if (!error_flow.reachable) break;
-                    try self.inferInputPostStatesNode(function_id, cleanup, &error_flow, exits);
-                }
-                if (error_flow.reachable) try self.recordInputPostStateExit(exits, &error_flow.states);
+                if (self.post_domain_sink) |sink| try error_flow.domains.appendSlice(sink.items);
+                try self.inferInputPostStatesRange(function_id, propagation.cleanup_nodes, &error_flow, exits);
+                if (error_flow.reachable) try self.recordOutcomeExit(exits, &error_flow);
             },
             .error_context => |context_id| {
                 const context = self.graph.error_contexts.items[@intFromEnum(context_id)];
@@ -1836,23 +2259,42 @@ pub const Infer = struct {
                 var error_flow = InputPostStateFlow.init(self.allocator);
                 defer error_flow.deinit();
                 try error_flow.states.appendSlice(states.items);
+                if (self.post_domain_sink) |sink| try error_flow.domains.appendSlice(sink.items);
                 try self.inferInputPostStatesExpression(function_id, context.context, &error_flow.states, exits);
-                for (self.graph.node_refs.items[context.cleanup_nodes.start..][0..context.cleanup_nodes.len]) |cleanup| {
-                    if (!error_flow.reachable) break;
-                    try self.inferInputPostStatesNode(function_id, cleanup, &error_flow, exits);
-                }
-                if (error_flow.reachable) try self.recordInputPostStateExit(exits, &error_flow.states);
+                try self.inferInputPostStatesRange(function_id, context.cleanup_nodes, &error_flow, exits);
+                if (error_flow.reachable) try self.recordOutcomeExit(exits, &error_flow);
             },
             .function_call => |call| {
+                const forwarded = self.forwarded_outcome;
+                self.forwarded_outcome = null;
+                if (call.callee_value) |value| try self.inferInputPostStatesExpression(function_id, value, states, exits);
                 try self.inferInputPostStatesExpression(function_id, call.input, states, exits);
+                self.forwarded_outcome = if (self.selected_forward) |origin| if (origin.call == node_id) origin.selector else forwarded else forwarded;
+                const previous_leaf = self.forwarded_leaf_selected;
+                self.forwarded_leaf_selected = false;
                 try self.applyInputPostStatesFromFunctionCall(function_id, call.callee, call.input, states);
+                if (self.selected_forward) |origin| if (origin.call == node_id and self.forwarded_leaf_selected) {
+                    self.selected_forward_applied = true;
+                };
+                self.forwarded_leaf_selected = previous_leaf;
+                self.forwarded_outcome = forwarded;
             },
             .virtual_call => |virtual_call_id| {
                 const call = self.graph.virtual_calls.items[@intFromEnum(virtual_call_id)];
+                const forwarded = self.forwarded_outcome;
+                self.forwarded_outcome = null;
                 try self.inferInputPostStatesExpression(function_id, call.handle, states, exits);
                 try self.inferInputPostStatesExpression(function_id, call.input, states, exits);
+                self.forwarded_outcome = if (self.selected_forward) |origin| if (origin.call == node_id) origin.selector else forwarded else forwarded;
+                const previous_leaf = self.forwarded_leaf_selected;
+                self.forwarded_leaf_selected = false;
                 if (try self.virtualSummary(call.safety_methods)) |summary|
                     try self.applyInputPostStatesFromSummary(function_id, summary, call.input, states, null);
+                if (self.selected_forward) |origin| if (origin.call == node_id and self.forwarded_leaf_selected) {
+                    self.selected_forward_applied = true;
+                };
+                self.forwarded_leaf_selected = previous_leaf;
+                self.forwarded_outcome = forwarded;
             },
             .virtualize => |virtualize_id| try self.inferInputPostStatesExpression(
                 function_id,
@@ -1860,11 +2302,7 @@ pub const Infer = struct {
                 states,
                 exits,
             ),
-            .type_initializer => |initializer| {
-                try self.inferInputPostStatesExpression(function_id, initializer.args, states, exits);
-                const summary = self.engine.summaryFor(initializer.init_fn) orelse return;
-                try self.applyInputPostStatesFromArguments(function_id, summary, try self.initializerArguments(initializer.args), states, .{ .input_index = 0, .effect = .{} });
-            },
+
             else => {},
         }
     }
@@ -1934,6 +2372,45 @@ pub const Infer = struct {
         try self.applyInputPostStatesFromSummary(function_id, summary, input, states, null);
     }
 
+    fn selectForwardedEffects(self: *Infer, summary: facts.SafetySummary, selected: facts.OutcomePostStates) !facts.SafetySummary {
+        var result = summary;
+        result.opaque_storage_empties = try std.mem.concat(self.allocator, facts.InputPath, &.{ summary.opaque_storage_empties, selected.opaque_storage_empties });
+        if (summary.outputs.len == 1) {
+            result.input_post_states = selected.input_post_states;
+            result.invalidated_domains = selected.invalidated_domains;
+            return result;
+        }
+        // One output can refine only its own effects. Retain the may-union for
+        // unrelated outputs and shared targets instead of inventing correlation.
+        var states = std.array_list.Managed(facts.PlacePostState).init(self.allocator);
+        for (summary.input_post_states) |state| {
+            var governed = false;
+            var shared = false;
+            for (summary.outcome_post_states) |outcome| {
+                if (self.findInputPostState(outcome.input_post_states, state.target) == null) continue;
+                if (outcome.output_index == selected.output_index) governed = true else shared = true;
+            }
+            if (!governed or shared) try states.append(state);
+        }
+        for (selected.input_post_states) |state| {
+            if (self.findInputPostState(states.items, state.target) == null) try states.append(state);
+        }
+        var domains = std.array_list.Managed(facts.InputDomain).init(self.allocator);
+        for (summary.invalidated_domains) |domain| {
+            var governed = false;
+            var shared = false;
+            for (summary.outcome_post_states) |outcome| for (outcome.invalidated_domains) |effect| {
+                if (effect.domain_index != domain.domain_index or !self.inputPathEqual(effect.path, domain.path)) continue;
+                if (outcome.output_index == selected.output_index) governed = true else shared = true;
+            };
+            if (!governed or shared) try appendDomain(&domains, domain);
+        }
+        for (selected.invalidated_domains) |domain| try appendDomain(&domains, domain);
+        result.input_post_states = try states.toOwnedSlice();
+        result.invalidated_domains = try domains.toOwnedSlice();
+        return result;
+    }
+
     fn applyInputPostStatesFromSummary(
         self: *Infer,
         function_id: graph_mod.GlobalFunctionId,
@@ -1943,7 +2420,19 @@ pub const Infer = struct {
         override: ?SymbolicInputOverride,
     ) !void {
         const arguments = self.structArguments(input) orelse return;
-        try self.applyInputPostStatesFromArguments(function_id, summary, arguments, states, override);
+        var selected = summary;
+        if (self.forwarded_outcome) |selector| {
+            // Forwarding a single choice keeps one selector. No correlation is
+            // inferred merely because unrelated outputs use the same tag names.
+            for (summary.outcome_post_states) |outcome| {
+                if (outcome.output_index == selector.output_index and outcome.variant_index == selector.variant_index and std.mem.eql(u32, outcome.parent_variants, selector.parent_variants)) {
+                    self.forwarded_leaf_selected = true;
+                    selected = try self.selectForwardedEffects(summary, outcome);
+                    break;
+                }
+            }
+        }
+        try self.applyInputPostStatesFromArguments(function_id, selected, arguments, states, override);
     }
 
     fn applyInputPostStatesFromArguments(
@@ -1954,13 +2443,30 @@ pub const Infer = struct {
         states: *std.array_list.Managed(facts.PlacePostState),
         override: ?SymbolicInputOverride,
     ) !void {
+        for (summary.invalidated_domains) |domain| {
+            var resolved = false;
+            if (domain.path.input_index < arguments.len) {
+                const argument = arguments[domain.path.input_index].value;
+                const value = (try self.localPointeeEffect(function_id, argument)) orelse try self.inferExpression(function_id, argument);
+                for (value.domain_values) |mapped| if (mapped.domain_index == domain.domain_index) {
+                    try self.recordInputPostState(states, mapped.value.input_generation_dependencies, .initialized, .{}, false, true, false, false);
+                    for (mapped.value.input_domains) |input| try appendDomain(self.post_domain_sink orelse &self.domain_invalidations, input);
+                    resolved = true;
+                };
+            }
+            if (!resolved) {
+                const paths = try self.substituteRequiredInputPath(function_id, domain.path, arguments, override);
+                for (paths) |path| try appendDomain(self.post_domain_sink orelse &self.domain_invalidations, .{ .path = path, .domain_index = domain.domain_index });
+            }
+        }
         for (summary.input_post_states) |post_state| {
             if (post_state.target.input_index >= arguments.len) continue;
-            const targets = try self.substituteRequiredInputPath(
+            const targets = try self.substituteInputPath(
                 function_id,
                 post_state.target,
                 arguments,
                 override,
+                .place,
             );
             if (post_state.opaque_ownership != .none) {
                 const storage = if (post_state.opaque_storage) |opaque_storage| blk: {
@@ -2006,6 +2512,7 @@ pub const Infer = struct {
         auto_id: graph_mod.GlobalAutoDeinitId,
         states: *std.array_list.Managed(facts.PlacePostState),
     ) !void {
+        if (self.cleanup) |active| if (!active.roots.contains(auto_id)) return;
         const cleanup = self.graph.auto_deinits.items[@intFromEnum(auto_id)];
         const binding_effect = self.bindings.get(cleanup.binding);
         if (cleanup.deinit_fn) |deinit_fn| if (cleanup.input) |input| {
@@ -2029,8 +2536,15 @@ pub const Infer = struct {
         states: *std.array_list.Managed(facts.PlacePostState),
         parent_effect: facts.ValueEffect,
     ) !void {
-        for (self.graph.auto_deinit_fields.items[field_range.start..][0..field_range.len]) |field| {
-            const field_effect = try self.projectValueEffect(parent_effect, .{ .field = field.field_index });
+        for (self.graph.auto_deinit_fields.items[field_range.start..][0..field_range.len], 0..) |field, index| {
+            if (self.cleanup) |active| if (!active.fields.contains(@enumFromInt(field_range.start + @as(u32, @intCast(index))))) continue;
+            if (field.is_variant) if (parent_effect.known_choice_variant) |active| {
+                if (active != field.field_index) continue;
+            };
+            const field_effect = try self.projectValueEffect(parent_effect, if (field.is_variant)
+                .{ .variant = field.field_index }
+            else
+                .{ .field = field.field_index });
             if (field.deinit_fn) |deinit_fn| if (field.input) |input| {
                 if (self.engine.summaryFor(deinit_fn)) |summary|
                     try self.applyInputPostStatesFromSummary(
@@ -2135,7 +2649,9 @@ pub const Infer = struct {
                     left_state.may_repopulate_opaque_storage or right_state.may_repopulate_opaque_storage;
                 self.joinOpaqueOwnershipEffect(&merged, left_state, right_state);
             } else {
-                if (left_state.initializedness != .initialized) {
+                // An untouched relocation destination remains available. It
+                // contributes no initialized value to the joined post-state.
+                if (left_state.initializedness != .initialized or left_state.requires_available_destination) {
                     merged.initializedness = .maybe_initialized;
                 } else {
                     merged.value = try self.mergeValueEffects(
@@ -2155,7 +2671,7 @@ pub const Infer = struct {
         for (right.items) |right_state| {
             if (self.findInputPostState(left.items, right_state.target) != null) continue;
             var merged = right_state;
-            if (right_state.initializedness != .initialized) {
+            if (right_state.initializedness != .initialized or right_state.requires_available_destination) {
                 merged.initializedness = .maybe_initialized;
             } else {
                 merged.value = try self.mergeValueEffects(
@@ -2190,7 +2706,15 @@ pub const Infer = struct {
             try self.copyInputPostStateFlow(destination, left);
         } else {
             try self.joinInputPostStates(&destination.states, &left.states, &right.states);
+            var domains = std.array_list.Managed(facts.InputDomain).init(self.allocator);
+            defer domains.deinit();
+            for (left.domains.items) |domain| try appendDomain(&domains, domain);
+            for (right.domains.items) |domain| try appendDomain(&domains, domain);
+            destination.domains.clearRetainingCapacity();
+            try destination.domains.appendSlice(domains.items);
             destination.reachable = true;
+            destination.outcome_variant = if (left.outcome_variant == right.outcome_variant) left.outcome_variant else null;
+            destination.outcome_parent_mismatch = left.outcome_parent_mismatch and right.outcome_parent_mismatch;
         }
     }
 
@@ -2217,7 +2741,36 @@ pub const Infer = struct {
         _ = self;
         destination.states.clearRetainingCapacity();
         try destination.states.appendSlice(source.states.items);
+        destination.domains.clearRetainingCapacity();
+        try destination.domains.appendSlice(source.domains.items);
         destination.reachable = source.reachable;
+        destination.outcome_variant = source.outcome_variant;
+        destination.outcome_parent_mismatch = source.outcome_parent_mismatch;
+    }
+
+    fn markAddressedOutput(self: *Infer, function: graph_mod.GlobalFunctionId, node: graph_mod.GlobalNodeId) anyerror!void {
+        switch (self.graph.node(node).content) {
+            .binding_use => |binding| if (self.outputIndex(function, binding) != null) {
+                try self.addressed_outputs.put(binding, {});
+            },
+            .struct_field_access => |access| try self.markAddressedOutput(function, access.value),
+            .choice_payload_access => |access| try self.markAddressedOutput(function, access.value),
+            else => {},
+        }
+    }
+
+    fn recordOutcomeExit(self: *Infer, exits: *?std.array_list.Managed(facts.PlacePostState), flow: *const InputPostStateFlow) !void {
+        if (self.selected_outcome) |selected| {
+            // Once an output slot is exposed through a reference, an alias may
+            // change its tag. Keep every exit in that selector's may-effects
+            // until indirect writes have a branch-local discriminant model.
+            if (!self.addressed_outputs.contains(selected.binding)) {
+                if (flow.outcome_parent_mismatch) return;
+                if (flow.outcome_variant) |variant| if (variant != selected.variant_index) return;
+            }
+        }
+        for (flow.domains.items) |domain| try appendDomain(&self.domain_invalidations, domain);
+        try self.recordInputPostStateExit(exits, &flow.states);
     }
 
     fn recordInputPostStateExit(
@@ -2256,7 +2809,7 @@ pub const Infer = struct {
 
     fn inputPathEqual(self: *Infer, left: facts.InputPath, right: facts.InputPath) bool {
         _ = self;
-        if (left.input_index != right.input_index or left.projections.len != right.projections.len) return false;
+        if (left.input_index != right.input_index or left.storage_domain != right.storage_domain or left.projections.len != right.projections.len) return false;
         for (left.projections, right.projections) |a, b| if (!std.meta.eql(a, b)) return false;
         return true;
     }
@@ -2318,7 +2871,7 @@ pub const Infer = struct {
         var exits: ?std.array_list.Managed(facts.InputPath) = null;
         defer if (exits) |*emptied| emptied.deinit();
         try self.inferOpaqueEmptyBlock(function_id, block_id, effects, &state, &exits);
-        if (state.reachable) try self.recordOpaqueEmptyExit(&exits, state.emptied.items);
+        if (state.reachable) try self.recordOpaqueEmptyExit(&exits, &state);
 
         const emptied = if (exits) |*items|
             try self.allocator.dupe(facts.InputPath, items.items)
@@ -2360,7 +2913,16 @@ pub const Infer = struct {
                 if (!record.deferred_initialization) if (record.initialization) |initialization|
                     try self.inferOpaqueEmptyExpression(function_id, initialization, effects, state, exits);
             },
-            .assignment => |assignment| try self.inferOpaqueEmptyExpression(function_id, assignment.value, effects, state, exits),
+            .assignment => |assignment| {
+                try self.inferOpaqueEmptyExpression(function_id, assignment.value, effects, state, exits);
+                if (self.selected_outcome) |selected| if (assignment.binding == selected.binding) {
+                    const known = try self.knownOutcome(try self.inferExpression(function_id, assignment.value), selected.parent_variants);
+                    state.outcome_parent_mismatch = known.mismatch;
+                    const origin = try self.expressionForwardOrigin(assignment.value);
+                    const selected_origin = if (self.selected_forward) |forwarded| if (origin) |actual| actual.call == forwarded.call and actual.output_index == forwarded.selector.output_index else false else false;
+                    state.outcome_variant = if (selected_origin and self.selected_forward_applied and !known.mismatch) selected.variant_index else known.variant;
+                };
+            },
             .function_call, .virtual_call => try self.inferOpaqueEmptyExpression(function_id, node_id, effects, state, exits),
             .if_statement => |statement| {
                 try self.inferOpaqueEmptyExpression(function_id, statement.condition, effects, state, exits);
@@ -2379,6 +2941,8 @@ pub const Infer = struct {
                 defer body_state.deinit();
                 try self.inferOpaqueEmptyBlock(function_id, statement.body, effects, &body_state, exits);
                 state.emptied.clearRetainingCapacity();
+                state.outcome_variant = null;
+                state.outcome_parent_mismatch = false;
             },
             .for_statement => |statement| {
                 if (statement.init) |initialization|
@@ -2391,6 +2955,8 @@ pub const Infer = struct {
                 if (body_state.reachable) if (statement.increment) |increment|
                     try self.inferOpaqueEmptyNode(function_id, increment, effects, &body_state, exits);
                 state.emptied.clearRetainingCapacity();
+                state.outcome_variant = null;
+                state.outcome_parent_mismatch = false;
             },
             .switch_statement => |switch_id| {
                 const statement = self.graph.switches.items[@intFromEnum(switch_id)];
@@ -2420,26 +2986,32 @@ pub const Infer = struct {
                 if (statement.expression) |expression|
                     try self.inferOpaqueEmptyExpression(function_id, expression, effects, state, exits);
                 try self.inferOpaqueEmptyRange(function_id, statement.cleanup, effects, state, exits);
-                if (state.reachable) try self.recordOpaqueEmptyExit(exits, state.emptied.items);
+                if (state.reachable) try self.recordOpaqueEmptyExit(exits, state);
                 state.reachable = false;
             },
             .struct_field_store => |store| {
                 try self.inferOpaqueEmptyExpression(function_id, store.struct_ptr, effects, state, exits);
                 try self.inferOpaqueEmptyExpression(function_id, store.value, effects, state, exits);
                 state.emptied.clearRetainingCapacity();
+                state.outcome_variant = null;
+                state.outcome_parent_mismatch = false;
             },
             .array_store => |store| {
                 try self.inferOpaqueEmptyExpression(function_id, store.array_ptr, effects, state, exits);
                 try self.inferOpaqueEmptyExpression(function_id, store.index, effects, state, exits);
                 try self.inferOpaqueEmptyExpression(function_id, store.value, effects, state, exits);
                 state.emptied.clearRetainingCapacity();
+                state.outcome_variant = null;
+                state.outcome_parent_mismatch = false;
             },
             .pointer_assignment => |assignment| {
                 try self.inferOpaqueEmptyExpression(function_id, assignment.pointer, effects, state, exits);
                 try self.inferOpaqueEmptyExpression(function_id, assignment.value, effects, state, exits);
                 state.emptied.clearRetainingCapacity();
+                state.outcome_variant = null;
+                state.outcome_parent_mismatch = false;
             },
-            .code_block => |child| try self.inferOpaqueEmptyBlock(function_id, child, effects, state, exits),
+            .code_block, .value_sequence => |child| try self.inferOpaqueEmptyBlock(function_id, child, effects, state, exits),
             .break_statement, .continue_statement, .abort_statement => state.reachable = false,
             .auto_deinit_binding => |auto_id| try self.applyAutoDeinitOpaqueEffects(function_id, auto_id, effects, state),
             else => try self.inferOpaqueEmptyExpression(function_id, node_id, effects, state, exits),
@@ -2467,6 +3039,7 @@ pub const Infer = struct {
         effects: *std.array_list.Managed(facts.OpaqueStorageEffect),
         state: *OpaqueEmptyState,
     ) !void {
+        if (self.cleanup) |active| if (!active.roots.contains(auto_id)) return;
         const cleanup = self.graph.auto_deinits.items[@intFromEnum(auto_id)];
         const binding_effect = self.bindings.get(cleanup.binding);
         if (cleanup.deinit_fn) |deinit_fn| if (cleanup.input) |input| {
@@ -2492,8 +3065,15 @@ pub const Infer = struct {
         state: *OpaqueEmptyState,
         parent_effect: facts.ValueEffect,
     ) !void {
-        for (self.graph.auto_deinit_fields.items[field_range.start..][0..field_range.len]) |field| {
-            const field_effect = try self.projectValueEffect(parent_effect, .{ .field = field.field_index });
+        for (self.graph.auto_deinit_fields.items[field_range.start..][0..field_range.len], 0..) |field, index| {
+            if (self.cleanup) |active| if (!active.fields.contains(@enumFromInt(field_range.start + @as(u32, @intCast(index))))) continue;
+            if (field.is_variant) if (parent_effect.known_choice_variant) |active| {
+                if (active != field.field_index) continue;
+            };
+            const field_effect = try self.projectValueEffect(parent_effect, if (field.is_variant)
+                .{ .variant = field.field_index }
+            else
+                .{ .field = field.field_index });
             if (field.deinit_fn) |deinit_fn| if (field.input) |input| {
                 if (self.engine.summaryFor(deinit_fn)) |summary|
                     try self.applyOpaqueEmptySummary(
@@ -2519,6 +3099,7 @@ pub const Infer = struct {
     ) anyerror!void {
         const node = self.graph.node(node_id);
         switch (node.content) {
+            .value_sequence => |block| try self.inferOpaqueEmptyBlock(function_id, block, effects, state, exits),
             .move_value, .denied_implicit_copy, .address_of => |value| try self.inferOpaqueEmptyExpression(function_id, value, effects, state, exits),
             .dereference => |value| try self.inferOpaqueEmptyExpression(function_id, value.pointer, effects, state, exits),
             .struct_value_literal => |literal| {
@@ -2572,26 +3153,37 @@ pub const Infer = struct {
                 try self.inferOpaqueEmptyExpression(function_id, propagation.errable_value, effects, state, exits);
                 var error_state = try state.clone(self.allocator);
                 defer error_state.deinit();
+                error_state.outcome_variant = null;
+                error_state.outcome_parent_mismatch = false;
                 try self.inferOpaqueEmptyRange(function_id, propagation.cleanup_nodes, effects, &error_state, exits);
-                if (error_state.reachable) try self.recordOpaqueEmptyExit(exits, error_state.emptied.items);
+                if (error_state.reachable) try self.recordOpaqueEmptyExit(exits, &error_state);
             },
             .error_context => |context_id| {
                 const context = self.graph.error_contexts.items[@intFromEnum(context_id)];
                 try self.inferOpaqueEmptyExpression(function_id, context.errable_value, effects, state, exits);
                 var error_state = try state.clone(self.allocator);
                 defer error_state.deinit();
+                error_state.outcome_variant = null;
+                error_state.outcome_parent_mismatch = false;
                 try self.inferOpaqueEmptyExpression(function_id, context.context, effects, &error_state, exits);
                 try self.inferOpaqueEmptyRange(function_id, context.cleanup_nodes, effects, &error_state, exits);
-                if (error_state.reachable) try self.recordOpaqueEmptyExit(exits, error_state.emptied.items);
+                if (error_state.reachable) try self.recordOpaqueEmptyExit(exits, &error_state);
             },
             .function_call => |call| {
+                if (call.callee_value) |value| try self.inferOpaqueEmptyExpression(function_id, value, effects, state, exits);
                 try self.inferOpaqueEmptyExpression(function_id, call.input, effects, state, exits);
+                const previous_forwarded = self.forwarded_outcome;
+                self.forwarded_outcome = if (self.selected_forward) |origin| if (origin.call == node_id) origin.selector else null else null;
+                defer self.forwarded_outcome = previous_forwarded;
                 try self.applyOpaqueEmptyFunctionCall(function_id, call.callee, call.input, effects, state);
             },
             .virtual_call => |virtual_call_id| {
                 const call = self.graph.virtual_calls.items[@intFromEnum(virtual_call_id)];
                 try self.inferOpaqueEmptyExpression(function_id, call.handle, effects, state, exits);
                 try self.inferOpaqueEmptyExpression(function_id, call.input, effects, state, exits);
+                const previous_forwarded = self.forwarded_outcome;
+                self.forwarded_outcome = if (self.selected_forward) |origin| if (origin.call == node_id) origin.selector else null else null;
+                defer self.forwarded_outcome = previous_forwarded;
                 if (try self.virtualSummary(call.safety_methods)) |summary|
                     try self.applyOpaqueEmptySummary(function_id, summary, call.input, effects, state, null);
             },
@@ -2602,11 +3194,7 @@ pub const Infer = struct {
                 state,
                 exits,
             ),
-            .type_initializer => |initializer| {
-                try self.inferOpaqueEmptyExpression(function_id, initializer.args, effects, state, exits);
-                const summary = self.engine.summaryFor(initializer.init_fn) orelse return;
-                try self.applyOpaqueEmptySummaryArguments(function_id, summary, try self.initializerArguments(initializer.args), effects, state, .{ .input_index = 0, .effect = .{} });
-            },
+
             else => {},
         }
     }
@@ -2671,7 +3259,15 @@ pub const Infer = struct {
         override: ?SymbolicInputOverride,
     ) !void {
         const arguments = self.structArguments(input) orelse return;
-        try self.applyOpaqueEmptySummaryArguments(function_id, summary, arguments, effects, state, override);
+        var selected = summary;
+        if (self.forwarded_outcome) |selector| for (summary.outcome_post_states) |outcome| {
+            if (outcome.output_index == selector.output_index and outcome.variant_index == selector.variant_index and std.mem.eql(u32, outcome.parent_variants, selector.parent_variants)) {
+                selected = try self.selectForwardedEffects(summary, outcome);
+                self.selected_forward_applied = true;
+                break;
+            }
+        };
+        try self.applyOpaqueEmptySummaryArguments(function_id, selected, arguments, effects, state, override);
     }
 
     fn applyOpaqueEmptySummaryArguments(
@@ -2684,6 +3280,10 @@ pub const Infer = struct {
         override: ?SymbolicInputOverride,
     ) !void {
         if (self.summaryMayRepopulateOpaqueStorage(summary)) state.emptied.clearRetainingCapacity();
+        for (summary.outcome_post_states) |outcome| if (outcome.opaque_storage_empties.len != 0) {
+            self.opaque_empty_seen = true;
+            break;
+        };
         for (summary.opaque_storage_effects) |effect| {
             if (effect.storage.input_index >= arguments.len) continue;
             const storages = try self.substituteRequiredInputPath(function_id, effect.storage, arguments, override);
@@ -2704,10 +3304,29 @@ pub const Infer = struct {
         storages: []const facts.InputPath,
         hidden: facts.ValueEffect,
     ) !void {
+        if (storages.len == 0) self.unbound_opaque_dependencies = try self.mergeValueEffects(self.unbound_opaque_dependencies, try self.flattenHiddenDependencies(hidden));
         for (storages) |storage| {
             self.removeOpaqueStorageRelease(&state.emptied, storage);
             try self.recordOpaqueStorageEffect(effects, storage, hidden);
         }
+    }
+
+    fn effectOwnsValue(effect: facts.ValueEffect) bool {
+        if (effect.fresh_cleanup_obligation or effect.fresh_owned_roots.len != 0) return true;
+        for (effect.input_dependencies) |dependency| if (dependency.transfers_ownership) return true;
+        for (effect.fields) |field| if (effectOwnsValue(field.value.*)) return true;
+        for (effect.variants) |variant| if (effectOwnsValue(variant.value.*)) return true;
+        return false;
+    }
+
+    fn flattenHiddenDependencies(self: *Infer, effect: facts.ValueEffect) anyerror!facts.ValueEffect {
+        const dependencies = try self.dependencyOnlyEffect(effect);
+        var result = try self.validityOnlyEffect(dependencies);
+        result.fields = &.{};
+        result.variants = &.{};
+        for (dependencies.fields) |field| result = try self.mergeValueEffects(result, try self.flattenHiddenDependencies(field.value.*));
+        for (dependencies.variants) |variant| result = try self.mergeValueEffects(result, try self.flattenHiddenDependencies(variant.value.*));
+        return result;
     }
 
     fn recordOpaqueStorageEmpties(
@@ -2715,6 +3334,7 @@ pub const Infer = struct {
         state: *OpaqueEmptyState,
         storages: []const facts.InputPath,
     ) !void {
+        if (storages.len != 0) self.opaque_empty_seen = true;
         for (storages) |storage| try self.recordOpaqueStorageRelease(&state.emptied, storage);
     }
 
@@ -2734,6 +3354,8 @@ pub const Infer = struct {
         const joined = try self.intersectInputPaths(left.emptied.items, right.emptied.items);
         destination.emptied.clearRetainingCapacity();
         try destination.emptied.appendSlice(joined);
+        destination.outcome_variant = if (left.outcome_variant == right.outcome_variant) left.outcome_variant else null;
+        destination.outcome_parent_mismatch = left.outcome_parent_mismatch and right.outcome_parent_mismatch;
         destination.reachable = true;
     }
 
@@ -2761,13 +3383,20 @@ pub const Infer = struct {
         destination.emptied.clearRetainingCapacity();
         try destination.emptied.appendSlice(source.emptied.items);
         destination.reachable = source.reachable;
+        destination.outcome_variant = source.outcome_variant;
+        destination.outcome_parent_mismatch = source.outcome_parent_mismatch;
     }
 
     fn recordOpaqueEmptyExit(
         self: *Infer,
         exits: *?std.array_list.Managed(facts.InputPath),
-        emptied: []const facts.InputPath,
+        state: *const OpaqueEmptyState,
     ) !void {
+        if (self.selected_outcome) |selected| if (!self.addressed_outputs.contains(selected.binding)) {
+            if (state.outcome_parent_mismatch) return;
+            if (state.outcome_variant) |variant| if (variant != selected.variant_index) return;
+        };
+        const emptied = state.emptied.items;
         if (exits.*) |*current| {
             const joined = try self.intersectInputPaths(current.items, emptied);
             current.clearRetainingCapacity();
@@ -2874,7 +3503,7 @@ pub const Infer = struct {
 
     fn inputPathPrefix(self: *Infer, prefix: facts.InputPath, path: facts.InputPath) bool {
         _ = self;
-        if (prefix.input_index != path.input_index or prefix.projections.len > path.projections.len) return false;
+        if (prefix.input_index != path.input_index or prefix.storage_domain != path.storage_domain or prefix.projections.len > path.projections.len) return false;
         for (prefix.projections, path.projections[0..prefix.projections.len]) |left, right|
             if (!std.meta.eql(left, right)) return false;
         return true;
@@ -2931,6 +3560,8 @@ pub const Infer = struct {
             .input_dependencies = input_dependencies,
             .input_places = effect.input_places,
             .input_generation_dependencies = effect.input_generation_dependencies,
+            .input_captured_storages = effect.input_captured_storages,
+            .input_receiver_values = effect.input_receiver_values,
             .input_place_values = effect.input_place_values,
             .input_owned_roots = effect.input_owned_roots,
             .opaque_generation_dependencies = effect.opaque_generation_dependencies,
@@ -3008,9 +3639,10 @@ pub const Infer = struct {
                 if (literal.payload) |payload| try self.inferRequiredLiveInputsNode(function_id, payload, required);
             },
             .function_call => |call| {
+                if (call.callee_value) |value| try self.inferRequiredLiveInputsNode(function_id, value, required);
                 try self.inferRequiredLiveInputsNode(function_id, call.input, required);
                 if (self.engine.summaryFor(call.callee)) |summary|
-                    try self.substituteRequiredLiveInputs(function_id, summary.required_live_inputs, call.input, required);
+                    try self.substituteRequiredLiveInputs(function_id, self.requiredInputPaths(summary), call.input, required);
             },
             .virtual_call => |virtual_call_id| {
                 const call = self.graph.virtual_calls.items[@intFromEnum(virtual_call_id)];
@@ -3019,7 +3651,7 @@ pub const Infer = struct {
                 if (try self.virtualSummary(call.safety_methods)) |summary|
                     try self.substituteRequiredLiveInputsWithOverride(
                         function_id,
-                        summary.required_live_inputs,
+                        self.requiredInputPaths(summary),
                         call.input,
                         required,
                         null,
@@ -3092,16 +3724,8 @@ pub const Infer = struct {
                 if (statement.expression) |expression| try self.inferRequiredLiveInputsNode(function_id, expression, required);
                 try self.inferRequiredLiveInputsRange(function_id, statement.cleanup, required);
             },
-            .code_block => |child| try self.inferRequiredLiveInputsBlock(function_id, child, required),
-            .type_initializer => |initializer| {
-                try self.inferRequiredLiveInputsNode(function_id, initializer.args, required);
-                const summary = self.engine.summaryFor(initializer.init_fn) orelse return;
-                const arguments = try self.initializerArguments(initializer.args);
-                for (summary.required_live_inputs) |path| {
-                    const mapped = try self.substituteRequiredInputPath(function_id, path, arguments, .{ .input_index = 0, .effect = .{} });
-                    for (mapped) |candidate| try appendInputPath(required, candidate);
-                }
-            },
+            .code_block, .value_sequence => |child| try self.inferRequiredLiveInputsBlock(function_id, child, required),
+
             .auto_deinit_binding => |auto_id| try self.inferAutoDeinitRequiredLiveInputs(function_id, auto_id, required),
             else => {},
         }
@@ -3124,8 +3748,20 @@ pub const Infer = struct {
         required: *std.array_list.Managed(facts.InputPath),
     ) !void {
         const effect = try self.inferExpression(function_id, pointer);
-        for (try self.symbolicSourcePaths(function_id, pointer, effect)) |path|
-            try appendInputPath(required, path);
+        if (self.collecting_opaque_requirements) {
+            // Backing-owner identities originate in trusted slot establishment.
+            // Reading a region anchor validates storage, not stored elements.
+            for (effect.input_owned_roots) |path| try appendInputPath(required, path);
+            return;
+        }
+        const paths = try self.symbolicSourcePaths(function_id, pointer, effect);
+        for (paths) |path| try appendInputPath(required, path);
+        // Using a pointer loaded through another pointer requires the loaded
+        // reference's lifetime, independently of its containing slot's storage.
+        if (self.graph.node(pointer).content == .dereference) {
+            for (try self.projectInputPaths(paths, .dereference)) |path|
+                try appendInputPath(required, path);
+        }
     }
 
     fn symbolicSourcePaths(
@@ -3137,6 +3773,10 @@ pub const Infer = struct {
         const direct = try self.inferInputPaths(function_id, node_id);
         if (direct.len != 0) return direct;
         return self.opaqueGenerationSourcePaths(effect);
+    }
+
+    fn requiredInputPaths(self: *Infer, summary: facts.SafetySummary) []const facts.InputPath {
+        return if (self.collecting_opaque_requirements) summary.required_opaque_inputs else summary.required_live_inputs;
     }
 
     fn substituteRequiredLiveInputs(
@@ -3162,6 +3802,10 @@ pub const Infer = struct {
             if (path.input_index >= arguments.len) continue;
             const substituted = try self.substituteRequiredInputPath(function_id, path, arguments, override);
             for (substituted) |candidate| try appendInputPath(required, candidate);
+            if (self.collecting_opaque_requirements and path.projections.len == 0) {
+                const effect = try self.inferExpression(function_id, arguments[path.input_index].value);
+                for (effect.input_owned_roots) |owner| try appendInputPath(required, owner);
+            }
         }
     }
 
@@ -3175,6 +3819,10 @@ pub const Infer = struct {
                 const targets = try self.allocator.alloc(graph_mod.GlobalNodeId, 1);
                 targets[0] = value;
                 break :blk targets;
+            },
+            .value_sequence => |block| blk: {
+                const value = self.graph.blocks.items[@intFromEnum(block)].ret_val orelse break :blk &.{};
+                break :blk try self.localAddressTargets(value);
             },
             .binding_use => |binding| self.local_address_bindings.get(binding) orelse &.{},
             .move_value, .denied_implicit_copy => |value| self.localAddressTargets(value),
@@ -3197,24 +3845,134 @@ pub const Infer = struct {
         arguments: []const graph_mod.ValueField,
         override: ?SymbolicInputOverride,
     ) ![]const facts.InputPath {
+        return self.substituteRequiredInputPathInContext(function_id, path, arguments, override, null);
+    }
+
+    fn substituteRequiredInputPathInContext(
+        self: *Infer,
+        function_id: graph_mod.GlobalFunctionId,
+        path: facts.InputPath,
+        arguments: []const graph_mod.ValueField,
+        override: ?SymbolicInputOverride,
+        context: ?*SubstitutionContext,
+    ) ![]const facts.InputPath {
+        if (path.storage_domain) |domain_index| {
+            if (path.input_index >= arguments.len) return &.{};
+            const argument = arguments[path.input_index].value;
+            var value = (if (context) |cache| try cache.pointee(path.input_index) else try self.localPointeeEffect(function_id, argument)) orelse
+                (if (context) |cache| try cache.effect(path.input_index) else try self.inferExpression(function_id, argument));
+            for (path.projections) |projection| value = try self.projectValueEffect(value, projection);
+            for (value.domain_values) |mapped| if (mapped.domain_index == domain_index) {
+                var sources = std.array_list.Managed(facts.InputPath).init(self.allocator);
+                for (mapped.value.input_generation_dependencies) |source| try appendInputPath(&sources, source);
+                for (mapped.value.input_domains) |source| try appendInputPath(&sources, .{ .input_index = source.path.input_index, .projections = source.path.projections, .storage_domain = source.domain_index });
+                return sources.toOwnedSlice();
+            };
+            var receiver = path;
+            receiver.storage_domain = null;
+            const paths = try self.substituteInputPathInContext(function_id, receiver, arguments, override, .validity, context);
+            const result = try self.allocator.dupe(facts.InputPath, paths);
+            for (result) |*source| source.storage_domain = domain_index;
+            return result;
+        }
+        return self.substituteInputPathInContext(function_id, path, arguments, override, .validity, context);
+    }
+
+    const InputPathPurpose = enum { validity, place };
+
+    fn pathReachesReferent(self: *Infer, initial: graph_mod.GlobalTypeId, projections: []const facts.Projection) bool {
+        var ty = initial;
+        if (self.graph.semanticType(ty) == .pointer) return true;
+        for (projections) |projection| {
+            ty = switch (projection) {
+                .field => |index| blk: {
+                    const fields = types.fields(self.graph, ty) orelse return false;
+                    if (index >= fields.len) return false;
+                    break :blk (self.graph.fields.items[fields.start + index]).ty;
+                },
+                .variant => |index| blk: {
+                    const variants = types.variants(self.graph, ty) orelse return false;
+                    if (index >= variants.len) return false;
+                    break :blk self.graph.variants.items[variants.start + index].payload_type orelse return false;
+                },
+                .static_index, .dynamic_index => types.arrayElement(self.graph, ty) orelse return false,
+                .dereference => return self.graph.semanticType(ty) == .pointer,
+            };
+        }
+        return false;
+    }
+
+    fn projectEffectInputPaths(self: *Infer, function_id: graph_mod.GlobalFunctionId, initial: facts.ValueEffect, projections: []const facts.Projection, purpose: InputPathPurpose) ![]const facts.InputPath {
+        var effect = initial;
+        for (projections, 0..) |projection, projection_index| {
+            if (purpose == .place and projection == .dereference) {
+                // A symbolic receiver field can already name a caller's
+                // pointer input referent. Only references stored inside
+                // that referent need another dereference coordinate.
+                var sources = try self.opaqueGenerationSourcePaths(effect);
+                var referents = std.array_list.Managed(facts.InputPath).init(self.allocator);
+                for (sources) |source| {
+                    const ty = self.inputPathType(function_id, source) orelse continue;
+                    try appendInputPath(&referents, if (self.graph.semanticType(ty) == .pointer)
+                        .{ .input_index = source.input_index, .projections = try self.appendProjection(source.projections, .dereference) }
+                    else
+                        source);
+                }
+                sources = try referents.toOwnedSlice();
+                for (projections[projection_index + 1 ..]) |remaining| sources = try self.projectInputPaths(sources, remaining);
+                return sources;
+            }
+            effect = try self.projectValueEffect(effect, projection);
+        }
+        return self.opaqueGenerationSourcePaths(effect);
+    }
+
+    fn substituteInputPath(
+        self: *Infer,
+        function_id: graph_mod.GlobalFunctionId,
+        path: facts.InputPath,
+        arguments: []const graph_mod.ValueField,
+        override: ?SymbolicInputOverride,
+        purpose: InputPathPurpose,
+    ) ![]const facts.InputPath {
+        return self.substituteInputPathInContext(function_id, path, arguments, override, purpose, null);
+    }
+
+    fn substituteInputPathInContext(
+        self: *Infer,
+        function_id: graph_mod.GlobalFunctionId,
+        path: facts.InputPath,
+        arguments: []const graph_mod.ValueField,
+        override: ?SymbolicInputOverride,
+        purpose: InputPathPurpose,
+        context: ?*SubstitutionContext,
+    ) ![]const facts.InputPath {
         if (path.input_index >= arguments.len) return &.{};
         if (override) |symbolic| if (symbolic.input_index == path.input_index) {
             if (path.projections.len == 0) return &.{};
-            var effect = symbolic.effect;
-            for (path.projections) |projection| effect = try self.projectValueEffect(effect, projection);
-            return self.opaqueGenerationSourcePaths(effect);
+            return self.projectEffectInputPaths(function_id, symbolic.effect, path.projections, purpose);
         };
 
         const argument = arguments[path.input_index].value;
-        var direct = try self.inferInputPaths(function_id, argument);
+        var direct = if (purpose == .place)
+            try self.inferPointeePaths(function_id, argument)
+        else if (context) |cache| try cache.paths(path.input_index) else try self.inferInputPaths(function_id, argument);
         if (direct.len != 0) {
             for (path.projections) |projection| direct = try self.projectInputPaths(direct, projection);
             return direct;
         }
 
-        var effect = try self.inferExpression(function_id, argument);
-        for (path.projections) |projection| effect = try self.projectValueEffect(effect, projection);
-        return self.opaqueGenerationSourcePaths(effect);
+        // A local by-value argument has its own place. Its borrowed lifetime
+        // dependencies can require caller inputs to remain live, but cannot
+        // identify caller places changed or consumed by the callee. Pointer
+        // arguments may still carry the provenance of a caller's place.
+        if (purpose == .place) {
+            const ty = self.graph.node(argument).ty orelse return &.{};
+            if (!self.pathReachesReferent(ty, path.projections)) return &.{};
+        }
+
+        const effect = if (context) |cache| try cache.effect(path.input_index) else try self.inferExpression(function_id, argument);
+        return self.projectEffectInputPaths(function_id, effect, path.projections, purpose);
     }
 
     fn inferAutoDeinitRequiredLiveInputs(
@@ -3223,6 +3981,7 @@ pub const Infer = struct {
         auto_id: graph_mod.GlobalAutoDeinitId,
         required: *std.array_list.Managed(facts.InputPath),
     ) !void {
+        if (self.cleanup) |active| if (!active.roots.contains(auto_id)) return;
         const cleanup = self.graph.auto_deinits.items[@intFromEnum(auto_id)];
         const binding_effect = self.bindings.get(cleanup.binding);
         if (cleanup.input) |input| {
@@ -3231,7 +3990,7 @@ pub const Infer = struct {
                 if (self.engine.summaryFor(deinit_fn)) |summary|
                     try self.substituteRequiredLiveInputsWithOverride(
                         function_id,
-                        summary.required_live_inputs,
+                        self.requiredInputPaths(summary),
                         input,
                         required,
                         if (binding_effect) |effect| .{ .input_index = cleanup.self_field_index, .effect = effect } else null,
@@ -3249,15 +4008,22 @@ pub const Infer = struct {
         parent_effect: facts.ValueEffect,
         required: *std.array_list.Managed(facts.InputPath),
     ) !void {
-        for (self.graph.auto_deinit_fields.items[fields_range.start..][0..fields_range.len]) |field| {
-            const field_effect = try self.projectValueEffect(parent_effect, .{ .field = field.field_index });
+        for (self.graph.auto_deinit_fields.items[fields_range.start..][0..fields_range.len], 0..) |field, index| {
+            if (self.cleanup) |active| if (!active.fields.contains(@enumFromInt(fields_range.start + @as(u32, @intCast(index))))) continue;
+            if (field.is_variant) if (parent_effect.known_choice_variant) |active| {
+                if (active != field.field_index) continue;
+            };
+            const field_effect = try self.projectValueEffect(parent_effect, if (field.is_variant)
+                .{ .variant = field.field_index }
+            else
+                .{ .field = field.field_index });
             if (field.input) |input| {
                 try self.inferRequiredLiveInputsNode(function_id, input, required);
                 if (field.deinit_fn) |deinit_fn| {
                     if (self.engine.summaryFor(deinit_fn)) |summary|
                         try self.substituteRequiredLiveInputsWithOverride(
                             function_id,
-                            summary.required_live_inputs,
+                            self.requiredInputPaths(summary),
                             input,
                             required,
                             .{ .input_index = field.self_field_index, .effect = field_effect },
@@ -3275,6 +4041,10 @@ pub const Infer = struct {
     ) anyerror!facts.ValueEffect {
         const node = self.graph.node(node_id);
         return switch (node.content) {
+            .value_sequence => |block| blk: {
+                const value = self.graph.blocks.items[@intFromEnum(block)].ret_val orelse break :blk .{};
+                break :blk try self.inferExpression(function_id, value);
+            },
             .binding_use => |binding| if (self.inputIndex(function_id, binding)) |index|
                 try self.inputValueEffect(index, &.{})
             else
@@ -3329,18 +4099,16 @@ pub const Infer = struct {
                 try self.inferExpression(function_id, cast.value)
             else
                 .{},
-            .type_initializer => |initializer| blk: {
-                const arguments = try self.initializerArguments(initializer.args);
-                const effect = try self.constructorResultEffect(initializer.init_fn, node.ty orelse return error.InvalidInitializerType);
-                const substituted = try self.substituteOutputWithOverride(function_id, effect, arguments, .{ .input_index = 0, .effect = .{} });
-                break :blk try self.rebaseFreshSources(substituted, node_id);
-            },
+
             .testing_expect_error => |id| blk: {
                 const expect = self.graph.testing_expect_errors.items[@intFromEnum(id)];
                 const input = expect.test_fail_input orelse break :blk .{};
                 break :blk try self.inferCall(function_id, node_id, expect.test_fail_function, input);
             },
-            .function_call => |call| try self.inferCall(function_id, node_id, call.callee, call.input),
+            .function_call => |call| blk: {
+                if (call.callee_value) |value| _ = try self.inferExpression(function_id, value);
+                break :blk try self.inferCall(function_id, node_id, call.callee, call.input);
+            },
             .virtualize => |virtualize_id| try self.inferVirtualize(function_id, virtualize_id),
             .virtual_call => |virtual_call_id| try self.inferVirtualCall(function_id, node_id, virtual_call_id),
             .error_propagation => |id| blk: {
@@ -3392,7 +4160,36 @@ pub const Infer = struct {
             return self.substituteOutput(function_id, effect, arguments);
         }
         const summary = self.engine.summaryFor(callee) orelse return .{};
-        return self.substitute_summary_outputs(function_id, summary.outputs, arguments, call_node);
+        var outputs = summary.outputs;
+        var selected: ?facts.ChoiceConditions = null;
+        for (summary.guarded_effects) |guarded| {
+            if (guarded.conditions.impossible) continue;
+            var established = true;
+            for (guarded.conditions.terms) |condition| {
+                if (condition.subject != .entry_input or condition.projections.len != 0 or condition.index >= arguments.len) {
+                    established = false;
+                    break;
+                }
+                var node = arguments[condition.index].value;
+                while (self.graph.node(node).content == .denied_implicit_copy) node = self.graph.node(node).content.denied_implicit_copy;
+                const literal = switch (self.graph.node(node).content) {
+                    .choice_literal => |value| value,
+                    else => {
+                        established = false;
+                        break;
+                    },
+                };
+                if (self.variantIndex(literal.choice_type, literal.variant) != condition.variant_index) {
+                    established = false;
+                    break;
+                }
+            }
+            if (established and (selected == null or guarded.conditions.implies(selected.?))) {
+                outputs = guarded.effects.outputs;
+                selected = guarded.conditions;
+            }
+        }
+        return self.substitute_summary_outputs(function_id, outputs, arguments, call_node);
     }
 
     fn substitute_summary_outputs(self: *Infer, function: graph_mod.GlobalFunctionId, outputs: []const facts.ValueEffect, arguments: []const graph_mod.ValueField, call_node: graph_mod.GlobalNodeId) !facts.ValueEffect {
@@ -3412,65 +4209,38 @@ pub const Infer = struct {
         return self.rebaseFreshSources(aggregate, call_node);
     }
 
-    fn initializerArguments(self: *Infer, input: graph_mod.GlobalNodeId) ![]const graph_mod.ValueField {
-        const explicit = self.structArguments(input) orelse return error.InvalidInitializerArguments;
-        const arguments = try self.allocator.alloc(graph_mod.ValueField, explicit.len + 1);
-        // The implicit destination has no caller-input identity. Substitution
-        // always overrides this placeholder with its symbolic value.
-        arguments[0] = .{ .name = .{ .start = 0, .len = 0 }, .value = input };
-        @memcpy(arguments[1..], explicit);
-        return arguments;
-    }
-
-    /// Constructors publish the value established by init's destination
-    /// post-state, rather than an ordinary function output. Parameter indices
-    /// remain those of init, including destination input zero.
-    pub fn initializerResultEffect(self: *Infer, init_fn: graph_mod.GlobalFunctionId) !facts.ValueEffect {
-        const summary = self.engine.summaryFor(init_fn) orelse return .{};
-        const function = self.graph.function(init_fn);
-        var post_states = summary.input_post_states;
-        if (function.output.len == 1) {
-            post_states = &.{};
-            const result_ty = self.graph.fields.items[function.output.start].ty;
-            const ok = types.findVariant(self.graph, result_ty, "ok") orelse return error.InvalidInitializerResult;
-            for (summary.outcome_post_states) |outcome| if (outcome.variant_index == ok.index) {
-                post_states = outcome.input_post_states;
-                break;
-            };
+    // Field-wise construction is ordinary output construction. Preserve the
+    // dependencies of projected writes just as whole-binding assignments do.
+    fn storeOutputProjection(self: *Infer, function: graph_mod.GlobalFunctionId, target: graph_mod.GlobalNodeId, path: []const facts.Projection, value: graph_mod.GlobalNodeId, outputs: []facts.ValueEffect) anyerror!void {
+        switch (self.graph.node(target).content) {
+            .binding_use => |binding| {
+                // Input-pointer writes belong to input post-states. Updating
+                // the pointer binding here would replace its reference effect
+                // with the pointee's fields and lose the caller's root identity.
+                if (self.inputIndex(function, binding) != null) return;
+                const ty = self.graph.resolvedSemanticType(self.graph.binding(binding).ty) orelse return;
+                if (ty == .pointer) return;
+                if (self.outputIndex(function, binding)) |index| {
+                    // TODO: Unify ordinary projected output writes with the
+                    // existing input post-state flow before broadening this
+                    // path. Replaying their RHS can duplicate opaque effects.
+                    if (standard_contracts.initializedType(self.graph, function) == null) return;
+                    outputs[index] = try self.storeEffectProjection(outputs[index], path, try self.inferExpression(function, value));
+                }
+            },
+            .struct_field_access => |field| {
+                const nested = try self.allocator.alloc(facts.Projection, path.len + 1);
+                nested[0] = .{ .field = field.field_index };
+                @memcpy(nested[1..], path);
+                try self.storeOutputProjection(function, field.value, nested, value, outputs);
+            },
+            .dereference => |read| {
+                for (try self.localAddressTargets(read.pointer)) |place|
+                    try self.storeOutputProjection(function, place, path, value, outputs);
+            },
+            .address_of => |place| try self.storeOutputProjection(function, place, path, value, outputs),
+            else => {},
         }
-        var result: facts.ValueEffect = .{};
-        for (post_states) |state| {
-            if (state.target.input_index != 0 or state.initializedness != .initialized) continue;
-            result = try self.storeEffectProjection(result, state.target.projections, state.value);
-        }
-        return result;
-    }
-
-    pub fn constructorResultEffect(
-        self: *Infer,
-        init_fn: graph_mod.GlobalFunctionId,
-        result_ty: graph_mod.GlobalTypeId,
-    ) !facts.ValueEffect {
-        const success = try self.initializerResultEffect(init_fn);
-        const function = self.graph.function(init_fn);
-        if (function.output.len == 0) return success;
-        const summary = self.engine.summaryFor(init_fn) orelse return .{};
-        const source_ty = self.graph.fields.items[function.output.start].ty;
-        const source_error = types.findVariant(self.graph, source_ty, "error") orelse return error.InvalidInitializerResult;
-        const target_ok = types.findVariant(self.graph, result_ty, "ok") orelse return error.InvalidInitializerResult;
-        const target_error = types.findVariant(self.graph, result_ty, "error") orelse return error.InvalidInitializerResult;
-        const error_effect = if (summary.outputs.len == 1)
-            try self.projectValueEffect(summary.outputs[0], .{ .variant = source_error.index })
-        else
-            facts.ValueEffect{};
-        const ok_value = try self.allocator.create(facts.ValueEffect);
-        ok_value.* = success;
-        const err_value = try self.allocator.create(facts.ValueEffect);
-        err_value.* = error_effect;
-        const variants = try self.allocator.alloc(facts.OutputVariantEffect, 2);
-        variants[0] = .{ .index = target_ok.index, .value = ok_value };
-        variants[1] = .{ .index = target_error.index, .value = err_value };
-        return .{ .variants = variants };
     }
 
     fn storeEffectProjection(self: *Infer, previous: facts.ValueEffect, projections: []const facts.Projection, value: facts.ValueEffect) anyerror!facts.ValueEffect {
@@ -3497,8 +4267,12 @@ pub const Infer = struct {
             child.* = try self.storeEffectProjection(.{}, projections[1..], value);
             try fields.append(.{ .index = index, .value = child });
         }
-        var result = previous;
-        for (fields.items) |field| result = try self.mergeValueEffects(result, field.value.*);
+        var result: facts.ValueEffect = .{};
+        for (fields.items) |field| {
+            result = try self.mergeValueEffects(result, field.value.*);
+            result.variants = &.{};
+            result.known_choice_variant = null;
+        }
         result.fields = try fields.toOwnedSlice();
         return result;
     }
@@ -3507,22 +4281,26 @@ pub const Infer = struct {
         const virtualize = self.graph.virtualizes.items[@intFromEnum(id)];
         var result = try self.inferExpression(function_id, virtualize.value);
         const receiver_paths = try self.inferInputPaths(function_id, virtualize.value);
-        var generations = std.array_list.Managed(facts.InputPath).init(self.allocator);
-        try generations.appendSlice(result.input_generation_dependencies);
-        for (self.graph.function_refs.items[virtualize.methods.start..][0..virtualize.methods.len], 0..) |method, index| {
-            const receiver_index = self.virtualizeReceiverIndex(virtualize, index);
-            const summary = self.engine.summaryFor(method) orelse continue;
-            for (summary.outputs) |output| {
-                const borrowed = try facts.receiverBorrowedPlaces(self.allocator, output, receiver_index);
-                for (receiver_paths) |receiver_path| for (borrowed) |borrowed_path| {
-                    const projections = try self.allocator.alloc(facts.Projection, receiver_path.projections.len + borrowed_path.projections.len);
-                    @memcpy(projections[0..receiver_path.projections.len], receiver_path.projections);
-                    @memcpy(projections[receiver_path.projections.len..], borrowed_path.projections);
-                    try appendInputPath(&generations, .{ .input_index = receiver_path.input_index, .projections = projections });
+        if (virtualize.domains.len != 0) {
+            const domain_values = try self.allocator.alloc(facts.OutputDomainEffect, virtualize.domains.len);
+            for (virtualize.domains, domain_values) |mapping, *domain| {
+                var paths = std.array_list.Managed(facts.InputPath).init(self.allocator);
+                for (receiver_paths) |receiver| for (mapping.paths) |path| {
+                    var projections = receiver.projections;
+                    for (path.fields) |field| projections = try self.appendProjection(projections, .{ .field = field });
+                    try appendInputPath(&paths, .{ .input_index = receiver.input_index, .projections = projections });
                 };
+                const value = try self.allocator.create(facts.ValueEffect);
+                value.* = .{ .input_generation_dependencies = try paths.toOwnedSlice() };
+                domain.* = .{ .domain_index = mapping.domain_index, .value = value };
             }
+            result.domain_values = domain_values;
+            return result;
         }
-        result.input_generation_dependencies = try generations.toOwnedSlice();
+        // A receiver without named domains captures its reachable storage.
+        // Callers resolve these paths to actual generations; concrete method
+        // summaries never determine the shape or liveness of the handle.
+        result.input_captured_storages = receiver_paths;
         return result;
     }
 
@@ -3569,21 +4347,37 @@ pub const Infer = struct {
             result.known_choice_variant = null;
         }
         result.fields = output_fields;
+        // A destructor creates a cleanup obligation, not necessarily a fresh
+        // storage lifetime. Shape anchors and scalar owners must not introduce
+        // extra roots that couple independently replaced backing allocations.
+        if (types.hasDestructor(self.graph, self.graph.node(node_id).ty.?))
+            result.fresh_cleanup_obligation = true;
         return result;
     }
 
     fn inferElements(self: *Infer, function_id: graph_mod.GlobalFunctionId, range: graph_mod.NodeRange) !facts.ValueEffect {
         var result: facts.ValueEffect = .{};
-        const output_fields = try self.allocator.alloc(facts.OutputFieldEffect, range.len);
+        // Share the checker's empty aggregate representation. A single
+        // nonempty child restores all projections, including empty neighbors.
+        var output_fields: ?[]facts.OutputFieldEffect = null;
         for (self.graph.node_refs.items[range.start..][0..range.len], 0..) |element, index| {
+            const effect = try self.inferExpression(function_id, element);
+            if (facts.isEmptyValue(effect)) {
+                if (output_fields) |stored| stored[index] = .{ .index = @intCast(index), .value = &facts.empty_value_effect };
+                continue;
+            }
+            if (output_fields == null) {
+                output_fields = try self.allocator.alloc(facts.OutputFieldEffect, range.len);
+                for (output_fields.?[0..index], 0..) |*field, prior| field.* = .{ .index = @intCast(prior), .value = &facts.empty_value_effect };
+            }
             const value = try self.allocator.create(facts.ValueEffect);
-            value.* = try self.inferExpression(function_id, element);
-            output_fields[index] = .{ .index = @intCast(index), .value = value };
+            value.* = effect;
+            output_fields.?[index] = .{ .index = @intCast(index), .value = value };
             result = try self.mergeValueEffects(result, value.*);
             result.variants = &.{};
             result.known_choice_variant = null;
         }
-        result.fields = output_fields;
+        result.fields = output_fields orelse &.{};
         return result;
     }
 
@@ -3615,7 +4409,7 @@ pub const Infer = struct {
         effect: facts.ValueEffect,
     ) !facts.ValueEffect {
         const ty = self.graph.node(node_id).ty orelse return effect;
-        if (!self.typeContainsPointer(ty)) return self.scalar_storage_effect(effect);
+        if (!self.typeContainsPointer(ty)) return self.scalar_read_effect(effect);
         return self.withOpaqueGenerationDependencies(try self.inferOpaqueReadInputPaths(function_id, node_id), effect);
     }
 
@@ -3630,15 +4424,89 @@ pub const Infer = struct {
         };
     }
 
+    fn inputPathType(self: *Infer, function_id: graph_mod.GlobalFunctionId, path: facts.InputPath) ?graph_mod.GlobalTypeId {
+        const function = self.graph.function(function_id);
+        if (path.input_index >= function.input.len) return null;
+        var ty = self.graph.fields.items[function.input.start + path.input_index].ty;
+        if (self.graph.semanticType(ty) == .pointer) ty = self.graph.semanticType(ty).pointer.child;
+        for (path.projections) |projection| {
+            ty = switch (projection) {
+                .field => |index| blk: {
+                    const fields = types.fields(self.graph, ty) orelse return null;
+                    if (index >= fields.len) return null;
+                    break :blk (self.graph.fields.items[fields.start + index]).ty;
+                },
+                .variant => |index| blk: {
+                    const variants = types.variants(self.graph, ty) orelse return null;
+                    if (index >= variants.len) return null;
+                    break :blk self.graph.variants.items[variants.start + index].payload_type orelse return null;
+                },
+                .static_index, .dynamic_index => types.arrayElement(self.graph, ty) orelse return null,
+                .dereference => if (self.graph.semanticType(ty) == .pointer) self.graph.semanticType(ty).pointer.child else return null,
+            };
+        }
+        return ty;
+    }
+
+    fn inferPointeePaths(self: *Infer, function_id: graph_mod.GlobalFunctionId, pointer: graph_mod.GlobalNodeId) ![]const facts.InputPath {
+        const paths = try self.inferInputPaths(function_id, pointer);
+        const pointer_ty = self.graph.node(pointer).ty orelse return paths;
+        const pointer_type = self.graph.semanticType(pointer_ty);
+        if (pointer_type != .pointer) return paths;
+        var result = std.array_list.Managed(facts.InputPath).init(self.allocator);
+        const function = self.graph.function(function_id);
+        for (paths) |path| {
+            if (path.input_index >= function.input.len) continue;
+            var ty = self.graph.fields.items[function.input.start + path.input_index].ty;
+            // Input pointer coordinates already denote their referent. A
+            // pointer stored inside it needs an explicit dereference instead
+            // of describing a write to the field holding that pointer.
+            if (self.graph.semanticType(ty) == .pointer) ty = self.graph.semanticType(ty).pointer.child;
+            var projections = std.array_list.Managed(facts.Projection).init(self.allocator);
+            for (path.projections) |projection| {
+                if (projection != .dereference and self.graph.semanticType(ty) == .pointer) {
+                    try projections.append(.dereference);
+                    ty = self.graph.semanticType(ty).pointer.child;
+                }
+                try projections.append(projection);
+                ty = switch (projection) {
+                    .field => |index| blk: {
+                        const fields = types.fields(self.graph, ty) orelse break :blk ty;
+                        if (index >= fields.len) break :blk ty;
+                        break :blk (self.graph.fields.items[fields.start + index]).ty;
+                    },
+                    .variant => |index| blk: {
+                        const variants = types.variants(self.graph, ty) orelse break :blk ty;
+                        if (index >= variants.len) break :blk ty;
+                        break :blk self.graph.variants.items[variants.start + index].payload_type orelse ty;
+                    },
+                    .static_index, .dynamic_index => types.arrayElement(self.graph, ty) orelse ty,
+                    .dereference => if (self.graph.semanticType(ty) == .pointer) self.graph.semanticType(ty).pointer.child else ty,
+                };
+            }
+            if (self.graph.semanticType(ty) == .pointer and !types.equal(self.graph, ty, pointer_type.pointer.child))
+                try projections.append(.dereference);
+            try appendInputPath(&result, .{ .input_index = path.input_index, .projections = try projections.toOwnedSlice() });
+        }
+        return result.toOwnedSlice();
+    }
+
     fn inferInputPaths(self: *Infer, function_id: graph_mod.GlobalFunctionId, node_id: graph_mod.GlobalNodeId) anyerror![]const facts.InputPath {
         return switch (self.graph.node(node_id).content) {
+            .value_sequence => |block| blk: {
+                const value = self.graph.blocks.items[@intFromEnum(block)].ret_val orelse break :blk &.{};
+                break :blk try self.inferInputPaths(function_id, value);
+            },
             .binding_use => |binding| if (self.inputIndex(function_id, binding)) |index|
                 try self.oneInputPath(index, &.{})
             else
                 self.place_bindings.get(binding) orelse &.{},
             .address_of => |value| self.inferInputPaths(function_id, value),
             .move_value, .denied_implicit_copy => |value| self.inferInputPaths(function_id, value),
-            .dereference => |value| self.inferInputPaths(function_id, value.pointer),
+            // A reference stored in a by-value Args field denotes a caller
+            // referent only after an explicit dereference projection. Keeping
+            // the field-slot path here loses returned field-address provenance.
+            .dereference => |value| self.inferPointeePaths(function_id, value.pointer),
             .explicit_cast => |cast| if (self.graph.types.items[@intFromEnum(cast.target_type)] == .pointer)
                 self.inferInputPaths(function_id, cast.value)
             else
@@ -3669,6 +4537,46 @@ pub const Infer = struct {
         return self.substituteOutputWithOverride(function_id, effect, arguments, null);
     }
 
+    const ArgumentFacts = struct {
+        effect: ?facts.ValueEffect = null,
+        paths: ?[]const facts.InputPath = null,
+        pointee: ?facts.ValueEffect = null,
+        pointee_ready: bool = false,
+    };
+
+    /// Queries are shared only during one substitution, with unchanged binding
+    /// and place facts. Nested calls create their own context; none survives a
+    /// statement, branch transition or summary reevaluation.
+    const SubstitutionContext = struct {
+        infer: *Infer,
+        function: graph_mod.GlobalFunctionId,
+        arguments: []const graph_mod.ValueField,
+        entries: []ArgumentFacts,
+
+        fn effect(self: *SubstitutionContext, index: u32) !facts.ValueEffect {
+            const entry = &self.entries[index];
+            if (entry.effect == null)
+                entry.effect = try self.infer.inferExpression(self.function, self.arguments[index].value);
+            return entry.effect.?;
+        }
+
+        fn paths(self: *SubstitutionContext, index: u32) ![]const facts.InputPath {
+            const entry = &self.entries[index];
+            if (entry.paths == null)
+                entry.paths = try self.infer.inferInputPaths(self.function, self.arguments[index].value);
+            return entry.paths.?;
+        }
+
+        fn pointee(self: *SubstitutionContext, index: u32) !?facts.ValueEffect {
+            const entry = &self.entries[index];
+            if (!entry.pointee_ready) {
+                entry.pointee = try self.infer.localPointeeEffect(self.function, self.arguments[index].value);
+                entry.pointee_ready = true;
+            }
+            return entry.pointee;
+        }
+    };
+
     fn substituteOutputWithOverride(
         self: *Infer,
         function_id: graph_mod.GlobalFunctionId,
@@ -3676,9 +4584,31 @@ pub const Infer = struct {
         arguments: []const graph_mod.ValueField,
         override: ?SymbolicInputOverride,
     ) !facts.ValueEffect {
+        if (!requiresOutputSubstitution(effect)) return effect;
+        var buffer: [4]ArgumentFacts = @splat(.{});
+        const entries = if (arguments.len <= buffer.len)
+            buffer[0..arguments.len]
+        else
+            try self.allocator.alloc(ArgumentFacts, arguments.len);
+        defer if (arguments.len > buffer.len) self.allocator.free(entries);
+        if (arguments.len > buffer.len) @memset(entries, .{});
+        var context: SubstitutionContext = .{ .infer = self, .function = function_id, .arguments = arguments, .entries = entries };
+        return self.substituteOutputInContext(function_id, effect, arguments, override, &context);
+    }
+
+    fn substituteOutputInContext(
+        self: *Infer,
+        function_id: graph_mod.GlobalFunctionId,
+        effect: facts.ValueEffect,
+        arguments: []const graph_mod.ValueField,
+        override: ?SymbolicInputOverride,
+        context: *SubstitutionContext,
+    ) !facts.ValueEffect {
+        if (!requiresOutputSubstitution(effect)) return effect;
         var result: facts.ValueEffect = .{
             .explicit_dependency = effect.explicit_dependency,
             .fresh_dependencies = effect.fresh_dependencies,
+            .fresh_cleanup_obligation = effect.fresh_cleanup_obligation,
             .fresh_owned_roots = effect.fresh_owned_roots,
             .fresh_storage_capabilities = effect.fresh_storage_capabilities,
             .unavailable_fresh_storage = effect.unavailable_fresh_storage,
@@ -3687,31 +4617,78 @@ pub const Infer = struct {
             .known_choice_variant = effect.known_choice_variant,
         };
 
+        var input_domains = std.array_list.Managed(facts.InputDomain).init(self.allocator);
+        for (effect.input_domains) |domain| {
+            var resolved = false;
+            if (domain.path.input_index < arguments.len) {
+                var value = (try context.pointee(domain.path.input_index)) orelse try context.effect(domain.path.input_index);
+                for (domain.path.projections) |projection| value = try self.projectValueEffect(value, projection);
+                for (value.domain_values) |mapped| if (mapped.domain_index == domain.domain_index) {
+                    result = try self.mergeValueEffects(result, mapped.value.*);
+                    resolved = true;
+                };
+            }
+            if (!resolved) {
+                const paths = try self.substituteRequiredInputPathInContext(function_id, domain.path, arguments, override, context);
+                for (paths) |path| try appendDomain(&input_domains, .{ .path = path, .domain_index = domain.domain_index });
+            }
+        }
+        result.input_domains = try input_domains.toOwnedSlice();
+        const domain_values = try self.allocator.alloc(facts.OutputDomainEffect, effect.domain_values.len);
+        for (effect.domain_values, domain_values) |domain, *mapped| {
+            const value = try self.allocator.create(facts.ValueEffect);
+            value.* = try self.substituteOutputInContext(function_id, domain.value.*, arguments, override, context);
+            mapped.* = .{ .domain_index = domain.domain_index, .value = value };
+        }
+        result.domain_values = domain_values;
+
         for (effect.input_storage_capabilities) |path| {
             if (path.input_index >= arguments.len) continue;
             var value = if (override) |symbolic|
-                if (symbolic.input_index == path.input_index) symbolic.effect else try self.inferExpression(function_id, arguments[path.input_index].value)
+                if (symbolic.input_index == path.input_index) symbolic.effect else try context.effect(path.input_index)
             else
-                try self.inferExpression(function_id, arguments[path.input_index].value);
-            if ((try self.inferInputPaths(function_id, arguments[path.input_index].value)).len == 0) {
-                if (try self.localPointeeEffect(function_id, arguments[path.input_index].value)) |pointee| value = pointee;
+                try context.effect(path.input_index);
+            if ((try context.paths(path.input_index)).len == 0) {
+                if (try context.pointee(path.input_index)) |pointee| value = pointee;
             }
             for (path.projections) |projection| value = try self.projectValueEffect(value, projection);
             result = try self.mergeValueEffects(result, try self.scalar_storage_effect(value));
         }
         var input_places = std.array_list.Managed(facts.InputPath).init(self.allocator);
         for (effect.input_places) |path| {
-            const mapped = try self.substituteRequiredInputPath(function_id, path, arguments, override);
+            const mapped = try self.substituteRequiredInputPathInContext(function_id, path, arguments, override, context);
             for (mapped) |candidate| try appendInputPath(&input_places, candidate);
         }
         result.input_places = try input_places.toOwnedSlice();
 
         var input_generations = std.array_list.Managed(facts.InputPath).init(self.allocator);
         for (effect.input_generation_dependencies) |path| {
-            const mapped = try self.substituteRequiredInputPath(function_id, path, arguments, override);
+            const mapped = try self.substituteRequiredInputPathInContext(function_id, path, arguments, override, context);
             for (mapped) |candidate| try appendInputPath(&input_generations, candidate);
         }
         result.input_generation_dependencies = try input_generations.toOwnedSlice();
+        var captured_storages = std.array_list.Managed(facts.InputPath).init(self.allocator);
+        for (effect.input_captured_storages) |path| {
+            const mapped = try self.substituteRequiredInputPathInContext(function_id, path, arguments, override, context);
+            for (mapped) |candidate| try appendInputPath(&captured_storages, candidate);
+        }
+        result.input_captured_storages = try captured_storages.toOwnedSlice();
+
+        var receiver_values = std.array_list.Managed(facts.InputPath).init(self.allocator);
+        for (effect.input_receiver_values) |path| {
+            if (path.input_index >= arguments.len) continue;
+            if ((try context.paths(path.input_index)).len == 0) {
+                if (try context.pointee(path.input_index)) |pointee| {
+                    var value = pointee;
+                    for (path.projections) |projection| value = try self.projectValueEffect(value, projection);
+                    result = try self.mergeValueEffects(result, try self.validityOnlyEffect(value));
+                    continue;
+                }
+            }
+            const mapped = try self.substituteRequiredInputPathInContext(function_id, path, arguments, override, context);
+            for (mapped) |candidate| try appendInputPath(&receiver_values, candidate);
+        }
+        result.input_receiver_values = try receiver_values.toOwnedSlice();
 
         var input_place_values = std.array_list.Managed(facts.InputPath).init(self.allocator);
         var input_place_value_overrides: facts.ValueEffect = .{};
@@ -3723,16 +4700,15 @@ pub const Infer = struct {
                 input_place_value_overrides = try self.mergeValueEffects(input_place_value_overrides, value);
                 continue;
             };
-            const argument = arguments[path.input_index].value;
-            if ((try self.inferInputPaths(function_id, argument)).len == 0) {
-                if (try self.localPointeeEffect(function_id, argument)) |pointee| {
+            if ((try context.paths(path.input_index)).len == 0) {
+                if (try context.pointee(path.input_index)) |pointee| {
                     var value = pointee;
                     for (path.projections) |projection| value = try self.projectValueEffect(value, projection);
                     input_place_value_overrides = try self.mergeValueEffects(input_place_value_overrides, value);
                     continue;
                 }
             }
-            const mapped = try self.substituteRequiredInputPath(function_id, path, arguments, override);
+            const mapped = try self.substituteRequiredInputPathInContext(function_id, path, arguments, override, context);
             for (mapped) |candidate| try appendInputPath(&input_place_values, candidate);
         }
         result.input_place_values = try input_place_values.toOwnedSlice();
@@ -3740,21 +4716,21 @@ pub const Infer = struct {
 
         var input_owned_roots = std.array_list.Managed(facts.InputPath).init(self.allocator);
         for (effect.input_owned_roots) |path| {
-            const mapped = try self.substituteRequiredInputPath(function_id, path, arguments, override);
+            const mapped = try self.substituteRequiredInputPathInContext(function_id, path, arguments, override, context);
             for (mapped) |candidate| try appendInputPath(&input_owned_roots, candidate);
         }
         result.input_owned_roots = try input_owned_roots.toOwnedSlice();
 
         var opaque_generations = std.array_list.Managed(facts.InputPath).init(self.allocator);
         for (effect.opaque_generation_dependencies) |path| {
-            const mapped = try self.substituteRequiredInputPath(function_id, path, arguments, override);
+            const mapped = try self.substituteRequiredInputPathInContext(function_id, path, arguments, override, context);
             for (mapped) |candidate| try appendInputPath(&opaque_generations, candidate);
         }
         result.opaque_generation_dependencies = try opaque_generations.toOwnedSlice();
 
         var opaque_storages = std.array_list.Managed(facts.InputPath).init(self.allocator);
         for (effect.opaque_storage_dependencies) |path| {
-            const mapped = try self.substituteRequiredInputPath(function_id, path, arguments, override);
+            const mapped = try self.substituteRequiredInputPathInContext(function_id, path, arguments, override, context);
             for (mapped) |candidate| try appendInputPath(&opaque_storages, candidate);
         }
         result.opaque_storage_dependencies = try opaque_storages.toOwnedSlice();
@@ -3769,11 +4745,11 @@ pub const Infer = struct {
                 if (symbolic.input_index == dependency.path.input_index)
                     symbolic.effect
                 else
-                    try self.inferExpression(function_id, arguments[dependency.path.input_index].value)
+                    try context.effect(dependency.path.input_index)
             else
-                try self.inferExpression(function_id, arguments[dependency.path.input_index].value);
+                try context.effect(dependency.path.input_index);
             if (dependency.validity_only and dependency.path.projections.len != 0 and dependency.path.projections[0] != .dereference) {
-                if (try self.localPointeeEffect(function_id, arguments[dependency.path.input_index].value)) |pointee|
+                if (try context.pointee(dependency.path.input_index)) |pointee|
                     argument = pointee;
             }
             for (dependency.path.projections) |projection|
@@ -3790,7 +4766,7 @@ pub const Infer = struct {
             const fields = try self.allocator.alloc(facts.OutputFieldEffect, effect.fields.len);
             for (effect.fields, 0..) |field, index| {
                 const value = try self.allocator.create(facts.ValueEffect);
-                value.* = try self.substituteOutputWithOverride(function_id, field.value.*, arguments, override);
+                value.* = try self.substituteOutputInContext(function_id, field.value.*, arguments, override, context);
                 fields[index] = .{ .index = field.index, .value = value };
             }
             result.fields = fields;
@@ -3799,12 +4775,27 @@ pub const Infer = struct {
             const variants = try self.allocator.alloc(facts.OutputVariantEffect, effect.variants.len);
             for (effect.variants, 0..) |variant, index| {
                 const value = try self.allocator.create(facts.ValueEffect);
-                value.* = try self.substituteOutputWithOverride(function_id, variant.value.*, arguments, override);
+                value.* = try self.substituteOutputInContext(function_id, variant.value.*, arguments, override, context);
                 variants[index] = .{ .index = variant.index, .value = value };
             }
             result.variants = variants;
         }
         return result;
+    }
+
+    fn requiresOutputSubstitution(effect: facts.ValueEffect) bool {
+        // Sparse tag-only facts still need the existing normalization path.
+        if (effect.known_choice_variant != null and effect.variants.len == 0) return true;
+        inline for (.{
+            "input_domains",                  "input_dependencies",            "input_storage_capabilities",
+            "input_places",                   "input_generation_dependencies", "input_captured_storages",
+            "input_receiver_values",          "input_place_values",            "input_owned_roots",
+            "opaque_generation_dependencies", "opaque_storage_dependencies",
+        }) |field| if (@field(effect, field).len != 0) return true;
+        for (effect.domain_values) |domain| if (requiresOutputSubstitution(domain.value.*)) return true;
+        for (effect.fields) |field| if (requiresOutputSubstitution(field.value.*)) return true;
+        for (effect.variants) |variant| if (requiresOutputSubstitution(variant.value.*)) return true;
+        return false;
     }
 
     fn substitutePaths(
@@ -3831,7 +4822,17 @@ pub const Infer = struct {
             .variant => |variant_index| {
                 for (effect.variants) |variant| if (variant.index == variant_index) return variant.value.*;
             },
-            else => {},
+            .static_index => |element_index| {
+                for (effect.fields) |field| if (field.index == element_index) return field.value.*;
+            },
+            .dynamic_index => {
+                if (effect.fields.len != 0) {
+                    var merged: facts.ValueEffect = .{ .foreign_storage = effect.foreign_storage };
+                    for (effect.fields) |field| merged = try self.mergeValueEffects(merged, field.value.*);
+                    return merged;
+                }
+            },
+            .dereference => {},
         }
         var result = effect;
         const dependencies = try self.allocator.alloc(facts.InputDependency, effect.input_dependencies.len);
@@ -3859,6 +4860,7 @@ pub const Infer = struct {
         const result = try self.allocator.alloc(facts.InputPath, paths.len);
         for (paths, 0..) |path, index| result[index] = .{
             .input_index = path.input_index,
+            .storage_domain = path.storage_domain,
             .projections = try self.appendProjection(path.projections, projection),
         };
         return result;
@@ -3872,6 +4874,25 @@ pub const Infer = struct {
     }
 
     fn mergeValueEffects(self: *Infer, left: facts.ValueEffect, right: facts.ValueEffect) !facts.ValueEffect {
+        // Effect union is idempotent. Keep immutable facts shared on stable
+        // branches and fixed-point reevaluations instead of rebuilding them.
+        if (summaries.valueEffectEql(left, right)) return left;
+        var input_domains = std.array_list.Managed(facts.InputDomain).init(self.allocator);
+        for (left.input_domains) |domain| try appendDomain(&input_domains, domain);
+        for (right.input_domains) |domain| try appendDomain(&input_domains, domain);
+        var domain_values = std.array_list.Managed(facts.OutputDomainEffect).init(self.allocator);
+        for (left.domain_values) |domain| try domain_values.append(domain);
+        for (right.domain_values) |domain| {
+            var found = false;
+            for (domain_values.items) |*existing| if (existing.domain_index == domain.domain_index) {
+                const value = try self.allocator.create(facts.ValueEffect);
+                value.* = try self.mergeValueEffects(existing.value.*, domain.value.*);
+                existing.value = value;
+                found = true;
+                break;
+            };
+            if (!found) try domain_values.append(domain);
+        }
         var dependencies = std.array_list.Managed(facts.InputDependency).init(self.allocator);
         for (left.input_dependencies) |value| try appendInputDependency(&dependencies, value);
         for (right.input_dependencies) |value| try appendInputDependency(&dependencies, value);
@@ -3881,6 +4902,12 @@ pub const Infer = struct {
         var input_generations = std.array_list.Managed(facts.InputPath).init(self.allocator);
         for (left.input_generation_dependencies) |value| try appendInputPath(&input_generations, value);
         for (right.input_generation_dependencies) |value| try appendInputPath(&input_generations, value);
+        var receiver_values = std.array_list.Managed(facts.InputPath).init(self.allocator);
+        for (left.input_receiver_values) |value| try appendInputPath(&receiver_values, value);
+        for (right.input_receiver_values) |value| try appendInputPath(&receiver_values, value);
+        var captured_storages = std.array_list.Managed(facts.InputPath).init(self.allocator);
+        for (left.input_captured_storages) |value| try appendInputPath(&captured_storages, value);
+        for (right.input_captured_storages) |value| try appendInputPath(&captured_storages, value);
         var input_place_values = std.array_list.Managed(facts.InputPath).init(self.allocator);
         for (left.input_place_values) |value| try appendInputPath(&input_place_values, value);
         for (right.input_place_values) |value| try appendInputPath(&input_place_values, value);
@@ -3949,8 +4976,12 @@ pub const Infer = struct {
             .input_storage_capabilities = try self.union_input_paths(left.input_storage_capabilities, right.input_storage_capabilities),
             .input_places = try input_places.toOwnedSlice(),
             .input_generation_dependencies = try input_generations.toOwnedSlice(),
+            .input_captured_storages = try captured_storages.toOwnedSlice(),
+            .input_receiver_values = try receiver_values.toOwnedSlice(),
             .input_place_values = try input_place_values.toOwnedSlice(),
             .input_owned_roots = try input_owned_roots.toOwnedSlice(),
+            .input_domains = try input_domains.toOwnedSlice(),
+            .domain_values = try domain_values.toOwnedSlice(),
             .opaque_generation_dependencies = try opaque_generations.toOwnedSlice(),
             .opaque_storage_dependencies = try opaque_storages.toOwnedSlice(),
             .fields = try fields.toOwnedSlice(),
@@ -3964,6 +4995,7 @@ pub const Infer = struct {
             else
                 null,
             .fresh_dependencies = try fresh_dependencies.toOwnedSlice(),
+            .fresh_cleanup_obligation = left.fresh_cleanup_obligation or right.fresh_cleanup_obligation,
             .fresh_owned_roots = try fresh_owned.toOwnedSlice(),
             .integer_address = left.integer_address or right.integer_address,
             .foreign_storage = left.foreign_storage or right.foreign_storage,
@@ -4002,9 +5034,12 @@ pub const Infer = struct {
         for (effect.input_generation_dependencies) |path| try appendInputPath(&generations, path);
         for (effect.input_places) |path| try appendInputPath(&generations, path);
         return .{
+            .input_domains = effect.input_domains,
             .explicit_dependency = effect.explicit_dependency,
             .input_dependencies = try dependencies.toOwnedSlice(),
             .input_generation_dependencies = try generations.toOwnedSlice(),
+            .input_captured_storages = effect.input_captured_storages,
+            .input_receiver_values = effect.input_receiver_values,
             .input_owned_roots = effect.input_owned_roots,
             .opaque_generation_dependencies = effect.opaque_generation_dependencies,
             .opaque_storage_dependencies = effect.opaque_storage_dependencies,
@@ -4090,6 +5125,7 @@ pub const Infer = struct {
     }
 
     fn rebaseFreshSources(self: *Infer, effect: facts.ValueEffect, call_node: graph_mod.GlobalNodeId) !facts.ValueEffect {
+        if (!hasFreshSources(effect)) return effect;
         var result = effect;
         result.fresh_dependencies = try self.rebaseFreshSlice(effect.fresh_dependencies, call_node);
         result.fresh_owned_roots = try self.rebaseFreshSlice(effect.fresh_owned_roots, call_node);
@@ -4121,6 +5157,14 @@ pub const Infer = struct {
         return result;
     }
 
+    fn hasFreshSources(effect: facts.ValueEffect) bool {
+        if (effect.fresh_dependencies.len != 0 or effect.fresh_owned_roots.len != 0 or
+            effect.fresh_storage_capabilities.len != 0 or effect.unavailable_fresh_storage.len != 0) return true;
+        for (effect.fields) |field| if (hasFreshSources(field.value.*)) return true;
+        for (effect.variants) |variant| if (hasFreshSources(variant.value.*)) return true;
+        return false;
+    }
+
     fn union_input_paths(self: *Infer, left: []const facts.InputPath, right: []const facts.InputPath) ![]const facts.InputPath {
         var paths = std.array_list.Managed(facts.InputPath).init(self.allocator);
         for (left) |path| try appendInputPath(&paths, path);
@@ -4144,6 +5188,28 @@ pub const Infer = struct {
         };
     }
 
+    fn scalar_read_effect(self: *Infer, effect: facts.ValueEffect) anyerror!facts.ValueEffect {
+        var result = try self.scalar_storage_effect(effect);
+        // Reading numeric contents grants no ownership or validity relation,
+        // but retains the copied discriminant and the paths to nested choices.
+        result.known_choice_variant = effect.known_choice_variant;
+        const fields = try self.allocator.alloc(facts.OutputFieldEffect, effect.fields.len);
+        for (effect.fields, fields) |field, *projected| {
+            const value = try self.allocator.create(facts.ValueEffect);
+            value.* = try self.scalar_read_effect(field.value.*);
+            projected.* = .{ .index = field.index, .value = value };
+        }
+        result.fields = fields;
+        const variants = try self.allocator.alloc(facts.OutputVariantEffect, effect.variants.len);
+        for (effect.variants, variants) |variant, *projected| {
+            const value = try self.allocator.create(facts.ValueEffect);
+            value.* = try self.scalar_read_effect(variant.value.*);
+            projected.* = .{ .index = variant.index, .value = value };
+        }
+        result.variants = variants;
+        return result;
+    }
+
     fn overlay_capability_outputs(self: *Infer, destination: facts.ValueEffect, origin: facts.ValueEffect, ty: graph_mod.GlobalTypeId) anyerror!facts.ValueEffect {
         var result = destination;
         if (self.graph.semanticType(ty) == .builtin) {
@@ -4164,7 +5230,7 @@ pub const Infer = struct {
             for (self.graph.fields.items[range.start..][0..range.len], 0..) |field, index| {
                 const value = try self.allocator.create(facts.ValueEffect);
                 const projection = facts.Projection{ .field = @intCast(index) };
-                value.* = try self.overlay_capability_outputs(try self.projectValueEffect(destination, projection), try self.projectValueEffect(origin, projection), types.effectiveFieldType(field));
+                value.* = try self.overlay_capability_outputs(try self.projectValueEffect(destination, projection), try self.projectValueEffect(origin, projection), field.ty);
                 fields[index] = .{ .index = @intCast(index), .value = value };
             }
             result.fields = fields;
@@ -4269,7 +5335,7 @@ pub const Infer = struct {
             .structural, .declared, .generic => blk: {
                 const range = types.fields(self.graph, ty) orelse break :blk false;
                 for (self.graph.fields.items[range.start..][0..range.len]) |field|
-                    if (self.typeContainsPointer(types.effectiveFieldType(field))) break :blk true;
+                    if (self.typeContainsPointer(field.ty)) break :blk true;
                 break :blk false;
             },
             .structural_choice, .inferred_choice => blk: {
@@ -4292,61 +5358,10 @@ pub const Infer = struct {
     }
 };
 
-fn virtualInputPostStatesRuntimeRepresentable(states: []const facts.PlacePostState) bool {
-    for (states) |state| if (!virtualInputPostStateRuntimeRepresentable(state)) return false;
-    return true;
-}
-
-fn virtualInputPostStateRuntimeRepresentable(state: facts.PlacePostState) bool {
-    return state.initializedness == .initialized and state.opaque_ownership == .none;
-}
-
-fn alignFreshSources(
-    canonical: []const facts.FreshEffectSource,
-    candidate: []const facts.FreshEffectSource,
-    mapping: *std.AutoHashMap(facts.FreshEffectSource, facts.FreshEffectSource),
-) !bool {
-    for (canonical, candidate) |canonical_source, candidate_source| {
-        if (mapping.get(candidate_source)) |existing| {
-            if (existing != canonical_source) return false;
-        } else {
-            var iterator = mapping.iterator();
-            while (iterator.next()) |entry|
-                if (entry.value_ptr.* == canonical_source and entry.key_ptr.* != candidate_source) return false;
-            try mapping.put(candidate_source, canonical_source);
-        }
-    }
-    return true;
-}
-
-fn mergeVirtualFreshRoots(
-    allocator: std.mem.Allocator,
-    canonical: []const facts.FreshEffectSource,
-    candidate: []const facts.FreshEffectSource,
-    mapping: *std.AutoHashMap(facts.FreshEffectSource, facts.FreshEffectSource),
-) !?[]const facts.FreshEffectSource {
-    // A fresh temporal identity can conservatively represent either a
-    // separately released allocation or a child of a shared region. The
-    // latter still carries its region dependency through the other effects.
-    if (candidate.len == 0) return canonical;
-    if (canonical.len == 0) {
-        const result = try allocator.dupe(facts.FreshEffectSource, candidate);
-        for (result) |*source| {
-            if (mapping.get(source.*)) |mapped| {
-                source.* = mapped;
-            } else {
-                try mapping.put(source.*, source.*);
-            }
-        }
-        return result;
-    }
-    if (canonical.len != candidate.len or !try alignFreshSources(canonical, candidate, mapping)) return null;
-    return canonical;
-}
-
 fn containsInputDependency(haystack: []const facts.InputDependency, needle: facts.InputDependency) bool {
     for (haystack) |candidate| {
         if (candidate.path.input_index != needle.path.input_index or
+            candidate.path.storage_domain != needle.path.storage_domain or
             candidate.transfers_ownership != needle.transfers_ownership or
             candidate.validity_only != needle.validity_only or
             candidate.path.projections.len != needle.path.projections.len) continue;
@@ -4387,7 +5402,7 @@ fn pointerUseOperand(content: graph_mod.Node.Content) ?graph_mod.GlobalNodeId {
 
 fn appendInputPath(list: *std.array_list.Managed(facts.InputPath), path: facts.InputPath) !void {
     for (list.items) |existing| {
-        if (existing.input_index != path.input_index or existing.projections.len != path.projections.len) continue;
+        if (existing.input_index != path.input_index or existing.storage_domain != path.storage_domain or existing.projections.len != path.projections.len) continue;
         var equal = true;
         for (existing.projections, path.projections) |left, right| if (!std.meta.eql(left, right)) {
             equal = false;
@@ -4486,7 +5501,6 @@ test "output summaries reach a fixed point through reverse call dependencies" {
         .input_bindings = .{ .start = 2, .len = 1 },
         .output_bindings = .{ .start = 3, .len = 1 },
     });
-    try graph.function_operators.appendSlice(allocator, &.{ null, null });
 
     // An unrelated extern population must not add inference work or prevent
     // convergence of callers whose summaries do carry effects.
@@ -4501,7 +5515,6 @@ test "output summaries reach a fixed point through reverse call dependencies" {
             .input_bindings = .{ .start = 0, .len = 0 },
             .output_bindings = .{ .start = 0, .len = 0 },
         });
-        try graph.function_operators.append(allocator, null);
     }
 
     var arena = std.heap.ArenaAllocator.init(allocator);
@@ -4563,12 +5576,104 @@ fn expectGlobalReseedingStable(infer: *Infer) !void {
     for (infer.graph.functions.items, 0..) |_, raw| {
         const function: graph_mod.GlobalFunctionId = @enumFromInt(raw);
         infer.virtual_summaries.clearRetainingCapacity();
-        infer.invalid_virtual_summaries.clearRetainingCapacity();
         infer.engine.beginInference(function);
         const next = try infer.inferFunction(function);
         try infer.engine.endInference();
         try std.testing.expect(summaries.summaryEql(infer.engine.summaries.get(function).?, next));
     }
+}
+
+test "result substitution observes new binding facts and symbolic overrides" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    const source = primitives.SourceRef{ .file_index = 0, .offset = 0 };
+    const name = try graph.addString(allocator, "value");
+    try graph.types.append(allocator, .{ .builtin = .Int32 });
+    try graph.declarations.append(allocator, .{ .kind = .function, .name = name, .source = source });
+    try graph.functions.append(allocator, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 } });
+    try graph.bindings.append(allocator, .{ .name = name, .source = source, .ty = @enumFromInt(0), .mutability = .variable });
+    try graph.nodes.append(allocator, .{ .source = source, .ty = @enumFromInt(0), .content = .{ .binding_use = @enumFromInt(0) } });
+    var engine = summaries.Engine.init(allocator);
+    defer engine.deinit();
+    var inference = Infer.init(allocator, &graph, &engine);
+    defer inference.deinit();
+    const argument = graph_mod.ValueField{ .name = name, .value = @enumFromInt(0) };
+    const dependency: facts.ValueEffect = .{ .input_dependencies = &.{.{ .path = .{ .input_index = 0 } }} };
+    const result: facts.ValueEffect = .{ .fields = &.{
+        .{ .index = 0, .value = &dependency },
+        .{ .index = 1, .value = &dependency },
+    } };
+    try inference.bindings.put(@enumFromInt(0), .{ .fresh_storage_capabilities = &.{7} });
+    const first = try inference.substituteOutput(@enumFromInt(0), result, &.{argument});
+    for (first.fields) |field| try std.testing.expectEqual(@as(usize, 7), field.value.fresh_storage_capabilities[0]);
+    const constant_payload: facts.ValueEffect = .{ .fresh_owned_roots = &.{23} };
+    const constant: facts.ValueEffect = .{ .variants = &.{.{ .index = 0, .value = &constant_payload }} };
+    const shared_constant = try inference.substituteOutput(@enumFromInt(0), constant, &.{argument});
+    try std.testing.expect(summaries.valueEffectEql(constant, shared_constant));
+    try std.testing.expect(constant.variants.ptr == shared_constant.variants.ptr);
+
+    try inference.bindings.put(@enumFromInt(0), .{ .fresh_storage_capabilities = &.{13} });
+    const second = try inference.substituteOutput(@enumFromInt(0), result, &.{argument});
+    for (second.fields) |field| try std.testing.expectEqual(@as(usize, 13), field.value.fresh_storage_capabilities[0]);
+    // Exercise the dynamic buffer as well as the small ordinary-call buffer.
+    const wider = try inference.substituteOutput(@enumFromInt(0), result, &.{ argument, argument, argument, argument, argument });
+    try std.testing.expect(summaries.valueEffectEql(second, wider));
+    const overridden = try inference.substituteOutputWithOverride(@enumFromInt(0), result, &.{argument}, .{ .input_index = 0, .effect = .{ .fresh_storage_capabilities = &.{19} } });
+    for (overridden.fields) |field| try std.testing.expectEqual(@as(usize, 0), field.value.fresh_storage_capabilities.len);
+    for (first.fields) |field| try std.testing.expectEqual(@as(usize, 7), field.value.fresh_storage_capabilities[0]);
+}
+
+test "fresh storage availability preserves unchanged trees and marks nested consumption" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    var engine = summaries.Engine.init(allocator);
+    defer engine.deinit();
+    var inference = Infer.init(allocator, &graph, &engine);
+    defer inference.deinit();
+
+    const payload: facts.ValueEffect = .{
+        .fresh_storage_capabilities = &.{7},
+        .unavailable_fresh_storage = &.{.{ .source = 11, .maybe_consumed = true }},
+    };
+    const original: facts.ValueEffect = .{ .fields = &.{.{ .index = 0, .value = &payload }} };
+    const unchanged = try inference.mark_unavailable_fresh_storage(original, &.{.{
+        .source = .{ .input = .{ .input_index = 0 } },
+        .minimum = 1,
+        .maximum = 1,
+    }});
+    try std.testing.expect(summaries.valueEffectEql(original, unchanged));
+    try std.testing.expect(original.fields.ptr == unchanged.fields.ptr);
+    const joined = try inference.mergeValueEffects(original, unchanged);
+    try std.testing.expect(summaries.valueEffectEql(original, joined));
+    try std.testing.expect(original.fields.ptr == joined.fields.ptr);
+
+    const consumed = try inference.mark_unavailable_fresh_storage(original, &.{.{
+        .source = .{ .fresh = 7 },
+        .minimum = 0,
+        .maximum = 1,
+    }});
+    try std.testing.expectEqual(@as(usize, 2), consumed.fields[0].value.unavailable_fresh_storage.len);
+    try std.testing.expectEqual(@as(usize, 7), consumed.fields[0].value.unavailable_fresh_storage[1].source);
+    try std.testing.expect(consumed.fields[0].value.unavailable_fresh_storage[1].maybe_consumed);
+    try std.testing.expectEqual(@as(usize, 1), original.fields[0].value.unavailable_fresh_storage.len);
+    const combined = try inference.mergeValueEffects(original, consumed);
+    try std.testing.expect(summaries.valueEffectEql(consumed, combined));
+    const rebased = try inference.rebaseFreshSources(original, @enumFromInt(1));
+    const other_call = try inference.rebaseFreshSources(original, @enumFromInt(2));
+    try std.testing.expect(!summaries.valueEffectEql(rebased, other_call));
+    try std.testing.expectEqual(@as(usize, 7), original.fields[0].value.fresh_storage_capabilities[0]);
+
+    const borrowed: facts.ValueEffect = .{ .input_dependencies = &.{.{ .path = .{ .input_index = 0 } }} };
+    const borrowed_record: facts.ValueEffect = .{ .fields = &.{.{ .index = 0, .value = &borrowed }} };
+    const shared = try inference.rebaseFreshSources(borrowed_record, @enumFromInt(3));
+    try std.testing.expect(summaries.valueEffectEql(borrowed_record, shared));
+    try std.testing.expect(borrowed_record.fields.ptr == shared.fields.ptr);
 }
 
 test "input post-state joins retain caller-visible transitions" {
@@ -4677,91 +5782,87 @@ fn joinInitializedness(left: value_state.Initializedness, right: value_state.Ini
     return .maybe_initialized;
 }
 
-test "virtual summaries align fresh roles and reject ownership mismatches" {
+test "numeric projected values retain choices without ownership or validity" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
-    var graph: graph_mod.GlobalSemanticGraph = .{};
-    defer graph.deinit(allocator);
     var engine = summaries.Engine.init(allocator);
     defer engine.deinit();
-    var infer = Infer.init(allocator, &graph, &engine);
+    var infer = Infer.init(allocator, undefined, &engine);
     defer infer.deinit();
-
-    const left_source: facts.FreshEffectSource = 11;
-    const right_source: facts.FreshEffectSource = 29;
-    const compatible = try infer.mergeVirtualSafetySummary(
-        .{ .outputs = &.{.{ .fresh_dependencies = &.{left_source}, .fresh_owned_roots = &.{left_source} }} },
-        .{ .outputs = &.{.{ .fresh_dependencies = &.{right_source}, .fresh_owned_roots = &.{right_source} }} },
-    );
-    try std.testing.expect(compatible != null);
-    try std.testing.expectEqual(left_source, compatible.?.outputs[0].fresh_dependencies[0]);
-    try std.testing.expectEqual(left_source, compatible.?.outputs[0].fresh_owned_roots[0]);
-
-    const region_dependency = facts.InputDependency{ .path = .{ .input_index = 0 } };
-    const separately_released = facts.SafetySummary{
-        .outputs = &.{.{ .fresh_dependencies = &.{left_source}, .fresh_owned_roots = &.{left_source} }},
+    const payload = facts.ValueEffect{
+        .fresh_cleanup_obligation = true,
+        .input_owned_roots = &.{.{ .input_index = 0 }},
+        .input_dependencies = &.{.{ .path = .{ .input_index = 0 }, .validity_only = true }},
+        .input_storage_capabilities = &.{.{ .input_index = 1 }},
     };
-    const region_child = facts.SafetySummary{
-        .outputs = &.{.{ .input_dependencies = &.{region_dependency} }},
+    const choice = facts.ValueEffect{
+        .known_choice_variant = 1,
+        .variants = &.{.{ .index = 1, .value = &payload }},
     };
-    const heap_first = (try infer.mergeVirtualSafetySummary(separately_released, region_child)).?;
-    const region_first = (try infer.mergeVirtualSafetySummary(region_child, separately_released)).?;
-    for ([_]facts.SafetySummary{ heap_first, region_first }) |merged| {
-        try std.testing.expectEqualSlices(facts.FreshEffectSource, &.{left_source}, merged.outputs[0].fresh_owned_roots);
-        try std.testing.expectEqual(@as(usize, 1), merged.outputs[0].input_dependencies.len);
-    }
-
-    const transfer = facts.InputDependency{ .path = .{ .input_index = 0 }, .transfers_ownership = true };
-    try std.testing.expect((try infer.mergeVirtualSafetySummary(
-        .{ .outputs = &.{.{ .input_dependencies = &.{transfer} }} },
-        .{ .outputs = &.{.{}} },
-    )) == null);
+    const effect = try infer.scalar_read_effect(.{ .fields = &.{.{ .index = 2, .value = &choice }} });
+    const projected = effect.fields[0].value.*;
+    try std.testing.expectEqual(@as(u32, 2), effect.fields[0].index);
+    try std.testing.expectEqual(@as(?u32, 1), projected.known_choice_variant);
+    try std.testing.expectEqual(@as(usize, 1), projected.variants.len);
+    const read = projected.variants[0].value.*;
+    try std.testing.expect(!read.fresh_cleanup_obligation);
+    try std.testing.expectEqual(@as(usize, 0), read.input_owned_roots.len);
+    try std.testing.expectEqual(@as(usize, 0), read.input_dependencies.len);
+    try std.testing.expectEqual(@as(usize, 1), read.input_storage_capabilities.len);
 }
 
-test "virtual summary merge preserves fresh identity across output fields" {
+test "forwarded output preserves unrelated and shared may effects" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
-    var graph: graph_mod.GlobalSemanticGraph = .{};
-    defer graph.deinit(allocator);
     var engine = summaries.Engine.init(allocator);
     defer engine.deinit();
-    var infer = Infer.init(allocator, &graph, &engine);
+    var infer = Infer.init(allocator, undefined, &engine);
     defer infer.deinit();
-
-    const empty = facts.ValueEffect{};
-    const left_root = facts.ValueEffect{ .fresh_dependencies = &.{11}, .fresh_owned_roots = &.{11} };
-    const right_root = facts.ValueEffect{ .fresh_dependencies = &.{29}, .fresh_owned_roots = &.{29} };
-    const left = facts.SafetySummary{ .outputs = &.{.{ .fields = &.{
-        .{ .index = 0, .value = &empty },
-        .{ .index = 1, .value = &left_root },
-    } }} };
-    const right = facts.SafetySummary{ .outputs = &.{.{ .fields = &.{
-        .{ .index = 0, .value = &right_root },
-        .{ .index = 1, .value = &right_root },
-    } }} };
-    const merged_optional_first = (try infer.mergeVirtualSafetySummary(left, right)).?;
-    try std.testing.expectEqual(@as(facts.FreshEffectSource, 11), merged_optional_first.outputs[0].fields[0].value.fresh_owned_roots[0]);
-    try std.testing.expectEqual(@as(facts.FreshEffectSource, 11), merged_optional_first.outputs[0].fields[1].value.fresh_owned_roots[0]);
-
-    const aligned_first = facts.SafetySummary{ .outputs = &.{.{ .fields = &.{
-        .{ .index = 0, .value = &left_root },
-        .{ .index = 1, .value = &empty },
-    } }} };
-    const merged = (try infer.mergeVirtualSafetySummary(aligned_first, right)).?;
-    try std.testing.expectEqual(@as(facts.FreshEffectSource, 11), merged.outputs[0].fields[0].value.fresh_owned_roots[0]);
-    try std.testing.expectEqual(@as(facts.FreshEffectSource, 11), merged.outputs[0].fields[1].value.fresh_owned_roots[0]);
-
-    const second_left_root = facts.ValueEffect{ .fresh_dependencies = &.{17}, .fresh_owned_roots = &.{17} };
-    const incompatible_left = facts.SafetySummary{ .outputs = &.{.{ .fields = &.{
-        .{ .index = 0, .value = &left_root },
-        .{ .index = 1, .value = &second_left_root },
-    } }} };
-    try std.testing.expect((try infer.mergeVirtualSafetySummary(incompatible_left, right)) == null);
+    const summary = facts.SafetySummary{
+        .outputs = &.{ .{}, .{} },
+        .input_post_states = &.{
+            .{ .target = .{ .input_index = 0 }, .initializedness = .maybe_initialized },
+            .{ .target = .{ .input_index = 1 }, .initializedness = .maybe_initialized },
+            .{ .target = .{ .input_index = 2 }, .initializedness = .maybe_initialized },
+            .{ .target = .{ .input_index = 3 }, .initializedness = .initialized },
+        },
+        .invalidated_domains = &.{
+            .{ .path = .{ .input_index = 0 }, .domain_index = 0 },
+            .{ .path = .{ .input_index = 1 }, .domain_index = 0 },
+            .{ .path = .{ .input_index = 2 }, .domain_index = 0 },
+        },
+        .outcome_post_states = &.{
+            .{ .output_index = 0, .variant_index = 1, .input_post_states = &.{
+                .{ .target = .{ .input_index = 0 }, .initializedness = .moved },
+                .{ .target = .{ .input_index = 2 }, .initializedness = .initialized },
+            }, .invalidated_domains = &.{
+                .{ .path = .{ .input_index = 0 }, .domain_index = 0 },
+                .{ .path = .{ .input_index = 2 }, .domain_index = 0 },
+            } },
+            .{ .output_index = 0, .variant_index = 0, .input_post_states = &.{} },
+            .{ .output_index = 1, .variant_index = 1, .input_post_states = &.{
+                .{ .target = .{ .input_index = 1 }, .initializedness = .moved },
+                .{ .target = .{ .input_index = 2 }, .initializedness = .initialized },
+            }, .invalidated_domains = &.{
+                .{ .path = .{ .input_index = 1 }, .domain_index = 0 },
+                .{ .path = .{ .input_index = 2 }, .domain_index = 0 },
+            } },
+        },
+    };
+    const preserving = try infer.selectForwardedEffects(summary, summary.outcome_post_states[1]);
+    try std.testing.expectEqual(@as(usize, 3), preserving.input_post_states.len);
+    try std.testing.expect(infer.findInputPostState(preserving.input_post_states, .{ .input_index = 0 }) == null);
+    try std.testing.expectEqual(.maybe_initialized, infer.findInputPostState(preserving.input_post_states, .{ .input_index = 1 }).?.initializedness);
+    try std.testing.expectEqual(.maybe_initialized, infer.findInputPostState(preserving.input_post_states, .{ .input_index = 2 }).?.initializedness);
+    try std.testing.expectEqual(@as(usize, 2), preserving.invalidated_domains.len);
+    const moving = try infer.selectForwardedEffects(summary, summary.outcome_post_states[0]);
+    try std.testing.expectEqual(.moved, infer.findInputPostState(moving.input_post_states, .{ .input_index = 0 }).?.initializedness);
+    try std.testing.expectEqual(.maybe_initialized, infer.findInputPostState(moving.input_post_states, .{ .input_index = 2 }).?.initializedness);
 }
 
-test "virtual summaries intersect opaque empty guarantees" {
+test "virtual safety contract scalar summaries do not read implementations" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -4771,18 +5872,34 @@ test "virtual summaries intersect opaque empty guarantees" {
     defer engine.deinit();
     var infer = Infer.init(allocator, &graph, &engine);
     defer infer.deinit();
-
-    const emptied = facts.InputPath{ .input_index = 0, .projections = &.{.{ .field = 1 }} };
-    const same = try infer.mergeVirtualSafetySummary(
-        .{ .opaque_storage_empties = &.{emptied} },
-        .{ .opaque_storage_empties = &.{emptied} },
-    );
-    try std.testing.expectEqual(@as(usize, 1), same.?.opaque_storage_empties.len);
-    const absent = try infer.mergeVirtualSafetySummary(
-        .{ .opaque_storage_empties = &.{emptied} },
-        .{},
-    );
-    try std.testing.expectEqual(@as(usize, 0), absent.?.opaque_storage_empties.len);
+    try graph.virtual_registries.append(allocator, .{
+        .implementations = .{ .start = 0, .len = 0 },
+        .receiver_input_index = 1,
+        .contract_input_count = 2,
+        .safety_contract = .{ .output_count = 1, .source = .{ .file_index = 0, .offset = 0 }, .dependencies = &.{.{ .output_index = 0, .input_index = 1 }} },
+    });
+    const first = (try infer.virtualSummary(@enumFromInt(0))).?;
+    try std.testing.expectEqual(@as(usize, 2), first.required_live_inputs.len);
+    try std.testing.expectEqual(@as(u32, 1), first.outputs[0].input_receiver_values[0].input_index);
+    try std.testing.expectEqual(@as(usize, 0), first.outputs[0].input_dependencies.len);
+    // No concrete summaries exist. Changing the implementation list must not
+    // introduce a read of a concrete body or change the published call effects.
+    try graph.function_refs.appendSlice(allocator, &.{ @enumFromInt(0), @enumFromInt(1) });
+    graph.virtual_registries.items[0].implementations.len = 2;
+    infer.virtual_summaries.clearRetainingCapacity();
+    const second = (try infer.virtualSummary(@enumFromInt(0))).?;
+    try std.testing.expect(summaries.summaryEql(first, second));
+    var declaration = graph.virtual_registries.items[0].safety_contract.?;
+    declaration.output_count = 0;
+    declaration.dependencies = &.{};
+    declaration.invalidates = &.{0};
+    graph.virtual_registries.items[0].safety_contract = declaration;
+    infer.virtual_summaries.clearRetainingCapacity();
+    const invalidating = (try infer.virtualSummary(@enumFromInt(0))).?;
+    try std.testing.expectEqual(@as(usize, 1), invalidating.input_post_states.len);
+    try std.testing.expectEqual(@as(u32, 0), invalidating.input_post_states[0].target.input_index);
+    try std.testing.expect(invalidating.input_post_states[0].refreshes_storage_generation);
+    try std.testing.expect(!invalidating.input_post_states[0].ends_previous_roots);
 }
 
 test "validity-only transfer retains loaded input anchor paths" {
@@ -4803,4 +5920,115 @@ test "validity-only transfer retains loaded input anchor paths" {
     try std.testing.expectEqual(@as(usize, 0), effect.input_place_values.len);
     const projected = try inference.projectValueEffect(effect, .{ .field = 7 });
     try std.testing.expectEqualDeep(path, projected.input_dependencies[0].path);
+}
+
+test "array summary projections select and merge element effects" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var engine = summaries.Engine.init(allocator);
+    defer engine.deinit();
+    var inference = Infer.init(allocator, undefined, &engine);
+    defer inference.deinit();
+
+    const foreign = facts.ValueEffect{ .foreign_storage = true };
+    const local = facts.ValueEffect{ .input_dependencies = &.{.{ .path = .{ .input_index = 2 } }} };
+    const array = facts.ValueEffect{ .fields = &.{
+        .{ .index = 0, .value = &foreign },
+        .{ .index = 1, .value = &local },
+    } };
+    const first = try inference.projectValueEffect(array, .{ .static_index = 0 });
+    try std.testing.expect(first.foreign_storage);
+    try std.testing.expectEqual(@as(usize, 0), first.input_dependencies.len);
+    const second = try inference.projectValueEffect(array, .{ .static_index = 1 });
+    try std.testing.expect(!second.foreign_storage);
+    try std.testing.expectEqualDeep(local.input_dependencies, second.input_dependencies);
+    const dynamic = try inference.projectValueEffect(array, .dynamic_index);
+    try std.testing.expect(dynamic.foreign_storage);
+    try std.testing.expectEqualDeep(local.input_dependencies, dynamic.input_dependencies);
+    try std.testing.expectEqual(@as(usize, 0), dynamic.fresh_storage_capabilities.len);
+
+    // A uniform foreign array can keep its marker on the aggregate instead
+    // of allocating metadata for every element. Individual writes add fields.
+    const uniform = facts.ValueEffect{ .foreign_storage = true, .fields = &.{.{ .index = 1, .value = &local }} };
+    try std.testing.expect((try inference.projectValueEffect(uniform, .dynamic_index)).foreign_storage);
+    try std.testing.expect((try inference.projectValueEffect(.{ .foreign_storage = true }, .{ .static_index = 5 })).foreign_storage);
+}
+
+test "large numeric literals keep no per-element summary records" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    try graph.nodes.append(allocator, .{ .source = .{ .file_index = 0, .offset = 0 }, .ty = null, .content = .{ .int_literal = 0 } });
+    try graph.node_refs.resize(allocator, 65536);
+    @memset(graph.node_refs.items, @enumFromInt(0));
+    var engine = summaries.Engine.init(allocator);
+    defer engine.deinit();
+    var inference = Infer.init(allocator, &graph, &engine);
+    defer inference.deinit();
+    const value = try inference.inferElements(@enumFromInt(0), .{ .start = 0, .len = 65536 });
+    try std.testing.expect(facts.isEmptyValue(value));
+    try std.testing.expect(facts.isEmptyValue(try inference.mergeValueEffects(value, value)));
+}
+
+fn appendDomain(list: *std.array_list.Managed(facts.InputDomain), domain: facts.InputDomain) !void {
+    for (list.items) |existing| {
+        if (existing.domain_index != domain.domain_index or existing.path.input_index != domain.path.input_index or existing.path.storage_domain != domain.path.storage_domain or existing.path.projections.len != domain.path.projections.len) continue;
+        var same = true;
+        for (existing.path.projections, domain.path.projections) |x, y| if (!x.eql(y)) {
+            same = false;
+            break;
+        };
+        if (same) return;
+    }
+    try list.append(domain);
+}
+
+test "no-result summaries avoid self scheduling and retain recursive dependencies" {
+    const allocator = std.testing.allocator;
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    const name = try graph.addString(allocator, "value");
+    try graph.types.appendSlice(allocator, &.{
+        .{ .builtin = .Int32 },
+        .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } },
+    });
+    try graph.bindings.append(allocator, .{ .name = name, .source = source, .ty = @enumFromInt(1), .mutability = .constant });
+    try graph.binding_refs.append(allocator, @enumFromInt(0));
+    try graph.fields.append(allocator, .{ .name = name, .source = source, .ty = @enumFromInt(1) });
+    try graph.nodes.appendSlice(allocator, &.{
+        .{ .source = source, .ty = @enumFromInt(1), .content = .{ .binding_use = @enumFromInt(0) } },
+        .{ .source = source, .ty = @enumFromInt(0), .content = .{ .dereference = .{ .pointer = @enumFromInt(0), .ty = @enumFromInt(0), .pointer_type = @enumFromInt(1) } } },
+        .{ .source = source, .ty = null, .content = .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 1 } } } },
+        .{ .source = source, .ty = null, .content = .{ .function_call = .{ .callee = @enumFromInt(0), .input = @enumFromInt(2) } } },
+    });
+    try graph.value_fields.append(allocator, .{ .name = name, .value = @enumFromInt(0) });
+    try graph.node_refs.appendSlice(allocator, &.{ @enumFromInt(1), @enumFromInt(3) });
+    try graph.blocks.append(allocator, .{ .nodes = .{ .start = 0, .len = 1 } });
+    try graph.declarations.append(allocator, .{ .kind = .function, .name = name, .source = source });
+    try graph.functions.append(allocator, .{
+        .declaration = @enumFromInt(0),
+        .input = .{ .start = 0, .len = 1 },
+        .output = .{ .start = 0, .len = 0 },
+        .input_bindings = .{ .start = 0, .len = 1 },
+        .body = @enumFromInt(0),
+    });
+    for (0..2) |recursive| {
+        graph.blocks.items[0].nodes.len = if (recursive == 0) 1 else 2;
+        var arena = std.heap.ArenaAllocator.init(allocator);
+        defer arena.deinit();
+        var engine = summaries.Engine.init(arena.allocator());
+        defer engine.deinit();
+        var infer = Infer.init(arena.allocator(), &graph, &engine);
+        defer infer.deinit();
+        try infer.inferSafetySummariesFixedPoint();
+        const summary = engine.summaries.get(@enumFromInt(0)).?;
+        try std.testing.expectEqual(@as(usize, 1), summary.required_live_inputs.len);
+        try std.testing.expectEqual(@as(u32, 0), summary.required_live_inputs[0].input_index);
+        try std.testing.expectEqual(@as(u64, if (recursive == 0) 1 else 2), infer.evaluations);
+        try expectGlobalReseedingStable(&infer);
+    }
 }

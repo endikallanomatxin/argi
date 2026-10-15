@@ -2,8 +2,11 @@ Thing : Type = (
     .value: Int32
 )
 
-deinit(.self: $&Thing) -> () := {
-}
+implement Deinit#(Thing) (
+    .deinit = (.self: $&Thing) -> () {
+
+    }
+)
 
 main() -> (.status_code: Int32) := {
     x :: Thing = (.value = 1)

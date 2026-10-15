@@ -4,7 +4,7 @@ Pair : Type = (
     .y: Int32,
 )
 
-Pair implements ImplicitlyCopyable
+implement ImplicitlyCopyable#(Pair) ()
 
 -- Define the index get operator as a normal function
 -- Convention: op_index_get(.self: T, .i: Int32) -> (.v: T)

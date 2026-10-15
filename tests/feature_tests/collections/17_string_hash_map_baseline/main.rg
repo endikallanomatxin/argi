@@ -4,9 +4,9 @@ main(.system: System) -> (.status_code: Int32) := {
 
     map ::= StringHashMap#(.value: Int32)(.capacity = 1)
 
-    put#(.value: Int32)(.self = $&map, .key = "alpha", .value = 1)
-    put#(.value: Int32)(.self = $&map, .key = "beta", .value = 2)
-    put#(.value: Int32)(.self = $&map, .key = "alpha", .value = 7)
+    put(.self = $&map, .key = "alpha", .value = 1)
+    put(.self = $&map, .key = "beta", .value = 2)
+    put(.self = $&map, .key = "alpha", .value = 7)
 
     if has#(.value: Int32)(.self = &map, .key = "alpha").ok {
     } else {
@@ -25,7 +25,7 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
-    alpha ::= get#(.value: Int32)(.self = &map, .key = "alpha").value
+    alpha ::= get(.self = &map, .key = "alpha").result
     match alpha {
         ..some payload {
             if payload.value != 7 {
@@ -39,7 +39,7 @@ main(.system: System) -> (.status_code: Int32) := {
         }
     }
 
-    beta ::= get#(.value: Int32)(.self = &map, .key = "beta").value
+    beta ::= get(.self = &map, .key = "beta").result
     match beta {
         ..some payload {
             if payload.value != 2 {
@@ -53,7 +53,7 @@ main(.system: System) -> (.status_code: Int32) := {
         }
     }
 
-    missing ::= get#(.value: Int32)(.self = &map, .key = "missing").value
+    missing ::= get(.self = &map, .key = "missing").result
     if missing? {
         status_code = 8
         return
@@ -78,7 +78,7 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
-    alpha_after_delete ::= get#(.value: Int32)(.self = &map, .key = "alpha").value
+    alpha_after_delete ::= get(.self = &map, .key = "alpha").result
     match alpha_after_delete {
         ..some payload {
             if payload.value != 7 {
@@ -92,7 +92,7 @@ main(.system: System) -> (.status_code: Int32) := {
         }
     }
 
-    put#(.value: Int32)(.self = $&map, .key = "gamma", .value = 9)
+    put(.self = $&map, .key = "gamma", .value = 9)
     removed_gamma ::= delete#(.value: Int32)(.self = $&map, .key = "gamma").value
     match removed_gamma {
         ..some payload {
@@ -113,6 +113,6 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
-    deinit#(.value: Int32)(.self = $&map)
+    deinit(.self = $&map)
     status_code = 0
 }

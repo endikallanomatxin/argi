@@ -1,25 +1,29 @@
-DummyInput : Type = (
-    .index: UIntNative = 0
+DummyInput: Type = (
+    .index : UIntNative = 0
 )
 
-read_byte(.self: $&DummyInput) -> (.result: Errable#(.t: ReadByte, .reasons: (..stream_read_failed))) := {
-    if self&.index < 20 {
-        current ::= self&.index
-        self& = (.index = current + 1)
-        result = ..ok ..ok 65
-        return
+implement Reader#(DummyInput)(
+    .read_byte = (
+            .self : $&DummyInput
+        ) -> (
+            .result : Errable#(.t: ReadByte, .reasons: (..stream_read_failed))
+        ) {
+        if self&.index < 20 {
+            current ::= self&.index
+            self&.index = current + 1
+            result = ..ok ..ok 65
+            return
+        }
+
+        if self&.index == 20 {
+            self&.index = 21
+            result = ..ok ..ok 10
+            return
+        }
+
+        result = ..ok ..end
     }
-
-    if self&.index == 20 {
-        self& = (.index = 21)
-        result = ..ok ..ok 10
-        return
-    }
-
-    result = ..ok ..end
-}
-
-DummyInput implements Reader
+)
 
 main(.system: System) -> (.status_code: Int32) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
@@ -35,12 +39,12 @@ main(.system: System) -> (.status_code: Int32) := {
         ..error _ {
             status_code = 1
         }
-        ..ok ~ outer {
+        ..ok ~outer {
             match outer {
                 ..end {
                     status_code = 1
                 }
-                ..ok ~ line_payload {
+                ..ok ~line_payload {
                     line ::= ~line_payload
                     if line.length != 20 {
                         status_code = 2
@@ -52,17 +56,17 @@ main(.system: System) -> (.status_code: Int32) := {
                         return
                     }
 
-                    if bytes_get(.string = &line, .index = 0).byte != 65 {
+                    if bytes_get(.view = &line, .index = 0).byte != 65 {
                         status_code = 4
                         return
                     }
 
-                    if bytes_get(.string = &line, .index = 19).byte != 65 {
+                    if bytes_get(.view = &line, .index = 19).byte != 65 {
                         status_code = 5
                         return
                     }
 
-                    deinit(.self = $&line, .allocator = $&allocator_storage)
+                    deinit(.self = $&line)
                     status_code = 0
                 }
             }

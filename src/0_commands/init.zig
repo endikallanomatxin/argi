@@ -98,6 +98,7 @@ fn writeFileIfMissing(io: std.Io, path: []const u8, contents: []const u8) !void 
 
 const moduleMainParameterized =
     \\main(.system: System) -> (.status_code: Int32 = 0) := {
+    \\    assume ffi ::= system.ffi
     \\    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
     \\    assume error_tracer ::= FixedSizeErrorTracer(
     \\        .buffer = view($&zeroed#(.t: [4096]UInt8)()),
@@ -254,7 +255,7 @@ test "init library scaffolds minimal files" {
     try expectFileExists(std.testing.io, gitignore);
     try expectFileMissing(std.testing.io, main_path);
     try expectFileContains(std.testing.io, manifest, "version = \"0.0.0\"\n");
-    try expectFileContains(std.testing.io, manifest, "minimum_argi_version = \"0.2.0\"\n");
+    try expectFileContains(std.testing.io, manifest, "minimum_argi_version = \"0.3.0\"\n");
     try expectFileOmits(std.testing.io, manifest, "kind = ");
     try expectFileOmits(std.testing.io, manifest, "[executables.");
     try expectFileOmits(std.testing.io, manifest, "[run]");
@@ -288,7 +289,7 @@ test "init executable scaffolds basic layout" {
     try expectFileMissing(std.testing.io, public_dir);
     try expectFileMissing(std.testing.io, private_dir);
     try expectFileContains(std.testing.io, manifest, "version = \"0.0.0\"\n");
-    try expectFileContains(std.testing.io, manifest, "minimum_argi_version = \"0.2.0\"\n");
+    try expectFileContains(std.testing.io, manifest, "minimum_argi_version = \"0.3.0\"\n");
     try expectFileContains(std.testing.io, manifest, "[executables.sample_app]\n");
     try expectFileContains(std.testing.io, manifest, "path = \"source/sample_app\"\n");
     try expectFileContains(std.testing.io, manifest, "[run]\n");

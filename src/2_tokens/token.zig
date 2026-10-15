@@ -110,6 +110,7 @@ pub const Content = union(enum(u8)) {
     tilde: struct {}, // ~
     bang: struct {}, // !
     double_bang: struct {}, // !!
+    triple_bang: struct {}, // !!!
     question_mark: struct {}, // ?
 
     // Arithmetic operators

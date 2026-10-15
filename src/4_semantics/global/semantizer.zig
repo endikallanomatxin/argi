@@ -1,4 +1,5 @@
 const std = @import("std");
+const c_abi = @import("c_abi.zig");
 const diagnostics_mod = @import("../../1_base/diagnostic.zig");
 const tok = @import("../../2_tokens/token.zig");
 const module_sg = @import("../module/graph.zig");
@@ -16,7 +17,7 @@ const constructor_mod = @import("constructors.zig");
 const control_mod = @import("control.zig");
 const generic_mod = @import("generics.zig");
 const generic_functions_mod = @import("generic_functions.zig");
-const abstract_mod = @import("abstracts.zig");
+const contract_mod = @import("contracts.zig");
 const error_mod = @import("errors.zig");
 const ownership_mod = @import("ownership.zig");
 const resolution = @import("resolution.zig");
@@ -25,11 +26,15 @@ const reachability_mod = @import("reachability.zig");
 const reach_context = @import("reach_context.zig");
 
 pub const Options = struct {
+    target: @import("../../1_base/target.zig").Config = .{},
     selected_test_name: ?[]const u8 = null,
     exhaustive_function_bodies: bool = true,
     diagnostics: ?*diagnostics_mod.Diagnostics = null,
     profile_io: ?std.Io = null,
 };
+
+pub const SetupStage = enum { external_types, conformance_registration, associated_types, known_types, sugar_types, worklists, conformance_validation, roots };
+const setup_stage_count = @typeInfo(SetupStage).@"enum".fields.len;
 
 pub const Stats = struct {
     pub const PendingResolution = struct {
@@ -47,25 +52,25 @@ pub const Stats = struct {
     pub const Timings = struct {
         relocation_ns: u64 = 0,
         setup_ns: u64 = 0,
+        setup_stages_ns: [setup_stage_count]u64 = @splat(0),
         fixed_point_ns: u64 = 0,
         pending_ns: u64 = 0,
-        runtime_binding_defaults_ns: u64 = 0,
         string_literal_types_ns: u64 = 0,
         binding_types_ns: u64 = 0,
         assignment_values_ns: u64 = 0,
         dereferences_ns: u64 = 0,
         addresses_ns: u64 = 0,
         known_generic_types_ns: u64 = 0,
-        abstract_field_storage_ns: u64 = 0,
+        field_access_types_ns: u64 = 0,
         sugar_types_ns: u64 = 0,
         error_inference_ns: u64 = 0,
+        error_summary_ns: u64 = 0,
+        error_refresh_ns: u64 = 0,
         cleanup_ns: u64 = 0,
         implicit_destructor_ns: u64 = 0,
-        implicit_generic_lookup_ns: u64 = 0,
         generic_constraints_ns: u64 = 0,
         generic_selection_prefilter_ns: u64 = 0,
         generic_selection_constraints_ns: u64 = 0,
-        generic_selection_scoring_ns: u64 = 0,
         generic_selection_arguments_ns: u64 = 0,
         generic_selection_instantiation_ns: u64 = 0,
         source_generic_selection_ns: u64 = 0,
@@ -84,10 +89,9 @@ pub const Stats = struct {
     generics: generic_mod.Stats = .{},
     generic_functions: generic_functions_mod.Stats = .{},
     generic_selection: generic_functions_mod.SelectionProfile = .{},
-    abstracts: abstract_mod.Stats = .{},
+    contracts: contract_mod.Stats = .{},
     errors: error_mod.Stats = .{},
     ownership: ownership_mod.Stats = .{},
-    implicit_lookup: dispatch_mod.ImplicitLookupStats = .{},
     pending_call_stages: [@typeInfo(dispatch_mod.PendingCallStage).@"enum".fields.len]dispatch_mod.PendingCallStageStats = @splat(.{}),
     pending_total: u32 = 0,
     pending_resolved: u32 = 0,
@@ -98,8 +102,6 @@ pub const Stats = struct {
     rounds: u32 = 0,
     cleanup_attempts: u32 = 0,
     destructor_lookups: u32 = 0,
-    cached_implementation_hits: u64 = 0,
-    cached_nonimplementation_hits: u64 = 0,
     generic_instantiation_calls: u64 = 0,
     generic_existing_instances: u64 = 0,
     generic_bodies_built: u64 = 0,
@@ -133,7 +135,7 @@ pub const PendingOwner = enum {
     core,
     expressions,
     control,
-    abstracts,
+    contracts,
     errors,
     ownership,
 };
@@ -185,7 +187,7 @@ const PendingResolutionStats = struct {
 const PendingPhase = enum {
     types_and_generics,
     expressions_and_calls,
-    control_and_abstracts,
+    control_and_contracts,
     errors,
     ownership,
 };
@@ -193,7 +195,7 @@ const PendingPhase = enum {
 const pending_phases = [_]PendingPhase{
     .types_and_generics,
     .expressions_and_calls,
-    .control_and_abstracts,
+    .control_and_contracts,
     .errors,
     .ownership,
 };
@@ -212,7 +214,7 @@ const PendingWorkItem = struct {
 const PendingWorklists = struct {
     types_and_generics: std.ArrayList(PendingWorkItem) = .empty,
     expressions_and_calls: std.ArrayList(PendingWorkItem) = .empty,
-    control_and_abstracts: std.ArrayList(PendingWorkItem) = .empty,
+    control_and_contracts: std.ArrayList(PendingWorkItem) = .empty,
     errors: std.ArrayList(PendingWorkItem) = .empty,
     ownership: std.ArrayList(PendingWorkItem) = .empty,
 
@@ -243,7 +245,7 @@ const PendingWorklists = struct {
     fn deinit(self: *PendingWorklists, allocator: std.mem.Allocator) void {
         self.types_and_generics.deinit(allocator);
         self.expressions_and_calls.deinit(allocator);
-        self.control_and_abstracts.deinit(allocator);
+        self.control_and_contracts.deinit(allocator);
         self.errors.deinit(allocator);
         self.ownership.deinit(allocator);
     }
@@ -252,7 +254,7 @@ const PendingWorklists = struct {
         return switch (phase) {
             .types_and_generics => &self.types_and_generics,
             .expressions_and_calls => &self.expressions_and_calls,
-            .control_and_abstracts => &self.control_and_abstracts,
+            .control_and_contracts => &self.control_and_contracts,
             .errors => &self.errors,
             .ownership => &self.ownership,
         };
@@ -270,7 +272,7 @@ const PendingWorklists = struct {
         return switch (phase) {
             .types_and_generics => &self.types_and_generics,
             .expressions_and_calls => &self.expressions_and_calls,
-            .control_and_abstracts => &self.control_and_abstracts,
+            .control_and_contracts => &self.control_and_contracts,
             .errors => &self.errors,
             .ownership => &self.ownership,
         };
@@ -291,6 +293,7 @@ pub fn semantizeWithOptions(
 ) !Result {
     const profile_start = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
     var relocation = try globalizer.relocate(allocator, modules, .allow_holes);
+    relocation.graph.target = options.target;
     errdefer relocation.deinit(allocator);
     try module_linker.link(allocator, &relocation.graph, modules, relocation.offsets.items);
     const profile_relocated = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
@@ -299,6 +302,8 @@ pub fn semantizeWithOptions(
     // those slots are genuinely unresolved before any resolver can inspect
     // them; unresolved is construction state, not the language type `Any`.
     try markUnresolvedTypeSlots(allocator, &relocation.graph, modules, relocation.offsets.items);
+
+    try @import("c_abi.zig").prepareForeignCapabilities(allocator, &relocation.graph);
 
     var core = core_mod.Resolver{
         .allocator = allocator,
@@ -347,7 +352,7 @@ pub fn semantizeWithOptions(
         .generics = &generics,
         .profile_io = options.profile_io,
     };
-    var abstracts = abstract_mod.Resolver{
+    var contracts = contract_mod.Resolver{
         .allocator = allocator,
         .graph = &relocation.graph,
         .modules = modules,
@@ -357,12 +362,18 @@ pub fn semantizeWithOptions(
         .profile_implementation_scans = options.profile_io != null,
         .profile_io = options.profile_io,
     };
-    constructors.abstracts = &abstracts;
+    generics.projection_context = &contracts;
+    generics.projection_resolver = contract_mod.Resolver.resolveAssociatedType;
+    generics.constant_projection_resolver = contract_mod.Resolver.resolveAssociatedInt;
+    constructors.contracts = &contracts;
     control.generic_functions = &generic_functions;
-    control.abstracts = &abstracts;
-    defer abstracts.deinit();
-    generic_functions.nested_call_context = &abstracts;
-    generic_functions.nested_call_resolver = abstract_mod.Resolver.resolveNestedCall;
+    control.contracts = &contracts;
+    defer contracts.deinit();
+    contracts.function_context = &generic_functions;
+    contracts.instantiate_function = generic_functions_mod.Resolver.instantiateReferencedFunction;
+    contracts.instantiate_alias = generic_functions_mod.Resolver.instantiateOperationAlias;
+    generic_functions.nested_call_context = &contracts;
+    generic_functions.nested_call_resolver = contract_mod.Resolver.resolveNestedCall;
     generic_functions.nested_constructor_context = &constructors;
     generic_functions.nested_constructor_resolver = constructor_mod.Resolver.resolveNestedCall;
     // These resolvers call back into one another while materializing generic
@@ -376,11 +387,12 @@ pub fn semantizeWithOptions(
         .offsets = relocation.offsets.items,
         .core = &core,
     };
+    defer errors.deinit();
     var dispatch = dispatch_mod.Resolver{
         .core = &core,
         .generic_functions = &generic_functions,
         .constructors = &constructors,
-        .abstracts = &abstracts,
+        .contracts = &contracts,
         .control = &control,
         .errors = &errors,
         .profile_io = options.profile_io,
@@ -400,95 +412,54 @@ pub fn semantizeWithOptions(
     generic_functions.ownership_checkpoint = ownership_mod.Resolver.parameterizedCheckpoint;
     generic_functions.rollback_ownership = ownership_mod.Resolver.rollbackParameterizedCheckpoint;
 
+    var setup_stages: [setup_stage_count]i96 = @splat(0);
+    var setup_start = profileTimestamp(options.profile_io);
     try core.resolveExternalTypes();
     try generics.resolveExternalTypes();
-    _ = try generics.materializeKnownTypes();
+    profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.external_types)]);
+    setup_start = profileTimestamp(options.profile_io);
+    // Generic record fields can contain associated projections. Publish tuple
+    // associations before materializing either their records or operation types.
+    try contracts.prepareParticipantConformances();
+    try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
+    profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.conformance_registration)]);
+    setup_start = profileTimestamp(options.profile_io);
+    contracts.resolveAssociatedTypes() catch |err| {
+        try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, &generics);
+        try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
+        return err;
+    };
+    profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.associated_types)]);
+    setup_start = profileTimestamp(options.profile_io);
+    _ = generics.materializeKnownTypes() catch |err| {
+        try reportGenericArgumentFailure(&relocation.graph, options.diagnostics, &generics);
+        try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, &generics);
+        try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
+        return err;
+    };
+    profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.known_types)]);
+    setup_start = profileTimestamp(options.profile_io);
     _ = try control.materializeSugarTypes();
 
+    profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.sugar_types)]);
+    setup_start = profileTimestamp(options.profile_io);
     if (options.diagnostics) |diagnostics| {
-        if (try abstracts.findConcreteImplementationConflict()) |conflict| {
-            var concrete_name = std.array_list.Managed(u8).init(allocator);
-            defer concrete_name.deinit();
-            try appendTypeName(&concrete_name, &relocation.graph, conflict.concrete);
-            try diagnostics.add(
-                diagnosticLocation(&relocation.graph, diagnostics, conflict.source),
-                .semantic,
-                "conflicting implementations of abstract '{s}' for type '{s}' produce different associated arguments",
-                .{
-                    relocation.graph.text(relocation.graph.declaration(conflict.abstract_decl).name),
-                    concrete_name.items,
-                },
-            );
-            return error.Reported;
-        }
-
-        if (try abstracts.findConcreteRequirementFailure()) |failure| {
-            var message = std.array_list.Managed(u8).init(allocator);
-            defer message.deinit();
-            try appendFormatted(
-                &message,
-                allocator,
-                "type does not implement abstract '{s}':\n  missing function: {s} ",
-                .{
-                    relocation.graph.text(relocation.graph.declaration(failure.abstract_decl).name),
-                    failure.method_name,
-                },
-            );
-            const expected_input = global_types.fields(&relocation.graph, failure.input) orelse return error.InvalidAbstractRequirementInput;
-            try appendFieldShape(&message, &relocation.graph, expected_input);
-
-            var candidate_count: usize = 0;
-            for (relocation.graph.functions.items) |function| {
-                const declaration = relocation.graph.declaration(function.declaration);
-                if (!std.mem.eql(u8, relocation.graph.text(declaration.name), failure.method_name)) continue;
-                if (!abstracts.requirementCandidateInputMatches(failure.input, function)) continue;
-                candidate_count += 1;
-            }
-            if (candidate_count != 0) {
-                try message.appendSlice("\n  possible overloads:");
-                for (relocation.graph.functions.items) |function| {
-                    const declaration = relocation.graph.declaration(function.declaration);
-                    if (!std.mem.eql(u8, relocation.graph.text(declaration.name), failure.method_name)) continue;
-                    if (!abstracts.requirementCandidateInputMatches(failure.input, function)) continue;
-                    try appendFormatted(&message, allocator, "\n  - {s} ", .{failure.method_name});
-                    try appendFieldShape(&message, &relocation.graph, function.input);
-                    try message.appendSlice(" -> ");
-                    try appendFieldShape(&message, &relocation.graph, function.output);
-                    const function_location = diagnosticLocation(&relocation.graph, diagnostics, declaration.source);
-                    const position = diagnostics.lineColumn(function_location);
-                    try appendFormatted(
-                        &message,
-                        allocator,
-                        "\n      file: {s}:{d}:{d}",
-                        .{ diagnostics.path(function_location), position.line, position.column },
-                    );
-                }
-            }
-
-            try diagnostics.add(
-                diagnosticLocation(&relocation.graph, diagnostics, failure.source),
-                .semantic,
-                "{s}",
-                .{message.items},
-            );
-            return error.Reported;
-        }
-
         for (relocation.graph.functions.items) |function| {
             for (relocation.graph.fields.items[function.output.start..][0..function.output.len]) |field| {
-                const abstract_use = abstracts.typeAbstractUse(field.ty) orelse continue;
-                if ((try abstracts.defaultType(abstract_use.declaration, abstract_use.arguments)) != null) continue;
+                const contract_use = contracts.typeContractUse(field.ty) orelse continue;
                 const declaration = relocation.graph.declaration(function.declaration);
                 try diagnostics.add(
                     diagnosticLocation(&relocation.graph, diagnostics, declaration.source),
-                    .codegen,
-                    "error generating function {s}: InvalidType",
-                    .{relocation.graph.text(declaration.name)},
+                    .semantic,
+                    "function '{s}' cannot return contract '{s}' as a runtime value; use a concrete type or Virtual",
+                    .{ relocation.graph.text(declaration.name), relocation.graph.text(relocation.graph.declaration(contract_use.declaration).name) },
                 );
                 return error.Reported;
             }
         }
     }
+
+    try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
 
     const total = totalPending(modules);
     const resolved = try allocator.alloc(bool, total);
@@ -505,27 +476,41 @@ pub fn semantizeWithOptions(
             pending_resolution_stats.initial(operation);
         };
     }
+    profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.worklists)]);
+    setup_start = profileTimestamp(options.profile_io);
+    // Validate declarations independently of executable use. Body proofs follow
+    // selected operations, or all materialized bodies in exhaustive mode.
+    contracts.validateParticipantConformances() catch |err| {
+        try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, &generics);
+        try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
+        return err;
+    };
+    try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
+    profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.conformance_validation)]);
+    setup_start = profileTimestamp(options.profile_io);
     var reachable_storage: reachability_mod.FunctionSet = undefined;
     var reachable: ?*reachability_mod.FunctionSet = null;
     if (!options.exhaustive_function_bodies) {
-        reachable_storage = try reachability_mod.roots(allocator, &relocation.graph, options.selected_test_name);
+        reachable_storage = try reachability_mod.executionRoots(allocator, &relocation.graph, options.selected_test_name);
         reachable = &reachable_storage;
     }
     defer if (reachable) |set| set.deinit();
+    profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.roots)]);
     var pending_attempts: u64 = 0;
     const profile_preloop = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
     var profile_rounds: usize = 0;
     var profile_pending_ns: i96 = 0;
-    var profile_runtime_binding_defaults_ns: i96 = 0;
     var profile_string_literal_types_ns: i96 = 0;
     var profile_binding_types_ns: i96 = 0;
     var profile_assignment_values_ns: i96 = 0;
     var profile_dereferences_ns: i96 = 0;
     var profile_addresses_ns: i96 = 0;
     var profile_known_generic_types_ns: i96 = 0;
-    var profile_abstract_field_storage_ns: i96 = 0;
+    var profile_field_access_types_ns: i96 = 0;
     var profile_sugar_types_ns: i96 = 0;
     var profile_errors_ns: i96 = 0;
+    var profile_error_summary_ns: i96 = 0;
+    var profile_error_refresh_ns: i96 = 0;
     var profile_finalize_ns: i96 = 0;
     var profile_finalize_count: usize = 0;
 
@@ -538,19 +523,26 @@ pub fn semantizeWithOptions(
     while (true) {
         while (changed) {
             profile_rounds += 1;
-            // Pending resolution can fill existing type slots without growing
-            // a pool, so failed conformance checks cannot cross rounds.
-            abstracts.invalidate_negative_implementation_cache();
             changed = false;
+            // Published operation signatures do not make their bodies roots.
+            // Complete selected bodies before resolving their pending uses.
+            if (generic_functions.materializePublishedBodies(reachable) catch |err| {
+                try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, &generics);
+                try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
+                return err;
+            }) changed = true;
+            if (reachable) |set| {
+                if (try reachability_mod.expand(allocator, &relocation.graph, set)) changed = true;
+            }
             const pending_start = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
             for (pending_phases) |phase| {
-                if (try resolvePendingPhase(
+                if (resolvePendingPhase(
                     &core,
                     &expressions,
                     &dispatch,
                     &control,
                     &generics,
-                    &abstracts,
+                    &contracts,
                     &errors,
                     &ownership,
                     modules,
@@ -562,13 +554,17 @@ pub fn semantizeWithOptions(
                     &pending_attempts,
                     if (options.profile_io != null) &pending_resolution_stats else null,
                     options.profile_io,
-                )) changed = true;
+                    options.diagnostics,
+                ) catch |err| {
+                    try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, &generics);
+                    try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
+                    return err;
+                }) changed = true;
             }
+            try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
             if (options.profile_io) |io| profile_pending_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - pending_start;
 
             var sweep_start = profileTimestamp(options.profile_io);
-            if (try abstracts.materializeRuntimeBindingDefaults()) changed = true;
-            profileAccumulate(options.profile_io, sweep_start, &profile_runtime_binding_defaults_ns);
             sweep_start = profileTimestamp(options.profile_io);
             if (core.materializeStringLiteralTypes()) changed = true;
             profileAccumulate(options.profile_io, sweep_start, &profile_string_literal_types_ns);
@@ -585,11 +581,16 @@ pub fn semantizeWithOptions(
             if (try core.materializeAddresses()) changed = true;
             profileAccumulate(options.profile_io, sweep_start, &profile_addresses_ns);
             sweep_start = profileTimestamp(options.profile_io);
-            if (try generics.materializeKnownTypes()) changed = true;
+            if (generics.materializeKnownTypes() catch |err| {
+                try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, &generics);
+                try reportGenericArgumentFailure(&relocation.graph, options.diagnostics, &generics);
+                try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
+                return err;
+            }) changed = true;
             profileAccumulate(options.profile_io, sweep_start, &profile_known_generic_types_ns);
             sweep_start = profileTimestamp(options.profile_io);
-            if (try abstracts.materializeAbstractFieldStorage()) changed = true;
-            profileAccumulate(options.profile_io, sweep_start, &profile_abstract_field_storage_ns);
+            if (try contracts.materializeFieldAccessTypes()) changed = true;
+            profileAccumulate(options.profile_io, sweep_start, &profile_field_access_types_ns);
             // Generic instantiation can intern nullable or inferred Errable
             // types during this pass. Their materialization must schedule a
             // further pass so pending uses can observe the final choice shape.
@@ -597,14 +598,32 @@ pub fn semantizeWithOptions(
             if (try control.materializeSugarTypes()) changed = true;
             profileAccumulate(options.profile_io, sweep_start, &profile_sugar_types_ns);
             const errors_start = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
-            if (try errors.inferFunctionErrorReasons()) changed = true;
+            if (try errors.inferFunctionErrorReasons(reachable)) changed = true;
+            profileAccumulate(options.profile_io, errors_start, &profile_error_summary_ns);
+            const refresh_start = profileTimestamp(options.profile_io);
+            if (errors.refreshPropagationResults()) changed = true;
+            profileAccumulate(options.profile_io, refresh_start, &profile_error_refresh_ns);
             if (options.profile_io) |io| profile_errors_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - errors_start;
             if (try completePropagatedReachCalls(&core, modules, relocation.offsets.items)) changed = true;
+            // Evidence selected by newly specialized bodies belongs to this
+            // fixed point. Its operation bodies must become reachable and have
+            // their cleanup finalized before construction metadata is retired.
+            const evidence_functions = relocation.graph.functions.items.len;
+            const evidence_types = relocation.graph.types.items.len;
+            const evidence_conformances = relocation.graph.contract_conformances.items.len;
+            contracts.validateParticipantConformances() catch |err| {
+                try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, &generics);
+                try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
+                return err;
+            };
+            try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
+            if (evidence_functions != relocation.graph.functions.items.len or
+                evidence_types != relocation.graph.types.items.len or
+                evidence_conformances != relocation.graph.contract_conformances.items.len) changed = true;
             if (reachable) |set| {
                 if (try reachability_mod.expand(allocator, &relocation.graph, set)) changed = true;
             }
         }
-        abstracts.invalidate_negative_implementation_cache();
         var finalized_any = false;
         const finalization_count = relocation.graph.functions.items.len;
         var raw: usize = 0;
@@ -632,7 +651,7 @@ pub fn semantizeWithOptions(
     }
     const profile_postloop = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
 
-    try abstracts.validateGenericFunctionInstances();
+    try contracts.validateGenericFunctionInstances();
     control.annotateChoiceTests();
 
     if (reachable) |set| try retireDormantBindingResolution(&relocation.graph, set, try core.builtin(.Any));
@@ -645,7 +664,7 @@ pub fn semantizeWithOptions(
             try diagnostics.add(
                 diagnosticLocation(&relocation.graph, diagnostics, failure.source),
                 .semantic,
-                "for expects a type implementing abstract '{s}', got '{s}'",
+                "for expects a type implementing contract '{s}', got '{s}'",
                 .{ failure.contract_name, actual_name.items },
             );
             return error.Reported;
@@ -653,42 +672,28 @@ pub fn semantizeWithOptions(
         return error.InvalidForEach;
     }
 
-    if (abstracts.virtual_signature_failure) |failure| {
+    if (contracts.virtual_signature_failure) |failure| {
         if (options.diagnostics) |diagnostics| {
-            try diagnostics.add(diagnosticLocation(&relocation.graph, diagnostics, failure.source), .semantic, "cannot use '{s}' for virtual dispatch: {s}", .{ failure.method_name, failure.reason });
+            const location = diagnosticLocation(&relocation.graph, diagnostics, failure.source);
+            if (failure.static_contract) {
+                try diagnostics.add(location, .semantic, "invalid safety contract for '{s}': {s}", .{ failure.method_name, failure.reason });
+            } else {
+                try diagnostics.add(location, .semantic, "cannot use '{s}' for virtual dispatch: {s}", .{ failure.method_name, failure.reason });
+            }
             return error.Reported;
         }
         return error.InvalidVirtualSignature;
     }
 
-    if (abstracts.field_storage_conflict) |conflict| {
-        if (options.diagnostics) |diagnostics| {
-            var abstract_name = std.array_list.Managed(u8).init(allocator);
-            defer abstract_name.deinit();
-            var existing_name = std.array_list.Managed(u8).init(allocator);
-            defer existing_name.deinit();
-            var actual_name = std.array_list.Managed(u8).init(allocator);
-            defer actual_name.deinit();
-            try appendTypeName(&abstract_name, &relocation.graph, conflict.abstract_type);
-            try appendTypeName(&existing_name, &relocation.graph, conflict.existing_type);
-            try appendTypeName(&actual_name, &relocation.graph, conflict.actual_type);
-            try diagnostics.add(
-                diagnosticLocation(&relocation.graph, diagnostics, conflict.source),
-                .semantic,
-                "field '.{s}' already stores '{s}' for abstract type '{s}', so it cannot also store '{s}'",
-                .{ relocation.graph.text(conflict.field_name), existing_name.items, abstract_name.items, actual_name.items },
-            );
-            return error.Reported;
-        }
-        return error.ConflictingAbstractFieldStorage;
-    }
+    if (try diagnoseArrayAssignments(allocator, &relocation.graph, reachable, options.diagnostics))
+        return error.Reported;
 
     if (options.diagnostics) |diagnostics| {
         if (try diagnoseUnresolvedPropagatedReach(allocator, &relocation.graph, modules, relocation.offsets.items, diagnostics))
             return error.Reported;
         if (try diagnosePrivateFields(&relocation.graph, modules, reachable, relocation.offsets.items, diagnostics))
             return error.Reported;
-        if (try diagnoseAbstractRuntimeBindings(&relocation.graph, &abstracts, diagnostics))
+        if (try diagnoseContractRuntimeBindings(&relocation.graph, &contracts, diagnostics))
             return error.Reported;
         if (try diagnoseMissingArrayTypeContext(&relocation.graph, diagnostics))
             return error.Reported;
@@ -701,6 +706,8 @@ pub fn semantizeWithOptions(
     };
     if (remaining != 0) {
         if (options.diagnostics) |diagnostics| {
+            if (try diagnoseUnresolvedAssignments(&relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
+                return error.Reported;
             if (try diagnoseUnresolvedArithmetic(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
                 return error.Reported;
             if (try diagnoseUnresolvedDereference(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
@@ -709,7 +716,7 @@ pub fn semantizeWithOptions(
                 return error.Reported;
             if (try diagnoseUnresolvedQualifiedNames(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
                 return error.Reported;
-            if (try diagnoseUnresolvedChoice(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
+            if (try diagnoseUnresolvedChoice(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics, false))
                 return error.Reported;
             if (try diagnoseUnresolvedIndex(&relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
                 return error.Reported;
@@ -718,7 +725,7 @@ pub fn semantizeWithOptions(
             // A denied copy may already be represented in the graph so Safety
             // can prefer a preceding move error. If another operation remains
             // unresolved, report that definite copy failure before unrelated
-            // overload diagnostics prevent Safety from running.
+            // call-resolution diagnostics prevent Safety from running.
             if (ownership.denied_copy) |denied| {
                 var type_name = std.array_list.Managed(u8).init(allocator);
                 defer type_name.deinit();
@@ -731,7 +738,9 @@ pub fn semantizeWithOptions(
                 );
                 return error.Reported;
             }
-            if (try diagnoseUnresolvedCall(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, &generic_functions, &abstracts, diagnostics))
+            if (try diagnoseUnresolvedCall(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, &generic_functions, &contracts, diagnostics))
+                return error.Reported;
+            if (try diagnoseUnresolvedChoice(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics, true))
                 return error.Reported;
         }
         dumpUnresolved(modules, resolved, reachable, relocation.offsets.items);
@@ -771,17 +780,17 @@ pub fn semantizeWithOptions(
         return if (options.diagnostics != null) error.Reported else error.InvalidPointerOperation;
 
     if (options.diagnostics) |diagnostics|
-        if (try abstracts.findGenericTypeConstraintFailure()) |failure| {
+        if (try contracts.findGenericTypeConstraintFailure()) |failure| {
             var actual_name = std.array_list.Managed(u8).init(allocator);
             defer actual_name.deinit();
             try appendTypeName(&actual_name, &relocation.graph, failure.actual);
             try diagnostics.add(
                 diagnosticLocation(&relocation.graph, diagnostics, failure.source),
                 .semantic,
-                "type '{s}' does not implement abstract '{s}' required by generic type parameter '.{s}' of '{s}'",
+                "type '{s}' does not implement contract '{s}' required by generic type parameter '.{s}' of '{s}'",
                 .{
                     actual_name.items,
-                    relocation.graph.text(relocation.graph.declaration(failure.abstract_decl).name),
+                    relocation.graph.text(relocation.graph.declaration(failure.contract_decl).name),
                     failure.parameter_name,
                     relocation.graph.text(relocation.graph.declaration(failure.generic_decl).name),
                 },
@@ -789,11 +798,17 @@ pub fn semantizeWithOptions(
             return error.Reported;
         };
 
-    try abstracts.closeVirtualMethodRegistries();
+    try contracts.closeVirtualMethodRegistries();
 
     // Construction-only resolution metadata must disappear before the graph is
     // exposed to Safety, Codegen or editor consumers.
     try relocation.graph.finishTypeResolution(allocator);
+    contracts.validateParticipantConformances() catch |err| {
+        try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, &generics);
+        try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
+        return err;
+    };
+    try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
     try relocation.graph.finishBindingTypeResolution(allocator);
 
     var generic_bodies_built: u64 = 0;
@@ -805,6 +820,15 @@ pub fn semantizeWithOptions(
         }
     }
     if (reachable) |set| {
+        for (relocation.graph.contract_safety_conformances.items) |*proof| {
+            const conformance = relocation.graph.contract_conformances.items[proof.selection.conformance];
+            const cleanup = set.cleanup_functions.contains(proof.method) and
+                @import("standard_contracts.zig").standardDeclaration(&relocation.graph, "Deinit") == conformance.declaration;
+            proof.safety_required = cleanup or set.operations.contains(proof.selection);
+        }
+        for (relocation.graph.virtualizes.items, 0..) |*value, raw| {
+            value.safety_required = set.virtualizes.contains(@enumFromInt(raw));
+        }
         for (relocation.graph.functions.items, 0..) |*function, raw| {
             const id: global_sg.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
             if (options.profile_io != null and function.flags.is_generic_instantiation and function.body != null) {
@@ -821,10 +845,9 @@ pub fn semantizeWithOptions(
         .generics = generics.stats,
         .generic_functions = generic_functions.stats,
         .generic_selection = generic_functions.selection_profile,
-        .abstracts = abstracts.stats,
+        .contracts = contracts.stats,
         .errors = errors.stats,
         .ownership = ownership.stats,
-        .implicit_lookup = dispatch.implicit_lookup_stats,
         .pending_call_stages = dispatch.pending_call_stages,
         .pending_total = @intCast(total),
         .pending_resolved = @intCast(resolved_count),
@@ -835,8 +858,6 @@ pub fn semantizeWithOptions(
         .rounds = @intCast(profile_rounds),
         .cleanup_attempts = @intCast(profile_finalize_count),
         .destructor_lookups = @intCast(ownership.profile_destructor_calls),
-        .cached_implementation_hits = abstracts.cached_implementation_hits,
-        .cached_nonimplementation_hits = abstracts.cached_nonimplementation_hits,
         .generic_instantiation_calls = generic_functions.profile_instantiate_calls,
         .generic_existing_instances = generic_functions.profile_instantiate_existing,
         .generic_bodies_built = generic_bodies_built,
@@ -848,24 +869,27 @@ pub fn semantizeWithOptions(
     try global_verify.verifyGlobal(&relocation.graph);
     const profile_end = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
     stats.remaining = 0;
+    var setup_stage_times: [setup_stage_count]u64 = undefined;
+    for (setup_stages, &setup_stage_times) |elapsed, *time| time.* = @intCast(elapsed);
     if (options.profile_io != null) stats.timings = .{
         .relocation_ns = @intCast(profile_relocated - profile_start),
         .setup_ns = @intCast(profile_preloop - profile_relocated),
+        .setup_stages_ns = setup_stage_times,
         .fixed_point_ns = @intCast(profile_postloop - profile_preloop),
         .pending_ns = @intCast(profile_pending_ns),
-        .runtime_binding_defaults_ns = @intCast(profile_runtime_binding_defaults_ns),
         .string_literal_types_ns = @intCast(profile_string_literal_types_ns),
         .binding_types_ns = @intCast(profile_binding_types_ns),
         .assignment_values_ns = @intCast(profile_assignment_values_ns),
         .dereferences_ns = @intCast(profile_dereferences_ns),
         .addresses_ns = @intCast(profile_addresses_ns),
         .known_generic_types_ns = @intCast(profile_known_generic_types_ns),
-        .abstract_field_storage_ns = @intCast(profile_abstract_field_storage_ns),
+        .field_access_types_ns = @intCast(profile_field_access_types_ns),
         .sugar_types_ns = @intCast(profile_sugar_types_ns),
         .error_inference_ns = @intCast(profile_errors_ns),
+        .error_summary_ns = @intCast(profile_error_summary_ns),
+        .error_refresh_ns = @intCast(profile_error_refresh_ns),
         .cleanup_ns = @intCast(profile_finalize_ns),
         .implicit_destructor_ns = @intCast(ownership.profile_destructor_ns),
-        .implicit_generic_lookup_ns = @intCast(dispatch.profile_generic_ns),
         .source_generic_selection_ns = @intCast(generic_functions.profile_source_selection_ns),
         .source_generic_completion_ns = @intCast(generic_functions.profile_source_completion_ns),
         .generic_instantiation_ns = @intCast(generic_functions.profile_instantiate_ns),
@@ -983,7 +1007,18 @@ fn diagnoseUnresolvedArithmetic(
             const left_ty = graph.node(left).ty orelse continue;
             const right_ty = graph.node(right).ty orelse continue;
             if (graph.isTypeUnresolved(left_ty) or graph.isTypeUnresolved(right_ty)) continue;
-            if (graph.semanticType(left_ty) == .pointer or graph.semanticType(right_ty) == .pointer) {
+            const left_representation_pointer = graph.semanticType(left_ty) == .pointer and switch (graph.semanticType(graph.semanticType(left_ty).pointer.child)) {
+                .builtin, .array, .pointer, .nullable => true,
+                else => false,
+            };
+            const right_representation_pointer = graph.semanticType(right_ty) == .pointer and switch (graph.semanticType(graph.semanticType(right_ty).pointer.child)) {
+                .builtin, .array, .pointer, .nullable => true,
+                else => false,
+            };
+            // References to nominal participants are legitimate contract
+            // operands. Report their concrete types and dimensions when no
+            // conforming operation exists, rather than calling them addresses.
+            if (left_representation_pointer or right_representation_pointer) {
                 try diagnostics.add(
                     diagnosticLocation(graph, diagnostics, graph.node(left).source),
                     .semantic,
@@ -1017,6 +1052,98 @@ fn diagnoseUnresolvedArithmetic(
     return false;
 }
 
+const ArrayMismatch = struct {
+    value: global_sg.GlobalNodeId,
+    expected: global_sg.GlobalTypeId,
+    length: ?usize = null,
+};
+
+fn arrayMismatch(graph: *const global_sg.GlobalSemanticGraph, value: global_sg.GlobalNodeId, expected: global_sg.GlobalTypeId) ?ArrayMismatch {
+    if (@intFromEnum(expected) >= graph.types.items.len or graph.isTypeUnresolved(expected)) return null;
+    const node = graph.node(value);
+    if (global_types.arrayElement(graph, expected)) |element| {
+        const elements = switch (node.content) {
+            .list_literal => |literal| literal.elements,
+            .array_literal => |literal| literal.elements,
+            else => null,
+        };
+        if (elements) |items| {
+            if (items.len != global_types.arrayLength(graph, expected).?)
+                return .{ .value = value, .expected = expected, .length = items.len };
+            for (graph.node_refs.items[items.start..][0..items.len]) |child|
+                if (arrayMismatch(graph, child, element)) |mismatch| return mismatch;
+        } else if (node.ty) |actual| {
+            if (!graph.isTypeUnresolved(actual) and global_types.arrayElement(graph, actual) != null and !global_types.equal(graph, actual, expected))
+                return .{ .value = value, .expected = expected };
+        }
+    } else if (graph.semanticType(expected) == .pointer) {
+        const pointer = graph.semanticType(expected).pointer;
+        if (global_types.arrayElement(graph, pointer.child) != null) {
+            const actual = node.ty orelse return null;
+            if (graph.isTypeUnresolved(actual)) return null;
+            if (graph.semanticType(actual) == .pointer and !global_types.equal(graph, graph.semanticType(actual).pointer.child, pointer.child))
+                return .{ .value = value, .expected = expected };
+        }
+    }
+    if (node.content == .struct_value_literal) {
+        const fields = global_types.fields(graph, expected) orelse return null;
+        for (graph.value_fields.items[node.content.struct_value_literal.fields.start..][0..node.content.struct_value_literal.fields.len], 0..) |field, index| {
+            const target = if (graph.text(field.name).len != 0)
+                if (global_types.findField(graph, expected, graph.text(field.name))) |hit| hit.field.ty else continue
+            else if (index < fields.len)
+                graph.fields.items[fields.start + index].ty
+            else
+                continue;
+            if (arrayMismatch(graph, field.value, target)) |mismatch| return mismatch;
+        }
+    }
+    return null;
+}
+
+// Contextual types are destinations, not proof that aggregate elements or
+// referenced storage have that shape. Validate before safety and codegen,
+// including when a rejected literal has no inferred type at all.
+fn diagnoseArrayAssignments(
+    allocator: std.mem.Allocator,
+    graph: *const global_sg.GlobalSemanticGraph,
+    reachable: ?*const reachability_mod.FunctionSet,
+    diagnostics: ?*diagnostics_mod.Diagnostics,
+) !bool {
+    for (graph.nodes.items, 0..) |node, raw| {
+        const id: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(raw)));
+        if (reachable) |set| if (!set.containsNode(id)) continue;
+        const value, const expected = switch (node.content) {
+            .binding_declaration => |binding| .{ graph.binding(binding).initialization orelse continue, graph.binding(binding).ty },
+            .assignment => |assignment| .{ assignment.value, graph.binding(assignment.binding).ty },
+            .array_store => |store| .{ store.value, store.element_type },
+            .pointer_assignment => |assignment| blk: {
+                const ty = graph.node(assignment.pointer).ty orelse continue;
+                if (graph.isTypeUnresolved(ty) or graph.semanticType(ty) != .pointer) continue;
+                break :blk .{ assignment.value, graph.semanticType(ty).pointer.child };
+            },
+            .struct_value_literal, .array_literal => .{ id, node.ty orelse continue },
+            else => continue,
+        };
+        const mismatch = arrayMismatch(graph, value, expected) orelse continue;
+        if (diagnostics) |sink| {
+            const location = diagnosticLocation(graph, sink, graph.node(mismatch.value).source);
+            if (mismatch.length) |length| {
+                try sink.add(location, .semantic, "array initializer has {d} elements; expected {d}", .{ length, global_types.arrayLength(graph, mismatch.expected).? });
+            } else {
+                var actual_name = std.array_list.Managed(u8).init(allocator);
+                defer actual_name.deinit();
+                var expected_name = std.array_list.Managed(u8).init(allocator);
+                defer expected_name.deinit();
+                try appendTypeName(&actual_name, graph, graph.node(mismatch.value).ty.?);
+                try appendTypeName(&expected_name, graph, mismatch.expected);
+                try sink.add(location, .semantic, "array value has type '{s}'; expected '{s}'", .{ actual_name.items, expected_name.items });
+            }
+        }
+        return true;
+    }
+    return false;
+}
+
 // Literal contextualization has already finished. Typed numeric values must
 // agree with their destination; changing their node type would conceal a
 // conversion that codegen has no corresponding instruction to perform.
@@ -1034,7 +1161,9 @@ fn diagnoseInvalidNumericAssignments(
                 graph.binding(binding).initialization orelse continue,
                 graph.binding(binding).ty,
             },
+            .struct_value_literal, .array_literal => findAggregateNumericMismatch(graph, id) orelse continue,
             .assignment => |assignment| .{ assignment.value, graph.binding(assignment.binding).ty },
+            .array_store => |store| .{ store.value, store.element_type },
             .pointer_assignment => |assignment| blk: {
                 const pointer_ty = graph.node(assignment.pointer).ty orelse continue;
                 const pointer = switch (graph.semanticType(pointer_ty)) {
@@ -1045,7 +1174,7 @@ fn diagnoseInvalidNumericAssignments(
             },
             else => continue,
         };
-        // Literal range failures have a more precise Safety diagnostic. Their
+        // Literal range failures have a more precise Safety diagnostics_mod. Their
         // default type is not evidence of an implicit variable conversion.
         if (graph.node(value).content == .int_literal and switch (graph.semanticType(expected)) {
             .builtin => |builtin| switch (builtin) {
@@ -1055,6 +1184,21 @@ fn diagnoseInvalidNumericAssignments(
             else => false,
         }) continue;
         const actual = graph.node(value).ty orelse continue;
+        if (isNumericType(graph, expected)) {
+            if (global_types.findVariant(graph, actual, "ok")) |ok| {
+                if (ok.variant.payload_type) |payload| {
+                    if (global_types.equal(graph, payload, expected) and global_types.findVariant(graph, actual, "error") != null) {
+                        if (diagnostics) |sink| try sink.add(
+                            diagnosticLocation(graph, sink, graph.node(value).source),
+                            .semantic,
+                            "cannot assign a fallible numeric result directly; handle its error or propagate it with '!'",
+                            .{},
+                        );
+                        return true;
+                    }
+                }
+            }
+        }
         if (!isNumericType(graph, actual) or !isNumericType(graph, expected)) continue;
         if (global_types.equal(graph, actual, expected)) continue;
         if (diagnostics) |sink| {
@@ -1074,6 +1218,46 @@ fn diagnoseInvalidNumericAssignments(
         return true;
     }
     return false;
+}
+
+// Aggregate types alone do not prove that each child has the representation
+// expected by LLVM. Check typed numeric children after contextualization.
+fn findAggregateNumericMismatch(graph: *const global_sg.GlobalSemanticGraph, id: global_sg.GlobalNodeId) ?struct { global_sg.GlobalNodeId, global_sg.GlobalTypeId } {
+    const node = graph.node(id);
+    const ty = node.ty orelse return null;
+    switch (node.content) {
+        .struct_value_literal => |literal| {
+            const fields = global_types.fields(graph, ty) orelse return null;
+            for (graph.value_fields.items[literal.fields.start..][0..literal.fields.len], 0..) |field, offset| {
+                var expected: ?global_sg.GlobalTypeId = null;
+                if (graph.text(field.name).len != 0) {
+                    for (graph.fields.items[fields.start..][0..fields.len]) |candidate| {
+                        if (std.mem.eql(u8, graph.text(field.name), graph.text(candidate.name))) {
+                            expected = candidate.ty;
+                            break;
+                        }
+                    }
+                } else if (offset < fields.len) expected = graph.fields.items[fields.start + offset].ty;
+                if (expected) |target| if (numericChildMismatch(graph, field.value, target)) return .{ field.value, target };
+            }
+        },
+        .array_literal => |literal| {
+            for (graph.node_refs.items[literal.elements.start..][0..literal.elements.len]) |child| {
+                if (numericChildMismatch(graph, child, literal.element_type)) return .{ child, literal.element_type };
+            }
+        },
+        else => {},
+    }
+    return null;
+}
+
+fn numericChildMismatch(graph: *const global_sg.GlobalSemanticGraph, child: global_sg.GlobalNodeId, expected: global_sg.GlobalTypeId) bool {
+    const node = graph.node(child);
+    const actual = node.ty orelse return false;
+    // Integer range errors retain the dedicated safety diagnostics_mod.
+    if (node.content == .int_literal and !global_types.isBuiltin(graph, expected, .Float16) and
+        !global_types.isBuiltin(graph, expected, .Float32) and !global_types.isBuiltin(graph, expected, .Float64)) return false;
+    return isNumericType(graph, actual) and isNumericType(graph, expected) and !global_types.equal(graph, actual, expected);
 }
 
 fn isNumericType(graph: *const global_sg.GlobalSemanticGraph, ty: global_sg.GlobalTypeId) bool {
@@ -1155,7 +1339,34 @@ fn diagnoseInvalidPointerOperations(
                     .pointer => |value| value,
                     else => continue,
                 };
-                if (pointer.mutability != .read_only) continue;
+                if (pointer.mutability != .read_only) {
+                    const actual = graph.node(assignment.value).ty orelse continue;
+                    const actual_pointer = switch (graph.semanticType(actual)) {
+                        .pointer => |value| value,
+                        else => continue,
+                    };
+                    const expected_pointer = switch (graph.semanticType(pointer.child)) {
+                        .pointer => |value| value,
+                        else => continue,
+                    };
+                    if (global_types.equal(graph, actual_pointer.child, expected_pointer.child) and
+                        (expected_pointer.mutability == .read_only or actual_pointer.mutability == .read_write)) continue;
+                    if (diagnostics) |sink| {
+                        var actual_name = std.array_list.Managed(u8).init(allocator);
+                        defer actual_name.deinit();
+                        var expected_name = std.array_list.Managed(u8).init(allocator);
+                        defer expected_name.deinit();
+                        try appendTypeName(&actual_name, graph, actual);
+                        try appendTypeName(&expected_name, graph, pointer.child);
+                        try sink.add(
+                            diagnosticLocation(graph, sink, graph.node(assignment.value).source),
+                            .semantic,
+                            "cannot assign reference of type '{s}' to destination of type '{s}'",
+                            .{ actual_name.items, expected_name.items },
+                        );
+                    }
+                    return true;
+                }
                 if (diagnostics) |sink| {
                     var name = std.array_list.Managed(u8).init(allocator);
                     defer name.deinit();
@@ -1343,12 +1554,12 @@ fn completePropagatedReachCalls(
             const node = core.graph.nodes.items[@intFromEnum(globalizer.globalNode(offset, call.node))];
             const callee = switch (node.content) {
                 .function_call => |value| value.callee,
-                .type_initializer => |value| value.init_fn,
+
                 else => continue,
             };
             const input_id = switch (node.content) {
                 .function_call => |value| value.input,
-                .type_initializer => |value| value.args,
+
                 else => unreachable,
             };
             const input = core.graph.nodes.items[@intFromEnum(input_id)];
@@ -1356,11 +1567,8 @@ fn completePropagatedReachCalls(
                 .struct_value_literal => |value| value,
                 else => continue,
             };
-            var fields = core.graph.function(callee).input;
-            if (node.content == .type_initializer) {
-                fields.start += 1;
-                fields.len -= 1;
-            }
+            const fields = core.graph.function(callee).input;
+
             if (literal.fields.len == fields.len) continue;
             const context = reach_context.Context.fromModule(module, offset, call.visible_bindings, call.owner_function);
             if (try core.completeCallInputFieldsWithReach(fields, input_id, context)) changed = true;
@@ -1375,7 +1583,7 @@ fn resolvePendingPhase(
     dispatch: *dispatch_mod.Resolver,
     control: *control_mod.Resolver,
     generics: *generic_mod.Resolver,
-    abstracts: *abstract_mod.Resolver,
+    contracts: *contract_mod.Resolver,
     errors: *error_mod.Resolver,
     ownership: *ownership_mod.Resolver,
     modules: []const module_sg.ModuleSemanticGraph,
@@ -1387,6 +1595,7 @@ fn resolvePendingPhase(
     pending_attempts: *u64,
     detailed_stats: ?*PendingResolutionStats,
     profile_io: ?std.Io,
+    diagnostics: ?*diagnostics_mod.Diagnostics,
 ) !bool {
     var changed = false;
     var write: usize = 0;
@@ -1415,14 +1624,24 @@ fn resolvePendingPhase(
             dispatch,
             control,
             generics,
-            abstracts,
+            contracts,
             errors,
             ownership,
             module_index,
             module,
             offsets[module_index],
             operation,
-        ) catch |err| return err;
+        ) catch |err| {
+            if (err == error.ConflictingGenericArgument and operation == .resolve_call) {
+                if (diagnostics) |bag| {
+                    const reference = module.semantic.external_refs.items[@intFromEnum(operation.resolve_call.callee)];
+                    const source = globalSource(offsets[module_index], reference.source);
+                    try bag.add(diagnosticLocation(core.graph, bag, source), .semantic, "conflicting inferred generic parameters in call to '{s}'; repeated types and dimensions must agree", .{module.text(reference.name)});
+                    return error.Reported;
+                }
+            }
+            return err;
+        };
         if (detailed_stats) |stats| {
             const elapsed = profileTimestamp(profile_io) - attempt_start;
             stats.attempt(operation, result, @intCast(@max(0, elapsed)));
@@ -1487,7 +1706,7 @@ fn pendingOwnerTag(tag: PendingTag) PendingOwner {
         .resolve_match,
         .resolve_match_case,
         => .control,
-        .resolve_abstract => .abstracts,
+        .resolve_contract => .contracts,
         .resolve_error_propagation => .errors,
         .resolve_defer,
         .resolve_copy,
@@ -1509,8 +1728,8 @@ fn pendingPhase(operation: module_entities.PendingOperation) PendingPhase {
         .expressions,
         => .expressions_and_calls,
         .control,
-        .abstracts,
-        => .control_and_abstracts,
+        .contracts,
+        => .control_and_contracts,
         .errors => .errors,
         .ownership => .ownership,
     };
@@ -1537,7 +1756,7 @@ fn resolveTypeOperation(
         else => unreachable,
     };
     const reference = module.semantic.external_refs.items[@intFromEnum(value.external)];
-    const result = if (reference.generic_arguments != null)
+    const result = if (reference.generic_arguments != null or reference.projection_base != null or reference.computed_type != null)
         try generics.tryResolve(module_index, module, o, operation)
     else
         try core.tryResolve(module_index, module, o, operation);
@@ -1550,7 +1769,7 @@ fn resolvePendingOperation(
     dispatch: *dispatch_mod.Resolver,
     control: *control_mod.Resolver,
     generics: *generic_mod.Resolver,
-    abstracts: *abstract_mod.Resolver,
+    contracts: *contract_mod.Resolver,
     errors: *error_mod.Resolver,
     ownership: *ownership_mod.Resolver,
     module_index: usize,
@@ -1569,14 +1788,20 @@ fn resolvePendingOperation(
             break :blk if (result == .not_applicable) .deferred else result;
         },
         .core => blk: {
+            if (operation == .resolve_binary) {
+                const contract_result = try dispatch.generic_functions.resolveContractArithmetic(module_index, module, o, operation.resolve_binary);
+                break :blk ownedResult(contract_result);
+            }
             const core_result = try core.tryResolve(module_index, module, o, operation);
-            if (core_result == .resolved or operation != .resolve_binary) break :blk ownedResult(core_result);
-            const generic_result = try dispatch.generic_functions.resolveGenericAddition(module_index, module, o, operation.resolve_binary);
-            break :blk if (generic_result == .resolved) generic_result else ownedResult(core_result);
+            if (core_result != .resolved and operation == .resolve_comparison) {
+                const contract_result = try dispatch.generic_functions.resolveContractComparison(module_index, module, o, operation.resolve_comparison);
+                if (contract_result == .resolved) break :blk contract_result;
+            }
+            break :blk ownedResult(core_result);
         },
         .expressions => ownedResult(try expressions.tryResolve(module_index, module, o, operation)),
         .control => ownedResult(try control.tryResolve(module_index, module, o, operation)),
-        .abstracts => ownedResult(try abstracts.tryResolve(module_index, module, o, operation)),
+        .contracts => ownedResult(try contracts.tryResolve(module_index, module, o, operation)),
         .errors => ownedResult(try errors.tryResolve(module_index, module, o, operation)),
         .ownership => ownedResult(try ownership.tryResolve(o, operation)),
     };
@@ -1627,10 +1852,19 @@ fn diagnoseUnresolvedQualifiedTypes(
                 error.UnknownModuleReference, error.AmbiguousModuleReference => continue,
                 else => return err,
             };
-            if (@intFromEnum(target) == module_index) continue;
             const name = module.text(reference.name);
+            if (!declarationNameExistsInModule(graph, target, name, &.{ .type, .contract_type })) {
+                try diagnostics.add(
+                    diagnosticLocation(graph, diagnostics, globalSource(offsets[module_index], reference.source)),
+                    .semantic,
+                    "module '{s}' has no type named '{s}'",
+                    .{ module.text(reference.module_path.?), name },
+                );
+                return true;
+            }
+            if (@intFromEnum(target) == module_index) continue;
             if (!std.mem.startsWith(u8, name, "_")) continue;
-            if (!declarationNameExistsInModule(graph, target, name, &.{ .type, .abstract_type })) continue;
+            if (!declarationNameExistsInModule(graph, target, name, &.{ .type, .contract_type })) continue;
             try diagnostics.add(
                 diagnosticLocation(graph, diagnostics, globalSource(offsets[module_index], reference.source)),
                 .semantic,
@@ -1789,20 +2023,19 @@ fn diagnoseUnresolvedBindingTypes(graph: *const global_sg.GlobalSemanticGraph, d
     return false;
 }
 
-fn diagnoseAbstractRuntimeBindings(
+fn diagnoseContractRuntimeBindings(
     graph: *const global_sg.GlobalSemanticGraph,
-    abstracts: *abstract_mod.Resolver,
+    contracts: *contract_mod.Resolver,
     diagnostics: *diagnostics_mod.Diagnostics,
 ) !bool {
     for (graph.bindings.items, 0..) |binding, raw| {
         const binding_id: global_sg.GlobalBindingId = @enumFromInt(@as(u32, @intCast(raw)));
-        const abstract_use = abstracts.runtimeBindingAbstract(binding_id) orelse continue;
-        if (try abstracts.hasDefaultDeclaration(abstract_use.declaration)) continue;
-        const name = graph.text(graph.declarations.items[@intFromEnum(abstract_use.declaration)].name);
+        const contract_use = contracts.runtimeBindingContract(binding_id) orelse continue;
+        const name = graph.text(graph.declarations.items[@intFromEnum(contract_use.declaration)].name);
         try diagnostics.add(
             diagnosticLocation(graph, diagnostics, binding.source),
             .semantic,
-            "cannot use abstract '{s}' as a type for a symbol. Use a concrete type or add a default concrete type to the abstract type ('{s} defaultsto <Type>')",
+            "contract '{s}' has no runtime representation; use a concrete type or Virtual#(.contract: {s})",
             .{ name, name },
         );
         return true;
@@ -1988,6 +2221,7 @@ fn diagnoseUnresolvedChoice(
     reachable: ?*const reachability_mod.FunctionSet,
     offsets: []const globalizer.Offsets,
     diagnostics: *diagnostics_mod.Diagnostics,
+    missing_context: bool,
 ) !bool {
     var flat: usize = 0;
     for (modules, 0..) |*module, module_index| {
@@ -2007,7 +2241,15 @@ fn diagnoseUnresolvedChoice(
                     const choice_ty = if (choice.expected_type) |local_ty|
                         globalizer.globalType(offsets[module_index], local_ty)
                     else
-                        graph.node(target).ty orelse continue;
+                        graph.node(target).ty orelse {
+                            if (!missing_context) continue;
+                            const source: @import("../primitives/schema.zig").SourceRef = .{
+                                .file_index = offsets[module_index].file_base + reference.source.file_index,
+                                .offset = reference.source.offset,
+                            };
+                            try diagnostics.add(diagnosticLocation(graph, diagnostics, source), .semantic, "choice option '..{s}' needs a concrete choice type", .{name});
+                            return true;
+                        };
                     if (graph.isTypeUnresolved(choice_ty) or global_types.isBuiltin(graph, choice_ty, .Any)) continue;
                     // A known non-choice may still become meaningful through a
                     // different pending operation. Only classify operations for
@@ -2043,7 +2285,13 @@ fn diagnoseUnresolvedChoice(
                 .resolve_choice_payload => |access| {
                     const value = graph.node(globalizer.globalNode(offsets[module_index], access.value));
                     const choice_ty = value.ty orelse continue;
-                    if (graph.isTypeUnresolved(choice_ty) or global_types.variants(graph, choice_ty) == null) continue;
+                    if (graph.isTypeUnresolved(choice_ty)) continue;
+                    if (access.requires_errable and !global_types.isErrable(graph, choice_ty)) {
+                        const source: @import("../primitives/schema.zig").SourceRef = .{ .file_index = offsets[module_index].file_base + access.source.file_index, .offset = access.source.offset };
+                        try diagnostics.add(diagnosticLocation(graph, diagnostics, source), .semantic, "handle expects an Errable value", .{});
+                        return true;
+                    }
+                    if (global_types.variants(graph, choice_ty) == null) continue;
                     const name = module.text(access.option_name);
                     const hit = global_types.findVariant(graph, choice_ty, name) orelse continue;
                     if (hit.variant.payload_type != null) continue;
@@ -2145,6 +2393,41 @@ fn diagnoseUnresolvedChoice(
                 },
                 else => {},
             }
+        }
+    }
+    return false;
+}
+
+fn diagnoseUnresolvedAssignments(
+    graph: *const global_sg.GlobalSemanticGraph,
+    modules: []const module_sg.ModuleSemanticGraph,
+    resolved: []const bool,
+    reachable: ?*const reachability_mod.FunctionSet,
+    offsets: []const globalizer.Offsets,
+    diagnostics: *diagnostics_mod.Diagnostics,
+) !bool {
+    var flat: usize = 0;
+    for (modules, 0..) |*module, module_index| {
+        for (module.semantic.pending_operations.items, 0..) |operation, operation_index| {
+            defer flat += 1;
+            const access = switch (operation) {
+                .resolve_name_assignment => |value| value,
+                else => continue,
+            };
+            const owner = if (operation_index < module.semantic.pending_owner_functions.items.len)
+                if (module.semantic.pending_owner_functions.items[operation_index]) |value| globalizer.globalFunction(offsets[module_index], value) else null
+            else
+                null;
+            if (resolved[flat] or (reachable != null and owner != null and !reachable.?.contains(owner.?))) continue;
+            var source = access.source;
+            source.file_index += offsets[module_index].file_base;
+            try diagnostics.add(
+                diagnosticLocation(graph, diagnostics, source),
+                .semantic,
+                "cannot assign to undeclared binding '{s}'; declare it first with ':=' or '::='",
+                .{module.text(access.name)},
+            );
+            return true;
         }
     }
     return false;
@@ -2257,7 +2540,7 @@ fn diagnoseUnresolvedCall(
     reachable: ?*const reachability_mod.FunctionSet,
     offsets: []const globalizer.Offsets,
     generic_functions: *generic_functions_mod.Resolver,
-    abstracts: *abstract_mod.Resolver,
+    contracts: *contract_mod.Resolver,
     diagnostics: *diagnostics_mod.Diagnostics,
 ) !bool {
     var flat: usize = 0;
@@ -2289,8 +2572,54 @@ fn diagnoseUnresolvedCall(
                 .offset = source.offset + @as(u32, @intCast(name.len)),
             });
 
-            if (reference.module_path == null and reference.generic_arguments == null and std.mem.eql(u8, name, "to_virtual") and call.expected_type == null) {
-                try diagnostics.add(diagnosticLocation(graph, diagnostics, source), .semantic, "cannot infer the abstract parameter of 'to_virtual'; provide a Virtual result type or '#(AbstractName)'", .{});
+            if (call.callee_value) |local| {
+                const pointer = graph.node(globalizer.globalNode(offsets[module_index], local));
+                const ty = pointer.ty orelse continue;
+                if (graph.isTypeUnresolved(ty)) continue;
+                if (!c_abi.isFunctionPointer(graph, ty)) {
+                    try diagnostics.add(location, .semantic, "cannot call binding '{s}': expected a CFunctionPointer value", .{name});
+                } else {
+                    const declaration = switch (graph.resolvedSemanticType(ty).?) {
+                        .declared => |id| graph.declaration(id),
+                        else => unreachable,
+                    };
+                    const signature = graph.function(declaration.function_id.?);
+                    const input = globalizer.globalNode(offsets[module_index], call.input);
+                    if (generic_functions.core.matchCallInput(signature.input, input) == .applicable) {
+                        try diagnostics.add(location, .semantic, "cannot resolve C callback '{s}': .ffi uses reach [ffi] and requires a ForeignFunctionInterface capability", .{name});
+                    } else {
+                        try diagnostics.add(location, .semantic, "arguments do not match the C callback signature of '{s}'", .{name});
+                    }
+                }
+                return true;
+            }
+
+            // Incomplete identities deliberately cannot participate in value
+            // construction or layout queries. Explain that boundary before
+            // the generic call-mismatch diagnostic hides the actual cause.
+            if (reference.module_path == null and (std.mem.eql(u8, name, "size_of") or std.mem.eql(u8, name, "alignment_of"))) {
+                const input_node = graph.node(globalizer.globalNode(offsets[module_index], call.input));
+                if (input_node.content == .struct_value_literal) {
+                    const fields = input_node.content.struct_value_literal.fields;
+                    for (graph.value_fields.items[fields.start..][0..fields.len]) |field| {
+                        const argument = graph.node(field.value);
+                        if (argument.content != .type_literal) continue;
+                        if (global_types.incompleteDeclaration(graph, argument.content.type_literal)) |id| {
+                            try diagnostics.add(location, .semantic, "CIncomplete type '{s}' has no size or alignment; use RawPointer for foreign handles", .{graph.text(graph.declaration(id).name)});
+                            return true;
+                        }
+                    }
+                }
+            }
+            for (try graph.declarationsNamed(allocator, name)) |id| {
+                const declaration = graph.declaration(id);
+                if (declaration.struct_layout != .c_incomplete or !functionDeclarationVisibleForDiagnostic(graph, module_index, id, qualified_module)) continue;
+                try diagnostics.add(location, .semantic, "CIncomplete type '{s}' cannot be constructed; use RawPointer for foreign handles", .{name});
+                return true;
+            }
+
+            if (reference.module_path == null and reference.generic_arguments == null and reference.computed_arguments == null and std.mem.eql(u8, name, "to_virtual") and call.expected_type == null) {
+                try diagnostics.add(diagnosticLocation(graph, diagnostics, source), .semantic, "cannot infer the contract parameter of 'to_virtual'; provide a Virtual result type or '#(.contract: ContractName)'", .{});
                 return true;
             }
 
@@ -2313,52 +2642,6 @@ fn diagnoseUnresolvedCall(
                     return true;
                 }
             } else if (!visibleFunctionNameExists(graph, module_index, null, name)) {
-                // A type constructor with a visible initializer is still a
-                // constructor call when its arguments fail overload matching.
-                // Report the initializer signatures instead of treating the
-                // type name as a missing function.
-                for (graph.declarations.items, 0..) |declaration, raw_decl| {
-                    if (declaration.kind != .type or !std.mem.eql(u8, graph.text(declaration.name), name)) continue;
-                    const type_id = declaration.type_id orelse continue;
-                    var constructor_core = core_mod.Resolver{
-                        .allocator = allocator,
-                        .graph = graph,
-                        .modules = modules,
-                        .offsets = offsets,
-                    };
-                    if (!constructor_core.declarationVisible(module_index, @enumFromInt(@as(u32, @intCast(raw_decl))), null)) continue;
-                    const input_id = globalizer.globalNode(offsets[module_index], call.input);
-                    const input = switch (graph.node(input_id).content) {
-                        .struct_value_literal => |value| value,
-                        else => continue,
-                    };
-                    var message = std.array_list.Managed(u8).init(allocator);
-                    defer message.deinit();
-                    for (graph.functions.items) |function| {
-                        const init_decl = graph.declaration(function.declaration);
-                        if (!std.mem.eql(u8, graph.text(init_decl.name), "init") or function.input.len == 0) continue;
-                        if (!constructor_core.declarationVisible(module_index, function.declaration, null)) continue;
-                        const receiver = graph.fields.items[function.input.start].ty;
-                        const pointer = switch (graph.types.items[@intFromEnum(receiver)]) {
-                            .pointer => |value| value,
-                            else => continue,
-                        };
-                        if (!global_types.equal(graph, pointer.child, type_id)) continue;
-                        if (message.items.len == 0) {
-                            try message.print("failed to initialize type '{s}': no visible 'init' overload accepts arguments ", .{name});
-                            try appendValueShape(&message, graph, input);
-                            try message.appendSlice(". Available overloads:");
-                        }
-                        try message.appendSlice("\n  - init ");
-                        try appendFieldShape(&message, graph, function.input);
-                        try message.appendSlice(" -> ");
-                        try appendFieldShape(&message, graph, function.output);
-                    }
-                    if (message.items.len != 0) {
-                        try diagnostics.add(location, .semantic, "{s}", .{message.items});
-                        return true;
-                    }
-                }
                 try diagnostics.add(location, .semantic, "no function named '{s}' exists", .{name});
                 return true;
             }
@@ -2368,6 +2651,14 @@ fn diagnoseUnresolvedCall(
                 .struct_value_literal => |value| value,
                 else => continue,
             };
+            var candidates: std.ArrayList(global_sg.GlobalFunctionId) = .empty;
+            defer candidates.deinit(allocator);
+            for (graph.functions.items, 0..) |function, raw| {
+                const declaration = graph.declaration(function.declaration);
+                if (!std.mem.eql(u8, graph.text(declaration.name), name)) continue;
+                if (!functionDeclarationVisibleForDiagnostic(graph, module_index, function.declaration, qualified_module)) continue;
+                try candidates.append(allocator, @enumFromInt(@as(u32, @intCast(raw))));
+            }
             var input_complete = true;
             for (graph.value_fields.items[input.fields.start..][0..input.fields.len]) |field| {
                 const ty = graph.node(field.value).ty orelse {
@@ -2379,7 +2670,23 @@ fn diagnoseUnresolvedCall(
                     break;
                 }
             }
-            if (!input_complete) continue;
+            if (!input_complete) {
+                // Untyped choice arguments can still make multiple candidate
+                // contracts fit. Diagnose that ambiguity before waiting for a
+                // context that only selection of a candidate could provide.
+                var contextual_core = core_mod.Resolver{
+                    .allocator = allocator,
+                    .graph = graph,
+                    .modules = modules,
+                    .offsets = offsets,
+                };
+                var contextual_matches: usize = 0;
+                for (candidates.items) |candidate| {
+                    const function = graph.function(candidate);
+                    if (contextual_core.matchCallInput(function.input, input_id) == .applicable) contextual_matches += 1;
+                }
+                if (contextual_matches < 2) continue;
+            }
 
             var constraint_failures: std.ArrayList(generic_functions_mod.ConstraintFailure) = .empty;
             defer constraint_failures.deinit(allocator);
@@ -2400,10 +2707,10 @@ fn diagnoseUnresolvedCall(
                 try diagnostics.add(
                     diagnosticLocation(graph, diagnostics, source),
                     .semantic,
-                    "type '{s}' does not satisfy abstract constraint '{s}' required by generic function parameter '.{s}' of '{s}'",
+                    "type '{s}' does not satisfy contract constraint '{s}' required by generic function parameter '.{s}' of '{s}'",
                     .{
                         constraint_actual_name.items,
-                        graph.text(graph.declaration(failure.abstract_decl).name),
+                        graph.text(graph.declaration(failure.contract_decl).name),
                         failure.parameter_name,
                         graph.text(graph.declaration(failure.function).name),
                     },
@@ -2411,30 +2718,31 @@ fn diagnoseUnresolvedCall(
                 return true;
             }
 
-            var candidates: std.ArrayList(global_sg.GlobalFunctionId) = .empty;
-            defer candidates.deinit(allocator);
-            for (graph.functions.items, 0..) |function, raw| {
-                const declaration = graph.declaration(function.declaration);
-                if (!std.mem.eql(u8, graph.text(declaration.name), name)) continue;
-                if (!functionDeclarationVisibleForDiagnostic(graph, module_index, function.declaration, qualified_module)) continue;
-                try candidates.append(allocator, @enumFromInt(@as(u32, @intCast(raw))));
+            // Materialized specializations must not hide the intrinsic's useful
+            // rejection diagnostic for an incompatible explicit type argument.
+            if (reference.module_path == null and std.mem.eql(u8, name, "zeroed") and
+                generic_functions.hasVisibleParameterizedFunctionName(module_index, name, qualified_module))
+            {
+                try diagnostics.add(diagnosticLocation(graph, diagnostics, source), .semantic, "zeroed requires a numeric type or a fixed array of numeric types; references and resource-bearing types cannot be zero-initialized", .{});
+                return true;
             }
+
             if (candidates.items.len == 0) {
                 if (generic_functions.hasVisibleParameterizedFunctionName(module_index, name, qualified_module)) {
-                    var generic_ties: std.ArrayList(global_sg.GlobalDeclId) = .empty;
-                    defer generic_ties.deinit(allocator);
+                    var applicable_generic_functions: std.ArrayList(global_sg.GlobalDeclId) = .empty;
+                    defer applicable_generic_functions.deinit(allocator);
                     if (try generic_functions.collectImplicitGenericAmbiguity(
                         module_index,
                         module,
                         reference,
                         input_id,
-                        &generic_ties,
+                        &applicable_generic_functions,
                     )) {
                         var ambiguity = std.array_list.Managed(u8).init(allocator);
                         defer ambiguity.deinit();
                         try appendAmbiguousCallPrefix(&ambiguity, graph, diagnostics, source, module, reference);
                         try appendValueShape(&ambiguity, graph, input);
-                        try ambiguity.appendSlice(". Possible overloads:");
+                        try ambiguity.appendSlice(". Applicable function identities:");
                         try diagnostics.add(
                             if (reference.module_path != null) location else diagnosticLocation(graph, diagnostics, source),
                             .semantic,
@@ -2444,56 +2752,50 @@ fn diagnoseUnresolvedCall(
                         return true;
                     }
 
-                    if (reference.module_path == null and std.mem.eql(u8, name, "zeroed")) {
-                        try diagnostics.add(diagnosticLocation(graph, diagnostics, source), .semantic, "zeroed requires a numeric type or a fixed array of numeric types; references and resource-bearing types cannot be zero-initialized", .{});
-                        return true;
-                    }
+                    var mismatch = std.array_list.Managed(u8).init(allocator);
+                    defer mismatch.deinit();
+                    try mismatch.appendSlice("no generic function named '");
+                    try mismatch.appendSlice(name);
+                    try mismatch.appendSlice("' accepts arguments ");
+                    try appendValueShape(&mismatch, graph, input);
+                    try mismatch.appendSlice("; input types and repeated generic dimensions must agree");
                     try diagnostics.add(
                         if (reference.module_path != null) location else diagnosticLocation(graph, diagnostics, source),
                         .semantic,
-                        "no function named '{s}' exists",
-                        .{name},
+                        "{s}",
+                        .{mismatch.items},
                     );
                     return true;
                 }
                 continue;
             }
 
-            // Reuse Core's matcher to distinguish a deterministic ambiguity
-            // from a genuine no-match. Resolution and diagnostics must agree
-            // on compatibility and scoring rather than maintaining parallel
-            // overload rules.
+            // Reuse Core's applicability matcher so diagnostics report every
+            // applicable identity, without introducing specificity ranking.
             var diagnostic_core = core_mod.Resolver{
                 .allocator = allocator,
                 .graph = graph,
                 .modules = modules,
                 .offsets = offsets,
             };
-            var best_matches: std.ArrayList(global_sg.GlobalFunctionId) = .empty;
-            defer best_matches.deinit(allocator);
-            var best_score: ?u32 = null;
+            var applicable_functions: std.ArrayList(global_sg.GlobalFunctionId) = .empty;
+            defer applicable_functions.deinit(allocator);
             for (candidates.items) |candidate| {
                 const function = graph.functions.items[@intFromEnum(candidate)];
-                if (function.flags.is_abstract_dispatch) continue;
-                const score = switch (diagnostic_core.matchCallInput(function.input, input_id)) {
-                    .score => |value| value,
+                if (function.flags.is_generic_instantiation or function.flags.is_c_function_pointer) continue;
+                switch (diagnostic_core.matchCallInput(function.input, input_id)) {
+                    .applicable => {},
                     .no_match, .deferred => continue,
-                };
-                if (best_score == null or score > best_score.?) {
-                    best_score = score;
-                    best_matches.clearRetainingCapacity();
-                    try best_matches.append(allocator, candidate);
-                } else if (score == best_score.?) {
-                    try best_matches.append(allocator, candidate);
                 }
+                try applicable_functions.append(allocator, candidate);
             }
-            if (best_matches.items.len > 1) {
+            if (applicable_functions.items.len > 1) {
                 var ambiguity = std.array_list.Managed(u8).init(allocator);
                 defer ambiguity.deinit();
                 try appendAmbiguousCallPrefix(&ambiguity, graph, diagnostics, source, module, reference);
                 try appendValueShape(&ambiguity, graph, input);
-                try ambiguity.appendSlice(". Possible overloads:");
-                for (best_matches.items) |candidate| {
+                try ambiguity.appendSlice(". Applicable function identities:");
+                for (applicable_functions.items) |candidate| {
                     const function = graph.functions.items[@intFromEnum(candidate)];
                     try ambiguity.appendSlice("\n  - ");
                     try ambiguity.appendSlice(name);
@@ -2511,21 +2813,21 @@ fn diagnoseUnresolvedCall(
                 return true;
             }
 
-            var generic_ties: std.ArrayList(global_sg.GlobalDeclId) = .empty;
-            defer generic_ties.deinit(allocator);
+            var applicable_generic_functions: std.ArrayList(global_sg.GlobalDeclId) = .empty;
+            defer applicable_generic_functions.deinit(allocator);
             if (try generic_functions.collectImplicitGenericAmbiguity(
                 module_index,
                 module,
                 reference,
                 input_id,
-                &generic_ties,
+                &applicable_generic_functions,
             )) {
                 var ambiguity = std.array_list.Managed(u8).init(allocator);
                 defer ambiguity.deinit();
                 try appendAmbiguousCallPrefix(&ambiguity, graph, diagnostics, source, module, reference);
                 try appendValueShape(&ambiguity, graph, input);
-                try ambiguity.appendSlice(". Possible overloads:");
-                for (generic_ties.items) |declaration_id| {
+                try ambiguity.appendSlice(". Applicable function identities:");
+                for (applicable_generic_functions.items) |declaration_id| {
                     const declaration = graph.declaration(declaration_id);
                     const function_id = declaration.function_id orelse continue;
                     const function = graph.functions.items[@intFromEnum(function_id)];
@@ -2547,9 +2849,9 @@ fn diagnoseUnresolvedCall(
 
             if (candidates.items.len == 1 and diagnostic_core.callInputNamesMatch(graph.functions.items[@intFromEnum(candidates.items[0])].input, input)) {
                 const function = graph.functions.items[@intFromEnum(candidates.items[0])];
-                var missing_abstract: ?struct {
+                var missing_contract: ?struct {
                     actual: global_sg.GlobalTypeId,
-                    abstract_type: global_sg.GlobalTypeId,
+                    contract_type: global_sg.GlobalTypeId,
                     declaration: global_sg.GlobalDeclId,
                     field: global_sg.Field,
                     source: primitives.SourceRef,
@@ -2574,7 +2876,7 @@ fn diagnoseUnresolvedCall(
                     };
                     if (global_types.equal(graph, actual, field.ty) or diagnostic_core.callTypesCompatible(actual, field.ty)) continue;
 
-                    var expected_abstract_type = field.ty;
+                    var expected_contract_type = field.ty;
                     var actual_concrete = actual;
                     switch (graph.semanticType(field.ty)) {
                         .pointer => |expected_pointer| {
@@ -2589,33 +2891,33 @@ fn diagnoseUnresolvedCall(
                                 other_mismatch = true;
                                 continue;
                             }
-                            expected_abstract_type = expected_pointer.child;
+                            expected_contract_type = expected_pointer.child;
                             actual_concrete = actual_pointer.child;
                         },
                         else => {},
                     }
 
-                    const declaration = abstracts.abstractDeclarationForType(expected_abstract_type) orelse {
+                    const declaration = contracts.contractDeclarationForType(expected_contract_type) orelse {
                         other_mismatch = true;
                         continue;
                     };
-                    if (abstracts.concreteImplements(actual_concrete, expected_abstract_type)) {
+                    if (contracts.concreteImplements(actual_concrete, expected_contract_type)) {
                         other_mismatch = true;
                         continue;
                     }
-                    if (missing_abstract != null) {
+                    if (missing_contract != null) {
                         other_mismatch = true;
                     } else {
-                        missing_abstract = .{
+                        missing_contract = .{
                             .actual = actual_concrete,
-                            .abstract_type = expected_abstract_type,
+                            .contract_type = expected_contract_type,
                             .declaration = declaration,
                             .field = field,
                             .source = graph.node(supplied_node).source,
                         };
                     }
                 }
-                if (!other_mismatch) if (missing_abstract) |missing| {
+                if (!other_mismatch) if (missing_contract) |missing| {
                     var actual_name = std.array_list.Managed(u8).init(allocator);
                     defer actual_name.deinit();
                     try appendTypeName(&actual_name, graph, missing.actual);
@@ -2624,7 +2926,7 @@ fn diagnoseUnresolvedCall(
                     try appendFormatted(
                         &message,
                         allocator,
-                        "type '{s}' does not implement abstract '{s}' required by parameter '.{s}' of '{s}'",
+                        "type '{s}' does not implement contract '{s}' required by parameter '.{s}' of '{s}'",
                         .{
                             actual_name.items,
                             graph.text(graph.declaration(missing.declaration).name),
@@ -2632,47 +2934,6 @@ fn diagnoseUnresolvedCall(
                             name,
                         },
                     );
-                    if (try abstracts.requirementFailureForAbstractType(
-                        missing.actual,
-                        missing.abstract_type,
-                        missing.source,
-                    )) |requirement_failure| {
-                        try message.appendSlice(":\nmissing function: ");
-                        try message.appendSlice(requirement_failure.method_name);
-                        try message.append(' ');
-                        const required_input = global_types.fields(graph, requirement_failure.input) orelse return false;
-                        try appendFieldShape(&message, graph, required_input);
-
-                        var candidate_count: usize = 0;
-                        for (graph.functions.items) |candidate| {
-                            const declaration = graph.declaration(candidate.declaration);
-                            if (!std.mem.eql(u8, graph.text(declaration.name), requirement_failure.method_name)) continue;
-                            if (!abstracts.requirementCandidateInputMatches(requirement_failure.input, candidate)) continue;
-                            candidate_count += 1;
-                        }
-                        if (candidate_count != 0) {
-                            try message.appendSlice("\npossible overloads:");
-                            for (graph.functions.items) |candidate| {
-                                const candidate_declaration = graph.declaration(candidate.declaration);
-                                if (!std.mem.eql(u8, graph.text(candidate_declaration.name), requirement_failure.method_name)) continue;
-                                if (!abstracts.requirementCandidateInputMatches(requirement_failure.input, candidate)) continue;
-                                try message.appendSlice("\n  - ");
-                                try message.appendSlice(requirement_failure.method_name);
-                                try message.append(' ');
-                                try appendFieldShape(&message, graph, candidate.input);
-                                try message.appendSlice(" -> ");
-                                try appendFieldShape(&message, graph, candidate.output);
-                                const candidate_location = diagnosticLocation(graph, diagnostics, candidate_declaration.source);
-                                const position = diagnostics.lineColumn(candidate_location);
-                                try appendFormatted(
-                                    &message,
-                                    allocator,
-                                    "\n      file: {s}:{d}:{d}",
-                                    .{ diagnostics.path(candidate_location), position.line, position.column },
-                                );
-                            }
-                        }
-                    }
                     try diagnostics.add(
                         argumentFieldLocation(
                             graph,
@@ -2693,15 +2954,17 @@ fn diagnoseUnresolvedCall(
             var reach_candidate_count: usize = 0;
             for (candidates.items) |candidate| {
                 const function = graph.functions.items[@intFromEnum(candidate)];
-                if (diagnostic_core.matchCallInput(function.input, input_id) != .score) continue;
+                if (diagnostic_core.matchCallInput(function.input, input_id) != .applicable) continue;
                 if (try appendOmittedReachDefaults(&reach_details, graph, name, function, input))
                     reach_candidate_count += 1;
             }
             if (reach_candidate_count != 0) {
                 var message = std.array_list.Managed(u8).init(allocator);
                 defer message.deinit();
-                try message.print("function '{s}' exists, but no overload matches the provided arguments.\nOverloads with omitted reach defaults:\n", .{name});
+                try message.print("function '{s}' exists, but its arguments do not match.\nCandidates with omitted reach defaults:\n", .{name});
                 try message.appendSlice(reach_details.items);
+                if (std.mem.indexOf(u8, reach_details.items, ".ffi uses reach") != null)
+                    try message.appendSlice("\n\nForeign calls require a live ForeignFunctionInterface capability. Bind 'assume ffi := system.ffi' in the caller or pass '.ffi' explicitly; this dependency is not part of the C signature.");
                 try message.appendSlice("\n\nAdd a reachable value in the caller, for example:\n  main(.system: System) -> (.status_code: Int32 = 0) := { ... }\n\nOr pass the omitted argument explicitly.");
                 try diagnostics.add(location, .semantic, "{s}", .{message.items});
                 return true;
@@ -2709,7 +2972,7 @@ fn diagnoseUnresolvedCall(
 
             var message = std.array_list.Managed(u8).init(allocator);
             defer message.deinit();
-            try message.appendSlice("no overload of '");
+            try message.appendSlice("no function named '");
             try message.appendSlice(name);
             try message.appendSlice("' accepts arguments ");
             try appendValueShape(&message, graph, input);
@@ -2854,6 +3117,12 @@ fn appendReachAlternatives(
 }
 
 fn appendTypeName(buffer: *std.array_list.Managed(u8), graph: *const global_sg.GlobalSemanticGraph, ty: global_sg.GlobalTypeId) anyerror!void {
+    // Candidate signatures may still contain unresolved slots while reporting
+    // a failed call. Their poison payload is not a declaration to inspect.
+    if (graph.isTypeUnresolved(ty)) {
+        try buffer.appendSlice("<unresolved>");
+        return;
+    }
     if (global_types.arrayLength(graph, ty)) |length| {
         const element = global_types.arrayElement(graph, ty) orelse return error.InvalidArrayType;
         try buffer.append('[');
@@ -3055,7 +3324,7 @@ test "pending operation ownership is explicit" {
     try std.testing.expectEqual(PendingOwner.core, pendingOwnerTag(.resolve_field));
     try std.testing.expectEqual(PendingOwner.expressions, pendingOwnerTag(.resolve_name_use));
     try std.testing.expectEqual(PendingOwner.control, pendingOwnerTag(.resolve_match));
-    try std.testing.expectEqual(PendingOwner.abstracts, pendingOwnerTag(.resolve_abstract));
+    try std.testing.expectEqual(PendingOwner.contracts, pendingOwnerTag(.resolve_contract));
     try std.testing.expectEqual(PendingOwner.errors, pendingOwnerTag(.resolve_error_propagation));
     try std.testing.expectEqual(PendingOwner.ownership, pendingOwnerTag(.resolve_deinit));
 }
@@ -3068,4 +3337,72 @@ test "global semantizer accepts an empty program" {
     try std.testing.expectEqual(@as(u32, 0), result.stats.remaining);
     try std.testing.expectEqual(@as(u64, 0), result.stats.pending_attempts);
     try std.testing.expect(result.graph.constructionStateEmpty());
+}
+
+test "call diagnostic type names tolerate unresolved slots" {
+    const allocator = std.testing.allocator;
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    try graph.types.append(allocator, .{ .builtin = .Int32 });
+    try graph.markTypeUnresolved(allocator, @enumFromInt(0));
+    var name = std.array_list.Managed(u8).init(allocator);
+    defer name.deinit();
+    try appendTypeName(&name, &graph, @enumFromInt(0));
+    try std.testing.expectEqualStrings("<unresolved>", name.items);
+}
+
+fn reportComptimeExpressionFailure(graph: *const global_sg.GlobalSemanticGraph, diagnostics: ?*diagnostics_mod.Diagnostics, generics: *const generic_mod.Resolver) !void {
+    const failure = generics.comptime_failure orelse return;
+    if (diagnostics) |bag| {
+        try bag.add(diagnosticLocation(graph, bag, failure.source), .semantic, "{s}", .{failure.reason});
+        return error.Reported;
+    }
+}
+
+fn reportGenericArgumentFailure(graph: *const global_sg.GlobalSemanticGraph, diagnostics: ?*diagnostics_mod.Diagnostics, generics: *const generic_mod.Resolver) !void {
+    const sink = diagnostics orelse return;
+    const failure = generics.argument_failure orelse return;
+    const declaration = graph.declaration(failure.declaration);
+    var source = declaration.source;
+    // External type holes retain the application's location in ModuleSG.
+    // Recover it only on failure, without adding source maps to hot type tables.
+    for (generics.modules, 0..) |*module, module_index| {
+        const offsets = generics.offsets[module_index];
+        const raw = @intFromEnum(failure.ty);
+        if (raw < offsets.type_base or raw - offsets.type_base >= module_views.typeCount(module)) continue;
+        const local = try module_views.typeView(module, @enumFromInt(raw - offsets.type_base));
+        if (local == .external) {
+            const reference = module.semantic.external_refs.items[@intFromEnum(local.external)];
+            source = generics.globalSource(module_index, reference.source);
+        }
+        break;
+    }
+    try sink.add(diagnosticLocation(graph, sink, source), .semantic, "{s} for type '{s}'", .{ failure.reason, graph.text(declaration.name) });
+}
+
+fn reportParticipantConformanceFailure(allocator: std.mem.Allocator, graph: *const global_sg.GlobalSemanticGraph, diagnostics: ?*diagnostics_mod.Diagnostics, optional: ?contract_mod.ParticipantConformanceFailure) !void {
+    const failure = optional orelse return;
+    if (diagnostics) |bag| {
+        var message = std.array_list.Managed(u8).init(allocator);
+        defer message.deinit();
+        if (failure.is_value_projection) {
+            try appendFormatted(&message, allocator, "invalid associated constant projection '{s}': {s}", .{ failure.contract_name, failure.reason });
+        } else if (failure.is_projection) {
+            try appendFormatted(&message, allocator, "invalid associated type projection '{s}': {s}", .{ failure.contract_name, failure.reason });
+        } else {
+            try appendFormatted(&message, allocator, "invalid conformance for contract '{s}': {s}", .{ failure.contract_name, failure.reason });
+        }
+        if (failure.operation) |operation| {
+            try appendFormatted(&message, allocator, "\n  required operation: {s}", .{operation});
+            if (failure.input) |input| if (failure.output) |output| {
+                try message.append(' ');
+                try appendFieldShape(&message, graph, global_types.fields(graph, input).?);
+                try message.appendSlice(" -> ");
+                try appendFieldShape(&message, graph, global_types.fields(graph, output).?);
+            };
+        }
+        try bag.add(diagnosticLocation(graph, bag, failure.source), .semantic, "{s}", .{message.items});
+        return error.Reported;
+    }
+    return error.InvalidParticipantConformance;
 }

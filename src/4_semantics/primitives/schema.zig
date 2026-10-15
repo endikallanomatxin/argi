@@ -30,9 +30,101 @@ pub const BuiltinType = enum {
     Any,
 };
 
+pub const IntegerRange = struct { minimum: i128, maximum: i128 };
+
+/// Conversion contracts depend on the compilation target, including native
+/// integers and C aliases already resolved to their underlying builtin.
+pub fn integerRange(kind: BuiltinType, target: std.Target) ?IntegerRange {
+    const bits: u7 = switch (kind) {
+        .Int8, .UInt8 => 8,
+        .Int16, .UInt16 => 16,
+        .Int32, .UInt32 => 32,
+        .Int64, .UInt64 => 64,
+        .UIntNative => @intCast(target.ptrBitWidth()),
+        else => return null,
+    };
+    const signed = switch (kind) {
+        .Int8, .Int16, .Int32, .Int64 => true,
+        else => false,
+    };
+    const bound = @as(i128, 1) << (if (signed) bits - 1 else bits);
+    return .{ .minimum = if (signed) -bound else 0, .maximum = bound - 1 };
+}
+
+test "integer conversion ranges follow signedness and target pointer width" {
+    var target = @import("builtin").target;
+    target.cpu.arch = .x86_64;
+    try std.testing.expectEqualDeep(IntegerRange{ .minimum = -128, .maximum = 127 }, integerRange(.Int8, target).?);
+    try std.testing.expectEqualDeep(IntegerRange{ .minimum = 0, .maximum = 255 }, integerRange(.UInt8, target).?);
+    try std.testing.expectEqualDeep(IntegerRange{ .minimum = -9223372036854775808, .maximum = 9223372036854775807 }, integerRange(.Int64, target).?);
+    try std.testing.expectEqualDeep(IntegerRange{ .minimum = 0, .maximum = 18446744073709551615 }, integerRange(.UIntNative, target).?);
+    target.cpu.arch = .x86;
+    try std.testing.expectEqualDeep(IntegerRange{ .minimum = 0, .maximum = 4294967295 }, integerRange(.UIntNative, target).?);
+    try std.testing.expect(integerRange(.Float32, target) == null);
+}
+
+/// Builtin spellings and C aliases share one lookup across module and global
+/// semantizing. The explicit target keeps ABI width decisions out of callers.
+pub fn builtinTypeNamedForTarget(name: []const u8, target: std.Target) ?BuiltinType {
+    inline for (@typeInfo(BuiltinType).@"enum".fields) |field| {
+        if (std.mem.eql(u8, name, field.name)) return @enumFromInt(field.value);
+    }
+    const aliases = .{
+        .{ "CShort", std.Target.CType.short, true },
+        .{ "CUShort", std.Target.CType.ushort, false },
+        .{ "CInt", std.Target.CType.int, true },
+        .{ "CUInt", std.Target.CType.uint, false },
+        .{ "CLong", std.Target.CType.long, true },
+        .{ "CULong", std.Target.CType.ulong, false },
+        .{ "CLongLong", std.Target.CType.longlong, true },
+        .{ "CULongLong", std.Target.CType.ulonglong, false },
+    };
+    inline for (aliases) |alias| {
+        if (std.mem.eql(u8, name, alias[0])) return cIntegerType(target.cTypeBitSize(alias[1]), alias[2]);
+    }
+    if (std.mem.eql(u8, name, "CChar")) return cIntegerType(8, target.cCharSignedness() == .signed);
+    if (std.mem.eql(u8, name, "CSignedChar")) return .Int8;
+    if (std.mem.eql(u8, name, "CUnsignedChar")) return .UInt8;
+    if (std.mem.eql(u8, name, "CSize")) return .UIntNative;
+    if (std.mem.eql(u8, name, "CPtrDiff")) return cIntegerType(target.ptrBitWidth(), true);
+    if (std.mem.eql(u8, name, "CFloat")) return if (target.cTypeBitSize(.float) == 32) .Float32 else null;
+    if (std.mem.eql(u8, name, "CDouble")) return if (target.cTypeBitSize(.double) == 64) .Float64 else null;
+    if (std.mem.eql(u8, name, "CBool")) return .Bool;
+    return null;
+}
+
+fn cIntegerType(bits: u16, signed: bool) ?BuiltinType {
+    return switch (bits) {
+        8 => if (signed) .Int8 else .UInt8,
+        16 => if (signed) .Int16 else .UInt16,
+        32 => if (signed) .Int32 else .UInt32,
+        64 => if (signed) .Int64 else .UInt64,
+        else => null,
+    };
+}
+
+test "C scalar aliases follow the target data model" {
+    var target = @import("builtin").target;
+    target.cpu.arch = .x86_64;
+    target.os.tag = .linux;
+    target.abi = .gnu;
+    try std.testing.expectEqual(BuiltinType.Int64, builtinTypeNamedForTarget("CLong", target).?);
+    target.os.tag = .windows;
+    target.abi = .msvc;
+    try std.testing.expectEqual(BuiltinType.Int32, builtinTypeNamedForTarget("CLong", target).?);
+    try std.testing.expectEqual(BuiltinType.Int64, builtinTypeNamedForTarget("CPtrDiff", target).?);
+    target.cpu.arch = .aarch64;
+    target.os.tag = .linux;
+    target.abi = .gnu;
+    try std.testing.expectEqual(BuiltinType.UInt8, builtinTypeNamedForTarget("CChar", target).?);
+    target.os.tag = .macos;
+    try std.testing.expectEqual(BuiltinType.Int8, builtinTypeNamedForTarget("CChar", target).?);
+    try std.testing.expect(builtinTypeNamedForTarget("CLongDouble", target) == null);
+}
+
 pub const PointerMutability = enum(u8) { read_only, read_write };
 pub const Mutability = enum(u8) { constant, variable };
-pub const ForMode = enum(u8) { value, borrow, mut_borrow };
+pub const ForMode = enum(u8) { value, borrow, mut_borrow, move };
 pub const MatchCaseMode = enum(u8) { value, borrow, mut_borrow, move };
 pub const BinaryOperator = enum(u8) { addition, subtraction, multiplication, division, modulo };
 pub const ComparisonOperator = enum(u8) { equal, not_equal, less_than, greater_than, less_than_or_equal, greater_than_or_equal };
@@ -40,7 +132,7 @@ pub const ComparisonOperator = enum(u8) { equal, not_equal, less_than, greater_t
 pub const DeclarationKind = enum {
     binding,
     import_alias,
-    abstract_type,
+    contract_type,
     type,
     choice_option,
     function,
@@ -70,6 +162,7 @@ pub const SafetyPrimitive = enum {
     trusted_opaque_drop,
     trusted_opaque_mark_empty,
     relocate,
+    float_math,
 };
 
 pub const FunctionFlags = packed struct(u16) {
@@ -79,12 +172,15 @@ pub const FunctionFlags = packed struct(u16) {
     uses_inferred_error_reasons: bool = false,
     is_deinit: bool = false,
     is_generic_instantiation: bool = false,
-    is_abstract_dispatch: bool = false,
     is_entry: bool = false,
-    _padding: u8 = 0,
+    is_c_abi: bool = false,
+    is_c_export: bool = false,
+    has_foreign_capability: bool = false,
+    is_c_function_pointer: bool = false,
+    _padding: u5 = 0,
 };
 
-pub const StructLayout = enum(u8) { regular, c_union };
+pub const StructLayout = enum(u8) { regular, c_union, c_struct, c_incomplete, c_function_pointer };
 pub const ChoiceLayout = enum(u8) { regular, c_enum };
 pub const InferredChoiceKind = enum(u8) { errable, reasons };
 pub const LogicalOperator = enum(u8) { and_, or_ };
@@ -92,6 +188,63 @@ pub const LogicalOperator = enum(u8) { and_, or_ };
 pub const SourceRef = struct {
     file_index: u32,
     offset: u32,
+};
+
+/// Syntax-free method contract coordinates survive associated specialization.
+/// Source provenance is relocated together with the defining module.
+pub const MethodSafetyContract = struct {
+    /// General selectors may combine entry inputs and distinct returned values.
+    general_conditions: bool = false,
+    output_count: u32,
+    dependencies: []const Dependency = &.{},
+    referents: []const Dependency = &.{},
+    consumed_inputs: []const u32 = &.{},
+    relocations: []const Relocation = &.{},
+    invalidates: []const u32 = &.{},
+    domain_dependencies: []const DomainDependency = &.{},
+    invalidated_domains: []const DomainInput = &.{},
+    owned_outputs: []const u32 = &.{},
+    transfers: []const Dependency = &.{},
+    retained_inputs: []const Retention = &.{},
+    emptied_inputs: []const StorageInput = &.{},
+    storage_sources: []const StorageDependency = &.{},
+    outcomes: []const Outcome = &.{},
+    source: SourceRef,
+
+    pub const Relocation = struct { destination: u32, source: u32 };
+    pub const StorageInput = struct { input_index: u32, domain_index: ?u32 = null };
+    pub const Retention = struct { storage: StorageInput, input: u32 };
+    pub const StorageDependency = struct { output_index: u32, storage: StorageInput };
+    pub const Dependency = struct { output_index: u32, input_index: u32 };
+    pub const DomainInput = struct { input_index: u32, domain_index: u32 };
+    pub const DomainDependency = struct { output_index: u32, input: DomainInput };
+    pub const Outcome = struct {
+        input_index: ?u32 = null,
+        input_dereference: bool = false,
+        output_index: u32 = 0,
+        /// Resolved ancestor tags for this selector, independent of other terms.
+        parent_variants: []const u32 = &.{},
+        variant: StringRange,
+        variant_index: ?u32 = null,
+        dependencies: []const Dependency = &.{},
+        domain_dependencies: []const DomainDependency = &.{},
+        owned_outputs: []const u32 = &.{},
+        storage_sources: []const StorageDependency = &.{},
+        emptied_inputs: []const StorageInput = &.{},
+        consumed_inputs: []const u32 = &.{},
+        relocations: []const Relocation = &.{},
+        invalidates: []const u32 = &.{},
+        invalidated_domains: []const DomainInput = &.{},
+        /// Repeated selectors follow their payload; other selectors conjoin.
+        outcomes: []const Outcome = &.{},
+        source: SourceRef,
+    };
+};
+
+pub const StorageDomainMapping = struct {
+    domain_index: u32,
+    paths: []const Path,
+    pub const Path = struct { fields: []const u32 };
 };
 
 /// Canonical declaration payload shared by ModuleSG and GlobalSG. Source
@@ -143,8 +296,8 @@ pub fn SemanticType(comptime Ids: type) type {
             base: Ids.DeclId,
             arguments: Range(Ids.GenericArgId),
         },
-        /// Runtime pair (data pointer, vtable pointer) carrying an Abstract.
-        /// The abstract type identity is explicit because `Virtual` is an
+        /// Runtime pair (data pointer, vtable pointer) carrying contract evidence.
+        /// The contract type identity is explicit because `Virtual` is an
         /// intrinsic type constructor, not a source declaration.
         virtual: Ids.TypeId,
     };
@@ -154,7 +307,6 @@ pub fn Field(comptime Ids: type) type {
     return struct {
         name: StringRange,
         ty: Ids.TypeId,
-        storage_type: ?Ids.TypeId = null,
         source: SourceRef,
         default_value: ?Ids.NodeId = null,
     };
@@ -192,6 +344,7 @@ pub fn Function(comptime Ids: type) type {
         input_bindings: Range(Ids.BindingId) = .{ .start = 0, .len = 0 },
         output_bindings: Range(Ids.BindingId) = .{ .start = 0, .len = 0 },
         inferred_error_reasons: ?Ids.TypeId = null,
+        foreign_symbol: ?StringRange = null,
         safety_primitive: SafetyPrimitive = .none,
         flags: FunctionFlags = .{},
     };
@@ -204,15 +357,12 @@ pub fn Binding(comptime Ids: type) type {
         ty: Ids.TypeId,
         initialization: ?Ids.NodeId = null,
         /// The initializer supplies the inferred type; evaluation happens at
-        /// the address expression that materializes this temporary.
+        /// ordered expression effects that initialize this temporary.
         deferred_initialization: bool = false,
         reinitialize_cleanup: ?Ids.NodeId = null,
         /// Lexical argument candidates captured where this local is declared,
         /// for resolving the same dependencies in its implicit destructor.
         cleanup_arguments: ?Ids.NodeId = null,
-        /// Concrete static implementer retained when `ty` exposes an abstract
-        /// interface. This is monomorphization evidence, not the visible type.
-        static_implementer: ?Ids.TypeId = null,
         mutability: Mutability,
     };
 }
@@ -264,6 +414,8 @@ pub fn Switch(comptime Ids: type) type {
 pub fn AutoDeinitField(comptime Ids: type) type {
     return struct {
         field_index: u32,
+        /// A choice payload uses a variant index and requires its active tag.
+        is_variant: bool = false,
         deinit_fn: ?Ids.FunctionId,
         input: ?Ids.NodeId = null,
         self_field_index: u32 = 0,
@@ -284,9 +436,14 @@ pub fn AutoDeinit(comptime Ids: type) type {
 pub fn VirtualMethodRegistry(comptime Ids: type) type {
     return struct {
         implementations: Range(Ids.FunctionId),
-        /// Receiver position comes from the erased abstract contract. A known
-        /// argument may have the same concrete type as Self after substitution.
+        /// Receiver position comes from the erased contract. A known
+        /// argument may have the same concrete type as the participant after substitution.
         receiver_input_index: u32,
+        safety_contract: ?MethodSafetyContract = null,
+        /// Scalar outputs and declared input referents need no concrete receiver
+        /// layout. Their call summaries are generated without concrete bodies.
+        contract_input_count: ?u32 = null,
+        contract_output_type: ?Ids.TypeId = null,
     };
 }
 
@@ -294,11 +451,26 @@ pub fn Virtualize(comptime Ids: type) type {
     return struct {
         value: Ids.NodeId,
         concrete_type: Ids.TypeId,
-        abstract_decl: Ids.DeclId,
+        // Unreached construction in executable mode retains no proof obligation.
+        safety_required: bool = true,
+        contract_decl: Ids.DeclId,
         virtual_type: Ids.TypeId,
         methods: Range(Ids.FunctionId),
         safety_methods: Range(Ids.VirtualRegistryId),
         source: SourceRef,
+        domains: []const StorageDomainMapping = &.{},
+    };
+}
+
+/// A returned choice selects whether the caller still owns cleanup of a place.
+/// Parent variants guard nested payload tags before their values are inspected.
+pub fn OutcomeCleanup(comptime Ids: type) type {
+    return struct {
+        place: Ids.NodeId,
+        output_index: u32,
+        parent_variants: []const u32 = &.{},
+        variant_index: u32,
+        enabled: bool = false,
     };
 }
 
@@ -315,6 +487,12 @@ pub fn VirtualCall(comptime Ids: type) type {
         self_permission: PointerMutability,
         safety_methods: Ids.VirtualRegistryId,
         consumes_auto_deinit: ?Ids.NodeId = null,
+        /// Safety records every consumed caller place, including aliases and
+        /// multiple resource inputs. These nodes identify cleanup flags only.
+        consumed_auto_deinits: []const Ids.NodeId = &.{},
+        /// Returning calls enable these destination cleanup flags.
+        initialized_auto_deinits: []const Ids.NodeId = &.{},
+        outcome_cleanups: []const OutcomeCleanup(Ids) = &.{},
     };
 }
 
@@ -395,6 +573,11 @@ pub fn ErrorContext(comptime Ids: type) type {
     };
 }
 
+pub const ContractOperationIdentity = struct {
+    conformance: u32 = std.math.maxInt(u32),
+    index: u32 = 0,
+};
+
 pub fn Node(comptime Ids: type) type {
     return struct {
         source: SourceRef,
@@ -410,15 +593,32 @@ pub fn Node(comptime Ids: type) type {
             denied_implicit_copy: Ids.NodeId,
             assignment: struct { binding: Ids.BindingId, value: Ids.NodeId },
             auto_deinit_binding: Ids.AutoDeinitId,
+            function_address: Ids.FunctionId,
             function_call: struct {
+                // A sentinel conformance denotes an ordinary call. Avoid an
+                // optional tag: its padding enlarges every semantic node.
+                // Frontend calls retain symbolic evidence in pending IR.
+                contract_operation: ContractOperationIdentity = .{},
                 callee: Ids.FunctionId,
+                // For indirect C calls, callee identifies signature metadata;
+                // the runtime address is evaluated separately from arguments.
+                callee_value: ?Ids.NodeId = null,
                 input: Ids.NodeId,
                 consumes_auto_deinit: ?Ids.NodeId = null,
+                /// Safety records every consumed caller place, including aliases and
+                /// multiple resource inputs. These nodes identify cleanup flags only.
+                consumed_auto_deinits: []const Ids.NodeId = &.{},
+                /// Returning calls enable these destination cleanup flags.
+                initialized_auto_deinits: []const Ids.NodeId = &.{},
+                outcome_cleanups: []const OutcomeCleanup(Ids) = &.{},
                 initializes_auto_deinit: ?Ids.NodeId = null,
             },
             virtualize: Ids.VirtualizeId,
             virtual_call: Ids.VirtualCallId,
             code_block: Ids.BlockId,
+            // Compiler-generated ordered expressions have an explicit result,
+            // unlike source blocks. Their storage belongs to the outer scope.
+            value_sequence: Ids.BlockId,
             int_literal: i128,
             float_literal: f64,
             char_literal: u8,
@@ -502,11 +702,6 @@ pub fn Node(comptime Ids: type) type {
                 pointer_type: Ids.TypeId,
             },
             pointer_assignment: struct { pointer: Ids.NodeId, value: Ids.NodeId },
-            type_initializer: struct {
-                type_decl: Ids.DeclId,
-                init_fn: Ids.FunctionId,
-                args: Ids.NodeId,
-            },
             type_literal: Ids.TypeId,
             explicit_cast: struct { value: Ids.NodeId, target_type: Ids.TypeId },
         };

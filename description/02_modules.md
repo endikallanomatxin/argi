@@ -12,6 +12,11 @@ to every program; its public names form an implicit prelude. `more/` is the
 broader library for collections, codecs, mathematics, and other domains. Its
 modules are imported explicitly. Much of `more/` is still under construction.
 
+Installations include `core` and `more` under `lib/argi/`. Bare imports can
+therefore resolve without a source checkout. Library development may use a
+local `more/` tree in the working directory or its parent before the installed
+library.
+
 ## Imports and visibility
 
 Names beginning with `_` are private to their module, except that bundled
@@ -39,7 +44,18 @@ follows:
 | `.../` | Project root |
 | No prefix | Bundled `more/` library |
 
-Import paths must resolve at compile time.
+Module-qualified calls accept explicit compile-time arguments, such as
+`dep.identity#(.t: Int32)(.value = 42)` or `dep.identity#(Int32)(42)`.
+
+Naming an imported type permits selecting its visible Init evidence for construction.
+Automatic cleanup first selects the caller's visible Deinit evidence, then looks
+in the type's defining module if none is available. Reached arguments still come from
+the caller's lexical context. These lifecycle lookups do not expose unrelated
+functions from the imported module to unqualified calls.
+
+Import paths must resolve at compile time. Imports in discarded target
+`#if` branches are not discovered or resolved; see
+[compile-time computation](50_comptime.md#compilation-target).
 
 > [!IMPLEMENTATION]
 > The compiler currently accepts only literal import paths.
@@ -119,7 +135,10 @@ Named C header import:
 some_c_lib := #c_import("c_module.h")
 ```
 
-It maps C signatures and structs to Argi calls with named arguments.
+It produces the typed declarations described in
+[C interoperability](20_c.md), including C signatures and record layouts.
+Foreign calls require the `ffi` capability; importing a header does not grant it
+or select a library to link.
 Some `more` modules may need native libraries (for example BLAS/LAPACK,
 OpenSSL, zlib, or FFmpeg). Builds should diagnose missing libraries; releases
 may bundle them per target.

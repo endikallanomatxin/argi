@@ -15,7 +15,7 @@ test collections_text_format_slice(.system: System) -> !() := {
     match text_result {
         ..ok ~ format_payload {
             text ::= ~format_payload
-            #defer deinit(.self = $&text, .allocator = $&allocator_storage)
+            #defer deinit(.self = $&text)
             view ::= as_view(.self = &text)
             testing.expect(.condition = view == "7")!
         }

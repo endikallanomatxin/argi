@@ -9,6 +9,12 @@ construction, and dependencies hidden inside opaque storage. These rules do
 not promise exclusive mutable references, absence of mutable aliasing,
 data-race freedom, or concurrency safety.
 
+Runtime failures report their cause to standard error before stopping the
+program. Array bounds failures, null C callback invocation, and explicit
+`abort` include the source file, line, and column of the failing operation.
+Reporting does not require a writer capability and does not run ordinary
+cleanup after the failure.
+
 ## Fundamental entities
 
 ### Place
@@ -105,6 +111,17 @@ Containers such as `DynamicArray<T>` may contain runtime slots whose individual
 cleanup responsibilities cannot be represented precisely. An Opaque Storage
 Domain, identified by a storage Place, conservatively retains hidden
 dependencies.
+
+Reading a reference from an opaque slot retains the lifetime dependencies
+of the stored references, including roots that have already ended. The same
+check applies through function summaries. Live storage for the slot does not
+prove that the referenced values remain live.
+
+Using or destroying stored elements requires their hidden external dependencies
+to remain live. This obligation follows concrete and static calls, wrappers,
+and automatic cleanup, as well as virtual receiver calls. Accessing allocation
+metadata or releasing backing storage alone does not use the stored elements;
+its own storage and capability dependencies must still remain valid.
 
 Visible and hidden dependencies have intentionally different rules:
 
@@ -270,9 +287,10 @@ selected payload.
 Each function has an inferred Safety Summary. It records required live input
 dependencies, value effects, Place post-states, and opaque-storage effects.
 Callers instantiate these symbolic effects at their own Places and roots.
-Virtual dispatch combines the effects of possible implementations
-conservatively; incompatible temporal post-states therefore cannot form one
-safe virtual abstraction.
+safety contracts bound the effects allowed through virtual dispatch.
+Concrete implementations must satisfy their contract independently, and virtual
+calls use that contract. See `134_virtual_types.md` for dependency declarations
+and the remaining implementation gaps during migration from combined summaries.
 
 `$&T` does not imply `noalias`. Calls such as `f($&x, $&x)` and
 `f($&x, &x)` may be temporally safe under the current model. Exclusivity and
@@ -305,6 +323,70 @@ sufficient size and alignment and contain an initialized, valid `T`.
 > Extraction from opaque storage does not yet reconstruct the exact
 > dependencies of a reference held in an opaque value; the checker retains
 > conservative storage-level dependencies instead.
+
+## Precision of safety effects
+
+Safety facts retain structural fields, choice payloads, input paths and named
+storage domains. Effects may be guarded by conjunctions of variants from several
+inputs and outputs, including choice fields and nested payloads. A guard can
+control effects on any input, output or domain. Each selected variant is a
+structural condition; the model does not require a symbolic formula for every
+branch in a function or an enumeration of all combinations of result tags.
+
+Input selectors describe variants at call entry. They refer to the value or
+referent before the function's effects, including for mutable-reference inputs.
+Inspecting a changed input after the call does not prove its entry variant.
+Output selectors describe the returned values. A mixed guard requires evidence
+for every input and output selector of the same call. Partial evidence cannot
+establish the conjunction, and unrelated calls cannot contribute missing terms.
+
+Predicates over ordinary numeric values and disjointness of dynamically indexed
+elements are outside this precision boundary. Source code may contain those
+branches; its summaries conservatively join effects whose conditions cannot be
+represented or proved. An explicit signature requiring an unsupported relation
+receives a diagnostic; its promise is never silently weakened. This boundary
+is structural, not a limit on the number of branches, selectors, outputs or
+facts a program may contain.
+
+Conservative joins union possible dependencies, invalidations and consumption.
+They intersect guarantees of identity, preservation and initialization. They
+retain ownership and cleanup obligations and never invent storage acquisition,
+prolong local generations or make possibly consumed capabilities available.
+
+An outcome proof identifies a call and the storage generation it affected.
+Discrimination can establish that generation's survival through that call. It
+cannot undo later writes, consumption, cleanup or invalidation. Independent
+unresolved calls affecting the same generation lose their correlation
+conservatively rather than gaining a guarantee that needs both results.
+
+> [!IMPLEMENTATION]
+> General summary guards represent conjunctions of entry-input and output
+> selectors, with shared records for every effect dimension. Existing outcome
+> partitions are published in this representation alongside their conservative
+> fallback. General conditional contracts can be checked against complete
+> guarded summaries; proving only a stricter subset of the declared condition
+> is insufficient. Existing output contracts use this proof path after concrete
+> domain resolution; unreachable output partitions have vacuous guarantees.
+> Stable terminal matches and branches can infer joint structural entry/input
+> and output conditions for dependency provenance. Contract `on` clauses accept
+> named inputs and outputs, including nested conjunctions and permissions on a
+> different output. Reference-input tags are captured before call effects;
+> later reads or mutations cannot establish the entry condition.
+> The caller selects entry-only effects before execution and refines returned
+> dependencies once all output terms from the same call are known. Copies retain
+> correlation; overwritten values and independent calls do not. Straight-line
+> wrappers can forward the exact outputs of one call while preserving their
+> input/output coordinates. Reassignment, unknown control flow, additional
+> effects and nontrivial cleanup keep the unconditional summary.
+> General guards carry complete effect records. Payload refinement changes
+> dependencies only; it never creates ownership, acquisition receipts or a new
+> storage generation. Generation and opaque-state refinement retain the existing
+> single-output/payload-path proof rules. Effects requiring several independent
+> result correlations remain conservative, and joint conditional consumption or
+> relocation is rejected because cleanup also requires exact caller identities.
+> Conditional hidden retention and selectors through arbitrary output fields
+> require further implementation. These restrictions are structural proof
+> boundaries, not configurable complexity budgets.
 
 ## Glossary
 

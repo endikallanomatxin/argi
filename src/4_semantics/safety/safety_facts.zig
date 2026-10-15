@@ -11,8 +11,13 @@ pub const StorageCapabilityId = enum(u32) { _ };
 
 pub const ValidityRoot = struct {
     id: ValidityRootId,
+    /// Sparse branch trackers leave other branches' identities absent.
+    present: bool = true,
     state: enum { alive, conditional, maybe_alive, dead } = .alive,
     owned_resource: bool = false,
+    /// One unresolved call may refine this generation. Zero means no proof;
+    /// joins and independent calls erase the proof rather than combine guards.
+    outcome_guard: u64 = 0,
 };
 
 pub const ValidityDependency = struct {
@@ -30,6 +35,9 @@ pub const ValidityRootEstablishment = union(enum) {
 pub const InputPath = struct {
     input_index: u32,
     projections: []const place.Projection = &.{},
+    /// Opaque effects may select a named domain after projecting the receiver.
+    /// This is a symbolic storage identity, never a physical Place projection.
+    storage_domain: ?u32 = null,
 };
 
 pub const InputDependency = struct {
@@ -39,10 +47,13 @@ pub const InputDependency = struct {
     validity_only: bool = false,
 };
 
+pub const InputDomain = struct { path: InputPath, domain_index: u32 };
+
 pub const OutputFieldEffect = struct {
     index: u32,
     value: *const ValueEffect,
 };
+pub const OutputDomainEffect = struct { domain_index: u32, value: *const ValueEffect };
 
 /// Stable compiler-owned identity for a fresh runtime fact produced while
 /// evaluating a summarized expression.
@@ -60,47 +71,32 @@ pub const ValueEffect = struct {
     /// Storage generations borrowed by a value, without making those places
     /// the value's referenced storage.
     input_generation_dependencies: []const InputPath = &.{},
+    /// Borrow all reachable generations before receiver layout is erased. This
+    /// resolves caller storage identities and never retains local storage.
+    input_captured_storages: []const InputPath = &.{},
+    /// A virtual Self dependency names the erased receiver's value, not the
+    /// lexical storage holding its handle. It carries validity only.
+    input_receiver_values: []const InputPath = &.{},
     input_place_values: []const InputPath = &.{},
     /// Roots owned by the value at an input reference's place, borrowed as dependencies.
     input_owned_roots: []const InputPath = &.{},
+    input_domains: []const InputDomain = &.{},
+    domain_values: []const OutputDomainEffect = &.{},
     opaque_generation_dependencies: []const InputPath = &.{},
     opaque_storage_dependencies: []const InputPath = &.{},
     fields: []const OutputFieldEffect = &.{},
     variants: []const OutputVariantEffect = &.{},
     known_choice_variant: ?u32 = null,
     fresh_dependencies: []const FreshEffectSource = &.{},
+    /// Nominal cleanup can be required without acquiring storage. This marker
+    /// checks ownership permissions without inventing a lifetime root.
+    fresh_cleanup_obligation: bool = false,
     fresh_owned_roots: []const FreshEffectSource = &.{},
     integer_address: bool = false,
     foreign_storage: bool = false,
     fresh_storage_capabilities: []const FreshEffectSource = &.{},
     unavailable_fresh_storage: []const FreshStorageCapabilityState = &.{},
 };
-
-/// Concrete method results can borrow a field generation of their receiver.
-/// Capture those generations when the receiver is erased into a Virtual value.
-pub fn receiverBorrowedPlaces(
-    allocator: @import("std").mem.Allocator,
-    effect: ValueEffect,
-    receiver_index: u32,
-) ![]const InputPath {
-    const std = @import("std");
-    var result: std.array_list.Managed(InputPath) = .init(allocator);
-    try collectReceiverBorrowedPlaces(&result, effect, receiver_index);
-    return result.toOwnedSlice();
-}
-
-fn collectReceiverBorrowedPlaces(
-    result: *@import("std").array_list.Managed(InputPath),
-    effect: ValueEffect,
-    receiver_index: u32,
-) !void {
-    for (effect.input_places) |path| if (path.input_index == receiver_index and path.projections.len != 0)
-        try result.append(path);
-    for (effect.input_generation_dependencies) |path| if (path.input_index == receiver_index and path.projections.len != 0)
-        try result.append(path);
-    for (effect.fields) |field| try collectReceiverBorrowedPlaces(result, field.value.*, receiver_index);
-    for (effect.variants) |variant| try collectReceiverBorrowedPlaces(result, variant.value.*, receiver_index);
-}
 
 pub const OutputVariantEffect = struct {
     index: u32,
@@ -145,22 +141,52 @@ pub const FreshStorageCapabilityState = struct {
     maybe_consumed: bool = false,
 };
 
+pub const ChoiceCondition = @import("choice_conditions.zig").ChoiceCondition;
+pub const ChoiceConditions = @import("choice_conditions.zig").ChoiceConditions;
+
+/// A complete approximation under an explicitly represented conjunction.
+/// Effects are shared between guards and contain no graph binding identities.
+pub const GuardedSafetyEffects = struct {
+    /// Derived compatibility records can be refreshed after receiver mapping
+    /// without discarding independently inferred entry or joint conditions.
+    origin: enum { general, outcome_partition } = .general,
+    conditions: ChoiceConditions,
+    effects: *const SafetySummary,
+};
+
 pub const SafetySummary = struct {
+    /// Unconditional fields retain the conservative approximation for unknown
+    /// conditions. Guarded records cannot silently remove those obligations.
+    guarded_effects: []const GuardedSafetyEffects = &.{},
+    /// Inferred regions cover every returning path. Declaration guards alone
+    /// are conditional promises and cannot establish exhaustive coverage.
+    guarded_returns_complete: bool = false,
     outputs: []const ValueEffect = &.{},
     storage_capability_uses: []const StorageCapabilityUse = &.{},
     storage_capability_conflicts: []const StorageCapabilityConflict = &.{},
     required_live_inputs: []const InputPath = &.{},
+    /// Using stored elements requires their hidden external dependencies;
+    /// merely accessing or freeing allocation metadata does not.
+    required_opaque_inputs: []const InputPath = &.{},
     input_post_states: []const PlacePostState = &.{},
     /// Post-states retained separately for a choice-valued function result.
-    /// Variant indices refer to the first output field's choice type.
+    /// Selectors identify the output field and its choice variant.
     outcome_post_states: []const OutcomePostStates = &.{},
     opaque_storage_effects: []const OpaqueStorageEffect = &.{},
     opaque_storage_empties: []const InputPath = &.{},
+    invalidated_domains: []const InputDomain = &.{},
 };
 
 pub const OutcomePostStates = struct {
+    /// A selector with no returning exit has vacuous post-state guarantees.
+    reachable: bool = true,
+    /// Tags of the enclosing payload choices, from outermost to innermost.
+    parent_variants: []const u32 = &.{},
+    output_index: u32 = 0,
     variant_index: u32,
     input_post_states: []const PlacePostState,
+    invalidated_domains: []const InputDomain = &.{},
+    opaque_storage_empties: []const InputPath = &.{},
 };
 
 pub const OpaqueStorageEffect = struct {

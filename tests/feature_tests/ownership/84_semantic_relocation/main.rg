@@ -1,15 +1,17 @@
 Holder : Type = (.allocation: Allocation)
 
-deinit(.self: $&Holder) -> () := {
-    deinit(.self = $&self&.allocation)
-}
+implement Deinit#(Holder) (
+    .deinit = (.self: $&Holder) -> () {
+        deinit(.self = $&self&.allocation)
+    }
+)
 
 main(.system: System) -> (.status_code: Int32) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 
-    result ::= allocate(.self = $&allocator_storage, .size = 1)
-    replacement_result ::= allocate(.self = $&allocator_storage, .size = 1)
+    result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
+    replacement_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
     match result {
         ..error _ { status_code = 1 }
         ..ok ~ payload {

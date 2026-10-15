@@ -1,9 +1,8 @@
+const contract_evidence = @import("contract_evidence.zig");
 const std = @import("std");
+const standard_contracts = @import("standard_contracts.zig");
 const graph_mod = @import("graph.zig");
 const primitives = @import("../primitives/schema.zig");
-
-pub const pointer_size_bytes: u64 = @sizeOf(*usize);
-pub const pointer_alignment_bytes: u64 = pointer_size_bytes;
 
 pub const FieldHit = struct {
     index: u32,
@@ -27,6 +26,30 @@ pub const LayoutError = error{
     UnmaterializedGenericType,
     TypeHasNoRuntimeLayout,
 };
+
+/// Init and Convert return their target directly or in one Errable success payload.
+pub fn resultMatchesTarget(graph: *const graph_mod.GlobalSemanticGraph, result: graph_mod.GlobalTypeId, target: graph_mod.GlobalTypeId) bool {
+    if (equal(graph, result, target)) return true;
+    if (!isErrable(graph, result)) return false;
+    const ok = findVariant(graph, result, "ok") orelse return false;
+    return equal(graph, ok.variant.payload_type orelse return false, target);
+}
+
+/// Local handling accepts the bundled Errable family and the identity-bearing
+/// inferred form used by fallible output shorthand, never arbitrary choices
+/// that merely happen to spell their alternatives `ok` and `error`.
+pub fn isErrable(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) bool {
+    const semantic = graph.resolvedSemanticType(ty) orelse return false;
+    return switch (semantic) {
+        .inferred_choice => |choice| choice.kind == .errable,
+        .generic => |generic| blk: {
+            const owner = graph.moduleForDeclaration(generic.base) orelse break :blk false;
+            break :blk graph.modules.items[@intFromEnum(owner)].is_bundled_core and
+                std.mem.eql(u8, graph.text(graph.declaration(generic.base).name), "Errable");
+        },
+        else => false,
+    };
+}
 
 pub fn fields(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?graph_mod.FieldRange {
     const semantic = graph.resolvedSemanticType(ty) orelse return null;
@@ -111,6 +134,22 @@ pub fn findVariant(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.Gl
     return null;
 }
 
+pub fn variantTag(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId, hit: VariantHit) i32 {
+    const layout: primitives.ChoiceLayout = switch (graph.semanticType(ty)) {
+        .declared => |id| graph.declaration(id).choice_layout,
+        .structural_choice => |shape| shape.layout,
+        .generic => if (genericInstance(graph, ty)) |instance| switch (instance.shape) {
+            .choice => |shape| shape.layout,
+            .alias => |child| return variantTag(graph, child, hit),
+            else => .regular,
+        } else .regular,
+        else => .regular,
+    };
+    // Regular choices use the position within their family. C enums preserve
+    // the explicit C value, independently of where their variants are stored.
+    return if (layout == .c_enum) hit.variant.value else @intCast(hit.index);
+}
+
 /// Nullable is an inference-friendly wrapper until consumers need its concrete
 /// choice layout. Parameterized bodies may create and consume the type within
 /// one instantiation, before the outer semantizing fixed point can materialize
@@ -144,34 +183,47 @@ pub fn materializeNullable(
 /// never the value whose lifetime that destructor closes.
 pub fn deinitFunction(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?graph_mod.GlobalFunctionId {
     if (graph.semanticType(ty) == .pointer) return null;
-    for (graph.functions.items, 0..) |function, raw| {
+    const contract = standard_contracts.standardDeclaration(graph, "Deinit") orelse return null;
+    var operations = contract_evidence.materializedOperations(graph, contract);
+    var found: ?graph_mod.GlobalFunctionId = null;
+    while (operations.next()) |selected| {
+        const id = selected.materializedFunction(graph) orelse continue;
+        const function = graph.function(id);
         if (!function.flags.is_deinit or function.input.len == 0) continue;
-        const self_ty = graph.fields.items[function.input.start].ty;
-        const child = switch (graph.semanticType(self_ty)) {
-            .pointer => |pointer| pointer.child,
-            else => self_ty,
-        };
-        if (equal(graph, child, ty)) return @enumFromInt(@as(u32, @intCast(raw)));
+        const participant = selected.participant(graph, 0) orelse continue;
+        if (!equal(graph, participant, ty)) continue;
+        // Preserve declaration-order selection when the same evidence is reached
+        // through several caller contexts.
+        if (found == null or @intFromEnum(id) < @intFromEnum(found.?)) found = id;
     }
-    return null;
+    return found;
 }
 
-/// Opaque drops need the destructor for the concrete allocator supplied with
-/// the slot. The value type alone can have several valid destructor instances.
+/// A cleanup obligation comes from selected Deinit evidence, independently
+/// of storage acquisition.
+pub fn hasDestructor(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) bool {
+    return deinitFunction(graph, ty) != null;
+}
+
+/// Opaque drops use selected Deinit evidence and check its capability inputs
+/// against the supplied arguments.
 pub fn deinitFunctionForInput(graph: *const graph_mod.GlobalSemanticGraph, value_type: graph_mod.GlobalTypeId, supplied: graph_mod.FieldRange) error{AmbiguousOpaqueDestructor}!?graph_mod.GlobalFunctionId {
     var found: ?graph_mod.GlobalFunctionId = null;
-    for (graph.functions.items, 0..) |function, raw| {
+    const contract = standard_contracts.standardDeclaration(graph, "Deinit") orelse return null;
+    var operations = contract_evidence.materializedOperations(graph, contract);
+    while (operations.next()) |selected| {
+        const id = selected.materializedFunction(graph) orelse continue;
+        const function = graph.function(id);
         if (!function.flags.is_deinit) continue;
+        const participant = selected.participant(graph, 0) orelse continue;
+        if (!equal(graph, participant, value_type)) continue;
         var self_matches = false;
         var arguments_match = true;
-        for (graph.fields.items[function.input.start..][0..function.input.len]) |expected| {
+        for (graph.fields.items[function.input.start..][0..function.input.len], 0..) |expected, index| {
             const name = graph.text(expected.name);
-            if (std.mem.eql(u8, name, "self")) {
-                const child = switch (graph.semanticType(expected.ty)) {
-                    .pointer => |pointer| pointer.child,
-                    else => expected.ty,
-                };
-                self_matches = equal(graph, child, value_type);
+            const is_receiver = index == 0;
+            if (is_receiver) {
+                self_matches = true;
                 continue;
             }
             var provided = false;
@@ -185,8 +237,8 @@ pub fn deinitFunctionForInput(graph: *const graph_mod.GlobalSemanticGraph, value
             if (!arguments_match) break;
         }
         if (!self_matches or !arguments_match) continue;
-        if (found != null) return error.AmbiguousOpaqueDestructor;
-        found = @enumFromInt(@as(u32, @intCast(raw)));
+        if (found != null and found.? != id) return error.AmbiguousOpaqueDestructor;
+        found = id;
     }
     return found;
 }
@@ -199,10 +251,6 @@ pub fn genericInstance(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mo
 
 pub fn typeForDeclaration(graph: *const graph_mod.GlobalSemanticGraph, decl: graph_mod.GlobalDeclId) ?graph_mod.GlobalTypeId {
     return graph.declarations.items[@intFromEnum(decl)].type_id;
-}
-
-pub fn effectiveFieldType(field: graph_mod.Field) graph_mod.GlobalTypeId {
-    return field.storage_type orelse field.ty;
 }
 
 pub fn isBuiltin(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId, builtin: primitives.BuiltinType) bool {
@@ -276,8 +324,8 @@ pub fn equal(graph: *const graph_mod.GlobalSemanticGraph, a: graph_mod.GlobalTyp
 pub fn layoutOf(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) LayoutError!Layout {
     const semantic = graph.resolvedSemanticType(ty) orelse return error.UnmaterializedGlobalType;
     return switch (semantic) {
-        .builtin => |builtin| builtinLayout(builtin),
-        .pointer => .{ .size = pointer_size_bytes, .alignment = pointer_alignment_bytes },
+        .builtin => |builtin| builtinLayout(graph, builtin),
+        .pointer => .{ .size = graph.target.pointerBytes(), .alignment = graph.target.pointerBytes() },
         .array => |array| blk: {
             const element = try layoutOf(graph, array.element);
             const stride = alignForward(element.size, element.alignment);
@@ -288,7 +336,7 @@ pub fn layoutOf(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.Globa
         .structural_choice => |shape| choiceLayout(graph, shape.variants, shape.layout),
         .inferred_choice => |shape| choiceLayout(graph, shape.variants, .regular),
         .generic => genericLayout(graph, ty),
-        .virtual => .{ .size = pointer_size_bytes * 2, .alignment = pointer_alignment_bytes },
+        .virtual => .{ .size = graph.target.pointerBytes() * 2, .alignment = graph.target.pointerBytes() },
         .nullable, .inferred_errable => error.UnmaterializedGlobalType,
     };
 }
@@ -301,14 +349,14 @@ pub fn alignmentOf(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.Gl
     return (try layoutOf(graph, ty)).alignment;
 }
 
-fn builtinLayout(builtin: primitives.BuiltinType) Layout {
+fn builtinLayout(graph: *const graph_mod.GlobalSemanticGraph, builtin: primitives.BuiltinType) Layout {
     return switch (builtin) {
         .Void => .{ .size = 0, .alignment = 1 },
         .Int8, .UInt8, .Char, .Bool, .Any => .{ .size = 1, .alignment = 1 },
         .Int16, .UInt16, .Float16 => .{ .size = 2, .alignment = 2 },
         .Int32, .UInt32, .Float32 => .{ .size = 4, .alignment = 4 },
         .Int64, .UInt64, .Float64 => .{ .size = 8, .alignment = 8 },
-        .UIntNative, .Type => .{ .size = pointer_size_bytes, .alignment = pointer_alignment_bytes },
+        .UIntNative, .Type => .{ .size = graph.target.pointerBytes(), .alignment = graph.target.pointerBytes() },
     };
 }
 
@@ -316,6 +364,7 @@ fn declaredLayout(graph: *const graph_mod.GlobalSemanticGraph, decl_id: graph_mo
     const raw: usize = @intFromEnum(decl_id);
     if (raw >= graph.declarations.items.len) return error.UnmaterializedGlobalType;
     const decl = graph.declarations.items[raw];
+    if (decl.struct_layout == .c_function_pointer) return .{ .size = graph.target.pointerBytes(), .alignment = graph.target.pointerBytes() };
     if (decl.struct_fields) |range| return structLayout(graph, range, decl.struct_layout);
     if (decl.choice_variants) |range| return choiceLayout(graph, range, decl.choice_layout);
     return error.TypeHasNoRuntimeLayout;
@@ -341,7 +390,7 @@ fn structLayout(graph: *const graph_mod.GlobalSemanticGraph, range: graph_mod.Fi
         var size: u64 = 0;
         var alignment: u64 = 1;
         for (graph.fields.items[range.start..][0..range.len]) |field| {
-            const layout = try layoutOf(graph, effectiveFieldType(field));
+            const layout = try layoutOf(graph, field.ty);
             size = @max(size, layout.size);
             alignment = @max(alignment, layout.alignment);
         }
@@ -351,7 +400,7 @@ fn structLayout(graph: *const graph_mod.GlobalSemanticGraph, range: graph_mod.Fi
     var offset: u64 = 0;
     var alignment: u64 = 1;
     for (graph.fields.items[range.start..][0..range.len]) |field| {
-        const layout = try layoutOf(graph, effectiveFieldType(field));
+        const layout = try layoutOf(graph, field.ty);
         offset = alignForward(offset, layout.alignment);
         offset += layout.size;
         alignment = @max(alignment, layout.alignment);
@@ -366,8 +415,12 @@ fn choiceLayout(graph: *const graph_mod.GlobalSemanticGraph, range: graph_mod.Va
     var offset: u64 = 4;
     var alignment: u64 = 4;
     for (graph.variants.items[range.start..][0..range.len]) |variant| {
-        const payload_ty = variant.payload_type orelse continue;
-        const layout = try layoutOf(graph, payload_ty);
+        // LLVM retains an i8 field for a variant without a payload.
+        // Include it in offsets and copy sizes even though it carries no value.
+        const layout: Layout = if (variant.payload_type) |payload_ty|
+            try layoutOf(graph, payload_ty)
+        else
+            .{ .size = 1, .alignment = 1 };
         offset = alignForward(offset, layout.alignment);
         offset += layout.size;
         alignment = @max(alignment, layout.alignment);
@@ -404,7 +457,9 @@ pub fn genericArgumentsEqual(graph: *const graph_mod.GlobalSemanticGraph, a: any
     for (0..a.len) |index| {
         const left = graph.generic_arguments.items[a.start + @as(u32, @intCast(index))];
         const right = graph.generic_arguments.items[b.start + @as(u32, @intCast(index))];
-        if (!std.mem.eql(u8, graph.text(left.name), graph.text(right.name))) return false;
+        // Positional arguments and their named spelling identify the same
+        // specialization when their declaration-order values agree.
+        if (left.name.len != 0 and right.name.len != 0 and !std.mem.eql(u8, graph.text(left.name), graph.text(right.name))) return false;
         switch (left.value) {
             .type => |left_ty| switch (right.value) {
                 .type => |right_ty| if (!identityEqual(graph, left_ty, right_ty)) return false,
@@ -460,43 +515,57 @@ test "generic argument identity uses semantic type equality" {
     try std.testing.expect(genericArgumentsEqual(&graph, first, second));
 }
 
-test "opaque destructor selection uses the supplied allocator type" {
+test "cleanup queries require selected Deinit evidence" {
     const allocator = std.testing.allocator;
     var graph: graph_mod.GlobalSemanticGraph = .{};
     defer graph.deinit(allocator);
-
-    const slot_name = try graph.addString(allocator, "slot");
-    const self_name = try graph.addString(allocator, "self");
-    const allocator_name = try graph.addString(allocator, "allocator");
-    const deinit_name = try graph.addString(allocator, "deinit");
+    const name = try graph.addString(allocator, "Deinit");
     const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    try graph.modules.append(allocator, .{
+        .dir = name,
+        .is_bundled_core = true,
+        .files = .{ .start = 0, .len = 0 },
+        .declarations = .{ .start = 0, .len = 2 },
+    });
+    try graph.declarations.appendSlice(allocator, &.{
+        .{ .kind = .contract_type, .name = name, .source = source },
+        .{ .kind = .function, .name = name, .source = source },
+    });
     try graph.types.appendSlice(allocator, &.{
         .{ .builtin = .Int32 },
-        .{ .builtin = .Int64 },
-        .{ .builtin = .UInt8 },
         .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_write } },
-        .{ .pointer = .{ .child = @enumFromInt(1), .mutability = .read_write } },
-        .{ .pointer = .{ .child = @enumFromInt(2), .mutability = .read_write } },
     });
-    try graph.fields.appendSlice(allocator, &.{
-        .{ .name = slot_name, .ty = @enumFromInt(3), .source = source },
-        .{ .name = allocator_name, .ty = @enumFromInt(4), .source = source },
-        .{ .name = allocator_name, .ty = @enumFromInt(5), .source = source },
-        .{ .name = self_name, .ty = @enumFromInt(3), .source = source },
-        .{ .name = allocator_name, .ty = @enumFromInt(5), .source = source },
-        .{ .name = allocator_name, .ty = @enumFromInt(4), .source = source },
-        .{ .name = self_name, .ty = @enumFromInt(3), .source = source },
+    try graph.fields.append(allocator, .{ .name = name, .ty = @enumFromInt(1), .source = source });
+    try graph.functions.append(allocator, .{
+        .declaration = @enumFromInt(1),
+        .input = .{ .start = 0, .len = 1 },
+        .output = .{ .start = 0, .len = 0 },
+        .flags = .{ .is_deinit = true },
     });
-    try graph.declarations.append(allocator, .{ .kind = .function, .name = deinit_name, .source = source });
-    try graph.functions.appendSlice(allocator, &.{
-        .{ .declaration = @enumFromInt(0), .input = .{ .start = 3, .len = 2 }, .output = .{ .start = 0, .len = 0 }, .flags = .{ .is_deinit = true } },
-        .{ .declaration = @enumFromInt(0), .input = .{ .start = 5, .len = 2 }, .output = .{ .start = 0, .len = 0 }, .flags = .{ .is_deinit = true } },
-    });
+    try std.testing.expect(!hasDestructor(&graph, @enumFromInt(0)));
+    try std.testing.expectEqual(@as(?graph_mod.GlobalFunctionId, null), try deinitFunctionForInput(&graph, @enumFromInt(0), .{ .start = 0, .len = 0 }));
 
-    try std.testing.expectEqual(@as(graph_mod.GlobalFunctionId, @enumFromInt(1)), (try deinitFunctionForInput(&graph, @enumFromInt(0), .{ .start = 0, .len = 2 })).?);
-    try std.testing.expectEqual(@as(graph_mod.GlobalFunctionId, @enumFromInt(0)), (try deinitFunctionForInput(&graph, @enumFromInt(0), .{ .start = 2, .len = 1 })).?);
-    try graph.functions.append(allocator, .{ .declaration = @enumFromInt(0), .input = .{ .start = 5, .len = 2 }, .output = .{ .start = 0, .len = 0 }, .flags = .{ .is_deinit = true } });
-    try std.testing.expectError(error.AmbiguousOpaqueDestructor, deinitFunctionForInput(&graph, @enumFromInt(0), .{ .start = 0, .len = 2 }));
+    try graph.generic_arguments.append(allocator, .{ .name = name, .value = .{ .type = @enumFromInt(0) } });
+    try graph.function_refs.append(allocator, @enumFromInt(0));
+    try graph.contract_operation_bindings.append(allocator, .{
+        .contract_declaration = @enumFromInt(0),
+        .requirement_index = 0,
+        .requirement_source = source,
+        .implementation_source = source,
+        .name = name,
+        .declaration = @enumFromInt(1),
+    });
+    try graph.contract_conformances.append(allocator, .{
+        .declaration = @enumFromInt(0),
+        .participants = .{ .start = 0, .len = 1 },
+        .associated_arguments = .{ .start = 1, .len = 0 },
+        .operations = .{ .start = 0, .len = 1 },
+        .operation_bindings = .{ .start = 0, .len = 1 },
+        .source = source,
+    });
+    try std.testing.expect(hasDestructor(&graph, @enumFromInt(0)));
+    try std.testing.expect(!hasDestructor(&graph, @enumFromInt(1)));
+    try std.testing.expectEqual(@as(?graph_mod.GlobalFunctionId, @enumFromInt(0)), try deinitFunctionForInput(&graph, @enumFromInt(0), .{ .start = 0, .len = 0 }));
 }
 
 test "global semantic types expose structural fields and variants" {
@@ -526,4 +595,38 @@ test "type helpers reject construction-time unresolved slots" {
     try std.testing.expect(!isBuiltin(&graph, @enumFromInt(0), .Any));
     try std.testing.expect(!equal(&graph, @enumFromInt(0), @enumFromInt(0)));
     try std.testing.expectError(error.UnmaterializedGlobalType, layoutOf(&graph, @enumFromInt(0)));
+}
+
+/// An incomplete C declaration has a nominal identity but no value layout.
+/// RawPointer does not query the representation of its pointee.
+pub fn incompleteDeclaration(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?graph_mod.GlobalDeclId {
+    const semantic = graph.resolvedSemanticType(ty) orelse return null;
+    return switch (semantic) {
+        .declared => |id| if (graph.declaration(id).struct_layout == .c_incomplete) id else null,
+        .generic => if (genericInstance(graph, ty)) |instance| switch (instance.shape) {
+            .alias => |target| incompleteDeclaration(graph, target),
+            else => null,
+        } else null,
+        else => null,
+    };
+}
+
+/// Lifecycle lookup can consult the module defining a nominal destination
+/// while retaining the caller's lexical context for reached arguments.
+pub fn nominalTypeOwner(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?graph_mod.GlobalModuleId {
+    const semantic = graph.resolvedSemanticType(ty) orelse return null;
+    const declaration = switch (semantic) {
+        .declared => |id| id,
+        .generic => |identity| identity.base,
+        else => return null,
+    };
+    return graph.moduleForDeclaration(declaration);
+}
+
+/// References retain the extension owner of their nominal referent. Structural
+/// containers do not grant ownership through nested fields or type arguments.
+pub fn conformanceParticipantOwner(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?graph_mod.GlobalModuleId {
+    const semantic = graph.resolvedSemanticType(ty) orelse return null;
+    if (semantic == .pointer) return conformanceParticipantOwner(graph, semantic.pointer.child);
+    return nominalTypeOwner(graph, ty);
 }

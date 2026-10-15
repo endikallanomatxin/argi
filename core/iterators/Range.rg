@@ -1,89 +1,58 @@
-Range#(.t: Type) : Type = (
-    .start: t
-    .end: t
-    .step: t
+Range#(.t: Type): Type = (
+    .start : t
+    .end   : t
+    .step  : t
 )
 
-RangeIterator#(.t: Type) : Type = (
-    .current: t
-    .end: t
-    .step: t
+RangeIterator#(.t: Type): Type = (
+    .current : t
+    .end     : t
+    .step    : t
 )
 
-Range#(.t: Type) implements Iterable#(.t: t)
-RangeIterator#(.t: Type) implements Iterator#(.t: t)
+implement#(.t: Type) Init#(Range#(.t: t), (.end: t, .start: t = 0, .step: t = 1)) (
+    .Result : Type = Range#(.t: t)
+    .init   = (.args: (.end: t, .start: t = 0, .step: t = 1)) -> (.result: Result) {
+        result = (.start = args.start, .end = args.end, .step = args.step)
+    }
+)
 
-init#(.t: Type)(
-    .p: $&Range#(.t: t),
-    .end: t,
-) -> () := {
-    zero : t = 0
-    one : t = 1
-    init#(.t: t)(.p = p, .start = zero, .end = end, .step = one)
-}
+implement#(.t: Type) Iterable#(Range#(.t: t)) (
+    .Item         : Type = t
+    .IteratorType : Type = RangeIterator#(.t: t)
 
-init#(.t: Type)(
-    .p: $&Range#(.t: t),
-    .end: t,
-    .step: t,
-) -> () := {
-    zero : t = 0
-    init#(.t: t)(.p = p, .start = zero, .end = end, .step = step)
-}
+    .to_iterator = (.value: &Range#(.t: t)) -> (.iterator: RangeIterator#(.t: t)) {
+        iterator = (.current = value&.start, .end = value&.end, .step = value&.step)
+    }
+)
 
-init#(.t: Type)(
-    .p: $&Range#(.t: t),
-    .start: t,
-    .end: t,
-) -> () := {
-    one : t = 1
-    init#(.t: t)(.p = p, .start = start, .end = end, .step = one)
-}
+implement#(.t: Type) Iterator#(RangeIterator#(.t: t)) (
+    .Item : Type = t
 
-init#(.t: Type)(
-    .p: $&Range#(.t: t),
-    .start: t,
-    .end: t,
-    .step: t,
-) -> () := {
-    p& = (
-        .start = start,
-        .end = end,
-        .step = step,
-    )
-}
+    .has_next = (.self: &RangeIterator#(.t: t)) -> (.ok: Bool) {
+        iterator :: RangeIterator#(.t: t) = self&
+        zero: t = 0
 
-to_iterator#(.t: Type)(.value: &Range#(.t: t)) -> (.iterator: RangeIterator#(.t: t)) := {
-    iterator = (
-        .current = value&.start,
-        .end = value&.end,
-        .step = value&.step,
-    )
-}
+        if iterator.step > zero {
+            ok = iterator.current < iterator.end
+            return
+        }
 
-has_next#(.t: Type)(.self: &RangeIterator#(.t: t)) -> (.ok: Bool) := {
-    iterator :: RangeIterator#(.t: t) = self&
-    zero : t = 0
+        if iterator.step < zero {
+            ok = iterator.current > iterator.end
+            return
+        }
 
-    if iterator.step > zero {
-        ok = iterator.current < iterator.end
-        return
+        ok = 0 == 1
     }
 
-    if iterator.step < zero {
-        ok = iterator.current > iterator.end
-        return
+    .next = (.self: $&RangeIterator#(.t: t)) -> (.value: t) {
+        iterator :: RangeIterator#(.t: t) = self&
+        value = iterator.current
+        self&= (
+            .current = iterator.current + iterator.step
+            .end     = iterator.end
+            .step    = iterator.step
+        )
     }
-
-    ok = 0 == 1
-}
-
-next#(.t: Type)(.self: $&RangeIterator#(.t: t)) -> (.value: t) := {
-    iterator :: RangeIterator#(.t: t) = self&
-    value = iterator.current
-    self& = (
-        .current = iterator.current + iterator.step,
-        .end = iterator.end,
-        .step = iterator.step,
-    )
-}
+)

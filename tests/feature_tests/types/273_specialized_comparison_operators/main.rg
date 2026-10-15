@@ -1,11 +1,11 @@
 Box#(.t: Type) : Type = (.value: t)
-Box#(.t: Type: ImplicitlyCopyable) implements ImplicitlyCopyable
-operator == #(.t: Type)(.left: Box#(.t: t), .right: Box#(.t: t)) -> (.ok: Bool) := {
-    ok = left.value == right.value
-}
-operator != #(.t: Type)(.left: Box#(.t: t), .right: Box#(.t: t)) -> (.ok: Bool) := {
-    ok = left.value != right.value
-}
+implement#(.t: Type: ImplicitlyCopyable) ImplicitlyCopyable#(Box#(.t: t)) ()
+implement#(.t: Type) Equal#(Box#(.t: t), Box#(.t: t), (.left: Box#(.t: t), .right: Box#(.t: t))) (
+    .equal = (.args: (.left: Box#(.t: t), .right: Box#(.t: t))) -> (.ok: Bool) {
+        ok = args.left.value == args.right.value
+    }
+)
+
 same#(.t: Type)(.left: t, .right: t) -> (.ok: Bool) := { ok = left == right }
 different#(.t: Type)(.left: t, .right: t) -> (.ok: Bool) := { ok = left != right }
 below_three#(.t: Type)(.value: t) -> (.ok: Bool) := { ok = value < 3 }

@@ -19,8 +19,8 @@ store_conditionally(
 
 main(.system: System, .skip: Bool = false) -> (.status_code: Int32) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    source_result ::= allocate(.self = $&allocator_storage, .size = 1)
-    slot_result ::= allocate(.self = $&allocator_storage, .size = size_of(.type = Allocation))
+    source_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
+    slot_result ::= allocate_bytes(.self = $&allocator_storage, .size = size_of(.type = Allocation))
     match source_result {
         ..error _ { status_code = 1 }
         ..ok ~ source_payload {

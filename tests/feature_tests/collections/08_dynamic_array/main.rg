@@ -15,12 +15,12 @@ main(.system: System) -> (.status_code: Int32) := {
     insert(.self = $&arr, .i = insert_offset, .value = 15)
     push(.self = $&arr, .value = 30)
 
-    if length#(.t: Int32)(.self = &arr).count != 4 {
+    if length(.self = &arr).count != 4 {
         status_code = 1
         return
     }
 
-    if capacity#(.t: Int32)(.self = &arr).count < 4 {
+    if capacity(.self = &arr).count < 4 {
         status_code = 2
         return
     }
@@ -47,7 +47,7 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
-    set_result ::= set(.self = $&arr, .index = second_offset, .value = 99, .allocator = allocator).result
+    set_result ::= replace(.self = $&arr, .index = second_offset, .value = 99, .allocator = allocator).result
     if is(.value = set_result, .variant = ..error) {
         status_code = 5
         return
@@ -98,7 +98,7 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
-    if length#(.t: Int32)(.self = &arr).count != 3 {
+    if length(.self = &arr).count != 3 {
         status_code = 9
         return
     }

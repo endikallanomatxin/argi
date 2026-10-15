@@ -1,8 +1,8 @@
-AbstractMatrix#(
-    .t: Type,
-    .rows: UIntNative,
-    .cols: UIntNative,
-) : Abstract = ()
+AbstractMatrix#(.Participant: Type): Contract = (
+    .t: Type
+    .rows: Int
+    .cols: Int
+)
 
 Matrix#(
     .t: Type,
@@ -10,14 +10,10 @@ Matrix#(
     .cols: UIntNative,
 ) : Type = (.marker: Int32)
 
-Matrix#(
-    .t: Type,
-    .rows: UIntNative,
-    .cols: UIntNative,
-) implements AbstractMatrix#(
-    .t: t,
-    .rows = rows,
-    .cols = cols,
+implement#(.t: Type, .rows: UIntNative, .cols: UIntNative) AbstractMatrix#(Matrix#(.t: t, .rows = rows, .cols = cols)) (
+    .t: Type = t
+    .rows: Int = rows
+    .cols: Int = cols
 )
 
 require_dimensions#(

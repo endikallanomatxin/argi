@@ -37,6 +37,19 @@ pub fn lower(
     return stats;
 }
 
+/// Closed anonymous types in associated definitions are lowered after the
+/// ordinary default pass. Reuse that same expression lowering for their fields.
+pub fn lowerAnonymousFieldDefaults(allocator: std.mem.Allocator, graph: *graph_mod.ModuleSemanticGraph, files: []const graph_mod.FileInput, file_index: u32, syntax: syn.NodeIndex, ty: entities.ModuleTypeId, diagnostics: ?*diagnostics_mod.Diagnostics) !void {
+    var context = Context{ .allocator = allocator, .graph = graph, .files = files, .diagnostics = diagnostics, .writer = writer_mod.Writer.init(allocator, graph) };
+    context.selectFile(file_index);
+    if (context.tree.structTypeLiteral(syntax) == null) return;
+    const semantic = try views.typeView(graph, ty);
+    if (semantic != .resolved or semantic.resolved != .structural) return;
+    const fields = semantic.resolved.structural.fields;
+    var stats: Stats = .{};
+    try context.lowerDeferredDefaults(fields.start, fields.len, syntax, &stats);
+}
+
 const Context = struct {
     allocator: std.mem.Allocator,
     graph: *graph_mod.ModuleSemanticGraph,
@@ -64,7 +77,7 @@ const Context = struct {
             self.selectFile(declaration.module_file_index);
             const declaration_node = graph_mod.declarationSyntaxNode(self.files, declaration) orelse continue;
             const type_declaration = switch (self.tree.tag(declaration_node)) {
-                .type_declaration => self.tree.typeDeclaration(declaration_node).?,
+                .type_declaration, .c_struct_declaration => self.tree.typeDeclaration(declaration_node).?,
                 .c_union_declaration => blk: {
                     const value = self.tree.cUnionDeclaration(declaration_node).?;
                     break :blk syn.TypeDeclaration{
@@ -133,7 +146,7 @@ const Context = struct {
                     .payload_type = if (variant.payload_type) |payload| try self.lowerType(payload) else null,
                     .option_decl = option_decl,
                     .source = self.sourceRef(variant_node),
-                    .value = @intCast(index),
+                    .value = variant.value orelse @intCast(index),
                 });
             }
             self.graph.declarations.items[raw].choice_variants = .{ .start = start, .len = @intCast(literal.variants.len) };
@@ -142,9 +155,10 @@ const Context = struct {
 
     fn lowerDeferredFunctionInterfaces(self: *Context) !void {
         for (self.graph.declarations.items, 0..) |declaration, raw| {
-            if ((declaration.kind != .function and declaration.kind != .test_function) or declaration.function_id != null) continue;
+            if (declaration.function_id != null) continue;
             self.selectFile(declaration.module_file_index);
             const declaration_node = graph_mod.declarationSyntaxNode(self.files, declaration) orelse continue;
+            if (declaration.kind != .function and declaration.kind != .test_function and self.tree.tag(declaration_node) != .c_function_pointer_declaration) continue;
             const function = if (declaration.kind == .test_function)
                 self.tree.testDeclaration(declaration_node).?.function
             else
@@ -273,6 +287,8 @@ const Context = struct {
     }
 
     fn lowerDeferredDefaults(self: *Context, range_start: u32, range_len: u32, struct_node: syn.NodeIndex, stats: *Stats) !void {
+        // TODO: Bind the function's reached capabilities for effectful output
+        // defaults; an error default currently needs an explicit trace field.
         const semantic_field_base = self.graph.fields.items.len + self.graph.structural_fields.items.len;
         const literal = self.tree.structTypeLiteral(struct_node) orelse return error.ExpectedStructType;
         if (literal.fields.len != range_len) return error.InterfaceFieldCountMismatch;

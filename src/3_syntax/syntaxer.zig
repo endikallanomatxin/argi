@@ -5,6 +5,7 @@ const diagnostic = @import("../1_base/diagnostic.zig");
 
 pub const SyntaxerError = error{
     ExpectedIdentifier,
+    ExpectedConformanceType,
     ExpectedColon,
     ExpectedEqual,
     ExpectedIntLiteral,
@@ -26,6 +27,8 @@ pub const SyntaxerError = error{
     ExpectedKeywordWhile,
     ExpectedAmpersand,
     ExpectedStringLiteral,
+    IncompleteTypeCannotBeParameterized,
+    IncompleteTypeHasNoDefinition,
     OutOfMemory,
 };
 
@@ -40,6 +43,8 @@ pub const Syntaxer = struct {
     tokens: tok.View,
     diags: *diagnostic.Diagnostics,
     parsing_pipe_rhs: bool,
+    allow_operator_newlines: bool,
+    allow_report_block: bool = true,
     scratch: std.ArrayList(syn.NodeIndex),
 
     pub fn init(alloc: std.mem.Allocator, toks: tok.View, source: []const u8, diags: *diagnostic.Diagnostics) !Syntaxer {
@@ -48,7 +53,7 @@ pub const Syntaxer = struct {
 
     pub fn initFile(alloc: std.mem.Allocator, file: syn.FileSyntaxTree, source: []const u8, diags: *diagnostic.Diagnostics) Syntaxer {
         const tokens = tok.View.init(&file.tokens);
-        return .{ .source = source, .index = 0, .allocator = alloc, .file = file, .tokens = tokens, .diags = diags, .parsing_pipe_rhs = false, .scratch = .empty };
+        return .{ .source = source, .index = 0, .allocator = alloc, .file = file, .tokens = tokens, .diags = diags, .parsing_pipe_rhs = false, .allow_operator_newlines = false, .scratch = .empty };
     }
 
     pub fn nodeCount(self: *const Syntaxer) usize {
@@ -72,6 +77,12 @@ pub const Syntaxer = struct {
         } catch |err| {
             if (err == SyntaxerError.OutOfMemory) {
                 try self.diags.add(self.tokenLocation(), .internal, "out of memory while parsing", .{});
+            } else if (err == SyntaxerError.IncompleteTypeHasNoDefinition) {
+                try self.diags.add(self.tokenLocation(), .syntax, "CIncomplete declares only a type identity; omit the definition", .{});
+            } else if (err == SyntaxerError.IncompleteTypeCannotBeParameterized) {
+                try self.diags.add(self.tokenLocation(), .syntax, "CIncomplete declarations cannot have compile-time parameters", .{});
+            } else if (err == SyntaxerError.ExpectedConformanceType) {
+                try self.diags.add(self.tokenLocation(), .syntax, "expected a contract type after the conformance relation", .{});
             } else {
                 try self.diags.add(self.tokenLocation(), .syntax, "syntax error: {s}", .{@errorName(err)});
             }
@@ -122,6 +133,7 @@ pub const Syntaxer = struct {
         return switch (self.currentContent()) {
             .literal,
             .open_parenthesis,
+            .open_bracket,
             .open_brace,
             .double_dot,
             .ampersand,
@@ -196,6 +208,7 @@ pub const Syntaxer = struct {
         self.advanceOne();
         self.skipNewLinesAndComments();
 
+        const literal_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
         const literal = switch (self.currentContent()) {
             .literal => |lit| lit,
             else => {
@@ -213,7 +226,7 @@ pub const Syntaxer = struct {
         }
 
         self.advanceOne();
-        return try self.addNode(.literal, minus_token, .{ .token = @enumFromInt(@intFromEnum(minus_token) + 1) });
+        return try self.addNode(.literal, minus_token, .{ .token = literal_token });
     }
 
     // ───────────────────────────────  atoms ──────────────────────────────────
@@ -243,22 +256,16 @@ pub const Syntaxer = struct {
                 try self.diags.add(self.tokenLocation(), .syntax, "unsupported operator '{s}'", .{ident});
                 return SyntaxerError.ExpectedIdentifier;
             },
-            .comparison_operator => |cmp| {
-                const name = switch (cmp) {
-                    .equal => "operator ==",
-                    .not_equal => "operator !=",
-                    else => blk: {
-                        try self.diags.add(self.tokenLocation(), .syntax, "unsupported comparison operator after 'operator'", .{});
-                        break :blk "";
-                    },
-                };
-                if (name.len == 0) return SyntaxerError.ExpectedIdentifier;
-                self.advanceOne();
-                return .{ .token = operator_token, .text = name };
+            .comparison_operator => {
+                try self.diags.add(self.tokenLocation(), .syntax, "comparison operator declarations are unsupported; use implement Equal#(Left, Right, Args)", .{});
+                return SyntaxerError.ExpectedIdentifier;
             },
             .binary_operator => |op| {
                 const name = switch (op) {
-                    .addition => "operator +",
+                    .addition => blk: {
+                        try self.diags.add(self.tokenLocation(), .syntax, "operator + declarations are unsupported; use implement Add#(Left, Right, Args)", .{});
+                        break :blk "";
+                    },
                     else => blk: {
                         try self.diags.add(self.tokenLocation(), .syntax, "unsupported binary operator after 'operator'", .{});
                         break :blk "";
@@ -415,7 +422,7 @@ pub const Syntaxer = struct {
             return try self.addNode(if (mutable) .pointer_type_mut else .pointer_type, main_token, .{ .node = base_ty_opt.? });
         } else if (self.tokenIs(.open_parenthesis)) {
             if (self.parenthesizedTypeIsChoiceLiteral()) {
-                return try self.parseChoiceTypeLiteral();
+                return try self.parseChoiceTypeLiteral(false);
             }
             return try self.parseStructTypeLiteral();
         }
@@ -436,10 +443,39 @@ pub const Syntaxer = struct {
         if (self.tokenIs(.hash)) {
             const hash_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
             self.advanceOne();
-            const gen_args = try self.parseStructTypeLiteral();
-            return try self.addNode(.generic_type_instantiation, hash_token, .{ .node_and_node = .{ .first = base, .second = gen_args } });
+            const gen_args = try self.parseStructTypeFields(true);
+            const instance = try self.addNode(.generic_type_instantiation, hash_token, .{ .node_and_node = .{ .first = base, .second = gen_args } });
+            if (self.tokenIs(.dot)) {
+                self.advanceOne();
+                const member = try self.parseName();
+                return try self.addNode(.associated_type_projection, member.token, .{ .node = instance });
+            }
+            return instance;
         }
         return base;
+    }
+
+    fn parseAssociatedValueProjection(self: *Syntaxer, name: syn.TokenIndex, qualifier: ?syn.TokenIndex, arguments: syn.NodeRange, named_arguments: ?syn.NodeIndex) SyntaxerError!syn.NodeIndex {
+        const literal = named_arguments orelse blk: {
+            // Extra-data growth must not invalidate the argument range being read.
+            const values = try self.allocator.dupe(syn.NodeIndex, self.file.nodeRange(arguments));
+            defer self.allocator.free(values);
+            var fields: std.ArrayList(syn.NodeIndex) = .empty;
+            defer fields.deinit(self.allocator);
+            for (values, 0..) |value, position| {
+                const extra = try self.addExtra(syn.FieldExtra{
+                    .type_node = syn.OptionalNodeIndex.init(value),
+                    .default_value = .none,
+                });
+                try fields.append(self.allocator, try self.addNode(.positional_type_field, self.file.mainToken(value), .{ .u32_and_extra = .{ .value = @intCast(position), .extra = extra } }));
+            }
+            break :blk try self.addNode(.struct_type_literal, name, .{ .extra_range = try self.addNodeRange(fields.items) });
+        };
+        const base = try self.addNode(.type_name, name, .{ .token_and_optional_token = .{ .token = name, .optional = syn.OptionalTokenIndex.init(qualifier) } });
+        const instance = try self.addNode(.generic_type_instantiation, name, .{ .node_and_node = .{ .first = base, .second = literal } });
+        self.advanceOne();
+        const member = try self.parseName();
+        return try self.addNode(.associated_type_projection, member.token, .{ .node = instance });
     }
 
     // Parse an abstract body: a parenthesized, comma-separated list of items.
@@ -447,11 +483,14 @@ pub const Syntaxer = struct {
     //   - an identifier: composed abstract name (e.g., Addable)
     //   - a function requirement: name ( StructTypeLiteral ) -> ( StructTypeLiteral )
     // Newlines and comments are ignored.
-    fn parseAbstractBody(self: *Syntaxer) SyntaxerError!struct {
+    fn parseContractBody(self: *Syntaxer) SyntaxerError!struct {
         req_names: syn.NodeRange,
         req_funcs: syn.NodeRange,
+        domains: syn.NodeRange,
+        associated_struct: ?syn.NodeIndex,
     } {
         if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
+        const body_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
         self.advanceOne();
         self.skipNewLinesAndComments();
 
@@ -459,29 +498,90 @@ pub const Syntaxer = struct {
         defer self.scratch.shrinkRetainingCapacity(scratch_top);
 
         while (!self.tokenIs(.close_parenthesis)) {
+            if (self.tokenIs(.dot)) {
+                self.advanceOne();
+                const member = try self.parseName();
+                if (self.tokenIs(.hash)) {
+                    try self.diags.add(self.tokenLocation(), .syntax, "operation-local generic parameters are not supported in contracts; declare associated members in the contract body", .{});
+                    return SyntaxerError.ExpectedStructField;
+                }
+                if (!self.tokenIs(.colon)) {
+                    try self.diags.add(self.tokenLocation(), .syntax, "associated contract members require a type declaration", .{});
+                    return SyntaxerError.ExpectedStructField;
+                }
+                self.advanceOne();
+                if (self.tokenIs(.open_parenthesis)) {
+                    try self.scratch.append(self.allocator, try self.parseContractRequirement(member));
+                    self.skipNewLinesAndComments();
+                    if (self.tokenIs(.comma)) {
+                        self.advanceOne();
+                        self.skipNewLinesAndComments();
+                    }
+                    continue;
+                }
+                var member_type = try self.parseType() orelse return SyntaxerError.ExpectedIdentifier;
+                if (self.tokenIs(.colon)) {
+                    if (self.file.tag(member_type) != .type_name or !std.mem.eql(u8, self.tokenText(self.contentAt(@intFromEnum(self.file.mainToken(member_type))).identifier), "Type")) {
+                        try self.diags.add(self.tokenLocation(), .syntax, "associated type bounds use '.{s}: Type: Constraint'", .{member.text});
+                        return SyntaxerError.ExpectedStructField;
+                    }
+                    self.advanceOne();
+                    member_type = try self.parseType() orelse return SyntaxerError.ExpectedIdentifier;
+                }
+                if (self.tokenIs(.equal)) {
+                    try self.diags.add(self.tokenLocation(), .syntax, "associated contract members are supplied by implement; defaults are not supported", .{});
+                    return SyntaxerError.ExpectedStructField;
+                }
+                const extra = try self.addExtra(syn.FieldExtra{
+                    .type_node = syn.OptionalNodeIndex.init(member_type),
+                    .default_value = .none,
+                });
+                try self.scratch.append(self.allocator, try self.addNode(.struct_type_field, member.token, .{ .extra = extra }));
+                self.skipNewLinesAndComments();
+                if (self.tokenIs(.comma)) {
+                    self.advanceOne();
+                    self.skipNewLinesAndComments();
+                }
+                continue;
+            }
+            if (self.currentIdentifierEquals("domain")) {
+                self.advanceOne();
+                const domain = try self.parseName();
+                try self.scratch.append(self.allocator, try self.addNode(.contract_domain, domain.token, .{ .unused = .{ 0, 0 } }));
+                self.skipNewLinesAndComments();
+                if (self.tokenIs(.comma)) {
+                    self.advanceOne();
+                    self.skipNewLinesAndComments();
+                }
+                continue;
+            }
             var name = try self.parseName();
+            if (self.currentContent() == .identifier and std.mem.eql(u8, self.tokenText(self.currentContent().identifier), "init")) {
+                try self.diags.add(self.tokenLocation(), .syntax, "legacy constructor declarations are unsupported; use implement Init", .{});
+                return SyntaxerError.ExpectedStructField;
+            }
+            if (self.currentIdentifierEquals("deinit")) {
+                try self.diags.add(self.tokenLocation(), .syntax, "legacy destructor declarations are unsupported; use implement Deinit", .{});
+                return SyntaxerError.ExpectedStructField;
+            }
+
             if (std.mem.eql(u8, name.text, "operator")) {
                 name = try self.parseOperatorName(name.token);
             }
 
-            if (self.tokenIs(.open_parenthesis)) {
-                const in_st = try self.parseStructTypeLiteral();
-                if (!self.tokenIs(.arrow)) return SyntaxerError.ExpectedArrow;
-                self.advanceOne();
-                const out_st = try self.parseStructTypeLiteral();
-                const empty = try self.addNodeRange(&.{});
-                const extra = try self.addExtra(syn.FunctionExtra{
-                    .name_token = name.token,
-                    .generic_params_start = empty.start,
-                    .generic_params_end = empty.end,
-                    .generic_params_struct = .none,
-                    .input = in_st,
-                    .output = out_st,
-                    .body = .none,
-                });
-                try self.scratch.append(self.allocator, try self.addNode(.abstract_function_requirement, name.token, .{ .extra = extra }));
+            if (self.tokenIs(.hash)) {
+                self.index = @intFromEnum(name.token);
+                const dependency = try self.parseType() orelse return SyntaxerError.ExpectedIdentifier;
+                if (self.tokenIs(.open_parenthesis)) {
+                    try self.diags.add(self.tokenLocation(), .syntax, "operation-local generic parameters are not supported in contracts; declare associated members in the contract body", .{});
+                    return SyntaxerError.ExpectedIdentifier;
+                }
+                try self.scratch.append(self.allocator, dependency);
+            } else if (self.tokenIs(.open_parenthesis)) {
+                try self.diags.add(self.tokenLocation(), .syntax, "contract operations use member declarations: .{s}: (...) -> (...)", .{name.text});
+                return SyntaxerError.ExpectedStructField;
             } else {
-                try self.scratch.append(self.allocator, try self.addNode(.type_name, name.token, .{ .unused = .{ 0, 0 } }));
+                try self.scratch.append(self.allocator, try self.addNode(.type_name, name.token, .{ .token_and_optional_token = .{ .token = name.token, .optional = .none } }));
             }
 
             self.skipNewLinesAndComments();
@@ -496,18 +596,162 @@ pub const Syntaxer = struct {
         var index = scratch_top;
         while (index < items_end) : (index += 1) {
             const item = self.scratch.items[index];
-            if (self.file.tag(item) == .type_name) try self.scratch.append(self.allocator, item);
+            if (self.file.tag(item) == .type_name or self.file.tag(item) == .generic_type_instantiation) try self.scratch.append(self.allocator, item);
         }
         const funcs_start = self.scratch.items.len;
         index = scratch_top;
         while (index < items_end) : (index += 1) {
             const item = self.scratch.items[index];
-            if (self.file.tag(item) == .abstract_function_requirement) try self.scratch.append(self.allocator, item);
+            if (self.file.tag(item) == .contract_function_requirement) try self.scratch.append(self.allocator, item);
         }
+        const domains_start = self.scratch.items.len;
+        index = scratch_top;
+        while (index < items_end) : (index += 1) {
+            const item = self.scratch.items[index];
+            if (self.file.tag(item) == .contract_domain) try self.scratch.append(self.allocator, item);
+        }
+        const associated_start = self.scratch.items.len;
+        index = scratch_top;
+        while (index < items_end) : (index += 1) {
+            const item = self.scratch.items[index];
+            if (self.file.tag(item) == .struct_type_field) try self.scratch.append(self.allocator, item);
+        }
+        const associated_struct = if (associated_start == self.scratch.items.len) null else try self.addNode(.struct_type_literal, body_token, .{ .extra_range = try self.addNodeRange(self.scratch.items[associated_start..]) });
         return .{
+            .associated_struct = associated_struct,
             .req_names = try self.addNodeRange(self.scratch.items[items_end..funcs_start]),
-            .req_funcs = try self.addNodeRange(self.scratch.items[funcs_start..]),
+            .req_funcs = try self.addNodeRange(self.scratch.items[funcs_start..domains_start]),
+            .domains = try self.addNodeRange(self.scratch.items[domains_start..associated_start]),
         };
+    }
+
+    fn parseContractRequirement(self: *Syntaxer, name: ParsedName) SyntaxerError!syn.NodeIndex {
+        const input = try self.parseStructTypeLiteral();
+        if (!self.tokenIs(.arrow)) return SyntaxerError.ExpectedArrow;
+        self.advanceOne();
+        const output = try self.parseStructTypeLiteral();
+        self.skipNewLinesAndComments();
+        const safety: ?syn.NodeIndex = if (self.currentIdentifierEquals("where")) blk: {
+            self.advanceOne();
+            self.skipNewLinesAndComments();
+            break :blk if (self.tokenIs(.open_brace)) try self.parseSafetyContract() else try self.parseExpression();
+        } else null;
+        const empty = try self.addNodeRange(&.{});
+        const extra = try self.addExtra(syn.FunctionExtra{
+            .contract_member = 1,
+            .name_token = name.token,
+            .generic_params_start = empty.start,
+            .generic_params_end = empty.end,
+            .generic_params_struct = .none,
+            .input = input,
+            .output = output,
+            .body = .none,
+            .safety_contract = syn.OptionalNodeIndex.init(safety),
+        });
+        return self.addNode(.contract_function_requirement, name.token, .{ .extra = extra });
+    }
+
+    fn parseImplementationMembers(self: *Syntaxer, implementation_parameters: syn.NodeRange) SyntaxerError!syn.NodeIndex {
+        if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
+        const open: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
+        self.advanceOne();
+        self.skipNewLinesAndComments();
+        const top = self.scratch.items.len;
+        defer self.scratch.shrinkRetainingCapacity(top);
+        while (!self.tokenIs(.close_parenthesis)) {
+            if (!self.tokenIs(.dot)) return SyntaxerError.ExpectedStructField;
+            self.advanceOne();
+            const member = try self.parseName();
+            const kind: ?syn.NodeIndex = if (self.tokenIs(.colon)) blk: {
+                self.advanceOne();
+                break :blk try self.parseType() orelse return SyntaxerError.ExpectedIdentifier;
+            } else null;
+            if (!self.tokenIs(.equal)) return SyntaxerError.ExpectedDeclarationOrAssignment;
+            self.advanceOne();
+            self.skipNewLinesAndComments();
+            const value = if (kind) |annotation| value: {
+                if (self.file.tag(annotation) == .type_name and std.mem.eql(u8, self.tokenText(self.contentAt(@intFromEnum(self.file.mainToken(annotation))).identifier), "Type"))
+                    break :value try self.parseType() orelse return SyntaxerError.ExpectedIdentifier;
+                break :value try self.parseExpression();
+            } else if (self.tokenIs(.open_parenthesis) and self.looksLikeFunctionDeclarationInput(self.index)) inline_body: {
+                const input = try self.parseStructTypeLiteral();
+                if (!self.tokenIs(.arrow)) return SyntaxerError.ExpectedArrow;
+                self.advanceOne();
+                const output = try self.parseFunctionOutputType();
+                self.skipNewLinesAndComments();
+                const body = try self.parseCodeBlock();
+                const empty = try self.addNodeRange(&.{});
+                const function = try self.addExtra(syn.FunctionExtra{
+                    .contract_member = 1,
+                    .name_token = member.token,
+                    .generic_params_start = empty.start,
+                    .generic_params_end = empty.end,
+                    .generic_params_struct = .none,
+                    .input = input,
+                    .output = output,
+                    .body = syn.OptionalNodeIndex.init(body),
+                });
+                break :inline_body try self.addNode(.function_declaration, member.token, .{ .extra = function });
+            } else try self.parseExpression();
+            const extra = try self.addExtra(syn.FieldExtra{ .type_node = syn.OptionalNodeIndex.init(kind), .default_value = syn.OptionalNodeIndex.init(value) });
+            try self.scratch.append(self.allocator, try self.addNode(.struct_type_field, member.token, .{ .extra = extra }));
+            self.skipNewLinesAndComments();
+            if (self.tokenIs(.comma)) {
+                self.advanceOne();
+                self.skipNewLinesAndComments();
+            }
+        }
+        self.advanceOne();
+        const members_end = self.scratch.items.len;
+        try self.scratch.appendSlice(self.allocator, self.file.nodeRange(implementation_parameters));
+        for (top..members_end) |index| {
+            const member = self.file.structTypeField(self.scratch.items[index]).?;
+            if (member.type_node != null) try self.scratch.append(self.allocator, self.scratch.items[index]);
+        }
+        const parameter_range = try self.addNodeRange(self.scratch.items[members_end..]);
+        const parameters = try self.addNode(.struct_type_literal, open, .{ .extra_range = parameter_range });
+        for (top..members_end) |index| {
+            const value = self.file.structTypeField(self.scratch.items[index]).?.default_value.?;
+            if (self.file.functionDeclaration(value) == null) continue;
+            var function = self.file.extraData(syn.FunctionExtra, self.file.data(value).extra);
+            function.generic_params_start = parameter_range.start;
+            function.generic_params_end = parameter_range.end;
+            function.generic_params_struct = syn.OptionalNodeIndex.init(if (parameter_range.start == parameter_range.end) null else parameters);
+            const function_extra = try self.addExtra(function);
+            self.file.nodes.items(.data)[@intFromEnum(value)] = .{ .extra = function_extra };
+        }
+        return self.addNode(.struct_type_literal, open, .{ .extra_range = try self.addNodeRange(self.scratch.items[top..members_end]) });
+    }
+
+    fn parseSafetyContract(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
+        const open: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
+        if (!self.tokenIs(.open_brace)) return SyntaxerError.ExpectedLeftBrace;
+        self.advanceOne();
+        self.skipNewLinesAndComments();
+        const scratch_top = self.scratch.items.len;
+        defer self.scratch.shrinkRetainingCapacity(scratch_top);
+        while (!self.tokenIs(.close_brace)) {
+            if (self.currentIdentifierEquals("on")) {
+                const start: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
+                self.advanceOne();
+                const output = try self.parseName();
+                if (!self.tokenIs(.double_dot)) return SyntaxerError.ExpectedIdentifier;
+                self.advanceOne();
+                const variant = try self.parseName();
+                self.skipNewLinesAndComments();
+                const body = try self.parseSafetyContract();
+                try self.scratch.append(self.allocator, try self.addNode(.contract_outcome, start, .{ .extra = try self.addExtra(syn.ContractOutcomeExtra{ .output = output.token, .variant = variant.token, .body = body }) }));
+            } else {
+                try self.scratch.append(self.allocator, try self.parseExpression());
+            }
+            self.skipNewLinesAndComments();
+            if (self.tokenIs(.comma)) {
+                self.advanceOne();
+                self.skipNewLinesAndComments();
+            }
+        }
+        self.advanceOne();
+        return try self.addNode(.code_block, open, .{ .extra_range = try self.addNodeRange(self.scratch.items[scratch_top..]) });
     }
 
     fn parseListLiteral(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
@@ -538,6 +782,12 @@ pub const Syntaxer = struct {
 
     // ( .field : Type? (= expr)? , ... )
     fn parseStructTypeLiteral(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
+        return self.parseStructTypeFields(false);
+    }
+
+    // Generic type applications share named-field syntax with declarations,
+    // but may supply an ordered positional prefix before any named arguments.
+    fn parseStructTypeFields(self: *Syntaxer, allow_positional: bool) SyntaxerError!syn.NodeIndex {
         if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
         const start_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
         self.advanceOne();
@@ -546,7 +796,39 @@ pub const Syntaxer = struct {
         const scratch_top = self.scratch.items.len;
         defer self.scratch.shrinkRetainingCapacity(scratch_top);
 
+        var has_named = false;
+        var position: u32 = 0;
         while (!self.tokenIs(.close_parenthesis)) {
+            if (allow_positional and !self.tokenIs(.dot)) {
+                if (has_named) {
+                    try self.diags.add(self.tokenLocation(), .syntax, "positional type arguments must appear before named arguments", .{});
+                    return SyntaxerError.ExpectedStructField;
+                }
+                const argument_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
+                var type_node: ?syn.NodeIndex = null;
+                var value_node: ?syn.NodeIndex = null;
+                if (self.currentContent() == .literal or
+                    (self.currentContent() == .binary_operator and self.currentContent().binary_operator == .subtraction))
+                {
+                    value_node = try self.parseExpression();
+                } else {
+                    type_node = try self.parseType();
+                    if (type_node == null) return SyntaxerError.ExpectedIdentifier;
+                }
+                const extra = try self.addExtra(syn.FieldExtra{
+                    .type_node = syn.OptionalNodeIndex.init(type_node),
+                    .default_value = syn.OptionalNodeIndex.init(value_node),
+                });
+                try self.scratch.append(self.allocator, try self.addNode(.positional_type_field, argument_token, .{ .u32_and_extra = .{ .value = position, .extra = extra } }));
+                position += 1;
+                self.skipNewLinesAndComments();
+                if (self.tokenIs(.comma)) {
+                    self.advanceOne();
+                    self.skipNewLinesAndComments();
+                }
+                continue;
+            }
+            has_named = true;
             if (!self.tokenIs(.dot)) {
                 try self.diags.add(self.tokenLocation(), .syntax, "expected struct field, found '{s}'", .{@tagName(self.currentContent())});
                 return SyntaxerError.ExpectedStructField;
@@ -597,7 +879,16 @@ pub const Syntaxer = struct {
             }
 
             const inferred = try self.addNode(.inferred_errable_type, bang_token, .{ .node = inner_ty_opt.? });
-            const field_extra = try self.addExtra(syn.FieldExtra{ .type_node = inferred.optional(), .default_value = .none });
+            var default_value: ?syn.NodeIndex = null;
+            if (self.tokenIs(.equal)) {
+                self.advanceOne();
+                if (self.tokenIs(.colon) or self.tokenIs(.eof)) {
+                    try self.diags.add(self.tokenLocation(), .syntax, "expected a default expression after '=' in the fallible output", .{});
+                    return SyntaxerError.ExpectedIntLiteral;
+                }
+                default_value = try self.parseExpression();
+            }
+            const field_extra = try self.addExtra(syn.FieldExtra{ .type_node = inferred.optional(), .default_value = syn.OptionalNodeIndex.init(default_value) });
             const field = try self.addNode(.inferred_result_field, bang_token, .{ .extra = field_extra });
             return try self.addNode(.struct_type_literal, bang_token, .{ .extra_range = try self.addNodeRange(&.{field}) });
         }
@@ -666,7 +957,34 @@ pub const Syntaxer = struct {
         return try self.addNode(.struct_type_literal, start_token, .{ .extra_range = try self.addNodeRange(self.scratch.items[scratch_top..]) });
     }
 
-    fn parseChoiceTypeLiteral(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
+    fn parseCEnumValue(self: *Syntaxer) SyntaxerError!i64 {
+        self.skipNewLinesAndComments();
+        const location = self.tokenLocation();
+        var negative = false;
+        if (self.currentContent() == .binary_operator and self.currentContent().binary_operator == .subtraction) {
+            negative = true;
+            self.advanceOne();
+        }
+        const text = switch (self.currentContent()) {
+            .literal => |literal| switch (literal) {
+                .decimal_int_literal, .hexadecimal_int_literal, .octal_int_literal, .binary_int_literal => |range| self.tokenText(range),
+                else => "",
+            },
+            else => "",
+        };
+        const magnitude = std.fmt.parseInt(i64, text, 0) catch {
+            try self.diags.add(location, .syntax, "CEnum value must be an Int32 integer literal", .{});
+            return SyntaxerError.ExpectedIntLiteral;
+        };
+        self.advanceOne();
+        if (self.currentContent() == .binary_operator) {
+            try self.diags.add(location, .syntax, "CEnum value must be an Int32 integer literal; constant expressions are not supported", .{});
+            return SyntaxerError.ExpectedIntLiteral;
+        }
+        return if (negative) -magnitude else magnitude;
+    }
+
+    fn parseChoiceTypeLiteral(self: *Syntaxer, c_enum: bool) SyntaxerError!syn.NodeIndex {
         if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
         const start_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
         self.advanceOne();
@@ -675,6 +993,9 @@ pub const Syntaxer = struct {
         const scratch_top = self.scratch.items.len;
         defer self.scratch.shrinkRetainingCapacity(scratch_top);
 
+        var next_value: i64 = 0;
+        var enum_values: std.AutoHashMapUnmanaged(i32, void) = .empty;
+        defer enum_values.deinit(self.allocator);
         while (!self.tokenIs(.close_parenthesis)) {
             var is_default = false;
             if (self.tokenIs(.equal)) {
@@ -702,13 +1023,32 @@ pub const Syntaxer = struct {
             if (self.tokenStartsChoicePayloadType()) {
                 payload_type = (try self.parseType()).?;
             }
+            var numeric_value: ?i32 = null;
+            if (c_enum) {
+                if (self.tokenIs(.equal)) {
+                    self.advanceOne();
+                    next_value = try self.parseCEnumValue();
+                }
+                numeric_value = std.math.cast(i32, next_value) orelse {
+                    try self.diags.add(self.locationAt(@intFromEnum(vname.token)), .syntax, "CEnum value is outside the supported Int32 range", .{});
+                    return SyntaxerError.ExpectedIntLiteral;
+                };
+                const entry = try enum_values.getOrPut(self.allocator, numeric_value.?);
+                if (entry.found_existing) {
+                    try self.diags.add(self.locationAt(@intFromEnum(vname.token)), .syntax, "duplicate CEnum numeric values are not supported", .{});
+                    return SyntaxerError.ExpectedIntLiteral;
+                }
+                next_value += 1;
+            }
             try self.scratch.append(self.allocator, try self.addNode(
                 if (is_default) .choice_type_variant_default else .choice_type_variant,
                 vname.token,
-                .{ .optional_token_and_optional_node = .{
-                    .token = syn.OptionalTokenIndex.init(if (module_qualifier) |qualifier| qualifier.token else null),
-                    .node = syn.OptionalNodeIndex.init(payload_type),
-                } },
+                .{ .extra = try self.addExtra(syn.ChoiceVariantExtra{
+                    .qualifier = syn.OptionalTokenIndex.init(if (module_qualifier) |qualifier| qualifier.token else null),
+                    .payload = syn.OptionalNodeIndex.init(payload_type),
+                    .value_bits = if (numeric_value) |value| @bitCast(value) else 0,
+                    .has_value = if (numeric_value != null) 1 else 0,
+                }) },
             ));
 
             self.skipNewLinesAndComments();
@@ -923,6 +1263,12 @@ pub const Syntaxer = struct {
     }
 
     fn parseCollectionLiteral(self: *Syntaxer, force_struct: bool) SyntaxerError!syn.NodeIndex {
+        const previous_report_block = self.allow_report_block;
+        self.allow_report_block = true;
+        defer self.allow_report_block = previous_report_block;
+        const previous_operator_newlines = self.allow_operator_newlines;
+        self.allow_operator_newlines = false;
+        defer self.allow_operator_newlines = previous_operator_newlines;
         if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
         const start_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
         self.advanceOne();
@@ -989,6 +1335,10 @@ pub const Syntaxer = struct {
 
     // ────────────────────────── postfix “.field” chain ───────────────────────
     fn parsePostfix(self: *Syntaxer, mut: syn.NodeIndex) !syn.NodeIndex {
+        return self.parsePostfixWithCalls(mut, false);
+    }
+
+    fn parsePostfixWithCalls(self: *Syntaxer, mut: syn.NodeIndex, allow_identifier_calls: bool) !syn.NodeIndex {
         var node = mut;
         while (true) {
             if (self.tokenIs(.dot)) {
@@ -1007,20 +1357,57 @@ pub const Syntaxer = struct {
                 continue;
             }
 
-            if (self.tokenIs(.open_parenthesis)) {
-                if (self.file.tag(node) == .struct_field_access) {
-                    const sfa = self.file.data(node).token_and_node;
-                    if (self.file.tag(sfa.node) != .identifier) break;
+            if (self.tokenIs(.open_parenthesis) and self.file.tag(node) == .associated_type_projection) {
+                const contract_type = self.file.data(node).node;
+                const operation_token = self.file.mainToken(node);
+                const input = try self.parseCollectionLiteral(true);
+                const empty = try self.addNodeRange(&.{});
+                const extra = try self.addExtra(syn.CallExtra{
+                    .contract_type = syn.OptionalNodeIndex.init(contract_type),
+                    .module_qualifier = .none,
+                    .type_arguments_start = empty.start,
+                    .type_arguments_end = empty.end,
+                    .type_arguments_struct = .none,
+                    .input = input,
+                });
+                node = try self.addNode(.function_call, operation_token, .{ .extra = extra });
+                continue;
+            }
+
+            if (self.tokenIs(.open_parenthesis) or self.tokenIs(.hash)) {
+                if (self.file.tag(node) == .struct_field_access or (allow_identifier_calls and self.file.tag(node) == .identifier)) {
+                    var qualifier: ?syn.TokenIndex = null;
+                    const callee_token = if (self.file.tag(node) == .struct_field_access) blk: {
+                        const sfa = self.file.data(node).token_and_node;
+                        if (self.file.tag(sfa.node) != .identifier) break;
+                        qualifier = self.file.mainToken(sfa.node);
+                        break :blk sfa.token;
+                    } else self.file.mainToken(node);
+                    var type_args = try self.addNodeRange(&.{});
+                    var type_args_struct: ?syn.NodeIndex = null;
+                    const has_comptime_arguments = self.tokenIs(.hash);
+                    if (self.tokenIs(.hash)) {
+                        self.advanceOne();
+                        if (self.comptime_arguments_are_named()) {
+                            type_args_struct = try self.parseStructTypeLiteral();
+                        } else {
+                            type_args = try self.parseTypeList();
+                        }
+                    }
+                    if (self.tokenIs(.dot) and has_comptime_arguments) {
+                        node = try self.parseAssociatedValueProjection(callee_token, qualifier, type_args, type_args_struct);
+                        continue;
+                    }
+                    if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
                     const struct_value_literal = try self.parseCollectionLiteral(true);
-                    const empty = try self.addNodeRange(&.{});
                     const extra = try self.addExtra(syn.CallExtra{
-                        .module_qualifier = syn.OptionalTokenIndex.init(self.file.mainToken(sfa.node)),
-                        .type_arguments_start = empty.start,
-                        .type_arguments_end = empty.end,
-                        .type_arguments_struct = .none,
+                        .module_qualifier = syn.OptionalTokenIndex.init(qualifier),
+                        .type_arguments_start = type_args.start,
+                        .type_arguments_end = type_args.end,
+                        .type_arguments_struct = syn.OptionalNodeIndex.init(type_args_struct),
                         .input = struct_value_literal,
                     });
-                    node = try self.addNode(.function_call, sfa.token, .{ .extra = extra });
+                    node = try self.addNode(.function_call, callee_token, .{ .extra = extra });
                     continue;
                 }
             }
@@ -1028,6 +1415,9 @@ pub const Syntaxer = struct {
             if (self.tokenIs(.open_bracket)) {
                 const bracket_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
                 self.advanceOne();
+                const previous_report_block = self.allow_report_block;
+                self.allow_report_block = true;
+                defer self.allow_report_block = previous_report_block;
                 const idx_expr = try self.parseExpression();
                 if (!self.tokenIs(.close_bracket))
                     return SyntaxerError.ExpectedRightBracket;
@@ -1040,6 +1430,18 @@ pub const Syntaxer = struct {
                 const amp_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
                 self.advanceOne();
                 node = try self.addNode(.dereference, amp_token, .{ .node = node });
+                continue;
+            }
+
+            if (self.tokenIs(.triple_bang)) {
+                const bang_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
+                self.advanceOne();
+                if (self.allow_report_block and self.tokenIs(.open_brace)) {
+                    const body = try self.parseCodeBlock();
+                    node = try self.addNode(.error_report_return_block, bang_token, .{ .node_and_node = .{ .first = node, .second = body } });
+                } else {
+                    node = try self.addNode(.error_report_return, bang_token, .{ .node = node });
+                }
                 continue;
             }
 
@@ -1070,137 +1472,36 @@ pub const Syntaxer = struct {
         return node;
     }
 
-    const PipePlaceholderAnalysis = struct {
-        has_placeholder: bool = false,
-        direct_shape: bool = false,
-        first_placeholder: ?syn.TokenIndex = null,
-        invalid_token: ?syn.TokenIndex = null,
-    };
-
-    fn mergePipePlaceholderAnalysis(result: *PipePlaceholderAnalysis, child: PipePlaceholderAnalysis) void {
-        if (!result.has_placeholder and child.has_placeholder) result.first_placeholder = child.first_placeholder;
-        result.has_placeholder = result.has_placeholder or child.has_placeholder;
-        if (result.invalid_token == null) result.invalid_token = child.invalid_token;
-    }
-
-    fn invalidatePipePlaceholderAnalysis(self: *Syntaxer, result: *PipePlaceholderAnalysis, node: syn.NodeIndex) void {
-        if (result.has_placeholder and result.invalid_token == null)
-            result.invalid_token = self.file.mainToken(node);
-        result.direct_shape = false;
-    }
-
-    fn analyzePipePlaceholder(self: *Syntaxer, node: syn.NodeIndex) PipePlaceholderAnalysis {
+    fn hasPipePlaceholder(self: *Syntaxer, node: syn.NodeIndex) bool {
         return switch (self.file.tag(node)) {
-            .pipe_placeholder => .{
-                .has_placeholder = true,
-                .direct_shape = true,
-                .first_placeholder = self.file.mainToken(node),
-            },
-
-            // These are the deliberately supported placeholder expressions.
-            // Chaining field/payload projections remains a direct shape because
-            // lowering can substitute the piped value before applying them.
-            .address_of, .address_of_mut => blk: {
-                const child_node = self.file.unaryOperand(node).?;
-                var result = self.analyzePipePlaceholder(child_node);
-                if (result.has_placeholder and (result.invalid_token != null or !result.direct_shape))
-                    self.invalidatePipePlaceholderAnalysis(&result, node);
-                break :blk result;
-            },
-            .struct_field_access => blk: {
-                const access = self.file.structFieldAccess(node).?;
-                var result = self.analyzePipePlaceholder(access.value);
-                if (result.has_placeholder and (result.invalid_token != null or !result.direct_shape))
-                    self.invalidatePipePlaceholderAnalysis(&result, node);
-                break :blk result;
-            },
-            .choice_payload_access => blk: {
-                const access = self.file.choicePayloadAccess(node).?;
-                var result = self.analyzePipePlaceholder(access.value);
-                if (result.has_placeholder and (result.invalid_token != null or !result.direct_shape))
-                    self.invalidatePipePlaceholderAnalysis(&result, node);
-                break :blk result;
-            },
-
-            // Calls and aggregate literals are containers: placeholders inside
-            // their values keep their validity, but the container itself is not
-            // a direct placeholder shape that another operator may wrap.
-            .function_call => blk: {
-                const call = self.file.functionCall(node).?;
-                var result = self.analyzePipePlaceholder(call.input);
-                result.direct_shape = false;
-                break :blk result;
-            },
+            .pipe_placeholder => true,
+            // A nested pipe binds its own RHS placeholders. Only its left
+            // operand may refer to the enclosing pipe's value.
+            .pipe_expression => self.hasPipePlaceholder(self.file.binaryOperation(node).?.lhs),
+            .address_of, .address_of_mut, .move_expression, .error_propagation, .nullable_test, .dereference => self.hasPipePlaceholder(self.file.unaryOperand(node).?),
+            .struct_field_access => self.hasPipePlaceholder(self.file.structFieldAccess(node).?.value),
+            .choice_payload_access => self.hasPipePlaceholder(self.file.choicePayloadAccess(node).?.value),
+            .function_call => self.hasPipePlaceholder(self.file.functionCall(node).?.input),
             .struct_value_literal => blk: {
-                const literal = self.file.structValueLiteral(node).?;
-                var result: PipePlaceholderAnalysis = .{};
-                for (literal.fields) |field_node|
-                    mergePipePlaceholderAnalysis(&result, self.analyzePipePlaceholder(field_node));
-                result.direct_shape = false;
-                break :blk result;
+                for (self.file.structValueLiteral(node).?.fields) |field|
+                    if (self.hasPipePlaceholder(field)) break :blk true;
+                break :blk false;
             },
-            .struct_value_field, .positional_value_field => blk: {
-                const field = self.file.valueField(node).?;
-                var result = self.analyzePipePlaceholder(field.value);
-                result.direct_shape = false;
-                break :blk result;
-            },
+            .struct_value_field, .positional_value_field => self.hasPipePlaceholder(self.file.valueField(node).?.value),
             .list_literal => blk: {
-                const literal = self.file.listLiteral(node).?;
-                var result: PipePlaceholderAnalysis = .{};
-                for (literal.elements) |element|
-                    mergePipePlaceholderAnalysis(&result, self.analyzePipePlaceholder(element));
-                result.direct_shape = false;
-                break :blk result;
+                for (self.file.listLiteral(node).?.elements) |element|
+                    if (self.hasPipePlaceholder(element)) break :blk true;
+                break :blk false;
             },
             .choice_literal, .choice_some_literal => blk: {
-                const literal = self.file.choiceLiteral(node).?;
-                var result: PipePlaceholderAnalysis = .{};
-                if (literal.payload) |payload| result = self.analyzePipePlaceholder(payload);
-                result.direct_shape = false;
-                break :blk result;
+                const payload = self.file.choiceLiteral(node).?.payload orelse break :blk false;
+                break :blk self.hasPipePlaceholder(payload);
             },
-
-            // Composite operators are not substitution points. If a placeholder
-            // appears anywhere under one, diagnose the first unsupported
-            // operator rather than the placeholder itself.
-            .pipe_expression,
-            .unwrap_or,
-            .unwrap_or_do,
-            .binary_add,
-            .binary_subtract,
-            .binary_multiply,
-            .binary_divide,
-            .binary_modulo,
-            .compare_equal,
-            .compare_not_equal,
-            .compare_less,
-            .compare_greater,
-            .compare_less_equal,
-            .compare_greater_equal,
-            .logical_and,
-            .logical_or,
-            .error_context,
-            .index_access,
-            => blk: {
+            .unwrap_or, .unwrap_or_do, .binary_add, .binary_subtract, .binary_multiply, .binary_divide, .binary_modulo, .compare_equal, .compare_not_equal, .compare_less, .compare_greater, .compare_less_equal, .compare_greater_equal, .logical_and, .logical_or, .error_context, .index_access => blk: {
                 const op = self.file.binaryOperation(node).?;
-                var result = self.analyzePipePlaceholder(op.lhs);
-                mergePipePlaceholderAnalysis(&result, self.analyzePipePlaceholder(op.rhs));
-                self.invalidatePipePlaceholderAnalysis(&result, node);
-                break :blk result;
+                break :blk self.hasPipePlaceholder(op.lhs) or self.hasPipePlaceholder(op.rhs);
             },
-
-            .move_expression,
-            .error_propagation,
-            .nullable_test,
-            .dereference,
-            => blk: {
-                var result = self.analyzePipePlaceholder(self.file.unaryOperand(node).?);
-                self.invalidatePipePlaceholderAnalysis(&result, node);
-                break :blk result;
-            },
-
-            else => .{},
+            else => false,
         };
     }
 
@@ -1293,6 +1594,7 @@ pub const Syntaxer = struct {
             return SyntaxerError.ExpectedDeclarationOrAssignment;
         }
 
+        const grouped = self.tokenIs(.open_bracket);
         const base: syn.NodeIndex = switch (content) {
             .double_dot => blk: {
                 const dots_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
@@ -1317,6 +1619,7 @@ pub const Syntaxer = struct {
                 }
                 var type_args = try self.addNodeRange(&.{});
                 var type_args_struct: ?syn.NodeIndex = null;
+                const has_comptime_arguments = self.tokenIs(.hash);
                 if (self.tokenIs(.open_bracket) and self.lookaheadIsTypeArgument()) {
                     // Explicit type arguments on call site (old syntax)
                     type_args = try self.parseTypeList();
@@ -1327,6 +1630,9 @@ pub const Syntaxer = struct {
                     } else {
                         type_args = try self.parseTypeList();
                     }
+                }
+                if (self.tokenIs(.dot) and has_comptime_arguments) {
+                    break :blk try self.parseAssociatedValueProjection(name_token, null, type_args, type_args_struct);
                 }
                 if (self.tokenIs(.open_parenthesis)) { // Call.
                     const struct_value_literal = try self.parseCollectionLiteral(true);
@@ -1354,37 +1660,87 @@ pub const Syntaxer = struct {
                 break :blk try self.parseCollectionLiteral(false);
             },
 
+            // Grouping is transparent to later phases: retain the enclosed
+            // node so contextual typing and place identity stay unchanged.
+            .open_bracket => blk: {
+                const previous_operator_newlines = self.allow_operator_newlines;
+                self.allow_operator_newlines = true;
+                defer self.allow_operator_newlines = previous_operator_newlines;
+                const open_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
+                self.advanceOne();
+                self.skipNewLinesAndComments();
+                if (self.tokenIs(.close_bracket)) {
+                    try self.diags.add(self.file.tokenLocation(open_token), .syntax, "expression grouping requires exactly one expression", .{});
+                    return SyntaxerError.ExpectedDeclarationOrAssignment;
+                }
+                const previous_report_block = self.allow_report_block;
+                self.allow_report_block = true;
+                defer self.allow_report_block = previous_report_block;
+                const expression = try self.parseExpression();
+                self.skipNewLinesAndComments();
+                if (!self.tokenIs(.close_bracket)) {
+                    try self.diags.add(self.tokenLocation(), .syntax, "expected ']' after grouped expression", .{});
+                    return SyntaxerError.ExpectedRightBracket;
+                }
+                self.advanceOne();
+                break :blk expression;
+            },
+
             // ─── embedded `{}` block ───────────────────────────────────────
             .open_brace => try self.parseCodeBlock(),
 
             else => return SyntaxerError.ExpectedIntLiteral,
         };
 
-        // Apply “.field” chains.
-        return try self.parsePostfix(base);
+        // A grouped name can still be a callee. Declaration syntaxing uses
+        // the restricted postfix form so it can recognize function signatures.
+        return try self.parsePostfixWithCalls(base, grouped);
+    }
+
+    // Only an explicit scalar grouping permits a completed left operand to
+    // continue on another line. Calls and source blocks reset this permission
+    // so newline-separated collection fields and statements remain distinct.
+    fn skipGroupedOperatorNewlines(self: *Syntaxer) void {
+        if (!self.allow_operator_newlines) return;
+        var cursor = self.index;
+        while (self.contentAt(cursor) == .new_line or self.contentAt(cursor) == .comment) cursor += 1;
+        const next = self.contentAt(cursor);
+        const continuation = switch (next) {
+            .binary_operator, .comparison_operator, .keyword_and, .keyword_or, .pipe => true,
+            .identifier => |name| std.mem.eql(u8, self.tokenText(name), "unwrap_or") or std.mem.eql(u8, self.tokenText(name), "unwrap_or_do"),
+            else => false,
+        };
+        if (continuation) self.index = cursor;
+    }
+
+    fn advanceExpressionOperator(self: *Syntaxer) SyntaxerError!void {
+        const operator = self.index;
+        self.advanceOne();
+        self.skipNewLinesAndComments();
+        switch (self.currentContent()) {
+            .close_bracket, .close_parenthesis, .close_brace, .eof => {
+                try self.diags.add(self.tokens.locations[operator], .syntax, "expected an expression after operator '{s}'", .{self.file.tokenTextFromSource(self.source, @enumFromInt(@as(u32, @intCast(operator))))});
+                return SyntaxerError.ExpectedIntLiteral;
+            },
+            else => {},
+        }
     }
 
     fn parsePipeExpr(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
         var lhs = try self.parsePrimary();
 
-        while (self.tokenIs(.pipe)) {
+        while (true) {
+            self.skipGroupedOperatorNewlines();
+            if (!self.tokenIs(.pipe)) break;
             const pipe_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
             self.advanceOne();
             self.skipNewLinesAndComments();
             const right = try self.parsePipeRhs();
-            const placeholder = self.analyzePipePlaceholder(right);
-            if (!placeholder.has_placeholder) {
+            if (!self.hasPipePlaceholder(right)) {
                 try self.diags.add(
                     self.file.tokenLocation(pipe_token),
                     .syntax,
                     "pipe right-hand side must use at least one argument placeholder",
-                    .{},
-                );
-            } else if (placeholder.invalid_token) |invalid| {
-                try self.diags.add(
-                    self.file.tokenLocation(invalid),
-                    .syntax,
-                    "pipe placeholders are only supported as '_', '&_', '$&_', '_.field', or '..variant' payload access for now",
                     .{},
                 );
             }
@@ -1397,7 +1753,9 @@ pub const Syntaxer = struct {
     // division tighter than addition is essential for byte-offset expressions.
     fn parseBinaryExpr(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
         var lhs = try self.parseMultiplicativeExpr();
-        while (self.currentContent() == .binary_operator) {
+        while (true) {
+            self.skipGroupedOperatorNewlines();
+            if (self.currentContent() != .binary_operator) break;
             const op = self.currentContent().binary_operator;
             const tag: syn.Node.Tag = switch (op) {
                 .addition => .binary_add,
@@ -1405,7 +1763,7 @@ pub const Syntaxer = struct {
                 else => break,
             };
             const op_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
-            self.advanceOne();
+            try self.advanceExpressionOperator();
             const rhs = try self.parseMultiplicativeExpr();
             lhs = try self.addNode(tag, op_token, .{ .node_and_node = .{ .first = lhs, .second = rhs } });
         }
@@ -1414,7 +1772,9 @@ pub const Syntaxer = struct {
 
     fn parseMultiplicativeExpr(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
         var lhs = try self.parsePipeExpr();
-        while (self.currentContent() == .binary_operator) {
+        while (true) {
+            self.skipGroupedOperatorNewlines();
+            if (self.currentContent() != .binary_operator) break;
             const op = self.currentContent().binary_operator;
             const tag: syn.Node.Tag = switch (op) {
                 .multiplication => .binary_multiply,
@@ -1423,7 +1783,7 @@ pub const Syntaxer = struct {
                 else => break,
             };
             const op_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
-            self.advanceOne();
+            try self.advanceExpressionOperator();
             const rhs = try self.parsePipeExpr();
             lhs = try self.addNode(tag, op_token, .{ .node_and_node = .{ .first = lhs, .second = rhs } });
         }
@@ -1433,7 +1793,9 @@ pub const Syntaxer = struct {
     fn parseComparisonExpr(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
         var lhs = try self.parseBinaryExpr();
 
-        while (self.currentContent() == .comparison_operator) {
+        while (true) {
+            self.skipGroupedOperatorNewlines();
+            if (self.currentContent() != .comparison_operator) break;
             const op_content = self.currentContent();
             const op_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
             var op: tok.ComparisonOperator = undefined;
@@ -1441,7 +1803,7 @@ pub const Syntaxer = struct {
                 .comparison_operator => |c| op = c,
                 else => unreachable,
             }
-            self.advanceOne();
+            try self.advanceExpressionOperator();
             const rhs = try self.parseBinaryExpr();
             const tag: syn.Node.Tag = switch (op) {
                 .equal => .compare_equal,
@@ -1459,9 +1821,11 @@ pub const Syntaxer = struct {
     fn parseAndExpr(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
         var lhs = try self.parseComparisonExpr();
 
-        while (self.tokenIs(.keyword_and)) {
+        while (true) {
+            self.skipGroupedOperatorNewlines();
+            if (!self.tokenIs(.keyword_and)) break;
             const op_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
-            self.advanceOne();
+            try self.advanceExpressionOperator();
             const rhs = try self.parseComparisonExpr();
             lhs = try self.addNode(.logical_and, op_token, .{ .node_and_node = .{ .first = lhs, .second = rhs } });
         }
@@ -1472,9 +1836,11 @@ pub const Syntaxer = struct {
     fn parseOrExpr(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
         var lhs = try self.parseAndExpr();
 
-        while (self.tokenIs(.keyword_or)) {
+        while (true) {
+            self.skipGroupedOperatorNewlines();
+            if (!self.tokenIs(.keyword_or)) break;
             const op_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
-            self.advanceOne();
+            try self.advanceExpressionOperator();
             const rhs = try self.parseAndExpr();
             lhs = try self.addNode(.logical_or, op_token, .{ .node_and_node = .{ .first = lhs, .second = rhs } });
         }
@@ -1485,10 +1851,12 @@ pub const Syntaxer = struct {
     fn parseUnwrapExpr(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
         var lhs = try self.parseOrExpr();
 
-        while (self.currentIdentifierEquals("unwrap_or") or self.currentIdentifierEquals("unwrap_or_do")) {
+        while (true) {
+            self.skipGroupedOperatorNewlines();
+            if (!self.currentIdentifierEquals("unwrap_or") and !self.currentIdentifierEquals("unwrap_or_do")) break;
             const op_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
             const is_do = self.currentIdentifierEquals("unwrap_or_do");
-            self.advanceOne();
+            try self.advanceExpressionOperator();
             const rhs = if (is_do)
                 try self.parsePrimary()
             else
@@ -1500,8 +1868,35 @@ pub const Syntaxer = struct {
         return lhs;
     }
 
+    // In a control header, an ungrouped brace belongs to the control body.
+    // Square-bracket grouping permits an explicit !!! handler there.
+    fn parseControlExpression(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
+        const previous = self.allow_report_block;
+        self.allow_report_block = false;
+        defer self.allow_report_block = previous;
+        return self.parseExpression();
+    }
+
     fn parseExpression(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
-        return self.parseUnwrapExpr();
+        return self.parseHandleTail(try self.parseUnwrapExpr());
+    }
+
+    fn parseHandleTail(self: *Syntaxer, operand: syn.NodeIndex) SyntaxerError!syn.NodeIndex {
+        var value = operand;
+        if (self.currentIdentifierEquals("handle")) {
+            const start: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
+            self.advanceOne();
+            const error_name = (try self.parseName()).token;
+            const result_name: ?syn.TokenIndex = if (self.tokenIs(.comma)) blk: {
+                self.advanceOne();
+                break :blk (try self.parseName()).token;
+            } else null;
+            self.skipNewLinesAndComments();
+            const body = try self.parseCodeBlock();
+            const extra = try self.addExtra(syn.HandleExtra{ .value = value, .result_name = syn.OptionalTokenIndex.init(result_name), .error_name = error_name, .body = body });
+            value = try self.addNode(.handle_expression, start, .{ .extra = extra });
+        }
+        return value;
     }
 
     fn parseNamedFunctionLikeDeclaration(
@@ -1510,20 +1905,73 @@ pub const Syntaxer = struct {
         is_once: bool,
         generic_params: syn.NodeRange,
         generic_params_struct: ?syn.NodeIndex,
+        body_follows_signature: bool,
     ) SyntaxerError!syn.NodeIndex {
         const input = try self.parseStructTypeLiteral();
 
         if (!self.tokenIs(.arrow)) return SyntaxerError.ExpectedArrow;
         self.advanceOne();
         const output = try self.parseFunctionOutputType();
+        self.skipNewLinesAndComments();
+        if (body_follows_signature) {
+            const body = try self.parseCodeBlock();
+            const extra = try self.addExtra(syn.FunctionExtra{
+                .name_token = name.token,
+                .generic_params_start = generic_params.start,
+                .generic_params_end = generic_params.end,
+                .generic_params_struct = syn.OptionalNodeIndex.init(generic_params_struct),
+                .input = input,
+                .output = output,
+                .body = syn.OptionalNodeIndex.init(body),
+            });
+            return try self.addNode(if (is_once) .function_declaration_once else .function_declaration, name.token, .{ .extra = extra });
+        }
         if (!self.tokenIs(.colon)) return SyntaxerError.ExpectedColon;
         self.advanceOne();
 
         switch (self.currentContent()) {
             .identifier => |ident_range| {
                 const ident_name = self.tokenText(ident_range);
+                if (std.mem.eql(u8, ident_name, "CFunctionPointer")) {
+                    self.advanceOne();
+                    if (is_once or generic_params.start != generic_params.end or generic_params_struct != null) {
+                        try self.diags.add(self.tokenLocation(), .syntax, "CFunctionPointer requires a concrete signature without 'once'", .{});
+                        return SyntaxerError.ExpectedStructField;
+                    }
+                    self.skipNewLinesAndComments();
+                    if (self.tokenIs(.open_parenthesis) or self.tokenIs(.colon)) {
+                        try self.diags.add(self.tokenLocation(), .syntax, "CFunctionPointer declares a type, without symbol options or a body", .{});
+                        return SyntaxerError.ExpectedStructField;
+                    }
+                    const extra = try self.addExtra(syn.FunctionExtra{
+                        .name_token = name.token,
+                        .generic_params_start = generic_params.start,
+                        .generic_params_end = generic_params.end,
+                        .generic_params_struct = .none,
+                        .input = input,
+                        .output = output,
+                        .body = .none,
+                        .c_abi = 1,
+                    });
+                    return try self.addNode(.c_function_pointer_declaration, name.token, .{ .extra = extra });
+                }
                 if (std.mem.eql(u8, ident_name, "ExternFunction") or std.mem.eql(u8, ident_name, "CFunction")) {
                     self.advanceOne();
+                    const options = if (self.tokenIs(.open_parenthesis))
+                        syn.OptionalNodeIndex.init(try self.parseCollectionLiteral(true))
+                    else
+                        syn.OptionalNodeIndex.none;
+                    if (generic_params.start != generic_params.end or generic_params_struct != null) {
+                        try self.diags.add(self.tokenLocation(), .syntax, "CFunction options require a concrete non-generic declaration", .{});
+                        return SyntaxerError.ExpectedStructField;
+                    }
+                    self.skipNewLinesAndComments();
+                    const body: syn.OptionalNodeIndex = if (self.tokenIs(.colon)) blk: {
+                        self.advanceOne();
+                        if (!self.tokenIs(.equal)) return SyntaxerError.ExpectedEqual;
+                        self.advanceOne();
+                        break :blk (try self.parseCodeBlock()).optional();
+                    } else .none;
                     const extra = try self.addExtra(syn.FunctionExtra{
                         .name_token = name.token,
                         .generic_params_start = generic_params.start,
@@ -1531,7 +1979,9 @@ pub const Syntaxer = struct {
                         .generic_params_struct = syn.OptionalNodeIndex.init(generic_params_struct),
                         .input = input,
                         .output = output,
-                        .body = .none,
+                        .body = body,
+                        .c_options = options,
+                        .c_abi = 1,
                     });
                     return try self.addNode(if (is_once) .function_declaration_once else .function_declaration, name.token, .{ .extra = extra });
                 }
@@ -1564,7 +2014,7 @@ pub const Syntaxer = struct {
         const name = try self.parseName();
         if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
 
-        const decl_node = try self.parseNamedFunctionLikeDeclaration(name, false, try self.addNodeRange(&.{}), null);
+        const decl_node = try self.parseNamedFunctionLikeDeclaration(name, false, try self.addNodeRange(&.{}), null, false);
         const function = self.file.functionDeclaration(decl_node).?;
 
         if (function.body == null) {
@@ -1583,6 +2033,11 @@ pub const Syntaxer = struct {
     fn parseStatement(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
         const start_index = self.index;
         self.skipNewLinesAndComments();
+
+        if (self.currentContent() == .binary_operator and self.currentContent().binary_operator != .subtraction) {
+            try self.diags.add(self.tokenLocation(), .syntax, "a leading operator requires scalar grouping with '[...]'", .{});
+            return SyntaxerError.ExpectedDeclarationOrAssignment;
+        }
 
         switch (self.currentContent()) {
             .keyword_abort => {
@@ -1665,12 +2120,39 @@ pub const Syntaxer = struct {
         }
 
         if (self.currentContent() != .identifier and self.currentCanStartBareExpressionStatement()) {
+            const grouped = self.tokenIs(.open_bracket);
             const expr = try self.parseExpression();
+            if (grouped and self.tokenIs(.equal)) {
+                const tag: syn.Node.Tag = switch (self.file.tag(expr)) {
+                    .identifier => .assignment,
+                    .index_access => .index_assignment,
+                    .struct_field_access, .dereference => .pointer_assignment,
+                    else => {
+                        try self.diags.add(self.tokenLocation(), .syntax, "grouped assignment target must name a mutable place", .{});
+                        return SyntaxerError.ExpectedDeclarationOrAssignment;
+                    },
+                };
+                self.advanceOne();
+                const value = try self.parseExpression();
+                return try self.addNode(tag, self.file.mainToken(expr), if (tag == .assignment)
+                    .{ .node = value }
+                else
+                    .{ .node_and_node = .{ .first = expr, .second = value } });
+            }
             return try self.addNode(.expression_statement, self.file.mainToken(expr), .{ .node = expr });
         }
 
         const id_loc = self.tokenLocation();
         var name = try self.parseName();
+
+        if (self.currentContent() == .identifier and std.mem.eql(u8, self.tokenText(self.currentContent().identifier), "init")) {
+            try self.diags.add(self.tokenLocation(), .syntax, "legacy constructor declarations are unsupported; use implement Init", .{});
+            return SyntaxerError.ExpectedStructField;
+        }
+        if (self.currentIdentifierEquals("deinit")) {
+            try self.diags.add(self.tokenLocation(), .syntax, "legacy destructor declarations are unsupported; use implement Deinit", .{});
+            return SyntaxerError.ExpectedStructField;
+        }
 
         if (std.mem.eql(u8, name.text, "operator")) {
             name = try self.parseOperatorName(name.token);
@@ -1693,6 +2175,49 @@ pub const Syntaxer = struct {
             }
         } else if (self.tokenIs(.open_bracket) and self.lookaheadIsTypeArgument()) {
             generic_params = try self.parseGenericParamNames();
+        }
+
+        if (std.mem.eql(u8, name.text, "implement")) {
+            if (is_once) return SyntaxerError.ExpectedDeclarationOrAssignment;
+            const contract_type = try self.parseType() orelse return SyntaxerError.ExpectedConformanceType;
+            const members = try self.parseImplementationMembers(generic_params);
+            const domain_mapping: ?syn.NodeIndex = if (self.currentIdentifierEquals("where")) blk: {
+                self.advanceOne();
+                self.skipNewLinesAndComments();
+                break :blk try self.parseCodeBlock();
+            } else null;
+            const extra = try self.addExtra(syn.GenericValueExtra{
+                .generic_params_start = generic_params.start,
+                .generic_params_end = generic_params.end,
+                .generic_params_struct = syn.OptionalNodeIndex.init(generic_params_struct),
+                .value = contract_type,
+                .implementation_members = syn.OptionalNodeIndex.init(members),
+                .safety_contract = syn.OptionalNodeIndex.init(domain_mapping),
+            });
+            return self.addNode(.contract_conformance, name.token, .{ .extra = extra });
+        }
+
+        if (std.mem.eql(u8, name.text, "satisfies") and self.currentContent() == .identifier) {
+            try self.diags.add(id_loc, .syntax, "legacy conformance declarations are unsupported; use implement Contract#(participants) (...) instead", .{});
+            return SyntaxerError.ExpectedDeclarationOrAssignment;
+        }
+
+        if (self.tokenIs(.colon) and self.contentAt(self.index + 1) == .equal) {
+            var input_index = self.index + 2;
+            while (self.contentAt(input_index) == .new_line or self.contentAt(input_index) == .comment) : (input_index += 1) {}
+            if (self.contentAt(input_index) == .open_parenthesis and self.looksLikeFunctionDeclarationInput(input_index)) {
+                self.advanceOne();
+                self.advanceOne();
+                self.skipNewLinesAndComments();
+                return self.parseNamedFunctionLikeDeclaration(name, is_once, generic_params, generic_params_struct, true);
+            }
+        }
+
+        if (self.tokenIs(.dot) and (generic_params.start != generic_params.end or generic_params_struct != null)) {
+            if (is_once) return SyntaxerError.ExpectedDeclarationOrAssignment;
+            const member = try self.parseAssociatedValueProjection(name.token, null, generic_params, generic_params_struct);
+            const expression = try self.parseHandleTail(try self.parsePostfix(member));
+            return self.addNode(.expression_statement, self.file.mainToken(expression), .{ .node = expression });
         }
 
         // Build identifier node to parse postfix (for p.x, p& etc.)
@@ -1719,12 +2244,14 @@ pub const Syntaxer = struct {
 
         if (self.tokenIs(.open_parenthesis)) {
             if (self.looksLikeFunctionDeclarationInput(self.index)) {
-                return try self.parseNamedFunctionLikeDeclaration(
+                const declaration = try self.parseNamedFunctionLikeDeclaration(
                     name,
                     is_once,
                     generic_params,
                     generic_params_struct,
+                    false,
                 );
+                return declaration;
             } else {
                 if (is_once) {
                     try self.diags.add(id_loc, .syntax, "once can only be used on function declarations", .{});
@@ -1741,13 +2268,13 @@ pub const Syntaxer = struct {
                     .input = input_node,
                 });
                 const call_node = try self.addNode(.function_call, name.token, .{ .extra = extra });
-                const expr = try self.parsePostfix(call_node);
+                const expr = try self.parseHandleTail(try self.parsePostfix(call_node));
                 if (expr == call_node) return call_node;
                 return try self.addNode(.expression_statement, self.file.mainToken(expr), .{ .node = expr });
             }
         }
 
-        // Abstract relations (implements/defaultsto)
+        // Unary conformance spellings share the same declaration and lowering path.
         switch (self.currentContent()) {
             .identifier => |kw_range| {
                 const kw = self.tokenText(kw_range);
@@ -1755,26 +2282,12 @@ pub const Syntaxer = struct {
                     try self.diags.add(id_loc, .syntax, "once can only be used on function declarations", .{});
                     return SyntaxerError.ExpectedDeclarationOrAssignment;
                 }
-                if (std.mem.eql(u8, kw, "implements")) {
-                    self.advanceOne();
-                    const abstract_ty = (try self.parseType()).?; // required
-                    const extra = try self.addExtra(syn.GenericValueExtra{
-                        .generic_params_start = generic_params.start,
-                        .generic_params_end = generic_params.end,
-                        .generic_params_struct = syn.OptionalNodeIndex.init(generic_params_struct),
-                        .value = abstract_ty,
-                    });
-                    return try self.addNode(.abstract_implements, name.token, .{ .extra = extra });
+                if (std.mem.eql(u8, kw, "implements") or std.mem.eql(u8, kw, "satisfies")) {
+                    try self.diags.add(id_loc, .syntax, "legacy conformance declarations are unsupported; use implement Contract#(participants) (...) instead", .{});
+                    return SyntaxerError.ExpectedDeclarationOrAssignment;
                 } else if (std.mem.eql(u8, kw, "defaultsto")) {
-                    self.advanceOne();
-                    const ty = (try self.parseType()).?; // required
-                    const extra = try self.addExtra(syn.GenericValueExtra{
-                        .generic_params_start = generic_params.start,
-                        .generic_params_end = generic_params.end,
-                        .generic_params_struct = syn.OptionalNodeIndex.init(generic_params_struct),
-                        .value = ty,
-                    });
-                    return try self.addNode(.abstract_defaultsto, name.token, .{ .extra = extra });
+                    try self.diags.add(id_loc, .syntax, "defaultsto is unsupported; choose a concrete representation explicitly", .{});
+                    return SyntaxerError.ExpectedDeclarationOrAssignment;
                 }
             },
             else => {},
@@ -1788,14 +2301,37 @@ pub const Syntaxer = struct {
             const ty_opt = try self.parseType();
 
             if (ty_opt) |ty| {
-                const type_name = if (self.file.tag(ty) == .type_name) self.tokenText(self.contentAt(@intFromEnum(self.file.mainToken(ty))).identifier) else "";
-                if (std.mem.eql(u8, type_name, "Type") or std.mem.eql(u8, type_name, "CEnum") or std.mem.eql(u8, type_name, "CUnion")) {
+                var participants_struct: ?syn.NodeIndex = null;
+                const marker = ty;
+                if (self.file.syntaxType(ty)) |syntax_type| if (syntax_type == .generic) {
+                    const base = syntax_type.generic.base;
+                    if (self.file.tag(base) == .type_name and std.mem.eql(u8, self.tokenText(self.contentAt(@intFromEnum(self.file.mainToken(base))).identifier), "Contract")) {
+                        try self.diags.add(self.tokenLocation(), .syntax, "declare contract participants on the name: Name#(.Participant: Type): Contract", .{});
+                        return SyntaxerError.ExpectedIdentifier;
+                    }
+                };
+                const type_name = if (self.file.tag(marker) == .type_name) self.tokenText(self.contentAt(@intFromEnum(self.file.mainToken(marker))).identifier) else "";
+                if (std.mem.eql(u8, type_name, "CIncomplete")) {
+                    if (generic_params.start != generic_params.end or generic_params_struct != null)
+                        return SyntaxerError.IncompleteTypeCannotBeParameterized;
+                    if (self.tokenIs(.equal)) return SyntaxerError.IncompleteTypeHasNoDefinition;
+                    // A nominal identity without a runtime definition. Reuse
+                    // the declaration payload; no structural literal is built.
+                    const extra = try self.addExtra(syn.GenericValueExtra{
+                        .generic_params_start = generic_params.start,
+                        .generic_params_end = generic_params.end,
+                        .generic_params_struct = syn.OptionalNodeIndex.init(null),
+                        .value = ty,
+                    });
+                    return try self.addNode(.c_incomplete_declaration, name.token, .{ .extra = extra });
+                }
+                if (std.mem.eql(u8, type_name, "Type") or std.mem.eql(u8, type_name, "CEnum") or std.mem.eql(u8, type_name, "CUnion") or std.mem.eql(u8, type_name, "CStruct")) {
                     if (!self.tokenIs(.equal)) return SyntaxerError.ExpectedEqual;
                     self.advanceOne();
                     if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
-                    const tag: syn.Node.Tag = if (std.mem.eql(u8, type_name, "CEnum")) .c_enum_declaration else if (std.mem.eql(u8, type_name, "CUnion")) .c_union_declaration else .type_declaration;
+                    const tag: syn.Node.Tag = if (std.mem.eql(u8, type_name, "CEnum")) .c_enum_declaration else if (std.mem.eql(u8, type_name, "CUnion")) .c_union_declaration else if (std.mem.eql(u8, type_name, "CStruct")) .c_struct_declaration else .type_declaration;
                     const lit_node = if (tag == .c_enum_declaration or (tag == .type_declaration and self.parenthesizedTypeIsChoiceLiteral()))
-                        try self.parseChoiceTypeLiteral()
+                        try self.parseChoiceTypeLiteral(tag == .c_enum_declaration)
                     else
                         try self.parseStructTypeLiteral();
                     const extra = try self.addExtra(syn.GenericValueExtra{
@@ -1806,24 +2342,40 @@ pub const Syntaxer = struct {
                     });
                     return try self.addNode(tag, name.token, .{ .extra = extra });
                 } else if (std.mem.eql(u8, type_name, "Abstract")) {
+                    try self.diags.add(id_loc, .syntax, "Abstract declarations are unsupported; use Contract with explicit participants", .{});
+                    return SyntaxerError.ExpectedDeclarationOrAssignment;
+                } else if (std.mem.eql(u8, type_name, "Contract")) {
                     var req_names = try self.addNodeRange(&.{});
                     var req_funcs = try self.addNodeRange(&.{});
+                    var domains = try self.addNodeRange(&.{});
+                    var associated_struct: ?syn.NodeIndex = null;
+                    if (generic_params.start != generic_params.end and generic_params_struct == null) {
+                        try self.diags.add(self.tokenLocation(), .syntax, "contract participants must use named compile-time parameters", .{});
+                        return SyntaxerError.ExpectedStructField;
+                    }
+                    participants_struct = generic_params_struct;
                     if (self.tokenIs(.equal)) {
                         self.advanceOne();
-                        const body = try self.parseAbstractBody();
+                        const body = try self.parseContractBody();
                         req_names = body.req_names;
                         req_funcs = body.req_funcs;
+                        domains = body.domains;
+                        associated_struct = body.associated_struct;
                     }
-                    const extra = try self.addExtra(syn.AbstractExtra{
-                        .generic_params_start = generic_params.start,
-                        .generic_params_end = generic_params.end,
-                        .generic_params_struct = syn.OptionalNodeIndex.init(generic_params_struct),
-                        .requires_abstracts_start = req_names.start,
-                        .requires_abstracts_end = req_names.end,
+                    const associated_range = if (associated_struct) |node| self.file.data(node).extra_range else try self.addNodeRange(&.{});
+                    const extra = try self.addExtra(syn.ContractExtra{
+                        .participants_struct = syn.OptionalNodeIndex.init(participants_struct),
+                        .generic_params_start = associated_range.start,
+                        .generic_params_end = associated_range.end,
+                        .generic_params_struct = syn.OptionalNodeIndex.init(associated_struct),
+                        .requires_contracts_start = req_names.start,
+                        .requires_contracts_end = req_names.end,
                         .requires_functions_start = req_funcs.start,
                         .requires_functions_end = req_funcs.end,
+                        .domains_start = domains.start,
+                        .domains_end = domains.end,
                     });
-                    return try self.addNode(.abstract_declaration, name.token, .{ .extra = extra });
+                    return try self.addNode(.contract_declaration, name.token, .{ .extra = extra });
                 }
             }
 
@@ -1863,6 +2415,12 @@ pub const Syntaxer = struct {
     }
 
     fn parseCodeBlock(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
+        const previous_report_block = self.allow_report_block;
+        self.allow_report_block = true;
+        defer self.allow_report_block = previous_report_block;
+        const previous_operator_newlines = self.allow_operator_newlines;
+        self.allow_operator_newlines = false;
+        defer self.allow_operator_newlines = previous_operator_newlines;
         if (!self.tokenIs(.open_brace)) return SyntaxerError.ExpectedLeftBrace;
         const open_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
         self.advanceOne();
@@ -1878,7 +2436,7 @@ pub const Syntaxer = struct {
         const start: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
         if (!self.tokenIs(.keyword_if)) return SyntaxerError.ExpectedKeywordIf;
         self.advanceOne();
-        const cond = try self.parseExpression();
+        const cond = try self.parseControlExpression();
         const thenB = try self.parseCodeBlock();
         var elseB: ?syn.NodeIndex = null;
         if (self.tokenIs(.keyword_else)) {
@@ -1893,7 +2451,7 @@ pub const Syntaxer = struct {
         const start: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
         if (!self.tokenIs(.keyword_match)) return SyntaxerError.ExpectedDeclarationOrAssignment;
         self.advanceOne();
-        const value = try self.parseExpression();
+        const value = try self.parseControlExpression();
         self.skipNewLinesAndComments();
         if (!self.tokenIs(.open_brace)) return SyntaxerError.ExpectedLeftBrace;
         self.advanceOne();
@@ -1960,10 +2518,14 @@ pub const Syntaxer = struct {
             tag = .for_borrow;
             self.advanceOne();
         }
+        if (tag == .for_value and self.tokenIs(.tilde)) {
+            tag = .for_move;
+            self.advanceOne();
+        }
         const item_name = try self.parseName();
         if (!self.tokenIs(.keyword_in)) return SyntaxerError.ExpectedKeywordIn;
         self.advanceOne();
-        const iterable = try self.parseExpression();
+        const iterable = try self.parseControlExpression();
         const body = try self.parseCodeBlock();
         return try self.addNode(tag, start, .{ .extra = try self.addExtra(syn.ForExtra{
             .name_token = item_name.token,
@@ -1976,7 +2538,7 @@ pub const Syntaxer = struct {
         const start: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
         if (!self.tokenIs(.keyword_while)) return SyntaxerError.ExpectedKeywordWhile;
         self.advanceOne();
-        const cond = try self.parseExpression();
+        const cond = try self.parseControlExpression();
         const body = try self.parseCodeBlock();
         return try self.addNode(.while_statement, start, .{ .node_and_node = .{ .first = cond, .second = body } });
     }

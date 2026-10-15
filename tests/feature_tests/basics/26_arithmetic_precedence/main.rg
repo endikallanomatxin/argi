@@ -11,6 +11,6 @@ main() -> (.status_code: Int32 = 0) := {
     if 20 % 6 * 3 != 6 { status_code = 5 }
     if 12 / 3 + 2 * 4 != 12 { status_code = 6 }
     bytes : Array#(.n = 2 * 3 + 4, .t: UInt8) = (0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
-    view ::= array_view_ro(.array = &bytes)
-    if length(.self = &view).count != 10 { status_code = 7 }
+    borrowed_view ::= view(.array = &bytes)
+    if length(.self = &borrowed_view).count != 10 { status_code = 7 }
 }

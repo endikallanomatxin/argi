@@ -1,4 +1,5 @@
 main(.system: System) -> (.status_code: Int32) := {
+    assume ffi := system.ffi
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 
@@ -9,7 +10,7 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
-    nul ::= bytes_get(.string = &text, .index = 0).byte
+    nul ::= bytes_get(.view = &text, .index = 0).byte
     if nul != 0 {
         status_code = 2
         return

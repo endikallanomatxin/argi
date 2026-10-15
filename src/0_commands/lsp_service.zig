@@ -6,6 +6,7 @@ const diag = @import("../1_base/diagnostic.zig");
 const token = @import("../2_tokens/token.zig");
 const st = @import("../3_syntax/syntax_tree.zig");
 const graph_mod = @import("../4_semantics/global/graph.zig");
+const standard_contracts = @import("../4_semantics/global/standard_contracts.zig");
 const global_types = @import("../4_semantics/global/types.zig");
 const editor_index = @import("lsp_index.zig");
 const completion = @import("lsp_completion.zig");
@@ -141,6 +142,24 @@ pub const InlayHintsResult = struct {
     }
 };
 
+pub const DocumentSymbol = struct {
+    name: []const u8,
+    kind: u32,
+    range: Range,
+    selectionRange: Range,
+    children: []const DocumentSymbol = &.{},
+};
+
+pub const DocumentSymbolsResult = struct {
+    arena: std.heap.ArenaAllocator,
+    items: []const DocumentSymbol,
+
+    pub fn deinit(self: DocumentSymbolsResult) void {
+        var arena = self.arena;
+        arena.deinit();
+    }
+};
+
 const Document = struct {
     uri: []u8,
     path: []u8,
@@ -189,19 +208,59 @@ const Analysis = struct {
     }
 };
 
+// One retained result bounds editor memory while sharing global semantizing and
+// the occurrence index across diagnostics and navigation. Source bytes remain
+// owned by this arena, including unsaved buffers that documents later replace.
+const Snapshot = struct {
+    arena: std.heap.ArenaAllocator,
+    path: []const u8,
+    files: []const sf.SourceFile,
+    analysis: ?Analysis = null,
+    diagnostics: []const Diagnostic = &.{},
+
+    fn deinit(self: *Snapshot, allocator: std.mem.Allocator) void {
+        if (self.analysis) |*analysis| analysis.deinit(self.arena.allocator());
+        self.arena.deinit();
+        allocator.destroy(self);
+    }
+
+    fn matches(self: *const Snapshot, path: []const u8, files: []const sf.SourceFile) bool {
+        if (!std.mem.eql(u8, self.path, path) or self.files.len != files.len) return false;
+        for (self.files, files) |previous, current| {
+            if (previous.origin != current.origin or
+                !std.mem.eql(u8, previous.path, current.path) or
+                !std.mem.eql(u8, previous.code, current.code)) return false;
+        }
+        return true;
+    }
+};
+
 pub const LanguageService = struct {
     allocator: std.mem.Allocator,
     io: std.Io,
     documents: std.array_list.Managed(Document),
     root_path: ?[]u8 = null,
+    module_cache: frontend.cache.ModuleCache,
+    snapshot: ?*Snapshot = null,
+    analysis_builds: usize = 0,
+    analysis_hits: usize = 0,
+    syntax_cache: editor_syntax.Cache = .{},
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io) LanguageService {
-        return .{ .allocator = allocator, .io = io, .documents = std.array_list.Managed(Document).init(allocator) };
+        return .{
+            .allocator = allocator,
+            .io = io,
+            .documents = std.array_list.Managed(Document).init(allocator),
+            .module_cache = frontend.cache.ModuleCache.init(allocator, .{}),
+        };
     }
 
     pub fn deinit(self: *LanguageService) void {
         for (self.documents.items) |*document| document.deinit(self.allocator);
         self.documents.deinit();
+        if (self.snapshot) |snapshot| snapshot.deinit(self.allocator);
+        self.module_cache.deinit();
+        self.syntax_cache.deinit(self.allocator);
         if (self.root_path) |path| self.allocator.free(path);
     }
 
@@ -240,6 +299,40 @@ pub const LanguageService = struct {
         return self.documents.items[index].text;
     }
 
+    pub fn formatting(self: *LanguageService, uri: []const u8) !TextEditsResult {
+        const doc = try self.getDoc(uri);
+        const formatted = @import("../3_syntax/formatter.zig").format(self.allocator, doc.text) catch |err| switch (err) {
+            error.OutOfMemory => return err,
+            else => return TextEditsResult.empty(self.allocator),
+        };
+        if (std.mem.eql(u8, formatted, doc.text)) {
+            self.allocator.free(formatted);
+            return TextEditsResult.empty(self.allocator);
+        }
+        errdefer self.allocator.free(formatted);
+        const path = try self.allocator.dupe(u8, doc.path);
+        errdefer self.allocator.free(path);
+        const items = try self.allocator.alloc(TextEdit, 1);
+        errdefer self.allocator.free(items);
+        var end = outlinePosition(doc.text, doc.text.len);
+        const last_line = if (std.mem.lastIndexOfScalar(u8, doc.text, '\n')) |index| doc.text[index + 1 ..] else doc.text;
+        end.character = @intCast(try std.unicode.calcUtf16LeLen(last_line));
+        items[0] = .{ .path = path, .range = .{ .start = .{ .line = 0, .character = 0 }, .end = end }, .new_text = formatted };
+        return .{ .allocator = self.allocator, .items = items, .owned = true };
+    }
+
+    pub fn documentSymbols(self: *LanguageService, uri: []const u8) !DocumentSymbolsResult {
+        const doc = try self.getDoc(uri);
+        var arena = std.heap.ArenaAllocator.init(self.allocator);
+        errdefer arena.deinit();
+        const work = arena.allocator();
+        // An outline must remain available independently of module resolution.
+        const sources = [_]sf.SourceFile{.{ .path = doc.path, .code = doc.text }};
+        const files = try editor_syntax.load_files(work, &sources);
+        const items = try outlineNodes(work, &files[0], files[0].tree.roots);
+        return .{ .arena = arena, .items = items };
+    }
+
     pub fn completions(self: *LanguageService, uri: []const u8, position: Position) !completion.Result {
         const doc = try self.getDoc(uri);
         var arena = std.heap.ArenaAllocator.init(self.allocator);
@@ -248,7 +341,8 @@ pub const LanguageService = struct {
         const offset = completion_offset(doc.text, position) orelse return error.InvalidPosition;
         const fallback = [_]sf.SourceFile{.{ .path = doc.path, .code = doc.text }};
         const files = self.collectFiles(&work, doc) catch fallback[0..];
-        return completion.complete(self.allocator, self.io, files, doc.path, offset);
+        const syntax_files = try self.syntax_cache.load(self.allocator, work, files);
+        return completion.completeFiles(self.allocator, self.io, syntax_files, doc.path, offset);
     }
 
     pub fn semanticTokensFull(self: *LanguageService, uri: []const u8) !std.array_list.Managed(u32) {
@@ -270,9 +364,8 @@ pub const LanguageService = struct {
 
         // Resolved identities refine syntax roles; syntax remains usable while
         // an unfinished edit prevents global semantizing from producing a graph.
-        var analysis = try self.collectAnalysis(&work, doc);
-        defer if (analysis) |*value| value.deinit(work);
-        if (analysis) |*value| try classifyOccurrences(work, value, doc.path, &classes);
+        const analysis = try self.collectAnalysis(&work, doc);
+        if (analysis) |value| try classifyOccurrences(work, &value, doc.path, &classes);
 
         var output = std.array_list.Managed(u32).init(self.allocator);
         errdefer output.deinit();
@@ -316,10 +409,9 @@ pub const LanguageService = struct {
         defer arena.deinit();
         var work = arena.allocator();
         var analysis = (try self.collectAnalysis(&work, doc)) orelse return null;
-        defer analysis.deinit(work);
 
         const occurrence = analysis.index.occurrenceAt(&analysis.graph, &analysis.source_db, doc.path, position.line, position.character) orelse return null;
-        const contents = try formatHover(self.allocator, &analysis.graph, occurrence.target);
+        const contents = try formatHover(self.allocator, &analysis.graph, occurrence.target, if (occurrence.operation_name_start != std.math.maxInt(u32)) analysis.graph.text(.{ .start = occurrence.operation_name_start, .len = occurrence.len }) else null);
         return .{
             .range = sourceRange(&analysis, occurrence.source, occurrence.len) orelse return null,
             .contents = contents,
@@ -332,9 +424,16 @@ pub const LanguageService = struct {
         defer arena.deinit();
         var work = arena.allocator();
         var analysis = (try self.collectAnalysis(&work, doc)) orelse return try self.syntax_definition(work, doc, position);
-        defer analysis.deinit(work);
 
         const occurrence = analysis.index.occurrenceAt(&analysis.graph, &analysis.source_db, doc.path, position.line, position.character) orelse return null;
+        if (occurrence.operation != null and occurrence.target == .declaration and
+            occurrence.target.declaration == occurrence.operation.?.contract)
+        {
+            for (analysis.index.occurrences.items) |candidate| {
+                if (candidate.declaration and editor_index.referencesEqual(candidate, occurrence))
+                    return try self.definitionForOccurrence(&analysis, candidate);
+            }
+        }
         // Specialized functions retain their source declaration but have a distinct
         // function ID. Navigation follows that declaration, not the instance ID.
         const target = analysis.index.declarationOccurrence(occurrence.target) orelse switch (occurrence.target) {
@@ -343,7 +442,7 @@ pub const LanguageService = struct {
                 const declaration = analysis.graph.declarations.items[@intFromEnum(function.declaration)];
                 break :blk editor_index.Occurrence{
                     .source = declaration.source,
-                    .len = @intCast(analysis.graph.text(declaration.name).len),
+                    .len = @intCast(analysis.graph.text(analysis.graph.declarationSourceName(function.declaration)).len),
                     .target = occurrence.target,
                     .declaration = true,
                 };
@@ -381,7 +480,6 @@ pub const LanguageService = struct {
         defer arena.deinit();
         var work = arena.allocator();
         var analysis = (try self.collectAnalysis(&work, doc)) orelse return LocationsResult.empty(self.allocator);
-        defer analysis.deinit(work);
 
         const selected = analysis.index.occurrenceAt(&analysis.graph, &analysis.source_db, doc.path, position.line, position.character) orelse
             return LocationsResult.empty(self.allocator);
@@ -391,7 +489,7 @@ pub const LanguageService = struct {
             output.deinit();
         }
         for (analysis.index.occurrences.items) |occurrence| {
-            if (!editor_index.targetsEqual(occurrence.target, selected.target)) continue;
+            if (!editor_index.referencesEqual(occurrence, selected)) continue;
             if (!include_declaration and occurrence.declaration) continue;
             const file = editor_index.sourceFileId(&analysis.graph, &analysis.source_db, occurrence.source) orelse continue;
             const range = sourceRange(&analysis, occurrence.source, occurrence.len) orelse continue;
@@ -404,6 +502,8 @@ pub const LanguageService = struct {
     }
 
     pub fn rename(self: *LanguageService, uri: []const u8, position: Position, new_name: []const u8) !TextEditsResult {
+        const prepared = (try self.prepareRename(uri, position)) orelse return TextEditsResult.empty(self.allocator);
+        defer prepared.deinit(self.allocator);
         var locations = try self.references(uri, position, true);
         defer locations.deinit();
         if (locations.items.len == 0) return TextEditsResult.empty(self.allocator);
@@ -423,11 +523,14 @@ pub const LanguageService = struct {
         defer arena.deinit();
         var work = arena.allocator();
         var analysis = (try self.collectAnalysis(&work, doc)) orelse return null;
-        defer analysis.deinit(work);
         const occurrence = analysis.index.occurrenceAt(&analysis.graph, &analysis.source_db, doc.path, position.line, position.character) orelse return null;
+        if (occurrence.target == .function) {
+            // Init operation wrappers retain their contract identity.
+            if (standard_contracts.initializedType(&analysis.graph, occurrence.target.function) != null) return null;
+        }
         return .{
             .range = sourceRange(&analysis, occurrence.source, occurrence.len) orelse return null,
-            .placeholder = try self.allocator.dupe(u8, editor_index.Index.targetName(&analysis.graph, occurrence.target)),
+            .placeholder = try self.allocator.dupe(u8, if (occurrence.operation_name_start != std.math.maxInt(u32)) analysis.graph.text(.{ .start = occurrence.operation_name_start, .len = occurrence.len }) else editor_index.Index.targetName(&analysis.graph, occurrence.target)),
         };
     }
 
@@ -437,7 +540,6 @@ pub const LanguageService = struct {
         defer arena.deinit();
         var work = arena.allocator();
         var analysis = (try self.collectAnalysis(&work, doc)) orelse return InlayHintsResult.empty(self.allocator);
-        defer analysis.deinit(work);
 
         var output = std.array_list.Managed(InlayHint).init(self.allocator);
         errdefer {
@@ -476,67 +578,98 @@ pub const LanguageService = struct {
         var arena = std.heap.ArenaAllocator.init(self.allocator);
         defer arena.deinit();
         var work = arena.allocator();
-        const files = self.collectFiles(&work, doc) catch |err| return self.loadFailureDiagnostic(doc, err);
-        var diagnostics = diag.Diagnostics.init(&work, files);
-        defer diagnostics.deinit();
-        var pipeline = frontend.FrontendPipeline.init(work, self.io, &diagnostics, .{});
-        defer pipeline.deinit();
-        _ = pipeline.semantizeGlobalFiles(files) catch {};
-
+        const snapshot = self.ensureSnapshot(&work, doc) catch |err| return self.loadFailureDiagnostic(doc, err);
         var output = std.array_list.Managed(Diagnostic).init(self.allocator);
         errdefer {
             for (output.items) |item| self.allocator.free(item.message);
             output.deinit();
         }
-        for (diagnostics.list.items) |entry| {
-            if (!std.mem.eql(u8, diagnostics.source_db.path(entry.loc.file), doc.path)) continue;
-            try output.append(.{
-                .range = tokenRange(&diagnostics.source_db, entry.loc, 1),
-                .severity = .err,
-                .message = try self.allocator.dupe(u8, entry.msg),
-            });
-        }
-        const items = try output.toOwnedSlice();
-        output.deinit();
-        return .{ .allocator = self.allocator, .items = items, .owned = true };
+        for (snapshot.diagnostics) |entry| try output.append(.{
+            .range = entry.range,
+            .severity = entry.severity,
+            .message = try self.allocator.dupe(u8, entry.message),
+        });
+        return .{ .allocator = self.allocator, .items = try output.toOwnedSlice(), .owned = true };
     }
 
+    // Callers borrow this result until the next service operation. Recollecting
+    // sources also observes disk edits, directory membership and import changes;
+    // document version alone cannot safely identify a whole-module result.
     fn collectAnalysis(self: *LanguageService, allocator: *std.mem.Allocator, doc: *Document) !?Analysis {
-        const files = self.collectFiles(allocator, doc) catch |err| {
+        const snapshot = self.ensureSnapshot(allocator, doc) catch |err| {
             log.debug("LSP module load failed for {s}: {s}", .{ doc.path, @errorName(err) });
             return null;
         };
-        var diagnostics = diag.Diagnostics.init(allocator, files);
-        defer diagnostics.deinit();
-        var pipeline = frontend.FrontendPipeline.init(allocator.*, self.io, &diagnostics, .{});
-        defer pipeline.deinit();
-        _ = pipeline.semantizeGlobalFiles(files) catch {
-            // Parsing/global semantic failures leave no graph. Safety failures,
-            // however, happen after GlobalSG is complete and should not disable
-            // editor navigation for otherwise-resolved symbols.
-            if (pipeline.global_graph == null) return null;
+        return snapshot.analysis;
+    }
+
+    fn ensureSnapshot(self: *LanguageService, scratch: *std.mem.Allocator, doc: *Document) !*Snapshot {
+        const collected = try self.collectFiles(scratch, doc);
+        if (self.snapshot) |snapshot| if (snapshot.matches(doc.path, collected)) {
+            self.analysis_hits += 1;
+            return snapshot;
         };
-
-        var graph = pipeline.global_graph.?;
-        pipeline.global_graph = null;
-        errdefer graph.deinit(allocator.*);
-        var index = try editor_index.Index.build(allocator.*, &graph);
-        errdefer index.deinit(allocator.*);
-        try augmentTypeOccurrences(allocator.*, &index, &graph, &diagnostics.source_db, pipeline.syntax_files.items);
-        index.sort();
-
-        var db = try diagnostics.source_db.clone(allocator.*);
-        errdefer db.deinit(allocator.*);
-        const tokens = try (pipeline.tokensForPath(doc.path) orelse token.View{}).clone(allocator.*);
-        return .{ .source_db = db, .graph = graph, .index = index, .tokens = tokens };
+        // Release the previous graph before building its replacement, so repeated
+        // edits do not retain overlapping whole-program allocations.
+        if (self.snapshot) |snapshot| snapshot.deinit(self.allocator);
+        self.snapshot = null;
+        const snapshot = try self.allocator.create(Snapshot);
+        snapshot.* = .{ .arena = std.heap.ArenaAllocator.init(self.allocator), .path = "", .files = &.{} };
+        errdefer snapshot.deinit(self.allocator);
+        var work = snapshot.arena.allocator();
+        snapshot.path = try work.dupe(u8, doc.path);
+        const files = try work.alloc(sf.SourceFile, collected.len);
+        for (collected, files) |source, *owned| {
+            owned.* = source;
+            owned.path = try work.dupe(u8, source.path);
+            owned.code = try work.dupe(u8, source.code);
+        }
+        snapshot.files = files;
+        var diagnostics = diag.Diagnostics.init(&work, files);
+        defer diagnostics.deinit();
+        var pipeline = frontend.FrontendPipeline.init(work, self.io, &diagnostics, .{ .module_cache = &self.module_cache, .semantizing = .{ .exhaustive_function_bodies = true } });
+        defer pipeline.deinit();
+        const start = std.Io.Timestamp.now(self.io, .boot).nanoseconds;
+        _ = pipeline.semantizeGlobalFiles(files) catch {};
+        self.analysis_builds += 1;
+        log.debug("LSP global semantizing: {d} us", .{@divTrunc(std.Io.Timestamp.now(self.io, .boot).nanoseconds - start, 1000)});
+        var output: std.ArrayList(Diagnostic) = .empty;
+        for (diagnostics.list.items) |entry| {
+            if (!std.mem.eql(u8, diagnostics.source_db.path(entry.loc.file), doc.path)) continue;
+            try output.append(work, .{
+                .range = tokenRange(&diagnostics.source_db, entry.loc, 1),
+                .severity = .err,
+                .message = try work.dupe(u8, entry.msg),
+            });
+        }
+        snapshot.diagnostics = output.items;
+        // A safety diagnostic may coexist with a resolved graph. Syntax and
+        // unresolved global failures keep diagnostics cached without an index.
+        if (pipeline.global_graph) |graph| {
+            pipeline.global_graph = null;
+            snapshot.analysis = .{
+                .graph = graph,
+                .index = .{},
+                .source_db = try diagnostics.source_db.clone(work),
+                .tokens = try (pipeline.tokensForPath(doc.path) orelse token.View{}).clone(work),
+            };
+            const analysis = &snapshot.analysis.?;
+            analysis.index = try editor_index.Index.build(work, &analysis.graph);
+            try augmentTypeOccurrences(work, &analysis.index, &analysis.graph, &diagnostics.source_db, pipeline.syntax_files.items);
+            analysis.index.sort();
+        }
+        self.snapshot = snapshot;
+        return snapshot;
     }
 
     fn collectFiles(self: *LanguageService, allocator: *std.mem.Allocator, doc: *Document) ![]const sf.SourceFile {
         const core_dir = try self.preferredCoreDir(allocator.*);
-        const files = try sf.collectWithEntrySource(allocator, self.io, core_dir, doc.path, doc.text);
-        for (files.items) |*source_file| for (self.documents.items) |open_document| {
-            if (std.mem.eql(u8, source_file.path, open_document.path)) source_file.code = open_document.text;
-        };
+        const overrides = try allocator.alloc(sf.SourceFile, self.documents.items.len);
+        for (self.documents.items, overrides) |document, *source| source.* = .{ .path = document.path, .code = document.text };
+        const files = try sf.collectWithEntrySourceWithOptions(allocator, self.io, .{
+            .fallback_core_dir = core_dir,
+            .source_overrides = overrides,
+        }, doc.path, doc.text);
         return files.items;
     }
 
@@ -596,6 +729,24 @@ fn augmentTypeOccurrences(
         const current_module = graph.files.items[global_file].module;
         for (0..tree.nodes.len) |raw| {
             const node: st.NodeIndex = @enumFromInt(@as(u32, @intCast(raw)));
+            if (tree.contractDeclaration(node)) |contract| {
+                const owner = findTypeDeclaration(graph, current_module, tree.tokenText(db, contract.name_token)) orelse continue;
+                for (contract.requires_functions, 0..) |requirement_node, operation_index| {
+                    const requirement = tree.contractFunctionRequirement(requirement_node) orelse continue;
+                    const spelling = tree.tokenText(db, requirement.name_token);
+                    // Requirement names are retained in relocated module strings.
+                    const name_start = std.mem.indexOf(u8, graph.strings.items, spelling) orelse continue;
+                    try index.add(allocator, .{
+                        .source = .{ .file_index = global_file, .offset = tree.tokenLocation(requirement.name_token).offset },
+                        .len = @intCast(spelling.len),
+                        .target = .{ .declaration = owner },
+                        .declaration = true,
+                        .operation = .{ .contract = owner, .index = @intCast(operation_index) },
+                        .operation_name_start = @intCast(name_start),
+                    });
+                }
+                continue;
+            }
             const ty = tree.syntaxType(node) orelse continue;
             const name = switch (ty) {
                 .name => |value| value,
@@ -616,7 +767,7 @@ fn augmentTypeOccurrences(
 fn findTypeDeclaration(graph: *const graph_mod.GlobalSemanticGraph, current_module: graph_mod.GlobalModuleId, name: []const u8) ?graph_mod.GlobalDeclId {
     var fallback: ?graph_mod.GlobalDeclId = null;
     for (graph.declarations.items, 0..) |declaration, raw| {
-        if (declaration.kind != .type and declaration.kind != .abstract_type) continue;
+        if (declaration.kind != .type and declaration.kind != .contract_type) continue;
         if (!std.mem.eql(u8, graph.text(declaration.name), name)) continue;
         const id: graph_mod.GlobalDeclId = @enumFromInt(@as(u32, @intCast(raw)));
         if (graph.moduleForDeclaration(id) == current_module) return id;
@@ -667,7 +818,7 @@ const HoverWriter = struct {
     }
 };
 
-fn formatHover(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSemanticGraph, target: editor_index.Target) ![]u8 {
+fn formatHover(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSemanticGraph, target: editor_index.Target, operation_name: ?[]const u8) ![]u8 {
     var output = std.array_list.Managed(u8).init(allocator);
     errdefer output.deinit();
     const writer = HoverWriter{ .allocator = allocator, .buffer = &output };
@@ -675,9 +826,8 @@ fn formatHover(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSeman
     switch (target) {
         .function => |id| {
             const function = graph.functions.items[@intFromEnum(id)];
-            const declaration = graph.declarations.items[@intFromEnum(function.declaration)];
             if (function.flags.is_once) try writer.writeAll("once ");
-            try writer.print("{s}(", .{graph.text(declaration.name)});
+            try writer.print("{s}(", .{operation_name orelse graph.text(graph.declarationSourceName(function.declaration))});
             try writeFieldRange(writer, graph, function.input);
             try writer.writeAll(") -> (");
             try writeFieldRange(writer, graph, function.output);
@@ -690,11 +840,13 @@ fn formatHover(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSeman
         },
         .declaration => |id| {
             const declaration = graph.declarations.items[@intFromEnum(id)];
-            const name = graph.text(declaration.name);
+            const name = graph.text(graph.declarationSourceName(id));
             switch (declaration.kind) {
-                .type, .abstract_type => {
-                    try writer.print("{s} : {s}", .{ name, if (declaration.kind == .type) "Type" else "Abstract" });
-                    if (declaration.type_id) |ty| {
+                .type, .contract_type => {
+                    if (operation_name) |operation| {
+                        try writer.print("{s} (operation of {s})", .{ operation, name });
+                    } else try writer.print("{s} : {s}", .{ name, if (declaration.kind == .type) "Type" else "Contract" });
+                    if (if (operation_name == null) declaration.type_id else null) |ty| {
                         const self_reference = switch (graph.types.items[@intFromEnum(ty)]) {
                             .declared => |target_decl| target_decl == id,
                             else => false,
@@ -786,9 +938,9 @@ fn writeType(writer: HoverWriter, graph: *const graph_mod.GlobalSemanticGraph, t
             }
             try writer.writeAll(")");
         },
-        .virtual => |abstract_type| {
-            try writer.writeAll("Virtual#(.abstract: ");
-            try writeType(writer, graph, abstract_type);
+        .virtual => |contract_type| {
+            try writer.writeAll("Virtual#(.contract: ");
+            try writeType(writer, graph, contract_type);
             try writer.writeAll(")");
         },
     }
@@ -830,12 +982,12 @@ fn classifySyntax(allocator: std.mem.Allocator, tree: *const st.FileSyntaxTree, 
             try markSyntax(tree, classes, ty.name_token, TOKEN_INDEX.type_, declaration);
             try type_names.put(tree.tokenTextFromSource(source, ty.name_token), {});
         }
-        if (tree.abstractDeclaration(node)) |ty| try markSyntax(tree, classes, ty.name_token, TOKEN_INDEX.type_, declaration);
+        if (tree.contractDeclaration(node)) |ty| try markSyntax(tree, classes, ty.name_token, TOKEN_INDEX.type_, declaration);
         if (tree.symbolDeclaration(node)) |binding| {
             const readonly = if (binding.mutability == .constant) @as(u32, 1) << MOD_INDEX.readonly else 0;
             try markSyntax(tree, classes, binding.name_token, TOKEN_INDEX.variable, declaration | readonly);
         }
-        if (tree.structTypeField(node)) |field| try markSyntax(tree, classes, field.name_token, TOKEN_INDEX.property, declaration);
+        if (tree.structTypeField(node)) |field| if (field.position == null) try markSyntax(tree, classes, field.name_token, TOKEN_INDEX.property, declaration);
         if (tree.valueField(node)) |field| if (field.name_token) |name| try markSyntax(tree, classes, name, TOKEN_INDEX.property, 0);
         if (tree.structFieldAccess(node)) |field| try markSyntax(tree, classes, field.field_token, TOKEN_INDEX.property, 0);
         if (tree.choiceLiteral(node)) |variant| try markSyntax(tree, classes, variant.name_token, TOKEN_INDEX.enum_member, 0);
@@ -893,14 +1045,14 @@ fn classifyOccurrences(allocator: std.mem.Allocator, analysis: *const Analysis, 
         if (!editor_index.occurrence_matches_source(graph, &analysis.source_db, occurrence)) continue;
         var classification: TokenClass = .{ .type_index = TOKEN_INDEX.variable };
         switch (occurrence.target) {
-            .function => classification.type_index = TOKEN_INDEX.function,
+            .function => classification.type_index = if (occurrence.constructor_call) TOKEN_INDEX.type_ else TOKEN_INDEX.function,
             .binding => |id| {
                 if (parameters.contains(id)) classification.type_index = TOKEN_INDEX.parameter;
                 if (graph.bindings.items[@intFromEnum(id)].mutability == .constant)
                     classification.modifiers |= @as(u32, 1) << MOD_INDEX.readonly;
             },
             .declaration => |id| classification.type_index = switch (graph.declarations.items[@intFromEnum(id)].kind) {
-                .type, .abstract_type => TOKEN_INDEX.type_,
+                .type, .contract_type => TOKEN_INDEX.type_,
                 .import_alias => TOKEN_INDEX.namespace,
                 .function, .test_function => TOKEN_INDEX.function,
                 .choice_option => TOKEN_INDEX.enum_member,
@@ -930,7 +1082,7 @@ fn classifyToken(content: token.Content) ?TokenClass {
             else => .{ .type_index = TOKEN_INDEX.number },
         },
         .keyword_abort, .keyword_import, .keyword_return, .keyword_if, .keyword_else, .keyword_match, .keyword_for, .keyword_in, .keyword_while, .keyword_break, .keyword_continue, .keyword_once, .keyword_assume, .keyword_reach, .keyword_test, .keyword_and, .keyword_or => .{ .type_index = TOKEN_INDEX.keyword },
-        .binary_operator, .comparison_operator, .equal, .arrow, .pipe, .tilde, .bang, .double_bang, .question_mark, .ampersand, .dollar, .colon, .double_colon => .{ .type_index = TOKEN_INDEX.operator },
+        .binary_operator, .comparison_operator, .equal, .arrow, .pipe, .tilde, .bang, .double_bang, .triple_bang, .question_mark, .ampersand, .dollar, .colon, .double_colon => .{ .type_index = TOKEN_INDEX.operator },
         else => null,
     };
 }
@@ -962,6 +1114,7 @@ fn tokenLength(content: token.Content, source: []const u8, offset: u32) u32 {
         .keyword_and => 3,
         .keyword_or => 2,
         .double_colon, .arrow, .double_bang => 2,
+        .triple_bang => 3,
         .comparison_operator => |operator| switch (operator) {
             .not_equal, .less_than_or_equal, .greater_than_or_equal, .equal => 2,
             else => 1,
@@ -1003,32 +1156,102 @@ fn sortLocations(items: []Location) void {
     }.lessThan);
 }
 
-pub fn decodeFileUri(allocator: std.mem.Allocator, uri: []const u8) !?[]u8 {
-    if (!std.mem.startsWith(u8, uri, "file://")) return null;
-    const encoded = uri["file://".len..];
-    var output = std.array_list.Managed(u8).init(allocator);
-    errdefer output.deinit();
-    var index: usize = 0;
-    while (index < encoded.len) {
-        if (encoded[index] == '%' and index + 2 < encoded.len) {
-            const high = std.fmt.charToDigit(encoded[index + 1], 16) catch {
-                try output.append(encoded[index]);
-                index += 1;
-                continue;
+fn outlinePosition(code: []const u8, offset: usize) Position {
+    const prefix = code[0..@min(offset, code.len)];
+    const start = if (std.mem.lastIndexOfScalar(u8, prefix, '\n')) |index| index + 1 else 0;
+    return .{ .line = @intCast(std.mem.count(u8, prefix, "\n")), .character = @intCast(prefix.len - start) };
+}
+
+fn outlineNodes(work: std.mem.Allocator, file: *const editor_syntax.File, nodes: []const st.NodeIndex) anyerror![]const DocumentSymbol {
+    var items: std.ArrayList(DocumentSymbol) = .empty;
+    for (nodes) |node| {
+        var name_token: st.TokenIndex = undefined;
+        var kind: u32 = undefined;
+        var children: []const st.NodeIndex = &.{};
+        if (file.tree.functionDeclaration(node)) |decl| {
+            name_token = decl.name_token;
+            kind = if (decl.c_function_pointer) 5 else 12;
+            if (decl.body) |body| if (file.tree.codeBlock(body)) |block| {
+                children = block.statements;
             };
-            const low = std.fmt.charToDigit(encoded[index + 2], 16) catch {
-                try output.append(encoded[index]);
-                index += 1;
-                continue;
+        } else if (file.tree.typeDeclaration(node)) |decl| {
+            name_token = decl.name_token;
+            kind = 5;
+            if (file.tree.structTypeLiteral(decl.value)) |value| {
+                kind = 23;
+                children = value.fields;
+            }
+            if (file.tree.choiceTypeLiteral(decl.value)) |value| {
+                kind = 10;
+                children = value.variants;
+            }
+        } else if (file.tree.cEnumDeclaration(node)) |decl| {
+            name_token = decl.name_token;
+            kind = 10;
+            if (file.tree.choiceTypeLiteral(decl.value)) |value| children = value.variants;
+        } else if (file.tree.cUnionDeclaration(node)) |decl| {
+            name_token = decl.name_token;
+            kind = 23;
+            if (file.tree.structTypeLiteral(decl.value)) |value| children = value.fields;
+        } else if (file.tree.contractDeclaration(node)) |decl| {
+            name_token = decl.name_token;
+            kind = 11;
+            children = decl.requires_functions;
+        } else if (file.tree.contractFunctionRequirement(node)) |decl| {
+            name_token = decl.name_token;
+            kind = 6;
+        } else if (file.tree.symbolDeclaration(node)) |decl| {
+            name_token = decl.name_token;
+            kind = if (decl.mutability == .constant) 14 else 13;
+            if (decl.value) |value| if (file.tree.importStatement(value) != null) {
+                kind = 2;
             };
-            try output.append(@intCast(high * 16 + low));
-            index += 3;
-        } else {
-            try output.append(encoded[index]);
-            index += 1;
+        } else if (file.tree.structTypeField(node)) |decl| {
+            if (decl.position != null) continue;
+            name_token = decl.name_token;
+            kind = 8;
+        } else if (file.tree.choiceTypeVariant(node)) |decl| {
+            name_token = decl.name_token;
+            kind = 22;
+        } else if (file.tree.choiceOptionDeclaration(node)) |decl| {
+            name_token = decl.name_token;
+            kind = 22;
+        } else continue;
+        const name = file.tree.tokenTextFromSource(file.source.code, name_token);
+        const start = file.tree.tokenLocation(name_token).offset;
+        var end: usize = start + name.len;
+        var depth: usize = 0;
+        // Tokenizing keeps strings and comments opaque, so their punctuation
+        // cannot terminate a declaration or change its delimiter depth.
+        for (@intFromEnum(name_token)..file.tokens.len) |index| {
+            const content = file.tokens.contents[index];
+            if (content == .eof or (content == .new_line and depth == 0)) break;
+            switch (content) {
+                .open_parenthesis, .open_bracket, .open_brace => depth += 1,
+                .close_parenthesis, .close_bracket, .close_brace => {
+                    if (depth == 0) break;
+                    depth -= 1;
+                },
+                else => {},
+            }
+            if (content != .comment and content != .new_line) {
+                const text = file.tree.tokenTextFromSource(file.source.code, @enumFromInt(@as(u32, @intCast(index))));
+                end = file.tokens.locations[index].offset + text.len;
+            }
         }
+        try items.append(work, .{
+            .name = try work.dupe(u8, name),
+            .kind = kind,
+            .range = .{ .start = outlinePosition(file.source.code, start), .end = outlinePosition(file.source.code, end) },
+            .selectionRange = .{ .start = outlinePosition(file.source.code, start), .end = outlinePosition(file.source.code, start + name.len) },
+            .children = try outlineNodes(work, file, children),
+        });
     }
-    return try output.toOwnedSlice();
+    return items.toOwnedSlice(work);
+}
+
+pub fn decodeFileUri(allocator: std.mem.Allocator, uri: []const u8) !?[]u8 {
+    return @import("file_uri.zig").decode(allocator, uri, @import("builtin").os.tag == .windows);
 }
 
 test "indexed LSP service public positions stay zero based" {
@@ -1066,6 +1289,11 @@ fn expectSemanticToken(data: []const u32, source: []const u8, needle: []const u8
 test "LSP semantic tokens distinguish resolved names without synthetic recoloring" {
     const code =
         \\Point : Type = (.x: Int32)
+        \\implement Init#(Point, (.x: Int32)) (.Result: Type = Point, .init = (.args: (.x: Int32)) -> (.result: Result) { result = (.x = args.x) })
+        \\implement Deinit#(Point) (.deinit = (.self: $&Point) -> () {})
+        \\Box#(.t: Type) : Type = (.value: t)
+        \\implement#(.t: Type) Init#(Box#(.t: t), (.value: t)) (.Result: Type = Box#(.t: t), .init = (.args: (.value: t)) -> (.result: Result) { result = (.value = args.value) })
+        \\implement#(.t: Type) Deinit#(Box#(.t: t)) (.deinit = (.self: $&Box#(.t: t)) -> () {})
         \\identity(.value: Int32) -> (.result: Int32) := { result = value }
         \\main(.system: System) -> (.status_code: Int32 = 0) := {
         \\    assume writer := $&system.terminal&.stdout
@@ -1086,6 +1314,12 @@ test "LSP semantic tokens distinguish resolved names without synthetic recolorin
     var data = try service.semanticTokensFull("file:///colors.rg");
     defer data.deinit();
     try expectSemanticToken(data.items, code, "Point :", TOKEN_INDEX.type_, 1);
+    try expectSemanticToken(data.items, code, "Point, (.x:", TOKEN_INDEX.type_, 0);
+    try expectSemanticToken(data.items, code, "Point) (.deinit", TOKEN_INDEX.type_, 0);
+    try expectSemanticToken(data.items, code, "Box#(.t: t),", TOKEN_INDEX.type_, 0);
+    try expectSemanticToken(data.items, code, "Box#(.t: t)) (.deinit", TOKEN_INDEX.type_, 0);
+    try expectSemanticToken(data.items, code, "init =", TOKEN_INDEX.function, 1);
+    try expectSemanticToken(data.items, code, "deinit =", TOKEN_INDEX.function, 1);
     try expectSemanticToken(data.items, code, "identity(.value:", TOKEN_INDEX.function, 1);
     try expectSemanticToken(data.items, code, "value: Int32", TOKEN_INDEX.parameter, 3);
     try expectSemanticToken(data.items, code, "value }", TOKEN_INDEX.parameter, 2);
@@ -1144,13 +1378,74 @@ test "LSP navigation and hovers use written symbols and source declarations" {
     try std.testing.expectEqual(@as(u32, 0), identity.range.start.character);
     const specialized = (try service.definition(uri, .{ .line = 6, .character = 4 })).?;
     defer specialized.deinit(std.testing.allocator);
-    try std.testing.expect(std.mem.endsWith(u8, specialized.path, "/system/terminal.rg"));
+    try std.testing.expect(std.mem.endsWith(u8, specialized.path, if (@import("builtin").os.tag == .windows) "\\system\\terminal.rg" else "/system/terminal.rg"));
     try std.testing.expectEqual(@as(u32, 0), specialized.range.start.character);
     try std.testing.expectEqual(@as(u32, 5), specialized.range.end.character);
     const terminal = (try service.definition(uri, .{ .line = 3, .character = 30 })).?;
     defer terminal.deinit(std.testing.allocator);
-    try std.testing.expect(std.mem.endsWith(u8, terminal.path, "/system/system.rg"));
+    try std.testing.expect(std.mem.endsWith(u8, terminal.path, if (@import("builtin").os.tag == .windows) "\\system\\system.rg" else "/system/system.rg"));
     try std.testing.expectEqual(@as(u32, 8), terminal.range.end.character - terminal.range.start.character);
+}
+
+test "LSP constructor navigation finds selected init bodies and default record declarations" {
+    const code =
+        \\MyType : Type = (.value: Int32)
+        \\implement Init#(MyType, ()) (.Result: Type = MyType, .init = (.args: ()) -> (.result: Result) { result = (.value = 0) })
+        \\implement Init#(MyType, (.value: Int32)) (.Result: Type = MyType, .init = (.args: (.value: Int32)) -> (.result: Result) { result = (.value = args.value) })
+        \\Box#(.t: Type) : Type = (.value: t)
+        \\implement#(.t: Type) Init#(Box#(.t: t), (.value: t)) (.Result: Type = Box#(.t: t), .init = (.args: (.value: t)) -> (.result: Result) { result = (.value = args.value) })
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    first ::= MyType()
+        \\    second ::= MyType(2)
+        \\    boxed ::= Box#(.t: Int32)(3)
+        \\    specs ::= (CliSpec("help", "h", "Show help"),)
+        \\    imported ::= library.Thing(4)
+        \\}
+        \\library := import("./library")
+    ;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDir(std.testing.io, "library", .default_dir);
+    try tmp.dir.writeFile(std.testing.io, .{
+        .sub_path = "library/thing.rg",
+        .data = "Thing : Type = (.value: Int32)\nimplement Init#(Thing, (.value: Int32)) (.Result: Type = Thing, .init = (.args: (.value: Int32)) -> (.result: Result) { result = (.value = args.value) })\n",
+    });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.rg", .data = code });
+    const path = try @import("../test_support.zig").tmpFilePath(&tmp, "main.rg");
+    defer std.testing.allocator.free(path);
+    var service = LanguageService.init(std.testing.allocator, std.testing.io);
+    defer service.deinit();
+    const uri = "file:///constructors.rg";
+    const diagnostics = try service.openDocument(uri, path, 1, code);
+    defer diagnostics.deinit();
+    try std.testing.expectEqual(@as(usize, 0), diagnostics.items.len);
+    for ([_]struct { line: u32, character: u32, declaration_line: u32 }{
+        .{ .line = 6, .character = 17, .declaration_line = 1 },
+        .{ .line = 7, .character = 18, .declaration_line = 2 },
+        .{ .line = 8, .character = 15, .declaration_line = 4 },
+    }) |case| {
+        const position = Position{ .line = case.line, .character = case.character };
+        const definition = (try service.definition(uri, position)).?;
+        defer definition.deinit(std.testing.allocator);
+        try std.testing.expectEqualStrings(path, definition.path);
+        try std.testing.expectEqual(case.declaration_line, definition.range.start.line);
+        const hover = (try service.hover(uri, position)).?;
+        defer std.testing.allocator.free(hover.contents);
+        try std.testing.expect(std.mem.indexOf(u8, hover.contents, "init(") != null);
+        try std.testing.expectEqual(@as(?PrepareRename, null), try service.prepareRename(uri, position));
+        const edits = try service.rename(uri, position, "Renamed");
+        defer edits.deinit();
+        try std.testing.expectEqual(@as(usize, 0), edits.items.len);
+    }
+    const spec = (try service.definition(uri, .{ .line = 9, .character = 16 })).?;
+    defer spec.deinit(std.testing.allocator);
+    try std.testing.expect(std.mem.endsWith(u8, spec.path, if (@import("builtin").os.tag == .windows) "\\system\\command.rg" else "/system/command.rg"));
+    try std.testing.expectEqual(@as(u32, 6), spec.range.start.line);
+    try std.testing.expectEqual(@as(u32, 7), spec.range.end.character);
+    const imported = (try service.definition(uri, .{ .line = 10, .character = 26 })).?;
+    defer imported.deinit(std.testing.allocator);
+    try std.testing.expect(std.mem.endsWith(u8, imported.path, if (@import("builtin").os.tag == .windows) "\\library\\thing.rg" else "/library/thing.rg"));
+    try std.testing.expectEqual(@as(u32, 1), imported.range.start.line);
 }
 
 test "LSP semantic tokens retain syntax roles with unresolved calls and multiline text" {
@@ -1242,10 +1537,10 @@ test "LSP definitions remain available with unresolved matrix initializers" {
     try service.documents.append(try Document.init(std.testing.allocator, uri, path, 1, code));
     const system = (try service.definition(uri, .{ .line = 1, .character = 14 })).?;
     defer system.deinit(std.testing.allocator);
-    try std.testing.expect(std.mem.endsWith(u8, system.path, "/system/system.rg"));
+    try std.testing.expect(std.mem.endsWith(u8, system.path, if (@import("builtin").os.tag == .windows) "\\system\\system.rg" else "/system/system.rg"));
     const print = (try service.definition(uri, .{ .line = 5, .character = 4 })).?;
     defer print.deinit(std.testing.allocator);
-    try std.testing.expect(std.mem.endsWith(u8, print.path, "/system/terminal.rg"));
+    try std.testing.expect(std.mem.endsWith(u8, print.path, if (@import("builtin").os.tag == .windows) "\\system\\terminal.rg" else "/system/terminal.rg"));
     const matrix = (try service.definition(uri, .{ .line = 4, .character = 9 })).?;
     defer matrix.deinit(std.testing.allocator);
     try std.testing.expectEqualStrings(path, matrix.path);
@@ -1253,4 +1548,452 @@ test "LSP definitions remain available with unresolved matrix initializers" {
     const data = (try service.definition(uri, .{ .line = 4, .character = 34 })).?;
     defer data.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(u32, 3), data.range.start.line);
+}
+
+test "LSP module reuse preserves navigation across unsaved imports and file changes" {
+    const code =
+        \\dep := import("./dep")
+        \\main() -> (.status_code: Int32) := {
+        \\    status_code = dep.answer().result
+        \\}
+    ;
+    const dependency = "answer() -> (.result: Int32 = 7) := {}\n";
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDir(std.testing.io, "dep", .default_dir);
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.rg", .data = code });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "dep/answer.rg", .data = dependency });
+    const path = try @import("../test_support.zig").tmpFilePath(&tmp, "main.rg");
+    defer std.testing.allocator.free(path);
+    const dep_path = try @import("../test_support.zig").tmpFilePath(&tmp, "dep/answer.rg");
+    defer std.testing.allocator.free(dep_path);
+    var service = LanguageService.init(std.testing.allocator, std.testing.io);
+    defer service.deinit();
+    const uri = "file:///incremental.rg";
+    const opened = try service.openDocument(uri, path, 1, code);
+    defer opened.deinit();
+    try std.testing.expectEqual(@as(usize, 0), opened.items.len);
+    const misses = service.module_cache.misses;
+    const position = Position{ .line = 2, .character = 22 };
+    const definition = (try service.definition(uri, position)).?;
+    defer definition.deinit(std.testing.allocator);
+    try std.testing.expectEqualStrings(dep_path, definition.path);
+    try std.testing.expectEqual(@as(u32, 0), definition.range.start.line);
+    try std.testing.expectEqual(misses, service.module_cache.misses);
+    try std.testing.expectEqual(@as(usize, 0), service.module_cache.hits);
+    try std.testing.expectEqual(@as(usize, 1), service.analysis_builds);
+    try std.testing.expectEqual(@as(usize, 1), service.analysis_hits);
+
+    const initial_hover = (try service.hover(uri, position)).?;
+    defer std.testing.allocator.free(initial_hover.contents);
+    var tokens = try service.semanticTokensFull(uri);
+    defer tokens.deinit();
+    const hints = try service.inlayHints(uri, null);
+    defer hints.deinit();
+    const references_result = try service.references(uri, position, true);
+    defer references_result.deinit();
+    try std.testing.expectEqual(@as(usize, 1), service.analysis_builds);
+    try std.testing.expectEqual(@as(usize, 5), service.analysis_hits);
+
+    // The imported buffer stays unsaved on disk; its source location changes.
+    const changed = try service.openDocument("file:///incremental-dep.rg", dep_path, 1, "\n" ++ dependency);
+    defer changed.deinit();
+    const moved = (try service.definition(uri, position)).?;
+    defer moved.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u32, 1), moved.range.start.line);
+    try std.testing.expectEqual(misses + 1, service.module_cache.misses);
+
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "helper.rg", .data = "helper() -> () := {}\n" });
+    const with_file = (try service.definition(uri, position)).?;
+    defer with_file.deinit(std.testing.allocator);
+    try std.testing.expectEqualStrings(dep_path, with_file.path);
+    try std.testing.expectEqual(@as(u32, 1), with_file.range.start.line);
+    try std.testing.expectEqual(misses + 2, service.module_cache.misses);
+    try tmp.dir.deleteFile(std.testing.io, "helper.rg");
+    const without_file = (try service.definition(uri, position)).?;
+    defer without_file.deinit(std.testing.allocator);
+    try std.testing.expectEqual(misses + 3, service.module_cache.misses);
+
+    const broken = try service.changeDocument(uri, path, 2, "main(\n");
+    defer broken.deinit();
+    try std.testing.expect(broken.items.len != 0);
+    const broken_builds = service.analysis_builds;
+    try std.testing.expectEqual(@as(?Hover, null), try service.hover(uri, position));
+    const stale = try service.changeDocument(uri, path, 1, code);
+    defer stale.deinit();
+    try std.testing.expectEqualStrings(broken.items[0].message, stale.items[0].message);
+    try std.testing.expectEqual(broken_builds, service.analysis_builds);
+    const repaired = try service.changeDocument(uri, path, 3, code);
+    defer repaired.deinit();
+    try std.testing.expectEqual(@as(usize, 0), repaired.items.len);
+    const hover = (try service.hover(uri, position)).?;
+    defer std.testing.allocator.free(hover.contents);
+    try std.testing.expect(std.mem.indexOf(u8, hover.contents, "answer(") != null);
+    service.closeDocument("file:///incremental-dep.rg");
+    const from_disk = (try service.definition(uri, position)).?;
+    defer from_disk.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u32, 0), from_disk.range.start.line);
+    try std.testing.expect(service.module_cache.retained_bytes <= service.module_cache.limits.bytes);
+}
+
+test "LSP module reuse discovers unsaved transitive imports and cycles" {
+    const code =
+        \\dep := import("./dep")
+        \\main() -> (.status_code: Int32) := {
+        \\    status_code = dep.answer().result
+        \\}
+    ;
+    const original = "answer() -> (.result: Int32 = 7) := {}\n";
+    const edited = "next := import(\"../next\")\nanswer() -> (.result: Int32) := { result = next.number().result }\n";
+    const next_code = "number() -> (.result: Int32 = 9) := {}\n";
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDir(std.testing.io, "dep", .default_dir);
+    try tmp.dir.createDir(std.testing.io, "next", .default_dir);
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.rg", .data = code });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "dep/answer.rg", .data = original });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "next/number.rg", .data = next_code });
+    const path = try @import("../test_support.zig").tmpFilePath(&tmp, "main.rg");
+    defer std.testing.allocator.free(path);
+    const dep_path = try @import("../test_support.zig").tmpFilePath(&tmp, "dep/answer.rg");
+    defer std.testing.allocator.free(dep_path);
+    const next_path = try @import("../test_support.zig").tmpFilePath(&tmp, "next/number.rg");
+    defer std.testing.allocator.free(next_path);
+    var service = LanguageService.init(std.testing.allocator, std.testing.io);
+    defer service.deinit();
+    const uri = "file:///unsaved-import-main.rg";
+    const opened = try service.openDocument(uri, path, 1, code);
+    defer opened.deinit();
+    const added_import = try service.openDocument("file:///unsaved-import-dep.rg", dep_path, 1, edited);
+    defer added_import.deinit();
+    try std.testing.expectEqual(@as(usize, 0), added_import.items.len);
+    const definition = (try service.definition(uri, .{ .line = 2, .character = 23 })).?;
+    defer definition.deinit(std.testing.allocator);
+    try std.testing.expectEqualStrings(dep_path, definition.path);
+    try std.testing.expectEqual(@as(u32, 1), definition.range.start.line);
+
+    const cycle = try service.openDocument("file:///unsaved-import-next.rg", next_path, 1, "back := import(\"../dep\")\n" ++ next_code);
+    defer cycle.deinit();
+    try std.testing.expectEqual(@as(usize, 1), cycle.items.len);
+    try std.testing.expectEqualStrings("import cycle detected", cycle.items[0].message);
+    const root_cycle = try service.changeDocument(uri, path, 2, code);
+    defer root_cycle.deinit();
+    try std.testing.expectEqualStrings("import cycle detected", root_cycle.items[0].message);
+    const repaired = try service.changeDocument("file:///unsaved-import-next.rg", next_path, 2, next_code);
+    defer repaired.deinit();
+    try std.testing.expectEqual(@as(usize, 0), repaired.items.len);
+    const root_repaired = try service.changeDocument(uri, path, 3, code);
+    defer root_repaired.deinit();
+    try std.testing.expectEqual(@as(usize, 0), root_repaired.items.len);
+    service.closeDocument("file:///unsaved-import-dep.rg");
+    const reverted = (try service.definition(uri, .{ .line = 2, .character = 23 })).?;
+    defer reverted.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u32, 0), reverted.range.start.line);
+}
+
+test "LSP document symbols preserve hierarchy and unsaved syntax" {
+    const code =
+        \\Point : Type = (
+        \\    .x: Int32
+        \\    .y: Int32
+        \\)
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    value ::= missing()
+        \\}
+    ;
+    var service = LanguageService.init(std.testing.allocator, std.testing.io);
+    defer service.deinit();
+    try service.documents.append(try Document.init(std.testing.allocator, "file:///outline.rg", "/not-on-disk/outline.rg", 1, code));
+    const result = try service.documentSymbols("file:///outline.rg");
+    defer result.deinit();
+    try std.testing.expectEqual(@as(usize, 2), result.items.len);
+    const point = result.items[0];
+    try std.testing.expectEqualStrings("Point", point.name);
+    try std.testing.expectEqual(@as(u32, 23), point.kind);
+    try std.testing.expectEqual(@as(u32, 3), point.range.end.line);
+    try std.testing.expectEqual(@as(u32, 1), point.range.end.character);
+    try std.testing.expectEqual(@as(usize, 2), point.children.len);
+    try std.testing.expectEqualStrings("x", point.children[0].name);
+    try std.testing.expectEqual(@as(u32, 8), point.children[0].kind);
+    try std.testing.expectEqual(@as(u32, 1), point.children[0].selectionRange.start.line);
+    const main = result.items[1];
+    try std.testing.expectEqualStrings("main", main.name);
+    try std.testing.expectEqual(@as(u32, 12), main.kind);
+    try std.testing.expectEqual(@as(u32, 6), main.range.end.line);
+    try std.testing.expectEqualStrings("value", main.children[0].name);
+    try std.testing.expectEqual(@as(u32, 13), main.children[0].kind);
+}
+
+test "LSP reports assignment without a previous declaration" {
+    const code = "main() -> (.status_code: Int32 = 0) := {\n    value = 1\n}\n";
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.rg", .data = code });
+    const path = try @import("../test_support.zig").tmpFilePath(&tmp, "main.rg");
+    defer std.testing.allocator.free(path);
+    var service = LanguageService.init(std.testing.allocator, std.testing.io);
+    defer service.deinit();
+    const diagnostics = try service.openDocument("file:///assignment.rg", path, 1, code);
+    defer diagnostics.deinit();
+    try std.testing.expect(diagnostics.items.len > 0);
+    try std.testing.expect(std.mem.indexOf(u8, diagnostics.items[0].message, "cannot assign to undeclared binding 'value'") != null);
+    try std.testing.expectEqual(@as(u32, 1), diagnostics.items[0].range.start.line);
+    const corrected = try service.changeDocument("file:///assignment.rg", path, 2, "main() -> (.status_code: Int32 = 0) := {\n    value ::= 1\n    value = 2\n    status_code = value\n}\n");
+    defer corrected.deinit();
+    try std.testing.expectEqual(@as(usize, 0), corrected.items.len);
+}
+
+test "LSP diagnoses array shapes before codegen" {
+    const cases = [_]struct { text: []const u8, message: []const u8 }{
+        .{ .text = "main() -> (.status_code: Int32 = 0) := {\n    data : [3][3]Int32 = ((1,2), (3,4))\n}\n", .message = "array initializer has 2 elements; expected 3" },
+        .{ .text = "main() -> (.status_code: Int32 = 0) := {\n    data : [2][3]Int32 = ((1,2), (3,4))\n}\n", .message = "array initializer has 2 elements; expected 3" },
+        .{ .text = "MatrixView : Type = (.data_p: &[2][2]Int32)\nmain() -> (.status_code: Int32 = 0) := {\n    data : [3][3]Int32 = ((1,2,3), (4,5,6), (7,8,9))\n    matrix : MatrixView = (.data_p = &data)\n}\n", .message = "array value has type '&[3][3]Int32'; expected '&[2][2]Int32'" },
+    };
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.rg", .data = "" });
+    const path = try @import("../test_support.zig").tmpFilePath(&tmp, "main.rg");
+    defer std.testing.allocator.free(path);
+    var service = LanguageService.init(std.testing.allocator, std.testing.io);
+    defer service.deinit();
+    for (cases, 0..) |case, index| {
+        const diagnostics = if (index == 0)
+            try service.openDocument("file:///matrix.rg", path, @intCast(index), case.text)
+        else
+            try service.changeDocument("file:///matrix.rg", path, @intCast(index), case.text);
+        defer diagnostics.deinit();
+        try std.testing.expect(diagnostics.items.len > 0);
+        try std.testing.expectEqualStrings(case.message, diagnostics.items[0].message);
+        try std.testing.expect(diagnostics.items[0].range.start.line > 0);
+    }
+}
+
+test "LSP target selection preserves definition positions and ignores inactive imports" {
+    const code =
+        "#if target_arch(\"aarch64\") and target_arch(\"x86_64\") {\n" ++
+        "bad := import(\"./absent\")\n" ++
+        "unknown(.value: MissingType) := {}\n" ++
+        "} #else {\n" ++
+        "answer() -> (.value: Int32 = 7) := {}\n" ++
+        "}\n" ++
+        "main() -> (.status_code: Int32) := { status_code = answer() }\n";
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.rg", .data = code });
+    const path = try @import("../test_support.zig").tmpFilePath(&tmp, "main.rg");
+    defer std.testing.allocator.free(path);
+    var service = LanguageService.init(std.testing.allocator, std.testing.io);
+    defer service.deinit();
+    const uri = "file:///selection.rg";
+    const diagnostics = try service.openDocument(uri, path, 1, code);
+    defer diagnostics.deinit();
+    try std.testing.expectEqual(@as(usize, 0), diagnostics.items.len);
+    const definition = (try service.definition(uri, .{ .line = 6, .character = 51 })).?;
+    defer definition.deinit(std.testing.allocator);
+    try std.testing.expectEqualStrings(path, definition.path);
+    try std.testing.expectEqual(@as(u32, 4), definition.range.start.line);
+}
+
+test "LSP formatting uses unsaved text and UTF16 document ranges" {
+    var svc = LanguageService.init(std.testing.allocator, std.testing.io);
+    defer svc.deinit();
+    const uri = "file:///tmp/argi-format/main.rg";
+    const path = try std.fs.path.resolve(std.testing.allocator, &.{"tests/feature_tests/basics/67_formatter_layout/main.rg"});
+    defer std.testing.allocator.free(path);
+    var diagnostics = try svc.openDocument(uri, path, 1, "x:=\"😀\"");
+    defer diagnostics.deinit();
+    var edits = try svc.formatting(uri);
+    defer edits.deinit();
+    try std.testing.expectEqual(@as(usize, 1), edits.items.len);
+    try std.testing.expectEqual(@as(u32, 7), edits.items[0].range.end.character);
+    try std.testing.expectEqualStrings("x := \"😀\"\n", edits.items[0].new_text);
+}
+
+test "LSP formatting expands unsaved blocks and becomes a no-op after applying edits" {
+    var svc = LanguageService.init(std.testing.allocator, std.testing.io);
+    defer svc.deinit();
+    const uri = "file:///tmp/argi-format-block/main.rg";
+    const path = try std.fs.path.resolve(std.testing.allocator, &.{"tests/feature_tests/basics/67_formatter_layout/main.rg"});
+    defer std.testing.allocator.free(path);
+    const source = "-- 😀\r\nPoint:Type=(.x:Int32)\r\nf()->():={value::Int32=0 value=value+1}\r\n";
+    var diagnostics = try svc.openDocument(uri, path, 1, source);
+    defer diagnostics.deinit();
+    var edits = try svc.formatting(uri);
+    defer edits.deinit();
+    try std.testing.expectEqual(@as(usize, 1), edits.items.len);
+    try std.testing.expectEqual(@as(u32, 3), edits.items[0].range.end.line);
+    try std.testing.expectEqual(@as(u32, 0), edits.items[0].range.end.character);
+    const expected = "-- 😀\nPoint: Type = (.x: Int32)\n\nf() -> () := {\n    value :: Int32 = 0\n    value = value + 1\n}\n";
+    try std.testing.expectEqualStrings(expected, edits.items[0].new_text);
+    var changed = try svc.changeDocument(uri, path, 2, expected);
+    defer changed.deinit();
+    var repeated = try svc.formatting(uri);
+    defer repeated.deinit();
+    try std.testing.expectEqual(@as(usize, 0), repeated.items.len);
+}
+
+test "LSP formatting introduces scalar grouping for long operations" {
+    var svc = LanguageService.init(std.testing.allocator, std.testing.io);
+    defer svc.deinit();
+    const uri = "file:///tmp/argi-format-operation/main.rg";
+    const path = try std.fs.path.resolve(std.testing.allocator, &.{"tests/feature_tests/basics/72_multiline_operations/main.rg"});
+    defer std.testing.allocator.free(path);
+    const source = "result:=base_amount+additional_service_charge+international_delivery_cost-loyalty_discount-promotional_discount";
+    var diagnostics = try svc.openDocument(uri, path, 1, source);
+    defer diagnostics.deinit();
+    var edits = try svc.formatting(uri);
+    defer edits.deinit();
+    try std.testing.expectEqual(@as(usize, 1), edits.items.len);
+    try std.testing.expectEqual(@as(u32, @intCast(source.len)), edits.items[0].range.end.character);
+    try std.testing.expectEqualStrings("result := [\n    base_amount\n    + additional_service_charge\n    + international_delivery_cost\n    - loyalty_discount\n    - promotional_discount\n]\n", edits.items[0].new_text);
+}
+
+test "LSP formatting removes multiline struct literal commas" {
+    var svc = LanguageService.init(std.testing.allocator, std.testing.io);
+    defer svc.deinit();
+    const uri = "file:///tmp/argi-format-struct/main.rg";
+    const path = try std.fs.path.resolve(std.testing.allocator, &.{"tests/feature_tests/basics/67_formatter_layout/main.rg"});
+    defer std.testing.allocator.free(path);
+    const source = "value := (\n.first = 1,\n.second = 2,\n)\n";
+    var diagnostics = try svc.openDocument(uri, path, 1, source);
+    defer diagnostics.deinit();
+    var edits = try svc.formatting(uri);
+    defer edits.deinit();
+    try std.testing.expectEqual(@as(usize, 1), edits.items.len);
+    try std.testing.expectEqualStrings("value := (\n    .first  = 1\n    .second = 2\n)\n", edits.items[0].new_text);
+}
+
+test "LSP positional type arguments remain type tokens" {
+    const code = "main() -> (.result: Errable#(Int32, Reasons)) := {}\n";
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.rg", .data = code });
+    const path = try @import("../test_support.zig").tmpFilePath(&tmp, "main.rg");
+    defer std.testing.allocator.free(path);
+    var service = LanguageService.init(std.testing.allocator, std.testing.io);
+    defer service.deinit();
+    try service.documents.append(try Document.init(std.testing.allocator, "file:///positional.rg", path, 1, code));
+    var data = try service.semanticTokensFull("file:///positional.rg");
+    defer data.deinit();
+    try expectSemanticToken(data.items, code, "Int32", TOKEN_INDEX.type_, 0);
+    try expectSemanticToken(data.items, code, "Reasons", TOKEN_INDEX.type_, 0);
+    const symbols = try service.documentSymbols("file:///positional.rg");
+    defer symbols.deinit();
+    try std.testing.expectEqual(@as(usize, 1), symbols.items.len);
+    for (symbols.items[0].children) |child| {
+        try std.testing.expect(!std.mem.eql(u8, child.name, "Int32"));
+        try std.testing.expect(!std.mem.eql(u8, child.name, "Reasons"));
+    }
+}
+
+test "LSP scoped implementation navigation retains written operation names" {
+    const code =
+        \\Reader#(.T: Type): Contract = (.read: (.value: &T) -> (.result: Int32))
+        \\Cell: Type = (.value: Int32)
+        \\implement Reader#(Cell) (
+        \\    .read = (.value: &Cell) -> (.result: Int32) { result = value&.value }
+        \\)
+        \\main := () -> (.status_code: Int32 = 0) {
+        \\    cell ::= Cell(42)
+        \\    answer ::= Reader#(Cell).read(&cell).result
+        \\}
+    ;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.rg", .data = code });
+    const path = try @import("../test_support.zig").tmpFilePath(&tmp, "main.rg");
+    defer std.testing.allocator.free(path);
+    var service = LanguageService.init(std.testing.allocator, std.testing.io);
+    defer service.deinit();
+    const uri = "file:///scoped-operations.rg";
+    const diagnostics = try service.openDocument(uri, path, 1, code);
+    defer diagnostics.deinit();
+    try std.testing.expectEqual(@as(usize, 0), diagnostics.items.len);
+    const position = Position{ .line = 7, .character = 29 };
+    const definition = (try service.definition(uri, position)).?;
+    defer definition.deinit(std.testing.allocator);
+    try std.testing.expectEqualStrings(path, definition.path);
+    try std.testing.expectEqual(@as(u32, 3), definition.range.start.line);
+    try std.testing.expectEqual(@as(u32, 5), definition.range.start.character);
+    try std.testing.expectEqual(@as(u32, 9), definition.range.end.character);
+    const hover = (try service.hover(uri, position)).?;
+    defer std.testing.allocator.free(hover.contents);
+    try std.testing.expect(std.mem.startsWith(u8, hover.contents, "```argi\nread("));
+    try std.testing.expect(std.mem.indexOf(u8, hover.contents, "_implement") == null);
+    const prepared = (try service.prepareRename(uri, position)).?;
+    defer prepared.deinit(std.testing.allocator);
+    try std.testing.expectEqualStrings("read", prepared.placeholder);
+    const edits = try service.rename(uri, position, "fetch");
+    defer edits.deinit();
+    try std.testing.expectEqual(@as(usize, 3), edits.items.len);
+}
+
+test "LSP renames scoped operations independently of shared aliases" {
+    const code =
+        \\First#(.T: Type): Contract = (.read: (.value: &T) -> (.result: Int32) where {})
+        \\Second#(.T: Type): Contract = (.read: (.value: &T) -> (.result: Int32) where {})
+        \\Cell: Type = (.value: Int32)
+        \\shared := (.value: &Cell) -> (.result: Int32) { result = value&.value }
+        \\implement First#(Cell) (.read = shared)
+        \\implement Second#(Cell) (.read = shared)
+        \\_read_virtual := (.value: &Virtual#(.contract: First)) -> (.result: Int32) { result = read(value).result }
+        \\main := () -> (.status_code: Int32 = 0) {
+        \\    cell ::= Cell(42)
+        \\    first ::= First#(Cell).read(&cell).result
+        \\    second ::= Second#(Cell).read(&cell).result
+        \\    virtual ::= to_virtual#(.contract: First)(&cell)
+        \\    answer ::= _read_virtual(&virtual).result
+        \\}
+    ;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.rg", .data = code });
+    const path = try @import("../test_support.zig").tmpFilePath(&tmp, "main.rg");
+    defer std.testing.allocator.free(path);
+    var service = LanguageService.init(std.testing.allocator, std.testing.io);
+    defer service.deinit();
+    const uri = "file:///shared-operations.rg";
+    const diagnostics = try service.openDocument(uri, path, 1, code);
+    defer diagnostics.deinit();
+    try std.testing.expectEqual(@as(usize, 0), diagnostics.items.len);
+    const hover = (try service.hover(uri, .{ .line = 9, .character = 27 })).?;
+    defer std.testing.allocator.free(hover.contents);
+    try std.testing.expect(std.mem.startsWith(u8, hover.contents, "```argi\nread("));
+    const edits = try service.rename(uri, .{ .line = 9, .character = 27 }, "fetch");
+    defer edits.deinit();
+    try std.testing.expectEqual(@as(usize, 4), edits.items.len);
+    for (edits.items) |edit| try std.testing.expect(edit.range.start.line == 0 or edit.range.start.line == 4 or edit.range.start.line == 6 or edit.range.start.line == 9);
+    const alias_edits = try service.rename(uri, .{ .line = 3, .character = 2 }, "read_cell");
+    defer alias_edits.deinit();
+    try std.testing.expectEqual(@as(usize, 3), alias_edits.items.len);
+    for (alias_edits.items) |edit| try std.testing.expect(edit.range.start.line == 3 or edit.range.start.line == 4 or edit.range.start.line == 5);
+}
+
+test "LSP proves unused concrete conformance safety promises" {
+    const code =
+        \\Releaser#(.Participant: Type): Contract = (
+        \\    .release: (.self: &Participant, .resource: $&Resource) -> () where consumes(resource)
+        \\)
+        \\Manager: Type = (.unused: Int32)
+        \\Resource: Type = (.value: Int32)
+        \\implement Deinit#(Resource) (.deinit = (.self: $&Resource) -> () {})
+        \\implement Releaser#(Manager) (
+        \\    .release = (.self: &Manager, .resource: $&Resource) -> () {}
+        \\)
+        \\main := () -> () {}
+    ;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.rg", .data = code });
+    const path = try @import("../test_support.zig").tmpFilePath(&tmp, "main.rg");
+    defer std.testing.allocator.free(path);
+    var service = LanguageService.init(std.testing.allocator, std.testing.io);
+    defer service.deinit();
+    const diagnostics = try service.openDocument("file:///unused-conformance.rg", path, 1, code);
+    defer diagnostics.deinit();
+    var found = false;
+    for (diagnostics.items) |entry| if (std.mem.indexOf(u8, entry.message, "cannot prove consumes") != null) {
+        found = true;
+    };
+    try std.testing.expect(found);
 }

@@ -1,5 +1,5 @@
 Payload : Type = (.value: Int32)
-Payload implements ImplicitlyCopyable
+implement ImplicitlyCopyable#(Payload) ()
 
 Result : Type = (
     ..ok Payload

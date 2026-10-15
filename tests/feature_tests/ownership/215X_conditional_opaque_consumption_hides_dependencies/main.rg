@@ -2,7 +2,11 @@ unsafe_allocation := import("../../_support/unsafe_allocation")
 Borrowing : Type = (.reference: $&UInt8)
 Container : Type = (.marker: UInt8)
 
-deinit(.self: $&Borrowing) -> () := {}
+implement Deinit#(Borrowing) (
+    .deinit = (.self: $&Borrowing) -> () {
+
+    }
+)
 
 store_conditionally(
     .storage: $&Container,
@@ -22,8 +26,8 @@ store_conditionally(
 
 main(.system: System, .skip: Bool = false) -> (.status_code: Int32) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    target_result ::= allocate(.self = $&allocator_storage, .size = 1)
-    slot_result ::= allocate(.self = $&allocator_storage, .size = size_of(.type = Borrowing))
+    target_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
+    slot_result ::= allocate_bytes(.self = $&allocator_storage, .size = size_of(.type = Borrowing))
     match target_result {
         ..error _ { status_code = 1 }
         ..ok ~ target_payload {

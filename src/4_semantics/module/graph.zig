@@ -1,8 +1,8 @@
+const type_arguments = @import("type_arguments.zig");
 const std = @import("std");
 const syn = @import("../../3_syntax/syntax_tree.zig");
 const semantic_strings = @import("../primitives/strings.zig");
 const primitives = @import("../primitives/schema.zig");
-const callable = @import("../primitives/callable.zig");
 const module_entities = @import("entities.zig");
 const module_storage = @import("storage.zig");
 
@@ -52,7 +52,9 @@ pub const Field = struct {
     module_file_index: u32 = 0,
 };
 pub const FunctionInterface = struct { declaration: ModuleDeclId, input: FieldRange, output: FieldRange };
-pub const ChoiceVariant = struct { name: StringRange, qualifier: ?StringRange, payload_type: ?ModuleTypeId, source_offset: u32, module_file_index: u32 };
+/// Explicit C enum tags survive canonicalization and relocation; ordinary
+/// choices leave this unset and derive their tags from variant order.
+pub const ChoiceVariant = struct { value: ?i32 = null, name: StringRange, qualifier: ?StringRange, payload_type: ?ModuleTypeId, source_offset: u32, module_file_index: u32 };
 pub const GenericTypeArgument = struct { name: StringRange, ty: ModuleTypeId };
 
 pub const DeclarationKind = primitives.DeclarationKind;
@@ -87,6 +89,7 @@ pub const Symbol = struct {
 /// and source offsets in construction tables are provenance only. Durable
 /// bodies and semantic identities live in `semantic` using Module* IDs.
 pub const ModuleSemanticGraph = struct {
+    target: @import("../../1_base/target.zig").Config = .{},
     module_dir: []const u8 = "",
     is_bundled_core: bool = false,
     declarations: std.ArrayList(Declaration) = .empty,
@@ -165,6 +168,7 @@ pub const ModuleSemanticGraph = struct {
 };
 
 pub const FileInput = struct {
+    diagnostics: ?*@import("../../1_base/diagnostic.zig").Diagnostics = null,
     path: []const u8,
     tree: *const syn.FileSyntaxTree,
     source: []const u8,
@@ -180,15 +184,15 @@ pub fn declarationSyntaxNode(files: []const FileInput, declaration: Declaration)
     for (tree.roots) |node| {
         if (tree.location(node).offset == declaration.source_offset) return node;
     }
+    for (tree.roots) |root| {
+        const conformance = tree.contractConformance(root) orelse continue;
+        const members = conformance.implementation_members;
+        for (tree.structTypeLiteral(members).?.fields) |field| {
+            const value = tree.structTypeField(field).?.default_value orelse continue;
+            if (tree.functionDeclaration(value) != null and tree.location(value).offset == declaration.source_offset) return value;
+        }
+    }
     return null;
-}
-
-pub fn operatorKindFromSyntax(value: syn.OperatorName) callable.OperatorKind {
-    return switch (value) {
-        .add => .add,
-        .equal => .equal,
-        .not_equal => .not_equal,
-    };
 }
 
 pub fn pointerMutabilityFromSyntax(value: syn.PointerMutability) primitives.PointerMutability {
@@ -207,6 +211,7 @@ pub fn mutabilityFromSyntax(value: syn.Mutability) primitives.Mutability {
 
 pub fn forModeFromSyntax(value: syn.ForMode) primitives.ForMode {
     return switch (value) {
+        .move => .move,
         .value => .value,
         .borrow => .borrow,
         .mut_borrow => .mut_borrow,
@@ -266,8 +271,13 @@ pub const ModuleSemanticGraphBuilder = struct {
 /// performs discovery file by file, but writes every durable result directly
 /// into module-owned tables; there is no intermediate file semantic artifact.
 pub fn build(allocator: std.mem.Allocator, module_dir: []const u8, files: []const FileInput) !ModuleSemanticGraph {
+    return buildForTarget(allocator, module_dir, files, .{});
+}
+
+pub fn buildForTarget(allocator: std.mem.Allocator, module_dir: []const u8, files: []const FileInput, target: @import("../../1_base/target.zig").Config) !ModuleSemanticGraph {
     var builder = try ModuleSemanticGraphBuilder.init(allocator, module_dir);
     errdefer builder.deinit();
+    builder.graph.target = target;
     return builder.build(files);
 }
 
@@ -296,13 +306,13 @@ fn buildSymbolIndex(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph) !
 fn resolveModuleTypeReferences(graph: *ModuleSemanticGraph) void {
     for (graph.type_references.items) |*reference| {
         if (reference.qualifier != null) continue;
-        if (builtinFromName(graph.text(reference.name))) |builtin| {
+        if (builtinFromName(graph, graph.text(reference.name))) |builtin| {
             reference.resolution = .{ .builtin = builtin };
             continue;
         }
         for (graph.declarationsNamed(graph.text(reference.name))) |declaration_id| {
             switch (graph.declaration(declaration_id).kind) {
-                .type, .abstract_type => {
+                .type, .contract_type => {
                     reference.resolution = .{ .module = declaration_id };
                     reference.resolved_type = graph.declaration(declaration_id).type_id;
                     break;
@@ -315,7 +325,7 @@ fn resolveModuleTypeReferences(graph: *ModuleSemanticGraph) void {
 
 fn predeclareTypes(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph) !void {
     for (graph.declarations.items, 0..) |*declaration, index| switch (declaration.kind) {
-        .type, .abstract_type => {
+        .type, .contract_type => {
             if (graph.types.items.len >= std.math.maxInt(u32)) return error.ModuleSemanticGraphTooLarge;
             declaration.type_id = @enumFromInt(@as(u32, @intCast(graph.types.items.len)));
             try graph.types.append(allocator, .{ .declared = @enumFromInt(@as(u32, @intCast(index))) });
@@ -326,14 +336,16 @@ fn predeclareTypes(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph) !v
 
 fn buildFunctionInterfaces(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, files: []const FileInput) !void {
     for (graph.declarations.items, 0..) |*declaration, declaration_index| {
-        if (declaration.kind != .function and declaration.kind != .test_function) continue;
         const file_input = files[declaration.module_file_index];
         const declaration_node = declarationSyntaxNode(files, declaration.*) orelse continue;
+        if (declaration.kind != .function and declaration.kind != .test_function and file_input.tree.tag(declaration_node) != .c_function_pointer_declaration) continue;
         const function = if (declaration.kind == .test_function)
             file_input.tree.testDeclaration(declaration_node).?.function
         else
             file_input.tree.functionDeclaration(declaration_node).?;
-        if (function.generic_params.len != 0 or function.generic_params_struct != null) continue;
+        // Inline members use parameterized IR even with no parameters. Their
+        // Args defaults must complete through the selected conformance path.
+        if (function.contract_member or function.generic_params.len != 0 or function.generic_params_struct != null) continue;
         const field_start = graph.fields.items.len;
         if (!try appendFields(allocator, graph, file_input, @intCast(declaration.module_file_index), function.input) or
             !try appendFields(allocator, graph, file_input, @intCast(declaration.module_file_index), function.output))
@@ -359,7 +371,7 @@ fn buildStructDefinitions(allocator: std.mem.Allocator, graph: *ModuleSemanticGr
         const input = files[declaration.module_file_index];
         const declaration_node = declarationSyntaxNode(files, declaration.*) orelse continue;
         const type_declaration = switch (input.tree.tag(declaration_node)) {
-            .type_declaration => input.tree.typeDeclaration(declaration_node).?,
+            .type_declaration, .c_struct_declaration => input.tree.typeDeclaration(declaration_node).?,
             .c_union_declaration => blk: {
                 const value = input.tree.cUnionDeclaration(declaration_node).?;
                 break :blk syn.TypeDeclaration{ .name_token = value.name_token, .generic_params = value.generic_params, .generic_params_struct = value.generic_params_struct, .value = value.value };
@@ -382,7 +394,7 @@ fn buildChoiceDefinitions(allocator: std.mem.Allocator, graph: *ModuleSemanticGr
         const input = files[declaration.module_file_index];
         const declaration_node = declarationSyntaxNode(files, declaration.*) orelse continue;
         const generic_params, const generic_params_struct, const value = switch (input.tree.tag(declaration_node)) {
-            .type_declaration => blk: {
+            .type_declaration, .c_struct_declaration => blk: {
                 const item = input.tree.typeDeclaration(declaration_node).?;
                 break :blk .{ item.generic_params, item.generic_params_struct, item.value };
             },
@@ -409,6 +421,7 @@ fn buildChoiceDefinitions(allocator: std.mem.Allocator, graph: *ModuleSemanticGr
             else
                 null;
             try graph.choice_variant_entries.append(allocator, .{
+                .value = variant.value,
                 .name = try graph.addString(allocator, input.tree.tokenTextFromSource(input.source, variant.name_token)),
                 .qualifier = if (variant.module_qualifier) |qualifier| try graph.addString(allocator, input.tree.tokenTextFromSource(input.source, qualifier)) else null,
                 .payload_type = payload_type,
@@ -448,7 +461,7 @@ fn lowerType(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, tree: *c
         .name => |name| blk: {
             if (name.qualifier_token != null) break :blk null;
             const spelling = tree.tokenTextFromSource(source, name.name_token);
-            if (builtinFromName(spelling)) |builtin| break :blk try appendType(allocator, graph, .{ .builtin = builtin });
+            if (builtinFromName(graph, spelling)) |builtin| break :blk try appendType(allocator, graph, .{ .builtin = builtin });
             const reference = findTypeReference(graph, module_file_index, tree.tokenLocation(name.name_token).offset) orelse break :blk null;
             break :blk switch (reference.resolution) {
                 .builtin => |builtin| try appendType(allocator, graph, .{ .builtin = builtin }),
@@ -473,6 +486,7 @@ fn lowerType(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, tree: *c
             const child = try lowerType(allocator, graph, tree, source, module_file_index, child_node) orelse break :blk null;
             break :blk try appendType(allocator, graph, .{ .inferred_errable = child });
         },
+        .projection => null,
         .struct_literal => |literal| try lowerStructuralType(allocator, graph, tree, source, module_file_index, literal),
         .choice_literal => |literal| try lowerStructuralChoiceType(allocator, graph, tree, source, module_file_index, literal),
         .generic => |generic| try lowerGenericType(allocator, graph, tree, source, module_file_index, generic),
@@ -498,7 +512,7 @@ fn lowerGenericType(
         var has_reasons = false;
         for (literal.fields) |field_node| {
             const field = tree.structTypeField(field_node) orelse return null;
-            const name = tree.tokenTextFromSource(source, field.name_token);
+            const name = type_arguments.name(tree, source, field, base_name);
             if (std.mem.eql(u8, name, "t")) {
                 if (result_node != null or field.type_node == null) return null;
                 result_node = field.type_node;
@@ -533,7 +547,7 @@ fn lowerGenericType(
         const type_node = field.type_node orelse break;
         const ty = try lowerType(allocator, graph, tree, source, module_file_index, type_node) orelse break;
         try arguments.append(allocator, .{
-            .name = try graph.addString(allocator, tree.tokenTextFromSource(source, field.name_token)),
+            .name = try graph.addString(allocator, type_arguments.name(tree, source, field, base_name)),
             .ty = ty,
         });
     } else {
@@ -566,7 +580,7 @@ fn lowerChoiceUnion(
         const field = tree.structTypeField(field_node) orelse return null;
         if (field.default_value != null) return null;
         const type_node = field.type_node orelse return null;
-        const name = tree.tokenTextFromSource(source, field.name_token);
+        const name = type_arguments.name(tree, source, field, "choice_union");
         if (std.mem.eql(u8, name, "a")) {
             if (left_node != null) return null;
             left_node = type_node;
@@ -629,7 +643,7 @@ fn lowerArrayGeneric(
     var element_node: ?syn.NodeIndex = null;
     for (literal.fields) |field_node| {
         const field = tree.structTypeField(field_node) orelse return null;
-        const name = tree.tokenTextFromSource(source, field.name_token);
+        const name = type_arguments.name(tree, source, field, "Array");
         if (std.mem.eql(u8, name, "n")) {
             if (length != null or field.type_node != null) return null;
             const value = field.default_value orelse return null;
@@ -760,9 +774,8 @@ fn findTypeReference(graph: *const ModuleSemanticGraph, module_file_index: u32, 
     return null;
 }
 
-fn builtinFromName(name: []const u8) ?BuiltinType {
-    inline for (@typeInfo(BuiltinType).@"enum".fields) |field| if (std.mem.eql(u8, name, field.name)) return @enumFromInt(field.value);
-    return null;
+fn builtinFromName(graph: *const ModuleSemanticGraph, name: []const u8) ?BuiltinType {
+    return primitives.builtinTypeNamedForTarget(name, graph.target.stdTarget());
 }
 
 fn discoverFile(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, input: FileInput, module_file_index: u32) !void {
@@ -774,8 +787,8 @@ fn discoverFile(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, input
                 const value = tree.symbolDeclaration(node).?.value;
                 break :blk if (value != null and tree.tag(value.?) == .import_statement) .import_alias else .binding;
             },
-            .abstract_declaration => .abstract_type,
-            .type_declaration, .c_enum_declaration, .c_union_declaration => .type,
+            .contract_declaration => .contract_type,
+            .type_declaration, .c_struct_declaration, .c_incomplete_declaration, .c_enum_declaration, .c_union_declaration, .c_function_pointer_declaration => .type,
             .choice_option_declaration => .choice_option,
             .function_declaration, .function_declaration_once => .function,
             .test_declaration => .test_function,
@@ -809,6 +822,25 @@ fn discoverFile(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, input
             .generic_parameter_count = genericParameterCount(tree, node),
         });
     }
+    for (tree.roots) |root| {
+        const conformance = tree.contractConformance(root) orelse continue;
+        const members = conformance.implementation_members;
+        for (tree.structTypeLiteral(members).?.fields) |field| {
+            const value = tree.structTypeField(field).?.default_value orelse continue;
+            if (tree.functionDeclaration(value) == null) continue;
+            // Implementation bodies have private declaration identities and
+            // never enter a source-visible global operation family.
+            const name = try std.fmt.allocPrint(allocator, "_implement${d}${d}${s}", .{ module_file_index, tree.location(root).offset, tree.tokenTextFromSource(source, tree.mainToken(value)) });
+            defer allocator.free(name);
+            try graph.declarations.append(allocator, .{
+                .kind = .function,
+                .name = try graph.addString(allocator, name),
+                .source_offset = tree.location(value).offset,
+                .module_file_index = module_file_index,
+                .generic_parameter_count = genericParameterCount(tree, value),
+            });
+        }
+    }
     // Syntax-node order permits binary lookup during ModuleSema construction
     // without retaining a dense map for every expression node.
     for (tree.nodes.items(.tag), 0..) |tag, index| {
@@ -830,7 +862,7 @@ fn discoverFile(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, input
 
 fn genericParameterCount(tree: *const syn.FileSyntaxTree, node: syn.NodeIndex) ?u32 {
     const params, const params_struct = switch (tree.tag(node)) {
-        .type_declaration => blk: {
+        .type_declaration, .c_struct_declaration, .c_incomplete_declaration => blk: {
             const declaration = tree.typeDeclaration(node).?;
             break :blk .{ declaration.generic_params, declaration.generic_params_struct };
         },

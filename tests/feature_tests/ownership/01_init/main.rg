@@ -3,9 +3,15 @@ Point : Type = (
     .y: Int32,
 )
 
-init(.p: $&Point, .x: Int32, .y: Int32) -> () := {
-    p& = (.x=x, .y=y)
-}
+implement Init#(Point, (.x: Int32, .y: Int32)) (
+    .Result: Type = Point
+    .init = (.args: (.x: Int32, .y: Int32)) -> (.result: Result) {
+        x ::= ~args.x
+        y ::= ~args.y
+
+        result = (.x=x, .y=y)
+    }
+)
 
 initialize_value(.p: $&Point, .x: Int32, .y: Int32) -> () := {
     p& = (.x=x, .y=y)
@@ -13,7 +19,7 @@ initialize_value(.p: $&Point, .x: Int32, .y: Int32) -> () := {
 
 main () -> (.status_code: Int32) := {
     my_point :: Point = (.x=0, .y=0)
-    init(.p = $&my_point, .x = 1, .y = 2)
+    my_point = Point(.x = 1, .y = 2)
     alias ::= &my_point
     initialize_value(.p = $&my_point, .x = 3, .y = 4)
     if alias&.x == 3 and alias&.y == 4 {

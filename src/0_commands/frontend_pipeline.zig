@@ -8,6 +8,7 @@ const tokenizer = @import("../2_tokens/tokenizer.zig");
 const st = @import("../3_syntax/syntax_tree.zig");
 const st_print = @import("../3_syntax/syntax_tree_print.zig");
 const syntaxer = @import("../3_syntax/syntaxer.zig");
+pub const cache = @import("frontend_cache.zig");
 const module_sg = @import("../4_semantics/module/graph.zig");
 const module_semantizer = @import("../4_semantics/module/semantizer.zig");
 const global_sg = @import("../4_semantics/global/graph.zig");
@@ -26,9 +27,12 @@ pub const FrontendPipeline = struct {
     };
 
     pub const Options = struct {
+        target: @import("../1_base/target.zig").Config = .{},
         semantizing: SemantizingOptions = .{},
         collect_stats: bool = false,
+        module_jobs: usize = 1,
         entry_module_dir: ?[]const u8 = null,
+        module_cache: ?*cache.ModuleCache = null,
     };
 
     allocator: std.mem.Allocator,
@@ -39,6 +43,12 @@ pub const FrontendPipeline = struct {
     syntax_files: std.array_list.Managed(st.FileSyntaxTree),
     syntax_root_list: std.array_list.Managed(st.SyntaxRef),
     module_graphs: std.ArrayList(module_sg.ModuleSemanticGraph) = .empty,
+    module_entries: std.ArrayList(*cache.ModuleCache.Entry) = .empty,
+    module_arenas: std.ArrayList(std.heap.ArenaAllocator) = .empty,
+    module_cache_hits: usize = 0,
+    module_cache_misses: usize = 0,
+    tokenizing_ns: u64 = 0,
+    syntaxing_ns: u64 = 0,
     /// Authoritative whole-program semantic artifact. No pointer SemanticGraph
     /// can be materialized by this pipeline anymore.
     global_graph: ?global_sg.GlobalSemanticGraph = null,
@@ -74,6 +84,8 @@ pub const FrontendPipeline = struct {
     pub fn deinit(self: *FrontendPipeline) void {
         self.clearModuleGraphs();
         self.module_graphs.deinit(self.allocator);
+        self.module_entries.deinit(self.allocator);
+        self.module_arenas.deinit(self.allocator);
         for (self.syntax_files.items) |*file| file.deinit(self.allocator);
         self.syntax_files.deinit();
         self.syntax_root_list.deinit();
@@ -87,10 +99,16 @@ pub const FrontendPipeline = struct {
         self.syntax_files.clearRetainingCapacity();
 
         for (files, 0..) |source_file, index| {
+            var error_offset: usize = 0;
+            const selected = @import("../1_base/target_selection.zig").select(self.allocator, source_file.code, self.options.target, &error_offset) catch |err| {
+                try self.diagnostics.add(.{ .file = self.source_db.fileId(index), .offset = @intCast(error_offset) }, .syntax, "invalid target selection: {s}", .{@import("../1_base/target_selection.zig").errorMessage(err)});
+                return err;
+            };
+            defer self.allocator.free(selected);
             var tokenizer_ctx = tokenizer.Tokenizer.init(
                 self.allocator,
                 self.diagnostics,
-                source_file.code,
+                selected,
                 self.source_db.fileId(index),
             );
             defer tokenizer_ctx.deinit();
@@ -158,8 +176,13 @@ pub const FrontendPipeline = struct {
     }
 
     pub fn parseFiles(self: *FrontendPipeline, files: []const sf.SourceFile) ![]const st.SyntaxRef {
+        const start = std.Io.Timestamp.now(self.io, .boot).nanoseconds;
         try self.tokenizeFiles(files);
-        return try self.syntax();
+        const syntax_start = std.Io.Timestamp.now(self.io, .boot).nanoseconds;
+        self.tokenizing_ns = @intCast(syntax_start - start);
+        const roots = try self.syntax();
+        self.syntaxing_ns = @intCast(std.Io.Timestamp.now(self.io, .boot).nanoseconds - syntax_start);
+        return roots;
     }
 
     /// Produce and safety-check the final indexed semantic graph. This is the
@@ -194,6 +217,13 @@ pub const FrontendPipeline = struct {
         const target = self.options.semantizing.selected_test_name orelse "main";
         var found = false;
         var takes_system = false;
+        var returns_status = false;
+        // Bootstrap reporting only when requested. Creating FFI/terminal
+        // owners in otherwise pure entries changes once and capability checks.
+        var needs_reporting = self.options.semantizing.selected_test_name != null;
+        for (self.syntax_files.items) |*file| for (file.tokens.items(.content)) |content| {
+            if (content == .triple_bang) needs_reporting = true;
+        };
         for (self.syntax_files.items) |*file| {
             const source = self.source_db.get(file.file_id);
             if (!std.mem.eql(u8, std.fs.path.dirname(source.path) orelse ".", dir)) continue;
@@ -202,6 +232,17 @@ pub const FrontendPipeline = struct {
                 const name = file.tokenText(self.source_db, function.name_token);
                 if (std.mem.eql(u8, name, target)) {
                     found = true;
+                    if (self.options.semantizing.selected_test_name == null) {
+                        const output = file.structTypeLiteral(function.output) orelse return error.InvalidMainOutput;
+                        if (output.fields.len == 1) {
+                            const field = file.structTypeField(output.fields[0]).?;
+                            returns_status = std.mem.eql(u8, file.tokenText(self.source_db, field.name_token), "status_code");
+                        }
+                        if (output.fields.len != 0 and !returns_status) {
+                            try self.diagnostics.add(file.location(root), .semantic, "main must return no values or (.status_code: Int32)", .{});
+                            return error.Reported;
+                        }
+                    }
                     if (file.structTypeLiteral(function.input)) |input| {
                         for (input.fields) |field_node| {
                             const field = file.structTypeField(field_node) orelse continue;
@@ -220,11 +261,41 @@ pub const FrontendPipeline = struct {
         const output = if (is_test) "!()" else "(.status_code: Int32 = 0)";
         const result = if (is_test) "result" else "status_code";
         const template = if (takes_system) @embedFile("program_entry.rg") else @embedFile("plain_entry.rg");
+        const tracer = if (needs_reporting)
+            "trace_buffer :: [4096]UInt8 = zeroed#(.t: [4096]UInt8)()\n" ++
+                "    tracer_storage ::= FixedSizeErrorTracer(.buffer = view($&trace_buffer))\n" ++
+                "    tracer_virtual ::= to_virtual#(.contract: ErrorTracer)(.value = $&tracer_storage)\n" ++
+                "    assume error_tracer ::= $&tracer_virtual"
+        else
+            "assume error_tracer ::= $&noop_error_tracer";
+        const call_args = if (takes_system) ".system = system" else "";
+        // Test diagnostics must finish while the entry's tracer and terminal
+        // are alive. Replace the reported trace with a program-lifetime noop
+        // trace before returning the unchanged reason to the C status wrapper.
+        const call = if (is_test)
+            try std.fmt.allocPrint(self.allocator, "test_result := {s}({s})\n" ++
+                "    match test_result {{\n" ++
+                "        ..ok _ {{}}\n" ++
+                "        ..error $&error {{\n" ++
+                "            assume error_tracer ::= $&noop_error_tracer\n" ++
+                "            report_trace(.tracer = error&.tracer, .writer = $&terminal&.stderr)\n" ++
+                "            error&.tracer = $&noop_error_tracer\n" ++
+                "        }}\n" ++
+                "    }}\n" ++
+                "    result = ~test_result", .{ target, call_args })
+        else if (returns_status)
+            try std.fmt.allocPrint(self.allocator, "{s} = {s}({s})", .{ result, target, call_args })
+        else
+            try std.fmt.allocPrint(self.allocator, "__main_result ::= {s}({s})", .{ target, call_args });
+        defer self.allocator.free(call);
         const with_output = try std.mem.replaceOwned(u8, self.allocator, template, "__ARGI_OUTPUT__", output);
         defer self.allocator.free(with_output);
-        const with_result = try std.mem.replaceOwned(u8, self.allocator, with_output, "__ARGI_RESULT__", result);
-        defer self.allocator.free(with_result);
-        self.entry_source = try std.mem.replaceOwned(u8, self.allocator, with_result, "__ARGI_TARGET__", target);
+        const with_tracer = try std.mem.replaceOwned(u8, self.allocator, with_output, "__ARGI_TRACER_SETUP__", tracer);
+        defer self.allocator.free(with_tracer);
+        const report_setup = if (!needs_reporting) "" else if (takes_system) "assume writer ::= $&terminal&.stderr" else "ffi_storage ::= ForeignFunctionInterface()\n    assume ffi ::= $&ffi_storage\n    terminal_storage ::= Terminal()\n    assume writer ::= $&terminal_storage.stderr";
+        const with_report = try std.mem.replaceOwned(u8, self.allocator, with_tracer, "__ARGI_REPORT_SETUP__", report_setup);
+        defer self.allocator.free(with_report);
+        self.entry_source = try std.mem.replaceOwned(u8, self.allocator, with_report, "__ARGI_CALL__", call);
         self.entry_path = try std.fs.path.join(self.allocator, &.{ dir, "<program-entry>" });
         self.entry_file = try self.diagnostics.appendSource(.{ .path = self.entry_path.?, .code = self.entry_source.? });
         var tokens = tokenizer.Tokenizer.init(self.allocator, self.diagnostics, self.entry_source.?, self.entry_file.?);
@@ -287,10 +358,13 @@ pub const FrontendPipeline = struct {
         self.clearModuleGraphs();
         errdefer self.clearModuleGraphs();
         self.module_lowered_functions = 0;
+        self.module_cache_hits = 0;
+        self.module_cache_misses = 0;
 
         const ModuleInputs = struct {
             dir: []const u8,
             files: std.ArrayList(module_sg.FileInput) = .empty,
+            source_fingerprint: cache.Fingerprint = @splat(0),
         };
         var groups: std.ArrayList(ModuleInputs) = .empty;
         defer {
@@ -312,124 +386,111 @@ pub const FrontendPipeline = struct {
             try groups.items[group_index.?].files.append(self.allocator, .{
                 .path = source.path,
                 .tree = file,
+                .diagnostics = self.diagnostics,
                 .source = source.source,
                 .is_bundled_core = source.origin == .bundled_core,
                 .is_entry = file.file_id == self.entry_file,
             });
         }
-        // Discover every module before semantic finishing. This exposes the
-        // bundled-core declaration surface early enough to derive the language
-        // prelude without making ordinary ModuleSema depend on arbitrary user
-        // modules.
-        try self.module_graphs.ensureTotalCapacity(self.allocator, groups.items.len);
-        for (groups.items) |group| {
-            var graph = try module_sg.build(self.allocator, group.dir, group.files.items);
-            errdefer graph.deinit(self.allocator);
-            self.module_graphs.appendAssumeCapacity(graph);
-            graph = .{};
-        }
-
-        // Bundled core is compiler semantic configuration: its abstracts are
-        // available as unqualified prelude names. Include this configuration in
-        // the durable ModuleSG build/cache key rather than discovering it by
-        // relowering modules after the fact.
-        var prelude_abstracts: std.ArrayList(module_semantizer.QualifiedAbstract) = .empty;
-        defer {
-            for (prelude_abstracts.items) |candidate| self.allocator.free(candidate.name);
-            prelude_abstracts.deinit(self.allocator);
-        }
-        for (self.module_graphs.items) |*candidate_module| {
-            if (!candidate_module.is_bundled_core) continue;
-            for (candidate_module.declarations.items) |declaration| {
-                if (declaration.kind != .abstract_type) continue;
-                // The source graph is not semantically finished yet; finishing
-                // can grow/reallocate its string pool. Keep the prelude catalog
-                // independent from those mutable buffers.
-                const name = try self.allocator.dupe(u8, candidate_module.text(declaration.name));
-                errdefer self.allocator.free(name);
-                try prelude_abstracts.append(self.allocator, .{
-                    .qualifier = null,
-                    .name = name,
-                });
-            }
-        }
-
-        // Finish each durable module exactly once with the prelude already
-        // known. Cross-user-module declaration kinds remain unresolved here.
-        for (self.module_graphs.items, 0..) |*module, module_index| {
-            const stats = try module_semantizer.finishLinked(
-                self.allocator,
-                module,
-                groups.items[module_index].files.items,
-                prelude_abstracts.items,
-                self.diagnostics,
-            );
-            self.module_lowered_functions += stats.lowered_functions;
-        }
-
-        var module_dirs: std.ArrayList([]const u8) = .empty;
-        defer module_dirs.deinit(self.allocator);
-        for (self.module_graphs.items) |*module| try module_dirs.append(self.allocator, module.module_dir);
-        var linked_graphs: std.ArrayList(module_sg.ModuleSemanticGraph) = .empty;
-        defer {
-            for (linked_graphs.items) |*graph| graph.deinit(self.allocator);
-            linked_graphs.deinit(self.allocator);
-        }
-        var selected_graphs: std.ArrayList(module_sg.ModuleSemanticGraph) = .empty;
-        defer selected_graphs.deinit(self.allocator);
-
-        for (self.module_graphs.items, 0..) |*module, module_index| {
-            // Only imported user/module-qualified abstracts can require a
-            // derivative now; unqualified prelude abstracts were already part
-            // of the one durable finishing pass above.
-            var imported_abstracts: std.ArrayList(module_semantizer.QualifiedAbstract) = .empty;
-            defer imported_abstracts.deinit(self.allocator);
-            for (module.semantic.module_aliases.items) |alias| {
-                const target_index = try module_linker.resolveImportPathFromDirs(
-                    self.allocator,
-                    module_dirs.items,
-                    module_index,
-                    module.text(alias.path),
-                );
-                const qualifier = module.text(module.declaration(alias.declaration).name);
-                const target = &self.module_graphs.items[target_index];
-                for (target.declarations.items) |declaration| {
-                    if (declaration.kind != .abstract_type) continue;
-                    try imported_abstracts.append(self.allocator, .{
-                        .qualifier = qualifier,
-                        .name = target.text(declaration.name),
-                    });
+        var core_hash = cache.ContentHash.init(.{});
+        if (self.options.module_cache != null) {
+            for (groups.items) |*group| {
+                var hash = cache.ContentHash.init(.{});
+                cache.hashBytes(&hash, group.dir);
+                for (group.files.items) |file| hashFile(&hash, file);
+                group.source_fingerprint = cache.finishHash(&hash);
+                if (group.files.items[0].is_bundled_core) {
+                    cache.hashBytes(&core_hash, group.dir);
+                    core_hash.update(&group.source_fingerprint);
                 }
             }
-
-            const needs_linked_graph = module_semantizer.needsLinkedLowering(
-                module,
-                groups.items[module_index].files.items,
-                imported_abstracts.items,
-            );
-            if (needs_linked_graph) {
-                var linked_abstracts: std.ArrayList(module_semantizer.QualifiedAbstract) = .empty;
-                defer linked_abstracts.deinit(self.allocator);
-                try linked_abstracts.appendSlice(self.allocator, prelude_abstracts.items);
-                try linked_abstracts.appendSlice(self.allocator, imported_abstracts.items);
-
-                const linked = try module_semantizer.buildLinked(
-                    self.allocator,
-                    groups.items[module_index].dir,
-                    groups.items[module_index].files.items,
-                    linked_abstracts.items,
-                );
-                try linked_graphs.append(self.allocator, linked.graph);
-                try selected_graphs.append(self.allocator, linked_graphs.items[linked_graphs.items.len - 1]);
-                self.module_lowered_functions += linked.stats.lowered_functions;
-            } else {
-                try selected_graphs.append(self.allocator, module.*);
-            }
         }
+        const core_fingerprint = cache.finishHash(&core_hash);
+        try self.module_graphs.ensureTotalCapacity(self.allocator, groups.items.len);
+        try self.module_entries.ensureTotalCapacity(self.allocator, groups.items.len);
+        try self.module_arenas.ensureTotalCapacity(self.allocator, groups.items.len);
+        const jobs = try self.allocator.alloc(ModuleJob, groups.items.len);
+        defer self.allocator.free(jobs);
+        var initialized: usize = 0;
+        var active_jobs: usize = 0;
+        defer for (jobs[0..initialized]) |*job| job.diagnostics.deinit();
+        // Cache access and leases stay on the coordinator. All task slots and
+        // arenas have stable addresses before any worker can start.
+        for (groups.items, 0..) |group, index| {
+            const arena: *std.heap.ArenaAllocator = if (self.options.module_cache) |session| blk: {
+                const fingerprint = self.moduleFingerprint(group.source_fingerprint, core_fingerprint);
+                const hit = session.acquire(group.dir, fingerprint);
+                const entry = hit orelse try session.create(fingerprint);
+                self.module_entries.appendAssumeCapacity(entry);
+                self.module_graphs.appendAssumeCapacity(entry.graph);
+                if (hit != null) self.module_cache_hits += 1 else self.module_cache_misses += 1;
+                break :blk &entry.arena;
+            } else blk: {
+                self.module_arenas.appendAssumeCapacity(std.heap.ArenaAllocator.init(self.allocator));
+                self.module_graphs.appendAssumeCapacity(.{});
+                break :blk &self.module_arenas.items[index];
+            };
+            const job = &jobs[index];
+            job.* = .{
+                .arena = arena,
+                .original_backing = arena.child_allocator,
+                .needs_run = !self.module_graphs.items[index].semantic.local_semantics_complete,
+                .allocator = arena.allocator(),
+                .graph = &self.module_graphs.items[index],
+                .dir = group.dir,
+                .files = group.files.items,
+                .target = self.options.target,
+                .diagnostics = undefined,
+            };
+            job.diagnostics = diag.Diagnostics.initBorrowed(&job.allocator, self.diagnostics);
+            initialized += 1;
+            active_jobs += @intFromBool(job.needs_run);
+            for (job.files) |*file| file.diagnostics = &job.diagnostics;
+        }
+        const workers = @min(@max(1, self.options.module_jobs), active_jobs);
+        if (workers <= 1) {
+            for (jobs) |*job| job.run();
+        } else {
+            // The caller's allocator may be an arena. Only backing growth is
+            // serialized; each module's allocation state belongs to one task.
+            var backing: @import("locked_allocator.zig").LockedAllocator = .{ .child_allocator = if (self.options.module_cache) |session| session.allocator else self.allocator, .io = self.io };
+            for (jobs) |*job| {
+                if (job.needs_run) job.arena.child_allocator = backing.allocator();
+            }
+            defer {
+                for (jobs) |*job| {
+                    if (job.needs_run) job.arena.child_allocator = job.original_backing;
+                }
+            }
+            var queue: ModuleQueue = .{ .jobs = jobs };
+            var group: std.Io.Group = .init;
+            defer group.cancel(self.io);
+            for (0..workers) |_| group.async(self.io, ModuleQueue.work, .{&queue});
+            try group.await(self.io);
+        }
+        // Publish in source module order, never worker completion order. Copy
+        // diagnostic text into the invocation's storage before task cleanup.
+        var failure: ?anyerror = null;
+        for (jobs, 0..) |*job, index| {
+            for (job.diagnostics.list.items) |message|
+                try self.diagnostics.add(message.loc, message.kind, "{s}", .{message.msg});
+            if (failure == null) failure = job.failure;
+            self.module_lowered_functions += job.stats.lowered_functions;
+            if (self.options.module_cache != null)
+                self.module_entries.items[index].graph = self.module_graphs.items[index];
+        }
+        if (failure) |err| return err;
+
+        // Cached graphs are immutable module-local artifacts.
+        if (!self.diagnostics.hasErrors()) if (self.options.module_cache) |session| {
+            for (self.module_entries.items) |entry| try session.publish(entry);
+        };
+
         self.module_semantizing_ns = @intCast(std.Io.Timestamp.now(self.io, .boot).nanoseconds - module_start);
 
         const global_start = std.Io.Timestamp.now(self.io, .boot).nanoseconds;
-        const result = try global_semantizer.semantizeWithOptions(self.allocator, selected_graphs.items, .{
+        const result = try global_semantizer.semantizeWithOptions(self.allocator, self.module_graphs.items, .{
+            .target = self.options.target,
             .selected_test_name = self.options.semantizing.selected_test_name,
             .exhaustive_function_bodies = self.options.semantizing.exhaustive_function_bodies,
             .diagnostics = self.diagnostics,
@@ -446,12 +507,84 @@ pub const FrontendPipeline = struct {
         self.global_semantic_ns = @intCast(std.Io.Timestamp.now(self.io, .boot).nanoseconds - global_start);
     }
 
+    const ModuleJob = struct {
+        arena: *std.heap.ArenaAllocator,
+        original_backing: std.mem.Allocator,
+        needs_run: bool,
+        allocator: std.mem.Allocator,
+        graph: *module_sg.ModuleSemanticGraph,
+        dir: []const u8,
+        files: []module_sg.FileInput,
+        target: @import("../1_base/target.zig").Config,
+        diagnostics: diag.Diagnostics,
+        stats: module_semantizer.BuildStats = .{},
+        failure: ?anyerror = null,
+
+        fn run(job: *ModuleJob) void {
+            if (job.graph.semantic.local_semantics_complete) return;
+            job.graph.* = module_sg.buildForTarget(job.allocator, job.dir, job.files, job.target) catch |err| {
+                job.failure = err;
+                return;
+            };
+            job.stats = module_semantizer.finish(job.allocator, job.graph, job.files, &job.diagnostics) catch |err| {
+                job.failure = err;
+                return;
+            };
+        }
+    };
+
+    const ModuleQueue = struct {
+        jobs: []ModuleJob,
+        next: std.atomic.Value(usize) = .init(0),
+
+        fn work(queue: *ModuleQueue) void {
+            while (true) {
+                const index = queue.next.fetchAdd(1, .monotonic);
+                if (index >= queue.jobs.len) return;
+                queue.jobs[index].run();
+            }
+        }
+    };
+
+    fn hashFile(hash: *cache.ContentHash, file: module_sg.FileInput) void {
+        cache.hashBytes(hash, file.path);
+        cache.hashBytes(hash, file.source);
+        hash.update(&.{ @intFromBool(file.is_bundled_core), @intFromBool(file.is_entry) });
+    }
+
+    fn moduleFingerprint(self: *const FrontendPipeline, source: cache.Fingerprint, core: cache.Fingerprint) cache.Fingerprint {
+        var hash = cache.ContentHash.init(.{});
+        cache.hashConfiguration(&hash);
+        cache.hashBytes(&hash, @tagName(self.options.target.arch));
+        cache.hashBytes(&hash, @tagName(self.options.target.os));
+        cache.hashBytes(&hash, @tagName(self.options.target.abi));
+        hash.update(&source);
+        hash.update(&core);
+        const options = self.options.semantizing;
+        hash.update(&.{
+            @intFromBool(options.include_tests),              @intFromBool(options.exhaustive_function_bodies),
+            @intFromBool(options.selected_test_name != null), @intFromBool(options.implicit_testing_module_dir != null),
+        });
+        cache.hashBytes(&hash, options.selected_test_name orelse "");
+        cache.hashBytes(&hash, options.implicit_testing_module_dir orelse "");
+        return cache.finishHash(&hash);
+    }
+
     fn clearModuleGraphs(self: *FrontendPipeline) void {
         if (self.safety_ctx) |*ctx| ctx.deinit();
         self.safety_ctx = null;
         if (self.global_graph) |*graph| graph.deinit(self.allocator);
         self.global_graph = null;
-        for (self.module_graphs.items) |*graph| graph.deinit(self.allocator);
+        if (self.options.module_cache != null) {
+            for (self.module_entries.items) |entry| entry.release();
+            self.module_entries.clearRetainingCapacity();
+        } else {
+            for (self.module_graphs.items, self.module_arenas.items) |*graph, *arena| {
+                graph.deinit(arena.allocator());
+                arena.deinit();
+            }
+            self.module_arenas.clearRetainingCapacity();
+        }
         self.module_graphs.clearRetainingCapacity();
     }
 

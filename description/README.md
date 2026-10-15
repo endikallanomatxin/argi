@@ -28,10 +28,18 @@ For a first pass, read [Syntax overview](00_syntax_overview.md),
 - **Polymorphism:** [Overview](130_polymorphism.md),
   [Multiple dispatch](131_multiple_dispatch.md),
   [Compile-time parameters](132_generics.md),
-  [Abstract types](133_abstract_types.md), and
-  [Virtual types](134_virtual_types.md).
+  [Contract capabilities](133_abstract_types.md),
+  [Virtual types](134_virtual_types.md), and
+  [Contracts and conformance](135_contracts.md).
 - **Collections:** [Lists](161_lists.md), [Strings](162_strings.md), and
   [Other collections](169_other_collections.md).
+- **Numeric utilities:** [Deterministic randomness](163_randomness.md) and
+  [Duration and clocks](164_time.md).
+- **Binary data and I/O:** [Binary views and cursors](170_binary.md),
+  [Streams](171_streams.md), and [Filesystem operations](172_filesystem.md).
+- **Native tools:** [Processes](165_processes.md) and
+  [Semantic versions](166_semver.md),
+  [Python embedding](167_python.md), and [Networking](168_networking.md).
 - **Integration and tooling:** [Modules](02_modules.md),
   [C interoperability](20_c.md), [Testing](72_testing.md),
   [Documentation comments](73_documentation.md), and [System](80_system.md).

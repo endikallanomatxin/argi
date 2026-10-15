@@ -1,409 +1,114 @@
---
--- Baseline text formatting helpers.
---
--- v1 intentionally keeps formatting small and explicit:
--- it covers borrowed/owned text, booleans, and decimal integers.
--- Rich interpolation or printf-style formatting can be layered on top later.
--- The baseline intentionally sticks to the fixed-width integer overloads that
--- are exercised today. Reintroducing IntNative/UIntNative formatting should
--- wait until widening/conversion rules are explicit again instead of relying
--- on ad-hoc casts inside formatting helpers.
---
+-- Decimal integer encoding is shared with writer formatting.
 
-decimal_digit_byte(
-    .digit: UInt64,
-) -> (.byte: UInt8) := {
-    if digit == 0 { byte = 48 return }
-    if digit == 1 { byte = 49 return }
-    if digit == 2 { byte = 50 return }
-    if digit == 3 { byte = 51 return }
-    if digit == 4 { byte = 52 return }
-    if digit == 5 { byte = 53 return }
-    if digit == 6 { byte = 54 return }
-    if digit == 7 { byte = 55 return }
-    if digit == 8 { byte = 56 return }
-    byte = 57
+decimal_digit_byte#(.t: Type: Int) := (.digit: t) -> (.byte: UInt8) {
+    byte = _decimal_digit#(.t: t)(.digit = digit).byte
 }
 
-decimal_digit_byte_u32(
-    .digit: UInt32,
-) -> (.byte: UInt8) := {
-    if digit == 0 { byte = 48 return }
-    if digit == 1 { byte = 49 return }
-    if digit == 2 { byte = 50 return }
-    if digit == 3 { byte = 51 return }
-    if digit == 4 { byte = 52 return }
-    if digit == 5 { byte = 53 return }
-    if digit == 6 { byte = 54 return }
-    if digit == 7 { byte = 55 return }
-    if digit == 8 { byte = 56 return }
-    byte = 57
+decimal_digit_byte_u32(.digit: UInt32) -> (.byte: UInt8) := {
+    byte = _decimal_digit#(.t: UInt32)(.digit = digit).byte
 }
 
-decimal_digit_byte(
-    .digit: Int64,
-) -> (.byte: UInt8) := {
-    if digit == 0 { byte = 48 return }
-    if digit == 1 { byte = 49 return }
-    if digit == 2 { byte = 50 return }
-    if digit == 3 { byte = 51 return }
-    if digit == 4 { byte = 52 return }
-    if digit == 5 { byte = 53 return }
-    if digit == 6 { byte = 54 return }
-    if digit == 7 { byte = 55 return }
-    if digit == 8 { byte = 56 return }
-    byte = 57
+decimal_digit_byte_i32(.digit: Int32) -> (.byte: UInt8) := {
+    byte = _decimal_digit#(.t: Int32)(.digit = digit).byte
 }
 
-decimal_digit_byte_i32(
-    .digit: Int32,
-) -> (.byte: UInt8) := {
-    if digit == 0 { byte = 48 return }
-    if digit == 1 { byte = 49 return }
-    if digit == 2 { byte = 50 return }
-    if digit == 3 { byte = 51 return }
-    if digit == 4 { byte = 52 return }
-    if digit == 5 { byte = 53 return }
-    if digit == 6 { byte = 54 return }
-    if digit == 7 { byte = 55 return }
-    if digit == 8 { byte = 56 return }
-    byte = 57
+format_unsigned_decimal_into_u64#(.AllocatorType: Type: Allocator#(AllocatorType))(
+    .out: $&String, .value: UInt64, .allocator: $&AllocatorType
+) -> (.result: Errable#(Void, (..out_of_memory))) := {
+    result = format_into(.out = out, .value = value, .allocator = allocator)
 }
 
-format_unsigned_decimal_into_u64(
-    .out: $&String,
-    .value: UInt64,
-    .allocator: $&Allocator,
-) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+format_unsigned_decimal_into_u32#(.AllocatorType: Type: Allocator#(AllocatorType))(
+    .out: $&String, .value: UInt32, .allocator: $&AllocatorType
+) -> (.result: Errable#(Void, (..out_of_memory))) := {
+    result = format_into(.out = out, .value = value, .allocator = allocator)
+}
+
+format_signed_decimal_into_i64#(.AllocatorType: Type: Allocator#(AllocatorType))(
+    .out: $&String, .value: Int64, .allocator: $&AllocatorType
+) -> (.result: Errable#(Void, (..out_of_memory))) := {
+    result = format_into(.out = out, .value = value, .allocator = allocator)
+}
+
+format_signed_decimal_into_i32#(.AllocatorType: Type: Allocator#(AllocatorType))(
+    .out: $&String, .value: Int32, .allocator: $&AllocatorType
+) -> (.result: Errable#(Void, (..out_of_memory))) := {
+    result = format_into(.out = out, .value = value, .allocator = allocator)
+}
+
+_format_text_into#(.Provider: Type: Allocator)(
+    .out: $&String, .value: StringView, .allocator: $&Provider
+) -> (.result: Errable#(Void, (..out_of_memory))) := {
     assume allocator
 
-    if value == 0 {
-        result = push_byte(.self = out, .byte = 48, .allocator = allocator)
-        return
-    }
-
-    reversed ::= string_with_capacity(.allocator = allocator, .capacity = 32)!
-    current :: UInt64 = value
-
-    while current > 0 {
-        digit ::= current % 10
-        push_byte(.self = $&reversed, .byte = decimal_digit_byte(.digit = digit).byte, .allocator = allocator)!
-        current = current / 10
-    }
-
-    i :: UIntNative = reversed.length
-    while i > 0 {
-        i = i - 1
-        push_byte(.self = out, .byte = bytes_get(.string = &reversed, .index = i).byte, .allocator = allocator)!
-    }
-    result = ..ok Void()
+    result = push_view(out, .view = value)
 }
 
-format_unsigned_decimal_into_u32(
-    .out: $&String,
-    .value: UInt32,
-    .allocator: $&Allocator,
-) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
-    assume allocator
-
-    if value == 0 {
-        result = push_byte(.self = out, .byte = 48, .allocator = allocator)
-        return
-    }
-
-    reversed ::= string_with_capacity(.allocator = allocator, .capacity = 16)!
-    current :: UInt32 = value
-
-    while current > 0 {
-        digit ::= current % 10
-        push_byte(.self = $&reversed, .byte = decimal_digit_byte_u32(.digit = digit).byte, .allocator = allocator)!
-        current = current / 10
-    }
-
-    i :: UIntNative = reversed.length
-    while i > 0 {
-        i = i - 1
-        push_byte(.self = out, .byte = bytes_get(.string = &reversed, .index = i).byte, .allocator = allocator)!
-    }
-    result = ..ok Void()
-}
-
-format_signed_decimal_into_i64(
-    .out: $&String,
-    .value: Int64,
-    .allocator: $&Allocator,
-) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
-    assume allocator
-
-    if value == 0 {
-        result = push_byte(.self = out, .byte = 48, .allocator = allocator)
-        return
-    }
-
-    reversed ::= string_with_capacity(.allocator = allocator, .capacity = 32)!
-    current :: Int64 = value
-
-    if current < 0 {
-        push_byte(.self = out, .byte = 45, .allocator = allocator)!
-    }
-
-    while current != 0 {
-        remainder ::= current % 10
-        if remainder < 0 {
-            remainder = 0 - remainder
-        }
-        push_byte(.self = $&reversed, .byte = decimal_digit_byte(.digit = remainder).byte, .allocator = allocator)!
-        current = current / 10
-    }
-
-    i :: UIntNative = reversed.length
-    while i > 0 {
-        i = i - 1
-        push_byte(.self = out, .byte = bytes_get(.string = &reversed, .index = i).byte, .allocator = allocator)!
-    }
-    result = ..ok Void()
-}
-
-format_signed_decimal_into_i32(
-    .out: $&String,
-    .value: Int32,
-    .allocator: $&Allocator,
-) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
-    assume allocator
-
-    if value == 0 {
-        result = push_byte(.self = out, .byte = 48, .allocator = allocator)
-        return
-    }
-
-    reversed ::= string_with_capacity(.allocator = allocator, .capacity = 16)!
-    current :: Int32 = value
-
-    if current < 0 {
-        push_byte(.self = out, .byte = 45, .allocator = allocator)!
-    }
-
-    while current != 0 {
-        remainder ::= current % 10
-        if remainder < 0 {
-            remainder = 0 - remainder
-        }
-        push_byte(.self = $&reversed, .byte = decimal_digit_byte_i32(.digit = remainder).byte, .allocator = allocator)!
-        current = current / 10
-    }
-
-    i :: UIntNative = reversed.length
-    while i > 0 {
-        i = i - 1
-        push_byte(.self = out, .byte = bytes_get(.string = &reversed, .index = i).byte, .allocator = allocator)!
-    }
-    result = ..ok Void()
-}
-
-format_into(
-    .out: $&String,
-    .value: StringView,
-    .allocator: $&Allocator,
-) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
-    assume allocator
-
-    result = push_view(.self = out, .view = value, .allocator = allocator)
-}
-
-format_into(
-    .out: $&String,
-    .value: Bool,
-    .allocator: $&Allocator,
-) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+_format_bool_into#(.Provider: Type: Allocator)(
+    .out: $&String, .value: Bool, .allocator: $&Provider
+) -> (.result: Errable#(Void, (..out_of_memory))) := {
     assume allocator
 
     if value {
-        result = push_c_string(.self = out, .text = "true", .allocator = allocator)
+        result = push_c_string(out, .text = "true")
     } else {
-        result = push_c_string(.self = out, .text = "false", .allocator = allocator)
+        result = push_c_string(out, .text = "false")
     }
 }
 
-format_into(
-    .out: $&String,
-    .value: UInt64,
-    .allocator: $&Allocator,
-) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+_format_text_owned#(.Provider: Type: Allocator)(.value: StringView, .allocator: $&Provider) -> (
+    .result : Errable#(String, (..out_of_memory))
+) := {
     assume allocator
 
-    result = format_unsigned_decimal_into_u64(.out = out, .value = value, .allocator = allocator)
+    out ::= string_with_capacity(.capacity = value.length)!
+    push_view($&out, .view = value)!
+
+    result = ..ok ~out
 }
 
-format_into(
-    .out: $&String,
-    .value: UInt32,
-    .allocator: $&Allocator,
-) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+_format_bool_owned#(.Provider: Type: Allocator)(.value: Bool, .allocator: $&Provider) -> (
+    .result : Errable#(String, (..out_of_memory))
+) := {
     assume allocator
 
-    result = format_unsigned_decimal_into_u32(.out = out, .value = value, .allocator = allocator)
+    out ::= string_with_capacity(.capacity = 5)!
+    format_into(.out = $&out, .value = value)!
+
+    result = ..ok ~out
 }
 
-format_into(
-    .out: $&String,
-    .value: Int64,
-    .allocator: $&Allocator,
-) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
-    assume allocator
+_format_integer_into#(.t: Type: Int, .Provider: Type: Allocator)(
+    .out: $&String, .value: t, .allocator: $&Provider
+) -> (.result: Errable#(Void, (..out_of_memory))) := {
+    encoded ::= _decimal_encode#(.t: t)(.value = value)
 
-    result = format_signed_decimal_into_i64(.out = out, .value = value, .allocator = allocator)
+    result = push_view(out, .view = _decimal_view(&encoded).view, .allocator = allocator)
 }
 
-format_into(
-    .out: $&String,
-    .value: Int32,
-    .allocator: $&Allocator,
-) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+_format_integer_owned#(.t: Type: Int, .Provider: Type: Allocator)(
+    .value: t, .allocator: $&Provider
+) -> (.result: Errable#(String, (..out_of_memory))) := {
     assume allocator
+    encoded ::= _decimal_encode#(.t: t)(.value = value)
+    view ::= _decimal_view(&encoded).view
 
-    result = format_signed_decimal_into_i32(.out = out, .value = value, .allocator = allocator)
+    result = format(.value = view, .allocator = allocator)
 }
 
-format(
-    .value: StringView,
-    .allocator: $&Allocator,
-) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
-    assume allocator
+_format_float_into#(.t: Type: Float, .Provider: Type: Allocator)(
+    .out: $&String, .value: t, .allocator: $&Provider
+) -> (.result: Errable#(Void, (..out_of_memory))) := {
+    encoded ::= _float_encode(.value = value)
 
-    create_result ::= string_with_capacity(.allocator = allocator, .capacity = value.length)
-    match create_result {
-        ..ok ~ view_output_payload {
-            out ::= ~view_output_payload
-            pushed ::= push_view(.self = $&out, .view = value, .allocator = allocator)
-            if is(.value = pushed, .variant = ..error) {
-                deinit(.self = $&out, .allocator = allocator)
-                result = ..error(.reason = ..out_of_memory)
-                return
-            }
-            result = ..ok ~out
-        }
-        ..error _ {
-            result = ..error(.reason = ..out_of_memory)
-        }
-    }
+    result = push_view(out, .view = _float_text_view(&encoded).view, .allocator = allocator)
 }
 
-format(
-    .value: Bool,
-    .allocator: $&Allocator,
-) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
+_format_float_owned#(.t: Type: Float, .Provider: Type: Allocator)(
+    .value: t, .allocator: $&Provider
+) -> (.result: Errable#(String, (..out_of_memory))) := {
     assume allocator
+    encoded ::= _float_encode(.value = value)
 
-    create_result ::= string_with_capacity(.allocator = allocator, .capacity = 5)
-    match create_result {
-        ..ok ~ bool_output_payload {
-            out ::= ~bool_output_payload
-            pushed ::= format_into(.out = $&out, .value = value, .allocator = allocator)
-            if is(.value = pushed, .variant = ..error) {
-                deinit(.self = $&out, .allocator = allocator)
-                result = ..error(.reason = ..out_of_memory)
-                return
-            }
-            result = ..ok ~out
-        }
-        ..error _ {
-            result = ..error(.reason = ..out_of_memory)
-        }
-    }
-}
-
-format(
-    .value: UInt64,
-    .allocator: $&Allocator,
-) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
-    assume allocator
-
-    create_result ::= string_with_capacity(.allocator = allocator, .capacity = 32)
-    match create_result {
-        ..ok ~ u64_output_payload {
-            out ::= ~u64_output_payload
-            pushed ::= format_into(.out = $&out, .value = value, .allocator = allocator)
-            if is(.value = pushed, .variant = ..error) {
-                deinit(.self = $&out, .allocator = allocator)
-                result = ..error(.reason = ..out_of_memory)
-                return
-            }
-            result = ..ok ~out
-        }
-        ..error _ {
-            result = ..error(.reason = ..out_of_memory)
-        }
-    }
-}
-
-format(
-    .value: UInt32,
-    .allocator: $&Allocator,
-) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
-    assume allocator
-
-    create_result ::= string_with_capacity(.allocator = allocator, .capacity = 16)
-    match create_result {
-        ..ok ~ u32_output_payload {
-            out ::= ~u32_output_payload
-            pushed ::= format_into(.out = $&out, .value = value, .allocator = allocator)
-            if is(.value = pushed, .variant = ..error) {
-                deinit(.self = $&out, .allocator = allocator)
-                result = ..error(.reason = ..out_of_memory)
-                return
-            }
-            result = ..ok ~out
-        }
-        ..error _ {
-            result = ..error(.reason = ..out_of_memory)
-        }
-    }
-}
-
-format(
-    .value: Int64,
-    .allocator: $&Allocator,
-) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
-    assume allocator
-
-    create_result ::= string_with_capacity(.allocator = allocator, .capacity = 32)
-    match create_result {
-        ..ok ~ i64_output_payload {
-            out ::= ~i64_output_payload
-            pushed ::= format_into(.out = $&out, .value = value, .allocator = allocator)
-            if is(.value = pushed, .variant = ..error) {
-                deinit(.self = $&out, .allocator = allocator)
-                result = ..error(.reason = ..out_of_memory)
-                return
-            }
-            result = ..ok ~out
-        }
-        ..error _ {
-            result = ..error(.reason = ..out_of_memory)
-        }
-    }
-}
-
-format(
-    .value: Int32,
-    .allocator: $&Allocator,
-) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
-    assume allocator
-
-    create_result ::= string_with_capacity(.allocator = allocator, .capacity = 16)
-    match create_result {
-        ..ok ~ i32_output_payload {
-            out ::= ~i32_output_payload
-            pushed ::= format_into(.out = $&out, .value = value, .allocator = allocator)
-            if is(.value = pushed, .variant = ..error) {
-                deinit(.self = $&out, .allocator = allocator)
-                result = ..error(.reason = ..out_of_memory)
-                return
-            }
-            result = ..ok ~out
-        }
-        ..error _ {
-            result = ..error(.reason = ..out_of_memory)
-        }
-    }
+    result = format(.value = _float_text_view(&encoded).view, .allocator = allocator)
 }

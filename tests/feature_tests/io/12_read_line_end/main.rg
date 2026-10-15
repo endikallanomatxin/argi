@@ -1,12 +1,16 @@
-DummyInput : Type = (
-    .done: Bool = false
+DummyInput: Type = (
+    .done : Bool = false
 )
 
-read_byte(.self: $&DummyInput) -> (.result: Errable#(.t: ReadByte, .reasons: (..stream_read_failed))) := {
-    result = ..ok ..end
-}
-
-DummyInput implements Reader
+implement Reader#(DummyInput)(
+    .read_byte = (
+            .self : $&DummyInput
+        ) -> (
+            .result : Errable#(.t: ReadByte, .reasons: (..stream_read_failed))
+        ) {
+        result = ..ok ..end
+    }
+)
 
 main(.system: System) -> (.status_code: Int32) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
@@ -22,14 +26,14 @@ main(.system: System) -> (.status_code: Int32) := {
         ..error _ {
             status_code = 1
         }
-        ..ok ~ line_result {
+        ..ok ~line_result {
             match line_result {
                 ..end {
                     status_code = 0
                 }
-                ..ok ~ line_payload {
+                ..ok ~line_payload {
                     line ::= ~line_payload
-                    deinit(.self = $&line, .allocator = $&allocator_storage)
+                    deinit(.self = $&line)
                     status_code = 1
                 }
             }

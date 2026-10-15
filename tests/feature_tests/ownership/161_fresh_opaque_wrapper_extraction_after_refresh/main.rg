@@ -5,8 +5,11 @@ Borrowing : Type = (
 
 external :: UInt8 = 7
 
-deinit(.self: $&Borrowing) -> () := {
-}
+implement Deinit#(Borrowing) (
+    .deinit = (.self: $&Borrowing) -> () {
+
+    }
+)
 
 extract(.slot: $&Borrowing) -> (.result: $&UInt8) := {
     result = slot&.reference
@@ -14,7 +17,7 @@ extract(.slot: $&Borrowing) -> (.result: $&UInt8) := {
 
 main(.system: System) -> (.status_code: Int32) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    first_result ::= allocate(.self = $&allocator_storage, .size = size_of(.type = Borrowing))
+    first_result ::= allocate_bytes(.self = $&allocator_storage, .size = size_of(.type = Borrowing))
     match first_result {
         ..error _ { status_code = 1 }
         ..ok ~ first_payload {
@@ -29,7 +32,7 @@ main(.system: System) -> (.status_code: Int32) := {
             trusted_opaque_drop(.slot = first_slot)
             deinit(.self = $&storage)
 
-            second_result ::= allocate(.self = $&allocator_storage, .size = size_of(.type = Borrowing))
+            second_result ::= allocate_bytes(.self = $&allocator_storage, .size = size_of(.type = Borrowing))
             match second_result {
                 ..error _ { status_code = 2 }
                 ..ok ~ second_payload {

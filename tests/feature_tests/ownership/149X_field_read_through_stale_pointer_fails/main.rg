@@ -2,8 +2,11 @@ Value : Type = (
     .number: UInt8
 )
 
-deinit(.self: $&Value) -> () := {
-}
+implement Deinit#(Value) (
+    .deinit = (.self: $&Value) -> () {
+
+    }
+)
 
 main() -> (.status_code: Int32) := {
     source :: Value = (.number = 7)

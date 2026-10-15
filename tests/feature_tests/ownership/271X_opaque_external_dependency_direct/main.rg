@@ -4,15 +4,17 @@ BorrowingOwner : Type = (
     .borrowed: $&UInt8
 )
 
-deinit(.self: $&BorrowingOwner) -> () := {
-    deinit(.self = $&self&.allocation)
-}
+implement Deinit#(BorrowingOwner) (
+    .deinit = (.self: $&BorrowingOwner) -> () {
+        deinit(.self = $&self&.allocation)
+    }
+)
 
 main(.system: System) -> (.status_code: Int32 = 0) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    external_result ::= allocate(.self = $&allocator_storage, .size = 1)
-    slots_result ::= allocate(.self = $&allocator_storage, .size = size_of(.type = BorrowingOwner))
-    owned_result ::= allocate(.self = $&allocator_storage, .size = 1)
+    external_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
+    slots_result ::= allocate_bytes(.self = $&allocator_storage, .size = size_of(.type = BorrowingOwner))
+    owned_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
     match external_result {
         ..error _ { status_code = 1 }
         ..ok ~ external_payload {
