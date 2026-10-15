@@ -50,18 +50,24 @@ string_view_slice(
     out = _string_view_subrange(view&, .start = start, .count = length).view
 }
 
-implement Init#(Path, (.text : String)) (
-    .Result: Type = Path
-    .init = (.args: (.text : String)) -> (.result: Result) {
-        text ::= ~args.text
+implement Init#(Path, (.text: String)) (
+        .Result : Type = Path
+        .init   = (
+                .args : (.text: String)
+            ) -> (
+                .result : Result
+            ) {
+            text ::= ~args.text
 
-        result = (
-            .text = ~text
-        )
-    }
-)
+            result = (
+                .text = ~text
+            )
+        }
+    )
 
-path_with_view#(.AllocatorType: Type: Allocator#(AllocatorType))(
+path_with_view#(
+        .AllocatorType : Type: Allocator#(AllocatorType)
+    )(
         .view      : StringView,
         .allocator : $&AllocatorType,
     ) -> (
@@ -82,21 +88,21 @@ implement Deinit#(Path) (
 )
 
 implement#(.Provider: Type: Allocator) FalliblyCopyable#(Path, Provider) (
-    .reasons: Type = (..out_of_memory)
-    .copy = (
-            .self      : &Path,
-            .allocator : $&Provider,
-        ) -> (
-            .result : Errable#(Path, (..out_of_memory))
-        ) {
-        assume allocator
+        .reasons : Type = (..out_of_memory)
+        .copy    = (
+                .self      : &Path,
+                .allocator : $&Provider,
+            ) -> (
+                .result : Errable#(Path, (..out_of_memory))
+            ) {
+            assume allocator
 
-        text ::= copy(&self&.text, .allocator = allocator)!
+            text ::= copy(&self&.text, .allocator = allocator)!
 
-        result = ..ok(.text = ~text)
-    }
+            result = ..ok(.text = ~text)
+        }
 
-)
+    )
 
 as_view(
         .self : &Path,
@@ -245,7 +251,9 @@ extension(
     }
 }
 
-join_views#(.AllocatorType: Type: Allocator#(AllocatorType))(
+join_views#(
+        .AllocatorType : Type: Allocator#(AllocatorType)
+    )(
         .left      : &StringView,
         .right     : &StringView,
         .allocator : $&AllocatorType,
@@ -316,7 +324,9 @@ join_views#(.AllocatorType: Type: Allocator#(AllocatorType))(
     }
 }
 
-join#(.AllocatorType: Type: Allocator#(AllocatorType))(
+join#(
+        .AllocatorType : Type: Allocator#(AllocatorType)
+    )(
         .left      : &Path,
         .right     : &Path,
         .allocator : $&AllocatorType,

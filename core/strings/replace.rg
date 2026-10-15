@@ -1,4 +1,6 @@
-replace#(.AllocatorType: Type: Allocator#(AllocatorType))(
+replace#(
+        .AllocatorType : Type: Allocator#(AllocatorType)
+    )(
         .self        : StringView,
         .pattern     : StringView,
         .replacement : StringView,

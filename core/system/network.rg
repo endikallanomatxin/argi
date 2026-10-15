@@ -97,7 +97,11 @@ _network_shutdown(.handle: UIntNative) -> (.status: Int32): CFunction(
 
 Network: Type = (._ffi: $&ForeignFunctionInterface, ._ready: Bool)
 
-once _acquire_network := (.args: (.ffi: $&ForeignFunctionInterface = reach ffi)) -> (.result: Network) {
+once _acquire_network := (
+        .args : (.ffi: $&ForeignFunctionInterface = reach ffi)
+    ) -> (
+        .result : Network
+    ) {
     ffi ::= args.ffi
 
     assume ffi
@@ -106,8 +110,8 @@ once _acquire_network := (.args: (.ffi: $&ForeignFunctionInterface = reach ffi))
 }
 
 implement Init#(Network, (.ffi: $&ForeignFunctionInterface = reach ffi)) (
-    .Result: Type = Network
-    .init = _acquire_network
+    .Result : Type             = Network
+    .init   = _acquire_network
 )
 
 implement Deinit#(Network) (
@@ -234,48 +238,56 @@ implement Init#(
     TcpConnection,
     (
         .address : NetworkAddress,
-        .network : &Network = reach network,
+        .network : &Network        = reach network,
     )
 ) (
-    .Result: Type = Errable#(
+        .Result : Type = Errable#(
             TcpConnection,
             (..invalid_network_argument, ..socket_open_failed, ..out_of_memory)
         )
-    .init = (.args: (
-        .address : NetworkAddress,
-        .network : &Network = reach network,
-    )) -> (.result: Result) {
-        address ::= args.address
-        network ::= args.network
+        .init = (
+                .args : (
+                    .address : NetworkAddress,
+                    .network : &Network        = reach network,
+                )
+            ) -> (
+                .result : Result
+            ) {
+            address ::= args.address
+            network ::= args.network
 
-        assume ffi := network&._ffi
+            assume ffi := network&._ffi
 
-        if address._datagram != false {
-            result = ..error(.reason = ..invalid_network_argument)
-            return
+            if address._datagram != false {
+                result = ..error(.reason = ..invalid_network_argument)
+                return
+            }
+
+            if network&._ready == false {
+                result = ..error(.reason = ..socket_open_failed)
+                return
+            }
+
+            handle :: UIntNative = 0
+            status ::= _network_socket(
+                .address   = &address._native
+                .operation = 0
+                .handle    = $&handle
+            ).status
+
+            if status == -3 {
+                result = ..error(.reason = ..out_of_memory)
+                return
+            }
+
+            if status != 0 {
+                result = ..error(.reason = ..socket_open_failed)
+                return
+            }
+
+            result = ..ok(._network = network, ._handle = handle)
         }
-
-        if network&._ready == false {
-            result = ..error(.reason = ..socket_open_failed)
-            return
-        }
-
-        handle :: UIntNative = 0
-        status ::= _network_socket(.address = &address._native, .operation = 0, .handle = $&handle).status
-
-        if status == -3 {
-            result = ..error(.reason = ..out_of_memory)
-            return
-        }
-
-        if status != 0 {
-            result = ..error(.reason = ..socket_open_failed)
-            return
-        }
-
-        result = ..ok(._network = network, ._handle = handle)
-    }
-)
+    )
 
 _close_TcpConnection(.self: $&TcpConnection) -> (.result: Errable#(Void, (..socket_close_failed))) := {
     assume ffi := self&._network&._ffi
@@ -320,48 +332,56 @@ implement Init#(
     TcpListener,
     (
         .address : NetworkAddress,
-        .network : &Network = reach network,
+        .network : &Network        = reach network,
     )
 ) (
-    .Result: Type = Errable#(
+        .Result : Type = Errable#(
             TcpListener,
             (..invalid_network_argument, ..socket_open_failed, ..out_of_memory)
         )
-    .init = (.args: (
-        .address : NetworkAddress,
-        .network : &Network = reach network,
-    )) -> (.result: Result) {
-        address ::= args.address
-        network ::= args.network
+        .init = (
+                .args : (
+                    .address : NetworkAddress,
+                    .network : &Network        = reach network,
+                )
+            ) -> (
+                .result : Result
+            ) {
+            address ::= args.address
+            network ::= args.network
 
-        assume ffi := network&._ffi
+            assume ffi := network&._ffi
 
-        if address._datagram != false {
-            result = ..error(.reason = ..invalid_network_argument)
-            return
+            if address._datagram != false {
+                result = ..error(.reason = ..invalid_network_argument)
+                return
+            }
+
+            if network&._ready == false {
+                result = ..error(.reason = ..socket_open_failed)
+                return
+            }
+
+            handle :: UIntNative = 0
+            status ::= _network_socket(
+                .address   = &address._native
+                .operation = 1
+                .handle    = $&handle
+            ).status
+
+            if status == -3 {
+                result = ..error(.reason = ..out_of_memory)
+                return
+            }
+
+            if status != 0 {
+                result = ..error(.reason = ..socket_open_failed)
+                return
+            }
+
+            result = ..ok(._network = network, ._handle = handle)
         }
-
-        if network&._ready == false {
-            result = ..error(.reason = ..socket_open_failed)
-            return
-        }
-
-        handle :: UIntNative = 0
-        status ::= _network_socket(.address = &address._native, .operation = 1, .handle = $&handle).status
-
-        if status == -3 {
-            result = ..error(.reason = ..out_of_memory)
-            return
-        }
-
-        if status != 0 {
-            result = ..error(.reason = ..socket_open_failed)
-            return
-        }
-
-        result = ..ok(._network = network, ._handle = handle)
-    }
-)
+    )
 
 _close_TcpListener(.self: $&TcpListener) -> (.result: Errable#(Void, (..socket_close_failed))) := {
     assume ffi := self&._network&._ffi
@@ -406,48 +426,56 @@ implement Init#(
     UdpSocket,
     (
         .address : NetworkAddress,
-        .network : &Network = reach network,
+        .network : &Network        = reach network,
     )
 ) (
-    .Result: Type = Errable#(
+        .Result : Type = Errable#(
             UdpSocket,
             (..invalid_network_argument, ..socket_open_failed, ..out_of_memory)
         )
-    .init = (.args: (
-        .address : NetworkAddress,
-        .network : &Network = reach network,
-    )) -> (.result: Result) {
-        address ::= args.address
-        network ::= args.network
+        .init = (
+                .args : (
+                    .address : NetworkAddress,
+                    .network : &Network        = reach network,
+                )
+            ) -> (
+                .result : Result
+            ) {
+            address ::= args.address
+            network ::= args.network
 
-        assume ffi := network&._ffi
+            assume ffi := network&._ffi
 
-        if address._datagram != true {
-            result = ..error(.reason = ..invalid_network_argument)
-            return
+            if address._datagram != true {
+                result = ..error(.reason = ..invalid_network_argument)
+                return
+            }
+
+            if network&._ready == false {
+                result = ..error(.reason = ..socket_open_failed)
+                return
+            }
+
+            handle :: UIntNative = 0
+            status ::= _network_socket(
+                .address   = &address._native
+                .operation = 2
+                .handle    = $&handle
+            ).status
+
+            if status == -3 {
+                result = ..error(.reason = ..out_of_memory)
+                return
+            }
+
+            if status != 0 {
+                result = ..error(.reason = ..socket_open_failed)
+                return
+            }
+
+            result = ..ok(._network = network, ._handle = handle)
         }
-
-        if network&._ready == false {
-            result = ..error(.reason = ..socket_open_failed)
-            return
-        }
-
-        handle :: UIntNative = 0
-        status ::= _network_socket(.address = &address._native, .operation = 2, .handle = $&handle).status
-
-        if status == -3 {
-            result = ..error(.reason = ..out_of_memory)
-            return
-        }
-
-        if status != 0 {
-            result = ..error(.reason = ..socket_open_failed)
-            return
-        }
-
-        result = ..ok(._network = network, ._handle = handle)
-    }
-)
+    )
 
 _close_UdpSocket(.self: $&UdpSocket) -> (.result: Errable#(Void, (..socket_close_failed))) := {
     assume ffi := self&._network&._ffi
@@ -572,8 +600,8 @@ _read_tcp(
 }
 
 _tcp_write(
-        .self   : $&TcpConnection,
-        .value  : ArrayViewRO#(.t: UInt8)
+        .self  : $&TcpConnection,
+        .value : ArrayViewRO#(.t: UInt8)
     ) -> (
         .result : Errable#(UIntNative, (..socket_write_failed))
     ) := {
@@ -602,7 +630,7 @@ _tcp_write(
 }
 
 implement WriteValue#(TcpConnection, ArrayViewRO#(.t: UInt8)) (
-    .Result: Type = Errable#(UIntNative, (..socket_write_failed))
+    .Result      : Type       = Errable#(UIntNative, (..socket_write_failed))
     .write_value = _tcp_write
 )
 
@@ -651,8 +679,13 @@ send_to(
         .handle = self&._handle
         .bytes  = raw_pointer#(.t: UInt8)(.address = address).raw
         .length = size
-        .peer   = raw_pointer#(.t: _NetworkAddress)(.address = &peer._native | convert#(.to: UIntNative)(_)).raw
-        .sent   = $&sent
+        .peer   = raw_pointer#(.t: _NetworkAddress)(
+            .address = [
+                &peer._native
+                | convert#(.to: UIntNative)(_)
+            ]
+        ).raw
+        .sent = $&sent
     ).status
 
     if status == -2 {
@@ -702,22 +735,21 @@ receive_from(
     result = ..ok(.count = received, .peer = (._native = peer, ._datagram = true))
 }
 
-
-implement Reader#(TcpConnection)(
+implement Reader#(TcpConnection) (
     .read_byte = (
-                .self : $&TcpConnection
-            ) -> (
-                .result : Errable#(ReadByte, (..stream_read_failed))
-            ) {
-            buffer :: [1]UInt8 = (0)
+            .self : $&TcpConnection
+        ) -> (
+            .result : Errable#(ReadByte, (..stream_read_failed))
+        ) {
+        buffer :: [1]UInt8 = (0)
 
-            match read(self, .buffer = view($&buffer)) {
-                ..error _ { result = ..error(.reason = ..stream_read_failed) }
-                ..ok count {
-                    if count == 0 { result = ..ok ..end } else { result = ..ok ..ok buffer[0] }
-                }
+        match read(self, .buffer = view($&buffer)) {
+            ..error _ { result = ..error(.reason = ..stream_read_failed) }
+            ..ok count {
+                if count == 0 { result = ..ok ..end } else { result = ..ok ..ok buffer[0] }
             }
         }
+    }
 )
 
 implement BlockReader#(TcpConnection) (
@@ -748,57 +780,57 @@ implement BlockWriter#(TcpConnection) (
     }
 )
 
-implement Writer#(TcpConnection)(
+implement Writer#(TcpConnection) (
     .write_byte = (
-                .self : $&TcpConnection,
-                .byte : UInt8
-            ) -> (
-                .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-            ) {
-            buffer: [1]UInt8 = (byte)
+            .self : $&TcpConnection,
+            .byte : UInt8
+        ) -> (
+            .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+        ) {
+        buffer: [1]UInt8 = (byte)
 
-            match write_all(self, .buffer = view(&buffer)) {
-                ..error _ { result = ..error(.reason = ..stream_write_failed) }
-                ..ok _ { result = ..ok Void() }
-            }
+        match write_all(self, .buffer = view(&buffer)) {
+            ..error _ { result = ..error(.reason = ..stream_write_failed) }
+            ..ok _ { result = ..ok Void() }
+        }
+    }
+
+    .flush = (
+            .self : $&TcpConnection
+        ) -> (
+            .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+        ) {
+        if self&._handle == 0 {
+            result = ..error(.reason = ..stream_flush_failed)
+            return
         }
 
-        .flush = (
-                .self : $&TcpConnection
-            ) -> (
-                .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-            ) {
-            if self&._handle == 0 {
-                result = ..error(.reason = ..stream_flush_failed)
-                return
-            }
-
-            result = ..ok Void()
-        }
+        result = ..ok Void()
+    }
 )
 
 implement Closeable#(TcpConnection) (
-    .Result: Type = Errable#(Void, (..socket_close_failed))
+    .Result         : Type                 = Errable#(Void, (..socket_close_failed))
     .close_resource = _close_TcpConnection
 )
 
 implement OpenState#(TcpConnection) (.check_open = _is_open_TcpConnection)
 
 implement Closeable#(TcpListener) (
-    .Result: Type = Errable#(Void, (..socket_close_failed))
+    .Result         : Type               = Errable#(Void, (..socket_close_failed))
     .close_resource = _close_TcpListener
 )
 
 implement OpenState#(TcpListener) (.check_open = _is_open_TcpListener)
 
 implement Closeable#(UdpSocket) (
-    .Result: Type = Errable#(Void, (..socket_close_failed))
+    .Result         : Type             = Errable#(Void, (..socket_close_failed))
     .close_resource = _close_UdpSocket
 )
 
 implement OpenState#(UdpSocket) (.check_open = _is_open_UdpSocket)
 
 implement BufferReading#(TcpConnection) (
-    .Result: Type = Errable#(UIntNative, (..socket_read_failed))
-    .read = _read_tcp
+    .Result : Type      = Errable#(UIntNative, (..socket_read_failed))
+    .read   = _read_tcp
 )

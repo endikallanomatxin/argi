@@ -5,7 +5,7 @@ implement ImplicitlyCopyable#(LogLevel) ()
 LogReasons: Type = (..stream_write_failed, ..stream_flush_failed)
 
 Logger#(.Value: Type): Contract = (
-    .log: (.self: $&Value, .level: LogLevel, .message: StringView) -> (
+    .log : (.self: $&Value, .level: LogLevel, .message: StringView) -> (
         .result : Errable#(Void, LogReasons)
     ) where {}
 )
@@ -27,7 +27,9 @@ _prefix(.level: LogLevel) -> (.text: StringView) := {
 -- Records borrow text and require no allocation. Escape line breaks to keep
 -- each record on one line. Writes can fail after a prefix; callers decide
 -- whether logging failures should affect their application. Flush is explicit.
-_write_record#(.WriterType: Type: Writer#(WriterType))(
+_write_record#(
+        .WriterType : Type: Writer#(WriterType)
+    )(
         .writer  : $&WriterType,
         .level   : LogLevel,
         .message : StringView
@@ -53,25 +55,32 @@ _write_record#(.WriterType: Type: Writer#(WriterType))(
 
 FileLogger#(.t: Type: Writer#(t)): Type = (._writer: $&t, .minimum: LogLevel)
 
-implement#(.t: Type: Writer#(t)) Init#(FileLogger#(.t: t), (.writer: $&t, .minimum: LogLevel = ..info)) (
-    .Result: Type = FileLogger#(.t: t)
-    .init = (.args: (.writer: $&t, .minimum: LogLevel = ..info)) -> (.result: Result) { result = (._writer = args.writer, .minimum = args.minimum) }
-)
+implement#(.t: Type: Writer#(t)) Init#(
+    FileLogger#(.t: t),
+    (.writer: $&t, .minimum: LogLevel = ..info)
+) (
+        .Result : Type = FileLogger#(.t: t)
+        .init   = (
+                .args : (.writer: $&t, .minimum: LogLevel = ..info)
+            ) -> (
+                .result : Result
+            ) { result = (._writer = args.writer, .minimum = args.minimum) }
+    )
 
 implement#(
-        .t : Type: Writer#(t)
-    ) Logger#(FileLogger#(.t: t)) (
-    .log = (
-        .self    : $&FileLogger#(.t: t),
-        .level   : LogLevel,
-        .message : StringView
-    ) -> (
-        .result : Errable#(Void, LogReasons) = ..ok Void()
-    ) {
-        if _rank(.level = level).value < _rank(.level = self&.minimum).value { return }
-        _write_record(.writer = self&._writer, .level = level, .message = message)!
-    }
-)
+    .t : Type: Writer#(t)
+) Logger#(FileLogger#(.t: t)) (
+        .log = (
+                .self    : $&FileLogger#(.t: t),
+                .level   : LogLevel,
+                .message : StringView
+            ) -> (
+                .result : Errable#(Void, LogReasons) = ..ok Void()
+            ) {
+            if _rank(.level = level).value < _rank(.level = self&.minimum).value { return }
+            _write_record(.writer = self&._writer, .level = level, .message = message)!
+        }
+    )
 
 flush#(
         .t : Type: Writer#(t)
@@ -87,38 +96,47 @@ StdLogger#(.out: Type: Writer#(out), .err: Type: Writer#(err)): Type = (
     .minimum : LogLevel
 )
 
-implement#(.out: Type: Writer#(out), .err: Type: Writer#(err)) Init#(StdLogger#(.out: out, .err: err), (.writer: $&out, .error_writer: $&err, .minimum: LogLevel = ..info)) (
-    .Result: Type = StdLogger#(.out: out, .err: err)
-    .init = (.args: (.writer: $&out, .error_writer: $&err, .minimum: LogLevel = ..info)) -> (.result: Result) { result = (._out = args.writer, ._err = args.error_writer, .minimum = args.minimum) }
-)
+implement#(.out: Type: Writer#(out), .err: Type: Writer#(err)) Init#(
+    StdLogger#(.out: out, .err: err),
+    (.writer: $&out, .error_writer: $&err, .minimum: LogLevel = ..info)
+) (
+        .Result : Type = StdLogger#(.out: out, .err: err)
+        .init   = (
+                .args : (.writer: $&out, .error_writer: $&err, .minimum: LogLevel = ..info)
+            ) -> (
+                .result : Result
+            ) {
+            result = (._out = args.writer, ._err = args.error_writer, .minimum = args.minimum)
+        }
+    )
 
 implement#(
-        .out : Type: Writer#(out),
-        .err : Type: Writer#(err)
-    ) Logger#(StdLogger#(.out: out, .err: err)) (
-    .log = (
-        .self    : $&StdLogger#(.out: out, .err: err),
-        .level   : LogLevel,
-        .message : StringView
-    ) -> (
-        .result : Errable#(Void, LogReasons) = ..ok Void()
-    ) {
-        if _rank(.level = level).value < _rank(.level = self&.minimum).value { return }
-        if _rank(.level = level).value >= 2 {
-            _write_record(.writer = self&._err, .level = level, .message = message)!
-        } else { _write_record(.writer = self&._out, .level = level, .message = message)! }
-    }
-)
+    .out : Type: Writer#(out),
+    .err : Type: Writer#(err)
+) Logger#(StdLogger#(.out: out, .err: err)) (
+        .log = (
+                .self    : $&StdLogger#(.out: out, .err: err),
+                .level   : LogLevel,
+                .message : StringView
+            ) -> (
+                .result : Errable#(Void, LogReasons) = ..ok Void()
+            ) {
+            if _rank(.level = level).value < _rank(.level = self&.minimum).value { return }
+            if _rank(.level = level).value >= 2 {
+                _write_record(.writer = self&._err, .level = level, .message = message)!
+            } else { _write_record(.writer = self&._out, .level = level, .message = message)! }
+        }
+    )
 
 NullLogger: Type = ()
 
 implement Logger#(NullLogger) (
     .log = (
-        .self    : $&NullLogger,
-        .level   : LogLevel,
-        .message : StringView
-    ) -> (
-        .result : Errable#(Void, LogReasons) = ..ok Void()
-    ) {
+            .self    : $&NullLogger,
+            .level   : LogLevel,
+            .message : StringView
+        ) -> (
+            .result : Errable#(Void, LogReasons) = ..ok Void()
+        ) {
     }
 )

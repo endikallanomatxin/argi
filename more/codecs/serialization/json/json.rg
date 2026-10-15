@@ -383,23 +383,27 @@ JsonCursor: Type = (._text: StringView, ._position: UIntNative)
 implement Init#(
     JsonCursor,
     (
-        .text : StringView,
-        .maximum_depth : UIntNative = 64,
+        .text          : StringView,
+        .maximum_depth : UIntNative  = 64,
     )
 ) (
-    .Result: Type = Errable#(JsonCursor, JsonReasons)
-    .init = (.args: (
-        .text : StringView,
-        .maximum_depth : UIntNative = 64,
-    )) -> (.result: Result) {
-        text ::= args.text
-        maximum_depth ::= args.maximum_depth
+        .Result : Type = Errable#(JsonCursor, JsonReasons)
+        .init   = (
+                .args : (
+                    .text          : StringView,
+                    .maximum_depth : UIntNative  = 64,
+                )
+            ) -> (
+                .result : Result
+            ) {
+            text ::= args.text
+            maximum_depth ::= args.maximum_depth
 
-        validate(.text = text, .maximum_depth = maximum_depth)!
+            validate(.text = text, .maximum_depth = maximum_depth)!
 
-        result = ..ok(._text = text, ._position = 0)
-    }
-)
+            result = ..ok(._text = text, ._position = 0)
+        }
+    )
 
 next(.self: $&JsonCursor) -> (.result: Errable#(?JsonToken, JsonReasons)) := {
     start ::= _space(.text = self&._text, .position = self&._position).next
@@ -434,7 +438,9 @@ next(.self: $&JsonCursor) -> (.result: Errable#(?JsonToken, JsonReasons)) := {
 }
 
 -- Decode exactly one JSON string into independent UTF-8 storage.
-decode_string#(.AllocatorType: Type: Allocator#(AllocatorType))(
+decode_string#(
+        .AllocatorType : Type: Allocator#(AllocatorType)
+    )(
         .text      : StringView,
         .allocator : $&AllocatorType = reach allocator
     ) -> (
@@ -492,7 +498,12 @@ decode_string#(.AllocatorType: Type: Allocator#(AllocatorType))(
                     divisor = 262144
                     prefix = 240
                 }
-                first ::= unwrap_or_abort(.value = [prefix + code / divisor] | convert#(.to: UInt8)(_))
+                first ::= unwrap_or_abort(
+                    .value = [
+                        [prefix + code / divisor]
+                        | convert#(.to: UInt8)(_)
+                    ]
+                )
                 push_byte(.self = $&decoded, .byte = first)!
                 continuation :: UInt32 = 128
                 offset :: UIntNative = 1
@@ -525,7 +536,9 @@ _hex_ascii(.value: UInt8) -> (.byte: UInt8) := {
 }
 
 -- Validate input before writing; native writer failures can leave a prefix.
-write_string#(.WriterType: Type: Writer#(WriterType))(
+write_string#(
+        .WriterType : Type: Writer#(WriterType)
+    )(
         .writer : $&WriterType,
         .text   : StringView
     ) -> (

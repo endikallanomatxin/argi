@@ -3,13 +3,17 @@ Deadline: Type = (._instant: MonotonicInstant)
 implement ImplicitlyCopyable#(Deadline) ()
 
 implement Init#(Deadline, (.at: MonotonicInstant)) (
-    .Result: Type = Deadline
-    .init = (.args: (.at: MonotonicInstant)) -> (.result: Result) {
-        at ::= args.at
+        .Result : Type = Deadline
+        .init   = (
+                .args : (.at: MonotonicInstant)
+            ) -> (
+                .result : Result
+            ) {
+            at ::= args.at
 
-        result = (._instant = at)
-    }
-)
+            result = (._instant = at)
+        }
+    )
 
 deadline_after(
         .after : Duration,

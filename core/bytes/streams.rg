@@ -1,21 +1,21 @@
 -- Memory cursors implement the stream protocols without acquiring capabilities
 -- or storage. They retain the same backing-view lifetime as binary operations.
-implement Reader#(ByteReader)(
+implement Reader#(ByteReader) (
     .read_byte = (
-                .self : $&ByteReader
-            ) -> (
-                .result : Errable#(ReadByte, (..stream_read_failed))
-            ) {
-            if remaining(self).count == 0 {
-                result = ..ok ..end
-                return
-            }
-
-            byte ::= unwrap_or_abort(.value = get_ro_ref(&self&._bytes, .index = self&._position))
-            self&._position = self&._position + 1
-
-            result = ..ok ..ok byte&
+            .self : $&ByteReader
+        ) -> (
+            .result : Errable#(ReadByte, (..stream_read_failed))
+        ) {
+        if remaining(self).count == 0 {
+            result = ..ok ..end
+            return
         }
+
+        byte ::= unwrap_or_abort(.value = get_ro_ref(&self&._bytes, .index = self&._position))
+        self&._position = self&._position + 1
+
+        result = ..ok ..ok byte&
+    }
 )
 
 implement BlockReader#(ByteReader) (
@@ -91,28 +91,28 @@ implement BlockWriter#(ByteWriter) (
     }
 )
 
-implement Writer#(ByteWriter)(
+implement Writer#(ByteWriter) (
     .write_byte = (
-                .self : $&ByteWriter,
-                .byte : UInt8
-            ) -> (
-                .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()
-            ) {
-            if remaining(self).count == 0 {
-                result = ..error(.reason = ..stream_write_failed)
-                return
-            }
-
-            target ::= unwrap_or_abort(
-                .value = get_rw_ref($&self&._bytes, .index = self&._position)
-            )
-            target&= byte
-            self&._position = self&._position + 1
+            .self : $&ByteWriter,
+            .byte : UInt8
+        ) -> (
+            .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()
+        ) {
+        if remaining(self).count == 0 {
+            result = ..error(.reason = ..stream_write_failed)
+            return
         }
 
-        .flush = (
-                .self : $&ByteWriter
-            ) -> (
-                .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()
-            ) {}
+        target ::= unwrap_or_abort(
+            .value = get_rw_ref($&self&._bytes, .index = self&._position)
+        )
+        target&= byte
+        self&._position = self&._position + 1
+    }
+
+    .flush = (
+            .self : $&ByteWriter
+        ) -> (
+            .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()
+        ) {}
 )

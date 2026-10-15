@@ -23,10 +23,6 @@ _next(
         .handle : RawPointer#(.t: _PyObject)
     ): CFunction(.symbol = "_argi_python_next")
 
-
-
-
-
 set_attribute(
         .self  : &Object,
         .name  : StringView,

@@ -20,38 +20,50 @@ split_whitespace(.self: StringView) -> (.iterator: StringWhitespaceIterator) := 
 }
 
 implement Iterable#(StringWhitespaceIterator) (
-    .Item: Type = StringView
-    .IteratorType: Type = StringWhitespaceIterator
+        .Item         : Type = StringView
+        .IteratorType : Type = StringWhitespaceIterator
 
-    .to_iterator = (.value: &StringWhitespaceIterator) -> (.iterator: StringWhitespaceIterator) {
-        iterator = (._text = value&._text, ._start = value&._start)
-    }
-)
+        .to_iterator = (
+                .value : &StringWhitespaceIterator
+            ) -> (
+                .iterator : StringWhitespaceIterator
+            ) {
+            iterator = (._text = value&._text, ._start = value&._start)
+        }
+    )
 
 implement Iterator#(StringWhitespaceIterator) (
-    .Item: Type = StringView
+        .Item : Type = StringView
 
-    .has_next = (.self: &StringWhitespaceIterator) -> (.ok: Bool) {
-        ok = [
-            _whitespace_token_start(.text = self&._text, .start = self&._start).position
-            < self&._text.length
-        ]
-    }
-
-    .next = (.self: $&StringWhitespaceIterator) -> (.value: StringView) {
-        start ::= _whitespace_token_start(.text = self&._text, .start = self&._start).position
-
-        if start == self&._text.length { abort }
-        end ::= start
-
-        while end < self&._text.length {
-            if ascii_is_whitespace(.byte = bytes_get(.view = &self&._text, .index = end).byte).ok {
-                break
-            }
-            end = end + 1
+        .has_next = (
+                .self : &StringWhitespaceIterator
+            ) -> (
+                .ok : Bool
+            ) {
+            ok = [
+                _whitespace_token_start(.text = self&._text, .start = self&._start).position
+                < self&._text.length
+            ]
         }
 
-        value = _string_view_subrange(self&._text, .start = start, .count = end - start).view
-        self&._start = end
-    }
-)
+        .next = (
+                .self : $&StringWhitespaceIterator
+            ) -> (
+                .value : StringView
+            ) {
+            start ::= _whitespace_token_start(.text = self&._text, .start = self&._start).position
+
+            if start == self&._text.length { abort }
+            end ::= start
+
+            while end < self&._text.length {
+                if ascii_is_whitespace(.byte = bytes_get(.view = &self&._text, .index = end).byte).ok {
+                    break
+                }
+                end = end + 1
+            }
+
+            value = _string_view_subrange(self&._text, .start = start, .count = end - start).view
+            self&._start = end
+        }
+    )

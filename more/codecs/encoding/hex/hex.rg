@@ -7,9 +7,11 @@ _digit(.byte: UInt8) -> (.value: UInt8 = 255) := {
 }
 
 -- Lowercase output, with checked capacity. Text and bytes never alias output.
-encode#(.AllocatorType: Type: Allocator#(AllocatorType))(
+encode#(
+        .AllocatorType : Type: Allocator#(AllocatorType)
+    )(
         .bytes     : ArrayViewRO#(.t: UInt8),
-        .allocator : $&AllocatorType              = reach allocator
+        .allocator : $&AllocatorType          = reach allocator
     ) -> (
         .result : Errable#(String, (..out_of_memory, ..out_of_range))
     ) := {
@@ -28,9 +30,9 @@ encode#(.AllocatorType: Type: Allocator#(AllocatorType))(
             .value  = bytes_get(
                 .view  = &alphabet
                 .index = [
-                        byte
-                        / 16
-                    ] | convert#(.to: UIntNative)(_)
+                    byte
+                    / 16
+                ] | convert#(.to: UIntNative)(_)
             ).byte
         )
         bytes_set(
@@ -39,9 +41,9 @@ encode#(.AllocatorType: Type: Allocator#(AllocatorType))(
             .value  = bytes_get(
                 .view  = &alphabet
                 .index = [
-                        byte
-                        % 16
-                    ] | convert#(.to: UIntNative)(_)
+                    byte
+                    % 16
+                ] | convert#(.to: UIntNative)(_)
             ).byte
         )
         index = index + 1
@@ -51,7 +53,9 @@ encode#(.AllocatorType: Type: Allocator#(AllocatorType))(
 }
 
 -- Validate completely before allocating or publishing any decoded bytes.
-decode#(.AllocatorType: Type: Allocator#(AllocatorType))(
+decode#(
+        .AllocatorType : Type: Allocator#(AllocatorType)
+    )(
         .text      : StringView,
         .allocator : $&AllocatorType = reach allocator
     ) -> (

@@ -26,20 +26,29 @@ implement#(
     CliParser#(.t: t),
     (
         .source : &t,
-        .start : UIntNative = 0,
+        .start  : UIntNative = 0,
     )
 ) (
-    .Result: Type = CliParser#(.t: t)
-    .init = (.args: (
-        .source : &t,
-        .start : UIntNative = 0,
-    )) -> (.result: Result) {
-        source ::= args.source
-        start ::= args.start
+        .Result : Type = CliParser#(.t: t)
+        .init   = (
+                .args : (
+                    .source : &t,
+                    .start  : UIntNative = 0,
+                )
+            ) -> (
+                .result : Result
+            ) {
+            source ::= args.source
+            start ::= args.start
 
-        result = (._source = source, ._index = start, ._short_offset = 0, ._positionals = false)
-    }
-)
+            result = (
+                ._source       = source
+                ._index        = start
+                ._short_offset = 0
+                ._positionals  = false
+            )
+        }
+    )
 
 next#(
         .t : Type: ArgumentSource#(t)

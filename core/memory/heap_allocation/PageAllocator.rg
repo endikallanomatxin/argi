@@ -4,13 +4,17 @@ PageAllocator: Type = (
 )
 
 implement Init#(PageAllocator, (.memory: $&Memory)) (
-    .Result: Type = PageAllocator
+        .Result : Type = PageAllocator
 
-    .init = (.args: (.memory: $&Memory)) -> (.result: Result) {
-        memory ::= args.memory
-        result = (.memory = memory, .page_size = memory&._page_size)
-    }
-)
+        .init = (
+                .args : (.memory: $&Memory)
+            ) -> (
+                .result : Result
+            ) {
+            memory ::= args.memory
+            result = (.memory = memory, .page_size = memory&._page_size)
+        }
+    )
 
 page_allocator_page_size(.self: $&PageAllocator) -> (.size: UIntNative) := {
     size = self&.page_size
@@ -38,7 +42,7 @@ page_allocator_round_up(
     }
 }
 
-implement Allocator#(PageAllocator)(
+implement Allocator#(PageAllocator) (
     .allocate = (
             .self      : $&PageAllocator,
             .size      : UIntNative,

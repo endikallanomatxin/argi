@@ -1,7 +1,10 @@
 -- Whole-file reading selects the path representation and allocation provider.
 FileReading#(.PathValue: Type, .Provider: Type: Allocator#(Provider)): Contract = (
-    .read_file: (.self: &FileSystem, .path: PathValue, .allocator: $&Provider = reach allocator) -> (
-        .result: Errable#(String, (..path_open_failed, ..stream_read_failed, ..stream_close_failed, ..out_of_memory))
+    .read_file : (.self: &FileSystem, .path: PathValue, .allocator: $&Provider = reach allocator) -> (
+        .result : Errable#(
+            String,
+            (..path_open_failed, ..stream_read_failed, ..stream_close_failed, ..out_of_memory)
+        )
     )
 )
 

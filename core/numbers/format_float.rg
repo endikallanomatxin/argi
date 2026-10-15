@@ -855,7 +855,13 @@ _FloatEncoding: Type = (
     .bias           : Int32
 )
 
-_float_encoding#(.Value: Type: _FloatRepresentation#(Value)) := (.value: Value) -> (.encoding: _FloatEncoding) {
+_float_encoding#(
+        .Value : Type: _FloatRepresentation#(Value)
+    ) := (
+        .value : Value
+    ) -> (
+        .encoding : _FloatEncoding
+    ) {
     encoding = _FloatRepresentation#(Value).encoding(.value = value)
 }
 

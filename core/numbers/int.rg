@@ -4,23 +4,34 @@ Int#(.Value: Type): Contract = ()
 
 -- Signed integers
 implement Int#(Int8) ()
+
 implement Int#(Int16) ()
+
 implement Int#(Int32) ()
+
 implement Int#(Int64) ()
 
 -- Unsigned integers
 implement Int#(UInt8) ()
+
 implement Int#(UInt16) ()
+
 implement Int#(UInt32) ()
+
 implement Int#(UInt64) ()
+
 implement Int#(UIntNative) ()
 
 UInt#(.Value: Type): Contract = ()
 
 implement UInt#(UInt8) ()
+
 implement UInt#(UInt16) ()
+
 implement UInt#(UInt32) ()
+
 implement UInt#(UInt64) ()
+
 implement UInt#(UIntNative) ()
 
 -- TODO: More types

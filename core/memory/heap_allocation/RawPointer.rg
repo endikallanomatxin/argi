@@ -84,11 +84,21 @@ trusted_reinterpret_reference#(
     ) -> (
         .reference : &to
     ) := {
-    reference = __trusted_reference_from_address#(.to: &to)(.address = base | convert#(.to: UIntNative)(_))
+    reference = __trusted_reference_from_address#(.to: &to)(
+        .address = [
+            base
+            | convert#(.to: UIntNative)(_)
+        ]
+    )
 }
 
 read_reference#(.t: Type)(.base: $&t) -> (.reference: &t) := {
-    reference = __trusted_reference_from_address#(.to: &t)(.address = base | convert#(.to: UIntNative)(_))
+    reference = __trusted_reference_from_address#(.to: &t)(
+        .address = [
+            base
+            | convert#(.to: UIntNative)(_)
+        ]
+    )
 }
 
 trusted_mutable_reinterpret_reference#(
@@ -99,7 +109,12 @@ trusted_mutable_reinterpret_reference#(
     ) -> (
         .reference : $&to
     ) := {
-    reference = __trusted_reference_from_address#(.to: $&to)(.address = base | convert#(.to: UIntNative)(_))
+    reference = __trusted_reference_from_address#(.to: $&to)(
+        .address = [
+            base
+            | convert#(.to: UIntNative)(_)
+        ]
+    )
 }
 
 trusted_mutable_reference_offset#(

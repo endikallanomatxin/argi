@@ -122,27 +122,27 @@ utc_date(
         .month = month
         .day   = unwrap_or_abort(
             .value = [
-                    days
-                    + 1
-                ] | convert#(.to: UInt32)(_)
+                days
+                + 1
+            ] | convert#(.to: UInt32)(_)
         )
         .hour = unwrap_or_abort(
             .value = [
-                    within
-                    / 3600
-                ] | convert#(.to: UInt32)(_)
+                within
+                / 3600
+            ] | convert#(.to: UInt32)(_)
         )
         .minute = unwrap_or_abort(
             .value = [
-                    [within % 3600]
-                    / 60
-                ] | convert#(.to: UInt32)(_)
+                [within % 3600]
+                / 60
+            ] | convert#(.to: UInt32)(_)
         )
         .second = unwrap_or_abort(
             .value = [
-                    within
-                    % 60
-                ] | convert#(.to: UInt32)(_)
+                within
+                % 60
+            ] | convert#(.to: UInt32)(_)
         )
         .nanoseconds = nanoseconds(&timestamp).value
     )

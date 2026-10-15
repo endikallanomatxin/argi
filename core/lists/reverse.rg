@@ -1,7 +1,7 @@
 -- Exchange copied values through indexed references without resizing storage.
 _swap_indexed_values#(
-        .t : Type: ImplicitlyCopyable,
-        .Collection: Type: IndexableMutable#(.Item: t)
+        .t          : Type: ImplicitlyCopyable,
+        .Collection : Type: IndexableMutable#(.Item: t)
     )(
         .self  : $&Collection,
         .left  : UIntNative,
@@ -16,8 +16,8 @@ _swap_indexed_values#(
 }
 
 reverse#(
-        .t : Type: ImplicitlyCopyable,
-        .Collection: Type: IndexableMutable#(.Item: t)
+        .t          : Type: ImplicitlyCopyable,
+        .Collection : Type: IndexableMutable#(.Item: t)
     )(
         .self : $&Collection,
     ) -> () := {

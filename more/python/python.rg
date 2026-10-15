@@ -139,37 +139,41 @@ _tuple_set(
 implement Init#(
     Python,
     (
-        .ffi : $&ForeignFunctionInterface,
-        .program_name : StringView = "python3",
-        .home : StringView = "",
+        .ffi          : $&ForeignFunctionInterface,
+        .program_name : StringView                  = "python3",
+        .home         : StringView                  = "",
     )
 ) (
-    .Result: Type = Errable#(Python, (..python_initialization_failed))
-    .init = (.args: (
-        .ffi : $&ForeignFunctionInterface,
-        .program_name : StringView = "python3",
-        .home : StringView = "",
-    )) -> (.result: Result) {
-        ffi ::= args.ffi
-        program_name ::= args.program_name
-        home ::= args.home
+        .Result : Type = Errable#(Python, (..python_initialization_failed))
+        .init   = (
+                .args : (
+                    .ffi          : $&ForeignFunctionInterface,
+                    .program_name : StringView                  = "python3",
+                    .home         : StringView                  = "",
+                )
+            ) -> (
+                .result : Result
+            ) {
+            ffi ::= args.ffi
+            program_name ::= args.program_name
+            home ::= args.home
 
-        assume ffi
-        handle ::= _start(
-            .program        = program_name.data
-            .program_length = program_name.length
-            .home           = home.data
-            .home_length    = home.length
-        ).handle
+            assume ffi
+            handle ::= _start(
+                .program        = program_name.data
+                .program_length = program_name.length
+                .home           = home.data
+                .home_length    = home.length
+            ).handle
 
-        if handle == 0 {
-            result = ..error(.reason = ..python_initialization_failed)
-            return
+            if handle == 0 {
+                result = ..error(.reason = ..python_initialization_failed)
+                return
+            }
+
+            result = ..ok(._handle = handle, ._ffi = ffi)
         }
-
-        result = ..ok(._handle = handle, ._ffi = ffi)
-    }
-)
+    )
 
 implement Deinit#(Python) (
     .deinit = (.self: $&Python) -> () {
@@ -341,7 +345,9 @@ to_float64(.self: &Object) -> (.result: Errable#(Float64, (..python_error))) := 
     result = ..ok value
 }
 
-_no_arguments() -> (.value: ArrayViewRO#(.t: &Object)) := { value = empty_array_view_ro#(.t: &Object)() }
+_no_arguments() -> (.value: ArrayViewRO#(.t: &Object)) := {
+    value = empty_array_view_ro#(.t: &Object)()
+}
 
 _no_keywords() -> (.value: ?&Object) := { value = ..none }
 
@@ -678,7 +684,9 @@ set_item(
     result = ..ok Void()
 }
 
-_copy_text#(.AllocatorType: Type: Allocator#(AllocatorType))(
+_copy_text#(
+        .AllocatorType : Type: Allocator#(AllocatorType)
+    )(
         .self      : &Object,
         .kind      : Int32,
         .allocator : $&AllocatorType
@@ -720,7 +728,9 @@ _copy_text#(.AllocatorType: Type: Allocator#(AllocatorType))(
     result = ..ok ~text
 }
 
-to_string#(.AllocatorType: Type: Allocator#(AllocatorType))(
+to_string#(
+        .AllocatorType : Type: Allocator#(AllocatorType)
+    )(
         .self      : &Object,
         .allocator : $&AllocatorType
     ) -> (
@@ -729,7 +739,9 @@ to_string#(.AllocatorType: Type: Allocator#(AllocatorType))(
     result = _copy_text(.self = self, .kind = 0, .allocator = allocator)
 }
 
-to_bytes#(.AllocatorType: Type: Allocator#(AllocatorType))(
+to_bytes#(
+        .AllocatorType : Type: Allocator#(AllocatorType)
+    )(
         .self      : &Object,
         .allocator : $&AllocatorType
     ) -> (
@@ -738,7 +750,9 @@ to_bytes#(.AllocatorType: Type: Allocator#(AllocatorType))(
     result = _copy_text(.self = self, .kind = 1, .allocator = allocator)
 }
 
-error_text#(.AllocatorType: Type: Allocator#(AllocatorType))(
+error_text#(
+        .AllocatorType : Type: Allocator#(AllocatorType)
+    )(
         .self      : &Python,
         .allocator : $&AllocatorType
     ) -> (

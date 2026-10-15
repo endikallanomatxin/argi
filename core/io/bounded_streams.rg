@@ -18,11 +18,15 @@ implement ImplicitlyCopyable#(StreamCopyEnd) ()
 StreamCopyResult: Type = (.count: UIntNative, .termination: StreamCopyEnd)
 
 implement ImplicitlyCopyable#(StreamCopyResult) ()
+
 ..size_limit_exceeded
 
 -- A limit is a stopping point, not an assertion that the source ended. No
 -- lookahead byte is consumed, including when the limit is zero or exactly met.
-copy_stream_limited#(.ReaderType: Type: BlockReader#(ReaderType), .WriterType: Type: BlockWriter#(WriterType))(
+copy_stream_limited#(
+        .ReaderType : Type: BlockReader#(ReaderType),
+        .WriterType : Type: BlockWriter#(WriterType)
+    )(
         .reader : $&ReaderType,
         .writer : $&WriterType,
         .buffer : ArrayView#(.t: UInt8),
@@ -74,7 +78,10 @@ copy_stream_limited#(.ReaderType: Type: BlockReader#(ReaderType), .WriterType: T
 
 -- Return complete binary data or release the partial owner on every error.
 -- Capacity growth is capped independently of the caller's scratch extent.
-read_all_limited#(.SelfType: Type: BlockReader#(SelfType), .AllocatorType: Type: Allocator#(AllocatorType))(
+read_all_limited#(
+        .SelfType      : Type: BlockReader#(SelfType),
+        .AllocatorType : Type: Allocator#(AllocatorType)
+    )(
         .self      : $&SelfType,
         .buffer    : ArrayView#(.t: UInt8),
         .limit     : UIntNative,

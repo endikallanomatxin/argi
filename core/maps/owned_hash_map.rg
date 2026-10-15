@@ -1,6 +1,12 @@
 -- Consume rejected inputs through ordinary lexical cleanup, which also handles
 -- aggregate owners without a nominal destructor.
-_owned_hash_discard#(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType))(.value: t, .allocator: $&AllocatorType) -> () := {
+_owned_hash_discard#(
+        .t             : Type,
+        .AllocatorType : Type: Allocator#(AllocatorType)
+    )(
+        .value     : t,
+        .allocator : $&AllocatorType
+    ) -> () := {
     assume allocator
     discarded ::= ~value
 }
@@ -14,7 +20,8 @@ BorrowedHashPolicy#(.Policy: Type, .key: Type): Contract = (
 StringHashPolicy: Type = ()
 
 implement ImplicitlyCopyable#(StringHashPolicy) ()
-implement BorrowedHashPolicy#(StringHashPolicy, String)(
+
+implement BorrowedHashPolicy#(StringHashPolicy, String) (
     .hash = (.self: &StringHashPolicy, .key: &String) -> (.hash: UIntNative) {
         text ::= as_view(key)
         hash = string_hash_map_hash(.key = &text).hash
@@ -25,7 +32,7 @@ implement BorrowedHashPolicy#(StringHashPolicy, String)(
     }
 )
 
-implement BorrowedHashPolicy#(Int32HashPolicy, Int32)(
+implement BorrowedHashPolicy#(Int32HashPolicy, Int32) (
     .hash = (.self: &Int32HashPolicy, .key: &Int32) -> (.hash: UIntNative) {
         hash = HashPolicy#(Int32HashPolicy, Int32).hash(.self = self, .key = key&).hash
     }
@@ -35,7 +42,7 @@ implement BorrowedHashPolicy#(Int32HashPolicy, Int32)(
     }
 )
 
-implement BorrowedHashPolicy#(UIntNativeHashPolicy, UIntNative)(
+implement BorrowedHashPolicy#(UIntNativeHashPolicy, UIntNative) (
     .hash = (.self: &UIntNativeHashPolicy, .key: &UIntNative) -> (.hash: UIntNative) { hash = key&}
 
     .eql = (.self: &UIntNativeHashPolicy, .left: &UIntNative, .right: &UIntNative) -> (.ok: Bool) {
@@ -71,7 +78,9 @@ OwnedHashMap#(.key: Type, .value: Type, .policy: Type: BorrowedHashPolicy#(polic
     ._shape  : _OwnedHashShape
 )
 
-_owned_hash_slots#(.AllocatorType: Type: Allocator#(AllocatorType))(
+_owned_hash_slots#(
+        .AllocatorType : Type: Allocator#(AllocatorType)
+    )(
         .capacity  : UIntNative,
         .allocator : $&AllocatorType
     ) -> (
@@ -89,52 +98,56 @@ _owned_hash_slots#(.AllocatorType: Type: Allocator#(AllocatorType))(
 }
 
 implement#(
-    .key : Type,
-    .value : Type,
-    .policy : Type: BorrowedHashPolicy#(policy, key),
-    .Provider: Type: Allocator
+    .key      : Type,
+    .value    : Type,
+    .policy   : Type: BorrowedHashPolicy#(policy, key),
+    .Provider : Type: Allocator
 ) Init#(
     OwnedHashMap#(.key: key, .value: value, .policy: policy),
     (
-        .policy : policy,
+        .policy    : policy,
         .allocator : $&Provider = reach allocator,
-        .capacity : UIntNative = 8,
+        .capacity  : UIntNative = 8,
     )
 ) (
-    .Result: Type = Errable#(
+        .Result : Type = Errable#(
             OwnedHashMap#(.key: key, .value: value, .policy: policy),
             (..out_of_memory)
         )
-    .init = (.args: (
-        .policy : policy,
-        .allocator : $&Provider = reach allocator,
-        .capacity : UIntNative = 8,
-    )) -> (.result: Result) {
-        policy ::= ~args.policy
-        allocator ::= args.allocator
-        capacity ::= args.capacity
+        .init = (
+                .args : (
+                    .policy    : policy,
+                    .allocator : $&Provider = reach allocator,
+                    .capacity  : UIntNative = 8,
+                )
+            ) -> (
+                .result : Result
+            ) {
+            policy ::= ~args.policy
+            allocator ::= args.allocator
+            capacity ::= args.capacity
 
-        constructed :: OwnedHashMap#(.key: key, .value: value, .policy: policy)
-        assume allocator
-        owned_policy ::= ~policy
-        count ::= capacity
+            constructed :: OwnedHashMap#(.key: key, .value: value, .policy: policy)
+            assume allocator
+            owned_policy ::= ~policy
+            count ::= capacity
 
-        if count < 8 { count = 8 }
-        slots ::= _owned_hash_slots(.capacity = count, .allocator = allocator)!
-        entries ::= allocate#(.t: OwnedHashMapEntry#(.key: key, .value: value))(
-            allocator
-            .count = count
-        )!
-        constructed = (
-            ._table  = (._entries = ~entries, ._slots = ~slots)
-            ._length = 0
-            ._policy = ~owned_policy
-            ._shape  = (.marker = 0)
-        )
+            if count < 8 { count = 8 }
+            slots ::= _owned_hash_slots(.capacity = count, .allocator = allocator)!
+            entries ::= allocate#(.t: OwnedHashMapEntry#(.key: key, .value: value))(
+                allocator
+                .count = count
+            )!
+            constructed = (
+                ._table  = (._entries = ~entries, ._slots = ~slots)
+                ._length = 0
+                ._policy = ~owned_policy
+                ._shape  = (.marker = 0)
+            )
 
-        result = ..ok ~constructed
-    }
-)
+            result = ..ok ~constructed
+        }
+    )
 
 _collection_length_owned_hash_map#(
         .key    : Type,
@@ -147,10 +160,10 @@ _collection_length_owned_hash_map#(
     ) := { count = self&._length }
 
 implement#(
-        .key    : Type,
-        .value  : Type,
-        .policy : Type: BorrowedHashPolicy#(policy, key)
-    ) CollectionLength#(OwnedHashMap#(.key: key, .value: value, .policy: policy)) (
+    .key    : Type,
+    .value  : Type,
+    .policy : Type: BorrowedHashPolicy#(policy, key)
+) CollectionLength#(OwnedHashMap#(.key: key, .value: value, .policy: policy)) (
     .measure_length = _collection_length_owned_hash_map
 )
 
@@ -165,10 +178,10 @@ _collection_capacity_owned_hash_map#(
     ) := { count = length(&self&._table._slots).count }
 
 implement#(
-        .key    : Type,
-        .value  : Type,
-        .policy : Type: BorrowedHashPolicy#(policy, key)
-    ) CollectionCapacity#(OwnedHashMap#(.key: key, .value: value, .policy: policy)) (
+    .key    : Type,
+    .value  : Type,
+    .policy : Type: BorrowedHashPolicy#(policy, key)
+) CollectionCapacity#(OwnedHashMap#(.key: key, .value: value, .policy: policy)) (
     .measure_capacity = _collection_capacity_owned_hash_map
 )
 
@@ -270,14 +283,17 @@ _owned_hash_vacancy(
 }
 
 _map_reserve_owned_hash_map#(
-        .key    : Type,
-        .value  : Type,
-        .policy : Type: BorrowedHashPolicy#(policy, key), .Provider: Type: Allocator#(Provider)
-) := (
+        .key      : Type,
+        .value    : Type,
+        .policy   : Type: BorrowedHashPolicy#(policy, key),
+        .Provider : Type: Allocator#(Provider)
+    ) := (
         .self      : $&OwnedHashMap#(.key: key, .value: value, .policy: policy),
         .capacity  : UIntNative,
         .allocator : $&Provider
-    ) -> (.result : Errable#(Void, (..out_of_memory))) {
+    ) -> (
+        .result : Errable#(Void, (..out_of_memory))
+    ) {
     assume allocator
     old_count ::= capacity(self).count
 
@@ -332,15 +348,18 @@ _map_reserve_owned_hash_map#(
 }
 
 _map_put_owned_hash_map#(
-        .key    : Type,
-        .value  : Type,
-        .policy : Type: BorrowedHashPolicy#(policy, key), .Provider: Type: Allocator#(Provider)
-) := (
+        .key      : Type,
+        .value    : Type,
+        .policy   : Type: BorrowedHashPolicy#(policy, key),
+        .Provider : Type: Allocator#(Provider)
+    ) := (
         .self      : $&OwnedHashMap#(.key: key, .value: value, .policy: policy),
         .key       : key,
         .value     : value,
         .allocator : $&Provider
-    ) -> (.result : Errable#(Void, (..out_of_memory))) {
+    ) -> (
+        .result : Errable#(Void, (..out_of_memory))
+    ) {
     assume allocator
     digest ::= BorrowedHashPolicy#(policy, key).hash(&self&._policy, .key = &key).hash
 
@@ -411,7 +430,9 @@ _map_contains_owned_hash_map#(
     ) := (
         .self : &OwnedHashMap#(.key: key, .value: value, .policy: policy),
         .key  : &key
-    ) -> (.ok : Bool) {
+    ) -> (
+        .ok : Bool
+    ) {
     digest ::= BorrowedHashPolicy#(policy, key).hash(&self&._policy, .key = key).hash
     ok = is(
         .value   = _owned_hash_find(self, .key = key, .hash = digest).index
@@ -426,7 +447,9 @@ _map_get_ro_ref_owned_hash_map#(
     ) := (
         .self : &OwnedHashMap#(.key: key, .value: value, .policy: policy),
         .key  : &key
-    ) -> (.result : ?&value) {
+    ) -> (
+        .result : ?&value
+    ) {
     digest ::= BorrowedHashPolicy#(policy, key).hash(&self&._policy, .key = key).hash
 
     match _owned_hash_find(self, .key = key, .hash = digest).index {
@@ -449,7 +472,9 @@ _map_extract_owned_hash_map#(
     ) := (
         .self : $&OwnedHashMap#(.key: key, .value: value, .policy: policy),
         .key  : &key
-    ) -> (.result : ?OwnedHashMapEntry#(.key: key, .value: value)) {
+    ) -> (
+        .result : ?OwnedHashMapEntry#(.key: key, .value: value)
+    ) {
     digest ::= BorrowedHashPolicy#(policy, key).hash(&self&._policy, .key = key).hash
 
     match _owned_hash_find(self, .key = key, .hash = digest).index {
@@ -473,14 +498,17 @@ _map_extract_owned_hash_map#(
 }
 
 _map_remove_owned_hash_map#(
-        .key    : Type,
-        .value  : Type,
-        .policy : Type: BorrowedHashPolicy#(policy, key), .Provider: Type: Allocator#(Provider)
-) := (
+        .key      : Type,
+        .value    : Type,
+        .policy   : Type: BorrowedHashPolicy#(policy, key),
+        .Provider : Type: Allocator#(Provider)
+    ) := (
         .self      : $&OwnedHashMap#(.key: key, .value: value, .policy: policy),
         .key       : &key,
         .allocator : $&Provider
-    ) -> (.removed : Bool) {
+    ) -> (
+        .removed : Bool
+    ) {
     assume allocator
 
     match extract(self, .key = key).result {
@@ -493,27 +521,37 @@ _map_remove_owned_hash_map#(
 }
 
 implement#(
-        .key    : Type,
-        .value  : Type,
-        .policy : Type: BorrowedHashPolicy#(policy, key)
-    ) Deinit#(OwnedHashMap#(.key: key, .value: value, .policy: policy)) (
-    .deinit = (.self: $&OwnedHashMap#(.key: key, .value: value, .policy: policy)) -> () {
-        index :: UIntNative = 0
+    .key    : Type,
+    .value  : Type,
+    .policy : Type: BorrowedHashPolicy#(policy, key)
+) Deinit#(OwnedHashMap#(.key: key, .value: value, .policy: policy)) (
+        .deinit = (
+                .self : $&OwnedHashMap#(.key: key, .value: value, .policy: policy)
+            ) -> () {
+            index :: UIntNative = 0
 
-        while index < capacity(self).count {
-            if _trusted_dynamic_array_get(.array = &self&._table._slots, .index = index).state == 1 {
-                slot ::= _trusted_uninit_slot#(.t: OwnedHashMapEntry#(.key: key, .value: value))(
-                    .allocation = &self&._table._entries
-                    .index      = index
-                )
-                entry ::= _trusted_uninit_take(.allocation = $&self&._table._entries, .slot = slot)
+            while index < capacity(self).count {
+                if [
+                    _trusted_dynamic_array_get(.array = &self&._table._slots, .index = index).state
+                    == 1
+                ] {
+                    slot ::= _trusted_uninit_slot#(
+                        .t : OwnedHashMapEntry#(.key: key, .value: value)
+                    )(
+                        .allocation = &self&._table._entries
+                        .index      = index
+                    )
+                    entry ::= _trusted_uninit_take(
+                        .allocation = $&self&._table._entries
+                        .slot       = slot
+                    )
+                }
+                index = index + 1
             }
-            index = index + 1
-        }
 
-        trusted_opaque_mark_empty(.storage = $&self&._table._entries)
-        deinit(.self = $&self&._table._entries)
-        deinit(.self = $&self&._table._slots)
-        policy ::= ~self&._policy
-    }
-)
+            trusted_opaque_mark_empty(.storage = $&self&._table._entries)
+            deinit(.self = $&self&._table._entries)
+            deinit(.self = $&self&._table._slots)
+            policy ::= ~self&._policy
+        }
+    )

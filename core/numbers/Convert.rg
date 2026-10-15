@@ -1,6 +1,6 @@
 Convert#(.Source: Type, .Target: Type): Contract = (
-    .Result: Type
-    .convert: (.value: Source) -> (.result: Result)
+    .Result  : Type
+    .convert : (.value: Source) -> (.result: Result)
 )
 
 -- The source comes from the value; the destination is explicit. Associated

@@ -1,6 +1,6 @@
 ArgumentSource#(.Source: Type): Contract = (
-    .length: (.self: &Source) -> (.count: UIntNative) where {}
-    .get: (.self: &Source, .index: UIntNative) -> (
+    .length : (.self: &Source) -> (.count: UIntNative) where {}
+    .get    : (.self: &Source, .index: UIntNative) -> (
         .result : Errable#(StringView, (..out_of_bounds))
     ) where {
         on result ..ok { depends_on(result, self) }

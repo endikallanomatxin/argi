@@ -4,7 +4,9 @@ StringHashMapEntry#(.value: Type): Type = (
     .next  : UIntNative
 )
 
-implement#(.value: Type: ImplicitlyCopyable) ImplicitlyCopyable#(StringHashMapEntry#(.value: value)) ()
+implement#(.value: Type: ImplicitlyCopyable) ImplicitlyCopyable#(
+    StringHashMapEntry#(.value: value)
+) ()
 
 StringHashMap#(.value: Type): Type = (
     --
@@ -110,7 +112,9 @@ string_hash_map_bucket_index(
     index = hash % bucket_count
 }
 
-string_hash_map_prepare_buckets#(.AllocatorType: Type: Allocator#(AllocatorType))(
+string_hash_map_prepare_buckets#(
+        .AllocatorType : Type: Allocator#(AllocatorType)
+    )(
         .allocator : $&AllocatorType,
         .buckets   : $&DynamicArray#(.t: UIntNative),
         .capacity  : UIntNative,
@@ -130,56 +134,64 @@ string_hash_map_prepare_buckets#(.AllocatorType: Type: Allocator#(AllocatorType)
 }
 
 implement#(
-    .value : Type,
-    .Provider: Type: Allocator
+    .value    : Type,
+    .Provider : Type: Allocator
 ) Init#(
     StringHashMap#(.value: value),
     (
         .allocator : $&Provider = reach allocator,
-        .capacity : UIntNative = 8,
+        .capacity  : UIntNative = 8,
     )
 ) (
-    .Result: Type = StringHashMap#(.value: value)
-    .init = (.args: (
-        .allocator : $&Provider = reach allocator,
-        .capacity : UIntNative = 8,
-    )) -> (.result: Result) {
-        allocator ::= args.allocator
-        capacity ::= args.capacity
+        .Result : Type = StringHashMap#(.value: value)
+        .init   = (
+                .args : (
+                    .allocator : $&Provider = reach allocator,
+                    .capacity  : UIntNative = 8,
+                )
+            ) -> (
+                .result : Result
+            ) {
+            allocator ::= args.allocator
+            capacity ::= args.capacity
 
-        assume allocator
+            assume allocator
 
-        bucket_capacity ::= capacity
+            bucket_capacity ::= capacity
 
-        if bucket_capacity == 0 {
-            bucket_capacity = 1
-        }
+            if bucket_capacity == 0 {
+                bucket_capacity = 1
+            }
 
-        result.entries = unwrap_or_abort(
-            .value = DynamicArray#(.t: StringHashMapEntry#(.value: value))(
+            result.entries = unwrap_or_abort(
+                .value = DynamicArray#(.t: StringHashMapEntry#(.value: value))(
+                    .allocator = allocator
+                    .capacity  = bucket_capacity
+                )
+            )
+            string_hash_map_prepare_buckets(
                 .allocator = allocator
+                .buckets   = $&result.buckets
                 .capacity  = bucket_capacity
             )
-        )
-        string_hash_map_prepare_buckets(
-            .allocator = allocator
-            .buckets   = $&result.buckets
-            .capacity  = bucket_capacity
-        )
-    }
-)
+        }
+    )
 
 implement#(
-        .value : Type
-    ) Deinit#(StringHashMap#(.value: value)) (
-    .deinit = (.self: $&StringHashMap#(.value: value)) -> () {
-        deinit(.self = $&self&.buckets)
-        deinit(.self = $&self&.entries)
-    }
-)
+    .value : Type
+) Deinit#(StringHashMap#(.value: value)) (
+        .deinit = (
+                .self : $&StringHashMap#(.value: value)
+            ) -> () {
+            deinit(.self = $&self&.buckets)
+            deinit(.self = $&self&.entries)
+        }
+    )
 
 string_hash_map_rehash#(
-        .value : Type, .AllocatorType: Type: Allocator#(AllocatorType))(
+        .value         : Type,
+        .AllocatorType : Type: Allocator#(AllocatorType)
+    )(
         .allocator    : $&AllocatorType,
         .self         : $&StringHashMap#(.value: value),
         .bucket_count : UIntNative,
@@ -284,8 +296,10 @@ string_hash_map_find_entry_index#(
 }
 
 _map_put_StringHashMap#(
-        .value : Type, .Provider: Type: Allocator#(Provider), .Query: Type: StringMapKey#(Query)
-) := (
+        .value    : Type,
+        .Provider : Type: Allocator#(Provider),
+        .Query    : Type: StringMapKey#(Query)
+    ) := (
         .allocator : $&Provider,
         .self      : $&StringHashMap#(.value: value),
         .key       : Query,
@@ -363,11 +377,14 @@ _map_put_StringHashMap#(
 }
 
 _map_get_StringHashMap#(
-        .value : Type, .Query: Type: StringMapKey#(Query)
-) := (
+        .value : Type,
+        .Query : Type: StringMapKey#(Query)
+    ) := (
         .self : &StringHashMap#(.value: value),
         .key  : Query,
-    ) -> (.result : ?value) {
+    ) -> (
+        .result : ?value
+    ) {
     key_view ::= string_hash_map_key_view(.key = key)
     found ::= string_hash_map_find_entry_index#(.value: value)(self, .key = &key_view).index
 
@@ -543,12 +560,28 @@ _string_map_delete_view#(
     value = ..none
 }
 
-has#(.value: Type, .Key: Type: StringMapKey#(Key)) := (.self: &StringHashMap#(.value: value), .key: Key) -> (.ok: Bool) {
+has#(
+        .value : Type,
+        .Key   : Type: StringMapKey#(Key)
+    ) := (
+        .self : &StringHashMap#(.value: value),
+        .key  : Key
+    ) -> (
+        .ok : Bool
+    ) {
     key_view ::= string_hash_map_key_view(.key = key)
     ok = _string_map_has_view#(.value: value)(.self = self, .key = &key_view)
 }
 
-delete#(.value: Type, .Key: Type: StringMapKey#(Key)) := (.self: $&StringHashMap#(.value: value), .key: Key) -> (.value: ?value) {
+delete#(
+        .value : Type,
+        .Key   : Type: StringMapKey#(Key)
+    ) := (
+        .self : $&StringHashMap#(.value: value),
+        .key  : Key
+    ) -> (
+        .value : ?value
+    ) {
     key_view ::= string_hash_map_key_view(.key = key)
     value = _string_map_delete_view#(.value: value)(.self = self, .key = &key_view)
 }

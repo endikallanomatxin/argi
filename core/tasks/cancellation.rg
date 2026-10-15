@@ -10,17 +10,21 @@ implement Init#(
         .ffi : $&ForeignFunctionInterface = reach ffi,
     )
 ) (
-    .Result: Type = Errable#(CancellationSource, (..out_of_memory))
-    .init = (.args: (
-        .ffi : $&ForeignFunctionInterface = reach ffi,
-    )) -> (.result: Result) {
-        ffi ::= args.ffi
+        .Result : Type = Errable#(CancellationSource, (..out_of_memory))
+        .init   = (
+                .args : (
+                    .ffi : $&ForeignFunctionInterface = reach ffi,
+                )
+            ) -> (
+                .result : Result
+            ) {
+            ffi ::= args.ffi
 
-        state ::= AtomicUInt32(.ffi = ffi)!
+            state ::= AtomicUInt32(.ffi = ffi)!
 
-        result = ..ok(._state = ~state)
-    }
-)
+            result = ..ok(._state = ~state)
+        }
+    )
 
 implement Deinit#(CancellationSource) (
     .deinit = (.self: $&CancellationSource) -> () {

@@ -6,7 +6,7 @@ noop_error_tracer :: Virtual#(.contract: ErrorTracer) = to_virtual#(.contract: E
     .value = $&noop_error_tracer_storage
 )
 
-implement ErrorTracer#(NoopErrorTracer)(
+implement ErrorTracer#(NoopErrorTracer) (
     .add_context = (.self: $&NoopErrorTracer, .location: SourceLocationId, .context: StringView) -> () {}
 
     .reset_context = (.self: $&NoopErrorTracer) -> () {}

@@ -4,22 +4,30 @@ ByteReader: Type = (._bytes: ArrayViewRO#(.t: UInt8), ._position: UIntNative)
 ByteWriter: Type = (._bytes: ArrayView#(.t: UInt8), ._position: UIntNative)
 
 implement Init#(ByteReader, (.bytes: ArrayViewRO#(.t: UInt8))) (
-    .Result: Type = ByteReader
+        .Result : Type = ByteReader
 
-    .init = (.args: (.bytes: ArrayViewRO#(.t: UInt8))) -> (.result: Result) {
-        bytes ::= args.bytes
-        result = (._bytes = bytes, ._position = 0)
-    }
-)
+        .init = (
+                .args : (.bytes: ArrayViewRO#(.t: UInt8))
+            ) -> (
+                .result : Result
+            ) {
+            bytes ::= args.bytes
+            result = (._bytes = bytes, ._position = 0)
+        }
+    )
 
 implement Init#(ByteWriter, (.bytes: ArrayView#(.t: UInt8))) (
-    .Result: Type = ByteWriter
+        .Result : Type = ByteWriter
 
-    .init = (.args: (.bytes: ArrayView#(.t: UInt8))) -> (.result: Result) {
-        bytes ::= args.bytes
-        result = (._bytes = bytes, ._position = 0)
-    }
-)
+        .init = (
+                .args : (.bytes: ArrayView#(.t: UInt8))
+            ) -> (
+                .result : Result
+            ) {
+            bytes ::= args.bytes
+            result = (._bytes = bytes, ._position = 0)
+        }
+    )
 
 _byte_reader_position(.self: &ByteReader) -> (.count: UIntNative) := { count = self&._position }
 

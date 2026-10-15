@@ -34,7 +34,9 @@ _map_contains_owned_string_lookup#(
     ) := (
         .self : &OwnedHashMap#(.key: String, .value: value, .policy: StringHashPolicy),
         .key  : StringView
-    ) -> (.ok : Bool) {
+    ) -> (
+        .ok : Bool
+    ) {
     ok = _owned_string_find(self, .key = key).index ?
 }
 
@@ -43,7 +45,9 @@ _map_get_ro_ref_owned_string_lookup#(
     ) := (
         .self : &OwnedHashMap#(.key: String, .value: value, .policy: StringHashPolicy),
         .key  : StringView
-    ) -> (.result : ?&value = ..none) {
+    ) -> (
+        .result : ?&value = ..none
+    ) {
     match _owned_string_find(self, .key = key).index {
         ..none {}
         ..some found {

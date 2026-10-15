@@ -31,8 +31,8 @@ reverse_owned#(.t: Type)(.self: $&DynamicArray#(.t: t)) -> () := {
 }
 
 _owned_array_less#(
-        .t : Type,
-        .Policy: Type: BorrowedOrderPolicy#(Policy, t)
+        .t      : Type,
+        .Policy : Type: BorrowedOrderPolicy#(Policy, t)
     )(
         .self  : &DynamicArray#(.t: t),
         .order : &Policy,
@@ -47,8 +47,8 @@ _owned_array_less#(
 }
 
 _owned_sift_down#(
-        .t : Type,
-        .Policy: Type: BorrowedOrderPolicy#(Policy, t)
+        .t      : Type,
+        .Policy : Type: BorrowedOrderPolicy#(Policy, t)
     )(
         .self  : $&DynamicArray#(.t: t),
         .order : &Policy,
@@ -83,9 +83,13 @@ _owned_sift_down#(
 }
 
 -- Unstable heapsort uses O(1) auxiliary space and performs no allocation.
-sort_owned#(.t: Type,
-        .Policy: Type: BorrowedOrderPolicy#(Policy, t)
-    )(.self: $&DynamicArray#(.t: t), .order: &Policy) -> () := {
+sort_owned#(
+        .t      : Type,
+        .Policy : Type: BorrowedOrderPolicy#(Policy, t)
+    )(
+        .self  : $&DynamicArray#(.t: t),
+        .order : &Policy
+    ) -> () := {
     count ::= length(self).count
     parent ::= count / 2
 

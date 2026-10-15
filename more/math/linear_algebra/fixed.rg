@@ -9,7 +9,10 @@ Matrix#(.rows: UIntNative, .cols: UIntNative, .t: Type: Scalar): Type = (
 )
 
 implement#(.n: UIntNative, .t: Type: Scalar) ImplicitlyCopyable#(Vector#(.n = n, .t: t)) ()
-implement#(.rows: UIntNative, .cols: UIntNative, .t: Type: Scalar) ImplicitlyCopyable#(Matrix#(.rows = rows, .cols = cols, .t: t)) ()
+
+implement#(.rows: UIntNative, .cols: UIntNative, .t: Type: Scalar) ImplicitlyCopyable#(
+    Matrix#(.rows = rows, .cols = cols, .t: t)
+) ()
 
 implement#(
     .n : UIntNative,
@@ -20,38 +23,46 @@ implement#(
         .values : Array#(.n = n, .t: t),
     )
 ) (
-    .Result: Type = Vector#(
+        .Result : Type = Vector#(
             .n = n,
             .t : t
         )
-    .init = (.args: (
-        .values : Array#(.n = n, .t: t),
-    )) -> (.result: Result) {
-        values ::= args.values
+        .init = (
+                .args : (
+                    .values : Array#(.n = n, .t: t),
+                )
+            ) -> (
+                .result : Result
+            ) {
+            values ::= args.values
 
-        result = (.values = values)
-    }
-)
+            result = (.values = values)
+        }
+    )
 
 implement#(
     .rows : UIntNative,
     .cols : UIntNative,
-    .t : Type: Scalar
+    .t    : Type: Scalar
 ) Init#(
     Matrix#(.rows = rows, .cols = cols, .t: t),
     (
-        .values : Array#( .n = rows, .t : Array#(.n = cols, .t: t) ),
+        .values : Array#(.n = rows, .t: Array#(.n = cols, .t: t)),
     )
 ) (
-    .Result: Type = Matrix#(.rows = rows, .cols = cols, .t: t)
-    .init = (.args: (
-        .values : Array#( .n = rows, .t : Array#(.n = cols, .t: t) ),
-    )) -> (.result: Result) {
-        values ::= args.values
+        .Result : Type = Matrix#(.rows = rows, .cols = cols, .t: t)
+        .init   = (
+                .args : (
+                    .values : Array#(.n = rows, .t: Array#(.n = cols, .t: t)),
+                )
+            ) -> (
+                .result : Result
+            ) {
+            values ::= args.values
 
-        result = (.values = values)
-    }
-)
+            result = (.values = values)
+        }
+    )
 
 implement#(.n: UIntNative, .t: Type: Scalar) Add#(
     Vector#(.n = n, .t: t),
@@ -83,7 +94,9 @@ _math_dot_fixed_vector#(
     ) := (
         .left  : &Vector#(.n = n, .t: t),
         .right : &Vector#(.n = n, .t: t)
-    ) -> (.result: t) {
+    ) -> (
+        .result : t
+    ) {
     result = zeroed#(.t: t)()
     i :: UIntNative = 0
 
@@ -99,10 +112,12 @@ _math_scale_fixed_vector#(
     ) := (
         .self   : &Vector#(.n = n, .t: t),
         .factor : t
-    ) -> (.result : Vector#(
+    ) -> (
+        .result : Vector#(
             .n = n,
             .t : t
-        )) {
+        )
+    ) {
     result = (.values = zeroed#(.t: Array#(.n = n, .t: t))())
     i :: UIntNative = 0
 
@@ -156,7 +171,9 @@ _math_transpose_fixed_matrix#(
             .cols = cols,
             .t    : t
         )
-    ) -> (.result : Matrix#(.rows = cols, .cols = rows, .t: t)) {
+    ) -> (
+        .result : Matrix#(.rows = cols, .cols = rows, .t: t)
+    ) {
     result = (.values = zeroed#(.t: Array#(.n = cols, .t: Array#(.n = rows, .t: t)))())
     row :: UIntNative = 0
 

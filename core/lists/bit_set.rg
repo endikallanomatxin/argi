@@ -9,33 +9,37 @@ implement Init#(
         .count : UIntNative,
     )
 ) (
-    .Result: Type = Errable#(BitSetView, (..out_of_bounds))
-    .init = (.args: (
-        .bytes : ArrayView#(.t: UInt8),
-        .count : UIntNative,
-    )) -> (.result: Result) {
-        bytes ::= args.bytes
-        count ::= args.count
+        .Result : Type = Errable#(BitSetView, (..out_of_bounds))
+        .init   = (
+                .args : (
+                    .bytes : ArrayView#(.t: UInt8),
+                    .count : UIntNative,
+                )
+            ) -> (
+                .result : Result
+            ) {
+            bytes ::= args.bytes
+            count ::= args.count
 
-        needed ::= count / 8
+            needed ::= count / 8
 
-        if count % 8 != 0 { needed = needed + 1 }
-        if needed > length(&bytes).count {
-            result = ..error(.reason = ..out_of_bounds)
-            return
+            if count % 8 != 0 { needed = needed + 1 }
+            if needed > length(&bytes).count {
+                result = ..error(.reason = ..out_of_bounds)
+                return
+            }
+
+            index :: UIntNative = 0
+
+            while index < needed {
+                target ::= unwrap_or_abort(.value = get_rw_ref($&bytes, .index = index))
+                target&= 0
+                index = index + 1
+            }
+
+            result = ..ok(._bytes = bytes, ._count = count)
         }
-
-        index :: UIntNative = 0
-
-        while index < needed {
-            target ::= unwrap_or_abort(.value = get_rw_ref($&bytes, .index = index))
-            target&= 0
-            index = index + 1
-        }
-
-        result = ..ok(._bytes = bytes, ._count = count)
-    }
-)
+    )
 
 _collection_length_bit_set(.self: &BitSetView) -> (.count: UIntNative) := { count = self&._count }
 
@@ -115,7 +119,7 @@ _bit_count_BitSetView(.self: &BitSetView) -> (.count: UIntNative) := {
 }
 
 implement BitSetAccess#(BitSetView) (
-    .read_bit = _bit_query_BitSetView
-    .write_bit = _bit_write_BitSetView
+    .read_bit   = _bit_query_BitSetView
+    .write_bit  = _bit_write_BitSetView
     .population = _bit_count_BitSetView
 )

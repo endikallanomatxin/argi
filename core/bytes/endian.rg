@@ -32,7 +32,7 @@ read_uint16_at(
         position :: UIntNative = index
         if order == ..little { position = last - index }
         byte ::= get_ro_ref(&bytes, .index = offset + position)!
-        value = value * 256 + byte& | convert#(.to: UInt16)(_)
+        value = value * 256 + byte&| convert#(.to: UInt16)(_)
         index = index + 1
     }
 
@@ -95,7 +95,7 @@ read_uint32_at(
         position :: UIntNative = index
         if order == ..little { position = last - index }
         byte ::= get_ro_ref(&bytes, .index = offset + position)!
-        value = value * 256 + byte& | convert#(.to: UInt32)(_)
+        value = value * 256 + byte&| convert#(.to: UInt32)(_)
         index = index + 1
     }
 
@@ -158,7 +158,7 @@ read_uint64_at(
         position :: UIntNative = index
         if order == ..little { position = last - index }
         byte ::= get_ro_ref(&bytes, .index = offset + position)!
-        value = value * 256 + byte& | convert#(.to: UInt64)(_)
+        value = value * 256 + byte&| convert#(.to: UInt64)(_)
         index = index + 1
     }
 

@@ -72,7 +72,9 @@ capture#(
     }
 }
 
-_exception_text#(.AllocatorType: Type: Allocator#(AllocatorType))(
+_exception_text#(
+        .AllocatorType : Type: Allocator#(AllocatorType)
+    )(
         .self      : &Exception,
         .part      : Int32,
         .allocator : $&AllocatorType
@@ -96,7 +98,9 @@ _exception_text#(.AllocatorType: Type: Allocator#(AllocatorType))(
     result = ..ok ~text
 }
 
-exception_type#(.AllocatorType: Type: Allocator#(AllocatorType))(
+exception_type#(
+        .AllocatorType : Type: Allocator#(AllocatorType)
+    )(
         .self      : &Exception,
         .allocator : $&AllocatorType
     ) -> (
@@ -105,7 +109,9 @@ exception_type#(.AllocatorType: Type: Allocator#(AllocatorType))(
     result = _exception_text(.self = self, .part = 0, .allocator = allocator)
 }
 
-exception_message#(.AllocatorType: Type: Allocator#(AllocatorType))(
+exception_message#(
+        .AllocatorType : Type: Allocator#(AllocatorType)
+    )(
         .self      : &Exception,
         .allocator : $&AllocatorType
     ) -> (
@@ -114,7 +120,9 @@ exception_message#(.AllocatorType: Type: Allocator#(AllocatorType))(
     result = _exception_text(.self = self, .part = 1, .allocator = allocator)
 }
 
-exception_traceback#(.AllocatorType: Type: Allocator#(AllocatorType))(
+exception_traceback#(
+        .AllocatorType : Type: Allocator#(AllocatorType)
+    )(
         .self      : &Exception,
         .allocator : $&AllocatorType
     ) -> (

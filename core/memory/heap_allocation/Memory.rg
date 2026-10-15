@@ -10,7 +10,11 @@ _trusted_acquisition_subaddress(.base: UIntNative, .address: UIntNative) -> (.re
     result = address
 }
 
-once _acquire_memory := (.args: (.ffi: $&ForeignFunctionInterface = reach ffi)) -> (.result: Memory) {
+once _acquire_memory := (
+        .args : (.ffi: $&ForeignFunctionInterface = reach ffi)
+    ) -> (
+        .result : Memory
+    ) {
     assume ffi := args.ffi
 
     result._ffi = ffi
@@ -20,8 +24,8 @@ once _acquire_memory := (.args: (.ffi: $&ForeignFunctionInterface = reach ffi)) 
 }
 
 implement Init#(Memory, (.ffi: $&ForeignFunctionInterface = reach ffi)) (
-    .Result: Type = Memory
-    .init = _acquire_memory
+    .Result : Type            = Memory
+    .init   = _acquire_memory
 )
 
 _memory_map_aligned(
@@ -87,7 +91,7 @@ map_pages(
     }
 }
 
-implement Deallocator#(Memory)(
+implement Deallocator#(Memory) (
     .deallocate = (
             .self      : $&Memory,
             .data      : RawPointer#(.t: UInt8),

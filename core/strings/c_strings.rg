@@ -47,7 +47,9 @@ string_view_has_c_string_layout(
     ok = terminator_ptr&== 0
 }
 
-copy_c_string#(.Provider: Type: Allocator#(Provider)) := (
+copy_c_string#(
+        .Provider : Type: Allocator#(Provider)
+    ) := (
         .self      : StringView,
         .allocator : $&Provider,
     ) -> (

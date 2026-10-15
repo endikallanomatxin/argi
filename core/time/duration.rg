@@ -4,13 +4,17 @@ Duration: Type = (._nanoseconds: UInt64)
 implement ImplicitlyCopyable#(Duration) ()
 
 implement Init#(Duration, (.nanoseconds: UInt64)) (
-    .Result: Type = Duration
-    .init = (.args: (.nanoseconds: UInt64)) -> (.result: Result) {
-        nanoseconds ::= args.nanoseconds
+        .Result : Type = Duration
+        .init   = (
+                .args : (.nanoseconds: UInt64)
+            ) -> (
+                .result : Result
+            ) {
+            nanoseconds ::= args.nanoseconds
 
-        result = (._nanoseconds = nanoseconds)
-    }
-)
+            result = (._nanoseconds = nanoseconds)
+        }
+    )
 
 _duration_checked(
         .value : Errable#(UInt64, (..out_of_range))
@@ -55,7 +59,7 @@ duration_from_seconds(.seconds: UInt64) -> (.result: Errable#(Duration, (..out_o
 _nanoseconds_Duration(.self: &Duration) -> (.value: UInt64) := { value = self&._nanoseconds }
 
 implement NanosecondCount#(Duration) (
-    .Count: Type = UInt64
+    .Count            : Type                  = UInt64
     .nanosecond_count = _nanoseconds_Duration
 )
 

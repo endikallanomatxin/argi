@@ -4,7 +4,9 @@ ByteLine: Type = (.bytes: ArrayViewRO#(.t: UInt8), .terminated: Bool)
 
 -- LF terminates a line; remove a preceding CR only when LF was consumed.
 -- A full buffer needs one byte of lookahead to distinguish an exact fit.
-read_line#(.SelfType: Type: Reader#(SelfType))(
+read_line#(
+        .SelfType : Type: Reader#(SelfType)
+    )(
         .self   : $&SelfType,
         .buffer : ArrayView#(.t: UInt8)
     ) -> (

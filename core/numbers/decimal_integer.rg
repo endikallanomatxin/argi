@@ -362,7 +362,12 @@ _float_integer_from_u64(.value: UInt64) -> (.integer: _FloatDecimalInteger) := {
     integer.used = 0
 
     while true {
-        integer.words[integer.used] = unwrap_or_abort(.value = [remaining % 65536] | convert#(.to: UInt32)(_)).result
+        integer.words[integer.used] = unwrap_or_abort(
+            .value = [
+                [remaining % 65536]
+                | convert#(.to: UInt32)(_)
+            ]
+        ).result
         integer.used = integer.used + 1
         remaining = remaining / 65536
         if remaining == 0 { break }

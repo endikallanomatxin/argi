@@ -6,11 +6,15 @@ implement Init#(
     _TestDiagnostic,
     ()
 ) (
-    .Result: Type = _TestDiagnostic
-    .init = (.args: ()) -> (.result: Result) {
-        result = (._bytes = zeroed#(.t: [128]UInt8)(), ._length = 0)
-    }
-)
+        .Result : Type = _TestDiagnostic
+        .init   = (
+                .args : ()
+            ) -> (
+                .result : Result
+            ) {
+            result = (._bytes = zeroed#(.t: [128]UInt8)(), ._length = 0)
+        }
+    )
 
 _testing_append(.self: $&_TestDiagnostic, .text: StringView) -> () := {
     index :: UIntNative = 0
@@ -200,8 +204,6 @@ _assert_text_views(
         .kind     = "strings"
     )
 }
-
-
 
 _assert_owned_strings(
         .expected : &String,

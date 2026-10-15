@@ -62,7 +62,9 @@ _copy_numeric#(
     capacity ::= length(&destination).count
     address :: UIntNative = 0
 
-    if capacity != 0 { address = data(.self = &destination).pointer | convert#(.to: UIntNative)(_) }
+    if capacity != 0 {
+        address = data(.self = &destination).pointer | convert#(.to: UIntNative)(_)
+    }
     copied :: UIntNative = 0
 
     if [
@@ -111,73 +113,118 @@ _native_dtype() -> (.value: StringView) := {
 
 -- Element metadata selects the native format; view mutability stays explicit.
 _PythonNumericScalar#(.Value: Type): Contract = (
-    .native_kind: () -> (.value: Int32)
-    .dtype: () -> (.value: StringView)
+    .native_kind : () -> (.value: Int32)
+    .dtype       : () -> (.value: StringView)
 )
-_PythonNumericView#(.View: Type): Contract = (
-    .Element: Type
-)
-implement#(.t: Type: _PythonNumericScalar#(t)) _PythonNumericView#(ArrayView#(.t: t)) (.Element: Type = t)
-implement#(.t: Type: _PythonNumericScalar#(t)) _PythonNumericView#(ArrayViewRO#(.t: t)) (.Element: Type = t)
 
-numeric_buffer#(.View: Type: _PythonNumericView#(View)) := (
-    .self: &Python, .values: View
-) -> (.result: Errable#(Object, (..python_error))) {
-    result = ~_array_storage#(.t: _PythonNumericView#(View).Element)(.self = self, .values = values)
+_PythonNumericView#(.View: Type): Contract = (
+    .Element : Type
+)
+
+implement#(.t: Type: _PythonNumericScalar#(t)) _PythonNumericView#(ArrayView#(.t: t)) (
+    .Element : Type = t
+)
+
+implement#(.t: Type: _PythonNumericScalar#(t)) _PythonNumericView#(ArrayViewRO#(.t: t)) (
+    .Element : Type = t
+)
+
+numeric_buffer#(
+        .View : Type: _PythonNumericView#(View)
+    ) := (
+        .self   : &Python,
+        .values : View
+    ) -> (
+        .result : Errable#(Object, (..python_error))
+    ) {
+    result = ~_array_storage#(.t: _PythonNumericView#(View).Element)(
+        .self   = self
+        .values = values
+    )
 }
-numeric_array#(.View: Type: _PythonNumericView#(View)) := (
-    .self: &Python, .values: View
-) -> (.result: Errable#(Object, (..python_error))) {
+
+numeric_array#(
+        .View : Type: _PythonNumericView#(View)
+    ) := (
+        .self   : &Python,
+        .values : View
+    ) -> (
+        .result : Errable#(Object, (..python_error))
+    ) {
     storage ::= numeric_buffer(.self = self, .values = values)!
-    result = ~_numpy_array(.self = self, .storage = &storage, .dtype = _PythonNumericScalar#(_PythonNumericView#(View).Element).dtype())
+    result = ~_numpy_array(
+        .self    = self
+        .storage = &storage
+        .dtype   = _PythonNumericScalar#(_PythonNumericView#(View).Element).dtype()
+    )
 }
-copy_numeric#(.t: Type: _PythonNumericScalar#(t)) := (
-    .self: &Object, .destination: ArrayView#(.t: t)
-) -> (.result: Errable#(UIntNative, (..python_error))) {
-    result = _copy_numeric(.self = self, .destination = destination, .kind = _PythonNumericScalar#(t).native_kind())
+
+copy_numeric#(
+        .t : Type: _PythonNumericScalar#(t)
+    ) := (
+        .self        : &Object,
+        .destination : ArrayView#(.t: t)
+    ) -> (
+        .result : Errable#(UIntNative, (..python_error))
+    ) {
+    result = _copy_numeric(
+        .self        = self
+        .destination = destination
+        .kind        = _PythonNumericScalar#(t).native_kind()
+    )
 }
 
 implement _PythonNumericScalar#(Int8) (
     .native_kind = () -> (.value: Int32) { value = 0 }
-    .dtype = () -> (.value: StringView) { value = "=i1" }
+    .dtype       = () -> (.value: StringView) { value = "=i1" }
 )
+
 implement _PythonNumericScalar#(Int16) (
     .native_kind = () -> (.value: Int32) { value = 0 }
-    .dtype = () -> (.value: StringView) { value = "=i2" }
+    .dtype       = () -> (.value: StringView) { value = "=i2" }
 )
+
 implement _PythonNumericScalar#(Int32) (
     .native_kind = () -> (.value: Int32) { value = 0 }
-    .dtype = () -> (.value: StringView) { value = "=i4" }
+    .dtype       = () -> (.value: StringView) { value = "=i4" }
 )
+
 implement _PythonNumericScalar#(Int64) (
     .native_kind = () -> (.value: Int32) { value = 0 }
-    .dtype = () -> (.value: StringView) { value = "=i8" }
+    .dtype       = () -> (.value: StringView) { value = "=i8" }
 )
+
 implement _PythonNumericScalar#(UInt8) (
     .native_kind = () -> (.value: Int32) { value = 1 }
-    .dtype = () -> (.value: StringView) { value = "=u1" }
+    .dtype       = () -> (.value: StringView) { value = "=u1" }
 )
+
 implement _PythonNumericScalar#(UInt16) (
     .native_kind = () -> (.value: Int32) { value = 1 }
-    .dtype = () -> (.value: StringView) { value = "=u2" }
+    .dtype       = () -> (.value: StringView) { value = "=u2" }
 )
+
 implement _PythonNumericScalar#(UInt32) (
     .native_kind = () -> (.value: Int32) { value = 1 }
-    .dtype = () -> (.value: StringView) { value = "=u4" }
+    .dtype       = () -> (.value: StringView) { value = "=u4" }
 )
+
 implement _PythonNumericScalar#(UInt64) (
     .native_kind = () -> (.value: Int32) { value = 1 }
-    .dtype = () -> (.value: StringView) { value = "=u8" }
+    .dtype       = () -> (.value: StringView) { value = "=u8" }
 )
+
 implement _PythonNumericScalar#(UIntNative) (
     .native_kind = () -> (.value: Int32) { value = 1 }
-    .dtype = _native_dtype
+    .dtype       = _native_dtype
 )
+
 implement _PythonNumericScalar#(Float32) (
     .native_kind = () -> (.value: Int32) { value = 2 }
-    .dtype = () -> (.value: StringView) { value = "=f4" }
+    .dtype       = () -> (.value: StringView) { value = "=f4" }
 )
+
 implement _PythonNumericScalar#(Float64) (
     .native_kind = () -> (.value: Int32) { value = 2 }
-    .dtype = () -> (.value: StringView) { value = "=f8" }
+    .dtype       = () -> (.value: StringView) { value = "=f8" }
 )

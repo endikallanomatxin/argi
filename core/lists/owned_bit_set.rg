@@ -3,37 +3,41 @@
 BitSet: Type = (._storage: DynamicArray#(.t: UInt8), ._count: UIntNative)
 
 implement#(
-    .Provider: Type: Allocator
+    .Provider : Type: Allocator
 ) Init#(
     BitSet,
     (
-        .count : UIntNative,
-        .allocator : $&Provider = reach allocator,
+        .count     : UIntNative,
+        .allocator : $&Provider  = reach allocator,
     )
 ) (
-    .Result: Type = Errable#(BitSet, (..out_of_memory))
-    .init = (.args: (
-        .count : UIntNative,
-        .allocator : $&Provider = reach allocator,
-    )) -> (.result: Result) {
-        count ::= args.count
-        allocator ::= args.allocator
+        .Result : Type = Errable#(BitSet, (..out_of_memory))
+        .init   = (
+                .args : (
+                    .count     : UIntNative,
+                    .allocator : $&Provider  = reach allocator,
+                )
+            ) -> (
+                .result : Result
+            ) {
+            count ::= args.count
+            allocator ::= args.allocator
 
-        assume allocator
-        needed ::= count / 8
+            assume allocator
+            needed ::= count / 8
 
-        if count % 8 != 0 { needed = needed + 1 }
-        storage ::= DynamicArray#(.t: UInt8)(.allocator = allocator, .capacity = needed)!
-        index :: UIntNative = 0
+            if count % 8 != 0 { needed = needed + 1 }
+            storage ::= DynamicArray#(.t: UInt8)(.allocator = allocator, .capacity = needed)!
+            index :: UIntNative = 0
 
-        while index < needed {
-            push_assume_capacity($&storage, .value = 0)
-            index = index + 1
+            while index < needed {
+                push_assume_capacity($&storage, .value = 0)
+                index = index + 1
+            }
+
+            result = ..ok(._storage = ~storage, ._count = count)
         }
-
-        result = ..ok(._storage = ~storage, ._count = count)
-    }
-)
+    )
 
 implement Deinit#(BitSet) (
     .deinit = (.self: $&BitSet) -> () {
@@ -41,14 +45,19 @@ implement Deinit#(BitSet) (
     }
 )
 
-_collection_length_owned_bit_set(.self: &BitSet) -> (.count: UIntNative) := { count = self&._count }
+_collection_length_owned_bit_set(.self: &BitSet) -> (.count: UIntNative) := {
+    count = self&._count
+}
 
 implement CollectionLength#(BitSet) (
     .measure_length = _collection_length_owned_bit_set
 )
 
 as_view(.self: $&BitSet) -> (.view: BitSetView) := {
-    view = (._bytes = ViewOf#($&DynamicArray#(.t: UInt8)).make_view(.array = $&self&._storage), ._count = self&._count)
+    view = (
+        ._bytes = ViewOf#($&DynamicArray#(.t: UInt8)).make_view(.array = $&self&._storage)
+        ._count = self&._count
+    )
 }
 
 _bit_query_BitSet(
@@ -88,7 +97,7 @@ _bit_count_BitSet(.self: &BitSet) -> (.count: UIntNative) := {
 }
 
 implement BitSetAccess#(BitSet) (
-    .read_bit = _bit_query_BitSet
-    .write_bit = _bit_write_BitSet
+    .read_bit   = _bit_query_BitSet
+    .write_bit  = _bit_write_BitSet
     .population = _bit_count_BitSet
 )

@@ -13,7 +13,11 @@ ArgumentsIterator: Type = (
     .index : UIntNative
 )
 
-once _acquire_arguments := (.args: (.ffi: $&ForeignFunctionInterface = reach ffi)) -> (.result: Arguments) {
+once _acquire_arguments := (
+        .args : (.ffi: $&ForeignFunctionInterface = reach ffi)
+    ) -> (
+        .result : Arguments
+    ) {
     assume ffi := args.ffi
 
     result = (
@@ -24,8 +28,8 @@ once _acquire_arguments := (.args: (.ffi: $&ForeignFunctionInterface = reach ffi
 }
 
 implement Init#(Arguments, (.ffi: $&ForeignFunctionInterface = reach ffi)) (
-    .Result: Type = Arguments
-    .init = _acquire_arguments
+    .Result : Type               = Arguments
+    .init   = _acquire_arguments
 )
 
 has_argument(
@@ -83,45 +87,45 @@ argument_view_at(
 }
 
 implement Iterable#(Arguments) (
-    .Item: Type = StringView
-    .IteratorType: Type = ArgumentsIterator
+        .Item         : Type = StringView
+        .IteratorType : Type = ArgumentsIterator
 
-    .to_iterator = (
-            .value : &Arguments,
-        ) -> (
-            .iterator : ArgumentsIterator
-        ) {
-        iterator = (
-            .args  = value
-            .index = 0
-        )
-    }
-)
+        .to_iterator = (
+                .value : &Arguments,
+            ) -> (
+                .iterator : ArgumentsIterator
+            ) {
+            iterator = (
+                .args  = value
+                .index = 0
+            )
+        }
+    )
 
 implement Iterator#(ArgumentsIterator) (
-    .Item: Type = StringView
+        .Item : Type = StringView
 
-    .has_next = (
-            .self : &ArgumentsIterator,
-        ) -> (
-            .ok : Bool
-        ) {
-        ok = self&.index < self&.args&.count
-    }
+        .has_next = (
+                .self : &ArgumentsIterator,
+            ) -> (
+                .ok : Bool
+            ) {
+            ok = self&.index < self&.args&.count
+        }
 
-    .next = (
-            .self : $&ArgumentsIterator,
-        ) -> (
-            .value : StringView
-        ) {
-        current_index :: UIntNative = self&.index
-        value = argument_view_at(self&.args, .index = current_index)
-        self&= (
-            .args  = self&.args
-            .index = current_index + 1
-        )
-    }
-)
+        .next = (
+                .self : $&ArgumentsIterator,
+            ) -> (
+                .value : StringView
+            ) {
+            current_index :: UIntNative = self&.index
+            value = argument_view_at(self&.args, .index = current_index)
+            self&= (
+                .args  = self&.args
+                .index = current_index + 1
+            )
+        }
+    )
 
 implement ArgumentSource#(Arguments) (
     .length = (.self: &Arguments) -> (.count: UIntNative) {

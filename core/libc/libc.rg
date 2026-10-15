@@ -78,7 +78,7 @@ fread_into(
 }
 
 _FileWriteBuffer#(.Buffer: Type): Contract = (
-    .bytes: (.self: &Buffer) -> (.pointer: &UInt8)
+    .bytes : (.self: &Buffer) -> (.pointer: &UInt8)
 )
 
 _write_buffer_mutable(.self: &ArrayView#(.t: UInt8)) -> (.pointer: &UInt8) := {
@@ -92,21 +92,27 @@ _write_buffer_readonly(.self: &ArrayViewRO#(.t: UInt8)) -> (.pointer: &UInt8) :=
 implement _FileWriteBuffer#(ArrayView#(.t: UInt8)) (
     .bytes = _write_buffer_mutable
 )
+
 implement _FileWriteBuffer#(ArrayViewRO#(.t: UInt8)) (
     .bytes = _write_buffer_readonly
 )
 
-fwrite_from#(.Buffer: Type: _FileWriteBuffer#(Buffer)) := (
-    .buffer: Buffer, .stream: &Any
-) -> (.count: UIntNative) {
+fwrite_from#(
+        .Buffer : Type: _FileWriteBuffer#(Buffer)
+    ) := (
+        .buffer : Buffer,
+        .stream : &Any
+    ) -> (
+        .count : UIntNative
+    ) {
     if length(&buffer).count == 0 {
         count = 0
         return
     }
     count = fwrite(
         .buffer = _FileWriteBuffer#(Buffer).bytes(.self = &buffer).pointer
-        .size = 1
-        .count = length(&buffer).count
+        .size   = 1
+        .count  = length(&buffer).count
         .stream = stream
     ).count
 }

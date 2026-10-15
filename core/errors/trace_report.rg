@@ -83,9 +83,11 @@ _error_report_entry(
     result = ..ok Void()
 }
 
-report_trace#(.WriterType: Type: Writer#(WriterType))(
+report_trace#(
+        .WriterType : Type: Writer#(WriterType)
+    )(
         .tracer : $&Virtual#(.contract: ErrorTracer),
-        .writer : $&WriterType                            = reach writer
+        .writer : $&WriterType                        = reach writer
     ) -> (
         .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     ) := {
@@ -97,7 +99,9 @@ report_trace#(.WriterType: Type: Writer#(WriterType))(
 }
 
 report_error#(
-        .reasons : Type, .WriterType: Type: Writer#(WriterType))(
+        .reasons    : Type,
+        .WriterType : Type: Writer#(WriterType)
+    )(
         .err    : &Error#(.reasons: reasons),
         .writer : $&WriterType
     ) -> (
@@ -110,7 +114,9 @@ report_error#(
 }
 
 report_error_message#(
-        .reasons : Type, .WriterType: Type: Writer#(WriterType))(
+        .reasons    : Type,
+        .WriterType : Type: Writer#(WriterType)
+    )(
         .message : &Char,
         .err     : &Error#(.reasons: reasons),
         .writer  : $&WriterType

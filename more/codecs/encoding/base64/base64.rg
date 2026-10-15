@@ -25,9 +25,11 @@ _value(.byte: UInt8) -> (.value: UInt32 = 255) := {
 }
 
 -- RFC 4648 standard alphabet with required padding; no inserted whitespace.
-encode#(.AllocatorType: Type: Allocator#(AllocatorType))(
+encode#(
+        .AllocatorType : Type: Allocator#(AllocatorType)
+    )(
         .bytes     : ArrayViewRO#(.t: UInt8),
-        .allocator : $&AllocatorType              = reach allocator
+        .allocator : $&AllocatorType          = reach allocator
     ) -> (
         .result : Errable#(String, (..out_of_memory, ..out_of_range))
     ) := {
@@ -43,30 +45,43 @@ encode#(.AllocatorType: Type: Allocator#(AllocatorType))(
     output :: UIntNative = 0
 
     while index < count {
-        a ::= unwrap_or_abort(.value = get(.self = &bytes, .index = index)) | convert#(.to: UInt32)(_)
+        a ::= [
+            unwrap_or_abort(.value = get(.self = &bytes, .index = index))
+            | convert#(.to: UInt32)(_)
+        ]
         b :: UInt32 = 0
         c :: UInt32 = 0
         if count - index > 1 {
-            b = [unwrap_or_abort(
-                    .value = get(
-                        .self  = &bytes
-                        .index = [
-                            index
-                            + 1
-                        ]
+            b = [
+                [
+                    unwrap_or_abort(
+                        .value = get(
+                            .self  = &bytes
+                            .index = [
+                                index
+                                + 1
+                            ]
+                        )
                     )
-                )] | convert#(.to: UInt32)(_)
+                ]
+                | convert#(.to: UInt32)(_)
+            ]
         }
         if count - index > 2 {
-            c = [unwrap_or_abort(
-                    .value = get(
-                        .self  = &bytes
-                        .index = [
-                            index
-                            + 2
-                        ]
+            c = [
+                [
+                    unwrap_or_abort(
+                        .value = get(
+                            .self  = &bytes
+                            .index = [
+                                index
+                                + 2
+                            ]
+                        )
                     )
-                )] | convert#(.to: UInt32)(_)
+                ]
+                | convert#(.to: UInt32)(_)
+            ]
         }
         bytes_set(
             .string = $&text
@@ -74,9 +89,9 @@ encode#(.AllocatorType: Type: Allocator#(AllocatorType))(
             .value  = bytes_get(
                 .view  = &alphabet
                 .index = [
-                        a
-                        / 4
-                    ] | convert#(.to: UIntNative)(_)
+                    a
+                    / 4
+                ] | convert#(.to: UIntNative)(_)
             ).byte
         )
         bytes_set(
@@ -85,9 +100,9 @@ encode#(.AllocatorType: Type: Allocator#(AllocatorType))(
             .value  = bytes_get(
                 .view  = &alphabet
                 .index = [
-                        [a % 4] * 16
-                        + b / 16
-                    ] | convert#(.to: UIntNative)(_)
+                    [a % 4] * 16
+                    + b / 16
+                ] | convert#(.to: UIntNative)(_)
             ).byte
         )
         third :: UInt8 = 61
@@ -96,18 +111,18 @@ encode#(.AllocatorType: Type: Allocator#(AllocatorType))(
             third = bytes_get(
                 .view  = &alphabet
                 .index = [
-                        [b % 16] * 4
-                        + c / 64
-                    ] | convert#(.to: UIntNative)(_)
+                    [b % 16] * 4
+                    + c / 64
+                ] | convert#(.to: UIntNative)(_)
             ).byte
         }
         if count - index > 2 {
             fourth = bytes_get(
                 .view  = &alphabet
                 .index = [
-                        c
-                        % 64
-                    ] | convert#(.to: UIntNative)(_)
+                    c
+                    % 64
+                ] | convert#(.to: UIntNative)(_)
             ).byte
         }
         bytes_set(.string = $&text, .index = output + 2, .value = third)
@@ -123,7 +138,9 @@ encode#(.AllocatorType: Type: Allocator#(AllocatorType))(
 
 -- Reject misplaced padding, whitespace and nonzero unused trailing bits.
 -- Validation precedes allocation, so malformed input publishes no prefix.
-decode#(.AllocatorType: Type: Allocator#(AllocatorType))(
+decode#(
+        .AllocatorType : Type: Allocator#(AllocatorType)
+    )(
         .text      : StringView,
         .allocator : $&AllocatorType = reach allocator
     ) -> (
@@ -174,9 +191,9 @@ decode#(.AllocatorType: Type: Allocator#(AllocatorType))(
             .self  = $&bytes
             .value = unwrap_or_abort(
                 .value = [
-                        a * 4
-                        + b / 16
-                    ] | convert#(.to: UInt8)(_)
+                    a * 4
+                    + b / 16
+                ] | convert#(.to: UInt8)(_)
             )
         )
         if c != 255 {
@@ -184,9 +201,9 @@ decode#(.AllocatorType: Type: Allocator#(AllocatorType))(
                 .self  = $&bytes
                 .value = unwrap_or_abort(
                     .value = [
-                            [b % 16] * 16
-                            + c / 4
-                        ] | convert#(.to: UInt8)(_)
+                        [b % 16] * 16
+                        + c / 4
+                    ] | convert#(.to: UInt8)(_)
                 )
             )
         }
@@ -195,9 +212,9 @@ decode#(.AllocatorType: Type: Allocator#(AllocatorType))(
                 .self  = $&bytes
                 .value = unwrap_or_abort(
                     .value = [
-                            [c % 4] * 64
-                            + d
-                        ] | convert#(.to: UInt8)(_)
+                        [c % 4] * 64
+                        + d
+                    ] | convert#(.to: UInt8)(_)
                 )
             )
         }

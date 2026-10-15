@@ -17,50 +17,54 @@ RingBuffer#(.t: Type): Type = (
 )
 
 implement#(
-    .t : Type,
-    .Provider: Type: Allocator
+    .t        : Type,
+    .Provider : Type: Allocator
 ) Init#(
     RingBuffer#(.t: t),
     (
-        .capacity : UIntNative,
-        .allocator : $&Provider = reach allocator,
+        .capacity  : UIntNative,
+        .allocator : $&Provider  = reach allocator,
     )
 ) (
-    .Result: Type = Errable#(RingBuffer#(.t: t), (..invalid_capacity, ..out_of_memory))
-    .init = (.args: (
-        .capacity : UIntNative,
-        .allocator : $&Provider = reach allocator,
-    )) -> (.result: Result) {
-        capacity ::= args.capacity
-        allocator ::= args.allocator
+        .Result : Type = Errable#(RingBuffer#(.t: t), (..invalid_capacity, ..out_of_memory))
+        .init   = (
+                .args : (
+                    .capacity  : UIntNative,
+                    .allocator : $&Provider  = reach allocator,
+                )
+            ) -> (
+                .result : Result
+            ) {
+            capacity ::= args.capacity
+            allocator ::= args.allocator
 
-        constructed :: RingBuffer#(.t: t)
+            constructed :: RingBuffer#(.t: t)
 
-        if capacity == 0 {
-            result = ..error(.reason = ..invalid_capacity)
-            return
+            if capacity == 0 {
+                result = ..error(.reason = ..invalid_capacity)
+                return
+            }
+
+            element_size ::= size_of(.type = t)
+            maximum ::= integer_limits(.value = capacity).maximum
+
+            if element_size != 0 and capacity > maximum / element_size {
+                result = ..error(.reason = ..out_of_memory)
+                return
+            }
+
+            allocation ::= allocate#(.t: t)(allocator, .count = capacity)!
+            constructed = (
+                ._allocation = ~allocation
+                ._capacity   = capacity
+                ._head       = 0
+                ._length     = 0
+                ._shape      = (.marker = 0)
+            )
+
+            result = ..ok ~constructed
         }
-
-        element_size ::= size_of(.type = t)
-        maximum ::= integer_limits(.value = capacity).maximum
-
-        if element_size != 0 and capacity > maximum / element_size {
-            result = ..error(.reason = ..out_of_memory)
-            return
-        }
-
-        allocation ::= allocate#(.t: t)(allocator, .count = capacity)!
-        constructed = (
-            ._allocation = ~allocation
-            ._capacity   = capacity
-            ._head       = 0
-            ._length     = 0
-            ._shape      = (.marker = 0)
-        )
-
-        result = ..ok ~constructed
-    }
-)
+    )
 
 _collection_capacity_ring_buffer#(.t: Type)(.self: &RingBuffer#(.t: t)) -> (.count: UIntNative) := {
     count = self&._capacity
@@ -115,8 +119,8 @@ _ring_buffer_occupied_pointer#(
 }
 
 _queue_push_ring_buffer#(
-        .t : Type,
-        .Provider: Type: Allocator
+        .t        : Type,
+        .Provider : Type: Allocator
     )(
         .self      : $&RingBuffer#(.t: t),
         .value     : t,
@@ -159,50 +163,56 @@ _queue_pop_ring_buffer#(.t: Type)(.self: $&RingBuffer#(.t: t)) -> (.result: Erra
 }
 
 implement#(.t: Type) Deinit#(RingBuffer#(.t: t)) (
-    .deinit = (.self: $&RingBuffer#(.t: t)) -> () {
-        while self&._length > 0 {
-            discarded ::= ~unwrap_or_abort(.value = pop(self))
-        }
+        .deinit = (
+                .self : $&RingBuffer#(.t: t)
+            ) -> () {
+            while self&._length > 0 {
+                discarded ::= ~unwrap_or_abort(.value = pop(self))
+            }
 
-        trusted_opaque_mark_empty(.storage = $&self&._allocation)
-        deinit(.self = $&self&._allocation)
-    }
-)
+            trusted_opaque_mark_empty(.storage = $&self&._allocation)
+            deinit(.self = $&self&._allocation)
+        }
+    )
 
 implement#(.t: Type) Indexable#(RingBuffer#(.t: t)) (
-    .Item: Type = t
+        .Item : Type = t
 
-    .length = (.self: &RingBuffer#(.t: t)) -> (.count: UIntNative) { count = self&._length }
+        .length = (
+                .self : &RingBuffer#(.t: t)
+            ) -> (
+                .count : UIntNative
+            ) { count = self&._length }
 
-    .get_ro_ref = (
-            .self  : &RingBuffer#(.t: t),
-            .index : UIntNative
-        ) -> (
-            .result : Errable#(&t, (..out_of_bounds))
-        ) {
-        if index >= self&._length {
-            result = ..error(.reason = ..out_of_bounds)
-            return
+        .get_ro_ref = (
+                .self  : &RingBuffer#(.t: t),
+                .index : UIntNative
+            ) -> (
+                .result : Errable#(&t, (..out_of_bounds))
+            ) {
+            if index >= self&._length {
+                result = ..error(.reason = ..out_of_bounds)
+                return
+            }
+
+            mutable ::= _ring_buffer_occupied_pointer(self, .index = index).pointer
+            reference ::= read_reference#(.t: t)(.base = mutable).reference
+            borrowed ::= depend_on#(.t: &t)(
+                .value = reference
+                .on    = erase_reference#(.t: _RingBufferShape)(.base = &self&._shape).reference
+            ).result
+
+            result = ..ok borrowed
         }
-
-        mutable ::= _ring_buffer_occupied_pointer(self, .index = index).pointer
-        reference ::= read_reference#(.t: t)(.base = mutable).reference
-        borrowed ::= depend_on#(.t: &t)(
-            .value = reference
-            .on    = erase_reference#(.t: _RingBufferShape)(.base = &self&._shape).reference
-        ).result
-
-        result = ..ok borrowed
-    }
-)
+    )
 
 implement#(.t: Type) Queue#(RingBuffer#(.t: t)) (
-    .Item: Type = t
-    .Result: Type = Errable#(t, (..empty))
-    .pop = _queue_pop_ring_buffer
+    .Item   : Type                   = t
+    .Result : Type                   = Errable#(t, (..empty))
+    .pop    = _queue_pop_ring_buffer
 )
 
 implement#(.t: Type, .Provider: Type: Allocator) QueueInsertion#(RingBuffer#(.t: t), Provider) (
-    .Result: Type = Errable#(Void, (..full))
-    .push = _queue_push_ring_buffer
+    .Result : Type                    = Errable#(Void, (..full))
+    .push   = _queue_push_ring_buffer
 )

@@ -1,6 +1,8 @@
 -- Bounded byte copies are language operations and need no foreign-call
 -- authority. Source and destination must not overlap, as with memcpy.
-memcpy_bytes#(.Source: Type) := (
+memcpy_bytes#(
+        .Source : Type
+    ) := (
         .dst : ArrayView#(.t: UInt8),
         .src : Source,
     ) -> () {

@@ -1,7 +1,9 @@
 Float#(.Value: Type): Contract = ()
 
 implement Float#(Float16) ()
+
 implement Float#(Float32) ()
+
 implement Float#(Float64) ()
 
 -- TODO: support Float128 and Float8

@@ -1,9 +1,9 @@
 -- Search an ordered collection for the first policy-equivalent element.
 -- The half-open interval keeps midpoint arithmetic within UIntNative bounds.
 binary_search#(
-        .t      : Type: ImplicitlyCopyable,
-        .policy : Type: OrderPolicy#(policy, t),
-        .Collection: Type: Indexable#(.Item: t)
+        .t          : Type: ImplicitlyCopyable,
+        .policy     : Type: OrderPolicy#(policy, t),
+        .Collection : Type: Indexable#(.Item: t)
     ) := (
         .self  : &Collection,
         .value : t,

@@ -4,30 +4,24 @@ FileSystem: Type = (._ffi: $&ForeignFunctionInterface)
 ..path_remove_failed
 ..path_rename_failed
 
-once _acquire_file_system := (.args: (.ffi: $&ForeignFunctionInterface = reach ffi)) -> (.result: FileSystem) {
+once _acquire_file_system := (
+        .args : (.ffi: $&ForeignFunctionInterface = reach ffi)
+    ) -> (
+        .result : FileSystem
+    ) {
     ffi ::= args.ffi
 
     result._ffi = ffi
 }
 
 implement Init#(FileSystem, (.ffi: $&ForeignFunctionInterface = reach ffi)) (
-    .Result: Type = FileSystem
-    .init = _acquire_file_system
+    .Result : Type                 = FileSystem
+    .init   = _acquire_file_system
 )
 
-
-
-
-
-
-
-
-
-
-
-
-
-_read_c_file#(.Provider: Type: Allocator#(Provider)) := (
+_read_c_file#(
+        .Provider : Type: Allocator#(Provider)
+    ) := (
         .self      : &FileSystem,
         .path      : &Char,
         .allocator : $&Provider,
@@ -107,7 +101,9 @@ _read_c_file#(.Provider: Type: Allocator#(Provider)) := (
     result = ..ok ~text
 }
 
-_read_string_file#(.Provider: Type: Allocator#(Provider)) := (
+_read_string_file#(
+        .Provider : Type: Allocator#(Provider)
+    ) := (
         .self      : &FileSystem,
         .path      : &String,
         .allocator : $&Provider,
@@ -130,7 +126,9 @@ _read_string_file#(.Provider: Type: Allocator#(Provider)) := (
     result = read_file(self, .path = c_path, .allocator = allocator)
 }
 
-_read_view_file#(.Provider: Type: Allocator#(Provider)) := (
+_read_view_file#(
+        .Provider : Type: Allocator#(Provider)
+    ) := (
         .self      : &FileSystem,
         .path      : StringView,
         .allocator : $&Provider,
@@ -158,7 +156,9 @@ _read_view_file#(.Provider: Type: Allocator#(Provider)) := (
     }
 }
 
-_read_path_file#(.Provider: Type: Allocator#(Provider)) := (
+_read_path_file#(
+        .Provider : Type: Allocator#(Provider)
+    ) := (
         .self      : &FileSystem,
         .path      : &Path,
         .allocator : $&Provider,

@@ -12,29 +12,35 @@ implement#(
 ) Init#(
     BufferedWriter#(.base_type: base_type),
     (
-        .base : $&base_type,
+        .base   : $&base_type,
         .buffer : ArrayView#(.t: UInt8),
     )
 ) (
-    .Result: Type = BufferedWriter#(.base_type: base_type)
-    .init = (.args: (
-        .base : $&base_type,
-        .buffer : ArrayView#(.t: UInt8),
-    )) -> (.result: Result) {
-        base ::= args.base
-        buffer ::= args.buffer
+        .Result : Type = BufferedWriter#(.base_type: base_type)
+        .init   = (
+                .args : (
+                    .base   : $&base_type,
+                    .buffer : ArrayView#(.t: UInt8),
+                )
+            ) -> (
+                .result : Result
+            ) {
+            base ::= args.base
+            buffer ::= args.buffer
 
-        result = (.base = base, .buffer = buffer, .length = 0)
-    }
-)
+            result = (.base = base, .buffer = buffer, .length = 0)
+        }
+    )
 
 implement#(
-        .base_type : Type: Writer#(base_type)
-    ) Deinit#(BufferedWriter#(.base_type: base_type)) (
-    .deinit = (.self: $&BufferedWriter#(.base_type: base_type)) -> () {
-        buffered_writer_flush(self)
-    }
-)
+    .base_type : Type: Writer#(base_type)
+) Deinit#(BufferedWriter#(.base_type: base_type)) (
+        .deinit = (
+                .self : $&BufferedWriter#(.base_type: base_type)
+            ) -> () {
+            buffered_writer_flush(self)
+        }
+    )
 
 buffered_writer_flush#(
         .base_type : Type: Writer#(base_type)
@@ -80,7 +86,7 @@ buffered_writer_flush#(
 
 implement#(
     .base_type : Type: Writer#(base_type)
-) Writer#(BufferedWriter#(.base_type: base_type))(
+) Writer#(BufferedWriter#(.base_type: base_type)) (
         .write_byte = (
                 .self : $&BufferedWriter#(.base_type: base_type),
                 .byte : UInt8

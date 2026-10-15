@@ -47,15 +47,19 @@ _process_stream_write(.handle: UIntNative, .byte: UInt8) -> (.status: Int32): CF
 
 ProcessManager: Type = (._ffi: $&ForeignFunctionInterface)
 
-once _acquire_process_manager := (.args: (.ffi: $&ForeignFunctionInterface = reach ffi)) -> (.result: ProcessManager) {
+once _acquire_process_manager := (
+        .args : (.ffi: $&ForeignFunctionInterface = reach ffi)
+    ) -> (
+        .result : ProcessManager
+    ) {
     ffi ::= args.ffi
 
     result = (._ffi = ffi)
 }
 
 implement Init#(ProcessManager, (.ffi: $&ForeignFunctionInterface = reach ffi)) (
-    .Result: Type = ProcessManager
-    .init = _acquire_process_manager
+    .Result : Type                     = ProcessManager
+    .init   = _acquire_process_manager
 )
 
 ProcessStreamMode: Type = (..inherit, ..pipe, ..discard)
@@ -252,7 +256,7 @@ _close_ProcessStream(.self: $&ProcessStream) -> (.result: Errable#(Void, (..stre
     result = ..ok Void()
 }
 
-implement Reader#(ProcessStream)(
+implement Reader#(ProcessStream) (
     .read_byte = (
             .self : $&ProcessStream
         ) -> (
@@ -301,7 +305,7 @@ implement Deinit#(Process) (
     }
 )
 
-implement Writer#(ProcessStream)(
+implement Writer#(ProcessStream) (
     .write_byte = (
             .self : $&ProcessStream,
             .byte : UInt8
@@ -338,7 +342,7 @@ implement Writer#(ProcessStream)(
 )
 
 implement Closeable#(ProcessStream) (
-    .Result: Type = Errable#(Void, (..stream_close_failed))
+    .Result         : Type                 = Errable#(Void, (..stream_close_failed))
     .close_resource = _close_ProcessStream
 )
 

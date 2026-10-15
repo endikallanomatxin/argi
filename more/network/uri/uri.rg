@@ -387,7 +387,9 @@ _authority_valid(.text: StringView) -> (.ok: Bool = false) := {
 
 -- Recompose already encoded components. Validation rejects delimiter injection
 -- and ambiguous relative paths rather than silently changing their meaning.
-build#(.AllocatorType: Type: Allocator#(AllocatorType))(
+build#(
+        .AllocatorType : Type: Allocator#(AllocatorType)
+    )(
         .value     : UriView,
         .allocator : $&AllocatorType
     ) -> (
@@ -492,7 +494,9 @@ build#(.AllocatorType: Type: Allocator#(AllocatorType))(
     result = ..ok ~output
 }
 
-encode_component#(.AllocatorType: Type: Allocator#(AllocatorType))(
+encode_component#(
+        .AllocatorType : Type: Allocator#(AllocatorType)
+    )(
         .text      : StringView,
         .allocator : $&AllocatorType
     ) -> (
@@ -509,13 +513,25 @@ encode_component#(.AllocatorType: Type: Allocator#(AllocatorType))(
         } else {
             push_byte(.self = $&output, .byte = 37, .allocator = allocator)!
             push_byte(
-                .self      = $&output
-                .byte      = bytes_get(.view = &hex, .index = [byte / 16] | convert#(.to: UIntNative)(_)).byte
+                .self = $&output
+                .byte = bytes_get(
+                    .view  = &hex
+                    .index = [
+                        [byte / 16]
+                        | convert#(.to: UIntNative)(_)
+                    ]
+                ).byte
                 .allocator = allocator
             )!
             push_byte(
-                .self      = $&output
-                .byte      = bytes_get(.view = &hex, .index = [byte % 16] | convert#(.to: UIntNative)(_)).byte
+                .self = $&output
+                .byte = bytes_get(
+                    .view  = &hex
+                    .index = [
+                        [byte % 16]
+                        | convert#(.to: UIntNative)(_)
+                    ]
+                ).byte
                 .allocator = allocator
             )!
         }
@@ -525,7 +541,9 @@ encode_component#(.AllocatorType: Type: Allocator#(AllocatorType))(
     result = ..ok ~output
 }
 
-decode_component#(.AllocatorType: Type: Allocator#(AllocatorType))(
+decode_component#(
+        .AllocatorType : Type: Allocator#(AllocatorType)
+    )(
         .text      : StringView,
         .allocator : $&AllocatorType
     ) -> (

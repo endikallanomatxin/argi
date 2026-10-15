@@ -17,6 +17,7 @@ ArrayViewRO#(.t: Type): Type = (
 )
 
 implement#(.t: Type) ImplicitlyCopyable#(ArrayView#(.t: t)) ()
+
 implement#(.t: Type) ImplicitlyCopyable#(ArrayViewRO#(.t: t)) ()
 
 _array_view_data#(.t: Type)(.self: &ArrayView#(.t: t)) -> (.pointer: $&t) := {
@@ -148,117 +149,125 @@ as_readonly#(.t: Type)(.self: &ArrayView#(.t: t)) -> (.view: ArrayViewRO#(.t: t)
 }
 
 implement#(.t: Type) Indexable#(ArrayView#(.t: t)) (
-    .Item: Type = t
+        .Item : Type = t
 
-    .length = (.self: &ArrayView#(.t: t)) -> (.count: UIntNative) {
-        count = self&._length
-    }
-
-    .get_ro_ref = (
-            .self  : &ArrayView#(.t: t),
-            .index : UIntNative,
-        ) -> (
-            .result : Errable#(&t, (..out_of_bounds))
-        ) {
-        if index >= self&._length {
-            result = ..error(.reason = ..out_of_bounds)
-            return
+        .length = (
+                .self : &ArrayView#(.t: t)
+            ) -> (
+                .count : UIntNative
+            ) {
+            count = self&._length
         }
 
-        result = ..ok trusted_reference_offset#(.t: t)(
-            .base     = data(self).pointer
-            .elements = index
-        ).reference
-    }
-)
+        .get_ro_ref = (
+                .self  : &ArrayView#(.t: t),
+                .index : UIntNative,
+            ) -> (
+                .result : Errable#(&t, (..out_of_bounds))
+            ) {
+            if index >= self&._length {
+                result = ..error(.reason = ..out_of_bounds)
+                return
+            }
+
+            result = ..ok trusted_reference_offset#(.t: t)(
+                .base     = data(self).pointer
+                .elements = index
+            ).reference
+        }
+    )
 
 implement#(.t: Type) Indexable#(ArrayViewRO#(.t: t)) (
-    .Item: Type = t
+        .Item : Type = t
 
-    .length = (.self: &ArrayViewRO#(.t: t)) -> (.count: UIntNative) {
-        count = self&._length
-    }
-
-    .get_ro_ref = (
-            .self  : &ArrayViewRO#(.t: t),
-            .index : UIntNative,
-        ) -> (
-            .result : Errable#(&t, (..out_of_bounds))
-        ) {
-        if index >= self&._length {
-            result = ..error(.reason = ..out_of_bounds)
-            return
+        .length = (
+                .self : &ArrayViewRO#(.t: t)
+            ) -> (
+                .count : UIntNative
+            ) {
+            count = self&._length
         }
 
-        result = ..ok trusted_reference_offset#(.t: t)(
-            .base     = data(self).pointer
-            .elements = index
-        ).reference
-    }
-)
+        .get_ro_ref = (
+                .self  : &ArrayViewRO#(.t: t),
+                .index : UIntNative,
+            ) -> (
+                .result : Errable#(&t, (..out_of_bounds))
+            ) {
+            if index >= self&._length {
+                result = ..error(.reason = ..out_of_bounds)
+                return
+            }
+
+            result = ..ok trusted_reference_offset#(.t: t)(
+                .base     = data(self).pointer
+                .elements = index
+            ).reference
+        }
+    )
 
 implement#(
-        .t : Type
-    ) IndexableMutable#(ArrayView#(.t: t)) (
-    .Item: Type = t
+    .t : Type
+) IndexableMutable#(ArrayView#(.t: t)) (
+        .Item : Type = t
 
-    .get_rw_ref = (
-            .self  : $&ArrayView#(.t: t),
-            .index : UIntNative,
-        ) -> (
-            .result : Errable#($&t, (..out_of_bounds))
-        ) {
-        if index >= self&._length {
-            result = ..error(.reason = ..out_of_bounds)
-            return
+        .get_rw_ref = (
+                .self  : $&ArrayView#(.t: t),
+                .index : UIntNative,
+            ) -> (
+                .result : Errable#($&t, (..out_of_bounds))
+            ) {
+            if index >= self&._length {
+                result = ..error(.reason = ..out_of_bounds)
+                return
+            }
+
+            result = ..ok trusted_mutable_reference_offset#(.t: t)(
+                .base     = data(self).pointer
+                .elements = index
+            ).reference
         }
-
-        result = ..ok trusted_mutable_reference_offset#(.t: t)(
-            .base     = data(self).pointer
-            .elements = index
-        ).reference
-    }
-)
+    )
 
 implement#(
-        .t : Type: ImplicitlyCopyable
-    ) IndexableValue#(ArrayView#(.t: t)) (
-    .Item: Type = t
+    .t : Type: ImplicitlyCopyable
+) IndexableValue#(ArrayView#(.t: t)) (
+        .Item : Type = t
 
-    .get = (
-            .self  : &ArrayView#(.t: t),
-            .index : UIntNative,
-        ) -> (
-            .result : Errable#(t, (..out_of_bounds))
-        ) {
-        if index >= self&._length {
-            result = ..error(.reason = ..out_of_bounds)
-            return
+        .get = (
+                .self  : &ArrayView#(.t: t),
+                .index : UIntNative,
+            ) -> (
+                .result : Errable#(t, (..out_of_bounds))
+            ) {
+            if index >= self&._length {
+                result = ..error(.reason = ..out_of_bounds)
+                return
+            }
+
+            ptr ::= trusted_reference_offset#(.t: t)(
+                .base     = data(self).pointer
+                .elements = index
+            ).reference
+
+            result = ..ok ptr&
         }
-
-        ptr ::= trusted_reference_offset#(.t: t)(
-            .base     = data(self).pointer
-            .elements = index
-        ).reference
-
-        result = ..ok ptr&
-    }
-)
+    )
 
 implement#(
-        .t : Type: ImplicitlyCopyable
-    ) IndexableValue#(ArrayViewRO#(.t: t)) (
-    .Item: Type = t
+    .t : Type: ImplicitlyCopyable
+) IndexableValue#(ArrayViewRO#(.t: t)) (
+        .Item : Type = t
 
-    .get = (
-            .self  : &ArrayViewRO#(.t: t),
-            .index : UIntNative,
-        ) -> (
-            .result : Errable#(t, (..out_of_bounds))
-        ) {
-        match get_ro_ref(self, .index = index).result {
-            ..error _ { result = ..error(.reason = ..out_of_bounds) }
-            ..ok pointer { result = ..ok pointer&}
+        .get = (
+                .self  : &ArrayViewRO#(.t: t),
+                .index : UIntNative,
+            ) -> (
+                .result : Errable#(t, (..out_of_bounds))
+            ) {
+            match get_ro_ref(self, .index = index).result {
+                ..error _ { result = ..error(.reason = ..out_of_bounds) }
+                ..ok pointer { result = ..ok pointer&}
+            }
         }
-    }
-)
+    )

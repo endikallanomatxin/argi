@@ -33,27 +33,31 @@ GeneralPurposeAllocator: Type = (
 )
 
 implement#(
-    .Provider: Type: Allocator
+    .Provider : Type: Allocator
 ) Init#(
     GeneralPurposeAllocator,
     (
-        .allocator: $&Provider = reach allocator,
+        .allocator : $&Provider = reach allocator,
     )
 ) (
-    .Result: Type = GeneralPurposeAllocator
-    .init = (.args: (
-        .allocator: $&Provider = reach allocator,
-    )) -> (.result: Result) {
-        allocator ::= args.allocator
+        .Result : Type = GeneralPurposeAllocator
+        .init   = (
+                .args : (
+                    .allocator : $&Provider = reach allocator,
+                )
+            ) -> (
+                .result : Result
+            ) {
+            allocator ::= args.allocator
 
-        result = (
-            ._backing_allocator = to_virtual#(.contract: Allocator)(.value = allocator)
-            ._bucket_size       = 4096
-            ._bucket_head       = 0
-            ._large_head        = 0
-        )
-    }
-)
+            result = (
+                ._backing_allocator = to_virtual#(.contract: Allocator)(.value = allocator)
+                ._bucket_size       = 4096
+                ._bucket_head       = 0
+                ._large_head        = 0
+            )
+        }
+    )
 
 -- Only bundled core may turn the allocator's live metadata address into a
 -- reference. The backing block stays live until its last slot is released.
@@ -280,7 +284,7 @@ has_live_allocations(.self: &GeneralPurposeAllocator) -> (.has_live: Bool) := {
     has_live = self&._bucket_head != 0 or self&._large_head != 0
 }
 
-implement Allocator#(GeneralPurposeAllocator)(
+implement Allocator#(GeneralPurposeAllocator) (
     .allocate = (
             .self      : $&GeneralPurposeAllocator,
             .size      : UIntNative,
@@ -319,7 +323,7 @@ implement Allocator#(GeneralPurposeAllocator)(
     }
 )
 
-implement Deallocator#(GeneralPurposeAllocator)(
+implement Deallocator#(GeneralPurposeAllocator) (
     .deallocate = (
             .self      : $&GeneralPurposeAllocator,
             .data      : RawPointer#(.t: UInt8),

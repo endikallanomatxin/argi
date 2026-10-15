@@ -1,4 +1,11 @@
-_float_replace_bits#(.Value: Type: _FloatRepresentation#(Value)) := (.value: Value, .bits: UInt64) -> (.result: Value) {
+_float_replace_bits#(
+        .Value : Type: _FloatRepresentation#(Value)
+    ) := (
+        .value : Value,
+        .bits  : UInt64
+    ) -> (
+        .result : Value
+    ) {
     result = _FloatRepresentation#(Value).replace_bits(.value = value, .bits = bits)
 }
 

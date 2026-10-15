@@ -3,7 +3,9 @@
 ..unexpected_eof
 ..invalid_stream_buffer
 
-read_exact#(.SelfType: Type: BlockReader#(SelfType))(
+read_exact#(
+        .SelfType : Type: BlockReader#(SelfType)
+    )(
         .self   : $&SelfType,
         .buffer : ArrayView#(.t: UInt8)
     ) -> (
@@ -35,7 +37,9 @@ read_exact#(.SelfType: Type: BlockReader#(SelfType))(
     result = ..ok Void()
 }
 
-write_all#(.SelfType: Type: BlockWriter#(SelfType))(
+write_all#(
+        .SelfType : Type: BlockWriter#(SelfType)
+    )(
         .self   : $&SelfType,
         .buffer : ArrayViewRO#(.t: UInt8)
     ) -> (
@@ -67,7 +71,10 @@ write_all#(.SelfType: Type: BlockWriter#(SelfType))(
     result = ..ok Void()
 }
 
-copy_stream#(.ReaderType: Type: BlockReader#(ReaderType), .WriterType: Type: BlockWriter#(WriterType))(
+copy_stream#(
+        .ReaderType : Type: BlockReader#(ReaderType),
+        .WriterType : Type: BlockWriter#(WriterType)
+    )(
         .reader : $&ReaderType,
         .writer : $&WriterType,
         .buffer : ArrayView#(.t: UInt8)
@@ -119,7 +126,9 @@ ReadUntil: Type = (.count: UIntNative, .termination: ReadUntilEnd)
 
 implement ImplicitlyCopyable#(ReadUntil) ()
 
-read_until#(.SelfType: Type: Reader#(SelfType))(
+read_until#(
+        .SelfType : Type: Reader#(SelfType)
+    )(
         .self      : $&SelfType,
         .buffer    : ArrayView#(.t: UInt8),
         .delimiter : UInt8

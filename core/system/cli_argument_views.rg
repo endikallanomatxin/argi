@@ -3,18 +3,22 @@ CliArgumentViews: Type = (._values: ArrayViewRO#(.t: StringView))
 implement Init#(
     CliArgumentViews,
     (
-        .values: ArrayViewRO#(.t: StringView),
+        .values : ArrayViewRO#(.t: StringView),
     )
 ) (
-    .Result: Type = CliArgumentViews
-    .init = (.args: (
-        .values: ArrayViewRO#(.t: StringView),
-    )) -> (.result: Result) {
-        values ::= args.values
+        .Result : Type = CliArgumentViews
+        .init   = (
+                .args : (
+                    .values : ArrayViewRO#(.t: StringView),
+                )
+            ) -> (
+                .result : Result
+            ) {
+            values ::= args.values
 
-        result = (._values = values)
-    }
-)
+            result = (._values = values)
+        }
+    )
 
 implement ArgumentSource#(CliArgumentViews) (
     .length = (.self: &CliArgumentViews) -> (.count: UIntNative) {

@@ -3,15 +3,19 @@ CAllocator: Type = (
 )
 
 implement Init#(CAllocator, (.ffi: $&ForeignFunctionInterface)) (
-    .Result: Type = CAllocator
+        .Result : Type = CAllocator
 
-    .init = (.args: (.ffi: $&ForeignFunctionInterface)) -> (.result: Result) {
-        ffi ::= args.ffi
-        result.ffi = ffi
-    }
-)
+        .init = (
+                .args : (.ffi: $&ForeignFunctionInterface)
+            ) -> (
+                .result : Result
+            ) {
+            ffi ::= args.ffi
+            result.ffi = ffi
+        }
+    )
 
-implement Allocator#(CAllocator)(
+implement Allocator#(CAllocator) (
     .allocate = (
             .self      : $&CAllocator,
             .size      : UIntNative,
@@ -41,7 +45,7 @@ implement Allocator#(CAllocator)(
     }
 )
 
-implement Deallocator#(CAllocator)(
+implement Deallocator#(CAllocator) (
     .deallocate = (
             .self      : $&CAllocator,
             .data      : RawPointer#(.t: UInt8),

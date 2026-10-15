@@ -4,7 +4,9 @@ _HashMapSlot#(.key: Type: ImplicitlyCopyable, .value: Type: ImplicitlyCopyable):
     ..occupied(.hash: UIntNative, .key: key, .value: value),
 )
 
-implement#(.key: Type: ImplicitlyCopyable, .value: Type: ImplicitlyCopyable) ImplicitlyCopyable#(_HashMapSlot#(.key: key, .value: value)) ()
+implement#(.key: Type: ImplicitlyCopyable, .value: Type: ImplicitlyCopyable) ImplicitlyCopyable#(
+    _HashMapSlot#(.key: key, .value: value)
+) ()
 
 -- Slots are private and always initialized. Tombstones preserve probe paths;
 -- capacity is a slot count independent of powers of two and live load is at most one half.
@@ -19,8 +21,10 @@ HashMap#(
 )
 
 _hash_map_slots#(
-        .key   : Type: ImplicitlyCopyable,
-        .value : Type: ImplicitlyCopyable, .AllocatorType: Type: Allocator#(AllocatorType))(
+        .key           : Type: ImplicitlyCopyable,
+        .value         : Type: ImplicitlyCopyable,
+        .AllocatorType : Type: Allocator#(AllocatorType)
+    )(
         .capacity  : UIntNative,
         .allocator : $&AllocatorType,
     ) -> (
@@ -45,39 +49,49 @@ _hash_map_slots#(
 }
 
 implement#(
-    .key : Type: ImplicitlyCopyable,
-    .value : Type: ImplicitlyCopyable,
-    .policy : Type: HashPolicy#(policy, key),
-    .Provider: Type: Allocator
+    .key      : Type: ImplicitlyCopyable,
+    .value    : Type: ImplicitlyCopyable,
+    .policy   : Type: HashPolicy#(policy, key),
+    .Provider : Type: Allocator
 ) Init#(
     HashMap#(.key: key, .value: value, .policy: policy),
     (
-        .policy : policy,
+        .policy    : policy,
         .allocator : $&Provider = reach allocator,
-        .capacity : UIntNative = 8,
+        .capacity  : UIntNative = 8,
     )
 ) (
-    .Result: Type = Errable#(HashMap#(.key: key, .value: value, .policy: policy), (..out_of_memory))
-    .init = (.args: (
-        .policy : policy,
-        .allocator : $&Provider = reach allocator,
-        .capacity : UIntNative = 8,
-    )) -> (.result: Result) {
-        policy ::= ~args.policy
-        allocator ::= args.allocator
-        capacity ::= args.capacity
+        .Result : Type = Errable#(
+            HashMap#(.key: key, .value: value, .policy: policy),
+            (..out_of_memory)
+        )
+        .init = (
+                .args : (
+                    .policy    : policy,
+                    .allocator : $&Provider = reach allocator,
+                    .capacity  : UIntNative = 8,
+                )
+            ) -> (
+                .result : Result
+            ) {
+            policy ::= ~args.policy
+            allocator ::= args.allocator
+            capacity ::= args.capacity
 
-        constructed :: HashMap#(.key: key, .value: value, .policy: policy)
+            constructed :: HashMap#(.key: key, .value: value, .policy: policy)
 
-        count ::= capacity
+            count ::= capacity
 
-        if count < 8 { count = 8 }
-        slots ::= _hash_map_slots#(.key: key, .value: value)(.capacity = count, .allocator = allocator)!
-        constructed = (._slots = ~slots, ._length = 0, ._policy = ~policy)
+            if count < 8 { count = 8 }
+            slots ::= _hash_map_slots#(.key: key, .value: value)(
+                .capacity  = count
+                .allocator = allocator
+            )!
+            constructed = (._slots = ~slots, ._length = 0, ._policy = ~policy)
 
-        result = ..ok ~constructed
-    }
-)
+            result = ..ok ~constructed
+        }
+    )
 
 _collection_length_hash_map#(
         .key    : Type: ImplicitlyCopyable,
@@ -90,10 +104,10 @@ _collection_length_hash_map#(
     ) := { count = self&._length }
 
 implement#(
-        .key    : Type: ImplicitlyCopyable,
-        .value  : Type: ImplicitlyCopyable,
-        .policy : Type: HashPolicy#(policy, key)
-    ) CollectionLength#(HashMap#(.key: key, .value: value, .policy: policy)) (
+    .key    : Type: ImplicitlyCopyable,
+    .value  : Type: ImplicitlyCopyable,
+    .policy : Type: HashPolicy#(policy, key)
+) CollectionLength#(HashMap#(.key: key, .value: value, .policy: policy)) (
     .measure_length = _collection_length_hash_map
 )
 
@@ -108,10 +122,10 @@ _collection_capacity_hash_map#(
     ) := { count = length(&self&._slots).count }
 
 implement#(
-        .key    : Type: ImplicitlyCopyable,
-        .value  : Type: ImplicitlyCopyable,
-        .policy : Type: HashPolicy#(policy, key)
-    ) CollectionCapacity#(HashMap#(.key: key, .value: value, .policy: policy)) (
+    .key    : Type: ImplicitlyCopyable,
+    .value  : Type: ImplicitlyCopyable,
+    .policy : Type: HashPolicy#(policy, key)
+) CollectionCapacity#(HashMap#(.key: key, .value: value, .policy: policy)) (
     .measure_capacity = _collection_capacity_hash_map
 )
 
@@ -193,9 +207,11 @@ _hash_map_insert_slot#(
 }
 
 _hash_map_grow#(
-        .key    : Type: ImplicitlyCopyable,
-        .value  : Type: ImplicitlyCopyable,
-        .policy : Type: HashPolicy#(policy, key), .AllocatorType: Type: Allocator#(AllocatorType))(
+        .key           : Type: ImplicitlyCopyable,
+        .value         : Type: ImplicitlyCopyable,
+        .policy        : Type: HashPolicy#(policy, key),
+        .AllocatorType : Type: Allocator#(AllocatorType)
+    )(
         .self      : $&HashMap#(.key: key, .value: value, .policy: policy),
         .allocator : $&AllocatorType
     ) -> (
@@ -240,15 +256,18 @@ _hash_map_grow#(
 }
 
 _map_put_hash_map#(
-        .key    : Type: ImplicitlyCopyable,
-        .value  : Type: ImplicitlyCopyable,
-        .policy : Type: HashPolicy#(policy, key), .Provider: Type: Allocator#(Provider)
-) := (
+        .key      : Type: ImplicitlyCopyable,
+        .value    : Type: ImplicitlyCopyable,
+        .policy   : Type: HashPolicy#(policy, key),
+        .Provider : Type: Allocator#(Provider)
+    ) := (
         .self      : $&HashMap#(.key: key, .value: value, .policy: policy),
         .key       : key,
         .value     : value,
         .allocator : $&Provider
-    ) -> (.result : Errable#(Void, (..out_of_memory))) {
+    ) -> (
+        .result : Errable#(Void, (..out_of_memory))
+    ) {
     assume allocator
     digest ::= HashPolicy#(policy, key).hash(&self&._policy, .key = key).hash
 
@@ -294,7 +313,9 @@ _map_get_hash_map#(
     ) := (
         .self : &HashMap#(.key: key, .value: value, .policy: policy),
         .key  : key
-    ) -> (.result : ?value) {
+    ) -> (
+        .result : ?value
+    ) {
     digest ::= HashPolicy#(policy, key).hash(&self&._policy, .key = key).hash
 
     match _hash_map_find(self, .key = key, .hash = digest).index {
@@ -317,7 +338,9 @@ _map_contains_hash_map#(
     ) := (
         .self : &HashMap#(.key: key, .value: value, .policy: policy),
         .key  : key
-    ) -> (.ok : Bool) {
+    ) -> (
+        .ok : Bool
+    ) {
     digest ::= HashPolicy#(policy, key).hash(&self&._policy, .key = key).hash
     ok = is(
         .value   = _hash_map_find(self, .key = key, .hash = digest).index
@@ -332,7 +355,9 @@ _map_get_ro_ref_hash_map#(
     ) := (
         .self : &HashMap#(.key: key, .value: value, .policy: policy),
         .key  : key
-    ) -> (.result : ?&value) {
+    ) -> (
+        .result : ?&value
+    ) {
     digest ::= HashPolicy#(policy, key).hash(&self&._policy, .key = key).hash
 
     match _hash_map_find(self, .key = key, .hash = digest).index {
@@ -359,14 +384,17 @@ _map_get_ro_ref_hash_map#(
 }
 
 _map_remove_hash_map#(
-        .key    : Type: ImplicitlyCopyable,
-        .value  : Type: ImplicitlyCopyable,
-        .policy : Type: HashPolicy#(policy, key), .Provider: Type: Allocator#(Provider)
-) := (
+        .key      : Type: ImplicitlyCopyable,
+        .value    : Type: ImplicitlyCopyable,
+        .policy   : Type: HashPolicy#(policy, key),
+        .Provider : Type: Allocator#(Provider)
+    ) := (
         .self      : $&HashMap#(.key: key, .value: value, .policy: policy),
         .key       : key,
         .allocator : $&Provider
-    ) -> (.removed : Bool) {
+    ) -> (
+        .removed : Bool
+    ) {
     assume allocator
     digest ::= HashPolicy#(policy, key).hash(&self&._policy, .key = key).hash
     removed = false
@@ -387,12 +415,14 @@ _map_remove_hash_map#(
 }
 
 implement#(
-        .key    : Type: ImplicitlyCopyable,
-        .value  : Type: ImplicitlyCopyable,
-        .policy : Type: HashPolicy#(policy, key)
-    ) Deinit#(HashMap#(.key: key, .value: value, .policy: policy)) (
-    .deinit = (.self: $&HashMap#(.key: key, .value: value, .policy: policy)) -> () {
-        deinit(.self = $&self&._slots)
-        policy ::= ~self&._policy
-    }
-)
+    .key    : Type: ImplicitlyCopyable,
+    .value  : Type: ImplicitlyCopyable,
+    .policy : Type: HashPolicy#(policy, key)
+) Deinit#(HashMap#(.key: key, .value: value, .policy: policy)) (
+        .deinit = (
+                .self : $&HashMap#(.key: key, .value: value, .policy: policy)
+            ) -> () {
+            deinit(.self = $&self&._slots)
+            policy ::= ~self&._policy
+        }
+    )

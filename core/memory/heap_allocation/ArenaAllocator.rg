@@ -12,11 +12,15 @@ implement Init#(
     ArenaDomain,
     ()
 ) (
-    .Result: Type = ArenaDomain
-    .init = (.args: ()) -> (.result: Result) {
-        result = (.marker = false)
-    }
-)
+        .Result : Type = ArenaDomain
+        .init   = (
+                .args : ()
+            ) -> (
+                .result : Result
+            ) {
+            result = (.marker = false)
+        }
+    )
 
 implement Deinit#(ArenaDomain) (
     .deinit = (.self: $&ArenaDomain) -> () {
@@ -35,39 +39,43 @@ ArenaAllocator: Type = (
 )
 
 implement#(
-    .Provider: Type: Allocator
+    .Provider : Type: Allocator
 ) Init#(
     ArenaAllocator,
     (
-        .allocator : $&Provider = reach allocator,
+        .allocator  : $&Provider = reach allocator,
         .block_size : UIntNative = 4096,
     )
 ) (
-    .Result: Type = Errable#(ArenaAllocator, (..out_of_memory))
-    .init = (.args: (
-        .allocator : $&Provider = reach allocator,
-        .block_size : UIntNative = 4096,
-    )) -> (.result: Result) {
-        allocator ::= args.allocator
-        block_size ::= args.block_size
+        .Result : Type = Errable#(ArenaAllocator, (..out_of_memory))
+        .init   = (
+                .args : (
+                    .allocator  : $&Provider = reach allocator,
+                    .block_size : UIntNative = 4096,
+                )
+            ) -> (
+                .result : Result
+            ) {
+            allocator ::= args.allocator
+            block_size ::= args.block_size
 
-        constructed :: ArenaAllocator
+            constructed :: ArenaAllocator
 
-        actual_block_size ::= block_size
+            actual_block_size ::= block_size
 
-        if actual_block_size == 0 { actual_block_size = 1 }
-        constructed = (
-            ._backing_allocator    = to_virtual#(.contract: Allocator)(.value = allocator)
-            .domain                = ArenaDomain()
-            ._block_head           = 0
-            .block_count           = 0
-            .block_size            = actual_block_size
-            ._current_block_offset = 0
-        )
+            if actual_block_size == 0 { actual_block_size = 1 }
+            constructed = (
+                ._backing_allocator    = to_virtual#(.contract: Allocator)(.value = allocator)
+                .domain                = ArenaDomain()
+                ._block_head           = 0
+                .block_count           = 0
+                .block_size            = actual_block_size
+                ._current_block_offset = 0
+            )
 
-        result = ..ok ~constructed
-    }
-)
+            result = ..ok ~constructed
+        }
+    )
 
 _trusted_arena_block(.address: UIntNative, .owner: $&ArenaAllocator) -> (.block: $&_ArenaBlock) := {
     raw ::= raw_pointer#(.t: _ArenaBlock)(.address = address).raw
@@ -106,7 +114,7 @@ implement Deinit#(ArenaAllocator) (
     }
 )
 
-implement Allocator#(ArenaAllocator)(
+implement Allocator#(ArenaAllocator) (
     .allocate = (
             .self      : $&ArenaAllocator,
             .size      : UIntNative,
@@ -199,7 +207,7 @@ implement Allocator#(ArenaAllocator)(
     }
 )
 
-implement Deallocator#(ArenaAllocator)(
+implement Deallocator#(ArenaAllocator) (
     .deallocate = (
             .self      : $&ArenaAllocator,
             .data      : RawPointer#(.t: UInt8),

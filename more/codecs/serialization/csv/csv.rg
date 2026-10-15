@@ -27,35 +27,41 @@ CsvReader: Type = (
 implement Init#(
     CsvReader,
     (
-        .text : StringView,
-        .maximum_field_bytes : UIntNative = 1048576,
-        .maximum_fields : UIntNative = 1024,
+        .text                : StringView,
+        .maximum_field_bytes : UIntNative  = 1048576,
+        .maximum_fields      : UIntNative  = 1024,
     )
 ) (
-    .Result: Type = CsvReader
-    .init = (.args: (
-        .text : StringView,
-        .maximum_field_bytes : UIntNative = 1048576,
-        .maximum_fields : UIntNative = 1024,
-    )) -> (.result: Result) {
-        text ::= args.text
-        maximum_field_bytes ::= args.maximum_field_bytes
-        maximum_fields ::= args.maximum_fields
+        .Result : Type = CsvReader
+        .init   = (
+                .args : (
+                    .text                : StringView,
+                    .maximum_field_bytes : UIntNative  = 1048576,
+                    .maximum_fields      : UIntNative  = 1024,
+                )
+            ) -> (
+                .result : Result
+            ) {
+            text ::= args.text
+            maximum_field_bytes ::= args.maximum_field_bytes
+            maximum_fields ::= args.maximum_fields
 
-        result = (
-            ._text               = text
-            ._position           = 0
-            ._ended              = false
-            .maximum_field_bytes = maximum_field_bytes
-            .maximum_fields      = maximum_fields
-        )
-    }
-)
+            result = (
+                ._text               = text
+                ._position           = 0
+                ._ended              = false
+                .maximum_field_bytes = maximum_field_bytes
+                .maximum_fields      = maximum_fields
+            )
+        }
+    )
 
 -- Errors are terminal, and no partially decoded record escapes.
-next#(.AllocatorType: Type: Allocator#(AllocatorType))(
+next#(
+        .AllocatorType : Type: Allocator#(AllocatorType)
+    )(
         .self      : $&CsvReader,
-        .allocator : $&AllocatorType  = reach allocator
+        .allocator : $&AllocatorType = reach allocator
     ) -> (
         .result : Errable#(?CsvRecord, CsvReasons)
     ) := {
@@ -151,7 +157,9 @@ next#(.AllocatorType: Type: Allocator#(AllocatorType))(
 }
 
 -- Quote every field for unambiguous output. Writes may make partial progress.
-write_record#(.WriterType: Type: Writer#(WriterType))(
+write_record#(
+        .WriterType : Type: Writer#(WriterType)
+    )(
         .writer : $&WriterType,
         .fields : ArrayViewRO#(.t: StringView)
     ) -> (

@@ -1,14 +1,16 @@
 BufferReading#(.Stream: Type): Contract = (
-    .Result: Type
-    .read: (.self: $&Stream, .buffer: ArrayView#(.t: UInt8)) -> (.result: Result)
+    .Result : Type
+    .read   : (.self: $&Stream, .buffer: ArrayView#(.t: UInt8)) -> (.result: Result)
 )
 
 implement#(.Stream: Type: Reader#(Stream)) BufferReading#(Stream) (
-    .Result: Type = Errable#(UIntNative, (..stream_read_failed))
-    .read = _reader_read
+    .Result : Type         = Errable#(UIntNative, (..stream_read_failed))
+    .read   = _reader_read
 )
 
-_reader_read#(.Stream: Type: Reader#(Stream))(
+_reader_read#(
+        .Stream : Type: Reader#(Stream)
+    )(
         .self   : $&Stream,
         .buffer : ArrayView#(.t: UInt8),
     ) -> (

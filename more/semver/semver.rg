@@ -145,15 +145,19 @@ implement Init#(
         .text : StringView,
     )
 ) (
-    .Result: Type = Errable#(VersionView, (..invalid_input))
-    .init = (.args: (
-        .text : StringView,
-    )) -> (.result: Result) {
-        text ::= args.text
+        .Result : Type = Errable#(VersionView, (..invalid_input))
+        .init   = (
+                .args : (
+                    .text : StringView,
+                )
+            ) -> (
+                .result : Result
+            ) {
+            text ::= args.text
 
-        result = parse(.text = text)
-    }
-)
+            result = parse(.text = text)
+        }
+    )
 
 implement TextViewOf#(&VersionView) (
     .text_view = (.self: &VersionView) -> (.view: StringView) { view = self&._text }
@@ -330,17 +334,37 @@ implement Equal#(VersionView, VersionView, (.left: &VersionView, .right: &Versio
 )
 
 implement#(.Provider: Type: Allocator) StringFormatting#(&VersionView, Provider) (
-    .render = (.value: &VersionView, .allocator: $&Provider) -> (.result: Errable#(String, (..out_of_memory))) {
-        result = ~format(.value = as_view(.self = value).view, .allocator = allocator)
-    }
-    .append = (.out: $&String, .value: &VersionView, .allocator: $&Provider) -> (.result: Errable#(Void, (..out_of_memory))) {
-        result = format_into(.out = out, .value = as_view(.self = value).view, .allocator = allocator)
-    }
-)
+        .render = (
+                .value     : &VersionView,
+                .allocator : $&Provider
+            ) -> (
+                .result : Errable#(String, (..out_of_memory))
+            ) {
+            result = ~format(.value = as_view(.self = value).view, .allocator = allocator)
+        }
+        .append = (
+                .out       : $&String,
+                .value     : &VersionView,
+                .allocator : $&Provider
+            ) -> (
+                .result : Errable#(Void, (..out_of_memory))
+            ) {
+            result = format_into(
+                .out       = out
+                .value     = as_view(.self = value).view
+                .allocator = allocator
+            )
+        }
+    )
 
 implement#(.Stream: Type: WriteValue#(Stream, StringView)) WriteValue#(Stream, &VersionView) (
-    .Result: Type = WriteValue#(Stream, StringView).Result
-    .write_value = (.self: $&Stream, .value: &VersionView) -> (.result: Result) {
-        result = ~write(.self = self, .value = as_view(.self = value).view)
-    }
-)
+        .Result      : Type = WriteValue#(Stream, StringView).Result
+        .write_value = (
+                .self  : $&Stream,
+                .value : &VersionView
+            ) -> (
+                .result : Result
+            ) {
+            result = ~write(.self = self, .value = as_view(.self = value).view)
+        }
+    )

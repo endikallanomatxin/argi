@@ -6,42 +6,48 @@ PriorityQueue#(.t: Type: ImplicitlyCopyable, .order: Type: OrderPolicy#(order, t
 )
 
 implement#(
-    .t : Type: ImplicitlyCopyable,
-    .order : Type: OrderPolicy#(order, t),
-    .Provider: Type: Allocator
+    .t        : Type: ImplicitlyCopyable,
+    .order    : Type: OrderPolicy#(order, t),
+    .Provider : Type: Allocator
 ) Init#(
     PriorityQueue#(.t: t, .order: order),
     (
-        .order : &order,
+        .order     : &order,
         .allocator : $&Provider = reach allocator,
-        .capacity : UIntNative = 8,
+        .capacity  : UIntNative = 8,
     )
 ) (
-    .Result: Type = Errable#(PriorityQueue#(.t: t, .order: order), (..out_of_memory))
-    .init = (.args: (
-        .order : &order,
-        .allocator : $&Provider = reach allocator,
-        .capacity : UIntNative = 8,
-    )) -> (.result: Result) {
-        order ::= args.order
-        allocator ::= args.allocator
-        capacity ::= args.capacity
+        .Result : Type = Errable#(PriorityQueue#(.t: t, .order: order), (..out_of_memory))
+        .init   = (
+                .args : (
+                    .order     : &order,
+                    .allocator : $&Provider = reach allocator,
+                    .capacity  : UIntNative = 8,
+                )
+            ) -> (
+                .result : Result
+            ) {
+            order ::= args.order
+            allocator ::= args.allocator
+            capacity ::= args.capacity
 
-        assume allocator
-        items ::= DynamicArray#(.t: t)(.allocator = allocator, .capacity = capacity)!
+            assume allocator
+            items ::= DynamicArray#(.t: t)(.allocator = allocator, .capacity = capacity)!
 
-        result = ..ok(._items = ~items, ._order = order)
-    }
-)
+            result = ..ok(._items = ~items, ._order = order)
+        }
+    )
 
 implement#(
-        .t     : Type: ImplicitlyCopyable,
-        .order : Type: OrderPolicy#(order, t)
-    ) Deinit#(PriorityQueue#(.t: t, .order: order)) (
-    .deinit = (.self: $&PriorityQueue#(.t: t, .order: order)) -> () {
-        deinit(.self = $&self&._items)
-    }
-)
+    .t     : Type: ImplicitlyCopyable,
+    .order : Type: OrderPolicy#(order, t)
+) Deinit#(PriorityQueue#(.t: t, .order: order)) (
+        .deinit = (
+                .self : $&PriorityQueue#(.t: t, .order: order)
+            ) -> () {
+            deinit(.self = $&self&._items)
+        }
+    )
 
 _collection_length_priority_queue#(
         .t     : Type: ImplicitlyCopyable,
@@ -53,16 +59,16 @@ _collection_length_priority_queue#(
     ) := { count = length(&self&._items).count }
 
 implement#(
-        .t     : Type: ImplicitlyCopyable,
-        .order : Type: OrderPolicy#(order, t)
-    ) CollectionLength#(PriorityQueue#(.t: t, .order: order)) (
+    .t     : Type: ImplicitlyCopyable,
+    .order : Type: OrderPolicy#(order, t)
+) CollectionLength#(PriorityQueue#(.t: t, .order: order)) (
     .measure_length = _collection_length_priority_queue
 )
 
 _queue_push_priority_queue#(
-        .t     : Type: ImplicitlyCopyable,
-        .order : Type: OrderPolicy#(order, t),
-        .Provider: Type: Allocator
+        .t        : Type: ImplicitlyCopyable,
+        .order    : Type: OrderPolicy#(order, t),
+        .Provider : Type: Allocator
     )(
         .self      : $&PriorityQueue#(.t: t, .order: order),
         .value     : t,
@@ -71,7 +77,11 @@ _queue_push_priority_queue#(
         .result : Errable#(Void, (..out_of_memory)) = ..ok Void()
     ) := {
     assume allocator
-    Resizable#(DynamicArray#(.t: t), Provider).push(.self = $&self&._items, .value = value, .allocator = allocator)!
+    Resizable#(DynamicArray#(.t: t), Provider).push(
+        .self      = $&self&._items
+        .value     = value
+        .allocator = allocator
+    )!
     child ::= length(&self&._items).count - 1
 
     while child > 0 {
@@ -137,13 +147,19 @@ _queue_pop_priority_queue#(
     }
 }
 
-implement#(.t: Type: ImplicitlyCopyable, .order: Type: OrderPolicy#(order, t)) Queue#(PriorityQueue#(.t: t, .order: order)) (
-    .Item: Type = t
-    .Result: Type = ?t
-    .pop = _queue_pop_priority_queue
+implement#(.t: Type: ImplicitlyCopyable, .order: Type: OrderPolicy#(order, t)) Queue#(
+    PriorityQueue#(.t: t, .order: order)
+) (
+    .Item   : Type                      = t
+    .Result : Type                      = ?t
+    .pop    = _queue_pop_priority_queue
 )
 
-implement#(.t: Type: ImplicitlyCopyable, .order: Type: OrderPolicy#(order, t), .Provider: Type: Allocator) QueueInsertion#(PriorityQueue#(.t: t, .order: order), Provider) (
-    .Result: Type = Errable#(Void, (..out_of_memory))
-    .push = _queue_push_priority_queue
+implement#(
+    .t        : Type: ImplicitlyCopyable,
+    .order    : Type: OrderPolicy#(order, t),
+    .Provider : Type: Allocator
+) QueueInsertion#(PriorityQueue#(.t: t, .order: order), Provider) (
+    .Result : Type                       = Errable#(Void, (..out_of_memory))
+    .push   = _queue_push_priority_queue
 )

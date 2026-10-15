@@ -1,14 +1,18 @@
 EnvironmentVariables: Type = (._ffi: $&ForeignFunctionInterface)
 
-once _acquire_environment_variables := (.args: (.ffi : $&ForeignFunctionInterface = reach ffi)) -> (.result: EnvironmentVariables) {
+once _acquire_environment_variables := (
+        .args : (.ffi: $&ForeignFunctionInterface = reach ffi)
+    ) -> (
+        .result : EnvironmentVariables
+    ) {
     ffi ::= args.ffi
 
     result._ffi = ffi
 }
 
-implement Init#(EnvironmentVariables, (.ffi : $&ForeignFunctionInterface = reach ffi)) (
-    .Result: Type = EnvironmentVariables
-    .init = _acquire_environment_variables
+implement Init#(EnvironmentVariables, (.ffi: $&ForeignFunctionInterface = reach ffi)) (
+    .Result : Type                           = EnvironmentVariables
+    .init   = _acquire_environment_variables
 )
 
 environment_variables_get_c_string(
@@ -32,7 +36,9 @@ environment_variables_get_c_string(
     )
 }
 
-lookup_environment#(.Provider: Type: Allocator#(Provider)) := (
+lookup_environment#(
+        .Provider : Type: Allocator#(Provider)
+    ) := (
         .self      : &EnvironmentVariables,
         .key       : StringView,
         .allocator : $&Provider,
@@ -52,7 +58,9 @@ lookup_environment#(.Provider: Type: Allocator#(Provider)) := (
     }
 }
 
-has#(.AllocatorType: Type: Allocator#(AllocatorType))(
+has#(
+        .AllocatorType : Type: Allocator#(AllocatorType)
+    )(
         .self      : &EnvironmentVariables,
         .key       : StringView,
         .allocator : $&AllocatorType,

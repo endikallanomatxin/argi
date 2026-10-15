@@ -181,8 +181,8 @@ _object_from_readonly_view#(
 }
 
 implement#(
-        .t : Type
-    ) PythonValue#(ArrayViewRO#(.t: t)) (.convert_value = _object_from_readonly_view)
+    .t : Type
+) PythonValue#(ArrayViewRO#(.t: t)) (.convert_value = _object_from_readonly_view)
 
 _object_from_fixed_array#(
         .n : UIntNative,
@@ -197,9 +197,9 @@ _object_from_fixed_array#(
 }
 
 implement#(
-        .n : UIntNative,
-        .t : Type
-    ) PythonValue#(&Array#(.n = n, .t: t)) (.convert_value = _object_from_fixed_array)
+    .n : UIntNative,
+    .t : Type
+) PythonValue#(&Array#(.n = n, .t: t)) (.convert_value = _object_from_fixed_array)
 
 _object_from_dynamic_array#(
         .t : Type
@@ -213,8 +213,8 @@ _object_from_dynamic_array#(
 }
 
 implement#(
-        .t : Type
-    ) PythonValue#(&DynamicArray#(.t: t)) (.convert_value = _object_from_dynamic_array)
+    .t : Type
+) PythonValue#(&DynamicArray#(.t: t)) (.convert_value = _object_from_dynamic_array)
 
 _keywords_from_objects(
         .self   : &Python,
@@ -249,8 +249,8 @@ _object_from_copyable_reference#(
 }
 
 implement#(
-        .t : Type: ImplicitlyCopyable
-    ) PythonValue#(&t) (.convert_value = _object_from_copyable_reference)
+    .t : Type: ImplicitlyCopyable
+) PythonValue#(&t) (.convert_value = _object_from_copyable_reference)
 
 _float32(.context: UIntNative, .value: Float32) -> (.handle: RawPointer#(.t: _PyObject)): CFunction(
     .symbol = "_argi_python_float32"
@@ -327,7 +327,9 @@ _keywords_from_values(
     result = ..ok ~converted
 }
 
-implement _PythonKeywords#(ArrayViewRO#(.t: NamedArgument)) (.make_keywords = _keywords_from_values)
+implement _PythonKeywords#(ArrayViewRO#(.t: NamedArgument)) (
+    .make_keywords = _keywords_from_values
+)
 
 _as_tuple(
         .context : UIntNative,
@@ -398,8 +400,8 @@ _object_from_mutable_view#(
 }
 
 implement#(
-        .t : Type
-    ) PythonValue#(ArrayView#(.t: t)) (.convert_value = _object_from_mutable_view)
+    .t : Type
+) PythonValue#(ArrayView#(.t: t)) (.convert_value = _object_from_mutable_view)
 
 _object_from_object_reference(
         .self  : &Python,

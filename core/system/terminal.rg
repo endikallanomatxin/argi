@@ -6,7 +6,11 @@ Terminal: Type = (
     .stderr : File
 )
 
-once _acquire_terminal := (.args: (.ffi: $&ForeignFunctionInterface = reach ffi)) -> (.result: Terminal) {
+once _acquire_terminal := (
+        .args : (.ffi: $&ForeignFunctionInterface = reach ffi)
+    ) -> (
+        .result : Terminal
+    ) {
     assume ffi := args.ffi
 
     init_stdin(.p = $&result.stdin)
@@ -15,8 +19,8 @@ once _acquire_terminal := (.args: (.ffi: $&ForeignFunctionInterface = reach ffi)
 }
 
 implement Init#(Terminal, (.ffi: $&ForeignFunctionInterface = reach ffi)) (
-    .Result: Type = Terminal
-    .init = _acquire_terminal
+    .Result : Type              = Terminal
+    .init   = _acquire_terminal
 )
 
 implement Deinit#(Terminal) (
@@ -28,7 +32,10 @@ implement Deinit#(Terminal) (
     }
 )
 
-read_line_into_buffer#(.AllocatorType: Type: Allocator#(AllocatorType), .ReaderType: Type: Reader#(ReaderType))(
+read_line_into_buffer#(
+        .AllocatorType : Type: Allocator#(AllocatorType),
+        .ReaderType    : Type: Reader#(ReaderType)
+    )(
         .buffer    : $&String,
         .allocator : $&AllocatorType,
         .reader    : $&ReaderType,
@@ -84,7 +91,10 @@ read_line_into_buffer#(.AllocatorType: Type: Allocator#(AllocatorType), .ReaderT
     result = ..ok Void()
 }
 
-read_line#(.AllocatorType: Type: Allocator#(AllocatorType), .ReaderType: Type: Reader#(ReaderType))(
+read_line#(
+        .AllocatorType : Type: Allocator#(AllocatorType),
+        .ReaderType    : Type: Reader#(ReaderType)
+    )(
         .allocator : $&AllocatorType,
         .reader    : $&ReaderType,
     ) -> (
@@ -116,9 +126,9 @@ read_line#(.AllocatorType: Type: Allocator#(AllocatorType), .ReaderType: Type: R
     result = ..ok ..ok ~line
 }
 
-
-
-flush#(.WriterType: Type: Writer#(WriterType)) := (
+flush#(
+        .WriterType : Type: Writer#(WriterType)
+    ) := (
         .writer : $&WriterType,
     ) -> (
         .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
@@ -128,7 +138,9 @@ flush#(.WriterType: Type: Writer#(WriterType)) := (
     result = Writer#().flush(.self = writer)
 }
 
-print_error#(.WriterType: Type: Writer#(WriterType))(
+print_error#(
+        .WriterType : Type: Writer#(WriterType)
+    )(
         .value  : StringView,
         .writer : $&WriterType,
     ) -> (
@@ -158,7 +170,9 @@ print_error#(.WriterType: Type: Writer#(WriterType))(
     result = ..ok Void()
 }
 
-flush_error#(.WriterType: Type: Writer#(WriterType))(
+flush_error#(
+        .WriterType : Type: Writer#(WriterType)
+    )(
         .writer : $&WriterType,
     ) -> (
         .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
@@ -168,18 +182,17 @@ flush_error#(.WriterType: Type: Writer#(WriterType))(
     result = Writer#().flush(.self = writer)
 }
 
-
-
-
-
-
-
 -- Rendering is selected by WriteValue, not an ordinary print overload family.
-print#(.Value: Type, .Stream: Type: WriteValue#(Stream, Value)) := (
-    .value: Value,
-    .writer: $&Stream = reach writer,
-    .terminator: StringView = "\n"
-) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
+print#(
+        .Value  : Type,
+        .Stream : Type: WriteValue#(Stream, Value)
+    ) := (
+        .value      : Value,
+        .writer     : $&Stream   = reach writer,
+        .terminator : StringView = "\n"
+    ) -> (
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+    ) {
     write(.self = writer, .value = ~value)!
     result = write(.self = writer, .value = terminator)
 }

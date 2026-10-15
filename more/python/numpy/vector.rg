@@ -14,22 +14,26 @@ implement Init#(
     Vector64,
     (
         .interpreter : &python.Python,
-        .values : ArrayViewRO#(.t: Float64),
+        .values      : ArrayViewRO#(.t: Float64),
     )
 ) (
-    .Result: Type = Errable#(Vector64, _PythonReasons)
-    .init = (.args: (
-        .interpreter : &python.Python,
-        .values : ArrayViewRO#(.t: Float64),
-    )) -> (.result: Result) {
-        interpreter ::= args.interpreter
-        values ::= args.values
+        .Result : Type = Errable#(Vector64, _PythonReasons)
+        .init   = (
+                .args : (
+                    .interpreter : &python.Python,
+                    .values      : ArrayViewRO#(.t: Float64),
+                )
+            ) -> (
+                .result : Result
+            ) {
+            interpreter ::= args.interpreter
+            values ::= args.values
 
-        object ::= python.numeric_array(.self = interpreter, .values = values)!
+            object ::= python.numeric_array(.self = interpreter, .values = values)!
 
-        result = ..ok(._object = ~object, ._length = length(&values).count)
-    }
-)
+            result = ..ok(._object = ~object, ._length = length(&values).count)
+        }
+    )
 
 implement Deinit#(Vector64) (
     .deinit = (.self: $&Vector64) -> () {
