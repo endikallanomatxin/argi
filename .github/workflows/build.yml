@@ -62,9 +62,22 @@ jobs:
         if: inputs.package
         run: python .github/scripts/test_release.py
 
-      - name: Run tests
+      - name: Run compiler unit tests in Debug
         timeout-minutes: 45
-        run: zig build -j1 -Dtest-progress=true test --summary all
+        run: zig build test-internal -j2 -Dtest-jobs=2 -Dtest-progress=true --summary all
+
+      - name: Run program fixtures with the optimized compiler
+        timeout-minutes: 45
+        run: zig build test-programs -Doptimize=ReleaseSafe -j2 -Dtest-jobs=2 -Dtest-progress=true --summary all
+
+      - name: Upload program test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: program-tests-${{ matrix.target }}
+          path: .zig-cache/program-tests/
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Build binary distribution
         if: inputs.package

@@ -415,8 +415,12 @@ fn choiceLayout(graph: *const graph_mod.GlobalSemanticGraph, range: graph_mod.Va
     var offset: u64 = 4;
     var alignment: u64 = 4;
     for (graph.variants.items[range.start..][0..range.len]) |variant| {
-        const payload_ty = variant.payload_type orelse continue;
-        const layout = try layoutOf(graph, payload_ty);
+        // LLVM retains an i8 field for a variant without a payload.
+        // Include it in offsets and copy sizes even though it carries no value.
+        const layout: Layout = if (variant.payload_type) |payload_ty|
+            try layoutOf(graph, payload_ty)
+        else
+            .{ .size = 1, .alignment = 1 };
         offset = alignForward(offset, layout.alignment);
         offset += layout.size;
         alignment = @max(alignment, layout.alignment);

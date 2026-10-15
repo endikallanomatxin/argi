@@ -613,7 +613,10 @@ test "frontend module cache preserves scoped implementation bodies" {
     defer tmp.cleanup();
     const root = try @import("../test_support.zig").tmpRootPath(&tmp);
     defer std.testing.allocator.free(root);
-    const source = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, "tests/feature_tests/contracts/115_inline_operation_bodies/main.rg", std.testing.allocator, .limited(64 * 1024));
+    const raw_source = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, "tests/feature_tests/contracts/115_inline_operation_bodies/main.rg", std.testing.allocator, .limited(64 * 1024));
+    defer std.testing.allocator.free(raw_source);
+    // Keep the multiline edit identical for LF and CRLF checkouts.
+    const source = try std.mem.replaceOwned(u8, std.testing.allocator, raw_source, "\r\n", "\n");
     defer std.testing.allocator.free(source);
     const files = [_]sf.SourceFile{
         .{ .path = "app/main.rg", .code = source },
@@ -640,6 +643,7 @@ test "frontend module cache preserves scoped implementation bodies" {
     var invalid = files;
     const changed = try std.mem.replaceOwned(u8, std.testing.allocator, source, ".multiply =\n        (.left: &Row, .right: &Column) -> (.result: Result) {\n        result = left&.value * right&.value * Scale\n    }", ".multiply = wrong_result");
     defer std.testing.allocator.free(changed);
+    try std.testing.expect(!std.mem.eql(u8, source, changed));
     invalid[0].code = try std.fmt.allocPrint(std.testing.allocator, "{s}\nwrong_result := (.left: &Row, .right: &Column) -> (.result: UInt8) {{ result = 1 }}\n", .{changed});
     defer std.testing.allocator.free(invalid[0].code);
     const rejected = try expectCleanEquivalent(&invalid, &warm);

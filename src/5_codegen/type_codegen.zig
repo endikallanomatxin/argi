@@ -238,3 +238,33 @@ test "global codegen type layer is independent from pointer-based semantic graph
     try std.testing.expect(@sizeOf(graph_mod.GlobalTypeId) == 4);
     try std.testing.expect((@import("../1_base/target.zig").Config{}).pointerBytes() == @sizeOf(*usize));
 }
+
+test "choice copy layout matches LLVM storage for empty and large variants" {
+    const allocator = std.testing.allocator;
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    try graph.types.append(allocator, .{ .builtin = .Int32 });
+    try graph.types.append(allocator, .{ .array = .{ .element = @enumFromInt(0), .length = 128 } });
+    var lowerer: Lowerer = .{ .allocator = allocator, .graph = &graph };
+    const data = c.LLVMCreateTargetData("e-i32:32-i64:64");
+    defer c.LLVMDisposeTargetData(data);
+    // Exercise empty alternatives before, after and between payloads. An
+    // underestimated size silently truncates memcpy of indirect call results.
+    for (0..3) |empty_index| {
+        graph.variants.clearRetainingCapacity();
+        for (0..3) |index| {
+            try graph.variants.append(allocator, .{
+                .name = .{ .start = 0, .len = 0 },
+                .source = .{ .file_index = 0, .offset = 0 },
+                .value = @intCast(index),
+                .payload_type = if (index == empty_index) null else @enumFromInt(1),
+            });
+        }
+        const ty: graph_mod.GlobalTypeId = @enumFromInt(graph.types.items.len);
+        try graph.types.append(allocator, .{ .structural_choice = .{ .variants = .{ .start = 0, .len = 3 }, .layout = .regular } });
+        const layout = try types.layoutOf(&graph, ty);
+        const lowered = try lowerer.toLLVMType(ty);
+        try std.testing.expectEqual(c.LLVMABISizeOfType(data, lowered), layout.size);
+        try std.testing.expectEqual(@as(u64, c.LLVMABIAlignmentOfType(data, lowered)), layout.alignment);
+    }
+}
