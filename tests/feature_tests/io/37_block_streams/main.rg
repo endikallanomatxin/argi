@@ -1,59 +1,66 @@
 Source: Type = (.bytes: ArrayViewRO#(.t: UInt8), .position: UIntNative, .calls: UIntNative)
 
-Source implements Reader
-Source implements BlockReader
+implement Reader#(Source)(
+    .read_byte = (
+                .self : $&Source
+            ) -> (
+                .result : Errable#(.t: ReadByte, .reasons: (..stream_read_failed))
+            ) {
+            if self&.position == length(.self = &self&.bytes).count {
+                result = ..ok ..end
+                return
+            }
+            byte ::= unwrap_or_abort(
+                .value = get_ro_ref(.self = &self&.bytes, .index = self&.position)
+            )
+            self&.position = self&.position + 1
+            result = ..ok ..ok byte&
+        }
+)
 
-read_byte(.self: $&Source) -> (.result: Errable#(.t: ReadByte, .reasons: (..stream_read_failed))) := {
-    if self&.position == length(.self = &self&.bytes).count {
-        result = ..ok ..end
-        return
-    }
-    byte ::= unwrap_or_abort(.value = get_ro_ref(.self = &self&.bytes, .index = self&.position))
-    self&.position = self&.position + 1
-    result = ..ok ..ok byte&
-}
-
-read_block(
-        .self   : $&Source,
-        .buffer : ArrayView#(.t: UInt8)
-    ) -> (
-        .result : Errable#(.t: UIntNative, .reasons: (..stream_read_failed))
-    ) := {
-    self&.calls = self&.calls + 1
-    if length(.self = &buffer).count == 0 {
-        result = ..ok 0
-        return
-    }
-    match read_byte(.self = self)! {
-        ..end { result = ..ok 0 }
-        ..ok byte {
-            pointer ::= unwrap_or_abort(.value = get_rw_ref(.self = $&buffer, .index = 0))
-            pointer&= byte
-            result = ..ok 1
+implement BlockReader#(Source) (
+    .read_block = (
+            .self   : $&Source,
+            .buffer : ArrayView#(.t: UInt8)
+        ) -> (
+            .result : Errable#(.t: UIntNative, .reasons: (..stream_read_failed))
+        ) {
+        self&.calls = self&.calls + 1
+        if length(.self = &buffer).count == 0 {
+            result = ..ok 0
+            return
+        }
+        match Reader#().read_byte(.self = self)! {
+            ..end { result = ..ok 0 }
+            ..ok byte {
+                pointer ::= unwrap_or_abort(.value = get_rw_ref(.self = $&buffer, .index = 0))
+                pointer&= byte
+                result = ..ok 1
+            }
         }
     }
-}
+)
 
 Sink: Type = (.bytes: ArrayView#(.t: UInt8), .position: UIntNative, .stalled: Bool)
 
-Sink implements BlockWriter
-
-write_block(
-        .self   : $&Sink,
-        .buffer : ArrayViewRO#(.t: UInt8)
-    ) -> (
-        .result : Errable#(.t: UIntNative, .reasons: (..stream_write_failed, ..stream_flush_failed))
-    ) := {
-    if self&.stalled or length(.self = &buffer).count == 0 {
-        result = ..ok 0
-        return
+implement BlockWriter#(Sink) (
+    .write_block = (
+            .self   : $&Sink,
+            .buffer : ArrayViewRO#(.t: UInt8)
+        ) -> (
+            .result : Errable#(.t: UIntNative, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        ) {
+        if self&.stalled or length(.self = &buffer).count == 0 {
+            result = ..ok 0
+            return
+        }
+        byte ::= unwrap_or_abort(.value = get_ro_ref(.self = &buffer, .index = 0))
+        target ::= unwrap_or_abort(.value = get_rw_ref(.self = $&self&.bytes, .index = self&.position))
+        target&= byte&
+        self&.position = self&.position + 1
+        result = ..ok 1
     }
-    byte ::= unwrap_or_abort(.value = get_ro_ref(.self = &buffer, .index = 0))
-    target ::= unwrap_or_abort(.value = get_rw_ref(.self = $&self&.bytes, .index = self&.position))
-    target&= byte&
-    self&.position = self&.position + 1
-    result = ..ok 1
-}
+)
 
 run_main() -> !Void = ..ok Void() := {
     input: [4]UInt8 = (65, 0, 66, 10)
@@ -79,13 +86,13 @@ run_main() -> !Void = ..ok Void() := {
     match write_all(.self = $&sink, .buffer = view(.array = &input)) {
         ..ok _ { abort } ..error _ {}
     }
-    virtual ::= to_virtual#(.abstract: BlockReader)(.value = $&source)
+    virtual ::= to_virtual#(.contract: BlockReader)(.value = $&source)
     match read_exact(.self = $&virtual, .buffer = view(.array = $&scratch)) {
         ..ok _ { abort } ..error _ {}
     }
 }
 
-main(.writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+main#(.WriterType: Type: Writer#(WriterType))(.writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
     run_main()!!!
     status_code = 0
 }

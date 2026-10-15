@@ -3,7 +3,7 @@ Packet : CStruct = (
     .count: CInt
     .context: RawPointer#(.t: Void)
 )
-Packet implements ImplicitlyCopyable
+implement ImplicitlyCopyable#(Packet) ()
 
 argi_callback_add(.left: CInt, .right: CInt) -> (.result: CInt)
     : CFunction(.export = true) := {

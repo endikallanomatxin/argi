@@ -29,8 +29,10 @@ String: Type = (
     .length     : UIntNative
 )
 
-string_with_length(
-        .allocator : $&Allocator,
+string_with_length#(
+        .AllocatorType : Type: Allocator#(AllocatorType)
+    )(
+        .allocator : $&AllocatorType,
         .length    : UIntNative,
     ) -> (
         .result : Errable#(String, (..out_of_memory))
@@ -43,7 +45,7 @@ string_with_length(
     }
 
     allocation_size ::= length + 1
-    allocation ::= allocate(allocator, .size = allocation_size)!
+    allocation ::= allocate_bytes(allocator, .size = allocation_size)!
     out :: String = (.allocation = ~allocation, .length = length)
     i :: UIntNative = 0
 
@@ -57,8 +59,10 @@ string_with_length(
     result = ..ok ~out
 }
 
-string_with_capacity(
-        .allocator : $&Allocator,
+string_with_capacity#(
+        .AllocatorType : Type: Allocator#(AllocatorType)
+    )(
+        .allocator : $&AllocatorType,
         .capacity  : UIntNative,
     ) -> (
         .result : Errable#(String, (..out_of_memory))
@@ -78,113 +82,74 @@ string_with_capacity(
     }
 
     allocation_size ::= actual_capacity + 1
-    allocation ::= allocate(allocator, .size = allocation_size)!
+    allocation ::= allocate_bytes(allocator, .size = allocation_size)!
     out :: String = (.allocation = ~allocation, .length = 0)
     bytes_set(.string = $&out, .index = 0, .value = 0)
 
     result = ..ok ~out
 }
 
-String init(
-        .allocator : $&Allocator,
-        .length    : UIntNative,
-    ) -> (
-        .result : Errable#(String, (..out_of_memory))
-    ) := {
-    constructed :: String
+implement#(.A: Type: Allocator) Init#(
+    String,
+    (.allocator: $&A = reach allocator, .length: UIntNative = 0)
+) (
+        .Result : Type = Errable#(String, (..out_of_memory))
+        .init   = (
+                .args : (.allocator: $&A, .length: UIntNative)
+            ) -> (
+                .result : Result
+            ) {
+            result = string_with_length(.allocator = args.allocator, .length = args.length)
+        }
+    )
 
-    assume allocator
-
-    if length > _string_max_result_length().length {
-        result = ..error(.reason = ..out_of_memory)
-        return
+implement Deinit#(String) (
+    .deinit = (.self: $&String) -> () {
+        deinit(.self = $&self&.allocation)
     }
+)
 
-    allocation_size ::= length + 1
-    allocation ::= allocate(allocator, .size = allocation_size)!
-    constructed = (.allocation = ~allocation, .length = length)
-    i :: UIntNative = 0
+implement#(.Provider: Type: Allocator) FalliblyCopyable#(String, Provider) (
+        .reasons : Type = (..out_of_memory)
+        .copy    = (
+                .self      : &String,
+                .allocator : $&Provider,
+            ) -> (
+                .result : Errable#(String, (..out_of_memory))
+            ) {
+            assume allocator
 
-    while i < length {
-        bytes_set(.string = $&constructed, .index = i, .value = 0)
-        i = i + 1
-    }
+            if self&.length > _string_max_result_length().length {
+                result = ..error(.reason = ..out_of_memory)
+                return
+            }
 
-    bytes_set(.string = $&constructed, .index = length, .value = 0)
+            allocation_size ::= self&.length + 1
+            allocation ::= allocate_bytes(allocator, .size = allocation_size)!
+            out :: String = (.allocation = ~allocation, .length = self&.length)
 
-    result = ..ok ~constructed
-}
+            if allocation_size > 0 {
+                dst_view ::= _trusted_array_view#(.t: UInt8)(
+                    .data = _trusted_allocation_byte_rw(
+                        .allocation = $&out.allocation
+                        .offset     = 0
+                    ).reference
+                    .length = allocation_size
+                )
+                src_view ::= _trusted_array_view_ro#(.t: UInt8)(
+                    .data = _trusted_allocation_byte_ro(
+                        .allocation = &self&.allocation
+                        .offset     = 0
+                    ).reference
+                    .length = allocation_size
+                )
+                memcpy_bytes(.dst = dst_view, .src = src_view)
+            }
 
-String init(
-        .allocator : $&Allocator,
-        .capacity  : UIntNative,
-    ) -> (
-        .result : Errable#(String, (..out_of_memory))
-    ) := {
-    constructed :: String
+            result = ..ok ~out
+        }
 
-    assume allocator
-
-    actual_capacity ::= capacity
-    one :: UIntNative = 1
-
-    if actual_capacity == 0 {
-        actual_capacity = one
-    }
-
-    if actual_capacity > _string_max_result_length().length {
-        result = ..error(.reason = ..out_of_memory)
-        return
-    }
-
-    allocation_size ::= actual_capacity + 1
-    allocation ::= allocate(allocator, .size = allocation_size)!
-    constructed = (.allocation = ~allocation, .length = 0)
-    bytes_set(.string = $&constructed, .index = 0, .value = 0)
-
-    result = ..ok ~constructed
-}
-
-String deinit(
-        .allocator : $&Allocator,
-        .self      : $&String,
-    ) -> () := {
-    assume allocator
-
-    deinit(.self = $&self&.allocation)
-}
-
-copy(
-        .self      : &String,
-        .allocator : $&Allocator,
-    ) -> (
-        .result : Errable#(String, (..out_of_memory))
-    ) := {
-    assume allocator
-
-    if self&.length > _string_max_result_length().length {
-        result = ..error(.reason = ..out_of_memory)
-        return
-    }
-
-    allocation_size ::= self&.length + 1
-    allocation ::= allocate(allocator, .size = allocation_size)!
-    out :: String = (.allocation = ~allocation, .length = self&.length)
-
-    if allocation_size > 0 {
-        dst_view ::= _trusted_array_view#(.t: UInt8)(
-            .data   = _trusted_allocation_byte_rw(.allocation = $&out.allocation, .offset = 0).reference
-            .length = allocation_size
-        )
-        src_view ::= _trusted_array_view_ro#(.t: UInt8)(
-            .data   = _trusted_allocation_byte_ro(.allocation = &self&.allocation, .offset = 0).reference
-            .length = allocation_size
-        )
-        memcpy_bytes(.dst = dst_view, .src = src_view)
-    }
-
-    result = ..ok ~out
-}
+    )
 
 string_byte_reference(
         .string : &String,
@@ -197,13 +162,13 @@ string_byte_reference(
     reference = _trusted_allocation_byte_ro(.allocation = &string&.allocation, .offset = index).reference
 }
 
-bytes_get(
-        .string : &String,
-        .index  : UIntNative,
+_string_get_byte(
+        .view  : &String,
+        .index : UIntNative,
     ) -> (
         .byte : UInt8
     ) := {
-    byte = string_byte_reference(.string = string, .index = index).reference&
+    byte = string_byte_reference(.string = view, .index = index).reference&
 }
 
 bytes_set(
@@ -217,7 +182,7 @@ bytes_set(
     ptr&= value
 }
 
-as_view(
+_string_text_view(
         .self : &String,
     ) -> (
         .view : StringView
@@ -281,10 +246,12 @@ string_growth_capacity(
     }
 }
 
-ensure_capacity(
+ensure_capacity#(
+        .AllocatorType : Type: Allocator#(AllocatorType)
+    )(
         .self      : $&String,
         .capacity  : UIntNative,
-        .allocator : $&Allocator,
+        .allocator : $&AllocatorType,
     ) -> (
         .result : Errable#(Void, (..out_of_memory))
     ) := {
@@ -297,10 +264,12 @@ ensure_capacity(
     )
 }
 
-ensure_capacity_growing(
+ensure_capacity_growing#(
+        .AllocatorType : Type: Allocator#(AllocatorType)
+    )(
         .self            : $&String,
         .target_capacity : UIntNative,
-        .allocator       : $&Allocator,
+        .allocator       : $&AllocatorType,
     ) -> (
         .result : Errable#(Void, (..out_of_memory))
     ) := {
@@ -319,7 +288,7 @@ ensure_capacity_growing(
     }
 
     new_allocation_size ::= target_capacity + 1
-    allocate_result ::= allocate(allocator, .size = new_allocation_size)
+    allocate_result ::= allocate_bytes(allocator, .size = new_allocation_size)
 
     match allocate_result {
         ..ok ~payload {
@@ -377,7 +346,7 @@ string_append_bytes(
     current_capacity ::= capacity(self).value
 
     if self&.length > current_capacity { abort }
-    count ::= length#(.t: UInt8)(&source).count
+    count ::= length(&source).count
 
     if count > current_capacity - self&.length { abort }
     if count > 0 {
@@ -387,19 +356,21 @@ string_append_bytes(
         ).reference
         dest_view ::= _trusted_array_view#(.t: UInt8)(
             .data   = dest_data
-            .length = length#(.t: UInt8)(&source).count
+            .length = length(&source).count
         )
         memcpy_bytes(.dst = dest_view, .src = source)
     }
 
-    self&.length = self&.length + length#(.t: UInt8)(&source).count
+    self&.length = self&.length + length(&source).count
     bytes_set(.string = self, .index = self&.length, .value = 0)
 }
 
-push_byte(
+push_byte#(
+        .AllocatorType : Type: Allocator#(AllocatorType)
+    )(
         .self      : $&String,
         .byte      : UInt8,
-        .allocator : $&Allocator,
+        .allocator : $&AllocatorType,
     ) -> (
         .result : Errable#(Void, (..out_of_memory))
     ) := {
@@ -433,10 +404,12 @@ push_byte(
     result = ..ok Void()
 }
 
-push_c_string(
+push_c_string#(
+        .AllocatorType : Type: Allocator#(AllocatorType)
+    )(
         .self      : $&String,
         .text      : &Char,
-        .allocator : $&Allocator,
+        .allocator : $&AllocatorType,
     ) -> (
         .result : Errable#(Void, (..out_of_memory))
     ) := {
@@ -480,10 +453,12 @@ push_c_string(
     result = ..ok Void()
 }
 
-push_view(
+push_view#(
+        .AllocatorType : Type: Allocator#(AllocatorType)
+    )(
         .self      : $&String,
         .view      : StringView,
-        .allocator : $&Allocator,
+        .allocator : $&AllocatorType,
     ) -> (
         .result : Errable#(Void, (..out_of_memory))
     ) := {
@@ -557,10 +532,12 @@ c_string_as_view(
     )
 }
 
-concat_views(
+concat_views#(
+        .AllocatorType : Type: Allocator#(AllocatorType)
+    )(
         .left      : &StringView,
         .right     : &StringView,
-        .allocator : $&Allocator,
+        .allocator : $&AllocatorType,
     ) -> (
         .result : Errable#(String, (..out_of_memory))
     ) := {
@@ -605,140 +582,216 @@ concat_views(
     }
 }
 
-operator + (
-        .left      : &String,
-        .right     : &Char,
-        .allocator : $&Allocator,
-    ) -> (
-        .result : Errable#(String, (..out_of_memory))
-    ) := {
-    assume allocator
+implement#(.Provider: Type: Allocator) Add#(
+    String,
+    Char,
+    (
+        .left      : &String
+        .right     : &Char
+        .allocator : $&Provider = reach allocator
+    )
+) (
+        .Result : Type = Errable#(String, (..out_of_memory))
+        .add    = (
+                .args : (.left: &String, .right: &Char, .allocator: $&Provider = reach allocator)
+            ) -> (
+                .result : Result
+            ) {
+            assume allocator ::= args.allocator
 
-    left_view ::= as_view(left)
-    right_view ::= c_string_as_view(.text = right)
+            left_view ::= as_view(args.left)
+            right_view ::= c_string_as_view(.text = args.right)
 
-    result = concat_views(.left = &left_view, .right = &right_view)
-}
+            result = concat_views(.left = &left_view, .right = &right_view)
+        }
+    )
 
-operator + (
-        .left      : &String,
-        .right     : &StringView,
-        .allocator : $&Allocator,
-    ) -> (
-        .result : Errable#(String, (..out_of_memory))
-    ) := {
-    assume allocator
+implement#(.Provider: Type: Allocator) Add#(
+    String,
+    StringView,
+    (
+        .left      : &String
+        .right     : &StringView
+        .allocator : $&Provider  = reach allocator
+    )
+) (
+        .Result : Type = Errable#(String, (..out_of_memory))
+        .add    = (
+                .args : (
+                    .left      : &String,
+                    .right     : &StringView,
+                    .allocator : $&Provider   = reach allocator
+                )
+            ) -> (
+                .result : Result
+            ) {
+            assume allocator ::= args.allocator
 
-    left_view ::= as_view(left)
+            left_view ::= as_view(args.left)
 
-    result = concat_views(.left = &left_view, .right = right)
-}
+            result = concat_views(.left = &left_view, .right = args.right)
+        }
+    )
 
-operator + (
-        .left      : &String,
-        .right     : &String,
-        .allocator : $&Allocator,
-    ) -> (
-        .result : Errable#(String, (..out_of_memory))
-    ) := {
-    assume allocator
+implement#(.Provider: Type: Allocator) Add#(
+    String,
+    String,
+    (
+        .left      : &String
+        .right     : &String
+        .allocator : $&Provider = reach allocator
+    )
+) (
+        .Result : Type = Errable#(String, (..out_of_memory))
+        .add    = (
+                .args : (.left: &String, .right: &String, .allocator: $&Provider = reach allocator)
+            ) -> (
+                .result : Result
+            ) {
+            assume allocator ::= args.allocator
 
-    left_view ::= as_view(left)
-    right_view ::= as_view(right)
+            left_view ::= as_view(args.left)
+            right_view ::= as_view(args.right)
 
-    result = concat_views(.left = &left_view, .right = &right_view)
-}
+            result = concat_views(.left = &left_view, .right = &right_view)
+        }
+    )
 
-operator + (
-        .left      : &StringView,
-        .right     : &Char,
-        .allocator : $&Allocator,
-    ) -> (
-        .result : Errable#(String, (..out_of_memory))
-    ) := {
-    assume allocator
+implement#(.Provider: Type: Allocator) Add#(
+    StringView,
+    Char,
+    (
+        .left      : &StringView
+        .right     : &Char
+        .allocator : $&Provider  = reach allocator
+    )
+) (
+        .Result : Type = Errable#(String, (..out_of_memory))
+        .add    = (
+                .args : (
+                    .left      : &StringView,
+                    .right     : &Char,
+                    .allocator : $&Provider   = reach allocator
+                )
+            ) -> (
+                .result : Result
+            ) {
+            assume allocator ::= args.allocator
 
-    right_view ::= c_string_as_view(.text = right)
+            right_view ::= c_string_as_view(.text = args.right)
 
-    result = concat_views(.left = left, .right = &right_view)
-}
+            result = concat_views(.left = args.left, .right = &right_view)
+        }
+    )
 
-operator + (
-        .left      : &StringView,
-        .right     : &StringView,
-        .allocator : $&Allocator,
-    ) -> (
-        .result : Errable#(String, (..out_of_memory))
-    ) := {
-    assume allocator
+implement#(.Provider: Type: Allocator) Add#(
+    StringView,
+    StringView,
+    (
+        .left      : &StringView
+        .right     : &StringView
+        .allocator : $&Provider  = reach allocator
+    )
+) (
+        .Result : Type = Errable#(String, (..out_of_memory))
+        .add    = (
+                .args : (
+                    .left      : &StringView,
+                    .right     : &StringView,
+                    .allocator : $&Provider   = reach allocator
+                )
+            ) -> (
+                .result : Result
+            ) {
+            assume allocator ::= args.allocator
 
-    result = concat_views(.left = left, .right = right)
-}
+            result = concat_views(.left = args.left, .right = args.right)
+        }
+    )
 
-String implements FalliblyCopyable#(.reasons: (..out_of_memory))
+implement#(.Provider: Type: Allocator) Add#(
+    StringView,
+    String,
+    (
+        .left      : &StringView
+        .right     : &String
+        .allocator : $&Provider  = reach allocator
+    )
+) (
+        .Result : Type = Errable#(String, (..out_of_memory))
+        .add    = (
+                .args : (
+                    .left      : &StringView,
+                    .right     : &String,
+                    .allocator : $&Provider   = reach allocator
+                )
+            ) -> (
+                .result : Result
+            ) {
+            assume allocator ::= args.allocator
 
-operator + (
-        .left      : &StringView,
-        .right     : &String,
-        .allocator : $&Allocator,
-    ) -> (
-        .result : Errable#(String, (..out_of_memory))
-    ) := {
-    assume allocator
+            right_view ::= as_view(args.right)
 
-    right_view ::= as_view(right)
+            result = concat_views(.left = args.left, .right = &right_view)
+        }
+    )
 
-    result = concat_views(.left = left, .right = &right_view)
-}
+implement#(.Provider: Type: Allocator) Concatenation#(StringView, &String, Provider) (
+        .join = (
+                .left      : StringView,
+                .right     : &String,
+                .allocator : $&Provider
+            ) -> (
+                .result : Errable#(String, (..out_of_memory))
+            ) {
+            assume allocator
+            right_view := as_view(right)
 
-concat(
-        .left      : StringView,
-        .right     : &String,
-        .allocator : $&Allocator,
-    ) -> (
-        .result : Errable#(String, (..out_of_memory))
-    ) := {
-    assume allocator
-    right_view := as_view(right)
+            result = concat_views(&left, &right_view)
+        }
+    )
 
-    result = concat_views(&left, &right_view)
-}
+implement#(.Provider: Type: Allocator) Concatenation#(StringView, StringView, Provider) (
+        .join = (
+                .left      : StringView,
+                .right     : StringView,
+                .allocator : $&Provider
+            ) -> (
+                .result : Errable#(String, (..out_of_memory))
+            ) {
+            assume allocator
 
-concat(
-        .left      : StringView,
-        .right     : StringView,
-        .allocator : $&Allocator,
-    ) -> (
-        .result : Errable#(String, (..out_of_memory))
-    ) := {
-    assume allocator
+            result = concat_views(&left, &right)
+        }
+    )
 
-    result = concat_views(&left, &right)
-}
+implement#(.Provider: Type: Allocator) Concatenation#(&String, StringView, Provider) (
+        .join = (
+                .left      : &String,
+                .right     : StringView,
+                .allocator : $&Provider
+            ) -> (
+                .result : Errable#(String, (..out_of_memory))
+            ) {
+            assume allocator
+            left_view := as_view(left)
 
-concat(
-        .left      : &String,
-        .right     : StringView,
-        .allocator : $&Allocator,
-    ) -> (
-        .result : Errable#(String, (..out_of_memory))
-    ) := {
-    assume allocator
-    left_view := as_view(left)
+            result = concat_views(&left_view, &right)
+        }
+    )
 
-    result = concat_views(&left_view, &right)
-}
+implement#(.Provider: Type: Allocator) Concatenation#(&String, &String, Provider) (
+        .join = (
+                .left      : &String,
+                .right     : &String,
+                .allocator : $&Provider
+            ) -> (
+                .result : Errable#(String, (..out_of_memory))
+            ) {
+            assume allocator
+            left_view := as_view(left)
+            right_view := as_view(right)
 
-concat(
-        .left      : &String,
-        .right     : &String,
-        .allocator : $&Allocator,
-    ) -> (
-        .result : Errable#(String, (..out_of_memory))
-    ) := {
-    assume allocator
-    left_view := as_view(left)
-    right_view := as_view(right)
-
-    result = concat_views(&left_view, &right_view)
-}
+            result = concat_views(&left_view, &right_view)
+        }
+    )

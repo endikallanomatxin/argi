@@ -24,6 +24,14 @@ pub fn lower(
             if (call.type_arguments.len == 0 and call.type_arguments_struct == null) continue;
             const source_offset = file.tree.location(node).offset;
             const external = findCallReference(graph, file_index, source_offset) orelse continue;
+            if (call.type_arguments_struct) |literal| {
+                if (containsProjection(file.tree, literal)) {
+                    const arguments = try @import("parameterized/lowerer.zig").lowerConcreteArguments(graph, &writer, file_index, file.tree, file.source, literal);
+                    graph.semantic.external_refs.items[@intFromEnum(external)].computed_arguments = arguments;
+                    stats.generic_calls += 1;
+                    continue;
+                }
+            }
             // Lower nested types first, then publish one contiguous argument
             // range. Their own arguments share this pool but belong elsewhere.
             var arguments = std.array_list.Managed(entities.GenericArgument).init(allocator);
@@ -106,5 +114,16 @@ fn evalInt(tree: *const syn.FileSyntaxTree, source: []const u8, node: syn.NodeIn
 
 test "generic call arguments live on semantic external refs" {
     // Both the qualifier and generic argument range carry optional presence.
-    try std.testing.expect(@sizeOf(entities.ExternalRef) <= 44);
+    // Associated queries retain symbolic type and call arguments.
+    try std.testing.expect(@sizeOf(entities.ExternalRef) <= 72);
+}
+
+fn containsProjection(tree: *const syn.FileSyntaxTree, node: syn.NodeIndex) bool {
+    if (tree.tag(node) == .associated_type_projection) return true;
+    if (tree.binaryOperation(node)) |operation| return containsProjection(tree, operation.lhs) or containsProjection(tree, operation.rhs);
+    if (tree.structTypeLiteral(node)) |literal| for (literal.fields) |field_node| {
+        const field = tree.structTypeField(field_node) orelse continue;
+        if (field.default_value) |value| if (containsProjection(tree, value)) return true;
+    };
+    return false;
 }

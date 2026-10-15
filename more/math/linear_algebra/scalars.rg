@@ -1,14 +1,25 @@
-Scalar: Abstract = ()
+Scalar#(.Value: Type): Contract = ()
 
-Int8 implements Scalar
-Int16 implements Scalar
-Int32 implements Scalar
-Int64 implements Scalar
-UInt8 implements Scalar
-UInt16 implements Scalar
-UInt32 implements Scalar
-UInt64 implements Scalar
-UIntNative implements Scalar
-Float16 implements Scalar
-Float32 implements Scalar
-Float64 implements Scalar
+implement Scalar#(Int8) ()
+
+implement Scalar#(Int16) ()
+
+implement Scalar#(Int32) ()
+
+implement Scalar#(Int64) ()
+
+implement Scalar#(UInt8) ()
+
+implement Scalar#(UInt16) ()
+
+implement Scalar#(UInt32) ()
+
+implement Scalar#(UInt64) ()
+
+implement Scalar#(UIntNative) ()
+
+implement Scalar#(Float16) ()
+
+implement Scalar#(Float32) ()
+
+implement Scalar#(Float64) ()

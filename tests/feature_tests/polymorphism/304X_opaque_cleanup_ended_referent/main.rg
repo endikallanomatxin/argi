@@ -2,7 +2,11 @@ unsafe_allocation := import ("../../_support/unsafe_allocation")
 
 Tracked: Type = (.drops: $&Int32)
 
-Tracked deinit(.self: $&Tracked) -> () := { self&.drops&= self&.drops&+ 1 }
+implement Deinit#(Tracked) (
+    .deinit = (.self: $&Tracked) -> () {
+        self&.drops&= self&.drops&+ 1
+    }
+)
 
 Slot: Type = (.storage: Allocation)
 
@@ -27,10 +31,12 @@ drain(.self: $&Slot, .empty: Bool) -> (.result: ?Int32) := {
     result = ..none
 }
 
-Slot deinit(.self: $&Slot) -> () := {
-    _ ::= drain(self, true)
-    deinit($&self&.storage)
-}
+implement Deinit#(Slot) (
+    .deinit = (.self: $&Slot) -> () {
+        _ ::= drain(self, true)
+        deinit($&self&.storage)
+    }
+)
 
 main(.system: System) -> () := {
     assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)

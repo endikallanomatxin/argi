@@ -136,38 +136,58 @@ _tuple_set(
         .status : Int32
     ): CFunction(.symbol = "_argi_python_tuple_set")
 
-Python init(
+implement Init#(
+    Python,
+    (
         .ffi          : $&ForeignFunctionInterface,
         .program_name : StringView                  = "python3",
-        .home         : StringView                  = ""
-    ) -> (
-        .result : Errable#(Python, (..python_initialization_failed))
-    ) := {
-    assume ffi
-    handle ::= _start(
-        .program        = program_name.data
-        .program_length = program_name.length
-        .home           = home.data
-        .home_length    = home.length
-    ).handle
+        .home         : StringView                  = "",
+    )
+) (
+        .Result : Type = Errable#(Python, (..python_initialization_failed))
+        .init   = (
+                .args : (
+                    .ffi          : $&ForeignFunctionInterface,
+                    .program_name : StringView                  = "python3",
+                    .home         : StringView                  = "",
+                )
+            ) -> (
+                .result : Result
+            ) {
+            ffi ::= args.ffi
+            program_name ::= args.program_name
+            home ::= args.home
 
-    if handle == 0 {
-        result = ..error(.reason = ..python_initialization_failed)
-        return
+            assume ffi
+            handle ::= _start(
+                .program        = program_name.data
+                .program_length = program_name.length
+                .home           = home.data
+                .home_length    = home.length
+            ).handle
+
+            if handle == 0 {
+                result = ..error(.reason = ..python_initialization_failed)
+                return
+            }
+
+            result = ..ok(._handle = handle, ._ffi = ffi)
+        }
+    )
+
+implement Deinit#(Python) (
+    .deinit = (.self: $&Python) -> () {
+        assume ffi := self&._ffi
+        _stop(.context = self&._handle)
     }
+)
 
-    result = ..ok(._handle = handle, ._ffi = ffi)
-}
-
-Python deinit(.self: $&Python) -> () := {
-    assume ffi := self&._ffi
-    _stop(.context = self&._handle)
-}
-
-Object deinit(.self: $&Object) -> () := {
-    assume ffi := self&._python&._ffi
-    _release(.context = self&._python&._handle, .object = self&._handle)
-}
+implement Deinit#(Object) (
+    .deinit = (.self: $&Object) -> () {
+        assume ffi := self&._python&._ffi
+        _release(.context = self&._python&._handle, .object = self&._handle)
+    }
+)
 
 _owned(
         .self   : &Python,
@@ -225,7 +245,7 @@ bytes(
     )
 }
 
-clone(.self: &Object) -> (.result: Errable#(Object, (..python_error))) := {
+_python_object_clone(.self: &Object) -> (.result: Errable#(Object, (..python_error))) := {
     assume ffi := self&._python&._ffi
 
     result = _owned(
@@ -325,11 +345,13 @@ to_float64(.self: &Object) -> (.result: Errable#(Float64, (..python_error))) := 
     result = ..ok value
 }
 
-_no_arguments() -> (.value: ArrayViewRO#(.t: &Object)) := { value = array_view_ro#(.t: &Object)() }
+_no_arguments() -> (.value: ArrayViewRO#(.t: &Object)) := {
+    value = empty_array_view_ro#(.t: &Object)()
+}
 
 _no_keywords() -> (.value: ?&Object) := { value = ..none }
 
-call(
+_call_from_view(
         .self      : &Object,
         .arguments : ArrayViewRO#(.t: &Object) = _no_arguments(),
         .keywords  : ?&Object                  = _no_keywords()
@@ -377,6 +399,8 @@ call(
 
     result = _owned(.self = self&._python, .handle = handle)
 }
+
+implement _PythonCall#(ArrayViewRO#(.t: &Object)) (.invoke = _call_from_view)
 
 _bool(.context: UIntNative, .object: RawPointer#(.t: _PyObject)) -> (.status: Int32): CFunction(
     .symbol = "_argi_python_bool"
@@ -477,7 +501,7 @@ boolean(
     )
 }
 
-integer(
+_python_signed_integer(
         .self  : &Python,
         .value : Int64
     ) -> (
@@ -497,7 +521,7 @@ integer(
     )
 }
 
-integer(
+_python_unsigned_integer(
         .self  : &Python,
         .value : UInt64
     ) -> (
@@ -660,10 +684,12 @@ set_item(
     result = ..ok Void()
 }
 
-_copy_text(
+_copy_text#(
+        .AllocatorType : Type: Allocator#(AllocatorType)
+    )(
         .self      : &Object,
         .kind      : Int32,
-        .allocator : $&Allocator
+        .allocator : $&AllocatorType
     ) -> (
         .result : Errable#(String, (..python_error, ..out_of_memory))
     ) := {
@@ -702,27 +728,33 @@ _copy_text(
     result = ..ok ~text
 }
 
-to_string(
+to_string#(
+        .AllocatorType : Type: Allocator#(AllocatorType)
+    )(
         .self      : &Object,
-        .allocator : $&Allocator
+        .allocator : $&AllocatorType
     ) -> (
         .result : Errable#(String, (..python_error, ..out_of_memory))
     ) := {
     result = _copy_text(.self = self, .kind = 0, .allocator = allocator)
 }
 
-to_bytes(
+to_bytes#(
+        .AllocatorType : Type: Allocator#(AllocatorType)
+    )(
         .self      : &Object,
-        .allocator : $&Allocator
+        .allocator : $&AllocatorType
     ) -> (
         .result : Errable#(String, (..python_error, ..out_of_memory))
     ) := {
     result = _copy_text(.self = self, .kind = 1, .allocator = allocator)
 }
 
-error_text(
+error_text#(
+        .AllocatorType : Type: Allocator#(AllocatorType)
+    )(
         .self      : &Python,
-        .allocator : $&Allocator
+        .allocator : $&AllocatorType
     ) -> (
         .result : Errable#(String, (..python_error, ..out_of_memory))
     ) := {

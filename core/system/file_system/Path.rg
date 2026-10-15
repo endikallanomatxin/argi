@@ -50,34 +50,26 @@ string_view_slice(
     out = _string_view_subrange(view&, .start = start, .count = length).view
 }
 
-Path init(
-        .text : String,
-    ) -> (
-        .result : Path
-    ) := {
-    result = (
-        .text = ~text
+implement Init#(Path, (.text: String)) (
+        .Result : Type = Path
+        .init   = (
+                .args : (.text: String)
+            ) -> (
+                .result : Result
+            ) {
+            text ::= ~args.text
+
+            result = (
+                .text = ~text
+            )
+        }
     )
-}
 
-Path init(
+path_with_view#(
+        .AllocatorType : Type: Allocator#(AllocatorType)
+    )(
         .view      : StringView,
-        .allocator : $&Allocator,
-    ) -> (
-        .result : Errable#(Path, (..out_of_memory))
-    ) := {
-    constructed :: Path
-
-    assume allocator
-
-    constructed = path_with_view(.view = view, .allocator = allocator)!
-
-    result = ..ok ~constructed
-}
-
-path_with_view(
-        .view      : StringView,
-        .allocator : $&Allocator,
+        .allocator : $&AllocatorType,
     ) -> (
         .result : Errable#(Path, (..out_of_memory))
     ) := {
@@ -89,27 +81,28 @@ path_with_view(
     result = ..ok(.text = ~text)
 }
 
-Path deinit(
-        .self      : $&Path,
-        .allocator : $&Allocator,
-    ) -> () := {
-    assume allocator
+implement Deinit#(Path) (
+    .deinit = (.self: $&Path) -> () {
+        deinit(.self = $&self&.text)
+    }
+)
 
-    deinit(.self = $&self&.text, .allocator = allocator)
-}
+implement#(.Provider: Type: Allocator) FalliblyCopyable#(Path, Provider) (
+        .reasons : Type = (..out_of_memory)
+        .copy    = (
+                .self      : &Path,
+                .allocator : $&Provider,
+            ) -> (
+                .result : Errable#(Path, (..out_of_memory))
+            ) {
+            assume allocator
 
-copy(
-        .self      : &Path,
-        .allocator : $&Allocator,
-    ) -> (
-        .result : Errable#(Path, (..out_of_memory))
-    ) := {
-    assume allocator
+            text ::= copy(&self&.text, .allocator = allocator)!
 
-    text ::= copy(&self&.text, .allocator = allocator)!
+            result = ..ok(.text = ~text)
+        }
 
-    result = ..ok(.text = ~text)
-}
+    )
 
 as_view(
         .self : &Path,
@@ -258,10 +251,12 @@ extension(
     }
 }
 
-join_views(
+join_views#(
+        .AllocatorType : Type: Allocator#(AllocatorType)
+    )(
         .left      : &StringView,
         .right     : &StringView,
-        .allocator : $&Allocator,
+        .allocator : $&AllocatorType,
     ) -> (
         .result : Errable#(Path, (..out_of_memory))
     ) := {
@@ -329,10 +324,12 @@ join_views(
     }
 }
 
-join(
+join#(
+        .AllocatorType : Type: Allocator#(AllocatorType)
+    )(
         .left      : &Path,
         .right     : &Path,
-        .allocator : $&Allocator,
+        .allocator : $&AllocatorType,
     ) -> (
         .result : Errable#(Path, (..out_of_memory))
     ) := {
@@ -344,14 +341,11 @@ join(
     result = join_views(.left = &left_view, .right = &right_view, .allocator = allocator)
 }
 
-operator == (
-        .left  : &Path,
-        .right : &Path,
-    ) -> (
-        .ok : Bool
-    ) := {
-    ok = path_equals(.left = left, .right = right).ok
-}
+implement Equal#(Path, Path, (.left: &Path, .right: &Path)) (
+    .equal = (.args: (.left: &Path, .right: &Path)) -> (.ok: Bool) {
+        ok = path_equals(.left = args.left, .right = args.right).ok
+    }
+)
 
 path_equals(
         .left  : &Path,

@@ -10,22 +10,22 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     push_assume_capacity(.self = $&array, .value = 4)
     push_assume_capacity(.self = $&array, .value = 5)
     borrowed ::= unwrap_or_abort(.value = get_ro_ref(.self = &array, .index = 0))
-    view ::= array_view(.array = $&array).view
+    borrowed_view ::= view(.array = $&array)
     reverse(.self = $&array)
     if borrowed& != 5 { abort }
-    if unwrap_or_abort(.value = get(.self = &view, .index = 4)) != 1 { abort }
-    reverse(.self = $&view)
+    if unwrap_or_abort(.value = get(.self = &borrowed_view, .index = 4)) != 1 { abort }
+    reverse(.self = $&borrowed_view)
     if borrowed& != 1 { abort }
     if length(.self = &array).count != 5 { abort }
     deinit(.self = $&array)
     fixed : [4]Int32 = (10, 20, 30, 40)
-    fixed_view ::= array_view(.array = $&fixed).view
+    fixed_view ::= view(.array = $&fixed)
     middle ::= unwrap_or_abort(.value = slice(.self = &fixed_view, .start = 1, .count = 2))
     reverse(.self = $&middle)
     if fixed[0] != 10 or fixed[1] != 30 or fixed[2] != 20 or fixed[3] != 40 { abort }
     reverse(.self = $&fixed_view)
     if fixed[0] != 40 or fixed[1] != 20 or fixed[2] != 30 or fixed[3] != 10 { abort }
     empty : [0]Int32 = ()
-    empty_view ::= array_view(.array = $&empty).view
+    empty_view ::= view(.array = $&empty)
     reverse(.self = $&empty_view)
 }

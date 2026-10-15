@@ -78,21 +78,24 @@ pub const IntBinaryOperator = enum(u8) { add, subtract, multiply, divide, modulo
 pub const IntExpression = union(enum) {
     literal: i64,
     parameter: ComptimeParameterId,
+    projection: struct { base: ParameterizedTypeId, member: primitives.StringRange, source: primitives.SourceRef },
     binary: struct {
         operator: IntBinaryOperator,
         left: ParameterizedIntExprId,
         right: ParameterizedIntExprId,
+        source: ?primitives.SourceRef = null,
     },
 };
 
 pub const Type = union(enum) {
     concrete: entities.ModuleTypeId,
     parameter: ComptimeParameterId,
-    abstract_self,
+    projection: struct { base: ParameterizedTypeId, member: primitives.StringRange, source: primitives.SourceRef },
     external: entities.ExternalRefId,
     array: struct {
         length: ParameterizedIntExprId,
         element: ParameterizedTypeId,
+        source: ?primitives.SourceRef = null,
     },
     choice_union: struct { left: ParameterizedTypeId, right: ParameterizedTypeId },
     resolved: primitives.SemanticType(Ids),
@@ -185,6 +188,7 @@ pub const PendingExpressionDetail = union(enum(u8)) {
 };
 
 pub const PendingExpression = struct {
+    contract_type: ?ParameterizedTypeId = null,
     requires_errable: bool = false,
     kind: PendingExpressionKind,
     assumed_arguments: ?ParameterizedNodeId = null,
@@ -332,7 +336,7 @@ test "parameterized IR represents dependent type state without syntax refs" {
     defer storage.deinit(allocator);
 
     try storage.types.append(allocator, .{ .parameter = @enumFromInt(0) });
-    try storage.types.append(allocator, .abstract_self);
+    try storage.types.append(allocator, .{ .parameter = @enumFromInt(1) });
     try storage.int_expressions.append(allocator, .{ .parameter = @enumFromInt(0) });
     try storage.types.append(allocator, .{ .array = .{ .length = @enumFromInt(0), .element = @enumFromInt(0) } });
     try storage.variants.append(allocator, .{ .semantic = .{

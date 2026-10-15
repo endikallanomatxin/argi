@@ -1,33 +1,36 @@
-Closable: Abstract = (
-    close(.self: $&Self) -> () where {}
+Closable#(.Participant: Type): Contract = (
+    .close: (.self: $&Participant) -> () where {}
 )
 
 Closing: Type = (.value: Int32)
 
 Keeping: Type = (.value: Int32)
 
-Closing implements Closable
-Keeping implements Closable
+implement Closable#(Closing) (.close = _impl_close_Closing)
+implement Closable#(Keeping) (.close = _impl_close_Keeping)
 
-Closing deinit(.self: $&Closing) -> () := {
-}
+implement Deinit#(Closing) (
+    .deinit = (.self: $&Closing) -> () {
 
-close(.self: $&Closing) -> () := {
+    }
+)
+
+_impl_close_Closing := (.self: $&Closing) -> ()  {
     deinit(.self = self)
 }
 
-close(.self: $&Keeping) -> () := {
+_impl_close_Keeping := (.self: $&Keeping) -> ()  {
 }
 
 register_keeping(.value: $&Keeping) -> () := {
-    unused ::= to_virtual#(.abstract: Closable)(.value = value)
+    unused ::= to_virtual#(.contract: Closable)(.value = value)
 }
 
 main() -> (.status_code: Int32) := {
     keeping :: Keeping = (.value = 0)
     register_keeping(.value = $&keeping)
     value :: Closing = (.value = 0)
-    virtual ::= to_virtual#(.abstract: Closable)(.value = $&value)
+    virtual ::= to_virtual#(.contract: Closable)(.value = $&value)
     close(.self = $&virtual)
     status_code = value.value
 }

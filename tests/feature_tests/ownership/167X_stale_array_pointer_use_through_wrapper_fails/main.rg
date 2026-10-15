@@ -2,8 +2,11 @@ Value : Type = (
     .items: [2]Int32
 )
 
-Value deinit(.self: $&Value) -> () := {
-}
+implement Deinit#(Value) (
+    .deinit = (.self: $&Value) -> () {
+
+    }
+)
 
 read_first(.p: $&[2]Int32) -> (.result: Int32) := {
     result = p&[0]

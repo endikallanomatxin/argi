@@ -2,7 +2,7 @@ RawPointer#(.t: Type): Type = (
     .address : UIntNative
 )
 
-RawPointer#(.t: Type) implements ImplicitlyCopyable
+implement#(.t: Type) ImplicitlyCopyable#(RawPointer#(.t: t)) ()
 
 raw_pointer#(.t: Type)(.address: UIntNative) -> (.raw: RawPointer#(.t: t)) := {
     raw = (.address = address)
@@ -69,7 +69,7 @@ trusted_reference_offset#(
         .reference : &t
     ) := {
     address ::= _reference_offset_address(
-        .address      = UIntNative(.value = base)
+        .address      = base | convert#(.to: UIntNative)(_)
         .elements     = elements
         .element_size = size_of(.type = t)
     ).result
@@ -84,11 +84,21 @@ trusted_reinterpret_reference#(
     ) -> (
         .reference : &to
     ) := {
-    reference = __trusted_reference_from_address#(.to: &to)(.address = UIntNative(.value = base))
+    reference = __trusted_reference_from_address#(.to: &to)(
+        .address = [
+            base
+            | convert#(.to: UIntNative)(_)
+        ]
+    )
 }
 
 read_reference#(.t: Type)(.base: $&t) -> (.reference: &t) := {
-    reference = __trusted_reference_from_address#(.to: &t)(.address = UIntNative(.value = base))
+    reference = __trusted_reference_from_address#(.to: &t)(
+        .address = [
+            base
+            | convert#(.to: UIntNative)(_)
+        ]
+    )
 }
 
 trusted_mutable_reinterpret_reference#(
@@ -99,7 +109,12 @@ trusted_mutable_reinterpret_reference#(
     ) -> (
         .reference : $&to
     ) := {
-    reference = __trusted_reference_from_address#(.to: $&to)(.address = UIntNative(.value = base))
+    reference = __trusted_reference_from_address#(.to: $&to)(
+        .address = [
+            base
+            | convert#(.to: UIntNative)(_)
+        ]
+    )
 }
 
 trusted_mutable_reference_offset#(
@@ -111,7 +126,7 @@ trusted_mutable_reference_offset#(
         .reference : $&t
     ) := {
     address ::= _reference_offset_address(
-        .address      = UIntNative(.value = base)
+        .address      = base | convert#(.to: UIntNative)(_)
         .elements     = elements
         .element_size = size_of(.type = t)
     ).result

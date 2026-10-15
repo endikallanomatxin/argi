@@ -1,7 +1,7 @@
 ..failed
 
-SimpleEditor: Abstract = (
-    edit(.self: &Self, .target: $&Int32, .mode: Int32) -> (.result: ?Int32) where {
+SimpleEditor#(.Participant: Type): Contract = (
+    .edit: (.self: &Participant, .target: $&Int32, .mode: Int32) -> (.result: ?Int32) where {
         on result ..some { invalidates(target) }
         on result ..none {}
     }
@@ -9,9 +9,9 @@ SimpleEditor: Abstract = (
 
 Cell: Type = (.unused: Int32)
 
-Cell implements SimpleEditor
+implement SimpleEditor#(Cell) (.edit = _impl_edit_Cell)
 
-edit(.self: &Cell, .target: $&Int32, .mode: Int32) -> (.result: ?Int32) := {
+_impl_edit_Cell := (.self: &Cell, .target: $&Int32, .mode: Int32) -> (.result: ?Int32)  {
     if mode == 1 {
         target&= 42
         result = ..some(.value = 42)

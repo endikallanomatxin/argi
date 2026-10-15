@@ -3,14 +3,19 @@ calls :: Int32 = 0
 drops :: Int32 = 0
 
 Owner: Type = (.value: Int32)
-Owner deinit(.self: $&Owner) -> () := { drops = drops + 1 }
+
+implement Deinit#(Owner) (
+    .deinit = (.self: $&Owner) -> () {
+        drops = drops + 1
+    }
+)
 
 attempt(.fail: Bool) -> (.result: Errable#(Int32, (..missing))) := {
     calls = calls + 1
     if fail { result = ..error(.reason = ..missing) } else { result = ..ok 7 }
 }
 
-finish(.fail: Bool, .writer: $&Writer = reach writer) -> (.result: Int32 = 0) := {
+finish#(.WriterType: Type: Writer#(WriterType))(.fail: Bool, .writer: $&WriterType = reach writer) -> (.result: Int32 = 0) := {
     owner ::= Owner(1)
     value ::= attempt(fail)!!! {
         action_owner ::= Owner(2)
@@ -19,7 +24,14 @@ finish(.fail: Bool, .writer: $&Writer = reach writer) -> (.result: Int32 = 0) :=
     result = value
 }
 
-unwrap#(.t: Type)(.input: Errable#(t, (..missing)), .writer: $&Writer = reach writer) -> (.result: Int32 = 0) := {
+unwrap#(
+        .t : Type, .WriterType: Type: Writer#(WriterType)
+    )(
+        .input  : Errable#(t, (..missing)),
+        .writer : $&WriterType                  = reach writer
+    ) -> (
+        .result : Int32 = 0
+    ) := {
     owner ::= Owner(3)
     value ::= ~input!!! {
         action_owner ::= Owner(4)
@@ -32,7 +44,7 @@ condition(.fail: Bool) -> (.result: Errable#(Bool, (..missing))) := {
     if fail { result = ..error(.reason = ..missing) } else { result = ..ok true }
 }
 
-check_conditions(.fail: Bool, .writer: $&Writer = reach writer) -> (.result: Int32 = 0) := {
+check_conditions#(.WriterType: Type: Writer#(WriterType))(.fail: Bool, .writer: $&WriterType = reach writer) -> (.result: Int32 = 0) := {
     if condition(false)!!! { result = 1 }
     if [condition(fail)!!! { result = 13 }] { result = 2 }
 }
@@ -44,13 +56,6 @@ finish_argument(.fail: Bool, .writer: $&File = reach writer) -> (.result: Int32 
 }
 
 BrokenWriter: Type = ()
-BrokenWriter implements Writer
-write_byte(.self: $&BrokenWriter, .byte: UInt8) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) := {
-    result = ..error(.reason = ..stream_write_failed)
-}
-flush(.self: $&BrokenWriter) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) := {
-    result = ..error(.reason = ..stream_flush_failed)
-}
 
 main(.system: System) -> () := {
     assume writer ::= $&system.terminal&.stderr
@@ -63,3 +68,22 @@ main(.system: System) -> () := {
     broken ::= BrokenWriter()
     if finish(true, .writer = $&broken) != 9 or drops != 8 { abort }
 }
+
+implement Writer#(BrokenWriter)(
+    .write_byte = (
+            .self : $&BrokenWriter,
+            .byte : UInt8
+        ) -> (
+            .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+        ) {
+        result = ..error(.reason = ..stream_write_failed)
+    }
+
+    .flush = (
+            .self : $&BrokenWriter
+        ) -> (
+            .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+        ) {
+        result = ..error(.reason = ..stream_flush_failed)
+    }
+)

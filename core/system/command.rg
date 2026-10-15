@@ -14,11 +14,11 @@ CliSpec: Type = (
     .default_value : ?StringView = ..none
 )
 
-CliSpec implements ImplicitlyCopyable
+implement ImplicitlyCopyable#(CliSpec) ()
 
 CliValue: Type = (.name: StringView, .value: ?StringView)
 
-CliValue implements ImplicitlyCopyable
+implement ImplicitlyCopyable#(CliValue) ()
 
 CliMatches: Type = (
     .options     : DynamicArray#(.t: CliValue),
@@ -40,12 +40,13 @@ CliReasons: Type = (
 -- and schema until matches are destroyed. Every option uses a canonical long
 -- name; aliases and defaults are resolved without copying argument bytes.
 parse_cli#(
-        .t : Type: ArgumentSource
+        .t             : Type: ArgumentSource#(t),
+        .AllocatorType : Type: Allocator#(AllocatorType)
     )(
         .source    : &t,
         .specs     : ArrayViewRO#(.t: CliSpec),
         .start     : UIntNative                 = 0,
-        .allocator : $&Allocator                = reach allocator
+        .allocator : $&AllocatorType            = reach allocator
     ) -> (
         .result : Errable#(CliMatches, CliReasons)
     ) := {
@@ -184,47 +185,49 @@ parse_cli#(
     result = ..ok(.options = ~options, .positionals = ~positionals)
 }
 
-write_cli_help(
-        .writer  : $&Writer,
+write_cli_help#(
+        .WriterType : Type: Writer#(WriterType)
+    )(
+        .writer  : $&WriterType,
         .program : StringView,
         .about   : StringView,
         .specs   : ArrayViewRO#(.t: CliSpec)
     ) -> (
         .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()
     ) := {
-    write(writer, .text = about)!
-    write(writer, .text = "\nUsage: ")!
-    write(writer, .text = program)!
-    write(writer, .text = " [OPTIONS] [ARGS]\n\nOptions:\n")!
+    write(writer, .value = about)!
+    write(writer, .value = "\nUsage: ")!
+    write(writer, .value = program)!
+    write(writer, .value = " [OPTIONS] [ARGS]\n\nOptions:\n")!
     index :: UIntNative = 0
 
     while index < length(&specs).count {
         spec ::= unwrap_or_abort(.value = get(&specs, .index = index))
-        write(writer, .text = "  ")!
+        write(writer, .value = "  ")!
         if spec.short_name.length > 0 {
-            write(writer, .text = "-")!
-            write(writer, .text = spec.short_name)!
-            write(writer, .text = ", ")!
+            write(writer, .value = "-")!
+            write(writer, .value = spec.short_name)!
+            write(writer, .value = ", ")!
         }
-        write(writer, .text = "--")!
-        write(writer, .text = spec.name)!
+        write(writer, .value = "--")!
+        write(writer, .value = spec.name)!
         if spec.value_name.length > 0 {
-            write(writer, .text = " <")!
-            write(writer, .text = spec.value_name)!
-            write(writer, .text = ">")!
+            write(writer, .value = " <")!
+            write(writer, .value = spec.value_name)!
+            write(writer, .value = ">")!
         }
-        if spec.required { write(writer, .text = " (required)")! }
-        if spec.repeatable { write(writer, .text = " (repeatable)")! }
-        write(writer, .text = "  ")!
-        write(writer, .text = spec.help)!
+        if spec.required { write(writer, .value = " (required)")! }
+        if spec.repeatable { write(writer, .value = " (repeatable)")! }
+        write(writer, .value = "  ")!
+        write(writer, .value = spec.help)!
         match spec.default_value {
             ..none {} ..some entry {
-                write(writer, .text = " [default: ")!
-                write(writer, .text = entry.value)!
-                write(writer, .text = "]")!
+                write(writer, .value = " [default: ")!
+                write(writer, .value = entry.value)!
+                write(writer, .value = "]")!
             }
         }
-        write(writer, .text = "\n")!
+        write(writer, .value = "\n")!
         index = index + 1
     }
 }

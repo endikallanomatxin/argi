@@ -1,18 +1,22 @@
-Store: Abstract = (
-    put(.self: &Self, .storage: $&Allocation, .slot: $&Tracked, .value: Tracked, .other: Tracked) -> () where {
+Store#(.Participant: Type): Contract = (
+    .put: (.self: &Participant, .storage: $&Allocation, .slot: $&Tracked, .value: Tracked, .other: Tracked) -> () where {
         retains(storage, value)
     }
 )
 
 Tracked: Type = (.reference: &Int32)
 
-Tracked deinit(.self: $&Tracked) -> () := {}
+implement Deinit#(Tracked) (
+    .deinit = (.self: $&Tracked) -> () {
+
+    }
+)
 
 Cell: Type = ()
 
-Cell implements Store
+implement Store#(Cell) (.put = _impl_put_Cell)
 
-put(.self: &Cell, .storage: $&Allocation, .slot: $&Tracked, .value: Tracked, .other: Tracked) -> () := {
+_impl_put_Cell := (.self: &Cell, .storage: $&Allocation, .slot: $&Tracked, .value: Tracked, .other: Tracked) -> ()  {
     trusted_opaque_move_in#(Tracked, Allocation)(storage, slot, ~other)
 }
 

@@ -1,8 +1,8 @@
 unsafe_allocation := import ("../../_support/unsafe_allocation")
 
-OpaqueStorer: Abstract = (
-    store(
-        .self    : $&Self,
+OpaqueStorer#(.Participant: Type): Contract = (
+    .store: (
+        .self    : $&Participant,
         .storage : $&Container,
         .slot    : $&Borrowing,
         .source  : $&Borrowing,
@@ -17,24 +17,28 @@ Keeping: Type = (.marker: UInt8)
 
 Consuming: Type = (.marker: UInt8)
 
-Keeping implements OpaqueStorer
-Consuming implements OpaqueStorer
+implement OpaqueStorer#(Keeping) (.store = _impl_store_Keeping)
+implement OpaqueStorer#(Consuming) (.store = _impl_store_Consuming)
 
-Borrowing deinit(.self: $&Borrowing) -> () := {}
+implement Deinit#(Borrowing) (
+    .deinit = (.self: $&Borrowing) -> () {
 
-store(
+    }
+)
+
+_impl_store_Keeping := (
         .self    : $&Keeping,
         .storage : $&Container,
         .slot    : $&Borrowing,
         .source  : $&Borrowing,
-    ) -> () := {}
+    ) -> ()  {}
 
-store(
+_impl_store_Consuming := (
         .self    : $&Consuming,
         .storage : $&Container,
         .slot    : $&Borrowing,
         .source  : $&Borrowing,
-    ) -> () := {
+    ) -> ()  {
     trusted_opaque_move_in#(.t: Borrowing, .storage_type: Container)(
         .storage     = storage
         .destination = slot
@@ -43,13 +47,13 @@ store(
 }
 
 register_keeping(.value: $&Keeping) -> () := {
-    _ ::= to_virtual#(.abstract: OpaqueStorer)(.value = value)
+    _ ::= to_virtual#(.contract: OpaqueStorer)(.value = value)
 }
 
 main(.system: System) -> (.status_code: Int32) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    target_result ::= allocate(.self = $&allocator_storage, .size = 1)
-    slot_result ::= allocate(.self = $&allocator_storage, .size = size_of(.type = Borrowing))
+    target_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
+    slot_result ::= allocate_bytes(.self = $&allocator_storage, .size = size_of(.type = Borrowing))
     match target_result {
         ..error _ { status_code = 1 }
         ..ok ~target_payload {
@@ -68,7 +72,7 @@ main(.system: System) -> (.status_code: Int32) := {
                     keeping ::= Keeping(.marker = 0)
                     register_keeping(.value = $&keeping)
                     implementation ::= Consuming(.marker = 0)
-                    virtual ::= to_virtual#(.abstract: OpaqueStorer)(.value = $&implementation)
+                    virtual ::= to_virtual#(.contract: OpaqueStorer)(.value = $&implementation)
                     source ::= Borrowing(
                         .reference = unsafe_allocation.trusted_allocation_byte_rw(
                             .allocation = $&target

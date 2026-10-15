@@ -106,7 +106,8 @@ and [reference ownership](https://docs.python.org/3/c-api/refcounting.html).
 
 ## Argi values and arguments
 
-`to_object(.self: &Python, .value)` is an ordinary overload family for signed
+`to_object(.self: &Python, .value)` is one generic function selecting PythonValue
+evidence for signed
 and unsigned integer primitives, Bool, Float32/Float64, StringView, borrowed
 String, and borrowed Object (which acquires a new reference). Integer widening
 is explicit inside the module. Float16 is not supported by this boundary.
@@ -158,7 +159,9 @@ ordinary FFI capability, with no borrowed Python objects or buffers.
 `exception_type`, `exception_message`, and `exception_traceback` accept
 `.self: &Exception` and `.allocator: $&Allocator` and return owning Strings in
 an `Errable<String, out_of_memory>`. `clone(.self: &Exception)` acquires another
-snapshot reference. Exceptions are not implicitly copyable and clean up normally.
+snapshot reference, returned as `.result`. The unique clone entry selects an
+associated Result: Exception for snapshots, Errable containing Object for Python
+objects. Exceptions are not implicitly copyable and clean up normally.
 Native allocation exhaustion uses an immutable MemoryError fallback rather than
 silently retaining details from an earlier failure.
 
@@ -202,6 +205,8 @@ environment; explicit non-default program names continue to override it.
 
 `numeric_buffer(.self: &Python, .values: ArrayViewRO<T> or ArrayView<T>)` copies
 initialized numeric elements into a Python-owned bytearray in one operation.
+The numeric transfer functions have unique ordinary identities; private scalar
+and view contracts select their element widths, native formats and dtype names.
 It supports Int8/16/32/64, UInt8/16/32/64/Native, and Float32/64. Native byte order
 and representation are preserved. Empty inputs need no element address;
 byte-count overflow is rejected before reading memory.

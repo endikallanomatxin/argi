@@ -1,7 +1,7 @@
 ..failed
 
-Mover: Abstract = (
-    transfer(.self: &Self, .source: $&Resource, .destination: $&Resource, .move: Bool) -> (
+Mover#(.Participant: Type): Contract = (
+    .transfer: (.self: &Participant, .source: $&Resource, .destination: $&Resource, .move: Bool) -> (
         .count  : Int32,
         .result : ?Large
     ) where {
@@ -12,17 +12,21 @@ Mover: Abstract = (
 
 Manager: Type = (.unused: Int32)
 
-Manager implements Mover
+implement Mover#(Manager) (.transfer = _impl_transfer_Manager)
 
 Large: Type = (.values: [128]Int32)
 
 Resource: Type = (.value: Int32)
 
-Resource deinit(.self: $&Resource) -> () := { drops = drops + 1 }
+implement Deinit#(Resource) (
+    .deinit = (.self: $&Resource) -> () {
+        drops = drops + 1
+    }
+)
 
 drops :: Int32 = 0
 
-transfer(
+_impl_transfer_Manager := (
         .self        : &Manager,
         .source      : $&Resource,
         .destination : $&Resource,
@@ -30,7 +34,7 @@ transfer(
     ) -> (
         .count  : Int32,
         .result : ?Large
-    ) := {
+    )  {
     count = 42
     if move {
         relocate(source, destination)

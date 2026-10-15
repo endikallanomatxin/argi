@@ -28,27 +28,43 @@ _atomic_compare(.handle: UIntNative, .expected: UInt32, .desired: UInt32) -> (.p
 -- across threads; that requires the language's separate transfer contracts.
 AtomicUInt32: Type = (._handle: UIntNative, ._ffi: $&ForeignFunctionInterface)
 
-AtomicUInt32 init(
+implement Init#(
+    AtomicUInt32,
+    (
         .initial : UInt32                     = 0,
-        .ffi     : $&ForeignFunctionInterface = reach ffi
-    ) -> (
-        .result : Errable#(AtomicUInt32, (..out_of_memory))
-    ) := {
-    assume ffi
-    handle ::= _atomic_create(.initial = initial).handle
+        .ffi     : $&ForeignFunctionInterface = reach ffi,
+    )
+) (
+        .Result : Type = Errable#(AtomicUInt32, (..out_of_memory))
+        .init   = (
+                .args : (
+                    .initial : UInt32                     = 0,
+                    .ffi     : $&ForeignFunctionInterface = reach ffi,
+                )
+            ) -> (
+                .result : Result
+            ) {
+            initial ::= args.initial
+            ffi ::= args.ffi
 
-    if handle == 0 {
-        result = ..error(.reason = ..out_of_memory)
-        return
+            assume ffi
+            handle ::= _atomic_create(.initial = initial).handle
+
+            if handle == 0 {
+                result = ..error(.reason = ..out_of_memory)
+                return
+            }
+
+            result = ..ok(._handle = handle, ._ffi = ffi)
+        }
+    )
+
+implement Deinit#(AtomicUInt32) (
+    .deinit = (.self: $&AtomicUInt32) -> () {
+        assume ffi := self&._ffi
+        _atomic_destroy(.handle = self&._handle)
     }
-
-    result = ..ok(._handle = handle, ._ffi = ffi)
-}
-
-AtomicUInt32 deinit(.self: $&AtomicUInt32) -> () := {
-    assume ffi := self&._ffi
-    _atomic_destroy(.handle = self&._handle)
-}
+)
 
 load(.self: &AtomicUInt32) -> (.value: UInt32) := {
     assume ffi := self&._ffi
@@ -81,6 +97,6 @@ compare_exchange(
     ) := {
     assume ffi := self&._ffi
     packed ::= _atomic_compare(.handle = self&._handle, .expected = expected, .desired = desired).packed
-    observed = unwrap_or_abort(.value = UInt32(.value = packed % 4294967296))
+    observed = unwrap_or_abort(.value = [packed % 4294967296] | convert#(.to: UInt32)(_))
     swapped = packed / 4294967296 != 0
 }

@@ -1,10 +1,10 @@
 unsafe_allocation := import("../../_support/unsafe_allocation")
 
-SlotProtocol: Abstract = (
+SlotProtocol#(.Participant: Type): Contract = (
     domain contents
 
-    put(.self: $&Self, .value: Allocation) -> () where retains(self.contents, value)
-    take(.self: $&Self) -> (.value: Allocation) where {
+    .put: (.self: $&Participant, .value: Allocation) -> () where retains(self.contents, value)
+    .take: (.self: $&Participant) -> (.value: Allocation) where {
         owns(value)
         from_storage(value, self.contents)
         empties(self.contents)
@@ -12,15 +12,15 @@ SlotProtocol: Abstract = (
 )
 
 Slot: Type = (.storage: Allocation)
-Slot implements SlotProtocol where { contents(self.storage) }
+implement SlotProtocol#(Slot) (.put = _impl_put_Slot, .take = _impl_take_Slot) where { contents(self.storage) }
 
-put(.self: $&Slot, .value: Allocation) -> () := {
+_impl_put_Slot := (.self: $&Slot, .value: Allocation) -> ()  {
     slot ::= trusted_mutable_reinterpret_reference#(UInt8, Allocation)(
         unsafe_allocation.trusted_allocation_byte_rw($&self&.storage, 0).reference).reference
     trusted_opaque_move_in#(Allocation, Allocation)($&self&.storage, slot, ~value)
 }
 
-take(.self: $&Slot) -> (.value: Allocation) := {
+_impl_take_Slot := (.self: $&Slot) -> (.value: Allocation)  {
     slot ::= trusted_mutable_reinterpret_reference#(UInt8, Allocation)(
         unsafe_allocation.trusted_allocation_byte_rw($&self&.storage, 0).reference).reference
     value = trusted_opaque_move_out#(Allocation, Allocation)($&self&.storage, slot)

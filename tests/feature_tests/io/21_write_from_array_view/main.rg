@@ -2,29 +2,9 @@ DummyOutput: Type = (
     .write_count : UIntNative = 0
 )
 
-write_byte(
-        .self : $&DummyOutput,
-        .byte : UInt8,
-    ) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
-    ) := {
-    self&.write_count = self&.write_count + 1
-    result = ..ok Void()
-}
-
-flush(
-        .self : $&DummyOutput,
-    ) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
-    ) := {
-    result = ..ok Void()
-}
-
-DummyOutput implements Writer
-
 main() -> (.status_code: Int32) := {
     bytes: Array#(.n = 3, .t: UInt8) = (0, 0, 0)
-    buffer ::= array_view(.array = $&bytes)
+    buffer ::= view(.array = $&bytes)
     first_set ::= set#(.t: UInt8)(.self = $&buffer, .index = 0, .value = 2).result
     second_set ::= set#(.t: UInt8)(.self = $&buffer, .index = 1, .value = 3).result
     third_set ::= set#(.t: UInt8)(.self = $&buffer, .index = 2, .value = 5).result
@@ -42,7 +22,7 @@ main() -> (.status_code: Int32) := {
         .write_count = 0
     )
     assume writer ::= $&stdout_storage
-    write_result ::= write(.self = $&stdout_storage, .buffer = buffer)
+    write_result ::= write(.self = $&stdout_storage, .value = buffer)
 
     if is(.value = write_result, .variant = ..ok) {
     } else {
@@ -63,3 +43,23 @@ main() -> (.status_code: Int32) := {
 
     status_code = 0
 }
+
+implement Writer#(DummyOutput)(
+    .write_byte = (
+            .self : $&DummyOutput,
+            .byte : UInt8,
+        ) -> (
+            .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        ) {
+        self&.write_count = self&.write_count + 1
+        result = ..ok Void()
+    }
+
+    .flush = (
+            .self : $&DummyOutput,
+        ) -> (
+            .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        ) {
+        result = ..ok Void()
+    }
+)

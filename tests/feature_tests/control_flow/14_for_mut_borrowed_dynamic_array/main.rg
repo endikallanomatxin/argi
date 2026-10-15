@@ -3,7 +3,7 @@ main(.system: System) -> (.status_code: Int32) := {
     assume allocator ::= $&allocator_storage
 
     dyn ::= unwrap_or_abort(.value = DynamicArray#(.t: Int32)(.capacity = 2))
-    #defer deinit(.self = $&dyn, .allocator = $&allocator_storage)
+    #defer deinit(.self = $&dyn)
     push(.self = $&dyn, .value = 7, .allocator = $&allocator_storage)
     push(.self = $&dyn, .value = 8, .allocator = $&allocator_storage)
 

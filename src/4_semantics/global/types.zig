@@ -1,4 +1,6 @@
+const contract_evidence = @import("contract_evidence.zig");
 const std = @import("std");
+const standard_contracts = @import("standard_contracts.zig");
 const graph_mod = @import("graph.zig");
 const primitives = @import("../primitives/schema.zig");
 
@@ -24,6 +26,14 @@ pub const LayoutError = error{
     UnmaterializedGenericType,
     TypeHasNoRuntimeLayout,
 };
+
+/// Init and Convert return their target directly or in one Errable success payload.
+pub fn resultMatchesTarget(graph: *const graph_mod.GlobalSemanticGraph, result: graph_mod.GlobalTypeId, target: graph_mod.GlobalTypeId) bool {
+    if (equal(graph, result, target)) return true;
+    if (!isErrable(graph, result)) return false;
+    const ok = findVariant(graph, result, "ok") orelse return false;
+    return equal(graph, ok.variant.payload_type orelse return false, target);
+}
 
 /// Local handling accepts the bundled Errable family and the identity-bearing
 /// inferred form used by fallible output shorthand, never arbitrary choices
@@ -173,42 +183,45 @@ pub fn materializeNullable(
 /// never the value whose lifetime that destructor closes.
 pub fn deinitFunction(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?graph_mod.GlobalFunctionId {
     if (graph.semanticType(ty) == .pointer) return null;
-    for (graph.functions.items, 0..) |function, raw| {
+    const contract = standard_contracts.standardDeclaration(graph, "Deinit") orelse return null;
+    var operations = contract_evidence.materializedOperations(graph, contract);
+    var found: ?graph_mod.GlobalFunctionId = null;
+    while (operations.next()) |selected| {
+        const id = selected.materializedFunction(graph) orelse continue;
+        const function = graph.function(id);
         if (!function.flags.is_deinit or function.input.len == 0) continue;
-        if (graph.declaration(function.declaration).destructor_type) |owner| {
-            if (nominalFamily(graph, ty) != owner) continue;
-        }
-        // Capability inputs may precede the receiver; ownership belongs to
-        // the associated family rather than the first field in the signature.
-        for (graph.fields.items[function.input.start..][0..function.input.len]) |field| {
-            const pointer = switch (graph.semanticType(field.ty)) {
-                .pointer => |value| value,
-                else => continue,
-            };
-            if (pointer.mutability == .read_write and equal(graph, pointer.child, ty))
-                return @enumFromInt(@as(u32, @intCast(raw)));
-        }
+        const participant = selected.participant(graph, 0) orelse continue;
+        if (!equal(graph, participant, ty)) continue;
+        // Preserve declaration-order selection when the same evidence is reached
+        // through several caller contexts.
+        if (found == null or @intFromEnum(id) < @intFromEnum(found.?)) found = id;
     }
-    return null;
+    return found;
 }
 
-/// Opaque drops need the destructor for the concrete allocator supplied with
-/// the slot. The value type alone can have several valid destructor instances.
+/// A cleanup obligation comes from selected Deinit evidence, independently
+/// of storage acquisition.
+pub fn hasDestructor(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) bool {
+    return deinitFunction(graph, ty) != null;
+}
+
+/// Opaque drops use selected Deinit evidence and check its capability inputs
+/// against the supplied arguments.
 pub fn deinitFunctionForInput(graph: *const graph_mod.GlobalSemanticGraph, value_type: graph_mod.GlobalTypeId, supplied: graph_mod.FieldRange) error{AmbiguousOpaqueDestructor}!?graph_mod.GlobalFunctionId {
     var found: ?graph_mod.GlobalFunctionId = null;
-    for (graph.functions.items, 0..) |function, raw| {
+    const contract = standard_contracts.standardDeclaration(graph, "Deinit") orelse return null;
+    var operations = contract_evidence.materializedOperations(graph, contract);
+    while (operations.next()) |selected| {
+        const id = selected.materializedFunction(graph) orelse continue;
+        const function = graph.function(id);
         if (!function.flags.is_deinit) continue;
-        if (graph.declaration(function.declaration).destructor_type) |owner| {
-            if (nominalFamily(graph, value_type) != owner) continue;
-        }
+        const participant = selected.participant(graph, 0) orelse continue;
+        if (!equal(graph, participant, value_type)) continue;
         var self_matches = false;
         var arguments_match = true;
-        for (graph.fields.items[function.input.start..][0..function.input.len]) |expected| {
+        for (graph.fields.items[function.input.start..][0..function.input.len], 0..) |expected, index| {
             const name = graph.text(expected.name);
-            const is_receiver = switch (graph.semanticType(expected.ty)) {
-                .pointer => |pointer| pointer.mutability == .read_write and equal(graph, pointer.child, value_type),
-                else => false,
-            };
+            const is_receiver = index == 0;
             if (is_receiver) {
                 self_matches = true;
                 continue;
@@ -224,18 +237,10 @@ pub fn deinitFunctionForInput(graph: *const graph_mod.GlobalSemanticGraph, value
             if (!arguments_match) break;
         }
         if (!self_matches or !arguments_match) continue;
-        if (found != null) return error.AmbiguousOpaqueDestructor;
-        found = @enumFromInt(@as(u32, @intCast(raw)));
+        if (found != null and found.? != id) return error.AmbiguousOpaqueDestructor;
+        found = id;
     }
     return found;
-}
-
-fn nominalFamily(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?graph_mod.GlobalDeclId {
-    return switch (graph.resolvedSemanticType(ty) orelse return null) {
-        .declared => |id| id,
-        .generic => |identity| identity.base,
-        else => null,
-    };
 }
 
 pub fn genericInstance(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?graph_mod.GenericInstance {
@@ -246,10 +251,6 @@ pub fn genericInstance(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mo
 
 pub fn typeForDeclaration(graph: *const graph_mod.GlobalSemanticGraph, decl: graph_mod.GlobalDeclId) ?graph_mod.GlobalTypeId {
     return graph.declarations.items[@intFromEnum(decl)].type_id;
-}
-
-pub fn effectiveFieldType(field: graph_mod.Field) graph_mod.GlobalTypeId {
-    return field.storage_type orelse field.ty;
 }
 
 pub fn isBuiltin(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId, builtin: primitives.BuiltinType) bool {
@@ -389,7 +390,7 @@ fn structLayout(graph: *const graph_mod.GlobalSemanticGraph, range: graph_mod.Fi
         var size: u64 = 0;
         var alignment: u64 = 1;
         for (graph.fields.items[range.start..][0..range.len]) |field| {
-            const layout = try layoutOf(graph, effectiveFieldType(field));
+            const layout = try layoutOf(graph, field.ty);
             size = @max(size, layout.size);
             alignment = @max(alignment, layout.alignment);
         }
@@ -399,7 +400,7 @@ fn structLayout(graph: *const graph_mod.GlobalSemanticGraph, range: graph_mod.Fi
     var offset: u64 = 0;
     var alignment: u64 = 1;
     for (graph.fields.items[range.start..][0..range.len]) |field| {
-        const layout = try layoutOf(graph, effectiveFieldType(field));
+        const layout = try layoutOf(graph, field.ty);
         offset = alignForward(offset, layout.alignment);
         offset += layout.size;
         alignment = @max(alignment, layout.alignment);
@@ -510,43 +511,57 @@ test "generic argument identity uses semantic type equality" {
     try std.testing.expect(genericArgumentsEqual(&graph, first, second));
 }
 
-test "opaque destructor selection uses the supplied allocator type" {
+test "cleanup queries require selected Deinit evidence" {
     const allocator = std.testing.allocator;
     var graph: graph_mod.GlobalSemanticGraph = .{};
     defer graph.deinit(allocator);
-
-    const slot_name = try graph.addString(allocator, "slot");
-    const self_name = try graph.addString(allocator, "self");
-    const allocator_name = try graph.addString(allocator, "allocator");
-    const deinit_name = try graph.addString(allocator, "deinit");
+    const name = try graph.addString(allocator, "Deinit");
     const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    try graph.modules.append(allocator, .{
+        .dir = name,
+        .is_bundled_core = true,
+        .files = .{ .start = 0, .len = 0 },
+        .declarations = .{ .start = 0, .len = 2 },
+    });
+    try graph.declarations.appendSlice(allocator, &.{
+        .{ .kind = .contract_type, .name = name, .source = source },
+        .{ .kind = .function, .name = name, .source = source },
+    });
     try graph.types.appendSlice(allocator, &.{
         .{ .builtin = .Int32 },
-        .{ .builtin = .Int64 },
-        .{ .builtin = .UInt8 },
         .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_write } },
-        .{ .pointer = .{ .child = @enumFromInt(1), .mutability = .read_write } },
-        .{ .pointer = .{ .child = @enumFromInt(2), .mutability = .read_write } },
     });
-    try graph.fields.appendSlice(allocator, &.{
-        .{ .name = slot_name, .ty = @enumFromInt(3), .source = source },
-        .{ .name = allocator_name, .ty = @enumFromInt(4), .source = source },
-        .{ .name = allocator_name, .ty = @enumFromInt(5), .source = source },
-        .{ .name = self_name, .ty = @enumFromInt(3), .source = source },
-        .{ .name = allocator_name, .ty = @enumFromInt(5), .source = source },
-        .{ .name = allocator_name, .ty = @enumFromInt(4), .source = source },
-        .{ .name = self_name, .ty = @enumFromInt(3), .source = source },
+    try graph.fields.append(allocator, .{ .name = name, .ty = @enumFromInt(1), .source = source });
+    try graph.functions.append(allocator, .{
+        .declaration = @enumFromInt(1),
+        .input = .{ .start = 0, .len = 1 },
+        .output = .{ .start = 0, .len = 0 },
+        .flags = .{ .is_deinit = true },
     });
-    try graph.declarations.append(allocator, .{ .kind = .function, .name = deinit_name, .source = source });
-    try graph.functions.appendSlice(allocator, &.{
-        .{ .declaration = @enumFromInt(0), .input = .{ .start = 3, .len = 2 }, .output = .{ .start = 0, .len = 0 }, .flags = .{ .is_deinit = true } },
-        .{ .declaration = @enumFromInt(0), .input = .{ .start = 5, .len = 2 }, .output = .{ .start = 0, .len = 0 }, .flags = .{ .is_deinit = true } },
-    });
+    try std.testing.expect(!hasDestructor(&graph, @enumFromInt(0)));
+    try std.testing.expectEqual(@as(?graph_mod.GlobalFunctionId, null), try deinitFunctionForInput(&graph, @enumFromInt(0), .{ .start = 0, .len = 0 }));
 
-    try std.testing.expectEqual(@as(graph_mod.GlobalFunctionId, @enumFromInt(1)), (try deinitFunctionForInput(&graph, @enumFromInt(0), .{ .start = 0, .len = 2 })).?);
-    try std.testing.expectEqual(@as(graph_mod.GlobalFunctionId, @enumFromInt(0)), (try deinitFunctionForInput(&graph, @enumFromInt(0), .{ .start = 2, .len = 1 })).?);
-    try graph.functions.append(allocator, .{ .declaration = @enumFromInt(0), .input = .{ .start = 5, .len = 2 }, .output = .{ .start = 0, .len = 0 }, .flags = .{ .is_deinit = true } });
-    try std.testing.expectError(error.AmbiguousOpaqueDestructor, deinitFunctionForInput(&graph, @enumFromInt(0), .{ .start = 0, .len = 2 }));
+    try graph.generic_arguments.append(allocator, .{ .name = name, .value = .{ .type = @enumFromInt(0) } });
+    try graph.function_refs.append(allocator, @enumFromInt(0));
+    try graph.contract_operation_bindings.append(allocator, .{
+        .contract_declaration = @enumFromInt(0),
+        .requirement_index = 0,
+        .requirement_source = source,
+        .implementation_source = source,
+        .name = name,
+        .declaration = @enumFromInt(1),
+    });
+    try graph.contract_conformances.append(allocator, .{
+        .declaration = @enumFromInt(0),
+        .participants = .{ .start = 0, .len = 1 },
+        .associated_arguments = .{ .start = 1, .len = 0 },
+        .operations = .{ .start = 0, .len = 1 },
+        .operation_bindings = .{ .start = 0, .len = 1 },
+        .source = source,
+    });
+    try std.testing.expect(hasDestructor(&graph, @enumFromInt(0)));
+    try std.testing.expect(!hasDestructor(&graph, @enumFromInt(1)));
+    try std.testing.expectEqual(@as(?graph_mod.GlobalFunctionId, @enumFromInt(0)), try deinitFunctionForInput(&graph, @enumFromInt(0), .{ .start = 0, .len = 0 }));
 }
 
 test "global semantic types expose structural fields and variants" {
@@ -602,4 +617,12 @@ pub fn nominalTypeOwner(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_m
         else => return null,
     };
     return graph.moduleForDeclaration(declaration);
+}
+
+/// References retain the extension owner of their nominal referent. Structural
+/// containers do not grant ownership through nested fields or type arguments.
+pub fn conformanceParticipantOwner(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.GlobalTypeId) ?graph_mod.GlobalModuleId {
+    const semantic = graph.resolvedSemanticType(ty) orelse return null;
+    if (semantic == .pointer) return conformanceParticipantOwner(graph, semantic.pointer.child);
+    return nominalTypeOwner(graph, ty);
 }

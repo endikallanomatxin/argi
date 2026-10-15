@@ -47,17 +47,28 @@ _process_stream_write(.handle: UIntNative, .byte: UInt8) -> (.status: Int32): CF
 
 ProcessManager: Type = (._ffi: $&ForeignFunctionInterface)
 
-once ProcessManager init(.ffi: $&ForeignFunctionInterface = reach ffi) -> (.result: ProcessManager) := {
+once _acquire_process_manager := (
+        .args : (.ffi: $&ForeignFunctionInterface = reach ffi)
+    ) -> (
+        .result : ProcessManager
+    ) {
+    ffi ::= args.ffi
+
     result = (._ffi = ffi)
 }
 
+implement Init#(ProcessManager, (.ffi: $&ForeignFunctionInterface = reach ffi)) (
+    .Result : Type                     = ProcessManager
+    .init   = _acquire_process_manager
+)
+
 ProcessStreamMode: Type = (..inherit, ..pipe, ..discard)
 
-ProcessStreamMode implements ImplicitlyCopyable
+implement ImplicitlyCopyable#(ProcessStreamMode) ()
 
 ProcessExitStatus: Type = (..exited(.code: UInt32), ..signaled(.signal: UInt32))
 
-ProcessExitStatus implements ImplicitlyCopyable
+implement ImplicitlyCopyable#(ProcessExitStatus) ()
 
 ..invalid_process_argument
 ..process_spawn_failed
@@ -71,9 +82,6 @@ ProcessStream: Type = (
     ._handle   : UIntNative
     ._writable : Bool
 )
-
-ProcessStream implements Reader
-ProcessStream implements Writer
 
 Process: Type = (
     ._ffi    : $&ForeignFunctionInterface
@@ -98,7 +106,7 @@ _process_mode(.value: ProcessStreamMode) -> (.mode: Int32) := {
 }
 
 _process_no_arguments() -> (.value: ArrayViewRO#(.t: StringView)) := {
-    value = array_view_ro#(.t: StringView)()
+    value = empty_array_view_ro#(.t: StringView)()
 }
 
 _process_inherit() -> (.value: ProcessStreamMode) := { value = ..inherit }
@@ -233,9 +241,9 @@ terminate(
     result = ..ok Void()
 }
 
-is_open(.self: &ProcessStream) -> (.ok: Bool) := { ok = self&._handle != 0 }
+_is_open_ProcessStream(.self: &ProcessStream) -> (.ok: Bool) := { ok = self&._handle != 0 }
 
-close(.self: $&ProcessStream) -> (.result: Errable#(Void, (..stream_close_failed))) := {
+_close_ProcessStream(.self: $&ProcessStream) -> (.result: Errable#(Void, (..stream_close_failed))) := {
     assume ffi := self&._ffi
     handle ::= self&._handle
     self&._handle = 0
@@ -248,79 +256,94 @@ close(.self: $&ProcessStream) -> (.result: Errable#(Void, (..stream_close_failed
     result = ..ok Void()
 }
 
-read_byte(
-        .self : $&ProcessStream
-    ) -> (
-        .result : Errable#(ReadByte, (..stream_read_failed))
-    ) := {
-    assume ffi := self&._ffi
+implement Reader#(ProcessStream) (
+    .read_byte = (
+            .self : $&ProcessStream
+        ) -> (
+            .result : Errable#(ReadByte, (..stream_read_failed))
+        ) {
+        assume ffi := self&._ffi
 
-    if self&._handle == 0 or self&._writable {
-        result = ..error(.reason = ..stream_read_failed)
-        return
+        if self&._handle == 0 or self&._writable {
+            result = ..error(.reason = ..stream_read_failed)
+            return
+        }
+
+        byte :: UInt8 = 0
+        status ::= _process_stream_read(.handle = self&._handle, .byte = $&byte).status
+
+        if status < 0 {
+            result = ..error(.reason = ..stream_read_failed)
+            return
+        }
+
+        if status == 0 {
+            result = ..ok ..end
+            return
+        }
+
+        result = ..ok ..ok byte
+    }
+)
+
+implement Deinit#(ProcessStream) (
+    .deinit = (.self: $&ProcessStream) -> () {
+        assume ffi := self&._ffi
+        _process_stream_close(.handle = self&._handle)
+        self&._handle = 0
+    }
+)
+
+implement Deinit#(Process) (
+    .deinit = (.self: $&Process) -> () {
+        assume ffi := self&._ffi
+        deinit(.self = $&self&.stdin)
+        deinit(.self = $&self&.stdout)
+        deinit(.self = $&self&.stderr)
+        _process_free(.handle = self&._handle)
+        self&._handle = 0
+    }
+)
+
+implement Writer#(ProcessStream) (
+    .write_byte = (
+            .self : $&ProcessStream,
+            .byte : UInt8
+        ) -> (
+            .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+        ) {
+        assume ffi := self&._ffi
+
+        if self&._handle == 0 or self&._writable == false {
+            result = ..error(.reason = ..stream_write_failed)
+            return
+        }
+
+        if _process_stream_write(.handle = self&._handle, .byte = byte).status != 0 {
+            result = ..error(.reason = ..stream_write_failed)
+            return
+        }
+
+        result = ..ok Void()
     }
 
-    byte :: UInt8 = 0
-    status ::= _process_stream_read(.handle = self&._handle, .byte = $&byte).status
+    .flush = (
+            .self : $&ProcessStream
+        ) -> (
+            .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+        ) {
+        if self&._handle == 0 or self&._writable == false {
+            result = ..error(.reason = ..stream_flush_failed)
+            return
+        }
 
-    if status < 0 {
-        result = ..error(.reason = ..stream_read_failed)
-        return
+        result = ..ok Void()
     }
+)
 
-    if status == 0 {
-        result = ..ok ..end
-        return
-    }
+implement Closeable#(ProcessStream) (
+    .Result         : Type                 = Errable#(Void, (..stream_close_failed))
+    .close_resource = _close_ProcessStream
+)
 
-    result = ..ok ..ok byte
-}
-
-write_byte(
-        .self : $&ProcessStream,
-        .byte : UInt8
-    ) -> (
-        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-    ) := {
-    assume ffi := self&._ffi
-
-    if self&._handle == 0 or self&._writable == false {
-        result = ..error(.reason = ..stream_write_failed)
-        return
-    }
-
-    if _process_stream_write(.handle = self&._handle, .byte = byte).status != 0 {
-        result = ..error(.reason = ..stream_write_failed)
-        return
-    }
-
-    result = ..ok Void()
-}
-
-flush(
-        .self : $&ProcessStream
-    ) -> (
-        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-    ) := {
-    if self&._handle == 0 or self&._writable == false {
-        result = ..error(.reason = ..stream_flush_failed)
-        return
-    }
-
-    result = ..ok Void()
-}
-
-ProcessStream deinit(.self: $&ProcessStream) -> () := {
-    assume ffi := self&._ffi
-    _process_stream_close(.handle = self&._handle)
-    self&._handle = 0
-}
-
-Process deinit(.self: $&Process) -> () := {
-    assume ffi := self&._ffi
-    deinit(.self = $&self&.stdin)
-    deinit(.self = $&self&.stdout)
-    deinit(.self = $&self&.stderr)
-    _process_free(.handle = self&._handle)
-    self&._handle = 0
-}
+implement OpenState#(ProcessStream) (.check_open = _is_open_ProcessStream)

@@ -1,7 +1,7 @@
 ..failed
 
-Releaser: Abstract = (
-    release(.self: &Self, .resource: $&Resource, .mode: Int32) -> (
+Releaser#(.Participant: Type): Contract = (
+    .release: (.self: &Participant, .resource: $&Resource, .mode: Int32) -> (
         .result : Errable#(?Int32, (..failed))
     ) where {
         on result ..ok {
@@ -16,19 +16,23 @@ Resource: Type = (.value: Int32)
 
 Manager: Type = (.unused: Int32)
 
-Manager implements Releaser
+implement Releaser#(Manager) (.release = _impl_release_Manager)
 
-Resource deinit(.self: $&Resource) -> () := { drops = drops + 1 }
+implement Deinit#(Resource) (
+    .deinit = (.self: $&Resource) -> () {
+        drops = drops + 1
+    }
+)
 
 drops :: Int32 = 0
 
-release(
+_impl_release_Manager := (
         .self     : &Manager,
         .resource : $&Resource,
         .mode     : Int32
     ) -> (
         .result : Errable#(?Int32, (..failed))
-    ) := {
+    )  {
     if mode == 2 {
         result = ..error(.reason = ..failed)
         return

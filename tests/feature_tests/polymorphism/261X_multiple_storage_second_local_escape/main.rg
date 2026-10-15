@@ -4,13 +4,17 @@ Tracked: Type = (.drops: $&Int32)
 
 Pair: Type = (.first: Tracked, .second: Tracked)
 
-Tracked deinit(.self: $&Tracked) -> () := { self&.drops&= self&.drops&+ 1 }
+implement Deinit#(Tracked) (
+    .deinit = (.self: $&Tracked) -> () {
+        self&.drops&= self&.drops&+ 1
+    }
+)
 
 Slots: Type = ()
 
-SlotProtocol: Abstract = (
-    take_pair(
-        .self        : &Self,
+SlotProtocol#(.Participant: Type): Contract = (
+    .take_pair: (
+        .self        : &Participant,
         .first       : $&Allocation,
         .first_slot  : $&Tracked,
         .second      : $&Allocation,
@@ -23,9 +27,9 @@ SlotProtocol: Abstract = (
     }
 )
 
-Slots implements SlotProtocol
+implement SlotProtocol#(Slots) (.take_pair = _impl_take_pair_Slots)
 
-take_pair(
+_impl_take_pair_Slots := (
         .self        : &Slots,
         .first       : $&Allocation,
         .first_slot  : $&Tracked,
@@ -33,7 +37,7 @@ take_pair(
         .second_slot : $&Tracked
     ) -> (
         .value : Pair
-    ) := {
+    )  {
     first_value ::= trusted_opaque_move_out#(Tracked, Allocation)(first, first_slot)
     second_value ::= trusted_opaque_move_out#(Tracked, Allocation)(second, second_slot)
     trusted_opaque_mark_empty(first)

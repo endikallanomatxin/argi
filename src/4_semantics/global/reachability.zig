@@ -9,12 +9,18 @@ pub const FunctionSet = struct {
     values: std.AutoHashMap(graph_mod.GlobalFunctionId, void),
     bindings: std.AutoHashMap(graph_mod.GlobalBindingId, void),
     nodes: std.AutoHashMap(graph_mod.GlobalNodeId, void),
+    operations: std.AutoHashMap(@import("../primitives/schema.zig").ContractOperationIdentity, void),
+    virtualizes: std.AutoHashMap(graph_mod.GlobalVirtualizeId, void),
+    cleanup_functions: std.AutoHashMap(graph_mod.GlobalFunctionId, void),
 
     pub fn init(allocator: std.mem.Allocator) FunctionSet {
         return .{
             .values = std.AutoHashMap(graph_mod.GlobalFunctionId, void).init(allocator),
             .bindings = std.AutoHashMap(graph_mod.GlobalBindingId, void).init(allocator),
             .nodes = std.AutoHashMap(graph_mod.GlobalNodeId, void).init(allocator),
+            .operations = std.AutoHashMap(@import("../primitives/schema.zig").ContractOperationIdentity, void).init(allocator),
+            .virtualizes = std.AutoHashMap(graph_mod.GlobalVirtualizeId, void).init(allocator),
+            .cleanup_functions = std.AutoHashMap(graph_mod.GlobalFunctionId, void).init(allocator),
         };
     }
 
@@ -22,6 +28,9 @@ pub const FunctionSet = struct {
         self.values.deinit();
         self.bindings.deinit();
         self.nodes.deinit();
+        self.operations.deinit();
+        self.virtualizes.deinit();
+        self.cleanup_functions.deinit();
     }
 
     pub fn contains(self: *const FunctionSet, function: graph_mod.GlobalFunctionId) bool {
@@ -42,7 +51,9 @@ pub const FunctionSet = struct {
     }
 };
 
-pub fn roots(
+/// Conservative runtime roots retain tracing and inferred-signature helpers,
+/// but exclude operations retained only to prove conformance.
+pub fn executionRoots(
     allocator: std.mem.Allocator,
     graph: *const graph_mod.GlobalSemanticGraph,
     selected_test_name: ?[]const u8,
@@ -97,6 +108,28 @@ pub fn expand(
     return state.changed;
 }
 
+/// Initial summary worklist order, placing concrete dependencies before callers.
+/// Cycles retain a deterministic DFS order and still require fixed-point work.
+/// Reuse the complete graph traversal, including cleanup and callback bodies.
+pub fn dependencyOrder(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSemanticGraph, functions: []const graph_mod.GlobalFunctionId) ![]graph_mod.GlobalFunctionId {
+    var included = FunctionSet.init(allocator);
+    defer included.deinit();
+    var order: std.ArrayList(graph_mod.GlobalFunctionId) = .empty;
+    errdefer order.deinit(allocator);
+    var state = State{
+        .allocator = allocator,
+        .graph = graph,
+        .functions = &included,
+        .visited_functions = std.AutoHashMap(graph_mod.GlobalFunctionId, void).init(allocator),
+        .visited_nodes = std.AutoHashMap(graph_mod.GlobalNodeId, void).init(allocator),
+        .dependency_order = &order,
+    };
+    defer state.visited_functions.deinit();
+    defer state.visited_nodes.deinit();
+    for (functions) |function| try state.walkFunction(function);
+    return order.toOwnedSlice(allocator);
+}
+
 const State = struct {
     allocator: std.mem.Allocator,
     graph: *const graph_mod.GlobalSemanticGraph,
@@ -104,6 +137,12 @@ const State = struct {
     visited_functions: std.AutoHashMap(graph_mod.GlobalFunctionId, void),
     visited_nodes: std.AutoHashMap(graph_mod.GlobalNodeId, void),
     changed: bool = false,
+    dependency_order: ?*std.ArrayList(graph_mod.GlobalFunctionId) = null,
+
+    fn includeCleanupFunction(self: *State, function_id: graph_mod.GlobalFunctionId) !void {
+        try self.functions.cleanup_functions.put(function_id, {});
+        try self.includeFunction(function_id);
+    }
 
     fn includeFunction(self: *State, function_id: graph_mod.GlobalFunctionId) !void {
         if (try self.functions.include(function_id)) self.changed = true;
@@ -121,6 +160,8 @@ const State = struct {
             if (field.default_value) |value| try self.walkNode(value);
         const body = function.body orelse return;
         try self.walkBlock(body);
+        if (self.dependency_order) |order| if (function.safety_primitive == .none)
+            try order.append(self.allocator, function_id);
     }
 
     fn includeBindingRange(self: *State, range: graph_mod.BindingRange) !void {
@@ -158,11 +199,12 @@ const State = struct {
                 const value = self.graph.auto_deinits.items[@intFromEnum(id)];
                 try self.functions.bindings.put(value.binding, {});
                 if (value.input) |input| try self.walkNode(input);
-                if (value.deinit_fn) |callee| try self.includeFunction(callee);
+                if (value.deinit_fn) |callee| try self.includeCleanupFunction(callee);
                 try self.includeAutoDeinitFields(value.fields);
             },
             .function_address => |id| try self.includeFunction(id),
             .function_call => |call| {
+                if (self.graph.callOperation(call)) |operation| try self.functions.operations.put(operation, {});
                 if (call.callee_value) |value| try self.walkNode(value);
                 try self.walkNode(call.input);
                 if (call.consumes_auto_deinit) |value| try self.walkNode(value);
@@ -176,12 +218,13 @@ const State = struct {
                     const slot_ty = self.graph.fields.items[callee.input.start].ty;
                     if (self.graph.resolvedSemanticType(slot_ty)) |semantic| switch (semantic) {
                         .pointer => |pointer| if (try types.deinitFunctionForInput(self.graph, pointer.child, callee.input)) |destructor|
-                            try self.includeFunction(destructor),
+                            try self.includeCleanupFunction(destructor),
                         else => {},
                     };
                 }
             },
             .virtualize => |id| {
+                try self.functions.virtualizes.put(id, {});
                 const value = self.graph.virtualizes.items[@intFromEnum(id)];
                 try self.walkNode(value.value);
                 for (self.graph.function_refs.items[value.methods.start..][0..value.methods.len]) |method|
@@ -314,7 +357,7 @@ const State = struct {
     fn includeAutoDeinitFields(self: *State, range: @import("../primitives/schema.zig").Range(graph_mod.GlobalAutoDeinitFieldId)) anyerror!void {
         for (self.graph.auto_deinit_fields.items[range.start..][0..range.len]) |field| {
             if (field.input) |input| try self.walkNode(input);
-            if (field.deinit_fn) |callee| try self.includeFunction(callee);
+            if (field.deinit_fn) |callee| try self.includeCleanupFunction(callee);
             try self.includeAutoDeinitFields(field.fields);
         }
     }
@@ -355,7 +398,7 @@ test "function binding ranges dereference binding refs" {
         .input_bindings = .{ .start = 0, .len = 1 },
     });
 
-    var executable = try roots(allocator, &graph, null);
+    var executable = try executionRoots(allocator, &graph, null);
     defer executable.deinit();
     _ = try expand(allocator, &graph, &executable);
     try std.testing.expect(!executable.containsBinding(@enumFromInt(0)));
@@ -373,12 +416,56 @@ test "reachability roots select main or one test" {
     try graph.functions.append(allocator, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 } });
     try graph.functions.append(allocator, .{ .declaration = @enumFromInt(1), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 }, .flags = .{ .is_test = true } });
 
-    var executable = try roots(allocator, &graph, null);
+    var executable = try executionRoots(allocator, &graph, null);
     defer executable.deinit();
     try std.testing.expect(executable.contains(@enumFromInt(0)));
     try std.testing.expect(!executable.contains(@enumFromInt(1)));
-    var selected = try roots(allocator, &graph, "selected");
+    var selected = try executionRoots(allocator, &graph, "selected");
     defer selected.deinit();
     try std.testing.expect(!selected.contains(@enumFromInt(0)));
     try std.testing.expect(selected.contains(@enumFromInt(1)));
+
+    try graph.function_refs.append(allocator, @enumFromInt(1));
+    try graph.contract_conformances.append(allocator, .{
+        .declaration = @enumFromInt(0),
+        .participants = .{ .start = 0, .len = 0 },
+        .associated_arguments = .{ .start = 0, .len = 0 },
+        .operations = .{ .start = 0, .len = 1 },
+        .source = .{ .file_index = 0, .offset = 0 },
+    });
+    var runtime = try executionRoots(allocator, &graph, null);
+    defer runtime.deinit();
+    _ = try expand(allocator, &graph, &runtime);
+    try std.testing.expect(runtime.contains(@enumFromInt(0)));
+    try std.testing.expect(!runtime.contains(@enumFromInt(1)));
+}
+
+test "summary dependency order handles late callees and recursive cycles" {
+    const allocator = std.testing.allocator;
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    try graph.nodes.appendSlice(allocator, &.{
+        .{ .source = .{ .file_index = 0, .offset = 0 }, .ty = null, .content = .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 0 } } } },
+        .{ .source = .{ .file_index = 0, .offset = 0 }, .ty = null, .content = .{ .function_call = .{ .callee = @enumFromInt(1), .input = @enumFromInt(0) } } },
+        .{ .source = .{ .file_index = 0, .offset = 0 }, .ty = null, .content = .{ .function_call = .{ .callee = @enumFromInt(0), .input = @enumFromInt(0) } } },
+    });
+    try graph.node_refs.appendSlice(allocator, &.{ @enumFromInt(1), @enumFromInt(2) });
+    try graph.blocks.appendSlice(allocator, &.{
+        .{ .nodes = .{ .start = 0, .len = 1 } },
+        .{ .nodes = .{ .start = 1, .len = 0 } },
+    });
+    for (0..2) |index| try graph.functions.append(allocator, .{
+        .declaration = @enumFromInt(0),
+        .input = .{ .start = 0, .len = 0 },
+        .output = .{ .start = 0, .len = 0 },
+        .body = @enumFromInt(index),
+    });
+    const functions = [_]graph_mod.GlobalFunctionId{ @enumFromInt(0), @enumFromInt(1) };
+    const ordered = try dependencyOrder(allocator, &graph, &functions);
+    defer allocator.free(ordered);
+    try std.testing.expectEqualSlices(graph_mod.GlobalFunctionId, &.{ @enumFromInt(1), @enumFromInt(0) }, ordered);
+    graph.blocks.items[1].nodes.len = 1;
+    const recursive = try dependencyOrder(allocator, &graph, &functions);
+    defer allocator.free(recursive);
+    try std.testing.expectEqualSlices(graph_mod.GlobalFunctionId, ordered, recursive);
 }

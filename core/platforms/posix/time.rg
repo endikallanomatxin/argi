@@ -26,8 +26,8 @@
         #if target_os("macos") { id = 6 }
         if _clock_gettime(.id = id, .time = $&time).status != 0 { return }
         if time.seconds < 0 or time.nanoseconds < 0 or time.nanoseconds >= 1000000000 { return }
-        seconds = unwrap_or_abort(.value = UInt64(.value = time.seconds)).result
-        nanoseconds = unwrap_or_abort(.value = UInt32(.value = time.nanoseconds)).result
+        seconds = unwrap_or_abort(.value = time.seconds | convert#(.to: UInt64)(_)).result
+        nanoseconds = unwrap_or_abort(.value = time.nanoseconds | convert#(.to: UInt32)(_)).result
         status = 0
     }
 
@@ -41,7 +41,7 @@
         if _clock_gettime(.id = 0, .time = $&time).status != 0 { return }
         if time.nanoseconds < 0 or time.nanoseconds >= 1000000000 { return }
         seconds = time.seconds
-        nanoseconds = unwrap_or_abort(.value = UInt32(.value = time.nanoseconds)).result
+        nanoseconds = unwrap_or_abort(.value = time.nanoseconds | convert#(.to: UInt32)(_)).result
         status = 0
     }
 
@@ -60,8 +60,8 @@
             chunk_fraction ::= fraction
             if chunk >= 86400 { chunk = 86400 chunk_fraction = 0 }
             request :: _PosixTimespec = (
-                .seconds     = unwrap_or_abort(.value = Int64(.value = chunk)).result,
-                .nanoseconds = Int64(.value = chunk_fraction),
+                .seconds     = unwrap_or_abort(.value = chunk | convert#(.to: Int64)(_)).result,
+                .nanoseconds = chunk_fraction | convert#(.to: Int64)(_),
             )
             remaining :: _PosixTimespec = (.seconds = 0, .nanoseconds = 0)
             while true {

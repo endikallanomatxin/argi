@@ -5,53 +5,15 @@ RecordingAllocator: Type = (
     .deallocations : UIntNative                 = 0
 )
 
-allocate(
-        .self      : $&RecordingAllocator,
-        .size      : UIntNative,
-        .alignment : UIntNative            = 1
-    ) -> (
-        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
-    ) := {
-    if self&.fail {
-        result = ..error(.reason = ..out_of_memory)
-        return
-    }
-    self&.allocations = self&.allocations + 1
-    storage ::= malloc(.size = size, .ffi = self&.ffi)
-    if UIntNative(.value = storage) == 0 {
-        result = ..error(.reason = ..out_of_memory)
-        return
-    }
-    deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(
-        .value = self
-    )
-    allocation ::= trusted_establish_allocation(
-        .storage     = storage
-        .size        = size
-        .alignment   = alignment
-        .deallocator = deallocator
-    )
-    result = ..ok ~allocation
-}
-
-deallocate(
-        .self      : $&RecordingAllocator,
-        .data      : RawPointer#(.t: UInt8),
-        .size      : UIntNative,
-        .alignment : UIntNative
-    ) -> () := {
-    self&.deallocations = self&.deallocations + 1
-    free(.address = data.address, .ffi = self&.ffi)
-}
-
-RecordingAllocator implements Allocator
-RecordingAllocator implements Deallocator
-
 Tracked: Type = (.id: Int32)
 
 drops :: Int32 = 0
 
-Tracked deinit(.self: $&Tracked) -> () := { drops = drops + 1 }
+implement Deinit#(Tracked) (
+    .deinit = (.self: $&Tracked) -> () {
+        drops = drops + 1
+    }
+)
 
 run_main(.system: System) -> !Void = ..ok Void() := {
     allocator :: RecordingAllocator = (.ffi = system.ffi)
@@ -84,7 +46,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     front ::= pop_front(.self = $&queue)!
     back ::= pop_back(.self = $&queue)!
     if front.id != 2 or back.id != 3 { abort }
-    deinit(.self = $&queue, .allocator = $&allocator)
+    deinit(.self = $&queue)
     if allocator.deallocations != 2 or drops != 1 { abort }
     deinit(.self = $&first)
     deinit(.self = $&front)
@@ -92,7 +54,50 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     if drops != 4 { abort }
 }
 
-main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+main#(.WriterType: Type: Writer#(WriterType))(.system: System, .writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
     run_main(.system = system)!!!
     status_code = 0
 }
+
+implement Allocator#(RecordingAllocator)(
+    .allocate = (
+            .self      : $&RecordingAllocator,
+            .size      : UIntNative,
+            .alignment : UIntNative            = 1
+        ) -> (
+            .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+        ) {
+        if self&.fail {
+            result = ..error(.reason = ..out_of_memory)
+            return
+        }
+        self&.allocations = self&.allocations + 1
+        storage ::= malloc(.size = size, .ffi = self&.ffi)
+        if storage | convert#(.to: UIntNative)(_) == 0 {
+            result = ..error(.reason = ..out_of_memory)
+            return
+        }
+        deallocator :: Virtual#(.contract: Deallocator) = to_virtual#(.contract: Deallocator)(
+            .value = self
+        )
+        allocation ::= trusted_establish_allocation(
+            .storage     = storage
+            .size        = size
+            .alignment   = alignment
+            .deallocator = deallocator
+        )
+        result = ..ok ~allocation
+    }
+)
+
+implement Deallocator#(RecordingAllocator)(
+    .deallocate = (
+            .self      : $&RecordingAllocator,
+            .data      : RawPointer#(.t: UInt8),
+            .size      : UIntNative,
+            .alignment : UIntNative
+        ) -> () {
+        self&.deallocations = self&.deallocations + 1
+        free(.address = data.address, .ffi = self&.ffi)
+    }
+)

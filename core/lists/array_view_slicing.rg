@@ -1,6 +1,6 @@
 -- A subrange is justified by an existing view, not by an arbitrary pointer
 -- and claimed length. Subtraction after checking start avoids range-sum wrap.
-slice#(
+_array_view_slice#(
         .t : Type
     )(
         .self  : &ArrayView#(.t: t),
@@ -25,14 +25,14 @@ slice#(
     }
 
     first ::= trusted_mutable_reference_offset#(.t: t)(
-        .base     = data#(.t: t)(self).pointer
+        .base     = data(self).pointer
         .elements = start
     ).reference
 
     result = ..ok _trusted_array_view#(.t: t)(.data = first, .length = count).array
 }
 
-slice#(
+_array_view_ro_slice#(
         .t : Type
     )(
         .self  : &ArrayViewRO#(.t: t),
@@ -57,7 +57,7 @@ slice#(
     }
 
     first ::= trusted_reference_offset#(.t: t)(
-        .base     = data#(.t: t)(self).pointer
+        .base     = data(self).pointer
         .elements = start
     ).reference
 

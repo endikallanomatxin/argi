@@ -1,7 +1,11 @@
 Repeated : Type = (.count: UIntNative, .value: Int32, .reads: $&UIntNative)
-Repeated implements Indexable#(.t: Int32)
-length(.self: &Repeated) -> (.count: UIntNative) := { count = self&.count }
-get_ro_ref(.self: &Repeated, .index: UIntNative) -> (.result: Errable#(.t: &Int32, .reasons: (..out_of_bounds))) := {
+implement Indexable#(Repeated) (
+    .Item: Type = Int32
+    .length = repeated_length
+    .get_ro_ref = repeated_ref
+)
+repeated_length(.self: &Repeated) -> (.count: UIntNative) := { count = self&.count }
+repeated_ref(.self: &Repeated, .index: UIntNative) -> (.result: Errable#(.t: &Int32, .reasons: (..out_of_bounds))) := {
     if index >= self&.count { abort }
     self&.reads& = self&.reads& + 1
     result = ..ok &self&.value

@@ -34,10 +34,12 @@ _exception_copy(
         .status : Int32
     ): CFunction(.symbol = "_argi_python_exception_copy")
 
-Exception deinit(.self: $&Exception) -> () := {
-    assume ffi := self&._ffi
-    _exception_release(.handle = self&._handle)
-}
+implement Deinit#(Exception) (
+    .deinit = (.self: $&Exception) -> () {
+        assume ffi := self&._ffi
+        _exception_release(.handle = self&._handle)
+    }
+)
 
 snapshot_error(.self: &Python) -> (.exception: Exception) := {
     assume ffi := self&._ffi
@@ -49,9 +51,9 @@ initialization_error(.ffi: $&ForeignFunctionInterface) -> (.exception: Exception
     exception = (._handle = _initialization_snapshot().handle, ._ffi = ffi)
 }
 
-clone(.self: &Exception) -> (.exception: Exception) := {
+_python_exception_clone(.self: &Exception) -> (.result: Exception) := {
     assume ffi := self&._ffi
-    exception = (._handle = _exception_clone(.handle = self&._handle).handle, ._ffi = self&._ffi)
+    result = (._handle = _exception_clone(.handle = self&._handle).handle, ._ffi = self&._ffi)
 }
 
 -- Convert an operation's ordinary Errable immediately, before executing another
@@ -70,10 +72,12 @@ capture#(
     }
 }
 
-_exception_text(
+_exception_text#(
+        .AllocatorType : Type: Allocator#(AllocatorType)
+    )(
         .self      : &Exception,
         .part      : Int32,
-        .allocator : $&Allocator
+        .allocator : $&AllocatorType
     ) -> (
         .result : Errable#(String, (..out_of_memory))
     ) := {
@@ -94,27 +98,33 @@ _exception_text(
     result = ..ok ~text
 }
 
-exception_type(
+exception_type#(
+        .AllocatorType : Type: Allocator#(AllocatorType)
+    )(
         .self      : &Exception,
-        .allocator : $&Allocator
+        .allocator : $&AllocatorType
     ) -> (
         .result : Errable#(String, (..out_of_memory))
     ) := {
     result = _exception_text(.self = self, .part = 0, .allocator = allocator)
 }
 
-exception_message(
+exception_message#(
+        .AllocatorType : Type: Allocator#(AllocatorType)
+    )(
         .self      : &Exception,
-        .allocator : $&Allocator
+        .allocator : $&AllocatorType
     ) -> (
         .result : Errable#(String, (..out_of_memory))
     ) := {
     result = _exception_text(.self = self, .part = 1, .allocator = allocator)
 }
 
-exception_traceback(
+exception_traceback#(
+        .AllocatorType : Type: Allocator#(AllocatorType)
+    )(
         .self      : &Exception,
-        .allocator : $&Allocator
+        .allocator : $&AllocatorType
     ) -> (
         .result : Errable#(String, (..out_of_memory))
     ) := {

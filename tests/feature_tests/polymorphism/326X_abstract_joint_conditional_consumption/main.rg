@@ -2,10 +2,14 @@ Outcome: Type = (..yes, ..no)
 
 Resource: Type = (.value: Int32)
 
-Resource deinit(.self: $&Resource) -> () := {}
+implement Deinit#(Resource) (
+    .deinit = (.self: $&Resource) -> () {
 
-Releaser: Abstract = (
-    release(.self: &Self, .resource: $&Resource) -> (.first: Outcome, .second: Outcome) where {
+    }
+)
+
+Releaser#(.Participant: Type): Contract = (
+    .release: (.self: &Participant, .resource: $&Resource) -> (.first: Outcome, .second: Outcome) where {
         on first ..yes {
             on second ..yes { consumes(resource) }
         }
@@ -14,9 +18,9 @@ Releaser: Abstract = (
 
 Manager: Type = (.unused: Int32)
 
-Manager implements Releaser
+implement Releaser#(Manager) (.release = _impl_release_Manager)
 
-release(.self: &Manager, .resource: $&Resource) -> (.first: Outcome, .second: Outcome) := {
+_impl_release_Manager := (.self: &Manager, .resource: $&Resource) -> (.first: Outcome, .second: Outcome)  {
     first = ..yes
     second = ..yes
     deinit(resource)

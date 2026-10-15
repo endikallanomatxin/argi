@@ -26,6 +26,6 @@ main() -> (.status_code: Int32 = 0) := {
     copied ::= [identity]#(.t: Int32)(.value = [a + b])
     if copied != 5 { status_code = 9 }
     extent : Array#(.n = [2 + 3] * 2, .t: UInt8) = (0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
-    view ::= array_view_ro(.array = &extent)
-    if length(.self = &view).count != 10 { status_code = 10 }
+    borrowed_view ::= view(.array = &extent)
+    if length(.self = &borrowed_view).count != 10 { status_code = 10 }
 }

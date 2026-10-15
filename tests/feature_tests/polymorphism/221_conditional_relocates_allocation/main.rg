@@ -20,18 +20,18 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     source ::= unwrap_or_abort(DynamicArray#(Int32)(.capacity = 2))
     unwrap_or_abort(push(.self = $&source, .value = 42))
     destination ::= unwrap_or_abort(DynamicArray#(Int32)(.capacity = 1))
-    deinit#(Int32)(.self = $&destination)
+    deinit(.self = $&destination)
     result ::= transfer_if($&source, $&destination, true)
 
     match result {
         ..some _ {
             offset :: UIntNative = 0
-            element ::= unwrap_or_abort(get_ro_ref#(Int32)(.self = &destination, .index = offset))
+            element ::= unwrap_or_abort(get_ro_ref(.self = &destination, .index = offset))
             if element&!= 42 { status_code = 1 }
         }
         ..none {
             offset :: UIntNative = 0
-            element ::= unwrap_or_abort(get_ro_ref#(Int32)(.self = &source, .index = offset))
+            element ::= unwrap_or_abort(get_ro_ref(.self = &source, .index = offset))
             if element&!= 42 { status_code = 2 }
         }
     }
@@ -40,7 +40,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         next_source ::= unwrap_or_abort(DynamicArray#(Int32)(.capacity = 2))
         unwrap_or_abort(push(.self = $&next_source, .value = 43))
         next_destination ::= unwrap_or_abort(DynamicArray#(Int32)(.capacity = 1))
-        deinit#(Int32)(.self = $&next_destination)
+        deinit(.self = $&next_destination)
         transfer_if($&next_source, $&next_destination, true)
     }
 
@@ -48,7 +48,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         next_source ::= unwrap_or_abort(DynamicArray#(Int32)(.capacity = 2))
         unwrap_or_abort(push(.self = $&next_source, .value = 44))
         next_destination ::= unwrap_or_abort(DynamicArray#(Int32)(.capacity = 1))
-        deinit#(Int32)(.self = $&next_destination)
+        deinit(.self = $&next_destination)
         transfer_if($&next_source, $&next_destination, false)
     }
 }

@@ -5,13 +5,13 @@ Doubles : CUnion = (.first: CDouble, .values: [4]CDouble)
 Mixed : CUnion = (.real: CDouble, .values: [3]CFloat)
 Nested : CStruct = (.single: Single, .tail: CFloat)
 Wrapper#(.t: Type) : CUnion = (.first: t, .second: t)
-Number implements ImplicitlyCopyable
-Single implements ImplicitlyCopyable
-Floats implements ImplicitlyCopyable
-Doubles implements ImplicitlyCopyable
-Mixed implements ImplicitlyCopyable
-Nested implements ImplicitlyCopyable
-Wrapper#(.t: Type) implements ImplicitlyCopyable
+implement ImplicitlyCopyable#(Number) ()
+implement ImplicitlyCopyable#(Single) ()
+implement ImplicitlyCopyable#(Floats) ()
+implement ImplicitlyCopyable#(Doubles) ()
+implement ImplicitlyCopyable#(Mixed) ()
+implement ImplicitlyCopyable#(Nested) ()
+implement#(.t: Type) ImplicitlyCopyable#(Wrapper#(.t: t)) ()
 _number(.value: Number) -> (.result: Number) : CFunction(.symbol = "argi_c_union_number")
 _single(.value: Single) -> (.result: Single) : CFunction(.symbol = "argi_c_union_single")
 _floats(.value: Floats) -> (.result: Floats) : CFunction(.symbol = "argi_c_union_floats")

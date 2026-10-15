@@ -1,10 +1,19 @@
 Widget : Type = (.cleanups: $&Int32)
-Widget deinit(.self: $&Widget) -> () := { self&.cleanups& = self&.cleanups& + 1 }
+implement Deinit#(Widget) (
+    .deinit = (.self: $&Widget) -> () {
+        self&.cleanups& = self&.cleanups& + 1
+    }
+)
 
-Widget init(.cleanups: $&Int32) -> (.result: Errable#(.t: Widget, .reasons: (..rejected))) := {
-    constructed :: Widget = (.cleanups = cleanups)
-    result = ..error(.reason = ..rejected)
-}
+implement Init#(Widget, (.cleanups: $&Int32)) (
+    .Result: Type = Errable#(.t: Widget, .reasons: (..rejected))
+    .init = (.args: (.cleanups: $&Int32)) -> (.result: Result) {
+        cleanups ::= ~args.cleanups
+
+        constructed :: Widget = (.cleanups = cleanups)
+        result = ..error(.reason = ..rejected)
+    }
+)
 
 main() -> (.status_code: Int32 = 0) := {
     cleanups :: Int32 = 0

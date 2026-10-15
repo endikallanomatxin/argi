@@ -1,35 +1,39 @@
-Counter: Abstract = (bump(.self: $&Self) -> () where {})
+Counter#(.Participant: Type): Contract = (.bump: (.self: $&Participant) -> () where {})
 
-Other: Abstract = ()
+Other#(.Participant: Type): Contract = ()
 
 Probe: Type = (.counter: $&UIntNative)
 
-Probe implements Counter
-Probe implements Other
+implement Counter#(Probe) (.bump = _impl_bump_Probe)
+implement Other#(Probe) ()
 
-bump(.self: $&Probe) -> () := { self&.counter&= self&.counter&+ 10 }
+_impl_bump_Probe := (.self: $&Probe) -> ()  { self&.counter&= self&.counter&+ 10 }
 
-Probe deinit(.self: $&Probe) -> () := { self&.counter&= self&.counter&+ 1 }
+implement Deinit#(Probe) (
+    .deinit = (.self: $&Probe) -> () {
+        self&.counter&= self&.counter&+ 1
+    }
+)
 
 record#(.t: Type)(.value: t, .counter: $&UIntNative) -> () := {
     counter&= counter&+ 1
 }
 
 in_generic#(.t: Type)(.value: $&t) -> () := {
-    handle :: Virtual#(.abstract: Counter) = to_virtual(.value = value)
+    handle :: Virtual#(.contract: Counter) = to_virtual(.value = value)
     bump(.self = $&handle)
 }
 
 run(.system: System) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
-    assume error_tracer: $&Virtual#(.abstract: ErrorTracer) = [
+    assume error_tracer: $&Virtual#(.contract: ErrorTracer) = [
         FixedSizeErrorTracer(
             .buffer = view($&zeroed#(.t: [4096]UInt8)())
         )
         | to_virtual($&_)
         | $&_
     ]
-    add_context(.context = "inferred virtual tracer")
-    reset_context(.self = error_tracer)
+    add_context_text(.context = "inferred virtual tracer")
+    ErrorTracer#().reset_context(.self = error_tracer)
     result = ..ok Void()
 }
 
@@ -37,29 +41,17 @@ run(.system: System) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory)
 -- conversion, independently of the infallible fixed-buffer tracer.
 FailTracer: Type = (.marker: UInt8)
 
-FailTracer implements ErrorTracer
+implement Init#(FailTracer, ()) (
+    .Result: Type = Errable#(.t: FailTracer, .reasons: (..out_of_memory))
+    .init = (.args: ()) -> (.result: Result) {
+        constructed :: FailTracer
 
-FailTracer init() -> (.result: Errable#(.t: FailTracer, .reasons: (..out_of_memory))) := {
-    constructed :: FailTracer
-
-    result = ..error(.reason = ..out_of_memory)
-}
-
-add_context(.self: $&FailTracer, .location: SourceLocationId, .context: StringView) -> () := {}
-
-reset_context(.self: $&FailTracer) -> () := {}
-
-report(
-        .self   : $&FailTracer,
-        .writer : $&Virtual#(.abstract: Writer)
-    ) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
-    ) := {
-    result = ..ok Void()
-}
+        result = ..error(.reason = ..out_of_memory)
+    }
+)
 
 failed_init() -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
-    assume error_tracer: $&Virtual#(.abstract: ErrorTracer) = FailTracer()! | to_virtual($&_) | $&_
+    assume error_tracer: $&Virtual#(.contract: ErrorTracer) = FailTracer()! | to_virtual($&_) | $&_
     result = ..ok Void()
 }
 
@@ -72,7 +64,7 @@ main(.system: System) -> (.status_code: Int32) := {
     }
     count :: UIntNative = 0
     if true {
-        assume counter: $&Virtual#(.abstract: Counter) = [
+        assume counter: $&Virtual#(.contract: Counter) = [
             Probe(.counter = $&count)
             | to_virtual($&_)
             | $&_
@@ -90,7 +82,7 @@ main(.system: System) -> (.status_code: Int32) := {
     }
     if true {
         probe ::= Probe(.counter = $&count)
-        handle :: Virtual#(.abstract: Counter) = to_virtual($&probe)
+        handle :: Virtual#(.contract: Counter) = to_virtual($&probe)
         bump(.self = $&handle)
         in_generic(.value = $&probe)
         direct ::= to_virtual#(Counter)($&probe)
@@ -122,3 +114,18 @@ main(.system: System) -> (.status_code: Int32) := {
         ..error _ { status_code = 1 }
     }
 }
+
+implement ErrorTracer#(FailTracer)(
+    .add_context = (.self: $&FailTracer, .location: SourceLocationId, .context: StringView) -> () {}
+
+    .reset_context = (.self: $&FailTracer) -> () {}
+
+    .report = (
+            .self   : $&FailTracer,
+            .writer : $&Virtual#(.contract: Writer)
+        ) -> (
+            .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+        ) {
+        result = ..ok Void()
+    }
+)

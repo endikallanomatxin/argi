@@ -2,34 +2,26 @@ drops :: Int32 = 0
 
 Tracked: Type = (.id: Int32)
 
-Tracked deinit(.self: $&Tracked) -> () := { drops = drops + 1 }
+implement Deinit#(Tracked) (
+    .deinit = (.self: $&Tracked) -> () {
+        drops = drops + 1
+    }
+)
 
 Pair: Type = (.a: Tracked, .b: Tracked)
 
 PairOrder: Type = ()
 
-PairOrder implements BorrowedOrderPolicy#(.t: Pair)
-
-less(.self: &PairOrder, .left: &Pair, .right: &Pair) -> (.ok: Bool) := {
-    ok = [
-        left&.a.id
-        < right&.a.id
-    ]
-}
+implement BorrowedOrderPolicy#(PairOrder, Pair) (
+    .less = (.self: &PairOrder, .left: &Pair, .right: &Pair) -> (.ok: Bool) {
+        ok = [
+            left&.a.id
+            < right&.a.id
+        ]
+    }
+)
 
 RefusingAllocator: Type = ()
-
-RefusingAllocator implements Allocator
-
-allocate(
-        .self      : $&RefusingAllocator,
-        .size      : UIntNative,
-        .alignment : UIntNative           = 1
-    ) -> (
-        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
-    ) := {
-    result = ..error(.reason = ..out_of_memory)
-}
 
 run_main(.system: System) -> !Void = ..ok Void() := {
     assume allocator := system.page_allocator
@@ -77,11 +69,11 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     match peek_ref(.self = &queue).value {
         ..none { abort } ..some entry { if entry.value&.a.id != 1 { abort } }
     }
-    match pop(.self = $&queue).value {
+    match pop(.self = $&queue).result {
         ..none { abort } ..some ~entry { if entry.value.a.id != 1 { abort } }
     }
     if drops != 8 { abort }
-    deinit(.self = $&queue, .allocator = allocator)
+    deinit(.self = $&queue)
     if drops != 12 { abort }
     refusal ::= RefusingAllocator()
     bounded ::= OwnedPriorityQueue#(.t: Pair, .order: PairOrder)(
@@ -109,11 +101,23 @@ run_main(.system: System) -> !Void = ..ok Void() := {
                 != 4
             ] { abort } }
     }
-    deinit(.self = $&bounded, .allocator = allocator)
+    deinit(.self = $&bounded)
     if drops != 16 { abort }
 }
 
-main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+main#(.WriterType: Type: Writer#(WriterType))(.system: System, .writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
     run_main(.system = system)!!!
     status_code = 0
 }
+
+implement Allocator#(RefusingAllocator)(
+    .allocate = (
+                .self      : $&RefusingAllocator,
+                .size      : UIntNative,
+                .alignment : UIntNative           = 1
+            ) -> (
+                .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+            ) {
+            result = ..error(.reason = ..out_of_memory)
+        }
+)

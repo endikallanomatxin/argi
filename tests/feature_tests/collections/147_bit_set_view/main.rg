@@ -3,14 +3,14 @@ main() -> (.status_code: Int32 = 0) := {
     storage ::= view(.array = $&bytes)
     bits ::= unwrap_or_abort(.value = BitSetView(.bytes = storage, .count = 10))
     if count_set(.self = &bits).count != 0 { abort }
-    unwrap_or_abort(.value = set(.self = $&bits, .index = 0))
-    unwrap_or_abort(.value = set(.self = $&bits, .index = 7))
-    unwrap_or_abort(.value = set(.self = $&bits, .index = 9))
-    unwrap_or_abort(.value = set(.self = $&bits, .index = 9))
+    unwrap_or_abort(.value = set_bit(.self = $&bits, .index = 0))
+    unwrap_or_abort(.value = set_bit(.self = $&bits, .index = 7))
+    unwrap_or_abort(.value = set_bit(.self = $&bits, .index = 9))
+    unwrap_or_abort(.value = set_bit(.self = $&bits, .index = 9))
     if count_set(.self = &bits).count != 3 { abort }
-    unwrap_or_abort(.value = set(.self = $&bits, .index = 7, .value = false))
+    unwrap_or_abort(.value = set_bit(.self = $&bits, .index = 7, .value = false))
     if count_set(.self = &bits).count != 2 { abort }
-    match set(.self = $&bits, .index = 10) { ..ok _ { abort } ..error _ {} }
+    match set_bit(.self = $&bits, .index = 10) { ..ok _ { abort } ..error _ {} }
     if count_set(.self = &bits).count != 2 { abort }
     if length(.self = &bits).count != 10 { abort }
     other :: [1]UInt8 = (77)

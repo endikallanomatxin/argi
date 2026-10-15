@@ -1,43 +1,42 @@
-HashSetIterator#(.key: Type: ImplicitlyCopyable, .policy: Type: HashPolicy#(.key: key)): Type = (
+HashSetIterator#(.key: Type: ImplicitlyCopyable, .policy: Type: HashPolicy#(policy, key)): Type = (
     ._keys : HashMapKeyIterator#(.key: key, .value: _HashSetValue, .policy: policy)
 )
 
-HashSetIterator#(.key: Type: ImplicitlyCopyable, .policy: Type: HashPolicy#(.key: key)) implements Iterator#(
-    .t : key
-)
-HashSet#(.key: Type: ImplicitlyCopyable, .policy: Type: HashPolicy#(.key: key)) implements Iterable#(
-    .t : key
-)
+implement#(
+    .key    : Type: ImplicitlyCopyable,
+    .policy : Type: HashPolicy#(policy, key)
+) Iterable#(HashSet#(.key: key, .policy: policy)) (
+        .Item         : Type = key
+        .IteratorType : Type = HashSetIterator#(.key: key, .policy: policy)
 
-to_iterator#(
-        .key    : Type: ImplicitlyCopyable,
-        .policy : Type: HashPolicy#(.key: key)
-    )(
-        .value : &HashSet#(.key: key, .policy: policy)
-    ) -> (
-        .iterator : HashSetIterator#(.key: key, .policy: policy)
-    ) := {
-    iterator = (._keys = to_key_iterator(.value = &value&._map).iterator)
-}
+        .to_iterator = (
+                .value : &HashSet#(.key: key, .policy: policy)
+            ) -> (
+                .iterator : HashSetIterator#(.key: key, .policy: policy)
+            ) {
+            iterator = (._keys = to_key_iterator(.value = &value&._map).iterator)
+        }
+    )
 
-has_next#(
-        .key    : Type: ImplicitlyCopyable,
-        .policy : Type: HashPolicy#(.key: key)
-    )(
-        .self : &HashSetIterator#(.key: key, .policy: policy)
-    ) -> (
-        .ok : Bool
-    ) := {
-    ok = has_next(&self&._keys).ok
-}
+implement#(
+    .key    : Type: ImplicitlyCopyable,
+    .policy : Type: HashPolicy#(policy, key)
+) Iterator#(HashSetIterator#(.key: key, .policy: policy)) (
+        .Item : Type = key
 
-next#(
-        .key    : Type: ImplicitlyCopyable,
-        .policy : Type: HashPolicy#(.key: key)
-    )(
-        .self : $&HashSetIterator#(.key: key, .policy: policy)
-    ) -> (
-        .value : key
-    ) := {
-    value = next($&self&._keys).value
-}
+        .has_next = (
+                .self : &HashSetIterator#(.key: key, .policy: policy)
+            ) -> (
+                .ok : Bool
+            ) {
+            ok = has_next(&self&._keys).ok
+        }
+
+        .next = (
+                .self : $&HashSetIterator#(.key: key, .policy: policy)
+            ) -> (
+                .value : key
+            ) {
+            value = next($&self&._keys).value
+        }
+    )

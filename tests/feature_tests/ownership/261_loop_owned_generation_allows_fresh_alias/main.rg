@@ -3,7 +3,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 
-    buffer ::= unwrap_or_abort(.value = String(.allocator = $&allocator_storage, .capacity = 1))
+    buffer ::= unwrap_or_abort(.value = string_with_capacity(.allocator = $&allocator_storage, .capacity = 1))
     first ::= push_byte(.self = $&buffer, .byte = 65, .allocator = $&allocator_storage)
     if is(.value = first, .variant = ..error) {
         return
@@ -23,5 +23,5 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         status_code = 2
         return
     }
-    deinit(.self = $&buffer, .allocator = $&allocator_storage)
+    deinit(.self = $&buffer)
 }

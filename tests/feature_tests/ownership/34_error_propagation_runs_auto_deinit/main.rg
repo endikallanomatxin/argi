@@ -3,14 +3,18 @@ Resource : Type = ()
 ..cleanup_error
 
 dummy_counter :: Int32 = 0
-Resource init() -> (.result: Resource) := {
-    result = ()
+implement Init#(Resource, ()) (
+    .Result: Type = Resource
+    .init = (.args: ()) -> (.result: Result) {
+        result = ()
+    }
+)
 
-}
-
-Resource deinit(.res: $&Resource) -> () := {
-    dummy_counter = dummy_counter + 1
-}
+implement Deinit#(Resource) (
+    .deinit = (.self: $&Resource) -> () {
+        dummy_counter = dummy_counter + 1
+    }
+)
 
 fail() -> (.result: Errable#(.t: Int32, .reasons: (..test_error))) := {
     result = ..error(.reason = ..test_error)

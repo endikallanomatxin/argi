@@ -1,7 +1,6 @@
-NumberLike : Abstract = ()
+NumberLike#(.Participant: Type): Contract = ()
 
-Int32 implements NumberLike
-
+implement NumberLike#(Int32) ()
 double#(.t: Type: NumberLike)(.value: t) -> (.result: Int32) := {
     result = value + value
 }

@@ -2,7 +2,11 @@ Tracked: Type = (.id: Int32)
 
 drops :: Int32 = 0
 
-Tracked deinit(.self: $&Tracked) -> () := { drops = drops + 1 }
+implement Deinit#(Tracked) (
+    .deinit = (.self: $&Tracked) -> () {
+        drops = drops + 1
+    }
+)
 
 run_main(.system: System) -> !Void = ..ok Void() := {
     assume allocator := system.page_allocator
@@ -30,7 +34,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     if as_view(.self = &extracted).view != "A" { abort }
 }
 
-main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+main#(.WriterType: Type: Writer#(WriterType))(.system: System, .writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
     run_main(.system = system)!!!
     status_code = 0
 }

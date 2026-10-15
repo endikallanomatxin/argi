@@ -1,9 +1,9 @@
 ..failed
 
-Source: Abstract = (
+Source#(.Participant: Type): Contract = (
     domain storage
-    get(.self: &Self) -> (.value: &Int32) where depends_on(value, self.storage)
-    edit(.self: $&Self, .succeed: Bool) -> (.result: Errable#(?Int32, (..failed))) where {
+    .get: (.self: &Participant) -> (.value: &Int32) where depends_on(value, self.storage)
+    .edit: (.self: $&Participant, .succeed: Bool) -> (.result: Errable#(?Int32, (..failed))) where {
         on result ..ok {
             on result ..some { invalidates(self.storage) }
             on result ..none {}
@@ -14,11 +14,11 @@ Source: Abstract = (
 
 Cell: Type = (.value: Int32, .other: Int32)
 
-Cell implements Source where { storage(self.value) }
+implement Source#(Cell) (.get = _impl_get_Cell, .edit = _impl_edit_Cell) where { storage(self.value) }
 
-get(.self: &Cell) -> (.value: &Int32) := { value = &self&.value }
+_impl_get_Cell := (.self: &Cell) -> (.value: &Int32)  { value = &self&.value }
 
-edit(.self: $&Cell, .succeed: Bool) -> (.result: Errable#(?Int32, (..failed))) := {
+_impl_edit_Cell := (.self: $&Cell, .succeed: Bool) -> (.result: Errable#(?Int32, (..failed)))  {
     if succeed {
         self&.value = 42
         result = ..ok ..some(.value = 42)

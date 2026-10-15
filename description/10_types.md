@@ -34,17 +34,17 @@ floating-point values.
 
 ## Conversion
 
-Conversions are explicit. A call cannot select an overload solely from its
-desired output type: [multiple dispatch](131_multiple_dispatch.md) uses the
-function name and input types. Arithmetic does not silently convert values
-between unrelated types.
+Conversions are explicit. [Contract dispatch](131_multiple_dispatch.md) selects
+from known participant types, including an explicitly requested destination. An
+expected associated result cannot infer missing participants or rank implementations.
+Arithmetic does not silently convert values between unrelated types.
 
-Conversion uses the destination type as the callee. For example,
-`UIntNative(.value = reference)` observes a reference's numeric address.
+Conversion selects `Convert#(Source, Target)` with an explicit destination. For example,
+`reference | convert#(.to: UIntNative)(_)` observes a reference's numeric address.
 `UIntNative` is the pointer-sized integer type used for addresses. The
 integer carries no validity dependency on the referenced storage.
 
-Integer conversions use `Destination(.value = source)`. Their return type
+Integer conversions use `convert#(.to: Destination)(.value = source)`. Their return type
 depends on the complete ranges of the two types, never on the particular
 value or the expected result type. If the destination contains the source's
 entire range, the conversion returns the destination type directly. Otherwise
@@ -55,8 +55,8 @@ value outside that range.
 
 ```rg
 byte : UInt8 = 255
-wide : Int16 = Int16(.value = byte)
-checked ::= Int8(.value = wide)  -- Errable<Int8>: the Int16 range is larger
+wide : Int16 = byte | convert#(.to: Int16)(_)
+checked ::= wide | convert#(.to: Int8)(_)  -- The Int16 range requires Errable.
 ```
 
 The same rules apply to signedness changes, `UIntNative`, and C integer aliases.
@@ -76,10 +76,9 @@ A type conversion alone cannot establish a live reference.
 > assignment such as `x = 1` when `x` is `Float32`? This would be contextual
 > literal typing, not an implicit conversion of an integer variable.
 
-> [!QUESTION]
-> How should user-defined conversions distinguish construction from
-> representation conversion? Define how fallible conversions compose with
-> constructors and how their overloads are selected.
+User-defined conversions implement `Convert#(Source, Target)`. Its `Result` must
+be `Target` or an `Errable` containing it. Construction uses `Init` separately;
+conversion never selects an implementation from the expected result type.
 
 ## Type aliases
 

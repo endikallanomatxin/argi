@@ -1,12 +1,12 @@
-Drain: Abstract = (
-    drain(.self: &Self, .storage: $&Allocation, .clear: Bool) -> () where empties(storage)
+Drain#(.Participant: Type): Contract = (
+    .drain: (.self: &Participant, .storage: $&Allocation, .clear: Bool) -> () where empties(storage)
 )
 
 Cell: Type = ()
 
-Cell implements Drain
+implement Drain#(Cell) (.drain = _impl_drain_Cell)
 
-drain(.self: &Cell, .storage: $&Allocation, .clear: Bool) -> () := {
+_impl_drain_Cell := (.self: &Cell, .storage: $&Allocation, .clear: Bool) -> ()  {
     if clear { trusted_opaque_mark_empty(storage) }
 }
 

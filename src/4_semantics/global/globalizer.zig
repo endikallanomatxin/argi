@@ -198,8 +198,6 @@ fn appendDeclarations(allocator: std.mem.Allocator, result: *global_sg.GlobalSem
             .struct_fields = if (value.struct_fields) |range| relocateEntityRange(global_sg.GlobalFieldId, o.field_base, range) else null,
             .choice_variants = if (value.choice_variants) |range| relocateEntityRange(global_sg.GlobalVariantId, o.variant_base, range) else null,
             .generic_parameter_count = value.generic_parameter_count,
-            .constructor_type = if (value.constructor_type) |id| globalDecl(o, id) else null,
-            .destructor_type = if (value.destructor_type) |id| globalDecl(o, id) else null,
             .struct_layout = value.struct_layout,
             .choice_layout = value.choice_layout,
         });
@@ -212,7 +210,7 @@ fn appendFields(allocator: std.mem.Allocator, result: *global_sg.GlobalSemanticG
         try result.fields.append(allocator, .{
             .name = try relocateString(module, value.name, o.string_base),
             .ty = globalType(o, value.ty),
-            .storage_type = if (value.storage_type) |id| globalType(o, id) else null,
+
             .source = globalSource(o, value.source),
             .default_value = if (value.default_value) |id| globalNode(o, id) else null,
         });
@@ -300,7 +298,7 @@ fn relocateType(o: Offsets, value: module_entities.ResolvedType) global_sg.Globa
             .base = globalDecl(o, item.base),
             .arguments = relocateEntityRange(global_sg.GlobalGenericArgId, o.generic_argument_base, item.arguments),
         } },
-        .virtual => |abstract_type| .{ .virtual = globalType(o, abstract_type) },
+        .virtual => |contract_type| .{ .virtual = globalType(o, contract_type) },
     };
 }
 
@@ -319,8 +317,6 @@ fn appendFunctions(allocator: std.mem.Allocator, result: *global_sg.GlobalSemant
             .safety_primitive = value.safety_primitive,
             .flags = value.flags,
         });
-        const operator = if (index < module.semantic.function_operators.items.len) module.semantic.function_operators.items[index] else null;
-        try result.function_operators.append(allocator, operator);
     }
 }
 
@@ -354,7 +350,6 @@ fn appendBodyTables(allocator: std.mem.Allocator, result: *global_sg.GlobalSeman
             .initialization = if (value.initialization) |id| globalNode(o, id) else null,
             .deferred_initialization = value.deferred_initialization,
             .cleanup_arguments = if (value.cleanup_arguments) |id| globalNode(o, id) else null,
-            .static_implementer = if (value.static_implementer) |id| globalType(o, id) else null,
             .mutability = value.mutability,
         });
         if (unresolved) try result.markBindingTypeUnresolved(allocator, global_id);
@@ -409,7 +404,7 @@ fn appendBodyTables(allocator: std.mem.Allocator, result: *global_sg.GlobalSeman
     for (storage.virtualizes.items) |value| try result.virtualizes.append(allocator, .{
         .value = globalNode(o, value.value),
         .concrete_type = globalType(o, value.concrete_type),
-        .abstract_decl = globalDecl(o, value.abstract_decl),
+        .contract_decl = globalDecl(o, value.contract_decl),
         .virtual_type = globalType(o, value.virtual_type),
         .domains = value.domains,
         .methods = relocatePoolRange(global_sg.GlobalFunctionId, o.function_ref_base, value.methods),

@@ -6,8 +6,9 @@ below; exploratory collections are marked as ideas.
 
 ## Hash and equality policies
 
-`HashPolicy<K>` supplies `hash(.self, .key) -> UIntNative` and
-`eql(.self, .left, .right) -> Bool`. Equality must be an equivalence relation;
+`HashPolicy#(P, K)` supplies scoped operations
+`HashPolicy#(P, K).hash(.self, .key) -> UIntNative` and
+`HashPolicy#(P, K).eql(.self, .left, .right) -> Bool`. Equality must be an equivalence relation;
 equal keys must hash equally. Policy results must remain stable while keys are
 stored. Hash collisions are supported, but unstable equality or key mutation
 cannot be repaired by the container.
@@ -21,10 +22,14 @@ Applications can implement the same small contract for their own key types.
 Borrowed string keys retain their backing lifetimes and must not be modified
 while stored. Hashing does not transfer or acquire ownership of that storage.
 
+Ownership-bearing maps and sets use `BorrowedHashPolicy#(P, K)`, whose scoped
+`hash` and `eql` operations borrow keys through readonly references. Their
+implementations preserve key ownership and never expose mutable keys.
+
 ## Maps
 
 `HashMap<K, V, P>` stores implicitly copyable keys and values with an explicit
-`P: HashPolicy<K>` instance. Construction takes `.policy`, `.allocator`, and an
+`P: HashPolicy#(P, K)` instance. Construction takes `.policy`, `.allocator`, and an
 optional `.capacity`. Capacity is the number of table slots, at least eight;
 occupied load stays at most one half. The map owns its table and policy, but
 copying a borrowed key or value does not acquire its backing storage.
@@ -37,7 +42,7 @@ copying a borrowed key or value does not acquire its backing storage.
   cleanup invalidate element borrows; acquire a new reference after mutation.
 - `remove(.self, .key, .allocator)` reports whether an entry was removed.
 - `length` reports entries, `capacity` reports slots, and
-  `deinit(.self, .allocator)` releases the table and owned policy.
+  `deinit(.self)` releases the table and owned policy.
 
 `HashMap` implements `Iterable<HashMapEntry<K, V>>`: `for entry in map`
 visits copied `.key`/`.value` pairs. `to_key_iterator` and `to_value_iterator`
@@ -90,7 +95,7 @@ and unsuccessful removal do not change the table or invalidate an iterator.
 
 ## Queues
 
-`RingBuffer<T>` is an owning FIFO queue with a fixed positive capacity. Its
+`RingBuffer#(T)` is an owning FIFO queue with a fixed positive capacity. Its
 constructor accepts `.capacity` and an explicit `.allocator`, reserves storage
 once, and initializes no elements. Zero capacity reports `invalid_capacity`;
 unrepresentable allocation sizes and allocation failures report `out_of_memory`.
@@ -104,9 +109,9 @@ Zero-sized elements remain distinct logical occupied slots.
   owning value is independent of the buffer storage and can outlive it.
 - `length` and `capacity` report logical occupancy and fixed capacity.
 - `get_ro_ref(.self, .index)` borrows an occupied element in FIFO order,
-  or reports `out_of_bounds`. The buffer implements `Indexable<T>` and
+  or reports `out_of_bounds`. The buffer implements `Indexable#(RingBuffer#(T))` and
   supports equality search when its elements satisfy that algorithm's contract.
-- `deinit(.self, .allocator)` destroys the remaining occupied elements once
+- `deinit(.self)` destroys the remaining occupied elements once
   and releases the backing allocation. Vacant slots are never read or dropped.
 
 Push and pop do not allocate queue storage. Element cleanup may have its own
@@ -201,8 +206,8 @@ low bit of the first byte. Insufficient storage reports `out_of_bounds`
 before writing anything; size calculation cannot overflow. Storage beyond
 the required bytes remains unchanged, and zero bits require no bytes.
 
-`length` reports bit capacity. Checked `contains(.self, .index)` queries a bit;
-`set(.self, .index, .value = true)` sets or clears it. Repeated writes are
+`length` reports bit capacity. Checked `contains_bit(.self, .index)` queries a bit;
+`set_bit(.self, .index, .value = true)` sets or clears it. Repeated writes are
 idempotent, and invalid indices leave storage unchanged. `count_set` counts
 only the recorded bit range, ignoring padding bits in the final byte. The
 view allocates nothing and retains the backing storage's lifetime.
@@ -216,11 +221,12 @@ heap of implicitly copyable values and borrows a strict-weak `OrderPolicy`.
 `length` reports the number of elements. Peek is constant time; push and pop
 perform logarithmic comparisons. Equal-priority removal order is unspecified.
 The policy must remain live and its comparisons stable while values are queued.
-`deinit` releases the backing dynamic array. Ownership-bearing elements need a
-separate borrowed comparison and movement protocol before they can be supported.
+`deinit` releases the backing dynamic array. `OwnedPriorityQueue` supports owning
+elements through BorrowedOrderPolicy, retaining borrowed comparisons and
+relocation without copying queued owners.
 
 `BitSet(.count, .allocator)` owns initialized storage for a fixed bit count.
-It shares the checked `length`, `contains`, `set` and `count_set` operations
+It shares the checked `length`, `contains_bit`, `set_bit` and `count_set` operations
 with borrowed bit sets. `as_view(.self: $&BitSet)` borrows a mutable `BitSetView`
 without clearing any bits. Cleanup releases the underlying dynamic array and
 invalidates its borrowed views; owners cannot be implicitly copied.
@@ -230,3 +236,12 @@ from a readonly `.other` owner without allocating. Both bit counts must match;
 `bit_set_size_mismatch` leaves the destination unchanged. Using the same owner
 for both operands is valid. Unused high bits remain zero. Union and intersection
 with self preserve the set, and difference with self clears it.
+
+Queue supplies Item and the selected pop Result. RingBuffer returns Errable with
+empty, while both priority queue families return an optional item. All expose the
+result through the same .result label. QueueInsertion selects a collection and
+allocation Provider jointly; push uses its Result for full or out_of_memory.
+These are scoped contract operations, with no ordinary push/pop overload family.
+Provider defaults use lexical allocator lookup. Owning inputs move into lexical
+owners before fallible insertion, retaining cleanup on rejection and allocation
+failure. Dynamic-array reservation keeps that static Provider through allocation.

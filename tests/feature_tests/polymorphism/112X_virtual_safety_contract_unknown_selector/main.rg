@@ -1,5 +1,5 @@
-Source: Abstract = (
-    get(.self: &Self) -> (.result: ?Int32) where {
+Source#(.Participant: Type): Contract = (
+    .get: (.self: &Participant) -> (.result: ?Int32) where {
         on missing ..some {}
     }
 )

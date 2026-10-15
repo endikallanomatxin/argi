@@ -5,7 +5,11 @@ Borrowing : Type = (
 
 old_root :: UInt8 = 7
 
-Borrowing deinit(.self: $&Borrowing) -> () := {}
+implement Deinit#(Borrowing) (
+    .deinit = (.self: $&Borrowing) -> () {
+
+    }
+)
 
 store_and_return(.slot: $&Borrowing, .reference: $&UInt8) -> (.result: UInt8) := {
     slot&.reference = reference
@@ -19,8 +23,8 @@ reset_and_store(.storage: $&Allocation, .slot: $&Borrowing, .reference: $&UInt8)
 
 main(.system: System) -> (.status_code: Int32) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    new_root_result ::= allocate(.self = $&allocator_storage, .size = 1)
-    storage_result ::= allocate(.self = $&allocator_storage, .size = size_of(.type = Borrowing))
+    new_root_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
+    storage_result ::= allocate_bytes(.self = $&allocator_storage, .size = size_of(.type = Borrowing))
     match new_root_result {
         ..error _ { status_code = 1 }
         ..ok ~ new_root_payload {

@@ -47,10 +47,10 @@ Views are library abstractions. The language has no native slice type.
 contiguous storage. A safe constructor derives the extent from its source;
 pointer-and-length construction belongs to trusted code.
 
-The pointer and length fields are private. `array_view#(.t: T)(.data = $&element)`
-creates a one-element view; `array_view#(.n = N, .t: T)(.array = $&array)`
+The pointer and length fields are private. `single_array_view#(.t: T)(.data = $&element)`
+creates a one-element view; `view(.array = $&array)`
 derives the length from a fixed `[N]T`. The read-only constructors use
-`array_view_ro` and read-only references in the same way. Zero-length fixed
+`single_array_view_ro` and `view(.array = &array)` in the same way. Zero-length fixed
 arrays produce empty views without establishing an element reference. An
 empty view has length zero, rejects every index, and has no element pointer;
 `data` requires a nonempty view and aborts otherwise. Zero-length bulk-copy
@@ -68,7 +68,7 @@ subrange, preserving its access mode and backing lifetime. It rejects
 indices. An empty subrange at the end is valid and carries no element
 reference. A nested slice cannot enlarge its source's extent.
 
-`array_view#(.t: T)(.array = $&collection)` and its read-only counterpart
+`view(.array = $&collection)` and its read-only counterpart
 borrow the initialized prefix of a `DynamicArray`. Spare capacity is excluded.
 The private allocation receipt is maintained by the collection using the
 allocator contract; the backing allocator must provide live storage of the
@@ -81,7 +81,7 @@ capacity growth invalidate existing views, including their derived subranges
 and element references. The same rule applies to direct element loans from
 `get_ro_ref`, `get_rw_ref`, and the public element-pointer operations, and to
 elements borrowed through collection iterators. This conservative contract applies even when an append
-does not reallocate. Replacing an element through `DynamicArray.set` also invalidates existing
+does not reallocate. Replacing an element through `DynamicArray.replace` also invalidates existing
 content loans, views, and iterators, even though the length does not change. Owner cleanup and backing-arena reset invalidate its storage.
 A fresh view, element reference, or iterator can be borrowed after a structural
 change. Empty views contain no
@@ -136,10 +136,10 @@ module. Code in other modules reads the logical length and capacity through
 those fields or fill them with a struct literal; `init` maintains their shared
 invariant.
 
-`DynamicArray` provides explicit `copy()` for infallibly copyable elements and
-for elements implementing `FalliblyCopyable`. The latter obtains the element's
-associated error reasons from its abstract implementation and combines them
-with `..out_of_memory`. Each element is copied independently; a fallible copy
+`DynamicArray` implements `FalliblyCopyable#(DynamicArray#(T), Provider)` when
+its elements satisfy `FalliblyCopyable#(T, Provider)`. Its single copy algorithm
+obtains the element's associated reasons from that tuple and combines them with
+`..out_of_memory`. Infallibly copyable elements use the standard infallible adapter. Each element is copied independently; a fallible copy
 rolls back the completed prefix before releasing the new backing allocation.
 
 `DynamicArray` access uses named core operations:
@@ -147,7 +147,7 @@ rolls back the completed prefix before releasing the new backing allocation.
 - `get(index)` for value access
 - `get_ro_ref(index)` for borrowed read-only access
 - `get_rw_ref(index)` for borrowed mutable access
-- `set(index, value)` for assignment
+- `replace(index, value)` for owning replacement
 
 All four operations are fallible because an index may be outside the
 collection's logical length. Value access copies a named element implicitly
@@ -252,7 +252,8 @@ implement reversal would duplicate ownership.
 
 ## Ordering policies
 
-`OrderPolicy<T>` provides `less(.self, .left, .right) -> Bool` for implicitly
+`OrderPolicy#(Policy, T)` provides the static operation
+`OrderPolicy#(Policy, T).less(.self, .left, .right) -> (.ok: Bool)` for implicitly
 copyable elements. It defines a strict weak order: no value is less than
 itself, less-than is transitive, and equivalence is transitive. Two elements
 are equivalent when neither is less than the other; this need not coincide
@@ -261,7 +262,8 @@ with their `==` operator or complete record equality.
 Algorithms borrow a policy instance explicitly as `.order`. Its answers must
 remain consistent throughout an operation, and it must not mutate the
 collection or the backing data used for comparison. Applications can supply
-descending orders and comparisons by selected record fields.
+descending orders and comparisons by selected record fields through `implement`
+declarations. Policies no longer provide global `less` overloads.
 
 Core supplies `Int32OrderPolicy`, `UIntNativeOrderPolicy`, and
 `StringViewOrderPolicy`. String views use lexicographic unsigned-byte order,
@@ -335,3 +337,19 @@ logical front-to-back order, including wrapped storage. Iterators borrow the
 owner and its shape generation; insertion, extraction, growth, and cleanup
 invalidate them. Returned references retain the same shape dependency. Calling
 `next` without `has_next` is a contract violation and aborts.
+
+## Fixed-array view evidence
+
+The unique ordinary `view(.array)` function selects `ViewOf#(Source)` evidence.
+Source is the complete reference type, including mutability. For `$&[N]T`,
+Result is ArrayView(T); for `&[N]T`, Result is ArrayViewRO(T). Result does not
+participate in selection. Generic callers can require ViewOf(Source) and retain
+the associated result projection until specialization.
+
+Both conformances reuse the checked fixed-array view algorithms, preserve backing
+storage dependencies and return independent empty views for zero-size arrays.
+A returned nonempty view cannot outlive its backing array. This replaces the two
+ordinary view overloads. DynamicArray uses the same evidence model, preserving
+its shape dependencies. The former array_view and array_view_ro families are
+removed; empty_array_view_ro and single_array_view/single_array_view_ro are
+uniquely named factories.

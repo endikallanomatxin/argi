@@ -8,17 +8,19 @@ first_drops :: Int32 = 0
 second_drops :: Int32 = 0
 third_drops :: Int32 = 0
 
-Tracked deinit(.self: $&Tracked) -> () := {
-    if self&.id == 1 { first_drops = first_drops + 1 }
-    if self&.id == 2 { second_drops = second_drops + 1 }
-    if self&.id == 3 { third_drops = third_drops + 1 }
-    deinit(.self = $&self&.allocation)
-}
+implement Deinit#(Tracked) (
+    .deinit = (.self: $&Tracked) -> () {
+        if self&.id == 1 { first_drops = first_drops + 1 }
+        if self&.id == 2 { second_drops = second_drops + 1 }
+        if self&.id == 3 { third_drops = third_drops + 1 }
+        deinit(.self = $&self&.allocation)
+    }
+)
 
-make_tracked(.allocator: $&Allocator, .id: Int32) -> (.result: Errable#(.t: Tracked, .reasons: (..out_of_memory))) := {
+make_tracked#(.AllocatorType: Type: Allocator#(AllocatorType))(.allocator: $&AllocatorType, .id: Int32) -> (.result: Errable#(.t: Tracked, .reasons: (..out_of_memory))) := {
     assume allocator
 
-    allocation_result ::= allocate(.self = allocator, .size = 1)
+    allocation_result ::= allocate_bytes(.self = allocator, .size = 1)
     match allocation_result {
         ..error _ { result = ..error(.reason = ..out_of_memory) }
         ..ok ~ payload {
@@ -29,7 +31,7 @@ make_tracked(.allocator: $&Allocator, .id: Int32) -> (.result: Errable#(.t: Trac
 }
 
 main(.system: System) -> (.status_code: Int32) := {
-    slots_result ::= allocate(.self = system.page_allocator, .size = size_of(.type = Tracked) * 8)
+    slots_result ::= allocate_bytes(.self = system.page_allocator, .size = size_of(.type = Tracked) * 8)
     match slots_result {
         ..error _ { status_code = 1 }
         ..ok ~ slots_payload {

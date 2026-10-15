@@ -1,4 +1,4 @@
-sum_iterator(.it: $&Iterator#(.t: Int32)) -> (.sum: Int32) := {
+sum_iterator#(.T: Type: Iterator#(T))(.it: $&T) -> (.sum: Int32) := {
     sum = 0
     while has_next(.self = it) {
         value :: Int32 = next(.self = it)

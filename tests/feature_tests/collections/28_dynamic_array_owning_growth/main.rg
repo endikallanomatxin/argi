@@ -7,17 +7,19 @@ first_drops :: Int32 = 0
 second_drops :: Int32 = 0
 third_drops :: Int32 = 0
 
-Tracked deinit(.self: $&Tracked) -> () := {
-    if self&.id == 1 { first_drops = first_drops + 1 }
-    if self&.id == 2 { second_drops = second_drops + 1 }
-    if self&.id == 3 { third_drops = third_drops + 1 }
-    deinit(.self = $&self&.allocation)
-}
+implement Deinit#(Tracked) (
+    .deinit = (.self: $&Tracked) -> () {
+        if self&.id == 1 { first_drops = first_drops + 1 }
+        if self&.id == 2 { second_drops = second_drops + 1 }
+        if self&.id == 3 { third_drops = third_drops + 1 }
+        deinit(.self = $&self&.allocation)
+    }
+)
 
-make_tracked(.allocator: $&Allocator, .id: Int32) -> (.result: Errable#(.t: Tracked, .reasons: (..out_of_memory))) := {
+make_tracked#(.AllocatorType: Type: Allocator#(AllocatorType))(.allocator: $&AllocatorType, .id: Int32) -> (.result: Errable#(.t: Tracked, .reasons: (..out_of_memory))) := {
     assume allocator
 
-    allocated ::= allocate(.self = allocator, .size = 1)
+    allocated ::= allocate_bytes(.self = allocator, .size = 1)
     match allocated {
         ..error _ { result = ..error(.reason = ..out_of_memory) }
         ..ok ~ payload {
@@ -47,18 +49,18 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
                         ..error _ { status_code = 3 }
                         ..ok ~ third_payload {
                             third ::= ~third_payload
-                            first_push ::= push#(.t: Tracked)(.self = $&array, .value = ~first)
-                            second_push ::= push#(.t: Tracked)(.self = $&array, .value = ~second)
-                            third_push ::= push#(.t: Tracked)(.self = $&array, .value = ~third)
+                            first_push ::= push(.self = $&array, .value = ~first)
+                            second_push ::= push(.self = $&array, .value = ~second)
+                            third_push ::= push(.self = $&array, .value = ~third)
                             if is(.value = first_push, .variant = ..error) or is(.value = second_push, .variant = ..error) or is(.value = third_push, .variant = ..error) {
                                 status_code = 4
                                 return
                             }
-                            if length#(.t: Tracked)(.self = &array).count != 3 or capacity#(.t: Tracked)(.self = &array).count < 3 {
+                            if length(.self = &array).count != 3 or capacity(.self = &array).count < 3 {
                                 status_code = 5
                                 return
                             }
-                            deinit#(.t: Tracked)(.self = $&array)
+                            deinit(.self = $&array)
                             if first_drops != 1 or second_drops != 1 or third_drops != 1 {
                                 status_code = 6
                                 return

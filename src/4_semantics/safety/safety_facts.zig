@@ -11,6 +11,8 @@ pub const StorageCapabilityId = enum(u32) { _ };
 
 pub const ValidityRoot = struct {
     id: ValidityRootId,
+    /// Sparse branch trackers leave other branches' identities absent.
+    present: bool = true,
     state: enum { alive, conditional, maybe_alive, dead } = .alive,
     owned_resource: bool = false,
     /// One unresolved call may refine this generation. Zero means no proof;

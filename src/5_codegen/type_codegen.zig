@@ -81,18 +81,18 @@ pub const Lowerer = struct {
         const field_types = self.allocator.alloc(llvm.c.LLVMTypeRef, range.len) catch return Error.OutOfMemory;
         defer self.allocator.free(field_types);
         for (self.graph.fields.items[range.start..][0..range.len], 0..) |field, index|
-            field_types[index] = try self.toLLVMType(types.effectiveFieldType(field));
+            field_types[index] = try self.toLLVMType(field.ty);
         return c.LLVMStructType(field_types.ptr, @intCast(range.len), 0);
     }
 
     fn unionType(self: *Lowerer, range: graph_mod.FieldRange) Error!llvm.c.LLVMTypeRef {
         if (range.len == 0) return c.LLVMStructType(null, 0, 0);
         var best = self.graph.fields.items[range.start];
-        var best_layout = types.layoutOf(self.graph, types.effectiveFieldType(best)) catch return Error.InvalidType;
+        var best_layout = types.layoutOf(self.graph, best.ty) catch return Error.InvalidType;
         var max_size = best_layout.size;
         var max_alignment = best_layout.alignment;
         for (self.graph.fields.items[range.start + 1 ..][0 .. range.len - 1]) |field| {
-            const layout = types.layoutOf(self.graph, types.effectiveFieldType(field)) catch return Error.InvalidType;
+            const layout = types.layoutOf(self.graph, field.ty) catch return Error.InvalidType;
             max_size = @max(max_size, layout.size);
             max_alignment = @max(max_alignment, layout.alignment);
             if (layout.alignment > best_layout.alignment or (layout.alignment == best_layout.alignment and layout.size > best_layout.size)) {
@@ -102,7 +102,7 @@ pub const Lowerer = struct {
         }
         const remainder = if (max_alignment == 0) 0 else max_size % max_alignment;
         const total_size = if (remainder == 0) max_size else max_size + max_alignment - remainder;
-        const storage_ty = try self.toLLVMType(types.effectiveFieldType(best));
+        const storage_ty = try self.toLLVMType(best.ty);
         if (best_layout.size >= total_size) {
             var one = [_]llvm.c.LLVMTypeRef{storage_ty};
             return c.LLVMStructType(&one, 1, 0);
@@ -203,9 +203,9 @@ pub const Lowerer = struct {
                     .comptime_int => |value| try self.appendPrint(buffer, "_n{d}", .{value}),
                 };
             },
-            .virtual => |abstract_type| {
+            .virtual => |contract_type| {
                 try buffer.appendSlice("virtual_");
-                try self.encodeType(buffer, abstract_type);
+                try self.encodeType(buffer, contract_type);
             },
             .nullable, .inferred_errable => return Error.InvalidType,
         }

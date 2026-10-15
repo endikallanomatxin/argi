@@ -1,24 +1,24 @@
-expect_value(
+expect_value_Int16(
         .actual   : Errable#(.t: Int16, .reasons: (..out_of_range)),
         .expected : Int16
     ) -> () := {
     match actual { ..ok value { if value != expected { abort } } ..error _ { abort } }
 }
 
-expect_range(.actual: Errable#(.t: Int16, .reasons: (..out_of_range))) -> () := {
+expect_range_Int16(.actual: Errable#(.t: Int16, .reasons: (..out_of_range))) -> () := {
     match actual {
         ..ok unexpected { abort } ..error error { if error.reason != ..out_of_range { abort } }
     }
 }
 
-expect_division(
+expect_division_Int16(
         .actual   : Errable#(.t: Int16, .reasons: (..out_of_range, ..division_by_zero)),
         .expected : Int16
     ) -> () := {
     match actual { ..ok value { if value != expected { abort } } ..error _ { abort } }
 }
 
-expect_division_range(
+expect_division_range_Int16(
         .actual : Errable#(.t: Int16, .reasons: (..out_of_range, ..division_by_zero))
     ) -> () := {
     match actual {
@@ -26,7 +26,7 @@ expect_division_range(
     }
 }
 
-expect_zero(
+expect_zero_Int16(
         .actual : Errable#(.t: Int16, .reasons: (..out_of_range, ..division_by_zero))
     ) -> () := {
     match actual {
@@ -34,27 +34,27 @@ expect_zero(
     }
 }
 
-expect_value(
+expect_value_Int32(
         .actual   : Errable#(.t: Int32, .reasons: (..out_of_range)),
         .expected : Int32
     ) -> () := {
     match actual { ..ok value { if value != expected { abort } } ..error _ { abort } }
 }
 
-expect_range(.actual: Errable#(.t: Int32, .reasons: (..out_of_range))) -> () := {
+expect_range_Int32(.actual: Errable#(.t: Int32, .reasons: (..out_of_range))) -> () := {
     match actual {
         ..ok unexpected { abort } ..error error { if error.reason != ..out_of_range { abort } }
     }
 }
 
-expect_division(
+expect_division_Int32(
         .actual   : Errable#(.t: Int32, .reasons: (..out_of_range, ..division_by_zero)),
         .expected : Int32
     ) -> () := {
     match actual { ..ok value { if value != expected { abort } } ..error _ { abort } }
 }
 
-expect_division_range(
+expect_division_range_Int32(
         .actual : Errable#(.t: Int32, .reasons: (..out_of_range, ..division_by_zero))
     ) -> () := {
     match actual {
@@ -62,7 +62,7 @@ expect_division_range(
     }
 }
 
-expect_zero(
+expect_zero_Int32(
         .actual : Errable#(.t: Int32, .reasons: (..out_of_range, ..division_by_zero))
     ) -> () := {
     match actual {
@@ -70,27 +70,27 @@ expect_zero(
     }
 }
 
-expect_value(
+expect_value_Int64(
         .actual   : Errable#(.t: Int64, .reasons: (..out_of_range)),
         .expected : Int64
     ) -> () := {
     match actual { ..ok value { if value != expected { abort } } ..error _ { abort } }
 }
 
-expect_range(.actual: Errable#(.t: Int64, .reasons: (..out_of_range))) -> () := {
+expect_range_Int64(.actual: Errable#(.t: Int64, .reasons: (..out_of_range))) -> () := {
     match actual {
         ..ok unexpected { abort } ..error error { if error.reason != ..out_of_range { abort } }
     }
 }
 
-expect_division(
+expect_division_Int64(
         .actual   : Errable#(.t: Int64, .reasons: (..out_of_range, ..division_by_zero)),
         .expected : Int64
     ) -> () := {
     match actual { ..ok value { if value != expected { abort } } ..error _ { abort } }
 }
 
-expect_division_range(
+expect_division_range_Int64(
         .actual : Errable#(.t: Int64, .reasons: (..out_of_range, ..division_by_zero))
     ) -> () := {
     match actual {
@@ -98,7 +98,7 @@ expect_division_range(
     }
 }
 
-expect_zero(
+expect_zero_Int64(
         .actual : Errable#(.t: Int64, .reasons: (..out_of_range, ..division_by_zero))
     ) -> () := {
     match actual {
@@ -106,27 +106,27 @@ expect_zero(
     }
 }
 
-expect_value(
+expect_value_UInt16(
         .actual   : Errable#(.t: UInt16, .reasons: (..out_of_range)),
         .expected : UInt16
     ) -> () := {
     match actual { ..ok value { if value != expected { abort } } ..error _ { abort } }
 }
 
-expect_range(.actual: Errable#(.t: UInt16, .reasons: (..out_of_range))) -> () := {
+expect_range_UInt16(.actual: Errable#(.t: UInt16, .reasons: (..out_of_range))) -> () := {
     match actual {
         ..ok unexpected { abort } ..error error { if error.reason != ..out_of_range { abort } }
     }
 }
 
-expect_division(
+expect_division_UInt16(
         .actual   : Errable#(.t: UInt16, .reasons: (..out_of_range, ..division_by_zero)),
         .expected : UInt16
     ) -> () := {
     match actual { ..ok value { if value != expected { abort } } ..error _ { abort } }
 }
 
-expect_division_range(
+expect_division_range_UInt16(
         .actual : Errable#(.t: UInt16, .reasons: (..out_of_range, ..division_by_zero))
     ) -> () := {
     match actual {
@@ -134,7 +134,7 @@ expect_division_range(
     }
 }
 
-expect_zero(
+expect_zero_UInt16(
         .actual : Errable#(.t: UInt16, .reasons: (..out_of_range, ..division_by_zero))
     ) -> () := {
     match actual {
@@ -142,27 +142,27 @@ expect_zero(
     }
 }
 
-expect_value(
+expect_value_UInt32(
         .actual   : Errable#(.t: UInt32, .reasons: (..out_of_range)),
         .expected : UInt32
     ) -> () := {
     match actual { ..ok value { if value != expected { abort } } ..error _ { abort } }
 }
 
-expect_range(.actual: Errable#(.t: UInt32, .reasons: (..out_of_range))) -> () := {
+expect_range_UInt32(.actual: Errable#(.t: UInt32, .reasons: (..out_of_range))) -> () := {
     match actual {
         ..ok unexpected { abort } ..error error { if error.reason != ..out_of_range { abort } }
     }
 }
 
-expect_division(
+expect_division_UInt32(
         .actual   : Errable#(.t: UInt32, .reasons: (..out_of_range, ..division_by_zero)),
         .expected : UInt32
     ) -> () := {
     match actual { ..ok value { if value != expected { abort } } ..error _ { abort } }
 }
 
-expect_division_range(
+expect_division_range_UInt32(
         .actual : Errable#(.t: UInt32, .reasons: (..out_of_range, ..division_by_zero))
     ) -> () := {
     match actual {
@@ -170,7 +170,7 @@ expect_division_range(
     }
 }
 
-expect_zero(
+expect_zero_UInt32(
         .actual : Errable#(.t: UInt32, .reasons: (..out_of_range, ..division_by_zero))
     ) -> () := {
     match actual {
@@ -178,27 +178,27 @@ expect_zero(
     }
 }
 
-expect_value(
+expect_value_UInt64(
         .actual   : Errable#(.t: UInt64, .reasons: (..out_of_range)),
         .expected : UInt64
     ) -> () := {
     match actual { ..ok value { if value != expected { abort } } ..error _ { abort } }
 }
 
-expect_range(.actual: Errable#(.t: UInt64, .reasons: (..out_of_range))) -> () := {
+expect_range_UInt64(.actual: Errable#(.t: UInt64, .reasons: (..out_of_range))) -> () := {
     match actual {
         ..ok unexpected { abort } ..error error { if error.reason != ..out_of_range { abort } }
     }
 }
 
-expect_division(
+expect_division_UInt64(
         .actual   : Errable#(.t: UInt64, .reasons: (..out_of_range, ..division_by_zero)),
         .expected : UInt64
     ) -> () := {
     match actual { ..ok value { if value != expected { abort } } ..error _ { abort } }
 }
 
-expect_division_range(
+expect_division_range_UInt64(
         .actual : Errable#(.t: UInt64, .reasons: (..out_of_range, ..division_by_zero))
     ) -> () := {
     match actual {
@@ -206,7 +206,7 @@ expect_division_range(
     }
 }
 
-expect_zero(
+expect_zero_UInt64(
         .actual : Errable#(.t: UInt64, .reasons: (..out_of_range, ..division_by_zero))
     ) -> () := {
     match actual {
@@ -214,27 +214,27 @@ expect_zero(
     }
 }
 
-expect_value(
+expect_value_UIntNative(
         .actual   : Errable#(.t: UIntNative, .reasons: (..out_of_range)),
         .expected : UIntNative
     ) -> () := {
     match actual { ..ok value { if value != expected { abort } } ..error _ { abort } }
 }
 
-expect_range(.actual: Errable#(.t: UIntNative, .reasons: (..out_of_range))) -> () := {
+expect_range_UIntNative(.actual: Errable#(.t: UIntNative, .reasons: (..out_of_range))) -> () := {
     match actual {
         ..ok unexpected { abort } ..error error { if error.reason != ..out_of_range { abort } }
     }
 }
 
-expect_division(
+expect_division_UIntNative(
         .actual   : Errable#(.t: UIntNative, .reasons: (..out_of_range, ..division_by_zero)),
         .expected : UIntNative
     ) -> () := {
     match actual { ..ok value { if value != expected { abort } } ..error _ { abort } }
 }
 
-expect_division_range(
+expect_division_range_UIntNative(
         .actual : Errable#(.t: UIntNative, .reasons: (..out_of_range, ..division_by_zero))
     ) -> () := {
     match actual {
@@ -242,7 +242,7 @@ expect_division_range(
     }
 }
 
-expect_zero(
+expect_zero_UIntNative(
         .actual : Errable#(.t: UIntNative, .reasons: (..out_of_range, ..division_by_zero))
     ) -> () := {
     match actual {
@@ -258,95 +258,95 @@ check_int16() -> () := {
     two :: Int16 = 2
     negative_one :: Int16 = -1
     negative_two :: Int16 = -2
-    expect_value(
+    expect_value_Int16(
         .actual   = checked_add(.left = maximum, .right = zero)
         .expected = maximum
     )
-    expect_range(.actual = checked_add(.left = maximum, .right = one))
-    expect_range(.actual = checked_subtract(.left = minimum, .right = one))
-    expect_value(
+    expect_range_Int16(.actual = checked_add(.left = maximum, .right = one))
+    expect_range_Int16(.actual = checked_subtract(.left = minimum, .right = one))
+    expect_value_Int16(
         .actual   = checked_subtract(.left = maximum, .right = maximum)
         .expected = zero
     )
-    expect_value(
+    expect_value_Int16(
         .actual   = checked_multiply(.left = minimum, .right = zero)
         .expected = zero
     )
-    expect_value(
+    expect_value_Int16(
         .actual   = checked_multiply(.left = maximum, .right = one)
         .expected = maximum
     )
-    expect_range(.actual = checked_multiply(.left = maximum, .right = two))
-    expect_division(
+    expect_range_Int16(.actual = checked_multiply(.left = maximum, .right = two))
+    expect_division_Int16(
         .actual   = checked_divide(.left = minimum, .right = one)
         .expected = minimum
     )
-    expect_division(
+    expect_division_Int16(
         .actual   = checked_divide(.left = maximum, .right = maximum)
         .expected = one
     )
-    expect_zero(.actual = checked_divide(.left = maximum, .right = zero))
-    expect_zero(.actual = checked_divide(.left = zero, .right = zero))
-    expect_value(
+    expect_zero_Int16(.actual = checked_divide(.left = maximum, .right = zero))
+    expect_zero_Int16(.actual = checked_divide(.left = zero, .right = zero))
+    expect_value_Int16(
         .actual   = checked_multiply(.left = maximum / two, .right = two)
         .expected = [
             maximum
             - one
         ]
     )
-    expect_value(
+    expect_value_Int16(
         .actual   = checked_add(.left = minimum, .right = maximum)
         .expected = negative_one
     )
-    expect_range(.actual = checked_add(.left = minimum, .right = negative_one))
-    expect_range(.actual = checked_subtract(.left = maximum, .right = negative_one))
-    expect_value(
+    expect_range_Int16(.actual = checked_add(.left = minimum, .right = negative_one))
+    expect_range_Int16(.actual = checked_subtract(.left = maximum, .right = negative_one))
+    expect_value_Int16(
         .actual   = checked_subtract(.left = minimum, .right = minimum)
         .expected = zero
     )
-    expect_value(
+    expect_value_Int16(
         .actual   = checked_subtract(.left = zero, .right = maximum)
         .expected = [
             minimum
             + one
         ]
     )
-    expect_range(.actual = checked_multiply(.left = minimum, .right = negative_one))
-    expect_range(.actual = checked_multiply(.left = negative_one, .right = minimum))
-    expect_range(.actual = checked_multiply(.left = minimum, .right = two))
-    expect_value(
+    expect_range_Int16(.actual = checked_multiply(.left = minimum, .right = negative_one))
+    expect_range_Int16(.actual = checked_multiply(.left = negative_one, .right = minimum))
+    expect_range_Int16(.actual = checked_multiply(.left = minimum, .right = two))
+    expect_value_Int16(
         .actual   = checked_multiply(.left = minimum, .right = one)
         .expected = minimum
     )
-    expect_value(
+    expect_value_Int16(
         .actual   = checked_multiply(.left = minimum / two, .right = two)
         .expected = minimum
     )
-    expect_division_range(
+    expect_division_range_Int16(
         .actual = checked_divide(.left = minimum, .right = negative_one)
     )
-    expect_division(
+    expect_division_Int16(
         .actual   = checked_divide(.left = minimum, .right = two)
         .expected = [
             minimum
             / two
         ]
     )
-    expect_division(
+    expect_division_Int16(
         .actual   = checked_divide(.left = minimum, .right = minimum)
         .expected = one
     )
-    expect_division(
+    expect_division_Int16(
         .actual   = checked_divide(.left = minimum, .right = negative_two)
         .expected = [
             maximum / two
             + one
         ]
     )
-    expect_range(
+    expect_range_Int16(
         .actual = checked_multiply(.left = minimum / two, .right = negative_two)
     )
-    expect_value(
+    expect_value_Int16(
         .actual   = checked_multiply(.left = minimum / two + one, .right = negative_two)
         .expected = [
             maximum
@@ -363,95 +363,95 @@ check_int32() -> () := {
     two :: Int32 = 2
     negative_one :: Int32 = -1
     negative_two :: Int32 = -2
-    expect_value(
+    expect_value_Int32(
         .actual   = checked_add(.left = maximum, .right = zero)
         .expected = maximum
     )
-    expect_range(.actual = checked_add(.left = maximum, .right = one))
-    expect_range(.actual = checked_subtract(.left = minimum, .right = one))
-    expect_value(
+    expect_range_Int32(.actual = checked_add(.left = maximum, .right = one))
+    expect_range_Int32(.actual = checked_subtract(.left = minimum, .right = one))
+    expect_value_Int32(
         .actual   = checked_subtract(.left = maximum, .right = maximum)
         .expected = zero
     )
-    expect_value(
+    expect_value_Int32(
         .actual   = checked_multiply(.left = minimum, .right = zero)
         .expected = zero
     )
-    expect_value(
+    expect_value_Int32(
         .actual   = checked_multiply(.left = maximum, .right = one)
         .expected = maximum
     )
-    expect_range(.actual = checked_multiply(.left = maximum, .right = two))
-    expect_division(
+    expect_range_Int32(.actual = checked_multiply(.left = maximum, .right = two))
+    expect_division_Int32(
         .actual   = checked_divide(.left = minimum, .right = one)
         .expected = minimum
     )
-    expect_division(
+    expect_division_Int32(
         .actual   = checked_divide(.left = maximum, .right = maximum)
         .expected = one
     )
-    expect_zero(.actual = checked_divide(.left = maximum, .right = zero))
-    expect_zero(.actual = checked_divide(.left = zero, .right = zero))
-    expect_value(
+    expect_zero_Int32(.actual = checked_divide(.left = maximum, .right = zero))
+    expect_zero_Int32(.actual = checked_divide(.left = zero, .right = zero))
+    expect_value_Int32(
         .actual   = checked_multiply(.left = maximum / two, .right = two)
         .expected = [
             maximum
             - one
         ]
     )
-    expect_value(
+    expect_value_Int32(
         .actual   = checked_add(.left = minimum, .right = maximum)
         .expected = negative_one
     )
-    expect_range(.actual = checked_add(.left = minimum, .right = negative_one))
-    expect_range(.actual = checked_subtract(.left = maximum, .right = negative_one))
-    expect_value(
+    expect_range_Int32(.actual = checked_add(.left = minimum, .right = negative_one))
+    expect_range_Int32(.actual = checked_subtract(.left = maximum, .right = negative_one))
+    expect_value_Int32(
         .actual   = checked_subtract(.left = minimum, .right = minimum)
         .expected = zero
     )
-    expect_value(
+    expect_value_Int32(
         .actual   = checked_subtract(.left = zero, .right = maximum)
         .expected = [
             minimum
             + one
         ]
     )
-    expect_range(.actual = checked_multiply(.left = minimum, .right = negative_one))
-    expect_range(.actual = checked_multiply(.left = negative_one, .right = minimum))
-    expect_range(.actual = checked_multiply(.left = minimum, .right = two))
-    expect_value(
+    expect_range_Int32(.actual = checked_multiply(.left = minimum, .right = negative_one))
+    expect_range_Int32(.actual = checked_multiply(.left = negative_one, .right = minimum))
+    expect_range_Int32(.actual = checked_multiply(.left = minimum, .right = two))
+    expect_value_Int32(
         .actual   = checked_multiply(.left = minimum, .right = one)
         .expected = minimum
     )
-    expect_value(
+    expect_value_Int32(
         .actual   = checked_multiply(.left = minimum / two, .right = two)
         .expected = minimum
     )
-    expect_division_range(
+    expect_division_range_Int32(
         .actual = checked_divide(.left = minimum, .right = negative_one)
     )
-    expect_division(
+    expect_division_Int32(
         .actual   = checked_divide(.left = minimum, .right = two)
         .expected = [
             minimum
             / two
         ]
     )
-    expect_division(
+    expect_division_Int32(
         .actual   = checked_divide(.left = minimum, .right = minimum)
         .expected = one
     )
-    expect_division(
+    expect_division_Int32(
         .actual   = checked_divide(.left = minimum, .right = negative_two)
         .expected = [
             maximum / two
             + one
         ]
     )
-    expect_range(
+    expect_range_Int32(
         .actual = checked_multiply(.left = minimum / two, .right = negative_two)
     )
-    expect_value(
+    expect_value_Int32(
         .actual   = checked_multiply(.left = minimum / two + one, .right = negative_two)
         .expected = [
             maximum
@@ -468,95 +468,95 @@ check_int64() -> () := {
     two :: Int64 = 2
     negative_one :: Int64 = -1
     negative_two :: Int64 = -2
-    expect_value(
+    expect_value_Int64(
         .actual   = checked_add(.left = maximum, .right = zero)
         .expected = maximum
     )
-    expect_range(.actual = checked_add(.left = maximum, .right = one))
-    expect_range(.actual = checked_subtract(.left = minimum, .right = one))
-    expect_value(
+    expect_range_Int64(.actual = checked_add(.left = maximum, .right = one))
+    expect_range_Int64(.actual = checked_subtract(.left = minimum, .right = one))
+    expect_value_Int64(
         .actual   = checked_subtract(.left = maximum, .right = maximum)
         .expected = zero
     )
-    expect_value(
+    expect_value_Int64(
         .actual   = checked_multiply(.left = minimum, .right = zero)
         .expected = zero
     )
-    expect_value(
+    expect_value_Int64(
         .actual   = checked_multiply(.left = maximum, .right = one)
         .expected = maximum
     )
-    expect_range(.actual = checked_multiply(.left = maximum, .right = two))
-    expect_division(
+    expect_range_Int64(.actual = checked_multiply(.left = maximum, .right = two))
+    expect_division_Int64(
         .actual   = checked_divide(.left = minimum, .right = one)
         .expected = minimum
     )
-    expect_division(
+    expect_division_Int64(
         .actual   = checked_divide(.left = maximum, .right = maximum)
         .expected = one
     )
-    expect_zero(.actual = checked_divide(.left = maximum, .right = zero))
-    expect_zero(.actual = checked_divide(.left = zero, .right = zero))
-    expect_value(
+    expect_zero_Int64(.actual = checked_divide(.left = maximum, .right = zero))
+    expect_zero_Int64(.actual = checked_divide(.left = zero, .right = zero))
+    expect_value_Int64(
         .actual   = checked_multiply(.left = maximum / two, .right = two)
         .expected = [
             maximum
             - one
         ]
     )
-    expect_value(
+    expect_value_Int64(
         .actual   = checked_add(.left = minimum, .right = maximum)
         .expected = negative_one
     )
-    expect_range(.actual = checked_add(.left = minimum, .right = negative_one))
-    expect_range(.actual = checked_subtract(.left = maximum, .right = negative_one))
-    expect_value(
+    expect_range_Int64(.actual = checked_add(.left = minimum, .right = negative_one))
+    expect_range_Int64(.actual = checked_subtract(.left = maximum, .right = negative_one))
+    expect_value_Int64(
         .actual   = checked_subtract(.left = minimum, .right = minimum)
         .expected = zero
     )
-    expect_value(
+    expect_value_Int64(
         .actual   = checked_subtract(.left = zero, .right = maximum)
         .expected = [
             minimum
             + one
         ]
     )
-    expect_range(.actual = checked_multiply(.left = minimum, .right = negative_one))
-    expect_range(.actual = checked_multiply(.left = negative_one, .right = minimum))
-    expect_range(.actual = checked_multiply(.left = minimum, .right = two))
-    expect_value(
+    expect_range_Int64(.actual = checked_multiply(.left = minimum, .right = negative_one))
+    expect_range_Int64(.actual = checked_multiply(.left = negative_one, .right = minimum))
+    expect_range_Int64(.actual = checked_multiply(.left = minimum, .right = two))
+    expect_value_Int64(
         .actual   = checked_multiply(.left = minimum, .right = one)
         .expected = minimum
     )
-    expect_value(
+    expect_value_Int64(
         .actual   = checked_multiply(.left = minimum / two, .right = two)
         .expected = minimum
     )
-    expect_division_range(
+    expect_division_range_Int64(
         .actual = checked_divide(.left = minimum, .right = negative_one)
     )
-    expect_division(
+    expect_division_Int64(
         .actual   = checked_divide(.left = minimum, .right = two)
         .expected = [
             minimum
             / two
         ]
     )
-    expect_division(
+    expect_division_Int64(
         .actual   = checked_divide(.left = minimum, .right = minimum)
         .expected = one
     )
-    expect_division(
+    expect_division_Int64(
         .actual   = checked_divide(.left = minimum, .right = negative_two)
         .expected = [
             maximum / two
             + one
         ]
     )
-    expect_range(
+    expect_range_Int64(
         .actual = checked_multiply(.left = minimum / two, .right = negative_two)
     )
-    expect_value(
+    expect_value_Int64(
         .actual   = checked_multiply(.left = minimum / two + one, .right = negative_two)
         .expected = [
             maximum
@@ -571,36 +571,36 @@ check_uint16() -> () := {
     zero :: UInt16 = 0
     one :: UInt16 = 1
     two :: UInt16 = 2
-    expect_value(
+    expect_value_UInt16(
         .actual   = checked_add(.left = maximum, .right = zero)
         .expected = maximum
     )
-    expect_range(.actual = checked_add(.left = maximum, .right = one))
-    expect_range(.actual = checked_subtract(.left = minimum, .right = one))
-    expect_value(
+    expect_range_UInt16(.actual = checked_add(.left = maximum, .right = one))
+    expect_range_UInt16(.actual = checked_subtract(.left = minimum, .right = one))
+    expect_value_UInt16(
         .actual   = checked_subtract(.left = maximum, .right = maximum)
         .expected = zero
     )
-    expect_value(
+    expect_value_UInt16(
         .actual   = checked_multiply(.left = minimum, .right = zero)
         .expected = zero
     )
-    expect_value(
+    expect_value_UInt16(
         .actual   = checked_multiply(.left = maximum, .right = one)
         .expected = maximum
     )
-    expect_range(.actual = checked_multiply(.left = maximum, .right = two))
-    expect_division(
+    expect_range_UInt16(.actual = checked_multiply(.left = maximum, .right = two))
+    expect_division_UInt16(
         .actual   = checked_divide(.left = minimum, .right = one)
         .expected = minimum
     )
-    expect_division(
+    expect_division_UInt16(
         .actual   = checked_divide(.left = maximum, .right = maximum)
         .expected = one
     )
-    expect_zero(.actual = checked_divide(.left = maximum, .right = zero))
-    expect_zero(.actual = checked_divide(.left = zero, .right = zero))
-    expect_value(
+    expect_zero_UInt16(.actual = checked_divide(.left = maximum, .right = zero))
+    expect_zero_UInt16(.actual = checked_divide(.left = zero, .right = zero))
+    expect_value_UInt16(
         .actual   = checked_multiply(.left = maximum / two, .right = two)
         .expected = [
             maximum
@@ -615,36 +615,36 @@ check_uint32() -> () := {
     zero :: UInt32 = 0
     one :: UInt32 = 1
     two :: UInt32 = 2
-    expect_value(
+    expect_value_UInt32(
         .actual   = checked_add(.left = maximum, .right = zero)
         .expected = maximum
     )
-    expect_range(.actual = checked_add(.left = maximum, .right = one))
-    expect_range(.actual = checked_subtract(.left = minimum, .right = one))
-    expect_value(
+    expect_range_UInt32(.actual = checked_add(.left = maximum, .right = one))
+    expect_range_UInt32(.actual = checked_subtract(.left = minimum, .right = one))
+    expect_value_UInt32(
         .actual   = checked_subtract(.left = maximum, .right = maximum)
         .expected = zero
     )
-    expect_value(
+    expect_value_UInt32(
         .actual   = checked_multiply(.left = minimum, .right = zero)
         .expected = zero
     )
-    expect_value(
+    expect_value_UInt32(
         .actual   = checked_multiply(.left = maximum, .right = one)
         .expected = maximum
     )
-    expect_range(.actual = checked_multiply(.left = maximum, .right = two))
-    expect_division(
+    expect_range_UInt32(.actual = checked_multiply(.left = maximum, .right = two))
+    expect_division_UInt32(
         .actual   = checked_divide(.left = minimum, .right = one)
         .expected = minimum
     )
-    expect_division(
+    expect_division_UInt32(
         .actual   = checked_divide(.left = maximum, .right = maximum)
         .expected = one
     )
-    expect_zero(.actual = checked_divide(.left = maximum, .right = zero))
-    expect_zero(.actual = checked_divide(.left = zero, .right = zero))
-    expect_value(
+    expect_zero_UInt32(.actual = checked_divide(.left = maximum, .right = zero))
+    expect_zero_UInt32(.actual = checked_divide(.left = zero, .right = zero))
+    expect_value_UInt32(
         .actual   = checked_multiply(.left = maximum / two, .right = two)
         .expected = [
             maximum
@@ -659,36 +659,36 @@ check_uint64() -> () := {
     zero :: UInt64 = 0
     one :: UInt64 = 1
     two :: UInt64 = 2
-    expect_value(
+    expect_value_UInt64(
         .actual   = checked_add(.left = maximum, .right = zero)
         .expected = maximum
     )
-    expect_range(.actual = checked_add(.left = maximum, .right = one))
-    expect_range(.actual = checked_subtract(.left = minimum, .right = one))
-    expect_value(
+    expect_range_UInt64(.actual = checked_add(.left = maximum, .right = one))
+    expect_range_UInt64(.actual = checked_subtract(.left = minimum, .right = one))
+    expect_value_UInt64(
         .actual   = checked_subtract(.left = maximum, .right = maximum)
         .expected = zero
     )
-    expect_value(
+    expect_value_UInt64(
         .actual   = checked_multiply(.left = minimum, .right = zero)
         .expected = zero
     )
-    expect_value(
+    expect_value_UInt64(
         .actual   = checked_multiply(.left = maximum, .right = one)
         .expected = maximum
     )
-    expect_range(.actual = checked_multiply(.left = maximum, .right = two))
-    expect_division(
+    expect_range_UInt64(.actual = checked_multiply(.left = maximum, .right = two))
+    expect_division_UInt64(
         .actual   = checked_divide(.left = minimum, .right = one)
         .expected = minimum
     )
-    expect_division(
+    expect_division_UInt64(
         .actual   = checked_divide(.left = maximum, .right = maximum)
         .expected = one
     )
-    expect_zero(.actual = checked_divide(.left = maximum, .right = zero))
-    expect_zero(.actual = checked_divide(.left = zero, .right = zero))
-    expect_value(
+    expect_zero_UInt64(.actual = checked_divide(.left = maximum, .right = zero))
+    expect_zero_UInt64(.actual = checked_divide(.left = zero, .right = zero))
+    expect_value_UInt64(
         .actual   = checked_multiply(.left = maximum / two, .right = two)
         .expected = [
             maximum
@@ -709,36 +709,36 @@ check_uintnative() -> () := {
     zero :: UIntNative = 0
     one :: UIntNative = 1
     two :: UIntNative = 2
-    expect_value(
+    expect_value_UIntNative(
         .actual   = checked_add(.left = maximum, .right = zero)
         .expected = maximum
     )
-    expect_range(.actual = checked_add(.left = maximum, .right = one))
-    expect_range(.actual = checked_subtract(.left = minimum, .right = one))
-    expect_value(
+    expect_range_UIntNative(.actual = checked_add(.left = maximum, .right = one))
+    expect_range_UIntNative(.actual = checked_subtract(.left = minimum, .right = one))
+    expect_value_UIntNative(
         .actual   = checked_subtract(.left = maximum, .right = maximum)
         .expected = zero
     )
-    expect_value(
+    expect_value_UIntNative(
         .actual   = checked_multiply(.left = minimum, .right = zero)
         .expected = zero
     )
-    expect_value(
+    expect_value_UIntNative(
         .actual   = checked_multiply(.left = maximum, .right = one)
         .expected = maximum
     )
-    expect_range(.actual = checked_multiply(.left = maximum, .right = two))
-    expect_division(
+    expect_range_UIntNative(.actual = checked_multiply(.left = maximum, .right = two))
+    expect_division_UIntNative(
         .actual   = checked_divide(.left = minimum, .right = one)
         .expected = minimum
     )
-    expect_division(
+    expect_division_UIntNative(
         .actual   = checked_divide(.left = maximum, .right = maximum)
         .expected = one
     )
-    expect_zero(.actual = checked_divide(.left = maximum, .right = zero))
-    expect_zero(.actual = checked_divide(.left = zero, .right = zero))
-    expect_value(
+    expect_zero_UIntNative(.actual = checked_divide(.left = maximum, .right = zero))
+    expect_zero_UIntNative(.actual = checked_divide(.left = zero, .right = zero))
+    expect_value_UIntNative(
         .actual   = checked_multiply(.left = maximum / two, .right = two)
         .expected = [
             maximum

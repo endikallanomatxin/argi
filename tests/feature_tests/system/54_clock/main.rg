@@ -1,7 +1,7 @@
 main(.system: System) -> (.status_code: Int32 = 0) := {
     assume clock ::= system.clock
     before ::= unwrap_or_abort(.value = monotonic_now()).result
-    delay ::= unwrap_or_abort(.value = Duration(.milliseconds = 2)).result
+    delay ::= unwrap_or_abort(.value = duration_from_milliseconds(.milliseconds = 2)).result
     unwrap_or_abort(.value = sleep(.duration = delay))
     after ::= unwrap_or_abort(.value = monotonic_now()).result
     interval ::= unwrap_or_abort(.value = elapsed(.start = before, .end = after)).result

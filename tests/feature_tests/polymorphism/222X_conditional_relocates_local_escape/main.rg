@@ -1,6 +1,10 @@
 Resource: Type = (.value: &Int32)
 
-Resource deinit(.self: $&Resource) -> () := {}
+implement Deinit#(Resource) (
+    .deinit = (.self: $&Resource) -> () {
+
+    }
+)
 
 global :: Int32 = 1
 

@@ -1,17 +1,12 @@
-_float_replace_bits(.value: Float16, .bits: UInt64) -> (.result: Float16) := {
-    native ::= unwrap_or_abort(.value = UInt16(.value = bits))
-
-    result = trusted_reinterpret_reference#(.from: UInt16, .to: Float16)(.base = &native).reference&
-}
-
-_float_replace_bits(.value: Float32, .bits: UInt64) -> (.result: Float32) := {
-    native ::= unwrap_or_abort(.value = UInt32(.value = bits))
-
-    result = trusted_reinterpret_reference#(.from: UInt32, .to: Float32)(.base = &native).reference&
-}
-
-_float_replace_bits(.value: Float64, .bits: UInt64) -> (.result: Float64) := {
-    result = trusted_reinterpret_reference#(.from: UInt64, .to: Float64)(.base = &bits).reference&
+_float_replace_bits#(
+        .Value : Type: _FloatRepresentation#(Value)
+    ) := (
+        .value : Value,
+        .bits  : UInt64
+    ) -> (
+        .result : Value
+    ) {
+    result = _FloatRepresentation#(Value).replace_bits(.value = value, .bits = bits)
 }
 
 -- Clear fractional mantissa bits without integer conversion of the value.
@@ -28,7 +23,7 @@ truncate_float#(.t: Type: Float)(.value: t) -> (.result: t) := {
         return
     }
 
-    bias ::= unwrap_or_abort(.value = UInt64(.value = encoding.bias))
+    bias ::= unwrap_or_abort(.value = encoding.bias | convert#(.to: UInt64)(_))
 
     if exponent < bias {
         result = _float_replace_bits(.value = value, .bits = sign).result

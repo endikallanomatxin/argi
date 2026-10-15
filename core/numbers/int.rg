@@ -1,37 +1,38 @@
-Int: Abstract = (
-    -- float(_) : Float
-    -- operator +(_, _) : Int
-    -- operator -(_, _) : Int
-    -- operator *(_, _) : Int
-    -- operator /(_, _) : Int
-    -- operator %(_, _) : Int
-    -- operator ^(_, _) : Int
-    -- ...
-)
+-- Numeric classification does not declare arithmetic operations.
+-- Operators are separate from numeric classification.
+Int#(.Value: Type): Contract = ()
 
 -- Signed integers
-Int8 implements Int
-Int16 implements Int
-Int32 implements Int
-Int64 implements Int
+implement Int#(Int8) ()
+
+implement Int#(Int16) ()
+
+implement Int#(Int32) ()
+
+implement Int#(Int64) ()
 
 -- Unsigned integers
-UInt8 implements Int
-UInt16 implements Int
-UInt32 implements Int
-UInt64 implements Int
-UIntNative implements Int
+implement Int#(UInt8) ()
 
-UInt: Abstract = ()
+implement Int#(UInt16) ()
 
-UInt8 implements UInt
-UInt16 implements UInt
-UInt32 implements UInt
-UInt64 implements UInt
-UIntNative implements UInt
+implement Int#(UInt32) ()
 
--- TODO: Think if having SignedInteger and UnsignedInteger as abstracts is a
--- good idea. I think it is not very useful. But consider.
+implement Int#(UInt64) ()
+
+implement Int#(UIntNative) ()
+
+UInt#(.Value: Type): Contract = ()
+
+implement UInt#(UInt8) ()
+
+implement UInt#(UInt16) ()
+
+implement UInt#(UInt32) ()
+
+implement UInt#(UInt64) ()
+
+implement UInt#(UIntNative) ()
 
 -- TODO: More types
 --

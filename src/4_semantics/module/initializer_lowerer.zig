@@ -37,6 +37,19 @@ pub fn lower(
     return stats;
 }
 
+/// Closed anonymous types in associated definitions are lowered after the
+/// ordinary default pass. Reuse that same expression lowering for their fields.
+pub fn lowerAnonymousFieldDefaults(allocator: std.mem.Allocator, graph: *graph_mod.ModuleSemanticGraph, files: []const graph_mod.FileInput, file_index: u32, syntax: syn.NodeIndex, ty: entities.ModuleTypeId, diagnostics: ?*diagnostics_mod.Diagnostics) !void {
+    var context = Context{ .allocator = allocator, .graph = graph, .files = files, .diagnostics = diagnostics, .writer = writer_mod.Writer.init(allocator, graph) };
+    context.selectFile(file_index);
+    if (context.tree.structTypeLiteral(syntax) == null) return;
+    const semantic = try views.typeView(graph, ty);
+    if (semantic != .resolved or semantic.resolved != .structural) return;
+    const fields = semantic.resolved.structural.fields;
+    var stats: Stats = .{};
+    try context.lowerDeferredDefaults(fields.start, fields.len, syntax, &stats);
+}
+
 const Context = struct {
     allocator: std.mem.Allocator,
     graph: *graph_mod.ModuleSemanticGraph,

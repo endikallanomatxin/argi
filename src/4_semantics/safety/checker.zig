@@ -1,3 +1,4 @@
+const standard_contracts = @import("../global/standard_contracts.zig");
 const std = @import("std");
 const profile = @import("../../1_base/profile.zig");
 const diagnostics = @import("../../1_base/diagnostic.zig");
@@ -32,6 +33,9 @@ pub const SafetyChecker = struct {
         post_state_inference_ns: u64 = 0,
         outcome_inference_ns: u64 = 0,
         opaque_inference_ns: u64 = 0,
+        capability_inference_ns: u64 = 0,
+        capability_flow_ns: u64 = 0,
+        guard_inference_ns: u64 = 0,
         virtual_summary_ns: u64 = 0,
         summary_evaluations: u64 = 0,
         summary_changes: u64 = 0,
@@ -63,9 +67,14 @@ pub const SafetyChecker = struct {
     const ChoiceRejected = struct { storage: facts.Place, variant_index: u32 };
     const ChoiceTemporaryActive = struct { expression: graph_mod.GlobalNodeId, variant_index: u32 };
 
+    const SymbolicPointeeState = struct { identity: graph_mod.GlobalBindingId, initializedness: value_state.Initializedness };
+
     const FunctionState = struct {
         tracker: facts.Tracker,
         places: std.array_list.Managed(facts.PlaceFacts),
+        symbolic_pointees: std.array_list.Managed(SymbolicPointeeState),
+        // TODO: Give branch-created acquisition capabilities distinct shared
+        // identities as well; validity roots already use the joint namespace.
         storage_capabilities: std.array_list.Managed(StorageCapabilityState),
         ownership_edges: std.array_list.Managed(OwnershipEdge),
         storage_generations: std.array_list.Managed(StorageGeneration),
@@ -80,6 +89,7 @@ pub const SafetyChecker = struct {
             return .{
                 .tracker = facts.Tracker.init(allocator),
                 .places = std.array_list.Managed(facts.PlaceFacts).init(allocator),
+                .symbolic_pointees = std.array_list.Managed(SymbolicPointeeState).init(allocator),
                 .storage_capabilities = std.array_list.Managed(StorageCapabilityState).init(allocator),
                 .ownership_edges = std.array_list.Managed(OwnershipEdge).init(allocator),
                 .storage_generations = std.array_list.Managed(StorageGeneration).init(allocator),
@@ -94,6 +104,7 @@ pub const SafetyChecker = struct {
         fn deinit(self: *FunctionState) void {
             self.tracker.deinit();
             self.places.deinit();
+            self.symbolic_pointees.deinit();
             self.storage_capabilities.deinit();
             self.ownership_edges.deinit();
             self.storage_generations.deinit();
@@ -110,8 +121,10 @@ pub const SafetyChecker = struct {
             defer if (stats) |s| profile.accumulate(io, start, &s.state_copy_ns);
             var out = FunctionState.init(allocator);
             errdefer out.deinit();
+            out.tracker.namespace = self.tracker.namespace;
             try out.tracker.roots.appendSlice(self.tracker.roots.items);
             try out.places.appendSlice(self.places.items);
+            try out.symbolic_pointees.appendSlice(self.symbolic_pointees.items);
             try out.storage_capabilities.appendSlice(self.storage_capabilities.items);
             try out.ownership_edges.appendSlice(self.ownership_edges.items);
             try out.storage_generations.appendSlice(self.storage_generations.items);
@@ -123,7 +136,7 @@ pub const SafetyChecker = struct {
             out.reachable = self.reachable;
             if (stats) |s| {
                 s.state_clones += 1;
-                s.state_elements_copied += @intCast(self.tracker.roots.items.len + self.places.items.len + self.storage_capabilities.items.len + self.ownership_edges.items.len + self.storage_generations.items.len + self.lexical_storage_generations.items.len + self.opaque_storages.items.len + self.choice_active.items.len + self.choice_rejected.items.len + self.choice_temporary_active.items.len);
+                s.state_elements_copied += @intCast(self.tracker.roots.items.len + self.places.items.len + self.symbolic_pointees.items.len + self.storage_capabilities.items.len + self.ownership_edges.items.len + self.storage_generations.items.len + self.lexical_storage_generations.items.len + self.opaque_storages.items.len + self.choice_active.items.len + self.choice_rejected.items.len + self.choice_temporary_active.items.len);
             }
             return out;
         }
@@ -217,6 +230,9 @@ pub const SafetyChecker = struct {
             self.stats.post_state_inference_ns = inference.post_state_ns;
             self.stats.outcome_inference_ns = inference.outcome_ns;
             self.stats.opaque_inference_ns = inference.opaque_ns;
+            self.stats.capability_inference_ns = inference.capability_ns;
+            self.stats.capability_flow_ns = inference.capability_flow_ns;
+            self.stats.guard_inference_ns = inference.guards_ns;
         }
         try self.validateInitializerContracts(&engine);
         try self.validateVirtualSafetyContracts(&inference);
@@ -228,7 +244,10 @@ pub const SafetyChecker = struct {
         for (self.graph.functions.items, 0..) |function, raw| {
             if (function.body == null or function.safety_primitive != .none) continue;
             const id: graph_mod.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
+            var namespace: facts.Tracker.RootNamespace = .{};
+            defer namespace.initial_storage.deinit(self.allocator);
             var state = FunctionState.init(self.allocator);
+            state.tracker.namespace = &namespace;
             defer state.deinit();
             try self.seedFunctionInputs(function, &state);
             try self.call_stack.append(id);
@@ -247,20 +266,22 @@ pub const SafetyChecker = struct {
         // Conformance uses converged concrete summaries. Static selections and
         // virtual table slots share the same proof obligations; neither can
         // weaken a declaration by choosing a different dispatch mechanism.
-        for (self.graph.abstract_safety_conformances.items) |conformance| {
-            try self.validateAbstractSafetyContract(inference, conformance.contract, conformance.method, conformance.receiver_input_index, conformance.domains, conformance.source);
+        for (self.graph.contract_safety_conformances.items) |conformance| {
+            if (!conformance.safety_required) continue;
+            try self.validateContractSafetyContract(inference, conformance.contract, conformance.method, conformance.receiver_input_index, conformance.domains, conformance.source);
         }
         for (self.graph.virtualizes.items) |virtualize| {
+            if (!virtualize.safety_required) continue;
             for (self.graph.virtual_registry_refs.items[virtualize.safety_methods.start..][0..virtualize.safety_methods.len], 0..) |registry_id, index| {
                 const registry = self.graph.virtual_registries.items[@intFromEnum(registry_id)];
                 const declared = registry.safety_contract orelse continue;
                 const method = self.graph.function_refs.items[virtualize.methods.start + index];
-                try self.validateAbstractSafetyContract(inference, declared, method, registry.receiver_input_index, virtualize.domains, virtualize.source);
+                try self.validateContractSafetyContract(inference, declared, method, registry.receiver_input_index, virtualize.domains, virtualize.source);
             }
         }
     }
 
-    fn validateAbstractSafetyContract(self: *SafetyChecker, inference: *summary_infer.Infer, declared: primitives.MethodSafetyContract, method: graph_mod.GlobalFunctionId, receiver: ?u32, domains: []const primitives.StorageDomainMapping, source: primitives.SourceRef) !void {
+    fn validateContractSafetyContract(self: *SafetyChecker, inference: *summary_infer.Infer, declared: primitives.MethodSafetyContract, method: graph_mod.GlobalFunctionId, receiver: ?u32, domains: []const primitives.StorageDomainMapping, source: primitives.SourceRef) !void {
         const contracts = @import("contracts.zig");
         var contract = try contracts.fromDeclaration(self.allocator, declared);
         if (!try self.resolveContractOpaqueStorage(&contract, domains, method, source)) return;
@@ -278,7 +299,7 @@ pub const SafetyChecker = struct {
                 try self.report(source, "method '{s}' cannot prove transfers: move the declared input to the output directly or through lexical owners", .{self.graph.text(self.graph.declaration(function.declaration).name)});
         }
         var summary = (try inference.contractImplementationSummary(method, receiver)) orelse {
-            try self.report(source, "cannot verify Abstract safety contract for this implementation", .{});
+            try self.report(source, "cannot verify safety contract for this implementation", .{});
             return;
         };
         var scalar_invalidates: std.ArrayList(u32) = .empty;
@@ -306,11 +327,11 @@ pub const SafetyChecker = struct {
         contract = try contracts.withOutcomeGuards(self.allocator, contract);
         summary = try summary_engine.refreshOutcomeGuards(self.allocator, summary);
         if (contracts.check(contract, summary)) |failure| {
-            const method_name = self.graph.text(self.graph.declaration(function.declaration).name);
+            const method_name = self.graph.text(self.graph.declarationSourceName(function.declaration));
             if (failure.input) |path| {
                 const input_name = if (path.input_index < function.input.len) self.graph.text(self.graph.fields.items[function.input.start + path.input_index].name) else "implicit input";
-                try self.report(source, "method '{s}' violates its Abstract safety contract: {s} involving input '{s}'", .{ method_name, failure.description(), input_name });
-            } else try self.report(source, "method '{s}' violates its Abstract safety contract: {s}", .{ method_name, failure.description() });
+                try self.report(source, "method '{s}' violates its safety contract: {s} involving input '{s}'", .{ method_name, failure.description(), input_name });
+            } else try self.report(source, "method '{s}' violates its safety contract: {s}", .{ method_name, failure.description() });
             if (failure.outcome) |outcome| {
                 if (outcome.output_index < function.output.len) {
                     const output = self.graph.fields.items[function.output.start + outcome.output_index];
@@ -328,7 +349,7 @@ pub const SafetyChecker = struct {
                     };
                 }
             }
-            try self.report(declared.source, "the Abstract safety contract is declared here", .{});
+            try self.report(declared.source, "the safety contract is declared here", .{});
         }
     }
 
@@ -473,26 +494,9 @@ pub const SafetyChecker = struct {
         for (self.graph.functions.items, 0..) |function, raw| {
             if (function.body == null) continue;
             const declaration = self.graph.declaration(function.declaration);
-            if (declaration.destructor_type) |owner| {
-                var has_receiver = false;
-                for (self.graph.fields.items[function.input.start..][0..function.input.len]) |field| {
-                    const pointer = switch (self.graph.resolvedSemanticType(field.ty) orelse continue) {
-                        .pointer => |value| value,
-                        else => continue,
-                    };
-                    if (pointer.mutability != .read_write) continue;
-                    const receiver_owner = switch (self.graph.resolvedSemanticType(pointer.child) orelse continue) {
-                        .declared => |id| id,
-                        .generic => |identity| identity.base,
-                        else => continue,
-                    };
-                    if (receiver_owner == owner) has_receiver = true;
-                }
-                if (!has_receiver or function.output.len != 0)
-                    try self.report(declaration.source, "destructor must receive a mutable reference to its associated type and return no values", .{});
-            }
-            if (declaration.constructor_type == null) continue;
+
             const id: graph_mod.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
+            if (standard_contracts.initializedType(self.graph, id) == null) continue;
             if (initializer_contract.classify(self.graph, id) == .invalid)
                 try self.report(declaration.source, "initializer must return its constructed type or one Errable of that type", .{});
         }
@@ -553,7 +557,6 @@ pub const SafetyChecker = struct {
             }
         }
         for (self.graph.functions.items) |function| {
-            if (function.flags.is_abstract_dispatch) continue;
             if (!function.flags.is_c_abi and (function.body != null or function.flags.has_declared_body)) continue;
             const declaration = self.graph.declaration(function.declaration);
             const name = self.graph.text(declaration.name);
@@ -596,7 +599,8 @@ pub const SafetyChecker = struct {
                     shared_pointer_root = created;
                     break :root_blk created;
                 };
-                break :blk .{ .dependencies = try self.oneDependency(root) };
+                try state.symbolic_pointees.append(.{ .identity = binding, .initializedness = .initialized });
+                break :blk .{ .dependencies = try self.oneDependency(root), .symbolic_pointees = try self.allocator.dupe(graph_mod.GlobalBindingId, &.{binding}) };
             } else .{};
             const ty = if (isPointer(self.graph, record.ty)) self.graph.semanticType(record.ty).pointer.child else record.ty;
             if (self.graph.semanticType(ty) == .virtual) {
@@ -976,7 +980,7 @@ pub const SafetyChecker = struct {
                         try captured.append(self.allocator, .{ .domain = @enumFromInt(mapping.domain_index), .generations = roots });
                         try domains.append(self.allocator, .{ .domain_index = mapping.domain_index, .storages = try storages.toOwnedSlice(self.allocator) });
                     }
-                    if (@import("domains.zig").validateCaptured(captured.items)) |_| try self.report(virtualize.source, "Abstract storage domains share a storage generation and cannot be invalidated independently", .{});
+                    if (@import("domains.zig").validateCaptured(captured.items)) |_| try self.report(virtualize.source, "Contract storage domains share a storage generation and cannot be invalidated independently", .{});
                     value.domains = try domains.toOwnedSlice(self.allocator);
                 };
                 if (value.referenced_place) |receiver_place| if (virtualize.domains.len == 0) {
@@ -1134,7 +1138,7 @@ pub const SafetyChecker = struct {
         const fields = try self.allocator.alloc(facts.FieldFacts, range.len);
         for (self.graph.fields.items[range.start..][0..range.len], 0..) |field, index| {
             const child = try self.allocator.create(facts.ValueFacts);
-            child.* = try self.initializedValueAtPlace(state, try self.project(storage, .{ .field = @intCast(index) }), types.effectiveFieldType(field));
+            child.* = try self.initializedValueAtPlace(state, try self.project(storage, .{ .field = @intCast(index) }), field.ty);
             fields[index] = .{ .index = @intCast(index), .value = child };
             result = try self.mergeValueFacts(result, child.*);
         }
@@ -1577,16 +1581,76 @@ pub const SafetyChecker = struct {
             ((post.initializedness == .deinitialized or post.initializedness == .maybe_initialized) and post.ends_previous_roots);
     }
 
+    fn symbolicConsumptionInputs(self: *SafetyChecker, path: facts.InputPath, ids: []const graph_mod.GlobalValueFieldId, arguments: []const facts.ValueFacts) ![]const graph_mod.GlobalBindingId {
+        if (path.storage_domain != null or path.input_index >= arguments.len or path.input_index >= ids.len) return &.{};
+        var argument = arguments[path.input_index];
+        const node = self.graph.value_fields.items[@intFromEnum(ids[path.input_index])].value;
+        var ty = self.graph.node(node).ty orelse return &.{};
+        if (path.projections.len != 0) {
+            if (path.projections[path.projections.len - 1] != .dereference or isPointer(self.graph, ty)) return &.{};
+            for (path.projections[0 .. path.projections.len - 1]) |projection| {
+                ty = switch (projection) {
+                    .field => |index| blk: {
+                        const fields = types.fields(self.graph, ty) orelse return &.{};
+                        if (index >= fields.len) return &.{};
+                        break :blk (self.graph.fields.items[fields.start + index]).ty;
+                    },
+                    .variant => |index| blk: {
+                        const variants = types.variants(self.graph, ty) orelse return &.{};
+                        if (index >= variants.len) return &.{};
+                        break :blk self.graph.variants.items[variants.start + index].payload_type orelse return &.{};
+                    },
+                    .static_index, .dynamic_index => types.arrayElement(self.graph, ty) orelse return &.{},
+                    .dereference => return &.{},
+                };
+                argument = try self.projectValueFacts(argument, &.{projection});
+            }
+        }
+        // Only a whole unknown pointer carries a consumption identity. The
+        // surrounding copied record and borrowed dependency envelopes do not.
+        if (!isPointer(self.graph, ty) or argument.referenced_place != null) return &.{};
+        return argument.symbolic_pointees;
+    }
+
     fn validateConsumedInputAliasing(self: *SafetyChecker, source: primitives.SourceRef, summary: facts.SafetySummary, ids: []const graph_mod.GlobalValueFieldId, arguments: []const facts.ValueFacts, state: *FunctionState) !bool {
         for (summary.input_post_states, 0..) |post, index| {
             if (!cleanupTransition(summary, post)) continue;
-            const target = try self.resolveSummaryInputPath(post.target, ids, arguments, state) orelse continue;
-            if (mayMoveInput(summary, post) and self.initializednessAtPlace(state, target) != .initialized) {
-                try self.report(source, "relocation requires an initialized source; initialize it before transferring its owner", .{});
+            const target = try self.resolveSummaryInputPath(post.target, ids, arguments, state) orelse {
+                if (post.target.input_index >= arguments.len or post.requires_available_destination) continue;
+                const identities = try self.symbolicConsumptionInputs(post.target, ids, arguments);
+                for (identities) |identity| {
+                    for (state.symbolic_pointees.items) |pointee| {
+                        if (pointee.identity != identity or pointee.initializedness == .initialized) continue;
+                        try self.report(source, "consumption requires an initialized owner; this parameter's referent may already have been consumed", .{});
+                        return false;
+                    }
+                }
+                for (summary.input_post_states[0..index]) |previous| {
+                    if (!cleanupTransition(summary, previous) or previous.requires_available_destination or
+                        sameInputPath(previous.target, post.target) or previous.target.input_index >= arguments.len) continue;
+                    for (try self.symbolicConsumptionInputs(previous.target, ids, arguments)) |other| {
+                        if (std.mem.indexOfScalar(graph_mod.GlobalBindingId, identities, other) == null) continue;
+                        try self.report(source, "consumed inputs alias the same storage; provide distinct owners for consumption or relocation", .{});
+                        return false;
+                    }
+                }
+                continue;
+            };
+            if (!post.requires_available_destination and self.initializednessAtPlace(state, target) != .initialized) {
+                if (mayMoveInput(summary, post)) {
+                    try self.report(source, "relocation requires an initialized source; initialize it before transferring its owner", .{});
+                } else {
+                    try self.report(source, "consumption requires an initialized owner; initialize it before destroying its value", .{});
+                }
                 return false;
             }
             for (summary.input_post_states[0..index]) |previous| {
-                if (!cleanupTransition(summary, previous) or previous.target.input_index == post.target.input_index) continue;
+                if (!cleanupTransition(summary, previous)) continue;
+                if (previous.target.input_index == post.target.input_index and
+                    !(previous.target.projections.len != 0 and post.target.projections.len != 0 and
+                        previous.target.projections[previous.target.projections.len - 1] == .dereference and
+                        post.target.projections[post.target.projections.len - 1] == .dereference and
+                        !sameInputPath(previous.target, post.target))) continue;
                 const other = try self.resolveSummaryInputPath(previous.target, ids, arguments, state) orelse continue;
                 if (target.isPrefixOf(other) or other.isPrefixOf(target)) {
                     try self.report(source, "consumed inputs alias the same storage; provide distinct owners for consumption or relocation", .{});
@@ -2785,6 +2849,14 @@ pub const SafetyChecker = struct {
         for (summary.input_post_states, 0..) |post_state, post_index| {
             if (post_state.target.input_index >= arguments.len) continue;
             const index: usize = @intCast(post_state.target.input_index);
+            if (cleanupTransition(summary, post_state)) {
+                for (try self.symbolicConsumptionInputs(post_state.target, argument_ids, arguments)) |identity| {
+                    for (state.symbolic_pointees.items) |*pointee| if (pointee.identity == identity) {
+                        // Unknown input reinitialization cannot revive old aliases.
+                        pointee.initializedness = if (post_state.requires_available_destination) .maybe_initialized else post_state.initializedness;
+                    };
+                }
+            }
 
             if (post_state.opaque_ownership == .none and post_state.initializedness == .initialized and
                 post_state.may_repopulate_opaque_storage)
@@ -2885,25 +2957,34 @@ pub const SafetyChecker = struct {
     ) !?facts.Place {
         if (path_value.input_index >= arguments.len) return null;
         const index: usize = @intCast(path_value.input_index);
+        var projections = path_value.projections;
         var target = arguments[index].referenced_place orelse blk: {
-            if (index >= argument_ids.len) return null;
-            const argument = self.graph.value_fields.items[@intFromEnum(argument_ids[index])].value;
-            const argument_type = self.graph.nodes.items[@intFromEnum(argument)].ty orelse return null;
-            // A by-value parameter owns its local slot. Its summary state must
-            // not overwrite the caller Place that supplied the value; explicit
-            // move/copy evaluation has already updated that Place. Pointer
-            // arguments may still expose their own storage when provenance is
-            // unavailable (for example an abstract pointer binding).
-            if (!isPointer(self.graph, argument_type)) return null;
-            const storage = try self.resolvePlace(argument, state) orelse return null;
-            // An abstract pointer input has no concrete pointee Place. Its
-            // binding stores the pointer itself, so writing a pointee summary
-            // there would replace the pointer's own temporal dependencies.
-            if (isPointer(self.graph, self.graph.binding(storage.root).ty) and
-                arguments[index].referenced_place == null) return null;
-            break :blk storage;
+            if (index < argument_ids.len) {
+                const argument = self.graph.value_fields.items[@intFromEnum(argument_ids[index])].value;
+                const argument_type = self.graph.nodes.items[@intFromEnum(argument)].ty orelse return null;
+                if (isPointer(self.graph, argument_type)) {
+                    const storage = try self.resolvePlace(argument, state) orelse return null;
+                    // An unknown pointer binding stores the pointer, not a
+                    // concrete referent that summary effects may overwrite.
+                    if (isPointer(self.graph, self.graph.binding(storage.root).ty)) return null;
+                    break :blk storage;
+                }
+            }
+            // Copied records own their field slots, but explicit dereferences
+            // still reach caller storage. Output instantiation has facts alone;
+            // it does not need the argument syntax to follow those references.
+            var value = arguments[index];
+            for (projections, 0..) |projection, projection_index| {
+                if (projection == .dereference) {
+                    const referent = value.referenced_place orelse return null;
+                    projections = projections[projection_index + 1 ..];
+                    break :blk referent;
+                }
+                value = try self.projectValueFacts(value, &.{projection});
+            }
+            return null;
         };
-        for (path_value.projections) |projection| {
+        for (projections) |projection| {
             if (projection == .dereference) {
                 if (self.valueAtPlace(state, target)) |stored| {
                     if (stored.referenced_place) |referent| {
@@ -3007,15 +3088,11 @@ pub const SafetyChecker = struct {
         for (effect.fresh_dependencies) |fresh|
             try appendRootFact(hidden, try self.instantiateFreshRoot(fresh, state, fresh_roots));
         for (effect.input_places) |input_path| {
-            if (input_path.input_index >= arguments.len) continue;
-            var target = arguments[input_path.input_index].referenced_place orelse continue;
-            for (input_path.projections) |projection| target = try self.project(target, projection);
+            const target = try self.resolveSummaryInputPath(input_path, &.{}, arguments, state) orelse continue;
             try appendRootFact(hidden, try self.storageGeneration(state, target));
         }
         for (effect.input_generation_dependencies) |input_path| {
-            if (input_path.input_index >= arguments.len) continue;
-            var target = arguments[input_path.input_index].referenced_place orelse continue;
-            for (input_path.projections) |projection| target = try self.project(target, projection);
+            const target = try self.resolveSummaryInputPath(input_path, &.{}, arguments, state) orelse continue;
             try appendRootFact(hidden, try self.storageGeneration(state, target));
         }
         for (effect.input_dependencies) |dependency| {
@@ -3201,14 +3278,10 @@ pub const SafetyChecker = struct {
         var referenced_place: ?facts.Place = null;
         var has_referent = false;
         for (effect.input_places) |path| {
-            if (path.input_index >= arguments.len) continue;
-            if (arguments[path.input_index].referenced_place) |base| {
-                var target = base;
-                for (path.projections) |projection| target = try self.project(target, projection);
-                try appendDependencyFact(&dependencies, .{ .root = try self.storageGeneration(state, target) });
-                referenced_place = target;
-                has_referent = true;
-            }
+            const target = try self.resolveSummaryInputPath(path, &.{}, arguments, state) orelse continue;
+            try appendDependencyFact(&dependencies, .{ .root = try self.storageGeneration(state, target) });
+            referenced_place = target;
+            has_referent = true;
         }
         for (effect.input_captured_storages) |path| {
             if (path.input_index >= arguments.len) continue;
@@ -3220,9 +3293,7 @@ pub const SafetyChecker = struct {
             };
         }
         for (effect.input_generation_dependencies) |path| {
-            if (path.input_index >= arguments.len) continue;
-            var target = arguments[path.input_index].referenced_place orelse continue;
-            for (path.projections) |projection| target = try self.project(target, projection);
+            const target = try self.resolveSummaryInputPath(path, &.{}, arguments, state) orelse continue;
             try appendDependencyFact(&dependencies, .{ .root = try self.storageGeneration(state, target) });
         }
         for (effect.input_owned_roots) |path| {
@@ -3520,7 +3591,16 @@ pub const SafetyChecker = struct {
             if (!found) try variants.append(right_variant);
         }
 
+        var symbolic_pointees: std.ArrayList(graph_mod.GlobalBindingId) = .empty;
+        defer symbolic_pointees.deinit(self.allocator);
+        for (left.symbolic_pointees) |identity| try symbolic_pointees.append(self.allocator, identity);
+        for (right.symbolic_pointees) |identity| {
+            if (std.mem.indexOfScalar(graph_mod.GlobalBindingId, symbolic_pointees.items, identity) == null)
+                try symbolic_pointees.append(self.allocator, identity);
+        }
+        const symbolic = try self.allocator.dupe(graph_mod.GlobalBindingId, symbolic_pointees.items);
         return .{
+            .symbolic_pointees = symbolic,
             .explicit_dependency = left.explicit_dependency or right.explicit_dependency,
             .dependencies = try dependencies.toOwnedSlice(),
             .owned_roots = try owned.toOwnedSlice(),
@@ -4874,6 +4954,27 @@ pub const SafetyChecker = struct {
             }
             return entry.generation;
         };
+        if (state.tracker.namespace) |namespace| {
+            for (namespace.initial_storage.items) |initial| if (initial.storage.eql(storage)) {
+                const index = @intFromEnum(initial.root);
+                if (index >= state.tracker.roots.items.len or !state.tracker.roots.items[index].present) {
+                    try state.tracker.materialize(initial.root);
+                }
+                if (state.tracker.isAlive(initial.root)) {
+                    try state.storage_generations.append(.{ .storage = storage, .generation = initial.root });
+                    return initial.root;
+                }
+                // An ended incarnation cannot become the initial generation
+                // again when a lexical slot is reused in a later iteration.
+                const root = try state.tracker.establish(.fresh);
+                try state.storage_generations.append(.{ .storage = storage, .generation = root });
+                return root;
+            };
+            const root = try state.tracker.establish(.fresh);
+            try namespace.initial_storage.append(self.allocator, .{ .storage = storage, .root = root });
+            try state.storage_generations.append(.{ .storage = storage, .generation = root });
+            return root;
+        }
         const root = try state.tracker.establish(.fresh);
         try state.storage_generations.append(.{ .storage = storage, .generation = root });
         return root;
@@ -5040,8 +5141,9 @@ pub const SafetyChecker = struct {
             try self.report(source, "function output cannot depend on a local storage generation that ends before return (storage rooted at '{s}'); return an owned value instead, or create the owner in the caller and pass a reference to it", .{name});
             return;
         }
-        if (valueDependsOnDeadRoot(value, state))
+        if (valueDependsOnDeadRoot(value, state)) {
             try self.report(source, "returned reference depends on a root that has ended", .{});
+        }
     }
 
     fn rejectEscapingOutputBindings(
@@ -5166,30 +5268,52 @@ pub const SafetyChecker = struct {
         if (!right.reachable) return self.copyState(destination, left);
 
         var joined = FunctionState.init(self.allocator);
+        joined.tracker.namespace = left.tracker.namespace;
+        std.debug.assert(left.tracker.namespace == right.tracker.namespace);
         errdefer joined.deinit();
+
+        for (left.symbolic_pointees.items) |pointee| {
+            var result = pointee;
+            for (right.symbolic_pointees.items) |other| {
+                if (other.identity == pointee.identity and other.initializedness != pointee.initializedness)
+                    result.initializedness = .maybe_initialized;
+            }
+            try joined.symbolic_pointees.append(result);
+        }
+        for (right.symbolic_pointees.items) |pointee| {
+            var found = false;
+            for (left.symbolic_pointees.items) |other| if (other.identity == pointee.identity) {
+                found = true;
+                break;
+            };
+            if (!found) try joined.symbolic_pointees.append(pointee);
+        }
 
         const root_count = @max(left.tracker.roots.items.len, right.tracker.roots.items.len);
         for (0..root_count) |index| {
             const id: facts.ValidityRootId = @enumFromInt(index);
-            const left_state: @TypeOf(left.tracker.roots.items[0].state) = if (index < left.tracker.roots.items.len)
+            const left_present = index < left.tracker.roots.items.len and left.tracker.roots.items[index].present;
+            const right_present = index < right.tracker.roots.items.len and right.tracker.roots.items[index].present;
+            const left_state: @TypeOf(left.tracker.roots.items[0].state) = if (left_present)
                 left.tracker.roots.items[index].state
             else if (self.storageGenerationWasOnlyMaterializedIn(id, right, left))
                 .alive
             else
                 .dead;
-            const right_state: @TypeOf(right.tracker.roots.items[0].state) = if (index < right.tracker.roots.items.len)
+            const right_state: @TypeOf(right.tracker.roots.items[0].state) = if (right_present)
                 right.tracker.roots.items[index].state
             else if (self.storageGenerationWasOnlyMaterializedIn(id, left, right))
                 .alive
             else
                 .dead;
-            const left_owned = index < left.tracker.roots.items.len and left.tracker.roots.items[index].owned_resource;
-            const right_owned = index < right.tracker.roots.items.len and right.tracker.roots.items[index].owned_resource;
+            const left_owned = left_present and left.tracker.roots.items[index].owned_resource;
+            const right_owned = right_present and right.tracker.roots.items[index].owned_resource;
             try joined.tracker.roots.append(.{
                 .id = id,
+                .present = left_present or right_present,
                 .state = if (left_state == right_state) left_state else .maybe_alive,
                 .owned_resource = left_owned or right_owned,
-                .outcome_guard = if (index < left.tracker.roots.items.len and index < right.tracker.roots.items.len and
+                .outcome_guard = if (left_present and right_present and
                     left.tracker.roots.items[index].outcome_guard == right.tracker.roots.items[index].outcome_guard)
                     left.tracker.roots.items[index].outcome_guard
                 else
@@ -5717,7 +5841,6 @@ pub const SafetyChecker = struct {
         materialized: *const FunctionState,
         other: *const FunctionState,
     ) bool {
-        _ = self;
         var storage: ?facts.Place = null;
         for (materialized.storage_generations.items) |entry| if (entry.generation == root) {
             storage = entry.storage;
@@ -5725,6 +5848,9 @@ pub const SafetyChecker = struct {
         };
         const target = storage orelse return false;
         for (other.storage_generations.items) |entry| if (entry.storage.eql(target)) return false;
+        // Program-lifetime bindings are initialized independently of whether
+        // this path has read them and materialized their place facts.
+        if (self.graph.isModuleBinding(target.root)) return true;
 
         var projection_count = target.projections.len;
         while (true) {
@@ -6328,6 +6454,7 @@ fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChe
         left.storage_capabilities.items.len != right.storage_capabilities.items.len or
         left.lexical_storage_generations.items.len != right.lexical_storage_generations.items.len or
         left.places.items.len != right.places.items.len or
+        left.symbolic_pointees.items.len != right.symbolic_pointees.items.len or
         left.ownership_edges.items.len != right.ownership_edges.items.len or
         left.storage_generations.items.len != right.storage_generations.items.len or
         left.opaque_storages.items.len != right.opaque_storages.items.len or
@@ -6335,8 +6462,17 @@ fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChe
         left.choice_rejected.items.len != right.choice_rejected.items.len or
         left.choice_temporary_active.items.len != right.choice_temporary_active.items.len) return false;
 
+    for (left.symbolic_pointees.items) |pointee| {
+        var found = false;
+        for (right.symbolic_pointees.items) |other| if (other.identity == pointee.identity) {
+            if (other.initializedness != pointee.initializedness) return false;
+            found = true;
+            break;
+        };
+        if (!found) return false;
+    }
     for (left.tracker.roots.items, right.tracker.roots.items) |a, b|
-        if (a.state != b.state or a.owned_resource != b.owned_resource or a.outcome_guard != b.outcome_guard) return false;
+        if (a.present != b.present or a.state != b.state or a.owned_resource != b.owned_resource or a.outcome_guard != b.outcome_guard) return false;
     for (left.storage_capabilities.items, right.storage_capabilities.items) |a, b|
         if (a != b) return false;
     for (left.lexical_storage_generations.items) |root|
@@ -6405,6 +6541,9 @@ fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChe
 }
 
 fn valueFactsEqual(left: facts.ValueFacts, right: facts.ValueFacts) bool {
+    if (left.symbolic_pointees.len != right.symbolic_pointees.len) return false;
+    for (left.symbolic_pointees) |identity|
+        if (std.mem.indexOfScalar(graph_mod.GlobalBindingId, right.symbolic_pointees, identity) == null) return false;
     if (left.domains.len != right.domains.len) return false;
     for (left.domains, right.domains) |a, b| {
         if (a.domain_index != b.domain_index or a.storages.len != b.storages.len) return false;
@@ -7950,4 +8089,59 @@ test "mixed dependency guards capture mutable entry facts before replacement" {
     try std.testing.expectEqual(@as(usize, 1), prepared.len);
     try std.testing.expectEqual(@as(u32, 1), prepared[0].proof.entry_facts.terms[0].variant_index);
     try std.testing.expectEqual(@as(?u32, 2), (try checker.entryConditionValue(arguments[0], &.{.dereference}, &state)).?.known_choice_variant);
+}
+
+test "branch root identities separate owned resources from lexical temporaries" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(allocator, undefined, undefined);
+    defer checker.deinit();
+    var namespace: facts.Tracker.RootNamespace = .{};
+    var entry = SafetyChecker.FunctionState.init(allocator);
+    defer entry.deinit();
+    entry.tracker.namespace = &namespace;
+    var owner_branch = try entry.clone(allocator, null);
+    defer owner_branch.deinit();
+    var temporary_branch = try entry.clone(allocator, null);
+    defer temporary_branch.deinit();
+    const owner = try owner_branch.tracker.establish(.fresh);
+    owner_branch.tracker.roots.items[@intFromEnum(owner)].owned_resource = true;
+    const temporary = try temporary_branch.tracker.establish(.fresh);
+    try std.testing.expect(owner != temporary);
+    temporary_branch.tracker.end(temporary);
+    try temporary_branch.lexical_storage_generations.append(temporary);
+    var joined = SafetyChecker.FunctionState.init(allocator);
+    defer joined.deinit();
+    try checker.joinState(&joined, &owner_branch, &temporary_branch);
+    const result: facts.ValueFacts = .{ .dependencies = &.{.{ .root = owner }}, .owned_roots = &.{owner} };
+    try std.testing.expect(checker.escapingLocalRoot(@enumFromInt(0), result, &joined) == null);
+    try std.testing.expect(joined.tracker.roots.items[@intFromEnum(owner)].owned_resource);
+    try std.testing.expect(!joined.tracker.roots.items[@intFromEnum(temporary)].owned_resource);
+    try std.testing.expectEqual(.dead, joined.tracker.roots.items[@intFromEnum(temporary)].state);
+}
+
+test "branches share initial storage identities without reviving ended generations" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(allocator, undefined, undefined);
+    defer checker.deinit();
+    var namespace: facts.Tracker.RootNamespace = .{};
+    var entry = SafetyChecker.FunctionState.init(allocator);
+    defer entry.deinit();
+    entry.tracker.namespace = &namespace;
+    var left = try entry.clone(allocator, null);
+    defer left.deinit();
+    var right = try entry.clone(allocator, null);
+    defer right.deinit();
+    const storage = facts.Place{ .root = @enumFromInt(0) };
+    const initial = try checker.storageGeneration(&left, storage);
+    try std.testing.expectEqual(initial, try checker.storageGeneration(&right, storage));
+    left.tracker.end(initial);
+    _ = left.storage_generations.pop();
+    const replacement = try checker.storageGeneration(&left, storage);
+    try std.testing.expect(replacement != initial);
+    try std.testing.expect(!left.tracker.isAlive(initial));
+    try std.testing.expect(right.tracker.isAlive(initial));
 }

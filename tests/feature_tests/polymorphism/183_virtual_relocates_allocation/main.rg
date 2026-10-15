@@ -1,17 +1,17 @@
-Mover: Abstract = (
-    transfer(.self: &Self, .source: $&DynamicArray#(Int32), .destination: $&DynamicArray#(Int32)) -> ()
+Mover#(.Participant: Type): Contract = (
+    .transfer: (.self: &Participant, .source: $&DynamicArray#(Int32), .destination: $&DynamicArray#(Int32)) -> ()
     where relocates(destination, source)
 )
 
 Manager: Type = (.unused: Int32)
 
-Manager implements Mover
+implement Mover#(Manager) (.transfer = _impl_transfer_Manager)
 
-transfer(
+_impl_transfer_Manager := (
         .self        : &Manager,
         .source      : $&DynamicArray#(Int32),
         .destination : $&DynamicArray#(Int32)
-    ) -> () := {
+    ) -> ()  {
     relocate(source, destination)
 }
 
@@ -31,10 +31,10 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     source ::= unwrap_or_abort(DynamicArray#(Int32)(.capacity = 2))
     unwrap_or_abort(push(.self = $&source, .value = 42))
     destination ::= unwrap_or_abort(DynamicArray#(Int32)(.capacity = 1))
-    deinit#(Int32)(.self = $&destination)
+    deinit(.self = $&destination)
     transfer_owned(&mover, $&source, $&destination)
 
     offset :: UIntNative = 0
-    element ::= unwrap_or_abort(get_ro_ref#(Int32)(.self = &destination, .index = offset))
+    element ::= unwrap_or_abort(get_ro_ref(.self = &destination, .index = offset))
     if element&!= 42 { status_code = 1 }
 }

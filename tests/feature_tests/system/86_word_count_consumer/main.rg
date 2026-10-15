@@ -54,7 +54,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     expect_count(.self = &counts, .word = "café", .expected = 3, .allocator = allocator)!
 }
 
-main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+main#(.WriterType: Type: Writer#(WriterType))(.system: System, .writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
     run_main(.system = system)!!!
     status_code = 0
 }

@@ -36,7 +36,7 @@ _array_storage#(
     count ::= length(&values).count
     address :: UIntNative = 0
 
-    if count != 0 { address = UIntNative(.value = data(.self = &values).pointer) }
+    if count != 0 { address = data(.self = &values).pointer | convert#(.to: UIntNative)(_) }
 
     result = _owned(
         .self   = self
@@ -62,7 +62,9 @@ _copy_numeric#(
     capacity ::= length(&destination).count
     address :: UIntNative = 0
 
-    if capacity != 0 { address = UIntNative(.value = data(.self = &destination).pointer) }
+    if capacity != 0 {
+        address = data(.self = &destination).pointer | convert#(.to: UIntNative)(_)
+    }
     copied :: UIntNative = 0
 
     if [
@@ -109,541 +111,120 @@ _native_dtype() -> (.value: StringView) := {
     if size_of(.type = UIntNative) == 4 { value = "=u4" } else { value = "=u8" }
 }
 
-numeric_buffer(
+-- Element metadata selects the native format; view mutability stays explicit.
+_PythonNumericScalar#(.Value: Type): Contract = (
+    .native_kind : () -> (.value: Int32)
+    .dtype       : () -> (.value: StringView)
+)
+
+_PythonNumericView#(.View: Type): Contract = (
+    .Element : Type
+)
+
+implement#(.t: Type: _PythonNumericScalar#(t)) _PythonNumericView#(ArrayView#(.t: t)) (
+    .Element : Type = t
+)
+
+implement#(.t: Type: _PythonNumericScalar#(t)) _PythonNumericView#(ArrayViewRO#(.t: t)) (
+    .Element : Type = t
+)
+
+numeric_buffer#(
+        .View : Type: _PythonNumericView#(View)
+    ) := (
         .self   : &Python,
-        .values : ArrayViewRO#(.t: Int8)
+        .values : View
     ) -> (
         .result : Errable#(Object, (..python_error))
-    ) := {
-    result = _array_storage#(.t: Int8)(.self = self, .values = values)
+    ) {
+    result = ~_array_storage#(.t: _PythonNumericView#(View).Element)(
+        .self   = self
+        .values = values
+    )
 }
 
-numeric_array(
+numeric_array#(
+        .View : Type: _PythonNumericView#(View)
+    ) := (
         .self   : &Python,
-        .values : ArrayViewRO#(.t: Int8)
+        .values : View
     ) -> (
         .result : Errable#(Object, (..python_error))
-    ) := {
+    ) {
     storage ::= numeric_buffer(.self = self, .values = values)!
-
-    result = _numpy_array(.self = self, .storage = &storage, .dtype = "=i1")
+    result = ~_numpy_array(
+        .self    = self
+        .storage = &storage
+        .dtype   = _PythonNumericScalar#(_PythonNumericView#(View).Element).dtype()
+    )
 }
 
-numeric_buffer(
-        .self   : &Python,
-        .values : ArrayView#(.t: Int8)
-    ) -> (
-        .result : Errable#(Object, (..python_error))
-    ) := {
-    result = _array_storage#(.t: Int8)(.self = self, .values = values)
-}
-
-numeric_array(
-        .self   : &Python,
-        .values : ArrayView#(.t: Int8)
-    ) -> (
-        .result : Errable#(Object, (..python_error))
-    ) := {
-    storage ::= numeric_buffer(.self = self, .values = values)!
-
-    result = _numpy_array(.self = self, .storage = &storage, .dtype = "=i1")
-}
-
-copy_numeric(
+copy_numeric#(
+        .t : Type: _PythonNumericScalar#(t)
+    ) := (
         .self        : &Object,
-        .destination : ArrayView#(.t: Int8)
+        .destination : ArrayView#(.t: t)
     ) -> (
         .result : Errable#(UIntNative, (..python_error))
-    ) := {
-    result = _copy_numeric(.self = self, .destination = destination, .kind = 0)
+    ) {
+    result = _copy_numeric(
+        .self        = self
+        .destination = destination
+        .kind        = _PythonNumericScalar#(t).native_kind()
+    )
 }
 
-numeric_buffer(
-        .self   : &Python,
-        .values : ArrayViewRO#(.t: Int16)
-    ) -> (
-        .result : Errable#(Object, (..python_error))
-    ) := {
-    result = _array_storage#(.t: Int16)(.self = self, .values = values)
-}
-
-numeric_array(
-        .self   : &Python,
-        .values : ArrayViewRO#(.t: Int16)
-    ) -> (
-        .result : Errable#(Object, (..python_error))
-    ) := {
-    storage ::= numeric_buffer(.self = self, .values = values)!
-
-    result = _numpy_array(.self = self, .storage = &storage, .dtype = "=i2")
-}
-
-numeric_buffer(
-        .self   : &Python,
-        .values : ArrayView#(.t: Int16)
-    ) -> (
-        .result : Errable#(Object, (..python_error))
-    ) := {
-    result = _array_storage#(.t: Int16)(.self = self, .values = values)
-}
-
-numeric_array(
-        .self   : &Python,
-        .values : ArrayView#(.t: Int16)
-    ) -> (
-        .result : Errable#(Object, (..python_error))
-    ) := {
-    storage ::= numeric_buffer(.self = self, .values = values)!
-
-    result = _numpy_array(.self = self, .storage = &storage, .dtype = "=i2")
-}
-
-copy_numeric(
-        .self        : &Object,
-        .destination : ArrayView#(.t: Int16)
-    ) -> (
-        .result : Errable#(UIntNative, (..python_error))
-    ) := {
-    result = _copy_numeric(.self = self, .destination = destination, .kind = 0)
-}
-
-numeric_buffer(
-        .self   : &Python,
-        .values : ArrayViewRO#(.t: Int32)
-    ) -> (
-        .result : Errable#(Object, (..python_error))
-    ) := {
-    result = _array_storage#(.t: Int32)(.self = self, .values = values)
-}
-
-numeric_array(
-        .self   : &Python,
-        .values : ArrayViewRO#(.t: Int32)
-    ) -> (
-        .result : Errable#(Object, (..python_error))
-    ) := {
-    storage ::= numeric_buffer(.self = self, .values = values)!
-
-    result = _numpy_array(.self = self, .storage = &storage, .dtype = "=i4")
-}
-
-numeric_buffer(
-        .self   : &Python,
-        .values : ArrayView#(.t: Int32)
-    ) -> (
-        .result : Errable#(Object, (..python_error))
-    ) := {
-    result = _array_storage#(.t: Int32)(.self = self, .values = values)
-}
-
-numeric_array(
-        .self   : &Python,
-        .values : ArrayView#(.t: Int32)
-    ) -> (
-        .result : Errable#(Object, (..python_error))
-    ) := {
-    storage ::= numeric_buffer(.self = self, .values = values)!
-
-    result = _numpy_array(.self = self, .storage = &storage, .dtype = "=i4")
-}
-
-copy_numeric(
-        .self        : &Object,
-        .destination : ArrayView#(.t: Int32)
-    ) -> (
-        .result : Errable#(UIntNative, (..python_error))
-    ) := {
-    result = _copy_numeric(.self = self, .destination = destination, .kind = 0)
-}
-
-numeric_buffer(
-        .self   : &Python,
-        .values : ArrayViewRO#(.t: Int64)
-    ) -> (
-        .result : Errable#(Object, (..python_error))
-    ) := {
-    result = _array_storage#(.t: Int64)(.self = self, .values = values)
-}
-
-numeric_array(
-        .self   : &Python,
-        .values : ArrayViewRO#(.t: Int64)
-    ) -> (
-        .result : Errable#(Object, (..python_error))
-    ) := {
-    storage ::= numeric_buffer(.self = self, .values = values)!
-
-    result = _numpy_array(.self = self, .storage = &storage, .dtype = "=i8")
-}
-
-numeric_buffer(
-        .self   : &Python,
-        .values : ArrayView#(.t: Int64)
-    ) -> (
-        .result : Errable#(Object, (..python_error))
-    ) := {
-    result = _array_storage#(.t: Int64)(.self = self, .values = values)
-}
-
-numeric_array(
-        .self   : &Python,
-        .values : ArrayView#(.t: Int64)
-    ) -> (
-        .result : Errable#(Object, (..python_error))
-    ) := {
-    storage ::= numeric_buffer(.self = self, .values = values)!
-
-    result = _numpy_array(.self = self, .storage = &storage, .dtype = "=i8")
-}
-
-copy_numeric(
-        .self        : &Object,
-        .destination : ArrayView#(.t: Int64)
-    ) -> (
-        .result : Errable#(UIntNative, (..python_error))
-    ) := {
-    result = _copy_numeric(.self = self, .destination = destination, .kind = 0)
-}
-
-numeric_buffer(
-        .self   : &Python,
-        .values : ArrayViewRO#(.t: UInt8)
-    ) -> (
-        .result : Errable#(Object, (..python_error))
-    ) := {
-    result = _array_storage#(.t: UInt8)(.self = self, .values = values)
-}
-
-numeric_array(
-        .self   : &Python,
-        .values : ArrayViewRO#(.t: UInt8)
-    ) -> (
-        .result : Errable#(Object, (..python_error))
-    ) := {
-    storage ::= numeric_buffer(.self = self, .values = values)!
-
-    result = _numpy_array(.self = self, .storage = &storage, .dtype = "=u1")
-}
-
-numeric_buffer(
-        .self   : &Python,
-        .values : ArrayView#(.t: UInt8)
-    ) -> (
-        .result : Errable#(Object, (..python_error))
-    ) := {
-    result = _array_storage#(.t: UInt8)(.self = self, .values = values)
-}
-
-numeric_array(
-        .self   : &Python,
-        .values : ArrayView#(.t: UInt8)
-    ) -> (
-        .result : Errable#(Object, (..python_error))
-    ) := {
-    storage ::= numeric_buffer(.self = self, .values = values)!
-
-    result = _numpy_array(.self = self, .storage = &storage, .dtype = "=u1")
-}
-
-copy_numeric(
-        .self        : &Object,
-        .destination : ArrayView#(.t: UInt8)
-    ) -> (
-        .result : Errable#(UIntNative, (..python_error))
-    ) := {
-    result = _copy_numeric(.self = self, .destination = destination, .kind = 1)
-}
-
-numeric_buffer(
-        .self   : &Python,
-        .values : ArrayViewRO#(.t: UInt16)
-    ) -> (
-        .result : Errable#(Object, (..python_error))
-    ) := {
-    result = _array_storage#(.t: UInt16)(.self = self, .values = values)
-}
-
-numeric_array(
-        .self   : &Python,
-        .values : ArrayViewRO#(.t: UInt16)
-    ) -> (
-        .result : Errable#(Object, (..python_error))
-    ) := {
-    storage ::= numeric_buffer(.self = self, .values = values)!
-
-    result = _numpy_array(.self = self, .storage = &storage, .dtype = "=u2")
-}
-
-numeric_buffer(
-        .self   : &Python,
-        .values : ArrayView#(.t: UInt16)
-    ) -> (
-        .result : Errable#(Object, (..python_error))
-    ) := {
-    result = _array_storage#(.t: UInt16)(.self = self, .values = values)
-}
-
-numeric_array(
-        .self   : &Python,
-        .values : ArrayView#(.t: UInt16)
-    ) -> (
-        .result : Errable#(Object, (..python_error))
-    ) := {
-    storage ::= numeric_buffer(.self = self, .values = values)!
-
-    result = _numpy_array(.self = self, .storage = &storage, .dtype = "=u2")
-}
-
-copy_numeric(
-        .self        : &Object,
-        .destination : ArrayView#(.t: UInt16)
-    ) -> (
-        .result : Errable#(UIntNative, (..python_error))
-    ) := {
-    result = _copy_numeric(.self = self, .destination = destination, .kind = 1)
-}
-
-numeric_buffer(
-        .self   : &Python,
-        .values : ArrayViewRO#(.t: UInt32)
-    ) -> (
-        .result : Errable#(Object, (..python_error))
-    ) := {
-    result = _array_storage#(.t: UInt32)(.self = self, .values = values)
-}
-
-numeric_array(
-        .self   : &Python,
-        .values : ArrayViewRO#(.t: UInt32)
-    ) -> (
-        .result : Errable#(Object, (..python_error))
-    ) := {
-    storage ::= numeric_buffer(.self = self, .values = values)!
-
-    result = _numpy_array(.self = self, .storage = &storage, .dtype = "=u4")
-}
-
-numeric_buffer(
-        .self   : &Python,
-        .values : ArrayView#(.t: UInt32)
-    ) -> (
-        .result : Errable#(Object, (..python_error))
-    ) := {
-    result = _array_storage#(.t: UInt32)(.self = self, .values = values)
-}
-
-numeric_array(
-        .self   : &Python,
-        .values : ArrayView#(.t: UInt32)
-    ) -> (
-        .result : Errable#(Object, (..python_error))
-    ) := {
-    storage ::= numeric_buffer(.self = self, .values = values)!
-
-    result = _numpy_array(.self = self, .storage = &storage, .dtype = "=u4")
-}
-
-copy_numeric(
-        .self        : &Object,
-        .destination : ArrayView#(.t: UInt32)
-    ) -> (
-        .result : Errable#(UIntNative, (..python_error))
-    ) := {
-    result = _copy_numeric(.self = self, .destination = destination, .kind = 1)
-}
-
-numeric_buffer(
-        .self   : &Python,
-        .values : ArrayViewRO#(.t: UInt64)
-    ) -> (
-        .result : Errable#(Object, (..python_error))
-    ) := {
-    result = _array_storage#(.t: UInt64)(.self = self, .values = values)
-}
-
-numeric_array(
-        .self   : &Python,
-        .values : ArrayViewRO#(.t: UInt64)
-    ) -> (
-        .result : Errable#(Object, (..python_error))
-    ) := {
-    storage ::= numeric_buffer(.self = self, .values = values)!
-
-    result = _numpy_array(.self = self, .storage = &storage, .dtype = "=u8")
-}
-
-numeric_buffer(
-        .self   : &Python,
-        .values : ArrayView#(.t: UInt64)
-    ) -> (
-        .result : Errable#(Object, (..python_error))
-    ) := {
-    result = _array_storage#(.t: UInt64)(.self = self, .values = values)
-}
-
-numeric_array(
-        .self   : &Python,
-        .values : ArrayView#(.t: UInt64)
-    ) -> (
-        .result : Errable#(Object, (..python_error))
-    ) := {
-    storage ::= numeric_buffer(.self = self, .values = values)!
-
-    result = _numpy_array(.self = self, .storage = &storage, .dtype = "=u8")
-}
-
-copy_numeric(
-        .self        : &Object,
-        .destination : ArrayView#(.t: UInt64)
-    ) -> (
-        .result : Errable#(UIntNative, (..python_error))
-    ) := {
-    result = _copy_numeric(.self = self, .destination = destination, .kind = 1)
-}
-
-numeric_buffer(
-        .self   : &Python,
-        .values : ArrayViewRO#(.t: UIntNative)
-    ) -> (
-        .result : Errable#(Object, (..python_error))
-    ) := {
-    result = _array_storage#(.t: UIntNative)(.self = self, .values = values)
-}
-
-numeric_array(
-        .self   : &Python,
-        .values : ArrayViewRO#(.t: UIntNative)
-    ) -> (
-        .result : Errable#(Object, (..python_error))
-    ) := {
-    storage ::= numeric_buffer(.self = self, .values = values)!
-
-    result = _numpy_array(.self = self, .storage = &storage, .dtype = _native_dtype().value)
-}
-
-numeric_buffer(
-        .self   : &Python,
-        .values : ArrayView#(.t: UIntNative)
-    ) -> (
-        .result : Errable#(Object, (..python_error))
-    ) := {
-    result = _array_storage#(.t: UIntNative)(.self = self, .values = values)
-}
-
-numeric_array(
-        .self   : &Python,
-        .values : ArrayView#(.t: UIntNative)
-    ) -> (
-        .result : Errable#(Object, (..python_error))
-    ) := {
-    storage ::= numeric_buffer(.self = self, .values = values)!
-
-    result = _numpy_array(.self = self, .storage = &storage, .dtype = _native_dtype().value)
-}
-
-copy_numeric(
-        .self        : &Object,
-        .destination : ArrayView#(.t: UIntNative)
-    ) -> (
-        .result : Errable#(UIntNative, (..python_error))
-    ) := {
-    result = _copy_numeric(.self = self, .destination = destination, .kind = 1)
-}
-
-numeric_buffer(
-        .self   : &Python,
-        .values : ArrayViewRO#(.t: Float32)
-    ) -> (
-        .result : Errable#(Object, (..python_error))
-    ) := {
-    result = _array_storage#(.t: Float32)(.self = self, .values = values)
-}
-
-numeric_array(
-        .self   : &Python,
-        .values : ArrayViewRO#(.t: Float32)
-    ) -> (
-        .result : Errable#(Object, (..python_error))
-    ) := {
-    storage ::= numeric_buffer(.self = self, .values = values)!
-
-    result = _numpy_array(.self = self, .storage = &storage, .dtype = "=f4")
-}
-
-numeric_buffer(
-        .self   : &Python,
-        .values : ArrayView#(.t: Float32)
-    ) -> (
-        .result : Errable#(Object, (..python_error))
-    ) := {
-    result = _array_storage#(.t: Float32)(.self = self, .values = values)
-}
-
-numeric_array(
-        .self   : &Python,
-        .values : ArrayView#(.t: Float32)
-    ) -> (
-        .result : Errable#(Object, (..python_error))
-    ) := {
-    storage ::= numeric_buffer(.self = self, .values = values)!
-
-    result = _numpy_array(.self = self, .storage = &storage, .dtype = "=f4")
-}
-
-copy_numeric(
-        .self        : &Object,
-        .destination : ArrayView#(.t: Float32)
-    ) -> (
-        .result : Errable#(UIntNative, (..python_error))
-    ) := {
-    result = _copy_numeric(.self = self, .destination = destination, .kind = 2)
-}
-
-numeric_buffer(
-        .self   : &Python,
-        .values : ArrayViewRO#(.t: Float64)
-    ) -> (
-        .result : Errable#(Object, (..python_error))
-    ) := {
-    result = _array_storage#(.t: Float64)(.self = self, .values = values)
-}
-
-numeric_array(
-        .self   : &Python,
-        .values : ArrayViewRO#(.t: Float64)
-    ) -> (
-        .result : Errable#(Object, (..python_error))
-    ) := {
-    storage ::= numeric_buffer(.self = self, .values = values)!
-
-    result = _numpy_array(.self = self, .storage = &storage, .dtype = "=f8")
-}
-
-numeric_buffer(
-        .self   : &Python,
-        .values : ArrayView#(.t: Float64)
-    ) -> (
-        .result : Errable#(Object, (..python_error))
-    ) := {
-    result = _array_storage#(.t: Float64)(.self = self, .values = values)
-}
-
-numeric_array(
-        .self   : &Python,
-        .values : ArrayView#(.t: Float64)
-    ) -> (
-        .result : Errable#(Object, (..python_error))
-    ) := {
-    storage ::= numeric_buffer(.self = self, .values = values)!
-
-    result = _numpy_array(.self = self, .storage = &storage, .dtype = "=f8")
-}
-
-copy_numeric(
-        .self        : &Object,
-        .destination : ArrayView#(.t: Float64)
-    ) -> (
-        .result : Errable#(UIntNative, (..python_error))
-    ) := {
-    result = _copy_numeric(.self = self, .destination = destination, .kind = 2)
-}
+implement _PythonNumericScalar#(Int8) (
+    .native_kind = () -> (.value: Int32) { value = 0 }
+    .dtype       = () -> (.value: StringView) { value = "=i1" }
+)
+
+implement _PythonNumericScalar#(Int16) (
+    .native_kind = () -> (.value: Int32) { value = 0 }
+    .dtype       = () -> (.value: StringView) { value = "=i2" }
+)
+
+implement _PythonNumericScalar#(Int32) (
+    .native_kind = () -> (.value: Int32) { value = 0 }
+    .dtype       = () -> (.value: StringView) { value = "=i4" }
+)
+
+implement _PythonNumericScalar#(Int64) (
+    .native_kind = () -> (.value: Int32) { value = 0 }
+    .dtype       = () -> (.value: StringView) { value = "=i8" }
+)
+
+implement _PythonNumericScalar#(UInt8) (
+    .native_kind = () -> (.value: Int32) { value = 1 }
+    .dtype       = () -> (.value: StringView) { value = "=u1" }
+)
+
+implement _PythonNumericScalar#(UInt16) (
+    .native_kind = () -> (.value: Int32) { value = 1 }
+    .dtype       = () -> (.value: StringView) { value = "=u2" }
+)
+
+implement _PythonNumericScalar#(UInt32) (
+    .native_kind = () -> (.value: Int32) { value = 1 }
+    .dtype       = () -> (.value: StringView) { value = "=u4" }
+)
+
+implement _PythonNumericScalar#(UInt64) (
+    .native_kind = () -> (.value: Int32) { value = 1 }
+    .dtype       = () -> (.value: StringView) { value = "=u8" }
+)
+
+implement _PythonNumericScalar#(UIntNative) (
+    .native_kind = () -> (.value: Int32) { value = 1 }
+    .dtype       = _native_dtype
+)
+
+implement _PythonNumericScalar#(Float32) (
+    .native_kind = () -> (.value: Int32) { value = 2 }
+    .dtype       = () -> (.value: StringView) { value = "=f4" }
+)
+
+implement _PythonNumericScalar#(Float64) (
+    .native_kind = () -> (.value: Int32) { value = 2 }
+    .dtype       = () -> (.value: StringView) { value = "=f8" }
+)

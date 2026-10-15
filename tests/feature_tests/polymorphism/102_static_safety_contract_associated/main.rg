@@ -1,16 +1,17 @@
-Source#(.item: Type): Abstract = (
-    get(.self: &Self) -> (.value: &item) where depends_on(value, self)
+Source#(.Participant: Type): Contract = (
+    .item: Type
+    .get: (.self: &Participant) -> (.value: &item) where depends_on(value, self)
 )
 
 Cell#(.item: Type): Type = (.value: item)
 
-Cell#(.item: Type) implements Source#(item)
+implement#(.item: Type) Source#(Cell#(item)) (.item: Type = item, .get = _cell_get)
 
-get#(.item: Type)(.self: &Cell#(item)) -> (.value: &item) := {
+_cell_get#(.item: Type) := (.self: &Cell#(item)) -> (.value: &item) {
     value = &self&.value
 }
 
-read#(.item: Type, .source_type: Type: Source#(item))(.source: &source_type) -> (.value: &item) := {
+read#(.item: Type, .source_type: Type: Source#(.item: item))(.source: &source_type) -> (.value: &item) := {
     value = get(source)
 }
 

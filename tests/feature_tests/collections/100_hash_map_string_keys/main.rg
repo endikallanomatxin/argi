@@ -14,6 +14,6 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         ..none { abort }
         ..some entry { if entry.value != 9 { abort } }
     }
-    deinit(.self = $&map, .allocator = allocator)
-    deinit(.self = $&source, .allocator = allocator)
+    deinit(.self = $&map)
+    deinit(.self = $&source)
 }

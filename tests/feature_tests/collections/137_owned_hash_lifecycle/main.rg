@@ -4,21 +4,35 @@ key_drops :: Int32 = 0
 value_drops :: Int32 = 0
 policy_drops :: Int32 = 0
 
-Tracked deinit(.self: $&Tracked) -> () := { value_drops = value_drops + 1 }
+implement Deinit#(Tracked) (
+    .deinit = (.self: $&Tracked) -> () {
+        value_drops = value_drops + 1
+    }
+)
 
 Key: Type = (.id: Int32)
 
-Key deinit(.self: $&Key) -> () := { key_drops = key_drops + 1 }
+implement Deinit#(Key) (
+    .deinit = (.self: $&Key) -> () {
+        key_drops = key_drops + 1
+    }
+)
 
 Policy: Type = ()
 
-Policy implements BorrowedHashPolicy#(.key: Key)
+implement BorrowedHashPolicy#(Policy, Key)(
+    .hash = (.self: &Policy, .key: &Key) -> (.hash: UIntNative) { hash = 7 }
 
-Policy deinit(.self: $&Policy) -> () := { policy_drops = policy_drops + 1 }
+    .eql = (.self: &Policy, .left: &Key, .right: &Key) -> (.ok: Bool) {
+        ok = left&.id == right&.id
+    }
+)
 
-hash(.self: &Policy, .key: &Key) -> (.hash: UIntNative) := { hash = 7 }
-
-eql(.self: &Policy, .left: &Key, .right: &Key) -> (.ok: Bool) := { ok = left&.id == right&.id }
+implement Deinit#(Policy) (
+    .deinit = (.self: $&Policy) -> () {
+        policy_drops = policy_drops + 1
+    }
+)
 
 run_main(.system: System) -> !Void = ..ok Void() := {
     assume allocator := system.page_allocator
@@ -51,7 +65,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     query.id = 3
     extracted ::= extract(.self = $&map, .key = &query).result
     if key_drops != 2 or value_drops != 2 or length(.self = &map).count != 28 { abort }
-    deinit(.self = $&map, .allocator = allocator)
+    deinit(.self = $&map)
     if key_drops != 30 or value_drops != 30 or policy_drops != 1 { abort }
     match extracted {
         ..none { abort }
@@ -73,7 +87,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     if has_next(.self = &iterator).ok { abort }
     query.id = 5
     taken ::= extract(.self = $&set, .key = &query).result
-    deinit(.self = $&set, .allocator = allocator)
+    deinit(.self = $&set)
     if policy_drops != 2 or key_drops != 32 { abort }
     match taken {
         ..none { abort }
@@ -86,7 +100,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     if key_drops != 33 { abort }
 }
 
-main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+main#(.WriterType: Type: Writer#(WriterType))(.system: System, .writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
     run_main(.system = system)!!!
     status_code = 0
 }

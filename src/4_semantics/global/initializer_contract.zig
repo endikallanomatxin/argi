@@ -2,6 +2,7 @@ const std = @import("std");
 const graph_mod = @import("graph.zig");
 const types = @import("types.zig");
 const generics_mod = @import("generics.zig");
+const standard_contracts = @import("standard_contracts.zig");
 
 /// Constructors return their value directly; fallible construction places it
 /// in the ordinary Errable success payload instead of refining an input place.
@@ -29,10 +30,10 @@ pub fn classify(graph: *const graph_mod.GlobalSemanticGraph, function_id: graph_
         .inferred_choice => |choice| choice.kind == .errable,
         else => false,
     };
-    if (!is_errable) return if (matchesAssociation(graph, function.declaration, result_type)) .infallible else .invalid;
+    if (!is_errable) return if (matchesAssociation(graph, function_id, result_type)) .infallible else .invalid;
     const ok = types.findVariant(graph, result_type, "ok") orelse return .invalid;
     if (ok.variant.payload_type == null or types.isBuiltin(graph, ok.variant.payload_type.?, .Void)) return .invalid;
-    if (!matchesAssociation(graph, function.declaration, ok.variant.payload_type.?)) return .invalid;
+    if (!matchesAssociation(graph, function_id, ok.variant.payload_type.?)) return .invalid;
     const err = types.findVariant(graph, result_type, "error") orelse return .invalid;
     const payload = err.variant.payload_type orelse return .invalid;
     const reason = types.findField(graph, payload, "reason") orelse return .invalid;
@@ -68,11 +69,7 @@ pub fn constructedType(
     };
 }
 
-fn matchesAssociation(graph: *const graph_mod.GlobalSemanticGraph, declaration: graph_mod.GlobalDeclId, ty: graph_mod.GlobalTypeId) bool {
-    const associated = graph.declaration(declaration).constructor_type orelse return false;
-    return switch (graph.resolvedSemanticType(ty) orelse return false) {
-        .declared => |id| id == associated,
-        .generic => |identity| identity.base == associated,
-        else => false,
-    };
+fn matchesAssociation(graph: *const graph_mod.GlobalSemanticGraph, function: graph_mod.GlobalFunctionId, ty: graph_mod.GlobalTypeId) bool {
+    if (standard_contracts.initializedType(graph, function)) |target| return types.equal(graph, target, ty);
+    return false;
 }

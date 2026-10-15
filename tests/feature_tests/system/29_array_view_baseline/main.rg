@@ -1,6 +1,6 @@
 main() -> (.status_code: Int32) := {
     data : Array#(.n = 4, .t: Int32) = (0, 0, 0, 0)
-    values ::= array_view(.array = $&data)
+    values ::= view(.array = $&data)
 
     set0 ::= set#(.t: Int32)(.self = $&values, .index = 0, .value = 3).result
     set1 ::= set#(.t: Int32)(.self = $&values, .index = 1, .value = 5).result
@@ -11,12 +11,12 @@ main() -> (.status_code: Int32) := {
         return
     }
 
-    first_result ::= get#(.t: Int32)(.self = &values, .index = 0).result
+    first_result ::= get(.self = &values, .index = 0).result
     if is(.value = first_result, .variant = ..error) {
         status_code = 12
         return
     }
-    last_result ::= get#(.t: Int32)(.self = &values, .index = 3).result
+    last_result ::= get(.self = &values, .index = 3).result
     if is(.value = last_result, .variant = ..error) {
         status_code = 12
         return
@@ -32,12 +32,12 @@ main() -> (.status_code: Int32) := {
         return
     }
 
-    second_result ::= get#(.t: Int32)(.self = &values, .index = 1).result
+    second_result ::= get(.self = &values, .index = 1).result
     if is(.value = second_result, .variant = ..error) {
         status_code = 13
         return
     }
-    third_result ::= get#(.t: Int32)(.self = &values, .index = 2).result
+    third_result ::= get(.self = &values, .index = 2).result
     if is(.value = third_result, .variant = ..error) {
         status_code = 13
         return

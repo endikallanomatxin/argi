@@ -4,46 +4,23 @@ Sink: Type = (
     .fail_write  : Bool       = false
 )
 
-Sink implements Writer
-
-write_byte(
-        .self : $&Sink,
-        .byte : UInt8
+finish(
+        .sink  : $&Sink,
+        .early : Bool
     ) -> (
-        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()
     ) := {
-    if self&.fail_write {
-        result = ..error(.reason = ..stream_write_failed)
-        return
-    }
-    result = ..ok Void()
-}
-
-flush(
-        .self : $&Sink
-    ) -> (
-        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-    ) := {
-    self&.flush_calls = self&.flush_calls + 1
-    if self&.fail_flush {
-        result = ..error(.reason = ..stream_flush_failed)
-        return
-    }
-    result = ..ok Void()
-}
-
-finish(.sink: $&Sink, .early: Bool) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()) := {
     assume writer := sink
     #defer {
-        flush(writer) handle error { result = ..error ~error }
+        Writer#().flush(writer) handle error { result = ..error ~error }
     }
 
-    write_byte(writer, 65) handle error {
+    Writer#().write_byte(writer, 65) handle error {
         result = ..error ~error
         return
     }
     if early { return }
-    write_byte(writer, 66) handle error {
+    Writer#().write_byte(writer, 66) handle error {
         result = ..error ~error
         return
     }
@@ -81,7 +58,35 @@ run_main() -> !Void = ..ok Void() := {
 
 }
 
-main(.writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+main#(.WriterType: Type: Writer#(WriterType))(.writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
     run_main()!!!
     status_code = 0
 }
+
+implement Writer#(Sink)(
+    .write_byte = (
+            .self : $&Sink,
+            .byte : UInt8
+        ) -> (
+            .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+        ) {
+        if self&.fail_write {
+            result = ..error(.reason = ..stream_write_failed)
+            return
+        }
+        result = ..ok Void()
+    }
+
+    .flush = (
+            .self : $&Sink
+        ) -> (
+            .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+        ) {
+        self&.flush_calls = self&.flush_calls + 1
+        if self&.fail_flush {
+            result = ..error(.reason = ..stream_flush_failed)
+            return
+        }
+        result = ..ok Void()
+    }
+)

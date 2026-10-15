@@ -1,5 +1,5 @@
-Closable: Abstract = (
-    close(.self: $&Self) -> () where {}
+Closable#(.Participant: Type): Contract = (
+    .close: (.self: $&Participant) -> () where {}
 )
 
 drops :: Int32 = 0
@@ -8,27 +8,31 @@ First: Type = (.value: Int32)
 
 Second: Type = (.value: Int32)
 
-First implements Closable
-Second implements Closable
+implement Closable#(First) (.close = _impl_close_First)
+implement Closable#(Second) (.close = _impl_close_Second)
 
-First deinit(.self: $&First) -> () := {
-    drops = drops + 1
-}
+implement Deinit#(First) (
+    .deinit = (.self: $&First) -> () {
+        drops = drops + 1
+    }
+)
 
-Second deinit(.self: $&Second) -> () := {
-    drops = drops + 1
-}
+implement Deinit#(Second) (
+    .deinit = (.self: $&Second) -> () {
+        drops = drops + 1
+    }
+)
 
-close(.self: $&First) -> () := {
+_impl_close_First := (.self: $&First) -> ()  {
     deinit(.self = self)
 }
 
-close(.self: $&Second) -> () := {
+_impl_close_Second := (.self: $&Second) -> ()  {
     deinit(.self = self)
 }
 
 register_second(.value: $&Second) -> () := {
-    _ ::= to_virtual#(.abstract: Closable)(.value = value)
+    _ ::= to_virtual#(.contract: Closable)(.value = value)
 }
 
 verify(.status: $&Int32) -> () := {
@@ -45,6 +49,6 @@ main() -> (.status_code: Int32) := {
     second :: Second = (.value = 0)
     register_second(.value = $&second)
     value :: First = (.value = 0)
-    virtual ::= to_virtual#(.abstract: Closable)(.value = $&value)
+    virtual ::= to_virtual#(.contract: Closable)(.value = $&value)
     close(.self = $&virtual)
 }

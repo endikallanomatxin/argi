@@ -10,12 +10,23 @@ _trusted_acquisition_subaddress(.base: UIntNative, .address: UIntNative) -> (.re
     result = address
 }
 
-once Memory init(.ffi: $&ForeignFunctionInterface = reach ffi) -> (.result: Memory) := {
+once _acquire_memory := (
+        .args : (.ffi: $&ForeignFunctionInterface = reach ffi)
+    ) -> (
+        .result : Memory
+    ) {
+    assume ffi := args.ffi
+
     result._ffi = ffi
     result._page_size = _memory_getpagesize().size
 
     if result._page_size == 0 { result._page_size = 4096 }
 }
+
+implement Init#(Memory, (.ffi: $&ForeignFunctionInterface = reach ffi)) (
+    .Result : Type            = Memory
+    .init   = _acquire_memory
+)
 
 _memory_map_aligned(
         .size      : UIntNative,
@@ -66,7 +77,7 @@ map_pages(
     match mapped {
         ..error _ { result = ..error(.reason = ..out_of_memory) }
         ..ok ~storage {
-            deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(
+            deallocator :: Virtual#(.contract: Deallocator) = to_virtual#(.contract: Deallocator)(
                 .value = self
             )
             allocation ::= establish_allocation(
@@ -80,18 +91,18 @@ map_pages(
     }
 }
 
-deallocate(
-        .self      : $&Memory,
-        .data      : RawPointer#(.t: UInt8),
-        .size      : UIntNative,
-        .alignment : UIntNative
-    ) -> () := {
-    assume ffi := self&._ffi
-    physical_size ::= page_allocator_round_up(.size = size, .alignment = self&._page_size).rounded
+implement Deallocator#(Memory) (
+    .deallocate = (
+            .self      : $&Memory,
+            .data      : RawPointer#(.t: UInt8),
+            .size      : UIntNative,
+            .alignment : UIntNative
+        ) -> () {
+        assume ffi := self&._ffi
+        physical_size ::= page_allocator_round_up(.size = size, .alignment = self&._page_size).rounded
 
-    if _memory_release_aligned(.address = data.address, .length = physical_size).status != 0 {
-        abort
+        if _memory_release_aligned(.address = data.address, .length = physical_size).status != 0 {
+            abort
+        }
     }
-}
-
-Memory implements Deallocator
+)

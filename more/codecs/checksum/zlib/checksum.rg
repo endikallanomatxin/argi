@@ -27,7 +27,7 @@ update_crc32(
     }
 
     pointer := data(source)
-    raw := raw_pointer#(.t: UInt8)(UIntNative(.value = pointer))
+    raw := raw_pointer#(.t: UInt8)(pointer | convert#(.to: UIntNative)(_))
     checksum = _crc32_z(previous, raw, count)
 }
 

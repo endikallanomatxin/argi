@@ -12,7 +12,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     info ::= metadata(.path = directory_path)!
     if info.kind != ..directory { abort }
     file_path: StringView = "tests/feature_tests/system/80_filesystem_operations/build/sample/bytes.bin"
-    file ::= open_write(.self = file_system, .path = file_path, .allocator = allocator)!
+    file ::= File(.file_system = file_system, .path = file_path, .allocator = allocator, .mode = ..write)!
     input: [4]UInt8 = (65, 0, 66, 67)
     write_all(.self = $&file, .buffer = view(.array = &input))!
     if position(.self = $&file)! != 4 { abort }
@@ -48,7 +48,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     }
 }
 
-main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+main#(.WriterType: Type: Writer#(WriterType))(.system: System, .writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
     run_main(.system = system)!!!
     status_code = 0
 }

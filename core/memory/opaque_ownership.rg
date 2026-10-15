@@ -56,12 +56,6 @@ trusted_opaque_drop#(.t: Type)(.slot: $&t) -> () := {
     deinit(.self = slot)
 }
 
--- Use this overload when the element destructor may reach an allocator. The
--- explicit input keeps the monomorphized trusted function self-contained.
-trusted_opaque_drop#(.t: Type)(.slot: $&t, .allocator: $&Allocator) -> () := {
-    deinit(.self = slot)
-}
-
 -- The caller guarantees every opaque runtime value in `storage` was already
 -- destroyed. This discharges only the checker's domain-level hidden temporal
 -- dependencies; it does not free storage or refresh its generation.

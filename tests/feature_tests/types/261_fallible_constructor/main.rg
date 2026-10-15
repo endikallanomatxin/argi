@@ -1,15 +1,20 @@
 Widget : Type = (.value: Int32)
 
-Widget init(.fail: Bool) -> (.result: Errable#(.t: Widget, .reasons: (..rejected))) := {
-    constructed :: Widget
+implement Init#(Widget, (.fail: Bool)) (
+    .Result: Type = Errable#(.t: Widget, .reasons: (..rejected))
+    .init = (.args: (.fail: Bool)) -> (.result: Result) {
+        fail ::= ~args.fail
 
-    if fail {
-        result = ..error(.reason = ..rejected)
-        return
+        constructed :: Widget
+
+        if fail {
+            result = ..error(.reason = ..rejected)
+            return
+        }
+        constructed = (.value = 42)
+        result = ..ok ~constructed
     }
-    constructed = (.value = 42)
-    result = ..ok ~constructed
-}
+)
 
 main() -> (.status_code: Int32) := {
     failed ::= Widget(.fail = true)

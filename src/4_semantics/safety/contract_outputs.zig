@@ -52,7 +52,7 @@ const Builder = struct {
             result.variants = variants;
             return result;
         }
-        if (allowed.fresh_owner and self.hasDestructor(ty)) {
+        if (allowed.fresh_owner and types.hasDestructor(self.graph, ty)) {
             result.fresh_cleanup_obligation = true;
             const source = self.next_source;
             self.next_source +%= 1;
@@ -65,7 +65,7 @@ const Builder = struct {
             const fields = try self.allocator.alloc(facts.OutputFieldEffect, range.len);
             for (self.graph.fields.items[range.start..][0..range.len], fields, 0..) |field, *output, index| {
                 const child = try self.allocator.create(facts.ValueEffect);
-                child.* = try self.value(types.effectiveFieldType(field), allowed, depth + 1);
+                child.* = try self.value(field.ty, allowed, depth + 1);
                 output.* = .{ .index = @intCast(index), .value = child };
             }
             result.fields = fields;
@@ -80,15 +80,5 @@ const Builder = struct {
             result.fields = fields;
         }
         return result;
-    }
-
-    fn hasDestructor(self: *Builder, ty: graph_mod.GlobalTypeId) bool {
-        const nominal = switch (self.graph.semanticType(ty)) {
-            .declared => |declaration| declaration,
-            .generic => |identity| identity.base,
-            else => return false,
-        };
-        for (self.graph.declarations.items) |declaration| if (declaration.destructor_type == nominal) return true;
-        return false;
     }
 };

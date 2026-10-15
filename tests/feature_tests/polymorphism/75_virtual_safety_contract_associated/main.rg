@@ -1,19 +1,21 @@
-Source#(.item: Type): Abstract = (
-    get(.self: &Self) -> (.value: item) where {}
+Source#(.Participant: Type): Contract = (
+    .item: Type
+
+    .get: (.self: &Participant) -> (.value: item) where {}
 )
 
 Cell: Type = (.value: Int32)
 
 Other: Type = (.value: Int32)
 
-Cell implements Source#(Int32)
-Other implements Source#(Int32)
+implement Source#(Cell) (.item: Type = Int32, .get = _impl_get_Cell)
+implement Source#(Other) (.item: Type = Int32, .get = _impl_get_Other)
 
-get(.self: &Cell) -> (.value: Int32) := {
+_impl_get_Cell := (.self: &Cell) -> (.value: Int32)  {
     value = self&.value
 }
 
-get(.self: &Other) -> (.value: Int32) := {
+_impl_get_Other := (.self: &Other) -> (.value: Int32)  {
     value = self&.value + 1
 }
 

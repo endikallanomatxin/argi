@@ -2,7 +2,11 @@ Tracked: Type = (.id: Int32)
 
 drops :: Int32 = 0
 
-Tracked deinit(.self: $&Tracked) -> () := { drops = drops + 1 }
+implement Deinit#(Tracked) (
+    .deinit = (.self: $&Tracked) -> () {
+        drops = drops + 1
+    }
+)
 
 return_early(.array: DynamicArray#(.t: Tracked), .allocator: $&PageAllocator) -> () := {
     assume allocator
@@ -125,7 +129,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     push(.self = $&source, .value = Tracked(.id = 19), .allocator = allocator)!
     for ~item in source { push(.self = $&target, .value = ~item, .allocator = allocator)! }
     if drops != 17 { abort }
-    deinit(.self = $&target, .allocator = allocator)
+    deinit(.self = $&target)
     if drops != 19 { abort }
 
     wrapped ::= Deque#(.t: Int32)(.allocator = allocator, .capacity = 3)!
@@ -153,7 +157,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
 
 }
 
-main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+main#(.WriterType: Type: Writer#(WriterType))(.system: System, .writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
     run_main(.system = system)!!!
     status_code = 0
 }

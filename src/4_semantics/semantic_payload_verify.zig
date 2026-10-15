@@ -45,8 +45,6 @@ pub fn declaration(comptime Ids: type, value: primitives.Declaration(Ids), bound
     try require(verify.sourceFits(value.source, bounds.files));
     try require(verify.optionalIdFits(value.type_id, bounds.types));
     try require(verify.optionalIdFits(value.function_id, bounds.functions));
-    try require(verify.optionalIdFits(value.constructor_type, bounds.declarations));
-    try require(verify.optionalIdFits(value.destructor_type, bounds.declarations));
     if (value.struct_fields) |range| try require(verify.rangeFits(range, bounds.fields));
     if (value.choice_variants) |range| try require(verify.rangeFits(range, bounds.variants));
 }
@@ -65,14 +63,14 @@ pub fn semanticType(comptime Ids: type, value: primitives.SemanticType(Ids), bou
             try require(verify.idFits(item.base, bounds.declarations));
             try require(verify.rangeFits(item.arguments, bounds.generic_arguments));
         },
-        .virtual => |abstract_type| try require(verify.idFits(abstract_type, bounds.types)),
+        .virtual => |contract_type| try require(verify.idFits(contract_type, bounds.types)),
     }
 }
 
 pub fn field(comptime Ids: type, value: primitives.Field(Ids), bounds: Bounds) !void {
     try require(verify.stringFits(value.name, bounds.strings));
     try require(verify.idFits(value.ty, bounds.types));
-    try require(verify.optionalIdFits(value.storage_type, bounds.types));
+
     try require(verify.sourceFits(value.source, bounds.files));
     try require(verify.optionalIdFits(value.default_value, bounds.nodes));
 }
@@ -110,7 +108,6 @@ pub fn binding(comptime Ids: type, value: primitives.Binding(Ids), bounds: Bound
     try require(verify.optionalIdFits(value.initialization, bounds.nodes));
     try require(verify.optionalIdFits(value.reinitialize_cleanup, bounds.nodes));
     try require(verify.optionalIdFits(value.cleanup_arguments, bounds.nodes));
-    try require(verify.optionalIdFits(value.static_implementer, bounds.types));
 }
 
 pub fn block(comptime Ids: type, value: primitives.Block(Ids), bounds: Bounds) !void {
@@ -156,7 +153,7 @@ pub fn virtualRegistry(comptime Ids: type, value: primitives.VirtualMethodRegist
 pub fn virtualize(comptime Ids: type, value: primitives.Virtualize(Ids), bounds: Bounds) !void {
     try require(verify.idFits(value.value, bounds.nodes));
     try require(verify.idFits(value.concrete_type, bounds.types));
-    try require(verify.idFits(value.abstract_decl, bounds.declarations));
+    try require(verify.idFits(value.contract_decl, bounds.declarations));
     try require(verify.idFits(value.virtual_type, bounds.types));
     try require(verify.rangeFits(value.methods, bounds.function_refs));
     try require(verify.rangeFits(value.safety_methods, bounds.virtual_registry_refs));

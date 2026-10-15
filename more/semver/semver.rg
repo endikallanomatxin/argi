@@ -8,7 +8,7 @@ VersionView: Type = (
     ._pre_end   : UIntNative
 )
 
-VersionView implements ImplicitlyCopyable
+implement ImplicitlyCopyable#(VersionView) ()
 
 _digit(.byte: UInt8) -> (.ok: Bool) := { ok = byte >= 48 and byte <= 57 }
 
@@ -139,15 +139,29 @@ parse(.text: StringView) -> (.result: Errable#(VersionView, (..invalid_input))) 
     )
 }
 
-VersionView init(
-        .text : StringView
-    ) -> (
-        .result : Errable#(VersionView, (..invalid_input))
-    ) := {
-    result = parse(.text = text)
-}
+implement Init#(
+    VersionView,
+    (
+        .text : StringView,
+    )
+) (
+        .Result : Type = Errable#(VersionView, (..invalid_input))
+        .init   = (
+                .args : (
+                    .text : StringView,
+                )
+            ) -> (
+                .result : Result
+            ) {
+            text ::= args.text
 
-as_view(.self: &VersionView) -> (.text: StringView) := { text = self&._text }
+            result = parse(.text = text)
+        }
+    )
+
+implement TextViewOf#(&VersionView) (
+    .text_view = (.self: &VersionView) -> (.view: StringView) { view = self&._text }
+)
 
 major(.self: &VersionView) -> (.text: StringView) := {
     text = string_view_slice(.view = &self&._text, .start = 0, .length = self&._major_end)
@@ -313,38 +327,44 @@ equals(.left: &VersionView, .right: &VersionView) -> (.ok: Bool) := {
     ok = left&._text == right&._text
 }
 
-operator == (.left: &VersionView, .right: &VersionView) -> (.ok: Bool) := {
-    ok = equals(.left = left, .right = right).ok
-}
+implement Equal#(VersionView, VersionView, (.left: &VersionView, .right: &VersionView)) (
+    .equal = (.args: (.left: &VersionView, .right: &VersionView)) -> (.ok: Bool) {
+        ok = equals(.left = args.left, .right = args.right).ok
+    }
+)
 
-operator != (.left: &VersionView, .right: &VersionView) -> (.ok: Bool) := {
-    ok = equals(.left = left, .right = right).ok == false
-}
+implement#(.Provider: Type: Allocator) StringFormatting#(&VersionView, Provider) (
+        .render = (
+                .value     : &VersionView,
+                .allocator : $&Provider
+            ) -> (
+                .result : Errable#(String, (..out_of_memory))
+            ) {
+            result = ~format(.value = as_view(.self = value).view, .allocator = allocator)
+        }
+        .append = (
+                .out       : $&String,
+                .value     : &VersionView,
+                .allocator : $&Provider
+            ) -> (
+                .result : Errable#(Void, (..out_of_memory))
+            ) {
+            result = format_into(
+                .out       = out
+                .value     = as_view(.self = value).view
+                .allocator = allocator
+            )
+        }
+    )
 
-format(
-        .value     : &VersionView,
-        .allocator : $&Allocator
-    ) -> (
-        .result : Errable#(String, (..out_of_memory))
-    ) := {
-    result = format(.value = as_view(value).text, .allocator = allocator)
-}
-
-format_into(
-        .out       : $&String,
-        .value     : &VersionView,
-        .allocator : $&Allocator
-    ) -> (
-        .result : Errable#(Void, (..out_of_memory))
-    ) := {
-    result = format_into(.out = out, .value = as_view(value).text, .allocator = allocator)
-}
-
-format_into(
-        .out   : $&Writer,
-        .value : &VersionView
-    ) -> (
-        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-    ) := {
-    result = write(.self = out, .text = as_view(value).text)
-}
+implement#(.Stream: Type: WriteValue#(Stream, StringView)) WriteValue#(Stream, &VersionView) (
+        .Result      : Type = WriteValue#(Stream, StringView).Result
+        .write_value = (
+                .self  : $&Stream,
+                .value : &VersionView
+            ) -> (
+                .result : Result
+            ) {
+            result = ~write(.self = self, .value = as_view(.self = value).view)
+        }
+    )

@@ -855,34 +855,14 @@ _FloatEncoding: Type = (
     .bias           : Int32
 )
 
-_float_encoding(.value: Float16) -> (.encoding: _FloatEncoding) := {
-    bits ::= trusted_reinterpret_reference#(.from: Float16, .to: UInt16)(.base = &value).reference&
-    encoding = (
-        .bits           = UInt64(.value = bits)
-        .fraction_unit  = 1024
-        .exponent_limit = 32
-        .bias           = 15
-    )
-}
-
-_float_encoding(.value: Float32) -> (.encoding: _FloatEncoding) := {
-    bits ::= trusted_reinterpret_reference#(.from: Float32, .to: UInt32)(.base = &value).reference&
-    encoding = (
-        .bits           = UInt64(.value = bits)
-        .fraction_unit  = 8388608
-        .exponent_limit = 256
-        .bias           = 127
-    )
-}
-
-_float_encoding(.value: Float64) -> (.encoding: _FloatEncoding) := {
-    bits ::= trusted_reinterpret_reference#(.from: Float64, .to: UInt64)(.base = &value).reference&
-    encoding = (
-        .bits           = bits
-        .fraction_unit  = 4503599627370496
-        .exponent_limit = 2048
-        .bias           = 1023
-    )
+_float_encoding#(
+        .Value : Type: _FloatRepresentation#(Value)
+    ) := (
+        .value : Value
+    ) -> (
+        .encoding : _FloatEncoding
+    ) {
+    encoding = _FloatRepresentation#(Value).encoding(.value = value)
 }
 
 _float_exact_digits(.integer: _FloatDecimalInteger) -> (.digits: _FloatExactDigits) := {
@@ -936,7 +916,7 @@ _float_render(.coefficient: UInt64, .power: Int32, .negative: Bool) -> (.text: _
 
     digits ::= _decimal_encode(.value = reduced)
     count :: UIntNative = 20 - digits.start
-    exponent ::= scale + unwrap_or_abort(.value = Int32(.value = count)).result - 1
+    exponent ::= scale + unwrap_or_abort(.value = count | convert#(.to: Int32)(_)).result - 1
     index :: UIntNative = 0
     -- One notation policy applies to every width: fixed for exponents -4..15,
     -- scientific outside that range. Integral fixed values retain '.0'.
@@ -977,7 +957,7 @@ _float_render(.coefficient: UInt64, .power: Int32, .negative: Bool) -> (.text: _
         return
     }
 
-    before_point ::= UIntNative(.value = exponent + 1)
+    before_point ::= [exponent + 1] | convert#(.to: UIntNative)(_)
     before ::= unwrap_or_abort(.value = before_point).result
 
     while index < count or index < before {
@@ -1031,7 +1011,7 @@ _float_encode#(.t: Type: Float)(.value: t) -> (.text: _FloatText) := {
     if exponent_field != 0 {
         mantissa = mantissa + encoding.fraction_unit
         binary_power = [
-            unwrap_or_abort(.value = Int32(.value = exponent_field)).result
+            unwrap_or_abort(.value = exponent_field | convert#(.to: Int32)(_)).result
             - encoding.bias
         ]
     }
@@ -1084,8 +1064,8 @@ _float_encode#(.t: Type: Float)(.value: t) -> (.text: _FloatText) := {
     closed ::= mantissa % 2 == 0
 
     while index < count and index < 17 {
-        digit ::= UInt32(.value = digits.bytes[digits.start + index] - 48)
-        coefficient = coefficient * 10 + UInt64(.value = digit)
+        digit ::= [digits.bytes[digits.start + index] - 48] | convert#(.to: UInt32)(_)
+        coefficient = coefficient * 10 + digit | convert#(.to: UInt64)(_)
         _float_integer_add_multiple($&floor, .other = &place, .factor = digit)
         ceil ::= floor
         _float_integer_add_multiple($&ceil, .other = &place, .factor = 1)
@@ -1121,7 +1101,7 @@ _float_encode#(.t: Type: Float)(.value: t) -> (.text: _FloatText) := {
             }
             if floor_ok == false or [ceil_ok and prefer_ceil] { coefficient = coefficient + 1 }
             power ::= [
-                unwrap_or_abort(.value = Int32(.value = count - index - 1)).result
+                unwrap_or_abort(.value = [count - index - 1] | convert#(.to: Int32)(_)).result
                 - decimal_scale
             ]
             text = _float_render(.coefficient = coefficient, .power = power, .negative = negative).text

@@ -1,28 +1,36 @@
 Owned : Type = (.allocation: Allocation)
 
-Owned init(.allocator: $&Allocator, .fail: Bool) -> (.result: Errable#(.t: Owned, .reasons: (..out_of_memory))) := {
-    constructed :: Owned
+implement#(.AllocatorProvider: Type: Allocator) Init#(Owned, (.allocator: $&AllocatorProvider, .fail: Bool)) (
+    .Result: Type = Errable#(.t: Owned, .reasons: (..out_of_memory))
+    .init = (.args: (.allocator: $&AllocatorProvider, .fail: Bool)) -> (.result: Result) {
+        allocator ::= ~args.allocator
+        fail ::= ~args.fail
 
-    allocated ::= allocate(.self = allocator, .size = 1)
-    match allocated {
-        ..error _ {
-            result = ..error(.reason = ..out_of_memory)
-        }
-        ..ok ~ payload {
-            if fail {
-                deinit(.self = $&payload)
+        constructed :: Owned
+
+        allocated ::= allocate_bytes(.self = allocator, .size = 1)
+        match allocated {
+            ..error _ {
                 result = ..error(.reason = ..out_of_memory)
-                return
             }
-            constructed = (.allocation = ~payload)
-            result = ..ok ~constructed
+            ..ok ~ payload {
+                if fail {
+                    deinit(.self = $&payload)
+                    result = ..error(.reason = ..out_of_memory)
+                    return
+                }
+                constructed = (.allocation = ~payload)
+                result = ..ok ~constructed
+            }
         }
     }
-}
+)
 
-Owned deinit(.self: $&Owned) -> () := {
-    deinit(.self = $&self&.allocation)
-}
+implement Deinit#(Owned) (
+    .deinit = (.self: $&Owned) -> () {
+        deinit(.self = $&self&.allocation)
+    }
+)
 
 main(.system: System) -> (.status_code: Int32 = 0) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)

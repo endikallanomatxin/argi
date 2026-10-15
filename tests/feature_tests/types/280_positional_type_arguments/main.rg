@@ -21,17 +21,19 @@ open_echo#(.t: Type)(.value: t) -> (.result: Errable#(t)) := {
     result = ..ok value
 }
 
-ReadValue#(.t: Type): Abstract = (
-    read(.self: &Self) -> (.value: t)
+ReadValue#(.Participant: Type): Contract = (
+    .t: Type
+
+    .read: (.self: &Participant) -> (.value: t)
 )
 
 IntegerValue: Type = (.value: Int32)
 
-IntegerValue implements ReadValue#(Int32)
+implement ReadValue#(IntegerValue) (.t: Type = Int32, .read = _impl_read_IntegerValue)
 
-read(.self: &IntegerValue) -> (.value: Int32) := { value = self&.value }
+_impl_read_IntegerValue := (.self: &IntegerValue) -> (.value: Int32)  { value = self&.value }
 
-read_value#(.t: Type, .source: Type: ReadValue#(t))(.self: &source) -> (.value: t) := {
+read_value#(.t: Type, .source: Type: ReadValue#(.t: t))(.self: &source) -> (.value: t) := {
     value = read(.self = self).value
 }
 

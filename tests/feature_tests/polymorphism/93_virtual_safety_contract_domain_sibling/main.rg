@@ -1,22 +1,22 @@
-Source: Abstract = (
+Source#(.Participant: Type): Contract = (
     domain storage
     domain sibling
-    get(.self: &Self) -> (.value: &Int32) where depends_on(value, self.storage)
-    reset(.self: $&Self) -> () where invalidates(self.storage)
+    .get: (.self: &Participant) -> (.value: &Int32) where depends_on(value, self.storage)
+    .reset: (.self: $&Participant) -> () where invalidates(self.storage)
 )
 
 Cell: Type = (.value: Int32, .other: Int32)
 
-Cell implements Source where {
+implement Source#(Cell) (.get = _impl_get_Cell, .reset = _impl_reset_Cell) where {
     storage(self.value)
     sibling(self.other)
 }
 
-get(.self: &Cell) -> (.value: &Int32) := {
+_impl_get_Cell := (.self: &Cell) -> (.value: &Int32)  {
     value = &self&.value
 }
 
-reset(.self: $&Cell) -> () := {
+_impl_reset_Cell := (.self: $&Cell) -> ()  {
     self&.value = 42
 }
 

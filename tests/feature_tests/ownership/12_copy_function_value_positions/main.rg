@@ -1,16 +1,23 @@
 Resource : Type = ()
 
-Resource init() -> (.result: Resource) := {
-    result = ()
-}
+implement Init#(Resource, ()) (
+    .Result: Type = Resource
+    .init = (.args: ()) -> (.result: Result) {
+        result = ()
+    }
+)
 
-Resource deinit(.res: $&Resource) -> () := {}
+implement Deinit#(Resource) (
+    .deinit = (.self: $&Resource) -> () {
 
-copy(.self: &Resource) -> (.value: Resource) := {
-    value = Resource()
-}
+    }
+)
 
-Resource implements InfalliblyCopyable
+implement InfalliblyCopyable#(Resource) (
+    .copy = (.self: &Resource) -> (.value: Resource) {
+        value = Resource()
+    }
+)
 
 consume(.res: Resource) -> (.status_code: Int32) := {
     status_code = 0

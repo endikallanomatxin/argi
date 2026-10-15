@@ -1,27 +1,27 @@
-Source: Abstract = (
+Source#(.Participant: Type): Contract = (
     domain storage
-    get(.self: &Self) -> (.value: &Int32) where depends_on(value, self.storage)
-    reset(.self: $&Self) -> () where invalidates(self.storage)
+    .get: (.self: &Participant) -> (.value: &Int32) where depends_on(value, self.storage)
+    .reset: (.self: $&Participant) -> () where invalidates(self.storage)
 )
 
 Cell: Type = (.value: Int32)
 
-Cell implements Source where { storage(self.value) }
+implement Source#(Cell) (.get = _impl_get_Cell, .reset = _impl_reset_Cell) where { storage(self.value) }
 
-get(.self: &Cell) -> (.value: &Int32) := { value = &self&.value }
+_impl_get_Cell := (.self: &Cell) -> (.value: &Int32)  { value = &self&.value }
 
-reset(.self: $&Cell) -> () := { self&.value = 42 }
+_impl_reset_Cell := (.self: $&Cell) -> ()  { self&.value = 42 }
 
-Relay: Abstract = (
-    forward(.self: &Self, .source: $&Virtual#(Source)) -> (.value: $&Virtual#(Source))
+Relay#(.Participant: Type): Contract = (
+    .forward: (.self: &Participant, .source: $&Virtual#(Source)) -> (.value: $&Virtual#(Source))
     where refers_to(value, source)
 )
 
 RelayCell: Type = (.unused: Int32)
 
-RelayCell implements Relay
+implement Relay#(RelayCell) (.forward = _impl_forward_RelayCell)
 
-forward(.self: &RelayCell, .source: $&Virtual#(Source)) -> (.value: $&Virtual#(Source)) := {
+_impl_forward_RelayCell := (.self: &RelayCell, .source: $&Virtual#(Source)) -> (.value: $&Virtual#(Source))  {
     value = source
 }
 

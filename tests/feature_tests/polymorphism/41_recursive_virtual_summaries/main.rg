@@ -1,13 +1,13 @@
-View: Abstract = (
-    get(.self: &Self, .depth: Int32) -> (.value: &Int32) where depends_on(value, self)
+View#(.Participant: Type): Contract = (
+    .get: (.self: &Participant, .depth: Int32) -> (.value: &Int32) where depends_on(value, self)
 )
 
 Cell: Type = (.value: Int32)
 
 Other: Type = (.value: Int32)
 
-Cell implements View
-Other implements View
+implement View#(Cell) (.get = _impl_get_Cell)
+implement View#(Other) (.get = _impl_get_Other)
 
 identity(.value: &Int32, .depth: Int32) -> (.result: &Int32) := {
     if depth == 0 { result = value } else { result = identity(.value = value, .depth = depth - 1) }
@@ -21,18 +21,18 @@ second(.value: &Int32, .depth: Int32) -> (.result: &Int32) := {
     result = first(.value = value, .depth = depth)
 }
 
-read(.view: &Virtual#(.abstract: View), .depth: Int32) -> (.value: &Int32) := {
+read(.view: &Virtual#(.contract: View), .depth: Int32) -> (.value: &Int32) := {
     value = get(.self = view, .depth = depth)
 }
 
-get(.self: &Cell, .depth: Int32) -> (.value: &Int32) := {
+_impl_get_Cell := (.self: &Cell, .depth: Int32) -> (.value: &Int32)  {
     if depth == 0 { value = &self&.value } else {
         view ::= to_virtual#(View)(self)
         value = read(.view = &view, .depth = depth - 1)
     }
 }
 
-get(.self: &Other, .depth: Int32) -> (.value: &Int32) := {
+_impl_get_Other := (.self: &Other, .depth: Int32) -> (.value: &Int32)  {
     value = first(.value = &self&.value, .depth = depth)
 }
 

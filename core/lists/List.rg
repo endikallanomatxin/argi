@@ -1,43 +1,53 @@
--- Collection capabilities use named operations. Bracket indexing belongs to
--- native arrays and cannot be supplied by a library type.
-Indexable#(.t: Type): Abstract = (
-    length(.self: &Self) -> (.count: UIntNative)
-    get_ro_ref(.self: &Self, .index: UIntNative) -> (
-        .result : Errable#(&t, (..out_of_bounds))
+-- Collection operations retain one identity per capability.
+Indexable#(.Collection: Type): Contract = (
+    .Item       : Type
+    .length     : (.self: &Collection) -> (.count: UIntNative)
+    .get_ro_ref : (.self: &Collection, .index: UIntNative) -> (
+        .result : Errable#(&Item, (..out_of_bounds))
     )
 )
 
--- Logical elements are independently replaceable: writing an indexed
--- reference changes that position without replacing other logical elements
--- or resizing the collection.
-IndexableMutable#(.t: Type): Abstract = (
-    length(.self: &Self) -> (.count: UIntNative)
-    get_ro_ref(.self: &Self, .index: UIntNative) -> (
-        .result : Errable#(&t, (..out_of_bounds))
-    )
-    get_rw_ref(.self: $&Self, .index: UIntNative) -> (
-        .result : Errable#($&t, (..out_of_bounds))
+-- Writable indexing reuses the readonly capability without duplicating it.
+IndexableMutable#(.Collection: Type): Contract = (
+    .Item : Type
+    Indexable#(.Collection: Collection, .Item: Item)
+    .get_rw_ref : (.self: $&Collection, .index: UIntNative) -> (
+        .result : Errable#($&Item, (..out_of_bounds))
     )
 )
 
--- Value reads are an additional capability of collections whose elements
--- can be copied implicitly. Mutable collections decide whether replacing an
--- element needs an allocator to destroy the previous value.
-IndexableValue#(.t: Type: ImplicitlyCopyable): Abstract = (
-    get(.self: &Self, .index: UIntNative) -> (
-        .result : Errable#(t, (..out_of_bounds))
+IndexableValue#(.Collection: Type): Contract = (
+    .Item : Type: ImplicitlyCopyable
+    Indexable#(.Collection: Collection, .Item: Item)
+    .get : (.self: &Collection, .index: UIntNative) -> (
+        .result : Errable#(Item, (..out_of_bounds))
     )
 )
 
-Resizable#(.t: Type): Abstract = (
-    push(.self: $&Self, .value: t, .allocator: $&Allocator) -> (
+-- Removal needs no allocation capability; its identity has one participant.
+Removable#(.Collection: Type): Contract = (
+    .Item : Type
+    IndexableMutable#(.Collection: Collection, .Item: Item)
+    .pop    : (.self: $&Collection) -> (.result: Errable#(Item, (..empty)))
+    .remove : (.self: $&Collection, .i: UIntNative) -> (
+        .result : Errable#(Item, (..out_of_bounds))
+    )
+)
+
+-- Growth depends on both the collection and the allocation provider. The
+-- provider participates in static selection rather than being implicitly erased.
+Resizable#(.Collection: Type, .Provider: Type: Allocator#(Provider)): Contract = (
+    .Item : Type
+    Removable#(.Collection: Collection, .Item: Item)
+    .push : (.self: $&Collection, .value: Item, .allocator: $&Provider = reach allocator) -> (
         .result : Errable#(Void, (..out_of_memory))
     )
-    pop(.self: $&Self) -> (.result: Errable#(t, (..empty)))
-    insert(.self: $&Self, .i: UIntNative, .value: t, .allocator: $&Allocator) -> (
+    .insert : (
+        .self      : $&Collection,
+        .i         : UIntNative,
+        .value     : Item,
+        .allocator : $&Provider    = reach allocator
+    ) -> (
         .result : Errable#(Void, (..out_of_memory, ..out_of_bounds))
-    )
-    remove(.self: $&Self, .i: UIntNative) -> (
-        .result : Errable#(t, (..out_of_bounds))
     )
 )

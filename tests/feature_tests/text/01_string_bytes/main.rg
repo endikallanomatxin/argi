@@ -7,9 +7,9 @@ main(.system: System) -> (.status_code: Int32) := {
     bytes_set(.string = $&text, .index = 1, .value = 114)
     bytes_set(.string = $&text, .index = 2, .value = 103)
 
-    first ::= bytes_get(.string = &text, .index = 0).byte
-    second ::= bytes_get(.string = &text, .index = 1).byte
-    third ::= bytes_get(.string = &text, .index = 2).byte
+    first ::= bytes_get(.view = &text, .index = 0).byte
+    second ::= bytes_get(.view = &text, .index = 1).byte
+    third ::= bytes_get(.view = &text, .index = 2).byte
 
     if first != 65 {
         status_code = 1

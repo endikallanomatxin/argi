@@ -1,11 +1,20 @@
 -- Unsigned nanoseconds distinguish intervals from civil dates and never wrap.
 Duration: Type = (._nanoseconds: UInt64)
 
-Duration implements ImplicitlyCopyable
+implement ImplicitlyCopyable#(Duration) ()
 
-Duration init(.nanoseconds: UInt64) -> (.result: Duration) := {
-    result = (._nanoseconds = nanoseconds)
-}
+implement Init#(Duration, (.nanoseconds: UInt64)) (
+        .Result : Type = Duration
+        .init   = (
+                .args : (.nanoseconds: UInt64)
+            ) -> (
+                .result : Result
+            ) {
+            nanoseconds ::= args.nanoseconds
+
+            result = (._nanoseconds = nanoseconds)
+        }
+    )
 
 _duration_checked(
         .value : Errable#(UInt64, (..out_of_range))
@@ -27,7 +36,7 @@ _duration_scaled(
     result = _duration_checked(.value = checked_multiply(.left = value, .right = scale)).result
 }
 
-Duration init(
+duration_from_microseconds(
         .microseconds : UInt64
     ) -> (
         .result : Errable#(Duration, (..out_of_range))
@@ -35,7 +44,7 @@ Duration init(
     result = _duration_scaled(.value = microseconds, .scale = 1000).result
 }
 
-Duration init(
+duration_from_milliseconds(
         .milliseconds : UInt64
     ) -> (
         .result : Errable#(Duration, (..out_of_range))
@@ -43,11 +52,16 @@ Duration init(
     result = _duration_scaled(.value = milliseconds, .scale = 1000000).result
 }
 
-Duration init(.seconds: UInt64) -> (.result: Errable#(Duration, (..out_of_range))) := {
+duration_from_seconds(.seconds: UInt64) -> (.result: Errable#(Duration, (..out_of_range))) := {
     result = _duration_scaled(.value = seconds, .scale = 1000000000).result
 }
 
-nanoseconds(.self: &Duration) -> (.value: UInt64) := { value = self&._nanoseconds }
+_nanoseconds_Duration(.self: &Duration) -> (.value: UInt64) := { value = self&._nanoseconds }
+
+implement NanosecondCount#(Duration) (
+    .Count            : Type                  = UInt64
+    .nanosecond_count = _nanoseconds_Duration
+)
 
 microseconds(.self: &Duration) -> (.value: UInt64) := { value = self&._nanoseconds / 1000 }
 
@@ -77,15 +91,15 @@ subtract(
     ).result
 }
 
-operator == (.left: Duration, .right: Duration) -> (.ok: Bool) := {
-    ok = left._nanoseconds == right._nanoseconds
-}
+implement Equal#(Duration, Duration, (.left: Duration, .right: Duration)) (
+    .equal = (.args: (.left: Duration, .right: Duration)) -> (.ok: Bool) {
+        ok = args.left._nanoseconds == args.right._nanoseconds
+    }
+)
 
-operator != (.left: Duration, .right: Duration) -> (.ok: Bool) := {
-    ok = left._nanoseconds != right._nanoseconds
-}
-
-compare(.left: Duration, .right: Duration) -> (.order: Int32 = 0) := {
+_compare_Duration(.left: Duration, .right: Duration) -> (.order: Int32 = 0) := {
     if left._nanoseconds < right._nanoseconds { order = -1 }
     if left._nanoseconds > right._nanoseconds { order = 1 }
 }
+
+implement TimeCompare#(Duration) (.compare_value = _compare_Duration)

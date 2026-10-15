@@ -1,30 +1,30 @@
 unsafe_allocation := import ("../../_support/unsafe_allocation")
 
-Rewriter: Abstract = (
-    rewrite(.self: $&Self, .reference: $&UInt8) -> () where {}
+Rewriter#(.Participant: Type): Contract = (
+    .rewrite: (.self: $&Participant, .reference: $&UInt8) -> () where {}
 )
 
 Keeping: Type = (.reference: $&UInt8)
 
 Rewriting: Type = (.reference: $&UInt8)
 
-Keeping implements Rewriter
-Rewriting implements Rewriter
+implement Rewriter#(Keeping) (.rewrite = _impl_rewrite_Keeping)
+implement Rewriter#(Rewriting) (.rewrite = _impl_rewrite_Rewriting)
 
-rewrite(.self: $&Keeping, .reference: $&UInt8) -> () := {}
+_impl_rewrite_Keeping := (.self: $&Keeping, .reference: $&UInt8) -> ()  {}
 
-rewrite(.self: $&Rewriting, .reference: $&UInt8) -> () := {
+_impl_rewrite_Rewriting := (.self: $&Rewriting, .reference: $&UInt8) -> ()  {
     self&.reference = reference
 }
 
 register_keeping(.value: $&Keeping) -> () := {
-    _ ::= to_virtual#(.abstract: Rewriter)(.value = value)
+    _ ::= to_virtual#(.contract: Rewriter)(.value = value)
 }
 
 main(.system: System) -> (.status_code: Int32) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    old_result ::= allocate(.self = $&allocator_storage, .size = 1)
-    target_result ::= allocate(.self = $&allocator_storage, .size = 1)
+    old_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
+    target_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
     match old_result {
         ..error _ { status_code = 1 }
         ..ok ~old_payload {
@@ -46,7 +46,7 @@ main(.system: System) -> (.status_code: Int32) := {
                             .offset     = 0
                         ).reference
                     )
-                    virtual ::= to_virtual#(.abstract: Rewriter)(.value = $&value)
+                    virtual ::= to_virtual#(.contract: Rewriter)(.value = $&value)
                     rewrite(
                         .self      = $&virtual
                         .reference = unsafe_allocation.trusted_allocation_byte_rw(

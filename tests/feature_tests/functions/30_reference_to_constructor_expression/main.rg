@@ -1,15 +1,23 @@
 Box : Type = (.counter: $&Int32, .created: $&Int32)
 NumberBox : Type = (.value: Int32)
 
-Box init(.counter: $&Int32, .created: $&Int32) -> (.result: Box) := {
-    result.counter = counter
-    result.created = created
-    created& = created& + 1
-}
+implement Init#(Box, (.counter: $&Int32, .created: $&Int32)) (
+    .Result: Type = Box
+    .init = (.args: (.counter: $&Int32, .created: $&Int32)) -> (.result: Result) {
+        counter ::= ~args.counter
+        created ::= ~args.created
 
-Box deinit(.self: $&Box) -> () := {
-    self&.counter& = self&.counter& + 1
-}
+        result.counter = counter
+        result.created = created
+        created& = created& + 1
+    }
+)
+
+implement Deinit#(Box) (
+    .deinit = (.self: $&Box) -> () {
+        self&.counter& = self&.counter& + 1
+    }
+)
 
 positive(.box: $&Box) -> (.result: Bool) := {
     result = box&.counter& < 3

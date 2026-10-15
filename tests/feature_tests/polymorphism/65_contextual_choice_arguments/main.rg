@@ -1,13 +1,21 @@
+Selection#(.Number: Type): Contract = (
+    .Tag: Type
+    .select: (.tag: Tag, .number: Number) -> (.value: Int32)
+)
+
 First: Type = (..before, ..shared, ..payload Int32)
 Second: Type = (..shared, ..after, ..payload Int32)
-select(.tag: First, .number: Int32) -> (.value: Int32) := {
+_first_select(.tag: First, .number: Int32) -> (.value: Int32) := {
     if tag != ..shared { abort }
     value = number
 }
-select(.tag: Second, .number: UInt32) -> (.value: Int32) := {
+_second_select(.tag: Second, .number: UInt32) -> (.value: Int32) := {
     if tag != ..shared { abort }
     value = 2
 }
+implement Selection#(Int32) (.Tag: Type = First, .select = _first_select)
+implement Selection#(UInt32) (.Tag: Type = Second, .select = _second_select)
+
 with_payload(.tag: First) -> (.value: Int32) := {
     match tag {
         ..payload data { value = data }

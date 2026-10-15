@@ -13,7 +13,7 @@ main(.system: System) -> (.status_code: Int32) := {
         }
     }
 
-    create_result ::= open_write(.self = system.file_system, .path = path)
+    create_result ::= File(.file_system = system.file_system, .path = path, .mode = ..write)
     if is(.value = create_result, .variant = ..ok) {
     } else {
         status_code = 2
@@ -22,7 +22,7 @@ main(.system: System) -> (.status_code: Int32) := {
     file ::= ~create_result ..ok
 
     write_bytes: Array#(.n = 2, .t: UInt8) = (0, 0)
-    write_buffer ::= array_view(.array = $&write_bytes)
+    write_buffer ::= view(.array = $&write_bytes)
     first_set ::= set#(.t: UInt8)(.self = $&write_buffer, .index = 0, .value = 41).result
     second_set ::= set#(.t: UInt8)(.self = $&write_buffer, .index = 1, .value = 42).result
     if is(.value = first_set, .variant = ..error) or is(.value = second_set, .variant = ..error) {
@@ -31,7 +31,7 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
-    write_result ::= write(.self = $&file, .buffer = write_buffer)
+    write_result ::= write(.self = $&file, .value = write_buffer)
 
     if is(.value = write_result, .variant = ..ok) {
     } else {
@@ -48,7 +48,7 @@ main(.system: System) -> (.status_code: Int32) := {
 
     close(.self = $&file)
 
-    open_result ::= open_read(.self = system.file_system, .path = path)
+    open_result ::= File(.file_system = system.file_system, .path = path, .mode = ..read)
     if is(.value = open_result, .variant = ..ok) {
     } else {
         status_code = 6
@@ -57,7 +57,7 @@ main(.system: System) -> (.status_code: Int32) := {
     file = ~open_result ..ok
 
     read_bytes: Array#(.n = 4, .t: UInt8) = (0, 0, 0, 0)
-    read_buffer ::= array_view(.array = $&read_bytes)
+    read_buffer ::= view(.array = $&read_bytes)
 
     read_result ::= read(.self = $&file, .buffer = read_buffer)
     close(.self = $&file)
@@ -74,7 +74,7 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
-    first_read ::= get#(.t: UInt8)(.self = &read_buffer, .index = 0).result
+    first_read ::= get(.self = &read_buffer, .index = 0).result
     if is(.value = first_read, .variant = ..error) {
         status_code = 10
         return
@@ -84,7 +84,7 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
-    second_read ::= get#(.t: UInt8)(.self = &read_buffer, .index = 1).result
+    second_read ::= get(.self = &read_buffer, .index = 1).result
     if is(.value = second_read, .variant = ..error) {
         status_code = 11
         return

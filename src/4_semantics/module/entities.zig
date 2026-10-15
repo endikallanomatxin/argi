@@ -1,6 +1,5 @@
 const std = @import("std");
 const primitives = @import("../primitives/schema.zig");
-const callable = @import("../primitives/callable.zig");
 
 pub const ModuleDeclId = enum(u32) { _ };
 pub const ModuleTypeId = enum(u32) { _ };
@@ -134,7 +133,6 @@ pub const FunctionSemantic = struct {
 
 pub const FieldSemantic = struct {
     field: ModuleFieldId,
-    storage_type: ?ModuleTypeId = null,
     default_value: ?ModuleNodeId = null,
 };
 
@@ -153,7 +151,7 @@ pub const ExternalKind = enum(u8) {
     type,
     function,
     declaration,
-    abstract,
+    contract,
     choice_option,
     module,
 };
@@ -163,6 +161,9 @@ pub const ExternalRef = struct {
     module_path: ?primitives.StringRange,
     name: primitives.StringRange,
     generic_arguments: ?GenericArgRange = null,
+    computed_arguments: ?primitives.Range(@import("parameterized/ir.zig").ParameterizedGenericArgId) = null,
+    projection_base: ?ModuleTypeId = null,
+    computed_type: ?@import("parameterized/ir.zig").ParameterizedTypeId = null,
     source: primitives.SourceRef,
 };
 
@@ -172,6 +173,7 @@ pub const PendingOperation = union(enum) {
         destination: ModuleTypeId,
     },
     resolve_call: struct {
+        contract_type: ?ModuleTypeId = null,
         node: ModuleNodeId,
         callee: ExternalRefId,
         callee_value: ?ModuleNodeId = null,
@@ -208,6 +210,10 @@ pub const PendingOperation = union(enum) {
         assumed_arguments: ?ModuleNodeId = null,
     },
     resolve_comparison: struct {
+        source: primitives.SourceRef,
+        visible_bindings: BindingRange = .{ .start = 0, .len = 0 },
+        owner_function: ?ModuleFunctionId = null,
+        assumed_arguments: ?ModuleNodeId = null,
         node: ModuleNodeId,
         operator: primitives.ComparisonOperator,
         left: ModuleNodeId,
@@ -300,9 +306,9 @@ pub const PendingOperation = union(enum) {
         node: ModuleNodeId,
         path: primitives.StringRange,
     },
-    resolve_abstract: struct {
+    resolve_contract: struct {
         declaration: ModuleDeclId,
-        abstract_ref: ExternalRefId,
+        contract_ref: ExternalRefId,
     },
     resolve_copy: struct {
         node: ModuleNodeId,

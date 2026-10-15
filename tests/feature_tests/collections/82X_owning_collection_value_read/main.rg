@@ -1,4 +1,4 @@
-read(.items: &IndexableValue#(.t: String)) -> () := {}
+read#(.Collection: Type: IndexableValue#(.Item: String))(.items: &Collection) -> () := {}
 main(.system: System) -> () := {
     storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&storage

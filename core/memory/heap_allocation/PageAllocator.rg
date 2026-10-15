@@ -3,9 +3,18 @@ PageAllocator: Type = (
     .page_size : UIntNative
 )
 
-PageAllocator init(.memory: $&Memory) -> (.result: PageAllocator) := {
-    result = (.memory = memory, .page_size = memory&._page_size)
-}
+implement Init#(PageAllocator, (.memory: $&Memory)) (
+        .Result : Type = PageAllocator
+
+        .init = (
+                .args : (.memory: $&Memory)
+            ) -> (
+                .result : Result
+            ) {
+            memory ::= args.memory
+            result = (.memory = memory, .page_size = memory&._page_size)
+        }
+    )
 
 page_allocator_page_size(.self: $&PageAllocator) -> (.size: UIntNative) := {
     size = self&.page_size
@@ -33,27 +42,27 @@ page_allocator_round_up(
     }
 }
 
-allocate(
-        .self      : $&PageAllocator,
-        .size      : UIntNative,
-        .alignment : UIntNative
-    ) -> (
-        .result : Errable#(Allocation, (..out_of_memory))
-    ) := {
-    mapped ::= map_pages(self&.memory, .size = size, .alignment = alignment)
+implement Allocator#(PageAllocator) (
+    .allocate = (
+            .self      : $&PageAllocator,
+            .size      : UIntNative,
+            .alignment : UIntNative
+        ) -> (
+            .result : Errable#(Allocation, (..out_of_memory))
+        ) {
+        mapped ::= map_pages(self&.memory, .size = size, .alignment = alignment)
 
-    match mapped {
-        ..error _ { result = ..error(.reason = ..out_of_memory) }
-        ..ok ~payload {
-            allocation ::= ~payload
-            allocation.size = size
-            -- Page padding is not part of the range granted to the caller.
-            -- Memory rounds this extent back to pages during physical cleanup.
-            allocation._storage_size = size
-            allocation._release_size = size
-            result = ..ok ~allocation
+        match mapped {
+            ..error _ { result = ..error(.reason = ..out_of_memory) }
+            ..ok ~payload {
+                allocation ::= ~payload
+                allocation.size = size
+                -- Page padding is not part of the range granted to the caller.
+                -- Memory rounds this extent back to pages during physical cleanup.
+                allocation._storage_size = size
+                allocation._release_size = size
+                result = ..ok ~allocation
+            }
         }
     }
-}
-
-PageAllocator implements Allocator
+)

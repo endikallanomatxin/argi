@@ -1,14 +1,18 @@
-Releaser: Abstract = (
-    release(.self: $&Self) -> () where consumes(self)
+Releaser#(.Participant: Type): Contract = (
+    .release: (.self: $&Participant) -> () where consumes(self)
 )
 
 Manager: Type = (.unused: Int32)
 
-Manager implements Releaser
+implement Releaser#(Manager) (.release = _impl_release_Manager)
 
-Manager deinit(.self: $&Manager) -> () := {}
+implement Deinit#(Manager) (
+    .deinit = (.self: $&Manager) -> () {
 
-release(.self: $&Manager) -> () := { deinit(self) }
+    }
+)
+
+_impl_release_Manager := (.self: $&Manager) -> ()  { deinit(self) }
 
 main() -> () := {
     manager ::= Manager(0)

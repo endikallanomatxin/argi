@@ -4,42 +4,6 @@ CountingAllocator: Type = (
     .dealloc_count : Int32                      = 0
 )
 
-allocate(
-        .self      : $&CountingAllocator,
-        .size      : UIntNative,
-        .alignment : UIntNative           = 1
-    ) -> (
-        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
-    ) := {
-    storage ::= malloc(.size = size, .ffi = self&.ffi)
-    raw_addr :: UIntNative = UIntNative(.value = storage)
-    self&.alloc_count = self&.alloc_count + 1
-    deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(
-        .value = self
-    )
-    allocation ::= trusted_establish_allocation(
-        .storage     = storage
-        .size        = size
-        .alignment   = alignment
-        .deallocator = deallocator
-    )
-    result = ..ok ~allocation
-}
-
-deallocate(
-        .self      : $&CountingAllocator,
-        .data      : RawPointer#(.t: UInt8),
-        .size      : UIntNative,
-        .alignment : UIntNative
-    ) -> () := {
-    raw_addr :: UIntNative = data.address
-    free(.address = raw_addr, .ffi = self&.ffi)
-    self&.dealloc_count = self&.dealloc_count + 1
-}
-
-CountingAllocator implements Allocator
-CountingAllocator implements Deallocator
-
 main(.system: System) -> (.status_code: Int32) := {
     allocator_storage :: CountingAllocator = (
         .ffi           = system.ffi
@@ -56,7 +20,7 @@ main(.system: System) -> (.status_code: Int32) := {
             .data   = data
             .length = 3
         )
-        borrowed_result ::= as_c_string(.self = borrowed_view, .allocator = $&allocator_storage)
+        borrowed_result ::= copy_c_string(.self = borrowed_view, .allocator = $&allocator_storage)
         match borrowed_result {
             ..error _ { status_code = 7 }
             ..ok ~borrowed {
@@ -82,7 +46,7 @@ main(.system: System) -> (.status_code: Int32) := {
             .data   = data
             .length = 2
         )
-        copied_result ::= as_c_string(.self = copied_view, .allocator = $&allocator_storage)
+        copied_result ::= copy_c_string(.self = copied_view, .allocator = $&allocator_storage)
         match copied_result {
             ..error _ { status_code = 8 }
             ..ok ~copied {
@@ -105,3 +69,40 @@ main(.system: System) -> (.status_code: Int32) := {
 
     status_code = 0
 }
+
+implement Allocator#(CountingAllocator)(
+    .allocate = (
+            .self      : $&CountingAllocator,
+            .size      : UIntNative,
+            .alignment : UIntNative           = 1
+        ) -> (
+            .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+        ) {
+        storage ::= malloc(.size = size, .ffi = self&.ffi)
+        raw_addr :: UIntNative = storage | convert#(.to: UIntNative)(_)
+        self&.alloc_count = self&.alloc_count + 1
+        deallocator :: Virtual#(.contract: Deallocator) = to_virtual#(.contract: Deallocator)(
+            .value = self
+        )
+        allocation ::= trusted_establish_allocation(
+            .storage     = storage
+            .size        = size
+            .alignment   = alignment
+            .deallocator = deallocator
+        )
+        result = ..ok ~allocation
+    }
+)
+
+implement Deallocator#(CountingAllocator)(
+    .deallocate = (
+            .self      : $&CountingAllocator,
+            .data      : RawPointer#(.t: UInt8),
+            .size      : UIntNative,
+            .alignment : UIntNative
+        ) -> () {
+        raw_addr :: UIntNative = data.address
+        free(.address = raw_addr, .ffi = self&.ffi)
+        self&.dealloc_count = self&.dealloc_count + 1
+    }
+)

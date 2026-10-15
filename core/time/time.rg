@@ -2,17 +2,26 @@
 -- meaningful. Private fields prevent mixing Unix time into this domain.
 MonotonicInstant: Type = (._nanoseconds: UInt64)
 
-MonotonicInstant implements ImplicitlyCopyable
+implement ImplicitlyCopyable#(MonotonicInstant) ()
 
 UnixTimestamp: Type = (._seconds: Int64, ._nanoseconds: UInt32)
 
-UnixTimestamp implements ImplicitlyCopyable
+implement ImplicitlyCopyable#(UnixTimestamp) ()
 
-UnixTimestamp init(.seconds: Int64) -> (.result: UnixTimestamp) := {
-    result = (._seconds = seconds, ._nanoseconds = 0)
-}
+implement Init#(UnixTimestamp, (.seconds: Int64)) (
+        .Result : Type = UnixTimestamp
+        .init   = (
+                .args : (.seconds: Int64)
+            ) -> (
+                .result : Result
+            ) {
+            seconds ::= args.seconds
 
-UnixTimestamp init(
+            result = (._seconds = seconds, ._nanoseconds = 0)
+        }
+    )
+
+unix_timestamp_precise(
         .seconds     : Int64,
         .nanoseconds : UInt32
     ) -> (
@@ -28,7 +37,14 @@ UnixTimestamp init(
 
 unix_seconds(.self: &UnixTimestamp) -> (.value: Int64) := { value = self&._seconds }
 
-nanoseconds(.self: &UnixTimestamp) -> (.value: UInt32) := { value = self&._nanoseconds }
+_nanoseconds_UnixTimestamp(.self: &UnixTimestamp) -> (.value: UInt32) := {
+    value = self&._nanoseconds
+}
+
+implement NanosecondCount#(UnixTimestamp) (
+    .Count            : Type                       = UInt32
+    .nanosecond_count = _nanoseconds_UnixTimestamp
+)
 
 elapsed(
         .start : MonotonicInstant,
@@ -44,28 +60,33 @@ elapsed(
     result = ..ok Duration(.nanoseconds = end._nanoseconds - start._nanoseconds)
 }
 
-operator == (.left: MonotonicInstant, .right: MonotonicInstant) -> (.ok: Bool) := {
-    ok = left._nanoseconds == right._nanoseconds
-}
+implement Equal#(
+    MonotonicInstant,
+    MonotonicInstant,
+    (.left: MonotonicInstant, .right: MonotonicInstant)
+) (
+    .equal = (.args: (.left: MonotonicInstant, .right: MonotonicInstant)) -> (.ok: Bool) {
+        ok = args.left._nanoseconds == args.right._nanoseconds
+    }
+)
 
-operator != (.left: MonotonicInstant, .right: MonotonicInstant) -> (.ok: Bool) := {
-    ok = left._nanoseconds != right._nanoseconds
-}
+implement Equal#(UnixTimestamp, UnixTimestamp, (.left: UnixTimestamp, .right: UnixTimestamp)) (
+    .equal = (.args: (.left: UnixTimestamp, .right: UnixTimestamp)) -> (.ok: Bool) {
+        ok = [
+            args.left._seconds == args.right._seconds
+            and args.left._nanoseconds == args.right._nanoseconds
+        ]
+    }
+)
 
-operator == (.left: UnixTimestamp, .right: UnixTimestamp) -> (.ok: Bool) := {
-    ok = left._seconds == right._seconds and left._nanoseconds == right._nanoseconds
-}
-
-operator != (.left: UnixTimestamp, .right: UnixTimestamp) -> (.ok: Bool) := {
-    ok = left._seconds != right._seconds or left._nanoseconds != right._nanoseconds
-}
-
-compare(.left: MonotonicInstant, .right: MonotonicInstant) -> (.order: Int32 = 0) := {
+_compare_MonotonicInstant(.left: MonotonicInstant, .right: MonotonicInstant) -> (.order: Int32 = 0) := {
     if left._nanoseconds < right._nanoseconds { order = -1 }
     if left._nanoseconds > right._nanoseconds { order = 1 }
 }
 
-compare(.left: UnixTimestamp, .right: UnixTimestamp) -> (.order: Int32 = 0) := {
+implement TimeCompare#(MonotonicInstant) (.compare_value = _compare_MonotonicInstant)
+
+_compare_UnixTimestamp(.left: UnixTimestamp, .right: UnixTimestamp) -> (.order: Int32 = 0) := {
     if [
         left._seconds < right._seconds
         or [left._seconds == right._seconds and left._nanoseconds < right._nanoseconds]
@@ -81,12 +102,21 @@ compare(.left: UnixTimestamp, .right: UnixTimestamp) -> (.order: Int32 = 0) := {
     }
 }
 
+implement TimeCompare#(UnixTimestamp) (.compare_value = _compare_UnixTimestamp)
+
 -- Clock carries permission to call the platform; pure time values carry none.
 Clock: Type = (._ffi: $&ForeignFunctionInterface)
 
-once Clock init(.ffi: $&ForeignFunctionInterface = reach ffi) -> (.result: Clock) := {
+once _acquire_clock := (.args: (.ffi: $&ForeignFunctionInterface = reach ffi)) -> (.result: Clock) {
+    ffi ::= args.ffi
+
     result = (._ffi = ffi)
 }
+
+implement Init#(Clock, (.ffi: $&ForeignFunctionInterface = reach ffi)) (
+    .Result : Type           = Clock
+    .init   = _acquire_clock
+)
 
 monotonic_now(
         .self : &Clock = reach clock
@@ -102,7 +132,7 @@ monotonic_now(
     }
 
     maximum: UInt64 = 18446744073709551615
-    fraction ::= UInt64(.value = reading.nanoseconds)
+    fraction ::= reading.nanoseconds | convert#(.to: UInt64)(_)
 
     if reading.nanoseconds >= 1000000000 or reading.seconds > [maximum - fraction] / 1000000000 {
         result = ..error(.reason = ..out_of_range)
@@ -147,7 +177,12 @@ sleep(
     }
 
     whole ::= duration._nanoseconds / 1000000000
-    fraction ::= unwrap_or_abort(.value = UInt32(.value = duration._nanoseconds % 1000000000)).result
+    fraction ::= unwrap_or_abort(
+        .value = [
+            [duration._nanoseconds % 1000000000]
+            | convert#(.to: UInt32)(_)
+        ]
+    ).result
 
     if _platform_sleep(.seconds = whole, .nanoseconds = fraction).status != 0 {
         result = ..error(.reason = ..sleep_failed)

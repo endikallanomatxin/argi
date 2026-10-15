@@ -1,13 +1,13 @@
-Source: Abstract = (
-    get(.self: &Self) -> (.value: &Int32)
+Source#(.Participant: Type): Contract = (
+    .get: (.self: &Participant) -> (.value: &Int32)
     where depends_on(value, self)
 )
 
 Cell: Type = (.value: Int32)
 
-Cell implements Source
+implement Source#(Cell) (.get = _impl_get_Cell)
 
-get(.self: &Cell) -> (.value: &Int32) := {
+_impl_get_Cell := (.self: &Cell) -> (.value: &Int32)  {
     value = &self&.value
 }
 

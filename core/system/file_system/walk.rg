@@ -1,10 +1,11 @@
 _WalkFrame: Type = (.directory: Directory, .path: Path, .depth: UIntNative)
 
-_WalkFrame deinit(.self: $&_WalkFrame, .allocator: $&Allocator) -> () := {
-    assume allocator
-    deinit(.self = $&self&.directory)
-    deinit(.self = $&self&.path)
-}
+implement Deinit#(_WalkFrame) (
+    .deinit = (.self: $&_WalkFrame) -> () {
+        deinit(.self = $&self&.directory)
+        deinit(.self = $&self&.path)
+    }
+)
 
 WalkEntry: Type = (.path: Path, .info: FileMetadata, .depth: UIntNative)
 
@@ -19,51 +20,73 @@ DirectoryWalker: Type = (
     ._ended         : Bool
 )
 
-DirectoryWalker init(
+implement#(
+    .Provider : Type: Allocator
+) Init#(
+    DirectoryWalker,
+    (
         .self          : &FileSystem = reach file_system,
         .path          : StringView,
         .maximum_depth : UIntNative  = 64,
-        .allocator     : $&Allocator = reach allocator
-    ) -> (
-        .result : Errable#(DirectoryWalker, _FilesystemReasons)
-    ) := {
-    assume allocator
-    frames ::= DynamicArray#(.t: _WalkFrame)(.capacity = 1)!
-
-    if maximum_depth > 0 {
-        owned ::= path_with_view(.view = path)!
-        directory ::= Directory(.self = self, .path = path)!
-        push_assume_capacity(
-            $&frames
-            .value = _WalkFrame(~directory, ~owned, 0)
-        )
-    }
-
-    result = ..ok(
-        ._frames        = ~frames
-        ._filesystem    = self
-        ._maximum_depth = maximum_depth
-        ._ended         = false
+        .allocator     : $&Provider  = reach allocator,
     )
-}
+) (
+        .Result : Type = Errable#(DirectoryWalker, _FilesystemReasons)
+        .init   = (
+                .args : (
+                    .self          : &FileSystem = reach file_system,
+                    .path          : StringView,
+                    .maximum_depth : UIntNative  = 64,
+                    .allocator     : $&Provider  = reach allocator,
+                )
+            ) -> (
+                .result : Result
+            ) {
+            self ::= args.self
+            path ::= args.path
+            maximum_depth ::= args.maximum_depth
+            allocator ::= args.allocator
 
-DirectoryWalker deinit(.self: $&DirectoryWalker, .allocator: $&Allocator) -> () := {
-    assume allocator
+            assume allocator
+            frames ::= DynamicArray#(.t: _WalkFrame)(.capacity = 1)!
 
-    while length(&self&._frames).count > 0 {
-        discarded ::= ~unwrap_or_abort(.value = pop($&self&._frames))
+            if maximum_depth > 0 {
+                owned ::= path_with_view(.view = path)!
+                directory ::= Directory(.self = self, .path = path)!
+                push_assume_capacity(
+                    $&frames
+                    .value = _WalkFrame(~directory, ~owned, 0)
+                )
+            }
+
+            result = ..ok(
+                ._frames        = ~frames
+                ._filesystem    = self
+                ._maximum_depth = maximum_depth
+                ._ended         = false
+            )
+        }
+    )
+
+implement Deinit#(DirectoryWalker) (
+    .deinit = (.self: $&DirectoryWalker) -> () {
+        while length(&self&._frames).count > 0 {
+            discarded ::= ~unwrap_or_abort(.value = pop($&self&._frames))
+        }
+
+        deinit(.self = $&self&._frames)
     }
-
-    deinit(.self = $&self&._frames)
-}
+)
 
 -- EOF is sticky. Errors are terminal and preserve all owners for cleanup.
-next(
+_next_directory_walker#(
+        .Provider : Type: Allocator#(Provider)
+    ) := (
         .self      : $&DirectoryWalker,
-        .allocator : $&Allocator        = reach allocator
+        .allocator : $&Provider         = reach allocator
     ) -> (
         .result : Errable#(?WalkEntry, _FilesystemReasons)
-    ) := {
+    ) {
     assume allocator
 
     if self&._ended {
@@ -91,7 +114,7 @@ next(
                         .self     = $&self&._frames
                         .capacity = count + 1
                     )!
-                    owned ::= copy(&path)!
+                    owned ::= copy(&path, .allocator = allocator)!
                     directory ::= Directory(.self = self&._filesystem, .path = text)!
                     push_assume_capacity(
                         $&self&._frames

@@ -1,8 +1,10 @@
-replace(
+replace#(
+        .AllocatorType : Type: Allocator#(AllocatorType)
+    )(
         .self        : StringView,
         .pattern     : StringView,
         .replacement : StringView,
-        .allocator   : $&Allocator,
+        .allocator   : $&AllocatorType,
     ) -> (
         .result : Errable#(String, (..out_of_memory, ..size_overflow, ..empty_pattern))
     ) := {

@@ -1,9 +1,9 @@
-expect_replacement(
+expect_replacement#(.AllocatorType: Type: Allocator#(AllocatorType))(
         .text        : StringView,
         .pattern     : StringView,
         .replacement : StringView,
         .expected    : StringView,
-        .allocator   : $&Allocator
+        .allocator   : $&AllocatorType
     ) -> () := {
     output ::= unwrap_or_abort(
         .value = replace(
@@ -14,8 +14,8 @@ expect_replacement(
         )
     )
     if equals(.left = as_view(.self = &output).view, .right = expected).ok == false { abort }
-    if bytes_get(.string = &output, .index = output.length).byte != 0 { abort }
-    deinit(.self = $&output, .allocator = allocator)
+    if bytes_get(.view = &output, .index = output.length).byte != 0 { abort }
+    deinit(.self = $&output)
 }
 
 main(.system: System) -> (.status_code: Int32 = 0) := {
@@ -90,10 +90,10 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
             .allocator   = system.page_allocator
         )
     )
-    deinit(.self = $&source, .allocator = system.page_allocator)
+    deinit(.self = $&source)
     if independent.length != 3 { abort }
-    if bytes_get(.string = &independent, .index = 1).byte != 0 { abort }
-    deinit(.self = $&independent, .allocator = system.page_allocator)
+    if bytes_get(.view = &independent, .index = 1).byte != 0 { abort }
+    deinit(.self = $&independent)
     binary: [3]UInt8 = (97, 0, 98)
     binary_view :: StringView = (.data = &binary[0], .length = 3)
     zero :: StringView = (.data = &binary[1], .length = 1)

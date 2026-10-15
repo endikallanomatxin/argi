@@ -17,10 +17,10 @@ main(.system: System) -> (.status_code: Int32) := {
 
     if measure(.view = second_view).count != 4 {
         status_code = 1
-        deinit(.self = $&text, .allocator = $&allocator_storage)
+        deinit(.self = $&text)
         return
     }
 
-    deinit(.self = $&text, .allocator = $&allocator_storage)
+    deinit(.self = $&text)
     status_code = 0
 }

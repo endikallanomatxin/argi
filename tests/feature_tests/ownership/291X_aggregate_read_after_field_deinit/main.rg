@@ -2,8 +2,11 @@ Thing : Type = (
     .value: Int32
 )
 
-Thing deinit(.self: $&Thing) -> () := {
-}
+implement Deinit#(Thing) (
+    .deinit = (.self: $&Thing) -> () {
+
+    }
+)
 
 Pair : Type = (
     .left: Thing

@@ -23,9 +23,9 @@ It’s an early work-in-progress.
     dependencies through intermediate calls.
 - 🚫 No objects or inheritance.
 - 🔀 Polymorphism through:
-  - 🎛️ Multiple dispatch
+  - 🎛️ Contract-scoped multiple dispatch
   - ⚙️ Compile-time parameters (Rust's generics style)
-  - 📜 Abstract types specialized at compile time (Rust's traits style)
+  - 📜 Contracts with named participants, associated elements and explicit implementations
   - 🎭 Virtual types for runtime dynamic dispatch.
 - ❓ Errable and Nullable types, with nominal error reasons, reason-set
   inference, and explicit propagation with optional trace context.
@@ -144,6 +144,23 @@ Run the compiler's regression suite with:
 ```sh
 zig build test --summary all
 ```
+
+Program tests automatically use the available CPU count, capped at 16 worker
+processes. `-Dtest-jobs=N` selects another count; the build job limit (`-jN`)
+controls how many workers may run concurrently. For example, use
+`zig build test -j16 -Dtest-jobs=16` to request 16 concurrent workers.
+Installation and tests that touch shared state finish before the fixture workers
+start. Parallel tests of the same fixture run on one worker. Compiler unit tests retain
+Zig's standard runner.
+
+Use `-Dtest-jobs=1 -j1` for the standard serial test runner, especially when
+investigating compiler memory growth. `-Dtest-filter=contracts/` limits cases to
+that name fragment, and `-Dtest-progress=true` records active case names in
+`.zig-cache/program-tests/serial.log` and `worker-N.log`. These logs update while
+cases run, and each worker writes its totals there when finished. Terminal
+progress also shows active cases. With the standard serial runner, progress
+prints each case directly. Avoid overlapping separate build invocations that
+reinstall the bundled libraries.
 
 ## Release status
 

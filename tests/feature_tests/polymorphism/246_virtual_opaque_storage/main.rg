@@ -1,10 +1,10 @@
 unsafe_allocation := import ("../../_support/unsafe_allocation")
 
-SlotProtocol: Abstract = (
-    put(.self: &Self, .storage: $&Allocation, .slot: $&Tracked, .value: Tracked) -> () where {
+SlotProtocol#(.Participant: Type): Contract = (
+    .put: (.self: &Participant, .storage: $&Allocation, .slot: $&Tracked, .value: Tracked) -> () where {
         retains(storage, value)
     }
-    take(.self: &Self, .storage: $&Allocation, .slot: $&Tracked) -> (.value: Tracked) where {
+    .take: (.self: &Participant, .storage: $&Allocation, .slot: $&Tracked) -> (.value: Tracked) where {
         owns(value)
         from_storage(value, storage)
         empties(storage)
@@ -13,17 +13,21 @@ SlotProtocol: Abstract = (
 
 Tracked: Type = (.drops: $&Int32)
 
-Tracked deinit(.self: $&Tracked) -> () := { self&.drops&= self&.drops&+ 1 }
+implement Deinit#(Tracked) (
+    .deinit = (.self: $&Tracked) -> () {
+        self&.drops&= self&.drops&+ 1
+    }
+)
 
 Slots: Type = ()
 
-Slots implements SlotProtocol
+implement SlotProtocol#(Slots) (.put = _impl_put_Slots, .take = _impl_take_Slots)
 
-put(.self: &Slots, .storage: $&Allocation, .slot: $&Tracked, .value: Tracked) -> () := {
+_impl_put_Slots := (.self: &Slots, .storage: $&Allocation, .slot: $&Tracked, .value: Tracked) -> ()  {
     trusted_opaque_move_in#(Tracked, Allocation)(storage, slot, ~value)
 }
 
-take(.self: &Slots, .storage: $&Allocation, .slot: $&Tracked) -> (.value: Tracked) := {
+_impl_take_Slots := (.self: &Slots, .storage: $&Allocation, .slot: $&Tracked) -> (.value: Tracked)  {
     value = trusted_opaque_move_out#(Tracked, Allocation)(storage, slot)
     trusted_opaque_mark_empty(storage)
 }
@@ -47,11 +51,11 @@ forward_take(
     value = take(slots, storage, slot)
 }
 
-static_put(.slots: &SlotProtocol, .storage: $&Allocation, .slot: $&Tracked, .value: Tracked) -> () := {
+static_put#(.SlotsType: Type: SlotProtocol#(SlotsType))(.slots: &SlotsType, .storage: $&Allocation, .slot: $&Tracked, .value: Tracked) -> () := {
     put(slots, storage, slot, ~value)
 }
 
-static_take(.slots: &SlotProtocol, .storage: $&Allocation, .slot: $&Tracked) -> (.value: Tracked) := {
+static_take#(.SlotsType: Type: SlotProtocol#(SlotsType))(.slots: &SlotsType, .storage: $&Allocation, .slot: $&Tracked) -> (.value: Tracked) := {
     value = take(slots, storage, slot)
 }
 

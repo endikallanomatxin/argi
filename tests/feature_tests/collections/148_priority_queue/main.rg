@@ -7,7 +7,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         .capacity  = 1
     )!
     match peek(.self = &queue).value { ..none {} ..some _ { abort } }
-    match pop(.self = $&queue).value { ..none {} ..some _ { abort } }
+    match pop(.self = $&queue).result { ..none {} ..some _ { abort } }
     push(.self = $&queue, .value = 5, .allocator = allocator)!
     push(.self = $&queue, .value = -10, .allocator = allocator)!
     push(.self = $&queue, .value = 5, .allocator = allocator)!
@@ -15,7 +15,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     expected :: [4]Int32 = (-10, 0, 5, 5)
     index :: UIntNative = 0
     while index < 4 {
-        match pop(.self = $&queue).value {
+        match pop(.self = $&queue).result {
             ..none { abort }
             ..some item { if item.value != expected[index] { abort } }
         }
@@ -33,7 +33,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
             ..none { abort }
             ..some item { if item.value != value { abort } }
         }
-        match pop(.self = $&queue).value {
+        match pop(.self = $&queue).result {
             ..none { abort }
             ..some item { if item.value != value { abort } }
         }
@@ -41,18 +41,18 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     }
     push(.self = $&queue, .value = -2147483648, .allocator = allocator)!
     push(.self = $&queue, .value = 2147483647, .allocator = allocator)!
-    match pop(.self = $&queue).value {
+    match pop(.self = $&queue).result {
         ..none { abort }
         ..some item { if item.value != -2147483648 { abort } }
     }
-    match pop(.self = $&queue).value {
+    match pop(.self = $&queue).result {
         ..none { abort }
         ..some item { if item.value != 2147483647 { abort } }
     }
 
 }
 
-main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+main#(.WriterType: Type: Writer#(WriterType))(.system: System, .writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
     run_main(.system = system)!!!
     status_code = 0
 }

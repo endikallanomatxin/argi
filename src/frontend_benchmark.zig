@@ -9,7 +9,6 @@ const Sample = struct {
     tokenizing: u64 = 0,
     syntaxing: u64 = 0,
     module: u64 = 0,
-    linked: u64 = 0,
     global: u64 = 0,
     safety: u64 = 0,
     hits: usize = 0,
@@ -39,7 +38,6 @@ fn measure(io: std.Io, files: []const sf.SourceFile, session: ?*ModuleCache, edi
         .tokenizing = pipeline.tokenizing_ns,
         .syntaxing = pipeline.syntaxing_ns,
         .module = pipeline.module_semantizing_ns,
-        .linked = pipeline.linked_module_ns,
         .global = pipeline.global_semantic_ns,
         .safety = pipeline.safety_ns,
         .hits = pipeline.module_cache_hits,
@@ -63,13 +61,13 @@ fn benchmark(io: std.Io, files: []const sf.SourceFile, name: []const u8, edit: ?
         const sample = try measure(io, files, cache, edit, index);
         inline for (std.meta.fields(Sample)) |field| @field(totals, field.name) += @field(sample, field.name);
     }
-    std.debug.print("{s},{s},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d},{d},{d:.2}\n", .{
-        name,                                       if (reuse) @as([]const u8, "reuse") else "clean",
-        milliseconds(totals.total, iterations),     milliseconds(totals.tokenizing, iterations),
-        milliseconds(totals.syntaxing, iterations), milliseconds(totals.module, iterations),
-        milliseconds(totals.linked, iterations),    milliseconds(totals.global, iterations),
-        milliseconds(totals.safety, iterations),    totals.hits / iterations,
-        totals.misses / iterations,                 @as(f64, @floatFromInt(session.retained_bytes)) / (1024 * 1024),
+    std.debug.print("{s},{s},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d},{d},{d:.2}\n", .{
+        name,                                                            if (reuse) @as([]const u8, "reuse") else "clean",
+        milliseconds(totals.total, iterations),                          milliseconds(totals.tokenizing, iterations),
+        milliseconds(totals.syntaxing, iterations),                      milliseconds(totals.module, iterations),
+        milliseconds(totals.global, iterations),                         milliseconds(totals.safety, iterations),
+        totals.hits / iterations,                                        totals.misses / iterations,
+        @as(f64, @floatFromInt(session.retained_bytes)) / (1024 * 1024),
     });
 }
 
@@ -101,7 +99,7 @@ pub fn main(init: std.process.Init) !void {
         milliseconds(sample.total, 1),                                cold.entries.items.len,
         @as(f64, @floatFromInt(cold.retained_bytes)) / (1024 * 1024),
     });
-    std.debug.print("scenario,mode,frontend_ms,tokenizing_ms,syntaxing_ms,module_ms,linked_ms,global_ms,safety_ms,hits,misses,retained_MiB\n", .{});
+    std.debug.print("scenario,mode,frontend_ms,tokenizing_ms,syntaxing_ms,module_ms,global_ms,safety_ms,hits,misses,retained_MiB\n", .{});
     for ([_][]const u8{ "unchanged", "local_edit", "import_edit", "core_edit" }, [_]?usize{ null, local, imported, core }, 0..) |name, edit, index| {
         if (index != 0 and edit == null) continue;
         try benchmark(init.io, files.items, name, edit, iterations, false);

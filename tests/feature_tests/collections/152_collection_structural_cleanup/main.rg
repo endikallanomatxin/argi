@@ -2,7 +2,11 @@ drops :: UIntNative = 0
 
 Tracked: Type = (.id: Int32)
 
-Tracked deinit(.self: $&Tracked) -> () := { drops = drops + 1 }
+implement Deinit#(Tracked) (
+    .deinit = (.self: $&Tracked) -> () {
+        drops = drops + 1
+    }
+)
 
 Pair: Type = (.first: Tracked, .second: Tracked)
 
@@ -11,16 +15,6 @@ _pair(.id: Int32) -> (.value: Pair) := {
 }
 
 RefusingAllocator: Type = ()
-
-RefusingAllocator implements Allocator
-
-allocate(
-        .self      : $&RefusingAllocator,
-        .size      : UIntNative,
-        .alignment : UIntNative           = 1
-    ) -> (
-        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
-    ) := { result = ..error(.reason = ..out_of_memory) }
 
 run_main(.system: System) -> !Void = ..ok Void() := {
     assume allocator := system.page_allocator
@@ -39,14 +33,14 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         ..ok _ { abort } ..error error { if error.reason != ..out_of_bounds { abort } }
     }
     if drops != 6 { abort }
-    match set(.self = $&array, .index = 9, .value = _pair(.id = 5).value, .allocator = allocator) {
+    match replace(.self = $&array, .index = 9, .value = _pair(.id = 5).value, .allocator = allocator) {
         ..ok _ { abort } ..error error { if error.reason != ..out_of_bounds { abort } }
     }
     if drops != 8 { abort }
-    set(.self = $&array, .index = 0, .value = _pair(.id = 6).value, .allocator = allocator)!
+    replace(.self = $&array, .index = 0, .value = _pair(.id = 6).value, .allocator = allocator)!
     if drops != 10 { abort }
     if unwrap_or_abort(.value = get_ro_ref(.self = &array, .index = 0))&.first.id != 6 { abort }
-    deinit(.self = $&array, .allocator = allocator)
+    deinit(.self = $&array)
     if drops != 12 { abort }
     ring ::= RingBuffer#(.t: Pair)(.capacity = 2, .allocator = allocator)!
     push(.self = $&ring, .value = _pair(.id = 7).value, .allocator = allocator)!
@@ -58,7 +52,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     { extracted ::= ~unwrap_or_abort(.value = pop(.self = $&ring)) }
     if drops != 16 { abort }
     push(.self = $&ring, .value = _pair(.id = 10).value, .allocator = allocator)!
-    deinit(.self = $&ring, .allocator = allocator)
+    deinit(.self = $&ring)
     if drops != 20 { abort }
     deque ::= Deque#(.t: Pair)(.capacity = 1, .allocator = allocator)!
     push_back(.self = $&deque, .value = _pair(.id = 11).value, .allocator = allocator)!
@@ -70,11 +64,21 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         ..ok _ { abort } ..error error { if error.reason != ..out_of_memory { abort } }
     }
     if drops != 24 { abort }
-    deinit(.self = $&deque, .allocator = allocator)
+    deinit(.self = $&deque)
     if drops != 26 { abort }
 }
 
-main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+main#(.WriterType: Type: Writer#(WriterType))(.system: System, .writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
     run_main(.system = system)!!!
     status_code = 0
 }
+
+implement Allocator#(RefusingAllocator)(
+    .allocate = (
+            .self      : $&RefusingAllocator,
+            .size      : UIntNative,
+            .alignment : UIntNative           = 1
+        ) -> (
+            .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+        ) { result = ..error(.reason = ..out_of_memory) }
+)

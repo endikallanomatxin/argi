@@ -28,7 +28,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     if length(.self = &map).count != 1 { abort }
     extracted ::= extract(.self = $&map, .key = &query).result
     if length(.self = &map).count != 0 { abort }
-    deinit(.self = $&map, .allocator = allocator)
+    deinit(.self = $&map)
     match extracted {
         ..none { abort }
         ..some ~payload {
@@ -41,7 +41,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     }
 }
 
-main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+main#(.WriterType: Type: Writer#(WriterType))(.system: System, .writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
     run_main(.system = system)!!!
     status_code = 0
 }

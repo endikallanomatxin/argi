@@ -1,4 +1,4 @@
-verify(
+verify_Int8(
         .actual   : Errable#(.t: Int8, .reasons: (..out_of_range)),
         .expected : Int32,
         .minimum  : Int32,
@@ -7,7 +7,7 @@ verify(
     match actual {
         ..ok value {
             if expected < minimum or expected > maximum { abort }
-            if Int32(.value = value) != expected { abort }
+            if value | convert#(.to: Int32)(_) != expected { abort }
         }
         ..error error {
             if error.reason != ..out_of_range { abort }
@@ -16,7 +16,7 @@ verify(
     }
 }
 
-verify(
+verify_UInt8(
         .actual   : Errable#(.t: UInt8, .reasons: (..out_of_range)),
         .expected : Int32,
         .minimum  : Int32,
@@ -25,7 +25,7 @@ verify(
     match actual {
         ..ok value {
             if expected < minimum or expected > maximum { abort }
-            if Int32(.value = value) != expected { abort }
+            if value | convert#(.to: Int32)(_) != expected { abort }
         }
         ..error error {
             if error.reason != ..out_of_range { abort }
@@ -39,15 +39,15 @@ check_int8() -> () := {
     while left <= 127 {
         right :: Int32 = -128
         while right <= 127 {
-            a ::= unwrap_or_abort(.value = Int8(.value = left)).result
-            b ::= unwrap_or_abort(.value = Int8(.value = right)).result
-            verify(
+            a ::= unwrap_or_abort(.value = left | convert#(.to: Int8)(_)).result
+            b ::= unwrap_or_abort(.value = right | convert#(.to: Int8)(_)).result
+            verify_Int8(
                 .actual   = checked_add(.left = a, .right = b)
                 .expected = left + right
                 .minimum  = -128
                 .maximum  = 127
             )
-            verify(
+            verify_Int8(
                 .actual   = checked_subtract(.left = a, .right = b)
                 .expected = [
                     left
@@ -56,7 +56,7 @@ check_int8() -> () := {
                 .minimum = -128
                 .maximum = 127
             )
-            verify(
+            verify_Int8(
                 .actual   = checked_multiply(.left = a, .right = b)
                 .expected = [
                     left
@@ -70,7 +70,7 @@ check_int8() -> () := {
                     if right == 0 { abort }
                     expected ::= left / right
                     if expected < -128 or expected > 127 { abort }
-                    if Int32(.value = value) != expected { abort }
+                    if value | convert#(.to: Int32)(_) != expected { abort }
                 }
                 ..error error {
                     if right == 0 {
@@ -92,9 +92,9 @@ check_uint8() -> () := {
     while left <= 255 {
         right :: Int32 = 0
         while right <= 255 {
-            a ::= unwrap_or_abort(.value = UInt8(.value = left)).result
-            b ::= unwrap_or_abort(.value = UInt8(.value = right)).result
-            verify(
+            a ::= unwrap_or_abort(.value = left | convert#(.to: UInt8)(_)).result
+            b ::= unwrap_or_abort(.value = right | convert#(.to: UInt8)(_)).result
+            verify_UInt8(
                 .actual   = checked_add(.left = a, .right = b)
                 .expected = [
                     left
@@ -103,7 +103,7 @@ check_uint8() -> () := {
                 .minimum = 0
                 .maximum = 255
             )
-            verify(
+            verify_UInt8(
                 .actual   = checked_subtract(.left = a, .right = b)
                 .expected = [
                     left
@@ -112,7 +112,7 @@ check_uint8() -> () := {
                 .minimum = 0
                 .maximum = 255
             )
-            verify(
+            verify_UInt8(
                 .actual   = checked_multiply(.left = a, .right = b)
                 .expected = [
                     left
@@ -126,7 +126,7 @@ check_uint8() -> () := {
                     if right == 0 { abort }
                     expected ::= left / right
                     if expected < 0 or expected > 255 { abort }
-                    if Int32(.value = value) != expected { abort }
+                    if value | convert#(.to: Int32)(_) != expected { abort }
                 }
                 ..error error {
                     if right == 0 {

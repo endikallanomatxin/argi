@@ -9,7 +9,7 @@ _invalidate_dynamic_array_shape#(.t: Type)(.array: $&DynamicArray#(.t: t)) -> ()
 -- The collection owns a private allocation receipt and an initialized prefix.
 -- Only that prefix is exposed; spare capacity never becomes readable storage.
 -- Borrowed element facts retain the backing allocation's temporal generation.
-array_view#(
+_dynamic_array_view#(
         .t : Type
     )(
         .array : $&DynamicArray#(.t: t),
@@ -29,7 +29,7 @@ array_view#(
     view = _trusted_array_view#(.t: t)(.data = borrowed, .length = array&._length).array
 }
 
-array_view_ro#(
+_dynamic_array_view_ro#(
         .t : Type
     )(
         .array : &DynamicArray#(.t: t),

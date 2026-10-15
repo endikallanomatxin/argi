@@ -4,7 +4,11 @@ drops :: Int32 = 0
 
 Marker: Type = (.id: Int32)
 
-Marker deinit(.self: $&Marker) -> () := { drops = drops + 1 }
+implement Deinit#(Marker) (
+    .deinit = (.self: $&Marker) -> () {
+        drops = drops + 1
+    }
+)
 
 attempt(.fail: Bool) -> !Int32 := {
     calls = calls + 1

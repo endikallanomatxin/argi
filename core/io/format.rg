@@ -1,49 +1,87 @@
--- Formatting writes through the ordinary Writer contract and never flushes
--- implicitly. A failed byte stops emission; preceding bytes remain written.
-format_into#(
-        .t : Type: Int
-    )(
-        .out   : $&Writer,
-        .value : t,
+-- Numeric stream formatting has one scoped operation identity. It never flushes
+-- implicitly; a failed byte stops emission and preserves preceding writes.
+_write_integer_value#(
+        .Stream : Type: Writer#(Stream),
+        .Value  : Type: Int
+    ) := (
+        .self  : $&Stream,
+        .value : Value
     ) -> (
         .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-    ) := {
-    encoded ::= _decimal_encode#(.t: t)(.value = value)
-
-    result = write(out, .text = _decimal_view(&encoded).view)
+    ) {
+    encoded ::= _decimal_encode#(.t: Value)(.value = value)
+    result = write(self, .value = _decimal_view(&encoded).view)
 }
 
-write#(
-        .t : Type: Int
-    )(
-        .self  : $&Writer,
-        .value : t,
+_write_float_value#(
+        .Stream : Type: Writer#(Stream),
+        .Value  : Type: Float
+    ) := (
+        .self  : $&Stream,
+        .value : Value
     ) -> (
         .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-    ) := {
-    result = format_into(.out = self, .value = value)
-}
-
-format_into#(
-        .t : Type: Float
-    )(
-        .out   : $&Writer,
-        .value : t
-    ) -> (
-        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-    ) := {
+    ) {
     encoded ::= _float_encode(.value = value)
-
-    result = write(out, .text = _float_text_view(&encoded).view)
+    result = write(self, .value = _float_text_view(&encoded).view)
 }
 
-write#(
-        .t : Type: Float
-    )(
-        .self  : $&Writer,
-        .value : t
-    ) -> (
-        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-    ) := {
-    result = format_into(.out = self, .value = value)
-}
+implement#(.Stream: Type: Writer#(Stream)) WriteValue#(Stream, Int8) (
+    .Result      : Type                 = Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+    .write_value = _write_integer_value
+)
+
+implement#(.Stream: Type: Writer#(Stream)) WriteValue#(Stream, Int16) (
+    .Result      : Type                 = Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+    .write_value = _write_integer_value
+)
+
+implement#(.Stream: Type: Writer#(Stream)) WriteValue#(Stream, Int32) (
+    .Result      : Type                 = Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+    .write_value = _write_integer_value
+)
+
+implement#(.Stream: Type: Writer#(Stream)) WriteValue#(Stream, Int64) (
+    .Result      : Type                 = Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+    .write_value = _write_integer_value
+)
+
+implement#(.Stream: Type: Writer#(Stream)) WriteValue#(Stream, UInt8) (
+    .Result      : Type                 = Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+    .write_value = _write_integer_value
+)
+
+implement#(.Stream: Type: Writer#(Stream)) WriteValue#(Stream, UInt16) (
+    .Result      : Type                 = Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+    .write_value = _write_integer_value
+)
+
+implement#(.Stream: Type: Writer#(Stream)) WriteValue#(Stream, UInt32) (
+    .Result      : Type                 = Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+    .write_value = _write_integer_value
+)
+
+implement#(.Stream: Type: Writer#(Stream)) WriteValue#(Stream, UInt64) (
+    .Result      : Type                 = Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+    .write_value = _write_integer_value
+)
+
+implement#(.Stream: Type: Writer#(Stream)) WriteValue#(Stream, UIntNative) (
+    .Result      : Type                 = Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+    .write_value = _write_integer_value
+)
+
+implement#(.Stream: Type: Writer#(Stream)) WriteValue#(Stream, Float16) (
+    .Result      : Type               = Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+    .write_value = _write_float_value
+)
+
+implement#(.Stream: Type: Writer#(Stream)) WriteValue#(Stream, Float32) (
+    .Result      : Type               = Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+    .write_value = _write_float_value
+)
+
+implement#(.Stream: Type: Writer#(Stream)) WriteValue#(Stream, Float64) (
+    .Result      : Type               = Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+    .write_value = _write_float_value
+)

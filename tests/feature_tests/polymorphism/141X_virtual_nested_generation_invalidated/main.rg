@@ -1,7 +1,7 @@
 ..failed
 
-Editor: Abstract = (
-    edit(.self: &Self, .target: $&Int32, .mode: Int32) -> (.result: Errable#(?Int32, (..failed))) where {
+Editor#(.Participant: Type): Contract = (
+    .edit: (.self: &Participant, .target: $&Int32, .mode: Int32) -> (.result: Errable#(?Int32, (..failed))) where {
         on result ..ok {
             on result ..some { invalidates(target) }
             on result ..none {}
@@ -12,9 +12,9 @@ Editor: Abstract = (
 
 Cell: Type = (.unused: Int32)
 
-Cell implements Editor
+implement Editor#(Cell) (.edit = _impl_edit_Cell)
 
-edit(.self: &Cell, .target: $&Int32, .mode: Int32) -> (.result: Errable#(?Int32, (..failed))) := {
+_impl_edit_Cell := (.self: &Cell, .target: $&Int32, .mode: Int32) -> (.result: Errable#(?Int32, (..failed)))  {
     if mode == 2 {
         result = ..error(.reason = ..failed)
         return

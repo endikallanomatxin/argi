@@ -36,7 +36,7 @@ fn valueDepth(comptime Value: type, allocator: std.mem.Allocator, graph: *const 
         const value: Value = .{};
     };
     for (graph.fields.items[range.start..][0..range.len], 0..) |field, index| {
-        const child = try valueDepth(Value, allocator, graph, types.effectiveFieldType(field), depth + 1);
+        const child = try valueDepth(Value, allocator, graph, field.ty, depth + 1);
         var stored: *const Value = &empty.value;
         if (child.foreign_storage or child.fields.len != 0) {
             has_foreign = true;

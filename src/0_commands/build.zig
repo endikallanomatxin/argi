@@ -110,6 +110,9 @@ fn printStats(
     std.debug.print("Global semantizing\n", .{});
     std.debug.print("  relocate and link:           {d:.3} ms\n", .{milliseconds(semantic_timings.relocation_ns)});
     std.debug.print("  setup:                       {d:.3} ms\n", .{milliseconds(semantic_timings.setup_ns)});
+    inline for (std.meta.fields(global_semantizer.SetupStage), 0..) |stage, index|
+        std.debug.print("    {s}: {d:.3} ms\n", .{ stage.name, milliseconds(semantic_timings.setup_stages_ns[index]) });
+    std.debug.print("    registration templates: {d:.3} ms; concrete tuples: {d:.3} ms\n", .{ milliseconds(pipeline.global_stats.contracts.registration_templates_ns), milliseconds(pipeline.global_stats.contracts.registration_tuples_ns) });
     std.debug.print("  fixed point:                 {d:.3} ms ({d} rounds, {d} pending attempts)\n", .{
         milliseconds(semantic_timings.fixed_point_ns), semantic.rounds, semantic.pending_attempts,
     });
@@ -163,29 +166,30 @@ fn printStats(
     if (semantic.generic_reachability_tracked)
         std.debug.print("        unreachable after semantizing {d}\n", .{semantic.generic_bodies_unreachable});
     std.debug.print("    full-pool materialization:\n", .{});
-    std.debug.print("      binding defaults:        {d:.3} ms\n", .{milliseconds(semantic_timings.runtime_binding_defaults_ns)});
     std.debug.print("      string literal types:    {d:.3} ms\n", .{milliseconds(semantic_timings.string_literal_types_ns)});
     std.debug.print("      binding types:           {d:.3} ms\n", .{milliseconds(semantic_timings.binding_types_ns)});
     std.debug.print("      assignment values:       {d:.3} ms\n", .{milliseconds(semantic_timings.assignment_values_ns)});
     std.debug.print("      dereferences:            {d:.3} ms\n", .{milliseconds(semantic_timings.dereferences_ns)});
     std.debug.print("      addresses:               {d:.3} ms\n", .{milliseconds(semantic_timings.addresses_ns)});
     std.debug.print("      generic types:           {d:.3} ms\n", .{milliseconds(semantic_timings.known_generic_types_ns)});
-    std.debug.print("      abstract field storage:  {d:.3} ms\n", .{milliseconds(semantic_timings.abstract_field_storage_ns)});
+    std.debug.print("      field access types:      {d:.3} ms\n", .{milliseconds(semantic_timings.field_access_types_ns)});
     std.debug.print("      sugar types:             {d:.3} ms\n", .{milliseconds(semantic_timings.sugar_types_ns)});
     std.debug.print("    error reason inference:    {d:.3} ms\n", .{milliseconds(semantic_timings.error_inference_ns)});
+    std.debug.print("      reason summaries:        {d:.3} ms\n", .{milliseconds(semantic_timings.error_summary_ns)});
+    std.debug.print("      propagation refresh:     {d:.3} ms\n", .{milliseconds(semantic_timings.error_refresh_ns)});
     std.debug.print("    implicit generic constraints: {d:.3} ms\n", .{milliseconds(semantic_timings.generic_constraints_ns)});
     const generic_selection = semantic.generic_selection;
-    std.debug.print("  generic overload selection (phase times are disjoint):\n", .{});
-    std.debug.print("    implicit: {d} calls, {d} candidates; prefilter/inference {d:.3} ms, constraints {d:.3} ms, scoring {d:.3} ms, argument materialization {d:.3} ms, final instantiation {d:.3} ms\n", .{
+    std.debug.print("  generic function applicability (phase times are disjoint):\n", .{});
+    std.debug.print("    implicit: {d} calls, {d} candidates; prefilter/inference {d:.3} ms, constraints {d:.3} ms, applicability {d:.3} ms, argument materialization {d:.3} ms, final instantiation {d:.3} ms\n", .{
         generic_selection.implicit_calls,                                generic_selection.implicit_candidates,
         milliseconds(generic_selection.implicit_prefilter_inference_ns), milliseconds(generic_selection.implicit_constraints_ns),
-        milliseconds(generic_selection.implicit_scoring_ns),             milliseconds(generic_selection.implicit_argument_materialization_ns),
+        milliseconds(generic_selection.implicit_applicability_ns),       milliseconds(generic_selection.implicit_argument_materialization_ns),
         milliseconds(generic_selection.implicit_final_instantiation_ns),
     });
-    std.debug.print("    explicit: {d} calls, {d} candidates; prefilter/inference {d:.3} ms, constraints {d:.3} ms, scoring {d:.3} ms, argument materialization {d:.3} ms, final instantiation {d:.3} ms\n", .{
+    std.debug.print("    explicit: {d} calls, {d} candidates; prefilter/inference {d:.3} ms, constraints {d:.3} ms, applicability {d:.3} ms, argument materialization {d:.3} ms, final instantiation {d:.3} ms\n", .{
         generic_selection.explicit_calls,                                generic_selection.explicit_candidates,
         milliseconds(generic_selection.explicit_prefilter_inference_ns), milliseconds(generic_selection.explicit_constraints_ns),
-        milliseconds(generic_selection.explicit_scoring_ns),             milliseconds(generic_selection.explicit_argument_materialization_ns),
+        milliseconds(generic_selection.explicit_applicability_ns),       milliseconds(generic_selection.explicit_argument_materialization_ns),
         milliseconds(generic_selection.explicit_final_instantiation_ns),
     });
     std.debug.print("      explicit candidates: {d} reached argument materialization, {d} matched; {d} materializations discarded\n", .{
@@ -199,41 +203,15 @@ fn printStats(
     std.debug.print("      implicit destructors:    {d:.3} ms ({d} lookups)\n", .{
         milliseconds(semantic_timings.implicit_destructor_ns), semantic.destructor_lookups,
     });
-    std.debug.print("      generic lookup:          {d:.3} ms\n", .{milliseconds(semantic_timings.implicit_generic_lookup_ns)});
-    const implicit = semantic.implicit_lookup;
-    std.debug.print("  implicit function lookup (matching time excludes completion):\n", .{});
-    std.debug.print("    ordinary: {d:.3} ms, {d} calls, {d} resolved, {d} deferred, {d} no match, {d} ambiguous\n", .{
-        milliseconds(implicit.ordinary_matching_ns), implicit.ordinary_calls,
-        implicit.ordinary_resolved,                  implicit.ordinary_deferred,
-        implicit.ordinary_no_match,                  implicit.ordinary_ambiguous,
-    });
-    std.debug.print("    abstract-compatible: {d:.3} ms, {d} calls, {d} resolved, {d} deferred, {d} no match, {d} ambiguous\n", .{
-        milliseconds(implicit.abstract_compatible_matching_ns), implicit.abstract_compatible_calls,
-        implicit.abstract_compatible_resolved,                  implicit.abstract_compatible_deferred,
-        implicit.abstract_compatible_no_match,                  implicit.abstract_compatible_ambiguous,
-    });
-    std.debug.print("    generic: {d:.3} ms, {d} calls, {d} resolved, {d} deferred, {d} no match, {d} ambiguous\n", .{
-        milliseconds(implicit.generic_matching_ns), implicit.generic_calls,
-        implicit.generic_resolved,                  implicit.generic_deferred,
-        implicit.generic_no_match,                  implicit.generic_ambiguous,
-    });
-    std.debug.print("    completion: {d:.3} ms, {d} calls, {d} deferred\n", .{
-        milliseconds(implicit.ordinary_completion_ns + implicit.abstract_compatible_completion_ns + implicit.generic_completion_ns),
-        implicit.ordinary_completion_calls + implicit.abstract_compatible_completion_calls + implicit.generic_completion_calls,
-        implicit.ordinary_completion_deferred + implicit.abstract_compatible_completion_deferred + implicit.generic_completion_deferred,
-    });
     const destructor = semantic.ownership;
     std.debug.print("  destructor resolution: {d} success, {d} failed\n", .{
         destructor.destructor_successes, destructor.destructor_failures,
     });
     std.debug.print("  post-resolution:             {d:.3} ms\n", .{milliseconds(semantic_timings.post_resolution_ns)});
     std.debug.print("  verify:                      {d:.3} ms\n", .{milliseconds(semantic_timings.verify_ns)});
-    std.debug.print("  abstract implementation cache hits: {d} positive, {d} negative\n", .{
-        semantic.cached_implementation_hits, semantic.cached_nonimplementation_hits,
-    });
-    std.debug.print("  abstract implementation scans: {d:.3} ms, {d} over {d} candidates\n", .{
-        milliseconds(semantic.abstracts.implementation_scan_ns), semantic.abstracts.implementation_scans,
-        semantic.abstracts.implementation_candidates,
+    std.debug.print("  contract implementation scans: {d:.3} ms, {d} over {d} candidates\n", .{
+        milliseconds(semantic.contracts.implementation_scan_ns), semantic.contracts.implementation_scans,
+        semantic.contracts.implementation_candidates,
     });
     std.debug.print("  type interning: {d:.3} ms, {d} calls, {d} candidates\n", .{
         milliseconds(semantic.generics.type_intern_ns), semantic.generics.type_intern_calls,
@@ -272,6 +250,9 @@ fn printStats(
     std.debug.print("    post-states:        {d:.3} ms\n", .{milliseconds(safety.post_state_inference_ns)});
     std.debug.print("    outcomes:           {d:.3} ms\n", .{milliseconds(safety.outcome_inference_ns)});
     std.debug.print("    opaque storage:     {d:.3} ms\n", .{milliseconds(safety.opaque_inference_ns)});
+    std.debug.print("    capabilities:       {d:.3} ms\n", .{milliseconds(safety.capability_inference_ns)});
+    std.debug.print("      flow:             {d:.3} ms\n", .{milliseconds(safety.capability_flow_ns)});
+    std.debug.print("    guards:             {d:.3} ms\n", .{milliseconds(safety.guard_inference_ns)});
     std.debug.print("  summary bytes requested: {d}\n", .{safety.summary_allocated_bytes});
     std.debug.print("  retained worklist bytes: {d}\n", .{safety.summary_worklist_bytes});
     std.debug.print("  virtual contract summary time: {d:.3} ms\n", .{milliseconds(safety.virtual_summary_ns)});

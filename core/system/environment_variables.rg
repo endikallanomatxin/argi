@@ -1,12 +1,19 @@
 EnvironmentVariables: Type = (._ffi: $&ForeignFunctionInterface)
 
-once EnvironmentVariables init(
-        .ffi : $&ForeignFunctionInterface = reach ffi
+once _acquire_environment_variables := (
+        .args : (.ffi: $&ForeignFunctionInterface = reach ffi)
     ) -> (
         .result : EnvironmentVariables
-    ) := {
+    ) {
+    ffi ::= args.ffi
+
     result._ffi = ffi
 }
+
+implement Init#(EnvironmentVariables, (.ffi: $&ForeignFunctionInterface = reach ffi)) (
+    .Result : Type                           = EnvironmentVariables
+    .init   = _acquire_environment_variables
+)
 
 environment_variables_get_c_string(
         .key : &Char,
@@ -14,7 +21,7 @@ environment_variables_get_c_string(
         .value : ?StringView
     ) := {
     raw_ptr ::= getenv(.name = key).value
-    raw_addr :: UIntNative = UIntNative(.value = raw_ptr)
+    raw_addr :: UIntNative = raw_ptr | convert#(.to: UIntNative)(_)
 
     if raw_addr == 0 {
         value = ..none
@@ -29,17 +36,19 @@ environment_variables_get_c_string(
     )
 }
 
-get(
+lookup_environment#(
+        .Provider : Type: Allocator#(Provider)
+    ) := (
         .self      : &EnvironmentVariables,
         .key       : StringView,
-        .allocator : $&Allocator,
+        .allocator : $&Provider,
     ) -> (
         .result : Errable#(?StringView, (..out_of_memory))
-    ) := {
+    ) {
     assume ffi := self&._ffi
     assume allocator
 
-    converted ::= as_c_string(key, .allocator = allocator)
+    converted ::= copy_c_string(key, .allocator = allocator)
 
     match converted {
         ..error _ { result = ..error(.reason = ..out_of_memory) }
@@ -49,17 +58,19 @@ get(
     }
 }
 
-has(
+has#(
+        .AllocatorType : Type: Allocator#(AllocatorType)
+    )(
         .self      : &EnvironmentVariables,
         .key       : StringView,
-        .allocator : $&Allocator,
+        .allocator : $&AllocatorType,
     ) -> (
         .result : Errable#(Bool, (..out_of_memory))
     ) := {
     assume ffi := self&._ffi
     assume allocator
 
-    found ::= get(self, .key = key, .allocator = allocator)
+    found ::= lookup_environment(self, .key = key, .allocator = allocator)
 
     match found {
         ..ok payload { result = ..ok payload ?}

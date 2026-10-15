@@ -1,0 +1,2 @@
+Legacy: Abstract = ()
+main := () -> () {}

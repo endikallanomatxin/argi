@@ -1,10 +1,17 @@
 Resource : Type = ()
 
-Resource init() -> (.result: Resource) := {
-    result = ()
-}
+implement Init#(Resource, ()) (
+    .Result: Type = Resource
+    .init = (.args: ()) -> (.result: Result) {
+        result = ()
+    }
+)
 
-Resource deinit(.res: $&Resource) -> () := {}
+implement Deinit#(Resource) (
+    .deinit = (.self: $&Resource) -> () {
+
+    }
+)
 
 Wrapper : Type = (
     .res: Resource

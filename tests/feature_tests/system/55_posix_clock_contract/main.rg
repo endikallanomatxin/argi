@@ -24,7 +24,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     if unix_seconds(.self = &wall).value != -1 or nanoseconds(.self = &wall).value != 750000000 {
         abort
     }
-    delay ::= unwrap_or_abort(.value = Duration(.milliseconds = 2)).result
+    delay ::= unwrap_or_abort(.value = duration_from_milliseconds(.milliseconds = 2)).result
     unwrap_or_abort(.value = sleep(.duration = delay))
     if _sleeps().count != 2 { abort }
     _case(.value = 1)

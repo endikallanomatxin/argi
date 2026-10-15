@@ -6,53 +6,6 @@ RecordingAllocator: Type = (
     .fail          : Bool                       = false
 )
 
-allocate(
-        .self      : $&RecordingAllocator,
-        .size      : UIntNative,
-        .alignment : UIntNative            = 1
-    ) -> (
-        .result : Errable#(
-            .t : Allocation,
-
-            .reasons : (..out_of_memory)
-        )
-    ) := {
-    self&.allocations = self&.allocations + 1
-    self&.last_size = size
-    if self&.fail {
-        result = ..error(.reason = ..out_of_memory)
-        return
-    }
-    storage ::= malloc(.size = size, .ffi = self&.ffi)
-    if UIntNative(.value = storage) == 0 {
-        result = ..error(.reason = ..out_of_memory)
-        return
-    }
-    deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(
-        .value = self
-    )
-    allocation ::= trusted_establish_allocation(
-        .storage     = storage
-        .size        = size
-        .alignment   = alignment
-        .deallocator = deallocator
-    )
-    result = ..ok ~allocation
-}
-
-deallocate(
-        .self      : $&RecordingAllocator,
-        .data      : RawPointer#(.t: UInt8),
-        .size      : UIntNative,
-        .alignment : UIntNative
-    ) -> () := {
-    self&.deallocations = self&.deallocations + 1
-    free(.address = data.address, .ffi = self&.ffi)
-}
-
-RecordingAllocator implements Allocator
-RecordingAllocator implements Deallocator
-
 expect_formatted#(
         .t : Type: Int
     )(
@@ -67,7 +20,7 @@ expect_formatted#(
     if allocator&.allocations != before + 1 or allocator&.last_size != expected.length + 1 {
         abort
     }
-    deinit(.self = $&output, .allocator = allocator)
+    deinit(.self = $&output)
     if allocator&.deallocations != freed + 1 { abort }
 }
 
@@ -126,7 +79,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         .expected  = "18446744073709551615"
     )
     -- Reserved output must remain appendable even when allocations fail.
-    output ::= unwrap_or_abort(.value = String(.capacity = 64, .allocator = $&allocator))
+    output ::= unwrap_or_abort(.value = string_with_capacity(.capacity = 64, .allocator = $&allocator))
     before ::= allocator.allocations
     allocator.fail = true
     minimum: Int64 = -9223372036854775808
@@ -139,7 +92,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     )
     if as_view(.self = &output).view != "-922337203685477580818446744073709551615" { abort }
     if allocator.allocations != before { abort }
-    deinit(.self = $&output, .allocator = $&allocator)
+    deinit(.self = $&output)
 
     failed ::= format(.value = 12345, .allocator = $&allocator)
     if is(.value = failed, .variant = ..error) {
@@ -148,3 +101,51 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     if allocator.allocations != before + 1 { abort }
     if allocator.deallocations != before { abort }
 }
+
+implement Allocator#(RecordingAllocator)(
+    .allocate = (
+            .self      : $&RecordingAllocator,
+            .size      : UIntNative,
+            .alignment : UIntNative            = 1
+        ) -> (
+            .result : Errable#(
+                .t : Allocation,
+
+                .reasons : (..out_of_memory)
+            )
+        ) {
+        self&.allocations = self&.allocations + 1
+        self&.last_size = size
+        if self&.fail {
+            result = ..error(.reason = ..out_of_memory)
+            return
+        }
+        storage ::= malloc(.size = size, .ffi = self&.ffi)
+        if storage | convert#(.to: UIntNative)(_) == 0 {
+            result = ..error(.reason = ..out_of_memory)
+            return
+        }
+        deallocator :: Virtual#(.contract: Deallocator) = to_virtual#(.contract: Deallocator)(
+            .value = self
+        )
+        allocation ::= trusted_establish_allocation(
+            .storage     = storage
+            .size        = size
+            .alignment   = alignment
+            .deallocator = deallocator
+        )
+        result = ..ok ~allocation
+    }
+)
+
+implement Deallocator#(RecordingAllocator)(
+    .deallocate = (
+            .self      : $&RecordingAllocator,
+            .data      : RawPointer#(.t: UInt8),
+            .size      : UIntNative,
+            .alignment : UIntNative
+        ) -> () {
+        self&.deallocations = self&.deallocations + 1
+        free(.address = data.address, .ffi = self&.ffi)
+    }
+)

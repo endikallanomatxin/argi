@@ -1,10 +1,10 @@
-Source: Abstract = (read(.self: &Self) -> (.result: Int32) where {})
+Source#(.Participant: Type): Contract = (.read: (.self: &Participant) -> (.result: Int32) where {})
 
 Local: Type = (.value: Int32)
 
-Local implements Source
+implement Source#(Local) (.read = _impl_read_Local)
 
-read(.self: &Local) -> (.result: Int32) := {
+_impl_read_Local := (.self: &Local) -> (.result: Int32)  {
     result = self&.value
 }
 

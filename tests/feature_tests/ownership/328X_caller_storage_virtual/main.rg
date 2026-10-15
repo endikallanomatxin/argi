@@ -1,17 +1,17 @@
-Source: Abstract = (read(.self: &Self) -> (.result: &Int32) where depends_on(result, self))
+Source#(.Participant: Type): Contract = (.read: (.self: &Participant) -> (.result: &Int32) where depends_on(result, self))
 
 Local: Type = ()
 
-Local implements Source
+implement Source#(Local) (.read = _impl_read_Local)
 
-read(.self: &Local) -> (.result: &Int32) := {
+_impl_read_Local := (.self: &Local) -> (.result: &Int32)  {
     value ::= 17
     result = &value
 }
 
 main() -> (.status_code: Int32 = 0) := {
     local :: Local = ()
-    source ::= to_virtual#(.abstract: Source)(.value = &local)
+    source ::= to_virtual#(.contract: Source)(.value = &local)
     reference ::= read(.self = &source)
     status_code = reference&
 }

@@ -62,7 +62,7 @@ copyable.
 Some named arguments may be declared as *reached arguments*:
 
 ```argi
-allocate(.allocator: $&Allocator = reach allocator, .size: UIntNative) -> (.out: Allocation) := {
+allocate#(.Provider: Type: Allocator#(Provider))(.allocator: $&Provider = reach allocator, .size: UIntNative) -> (.out: Allocation) := {
     ...
 }
 ```
@@ -112,8 +112,9 @@ Reached arguments are resolved by propagation through the call chain.
    - then access `.stdout`
 6. The first alternative that resolves in the current caller scope and matches
    the declared type is used.
-7. If the declared type is an abstract, any value whose concrete type
-   implements that abstract is valid.
+7. A reached value can infer an explicit compile-time type parameter. Its
+   contract bounds are checked against the selected conformance; no contract
+   substitutes for a runtime type.
 8. If no alternative resolves in the current caller scope, the dependency is
    propagated upwards as if the caller itself had an extra argument declared as
    `.name = reach ...`.
@@ -135,8 +136,8 @@ compatible type”.
 Reached arguments may refer to nested capability paths:
 
 ```argi
-print_line(
-    .writer: $&Writer = reach writer, terminal.stdout, system.terminal.stdout,
+print_line#(.Provider: Type: Writer#(Provider))(
+    .writer: $&Provider = reach writer, terminal.stdout, system.terminal.stdout,
     .text: String,
 ) -> () := {
     ...

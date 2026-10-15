@@ -1,12 +1,12 @@
-Counter: Abstract = (bump(.self: $&Self) -> () where {})
+Counter#(.Participant: Type): Contract = (.bump: (.self: $&Participant) -> () where {})
 
 Probe: Type = (.value: UIntNative = 0)
 
-Probe implements Counter
+implement Counter#(Probe) (.bump = _impl_bump_Probe)
 
-bump(.self: $&Probe) -> () := { self&.value = self&.value + 1 }
+_impl_bump_Probe := (.self: $&Probe) -> ()  { self&.value = self&.value + 1 }
 
-escape() -> (.handle: $&Virtual#(.abstract: Counter)) := {
+escape() -> (.handle: $&Virtual#(.contract: Counter)) := {
     handle = Probe() | to_virtual($&_) | $&_
 }
 

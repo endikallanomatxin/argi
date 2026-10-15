@@ -109,6 +109,9 @@ pub const ValueFacts = struct {
     foreign_storage: bool = false,
     storage_capabilities: []const StorageCapabilityId = &.{},
     referenced_place: ?Place = null,
+    /// Unknown parameter referents have consumption identities, not concrete
+    /// places or owned roots. Copies retain them without granting validity.
+    symbolic_pointees: []const graph.GlobalBindingId = &.{},
     opaque_provenance: []const OpaqueProvenance = &.{},
     /// Concrete vtable method identities carried by a `Virtual` value. Keeping
     /// this in transient safety facts lets exact dispatch survive bindings and
@@ -128,6 +131,7 @@ pub const ValueFacts = struct {
             .foreign_storage = self.foreign_storage,
             .storage_capabilities = self.storage_capabilities,
             .referenced_place = self.referenced_place,
+            .symbolic_pointees = self.symbolic_pointees,
             .opaque_provenance = self.opaque_provenance,
             .virtual_methods = self.virtual_methods,
             .domains = self.domains,
@@ -196,6 +200,12 @@ pub const PlaceFacts = struct {
 };
 
 pub const Tracker = struct {
+    /// Cloned branch states share identities, never reuse another branch's ID.
+    pub const RootNamespace = struct {
+        next_id: u32 = 0,
+        initial_storage: std.ArrayList(struct { storage: Place, root: ValidityRootId }) = .empty,
+    };
+    namespace: ?*RootNamespace = null,
     allocator: std.mem.Allocator,
     roots: std.array_list.Managed(ValidityRoot),
 
@@ -211,11 +221,27 @@ pub const Tracker = struct {
         return switch (rooting) {
             .inherit => |root| root,
             .fresh => blk: {
-                const id: ValidityRootId = @enumFromInt(self.roots.items.len);
-                try self.roots.append(.{ .id = id });
+                const index = if (self.namespace) |namespace| identity: {
+                    const next = namespace.next_id;
+                    namespace.next_id += 1;
+                    break :identity next;
+                } else @as(u32, @intCast(self.roots.items.len));
+                const id: ValidityRootId = @enumFromInt(index);
+                try self.materialize(id);
                 break :blk id;
             },
         };
+    }
+
+    /// Materialize an identity that exists on another branch without reviving
+    /// a generation already observed and ended on this path.
+    pub fn materialize(self: *Tracker, id: ValidityRootId) !void {
+        const index = @intFromEnum(id);
+        while (self.roots.items.len <= index) {
+            const absent: ValidityRootId = @enumFromInt(self.roots.items.len);
+            try self.roots.append(.{ .id = absent, .state = .dead, .present = false });
+        }
+        if (!self.roots.items[index].present) self.roots.items[index] = .{ .id = id };
     }
 
     pub fn end(self: *Tracker, id: ValidityRootId) void {

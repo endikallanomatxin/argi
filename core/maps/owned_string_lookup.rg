@@ -29,25 +29,25 @@ _owned_string_find#(
     }
 }
 
-contains#(
+_map_contains_owned_string_lookup#(
         .value : Type
-    )(
+    ) := (
         .self : &OwnedHashMap#(.key: String, .value: value, .policy: StringHashPolicy),
         .key  : StringView
     ) -> (
         .ok : Bool
-    ) := {
+    ) {
     ok = _owned_string_find(self, .key = key).index ?
 }
 
-get_ro_ref#(
+_map_get_ro_ref_owned_string_lookup#(
         .value : Type
-    )(
+    ) := (
         .self : &OwnedHashMap#(.key: String, .value: value, .policy: StringHashPolicy),
         .key  : StringView
     ) -> (
         .result : ?&value = ..none
-    ) := {
+    ) {
     match _owned_string_find(self, .key = key).index {
         ..none {}
         ..some found {

@@ -94,9 +94,9 @@ API convention for borrowed text:
 - raw `&Char` is the C-string / low-level interop boundary, not the general
   string-like input type for high-level APIs.
 
-Avoid adding overloads only to accept every adjacent representation
+Avoid adding operation implementations only to accept every adjacent representation
 (`StringView`, `&StringView`, `&String`, `&Char`) unless those representations
-carry genuinely different semantics. Too many convenience overloads make
+carry genuinely different semantics. Too many convenience implementations make
 multiple dispatch encode API adapter noise instead of domain meaning.
 
 Text algorithms and formatting helpers such as `format` / `format_into`
@@ -113,13 +113,13 @@ implicit borrowing or conversions in ordinary call resolution.
 `print` is a line-oriented convenience API: `.terminator: StringView` defaults
 to `"\n"`. Pass `.terminator = ""` for no suffix or another view for a custom
 suffix. Writing the value and terminator preserves the writer's error reasons;
-`print` does not request a flush. Use `write(.self = writer, .text = text)` for
+`print` does not request a flush. Use `write(.self = writer, .value = text)` for
 exact text output without a terminator, and explicit `flush` when needed.
 
 Text equality follows the same rule: the byte-wise comparison primitive and
-`==` / `!=` overloads work on `StringView` values. Callers with owning `String`
+`==` / `!=` select Equal evidence on `StringView` values. Callers with owning `String`
 or raw `&Char` values should convert them explicitly instead of relying on
-high-level adapter overloads.
+implicit high-level adapters.
 
 Borrowed byte utilities preserve the backing storage lifetime:
 
@@ -299,9 +299,11 @@ of the destination string can allocate. A failed reservation leaves the
 existing string unchanged. String formatting returns `out_of_memory` on an
 allocation failure.
 
-`format_into(.out: $&Writer, .value: T)` and
-`write(.self: $&Writer, .value: T)` send the same decimal bytes to a writer
-without an allocator or an intermediate owning string. `print(.value: T,
+`WriteValue#(Stream, T).write_value(.self: $&Stream, .value: T)` sends the same decimal bytes to a writer
+without an allocator or an intermediate owning string. Participants are explicit
+in qualified calls; generic callers retain their stream and value type parameters.
+The contract permits specialization for a concrete stream/value pair.
+`print(.value: T,
 .writer: $&Writer, .terminator: StringView = "\n")` adds the usual terminator;
 a locally assumed writer can satisfy its writer input. These operations
 preserve `stream_write_failed` and `stream_flush_failed`, stop at the first
@@ -311,7 +313,8 @@ flush; a writer may flush internally while accepting bytes.
 
 ## Floating-point formatting
 
-The same `format`, `format_into`, `write`, and `print` inputs accept `Float16`,
+The same string `format` / `format_into`, stream `WriteValue.write_value`, and
+`print` inputs accept `Float16`,
 `Float32`, and `Float64`. Each finite value uses the shortest decimal
 significand that reads back as exactly that value at its original width under
 round-to-nearest, ties-to-even. Among equally short candidates, formatting

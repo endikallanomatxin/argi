@@ -6,19 +6,27 @@ dummy_status :: Int32 = 0
 global_counter_ptr :: $&Int32 = $&dummy_counter
 global_status_ptr :: $&Int32 = $&dummy_status
 
-Resource init(.counter: $&Int32, .status: $&Int32) -> (.result: Resource) := {
-    result = ()
+implement Init#(Resource, (.counter: $&Int32, .status: $&Int32)) (
+    .Result: Type = Resource
+    .init = (.args: (.counter: $&Int32, .status: $&Int32)) -> (.result: Result) {
+        counter ::= ~args.counter
+        status ::= ~args.status
 
-    puts(.string="Initializing resource\n")
-    global_counter_ptr = counter
-    global_status_ptr = status
-}
+        result = ()
 
-Resource deinit(.res: $&Resource) -> () := {
-    puts(.string="Deinitializing resource\n")
-    global_counter_ptr& = global_counter_ptr& + 1
-    global_status_ptr& = 0
-}
+        puts(.string="Initializing resource\n")
+        global_counter_ptr = counter
+        global_status_ptr = status
+    }
+)
+
+implement Deinit#(Resource) (
+    .deinit = (.self: $&Resource) -> () {
+        puts(.string="Deinitializing resource\n")
+        global_counter_ptr& = global_counter_ptr& + 1
+        global_status_ptr& = 0
+    }
+)
 
 verify(.counter: $&Int32, .status: $&Int32) -> () := {
     puts(.string="Verifying resource\n")

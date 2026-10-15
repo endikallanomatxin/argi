@@ -1,13 +1,13 @@
-Counter: Abstract = (bump(.self: $&Self) -> () where {})
+Counter#(.Participant: Type): Contract = (.bump: (.self: $&Participant) -> () where {})
 
 Box: Type = (.value: Int32)
 
-Box implements Counter
+implement Counter#(Box) (.bump = _impl_bump_Box)
 
-bump(.self: $&Box) -> () := { self&.value = self&.value + 1 }
+_impl_bump_Box := (.self: $&Box) -> ()  { self&.value = self&.value + 1 }
 
-wrap#(.t: Type: Counter)(.value: &t) -> (.result: Virtual#(.abstract: Counter)) := {
-    result = to_virtual#(.abstract: Counter)(.value = value)
+wrap#(.t: Type: Counter)(.value: &t) -> (.result: Virtual#(.contract: Counter)) := {
+    result = to_virtual#(.contract: Counter)(.value = value)
 }
 
 main() -> (.status_code: Int32 = 0) := {

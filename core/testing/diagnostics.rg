@@ -2,9 +2,19 @@
 -- Successful assertions do not construct diagnostics or require an allocator.
 _TestDiagnostic: Type = (._bytes: [128]UInt8, ._length: UIntNative)
 
-_TestDiagnostic init() -> (.result: _TestDiagnostic) := {
-    result = (._bytes = zeroed#(.t: [128]UInt8)(), ._length = 0)
-}
+implement Init#(
+    _TestDiagnostic,
+    ()
+) (
+        .Result : Type = _TestDiagnostic
+        .init   = (
+                .args : ()
+            ) -> (
+                .result : Result
+            ) {
+            result = (._bytes = zeroed#(.t: [128]UInt8)(), ._length = 0)
+        }
+    )
 
 _testing_append(.self: $&_TestDiagnostic, .text: StringView) -> () := {
     index :: UIntNative = 0
@@ -16,12 +26,12 @@ _testing_append(.self: $&_TestDiagnostic, .text: StringView) -> () := {
     }
 }
 
-_testing_append_number#(.t: Type: Int)(.self: $&_TestDiagnostic, .value: t) -> () := {
+_testing_append_integer#(.t: Type: Int)(.self: $&_TestDiagnostic, .value: t) -> () := {
     encoded ::= _decimal_encode#(.t: t)(.value = value)
     _testing_append(self, .text = _decimal_view(&encoded).view)
 }
 
-_testing_append_number#(.t: Type: Float)(.self: $&_TestDiagnostic, .value: t) -> () := {
+_testing_append_float#(.t: Type: Float)(.self: $&_TestDiagnostic, .value: t) -> () := {
     encoded ::= _float_encode(.value = value)
     _testing_append(self, .text = _float_text_view(&encoded).view)
 }
@@ -48,7 +58,7 @@ fail(.message: StringView) -> (.result: Errable#(Void, (..test_failed))) := {
     result = ..ok Void()
 }
 
-expect_equal#(
+_assert_equal_integer#(
         .t : Type: Int
     )(
         .expected : t,
@@ -74,7 +84,7 @@ expect_equal#(
     )
 }
 
-expect_equal#(
+_assert_equal_float#(
         .t : Type: Float
     )(
         .expected : t,
@@ -100,7 +110,7 @@ expect_equal#(
     )
 }
 
-expect_equal(
+_assert_equal_bool(
         .expected : Bool,
         .actual   : Bool,
         .message  : StringView = ""
@@ -180,7 +190,7 @@ _testing_compare_text(
     )
 }
 
-expect_equal_strings(
+_assert_text_views(
         .expected : StringView,
         .actual   : StringView,
         .message  : StringView  = ""
@@ -195,17 +205,7 @@ expect_equal_strings(
     )
 }
 
-expect_equal(
-        .expected : StringView,
-        .actual   : StringView,
-        .message  : StringView  = ""
-    ) -> (
-        .result : Errable#(Void, (..test_failed))
-    ) := {
-    result = expect_equal_strings(.expected = expected, .actual = actual, .message = message)
-}
-
-expect_equal_strings(
+_assert_owned_strings(
         .expected : &String,
         .actual   : &String,
         .message  : StringView = ""

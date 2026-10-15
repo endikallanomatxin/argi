@@ -7,7 +7,7 @@ UriView: Type = (
     .fragment  : ?StringView
 )
 
-UriView implements ImplicitlyCopyable
+implement ImplicitlyCopyable#(UriView) ()
 
 _alpha(.byte: UInt8) -> (.ok: Bool) := {
     ok = [byte >= 65 and byte <= 90] or [byte >= 97 and byte <= 122]
@@ -246,7 +246,7 @@ _ipv4_valid(.text: StringView) -> (.ok: Bool = false) := {
         } else {
             byte ::= bytes_get(.view = &text, .index = i).byte
             if _digit(.byte = byte).ok == false or i - start >= 3 { return }
-            number = number * 10 + UIntNative(.value = byte - 48)
+            number = number * 10 + [byte - 48] | convert#(.to: UIntNative)(_)
         }
         i = i + 1
     }
@@ -387,9 +387,11 @@ _authority_valid(.text: StringView) -> (.ok: Bool = false) := {
 
 -- Recompose already encoded components. Validation rejects delimiter injection
 -- and ambiguous relative paths rather than silently changing their meaning.
-build(
+build#(
+        .AllocatorType : Type: Allocator#(AllocatorType)
+    )(
         .value     : UriView,
-        .allocator : $&Allocator
+        .allocator : $&AllocatorType
     ) -> (
         .result : Errable#(String, (..invalid_input, ..out_of_memory))
     ) := {
@@ -412,7 +414,7 @@ build(
         }
     }
 
-    output ::= String(.allocator = allocator, .capacity = 0)!
+    output ::= string_with_capacity(.allocator = allocator, .capacity = 0)!
 
     match value.scheme {
         ..none {}
@@ -492,13 +494,15 @@ build(
     result = ..ok ~output
 }
 
-encode_component(
+encode_component#(
+        .AllocatorType : Type: Allocator#(AllocatorType)
+    )(
         .text      : StringView,
-        .allocator : $&Allocator
+        .allocator : $&AllocatorType
     ) -> (
         .result : Errable#(String, (..out_of_memory))
     ) := {
-    output ::= String(.allocator = allocator, .capacity = 0)!
+    output ::= string_with_capacity(.allocator = allocator, .capacity = 0)!
     hex: StringView = "0123456789ABCDEF"
     i :: UIntNative = 0
 
@@ -509,13 +513,25 @@ encode_component(
         } else {
             push_byte(.self = $&output, .byte = 37, .allocator = allocator)!
             push_byte(
-                .self      = $&output
-                .byte      = bytes_get(.view = &hex, .index = UIntNative(.value = byte / 16)).byte
+                .self = $&output
+                .byte = bytes_get(
+                    .view  = &hex
+                    .index = [
+                        [byte / 16]
+                        | convert#(.to: UIntNative)(_)
+                    ]
+                ).byte
                 .allocator = allocator
             )!
             push_byte(
-                .self      = $&output
-                .byte      = bytes_get(.view = &hex, .index = UIntNative(.value = byte % 16)).byte
+                .self = $&output
+                .byte = bytes_get(
+                    .view  = &hex
+                    .index = [
+                        [byte % 16]
+                        | convert#(.to: UIntNative)(_)
+                    ]
+                ).byte
                 .allocator = allocator
             )!
         }
@@ -525,13 +541,15 @@ encode_component(
     result = ..ok ~output
 }
 
-decode_component(
+decode_component#(
+        .AllocatorType : Type: Allocator#(AllocatorType)
+    )(
         .text      : StringView,
-        .allocator : $&Allocator
+        .allocator : $&AllocatorType
     ) -> (
         .result : Errable#(String, (..invalid_input, ..out_of_memory))
     ) := {
-    output ::= String(.allocator = allocator, .capacity = 0)!
+    output ::= string_with_capacity(.allocator = allocator, .capacity = 0)!
     i :: UIntNative = 0
 
     while i < text.length {
@@ -559,7 +577,7 @@ decode_component(
 
 AuthorityView: Type = (.userinfo: ?StringView, .host: StringView, .port: ?StringView)
 
-AuthorityView implements ImplicitlyCopyable
+implement ImplicitlyCopyable#(AuthorityView) ()
 
 authority_parts(
         .text : StringView

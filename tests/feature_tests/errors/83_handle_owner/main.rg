@@ -2,7 +2,11 @@
 
 Owner: Type = (.value: Int32)
 
-Owner deinit(.self: $&Owner) -> () := { self&.value = 0 }
+implement Deinit#(Owner) (
+    .deinit = (.self: $&Owner) -> () {
+        self&.value = 0
+    }
+)
 
 make(.fail: Bool) -> (.result: Errable#(.t: Owner, .reasons: (..missing))) := {
     if fail { result = ..error(.reason = ..missing) } else { result = ..ok(.value = 7) }

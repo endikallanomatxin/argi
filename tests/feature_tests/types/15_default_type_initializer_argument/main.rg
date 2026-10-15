@@ -2,11 +2,14 @@ Counter : Type = (
     .value: Int32
 )
 
-Counter init() -> (.result: Counter) := {
-    result = (
-        .value = 7
-    )
-}
+implement Init#(Counter, ()) (
+    .Result: Type = Counter
+    .init = (.args: ()) -> (.result: Result) {
+        result = (
+            .value = 7
+        )
+    }
+)
 
 read_counter(.counter: Counter = Counter()) -> (.value: Int32) := {
     value = counter.value

@@ -1,10 +1,11 @@
 const std = @import("std");
 const target_mod = @import("target.zig");
 
-pub const Query = enum { target_os, target_arch, target_abi };
+pub const Query = enum { target_os, target_arch, target_abi, target_pointer_bits };
 
 pub fn matches(target: target_mod.Config, query: Query, name: []const u8) !bool {
     return switch (query) {
+        .target_pointer_bits => target.stdTarget().ptrBitWidth() == (std.fmt.parseInt(u16, name, 10) catch return error.InvalidTargetCondition),
         .target_os => target.os == (std.meta.stringToEnum(std.Target.Os.Tag, name) orelse return error.UnknownTargetValue),
         .target_arch => target.arch == (std.meta.stringToEnum(std.Target.Cpu.Arch, name) orelse return error.UnknownTargetValue),
         .target_abi => target.abi == (std.meta.stringToEnum(std.Target.Abi, name) orelse return error.UnknownTargetValue),
@@ -14,7 +15,7 @@ pub fn matches(target: target_mod.Config, query: Query, name: []const u8) !bool 
 pub fn errorMessage(err: anyerror) []const u8 {
     return switch (err) {
         error.UnknownTargetValue => "unknown OS, architecture, or ABI name in target predicate",
-        error.InvalidTargetCondition => "expected target_os, target_arch, or target_abi with a literal string; combine predicates with not, and, or",
+        error.InvalidTargetCondition => "expected target_os, target_arch, or target_abi with a literal string, or target_pointer_bits with an integer literal; combine predicates with not, and, or",
         error.UnterminatedTargetBranch => "expected closing '}' for target selection branch",
         error.UnmatchedTargetElse => "#else requires a preceding #if branch",
         else => @errorName(err),
@@ -88,13 +89,22 @@ const Selector = struct {
         }
         const selected_query = query orelse return error.InvalidTargetCondition;
         try self.expect('(');
-        try self.expect('"');
-        const start = self.offset;
-        while (self.offset < self.source.len and self.source[self.offset] != '"') : (self.offset += 1) {
-            if (!std.ascii.isAlphanumeric(self.source[self.offset]) and self.source[self.offset] != '_') return error.InvalidTargetCondition;
-        }
-        const name = self.source[start..self.offset];
-        try self.expect('"');
+        const name = if (selected_query == .target_pointer_bits) blk: {
+            self.skipTrivia();
+            const start = self.offset;
+            while (self.offset < self.source.len and std.ascii.isDigit(self.source[self.offset])) self.offset += 1;
+            if (self.offset == start) return error.InvalidTargetCondition;
+            break :blk self.source[start..self.offset];
+        } else blk: {
+            try self.expect('"');
+            const start = self.offset;
+            while (self.offset < self.source.len and self.source[self.offset] != '"') : (self.offset += 1) {
+                if (!std.ascii.isAlphanumeric(self.source[self.offset]) and self.source[self.offset] != '_') return error.InvalidTargetCondition;
+            }
+            const value = self.source[start..self.offset];
+            try self.expect('"');
+            break :blk value;
+        };
         try self.expect(')');
         return matches(self.target, selected_query, name);
     }
@@ -238,4 +248,16 @@ test "target selection preserves CRLF and braces inside literals" {
     }
     try std.testing.expect(std.mem.indexOf(u8, selected, "keep") != null);
     try std.testing.expect(std.mem.indexOf(u8, selected, "discard") == null);
+}
+
+test "pointer width selection follows target ABI and preserves offsets" {
+    const source = "#if target_pointer_bits(32) { narrow := 1 } #else { wide := 2 }";
+    var offset: usize = 0;
+    const selected = try select(std.testing.allocator, source, .{ .arch = .x86_64, .abi = .gnux32 }, &offset);
+    defer std.testing.allocator.free(selected);
+    try std.testing.expectEqual(source.len, selected.len);
+    try std.testing.expect(std.mem.indexOf(u8, selected, "narrow") != null);
+    try std.testing.expect(std.mem.indexOf(u8, selected, "wide") == null);
+    try std.testing.expect(!try matches(.{ .arch = .x86_64, .abi = .gnu }, .target_pointer_bits, "32"));
+    try std.testing.expectError(error.InvalidTargetCondition, select(std.testing.allocator, "#if target_pointer_bits(\"32\") {}", .{}, &offset));
 }

@@ -13,7 +13,7 @@ main() -> (.status_code: Int32 = 0) := {
 ```
 
 `parse(.text: StringView)` and `VersionView(.text: StringView)` return
-`Errable<VersionView, invalid_input>`. Parsing consumes the entire input and
+`Errable#(VersionView, (..invalid_input))`. Parsing consumes the entire input and
 requires three decimal components without leading zeroes, optional prerelease
 identifiers after `-`, and optional build identifiers after `+`. Identifiers
 are nonempty dot-separated ASCII letters, digits, or hyphens. Numeric
@@ -28,7 +28,7 @@ ASCII digits. Only the source view's native length bounds their size. Private
 validated state prevents external modules from forging component boundaries.
 The source bytes must stay alive and unchanged while the version is used.
 
-`as_view(.self: &VersionView)` returns the full `.text: StringView`.
+`as_view(.self: &VersionView)` returns the full `.view: StringView` through TextViewOf.
 `major`, `minor`, `patch`, `pre_release`, and `build_metadata` return component
 text without separators. Missing prerelease or build metadata is an empty view.
 These accessors preserve borrowing; they do not allocate or parse again.
@@ -42,14 +42,17 @@ Build metadata does not affect precedence. `same_precedence` reports whether
 `compare` returns zero. `equals` and `==`/`!=` compare the complete validated
 text, including build metadata; equal precedence does not imply exact equality.
 
-`format(.value: &VersionView, .allocator: $&Allocator)` returns an owning
-`String` in `Errable<String, out_of_memory>`. It copies the exact validated
-spelling, including metadata. `format_into(.out: $&String, .value: &VersionView,
-.allocator: $&Allocator)` appends that spelling and returns
-`Errable<Void, out_of_memory>`; reserved capacity avoids further allocation.
-`format_into(.out: $&Writer, .value: &VersionView)` writes it without allocation
-and returns the existing `stream_write_failed` or `stream_flush_failed` errors.
-It does not flush or add a newline. As with ordinary string append, the source
+`format(.value = &version, .allocator = allocator)` returns an owning String in
+`Errable#(String, (..out_of_memory))`. It copies the exact validated spelling,
+including metadata. `format_into(.out = $&text, .value = &version,
+.allocator = allocator)` appends that spelling; reserved capacity avoids further
+allocation. Both use the shared StringFormatting contract with a static allocator
+Provider. They are the ordinary core functions, not semver-local overloads.
+
+`write(.self = writer, .value = &version)` uses WriteValue and the destination's
+selected StringView result. A Writer reports the existing stream_write_failed or
+stream_flush_failed errors; custom destinations can return counts. The version adapter adds
+no allocation, flush or newline. As with ordinary string append, the source
 view must not borrow a destination buffer whose growth could invalidate it.
 
 Version range selection, package resolution, and compatibility policies are

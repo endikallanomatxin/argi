@@ -2,15 +2,14 @@ Dog : Type = (
     .name: Int32 = 0
 )
 
-Animal : Abstract = (
-    speak(.who: Self) -> (.s: &Char)
+Animal#(.Participant: Type): Contract = (
+    .speak: (.who: Participant) -> (.s: &Char)
 )
 
-Dog implements Animal
-Animal defaultsto Dog
+implement Animal#(Dog) (.speak = _impl_speak_Dog)
 
 -- Wrong function signature: expects a &Char return type, but it's an Int32
-speak (.who: Dog) -> (.s: Int32) := {
+_impl_speak_Dog := (.who: Dog) -> (.s: Int32)  {
     s = 42
 }
 

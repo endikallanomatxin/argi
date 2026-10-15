@@ -1,8 +1,3 @@
--- Comparisons borrow elements so ordering never consumes their resources.
-BorrowedOrderPolicy#(.t: Type): Abstract = (
-    less(.self: &Self, .left: &t, .right: &t) -> (.ok: Bool)
-)
-
 -- Exchange occupied slots through temporary lexical owners. No element is
 -- copied or dropped; collection shape invalidation ends pre-existing loans.
 _swap_owned_array#(
@@ -36,10 +31,11 @@ reverse_owned#(.t: Type)(.self: $&DynamicArray#(.t: t)) -> () := {
 }
 
 _owned_array_less#(
-        .t : Type
+        .t      : Type,
+        .Policy : Type: BorrowedOrderPolicy#(Policy, t)
     )(
         .self  : &DynamicArray#(.t: t),
-        .order : &BorrowedOrderPolicy#(.t: t),
+        .order : &Policy,
         .left  : UIntNative,
         .right : UIntNative
     ) -> (
@@ -47,14 +43,15 @@ _owned_array_less#(
     ) := {
     a ::= _trusted_dynamic_array_get_ro_ref#(.t: t)(.array = self, .index = left).reference
     b ::= _trusted_dynamic_array_get_ro_ref#(.t: t)(.array = self, .index = right).reference
-    ok = less(order, .left = a, .right = b).ok
+    ok = BorrowedOrderPolicy#(Policy, t).less(order, .left = a, .right = b).ok
 }
 
 _owned_sift_down#(
-        .t : Type
+        .t      : Type,
+        .Policy : Type: BorrowedOrderPolicy#(Policy, t)
     )(
         .self  : $&DynamicArray#(.t: t),
-        .order : &BorrowedOrderPolicy#(.t: t),
+        .order : &Policy,
         .start : UIntNative,
         .count : UIntNative
     ) -> () := {
@@ -86,7 +83,13 @@ _owned_sift_down#(
 }
 
 -- Unstable heapsort uses O(1) auxiliary space and performs no allocation.
-sort_owned#(.t: Type)(.self: $&DynamicArray#(.t: t), .order: &BorrowedOrderPolicy#(.t: t)) -> () := {
+sort_owned#(
+        .t      : Type,
+        .Policy : Type: BorrowedOrderPolicy#(Policy, t)
+    )(
+        .self  : $&DynamicArray#(.t: t),
+        .order : &Policy
+    ) -> () := {
     count ::= length(self).count
     parent ::= count / 2
 

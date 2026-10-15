@@ -7,5 +7,5 @@ main(.system: System) -> () := {
     borrowed ::= borrow(.ring = &ring).reference
     unwrap_or_abort(.value = push(.self = $&ring, .value = 8, .allocator = system.page_allocator))
     observed ::= borrowed&
-    deinit(.self = $&ring, .allocator = system.page_allocator)
+    deinit(.self = $&ring)
 }

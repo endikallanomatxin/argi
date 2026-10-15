@@ -12,7 +12,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         ..error _ {} ..ok _ { abort }
     }
     first ::= python.snapshot_error(.self = &interpreter).exception
-    copy ::= python.clone(.self = &first).exception
+    copy ::= python.clone(.self = &first).result
     match python.import_module(.self = &interpreter, .name = "another_missing_module") {
         ..error _ {} ..ok _ { abort }
     }
@@ -36,7 +36,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     success ::= python.capture(.self = &interpreter,
         .value = python.import_module(.self = &interpreter, .name = "json")).result
     match success { ..ok ~object {} ..error _ { abort } }
-    python.deinit(.self = $&interpreter)
+    Deinit#(python.Python).deinit(.self = $&interpreter)
     preserved ::= unwrap_or_abort(.value = python.exception_message(.self = &copy,
             .allocator = system.page_allocator)).result
     if contains(.self = as_view(.self = &preserved).view, .pattern = "argi_missing_module").ok == false {

@@ -11,6 +11,19 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     saved ::= string_with_capacity(.capacity = 128, .allocator = allocator)!
     push_view(.self = $&saved, .view = path(.self = &first).view, .allocator = allocator)!
     if metadata(.path = path(.self = &first).view)!.kind != ..directory { abort }
+    child_path ::= concat(
+        .left = path(.self = &first).view,
+        .right = "/child",
+        .allocator = allocator
+    )!
+    child ::= File(.file_system = file_system, .path = as_view(.self = &child_path).view, .allocator = allocator, .mode = ..write)!
+    close(.self = $&child)!
+    match close(.self = $&first) {
+        ..ok _ { abort }
+        ..error _ {}
+    }
+    if metadata(.path = path(.self = &first).view)!.kind != ..directory { abort }
+    remove(.self = file_system, .path = as_view(.self = &child_path).view, .allocator = allocator)!
     close(.self = $&first)!
     close(.self = $&first)!
     match metadata(.path = as_view(.self = &saved).view) {
@@ -27,7 +40,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     }
 }
 
-main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+main#(.WriterType: Type: Writer#(WriterType))(.system: System, .writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
     run_main(.system = system)!!!
     status_code = 0
 }

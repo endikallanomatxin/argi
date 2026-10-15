@@ -13,7 +13,7 @@ main(.system: System) -> (.status_code: Int32) := {
     }
     }
 
-    result ::= allocate(.self = $&arena, .size = 0)
+    result ::= allocate_bytes(.self = $&arena, .size = 0)
     match result {
         ..error _ {
             deinit(.self = $&arena)

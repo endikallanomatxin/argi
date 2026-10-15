@@ -30,7 +30,7 @@ This repository contains a compiler for a new programming language written in Zi
 ## Usage
 
 - Build compiler: `zig build`
-- Run compiler tests: `zig build test`
+- Run compiler tests: `zig build test -j16 -Dtest-jobs=16`
 - Compile a test program: `./zig-out/bin/argi build tests/feature_tests/basics/01_minimal_main`
 
 > It might be necessary to set the following environment variables to make zig work:
@@ -80,7 +80,21 @@ feature first.
 - Keep CLI help aligned with the tool's current capabilities.
 
 - When validating the compiler locally, prefer:
-  `env ZIG_LOCAL_CACHE_DIR=$PWD/.zig-cache ZIG_GLOBAL_CACHE_DIR=$PWD/.zig-global-cache zig build test`
+  `env ZIG_LOCAL_CACHE_DIR=$PWD/.zig-cache ZIG_GLOBAL_CACHE_DIR=$PWD/.zig-global-cache zig build test -j16 -Dtest-jobs=16`
+
+- Use `-j16 -Dtest-jobs=16` for routine validation, including filtered runs.
+  Reduce both limits on constrained machines; retain the serial diagnostic
+  exception below for memory-growth investigations.
+- For large program-fixture runs, prefer
+  `zig build test-programs -Doptimize=ReleaseSafe -j16 -Dtest-jobs=16`, retaining
+  a separate Debug `test-internal` run. This optimizes the compiler and test
+  runner; fixtures still use their CLI-selected Argi build mode. Finish the
+  active suite before switching optimization modes and reinstalling bundles.
+- Program tests use one process per worker, automatically choosing the CPU count
+  capped at 16. `-Dtest-jobs=N` sets the worker count and `-jN` limits concurrent
+  build steps. Shared-state tests finish before fixture workers start; fixtures
+  stay on one worker. Per-worker totals and optional active-case progress are
+  recorded under `.zig-cache/program-tests/`.
 
 - CLI builds reuse canonical module snapshots under `.argi-cache/frontend/`.
   Use `argi build --no-cache` when comparing against a fresh frontend build;
@@ -91,8 +105,8 @@ feature first.
   source collection, codegen, and linking are outside these timings.
 
 - When investigating compiler memory growth or recursive function-summary
-  expansion, run focused tests serially with `-j1` and apply a process memory
-  limit where supported. Record the first failing test and peak memory use
+  expansion, run focused tests serially with `-j1 -Dtest-jobs=1` and apply a
+  process memory limit where supported. Record the first failing test and peak memory use
   before widening the run; avoid parallel full-suite runs during diagnosis.
   Use `-Dtest-progress=true` to identify an active case when a run stalls.
 
@@ -142,19 +156,85 @@ feature first.
   CIncomplete declarations keep nominal identities without runtime fields or
   layout. Only RawPointer handles may carry them across C boundaries; never
   synthesize an empty-record layout or construct safe references to them.
-  Constructors use `TypeName init#(...)(...)` and return the constructed value
-  or an Errable containing it. Their explicit association is a nominal
-  declaration ID, persisted in ModuleSG and relocated into GlobalSG. Keep
-  constructor lookup indexed by that family, independently of output types;
-  speculative specializations must roll back their index entries.
-  Destructors use `TypeName deinit#(...)(...)`, receive a mutable reference to
-  their associated nominal family, and return no values. Their declaration ID
-  and lookup indexes follow the same persistence and rollback rules as init.
-  Explicit deinit calls retain ordinary input dispatch; automatic cleanup
-  collects receiver names only from the target family's indexed destructors.
-  Imported nominal constructors consult public initializers in the type's
-  defining module. Automatic cleanup falls back to that module when caller
-  lookup finds no destructor; reached arguments retain the caller's context.
+  Arithmetic uses Add, Subtract, Multiply, Divide and Remainder with Left,
+  Right and Args participants. Custom equality uses Equal with the same tuple;
+  Equal returns (.ok: Bool), and != negates one selected operation call.
+  Infer participant bindings from Args, including reached generic providers,
+  never from Result. Concrete and specialized generic expressions share the
+  selected-evidence path; no receiver is implicitly borrowed. Trusted scalar
+  conformances lower to representation primitives only after selection, keeping
+  constants and contextual literal widths. Hooks are private to bundled core's
+  scalar_arithmetic.rg. Minimal semantic tests that omit installed core supply
+  explicit arithmetic evidence from test_support.arithmetic_core_source; never
+  restore a builtin dispatch fallback for tests. Reject conflicting repeated
+  bindings as losing patterns,
+  without aborting another applicable conformance. Legacy operator declarations
+  are rejected; there is no global operator registry or addressed selector.
+  The matrix library's MatrixShape associates dimensions and element types;
+  MatrixProduct shares the inner-dimension binding and can specialize Result.
+  Nominal Multiply adapters delegate to that protocol. Dynamic multiplication
+  stores its static provider in Args; no ordinary multiply overload is retained.
+  Canonical construction for migrated types uses `implement Init#(T, Args)`, with
+  an Args record participant and a Result of T or Errable containing T. Type calls
+  infer Args from target/input patterns, complete defaults and reached capabilities
+  and invoke the selected scoped init operation. Selected evidence supplies
+  initializer safety and projected output dependencies; never add a second
+  constructor registry. Generic type calls can infer their target parameters from
+  Args in concrete and specialized bodies; never infer those parameters from Result.
+  Closed/generic tuples remain ambiguous when they infer incomparable targets.
+  Move owning Args fields into lexical owners before fallible construction steps.
+  All bundled core and more constructor families now use Init. Single-use
+  capabilities reuse named once functions as their init operations; preserve
+  their function identity through lifecycle wrappers and entrypoint analysis.
+  Reach defaults describe lexical lookup, not values to type-check before lookup.
+  Scaled durations, relative deadlines, precise Unix timestamps and copied paths
+  use named factories rather than legacy constructor overloads.
+  Explicit conversion uses `Convert#(Source, Target)` through the unique ordinary
+  `convert#(.to: Target)(.value = source)` entry. Result is Target or one Errable
+  containing it; never infer participants from Result. Prefer the ordinary pipe
+  spelling `source | convert#(.to: Target)(_)` at call sites; group compound
+  source expressions with scalar brackets. Integer range checking
+  belongs to core conformances, with compiler hooks limited to primitive casts
+  and representable bounds. Numeric type-call conversions are rejected.
+  Reference-to-address conversion grants no reference validity or acquisition.
+  Constructor declarations use only Init; `TypeName init(...)` is rejected with
+  a migration diagnostic. Construction has no nominal initializer association,
+  legacy constructor index or output-based generic inference. Preserve speculative
+  rollback of selected evidence and generic side effects. Editor constructor
+  navigation uses the selected Init operation and the written type name.
+  By-value Args records preserve effects through their reference fields. Follow
+  explicit dereference projections to caller referents; changes to copied field
+  slots stay local. Summary substitution and concrete calls share that distinction.
+  Whole unknown pointers retain their consumption identities inside record fields,
+  without assigning those identities to aggregate envelopes or opaque domains.
+  Distinct consumed reference fields can alias even when they share one input index.
+  Migrated cleanup uses `implement Deinit#(T)` and its consuming self operation.
+  All bundled core and more destructor families use this mechanism, including
+  generic collections and optional Python owners. Cleanup of allocated owners
+  uses the deallocation evidence stored in Allocation, without a separate
+  allocator input. Definite whole-owner consumption permits emptying owned
+  opaque storage, never borrowed referents or retaining new hidden values.
+  Automatic and explicit cleanup select the same evidence. Lifecycle wrappers
+  preserve ordinary alias-function behavior and forward optional/reached
+  capabilities through tracked calls. They create no second destructor registry.
+  Whole-receiver destruction supersedes owned field post-values while retaining
+  effects through borrowed references. Unknown pointer referents keep separate
+  symbolic consumption identities/state; preserve copies, joins and loop equality
+  without changing their shared borrow root or inventing concrete pointee places.
+  Symbolic consumption targets only whole unknown pointers, never aggregate
+  envelopes or opaque domains. Reject uninitialized/repeated destruction.
+  Erased receiver consumption stays unsupported until runtime cleanup identities
+  exist. Destructor declarations use only Deinit; `TypeName deinit(...)` is
+  rejected with a migration diagnostic. Cleanup has no nominal destructor
+  associations, legacy family indexes or ordinary-function fallback. Ordinary
+  function names never confer destruction semantics. Selected evidence identifies
+  receivers and cleanup obligations, including scalar-only owners. Deinit
+  preserves borrowed storage: receiver consumption does not authorize replacing
+  external references. Auxiliary cleanup counters should mutate stable record
+  fields rather than replace a whole borrowed capability.
+  Imported nominal construction selects visible Init evidence. Automatic cleanup
+  falls back to the defining module when caller lookup finds no destructor; reached
+  arguments retain the caller's context.
   Bundled core is already visible, so it needs no second cleanup lookup.
   CFunctionPointer declarations are nominal types backed by signature FunctionIds,
   not runtime symbols or direct callees. Their logical ffi dependency remains
@@ -228,6 +308,14 @@ feature first.
   with destructors produce cleanup obligations even for scalar-only owners,
   including inside nested payloads; those obligations grant no fresh storage.
 
+- Copy permission comes from contracts, never ordinary functions named `copy`.
+  FalliblyCopyable selects Value and allocator Provider jointly. Its associated
+  reasons feed the single recursive DynamicArray copy algorithm; ordinary `!`
+  propagation preserves the original tracer and lexical owners clean partial
+  copies. Infallible elements use a non-allocating fallible-protocol adapter.
+  Queries with an unknown provider can conservatively forbid implicit copying,
+  but cannot establish conformance or select an operation.
+
 - Owning collection operations move generic input values into lexical owners
   before fallible branches. Extract replaced or discarded structural elements
   into lexical owners as well, so their fields receive recursive cleanup.
@@ -271,10 +359,20 @@ feature first.
   Ownership must traverse value sequences nested in initializers, arguments,
   assignments, conditions, and returns before finalizing cleanup. Codegen must
   not retain binding-map entry pointers across recursive expression emission.
-  Bound virtual abstract identities include associated type/value arguments;
+  Bound virtual contract identities include associated type/value arguments;
   safety implementation registries must keep those identities separate.
 
-- Abstract safety conformance is checked after concrete summaries converge.
+- Executable builds validate conformance declarations at registration and prove
+  safety for reached selected operations after concrete summaries converge.
+  Keep operation identities distinct when several contracts alias one function;
+  ordinary calls do not select every promise attached to that function.
+  Automatic cleanup counts as Deinit use, and reached virtual construction
+  proves all operations in its evidence. `argi check` and editor diagnostics
+  use exhaustive body proofs, including unused concrete implementations.
+  Error-reason inference follows the same execution reachability, retaining
+  inferred-signature roots. Exhaustive checks infer every body. Rebuild candidate
+  signatures on each global pass; reuse only scratch capacity across passes.
+- Contract safety conformance is checked after concrete summaries converge.
   Static selection and virtual table construction share declaration validation
   and implementation proofs. Static conformance metadata belongs to GlobalSG,
   participates in speculative checkpoints, and creates no runtime erasure.
@@ -293,6 +391,13 @@ feature first.
   propagate opaque-content requirements separately from pointer liveness through
   calls and cleanup. Trusted slot reads use backing-owner identities; reading a
   region anchor or releasing allocation metadata does not read stored elements.
+  Safety branch states share a per-function root namespace. Fresh resources and
+  lexical generations must never collide when independently created branches
+  join. Initial identities of the same place can materialize on either branch;
+  ended generations cannot be revived by later lexical-slot reuse.
+  Returned field addresses through by-value reference records retain explicit
+  dereference paths. Instantiate their storage dependencies from argument field
+  facts, even when the record envelope has no referenced place.
   Summary place paths distinguish a reference-valued field's slot from its
   pointee with explicit dereference
   projections; writing through the reference must preserve the field's facts.
@@ -338,7 +443,7 @@ feature first.
   clears the speculative destination and confirms current source facts. Keep
   transferred owned roots alive in both cases, and never restore value snapshots.
   Reject overlapping conditional source inputs before applying any effects.
-  Abstract outcome relocation inherits enclosing guarantees. Build its virtual
+  Contract outcome relocation inherits enclosing guarantees. Build its virtual
   summary from declarations, including available destinations and conservative
   unselected states; implementation lists only prove conformance. Shared input
   transitions across independent outputs require correlated facts. Alternative

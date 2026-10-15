@@ -3,7 +3,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     deadline ::= Deadline(.at = now)
     if expired(.self = deadline, .now = now).value == false { abort }
     if nanoseconds(.self = &remaining(.self = deadline, .now = now).value).value != 0 { abort }
-    future ::= Deadline(.after = Duration(.nanoseconds = 1000000), .now = now)!
+    future ::= deadline_after(.after = Duration(.nanoseconds = 1000000), .now = now)!
     if expired(.self = future, .now = now).value { abort }
     time_left ::= remaining(.self = future, .now = now).value
     if nanoseconds(.self = &time_left).value != 1000000 { abort }
@@ -27,7 +27,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     check_cancelled(.self = empty, .now = now)!
 }
 
-main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+main#(.WriterType: Type: Writer#(WriterType))(.system: System, .writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
     run_main(.system = system)!!!
     status_code = 0
 }

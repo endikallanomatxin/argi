@@ -13,10 +13,13 @@ ArgumentsIterator: Type = (
     .index : UIntNative
 )
 
-ArgumentsIterator implements Iterator#(.t: StringView)
-Arguments implements Iterable#(.t: StringView)
+once _acquire_arguments := (
+        .args : (.ffi: $&ForeignFunctionInterface = reach ffi)
+    ) -> (
+        .result : Arguments
+    ) {
+    assume ffi := args.ffi
 
-once Arguments init(.ffi: $&ForeignFunctionInterface = reach ffi) -> (.result: Arguments) := {
     result = (
         ._ffi    = ffi
         .count   = argi_runtime_argc().count
@@ -24,9 +27,10 @@ once Arguments init(.ffi: $&ForeignFunctionInterface = reach ffi) -> (.result: A
     )
 }
 
-length(.self: &Arguments) -> (.count: UIntNative) := {
-    count = self&.count
-}
+implement Init#(Arguments, (.ffi: $&ForeignFunctionInterface = reach ffi)) (
+    .Result : Type               = Arguments
+    .init   = _acquire_arguments
+)
 
 has_argument(
         .self  : &Arguments,
@@ -82,48 +86,63 @@ argument_view_at(
     )
 }
 
-get(
-        .self  : &Arguments,
-        .index : UIntNative,
-    ) -> (
-        .result : Errable#(StringView, (..out_of_bounds))
-    ) := {
-    if index >= self&.count {
-        result = ..error(.reason = ..out_of_bounds)
-        return
+implement Iterable#(Arguments) (
+        .Item         : Type = StringView
+        .IteratorType : Type = ArgumentsIterator
+
+        .to_iterator = (
+                .value : &Arguments,
+            ) -> (
+                .iterator : ArgumentsIterator
+            ) {
+            iterator = (
+                .args  = value
+                .index = 0
+            )
+        }
+    )
+
+implement Iterator#(ArgumentsIterator) (
+        .Item : Type = StringView
+
+        .has_next = (
+                .self : &ArgumentsIterator,
+            ) -> (
+                .ok : Bool
+            ) {
+            ok = self&.index < self&.args&.count
+        }
+
+        .next = (
+                .self : $&ArgumentsIterator,
+            ) -> (
+                .value : StringView
+            ) {
+            current_index :: UIntNative = self&.index
+            value = argument_view_at(self&.args, .index = current_index)
+            self&= (
+                .args  = self&.args
+                .index = current_index + 1
+            )
+        }
+    )
+
+implement ArgumentSource#(Arguments) (
+    .length = (.self: &Arguments) -> (.count: UIntNative) {
+        count = self&.count
     }
 
-    result = ..ok argument_view_at(self, .index = index)
-}
+    .get = (
+            .self  : &Arguments,
+            .index : UIntNative,
+        ) -> (
+            .result : Errable#(StringView, (..out_of_bounds))
+        ) {
+        if index >= self&.count {
+            result = ..error(.reason = ..out_of_bounds)
+            return
+        }
 
-to_iterator(
-        .value : &Arguments,
-    ) -> (
-        .iterator : ArgumentsIterator
-    ) := {
-    iterator = (
-        .args  = value
-        .index = 0
-    )
-}
-
-has_next(
-        .self : &ArgumentsIterator,
-    ) -> (
-        .ok : Bool
-    ) := {
-    ok = self&.index < self&.args&.count
-}
-
-next(
-        .self : $&ArgumentsIterator,
-    ) -> (
-        .value : StringView
-    ) := {
-    current_index :: UIntNative = self&.index
-    value = argument_view_at(self&.args, .index = current_index)
-    self&= (
-        .args  = self&.args
-        .index = current_index + 1
-    )
-}
+        result = ..ok argument_view_at(self, .index = index)
+    }
+)

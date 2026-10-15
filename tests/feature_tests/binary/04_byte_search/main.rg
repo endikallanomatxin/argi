@@ -3,7 +3,7 @@ main() -> (.status_code: Int32 = 0) := {
     pattern :: [3]UInt8 = (0, 255, 1)
     a ::= view(.array = &bytes)
     b ::= view(.array = &pattern)
-    empty ::= array_view_ro#(.t: UInt8)()
+    empty ::= empty_array_view_ro#(.t: UInt8)()
     if compare(.left = a, .right = b).order != 1 { abort }
     if compare(.left = b, .right = a).order != -1 { abort }
     if equals(.left = a, .right = a).ok == false { abort }
@@ -18,11 +18,11 @@ main() -> (.status_code: Int32 = 0) := {
         ..none { abort }
         ..some hit { if hit.value != 3 { abort } }
     }
-    match find(.self = a, .byte = 255).index {
+    match find_byte(.self = a, .byte = 255).index {
         ..none { abort }
         ..some hit { if hit.value != 1 { abort } }
     }
-    match find(.self = a, .byte = 2).index { ..none {} ..some _ { abort } }
+    match find_byte(.self = a, .byte = 2).index { ..none {} ..some _ { abort } }
     match find(.self = a, .pattern = empty).index {
         ..none { abort }
         ..some hit { if hit.value != 0 { abort } }

@@ -34,7 +34,7 @@ run_main() -> !Void = ..ok Void() := {
     if weekday(.date = UtcDateTime(.year = 1970, .month = 1, .day = 1))! != 4 { abort }
 }
 
-main(.writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+main#(.WriterType: Type: Writer#(WriterType))(.writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
     run_main()!!!
     status_code = 0
 }

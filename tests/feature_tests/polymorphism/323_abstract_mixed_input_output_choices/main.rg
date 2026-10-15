@@ -2,8 +2,8 @@ Outcome: Type = (..yes, ..no)
 
 Selection: Type = (..left, ..right)
 
-Splitter: Abstract = (
-    choose(.self: &Self, .mode: Selection, .left: &Int32, .right: &Int32) -> (
+Splitter#(.Participant: Type): Contract = (
+    .choose: (.self: &Participant, .mode: Selection, .left: &Int32, .right: &Int32) -> (
         .first  : Outcome,
         .second : Outcome,
         .value  : &Int32
@@ -17,9 +17,9 @@ Splitter: Abstract = (
 
 Manager: Type = (.unused: Int32)
 
-Manager implements Splitter
+implement Splitter#(Manager) (.choose = _impl_choose_Manager)
 
-choose(
+_impl_choose_Manager := (
         .self  : &Manager,
         .mode  : Selection,
         .left  : &Int32,
@@ -28,7 +28,7 @@ choose(
         .first  : Outcome,
         .second : Outcome,
         .value  : &Int32
-    ) := {
+    )  {
     match mode {
         ..left {
             first = ..yes

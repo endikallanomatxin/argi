@@ -91,28 +91,33 @@ iterator-owned elements and release its storage. Iterator cleanup happens before
 leaving the loop's scope. DynamicArray and Deque preserve logical element order.
 No backing allocation or element copy is needed for consuming traversal.
 
-Each contract creates an `Iterator#(.t: element_type)` through
+Each iterable contract associates its Item and concrete IteratorType through
 `to_iterator`, `to_ro_pointer_iterator`, `to_rw_pointer_iterator`, or
 `to_owning_iterator`,
 respectively. A `for` loop accepts an iterable, rather than an iterator
 directly.
 
 ```rg
-Iterable#(.t: Type) : Abstract = (
-    to_iterator(.value: &Self) -> (.iterator: Iterator#(.t: t))
+Iterable#(.Collection: Type): Contract = (
+    .Item: Type
+    .IteratorType: Type
+    .to_iterator: (.value: &Collection) -> (.iterator: IteratorType)
+)
+ROPointerIterable#(.Collection: Type): Contract = (
+    .Item: Type
+    .IteratorType: Type
+    .to_ro_pointer_iterator: (.value: &Collection) -> (.iterator: IteratorType)
+)
+RWPointerIterable#(.Collection: Type): Contract = (
+    .Item: Type
+    .IteratorType: Type
+    .to_rw_pointer_iterator: (.value: $&Collection) -> (.iterator: IteratorType)
 )
 
-ROPointerIterable#(.t: Type) : Abstract = (
-    to_ro_pointer_iterator(.value: &Self) -> (.iterator: Iterator#(.t: &t))
-)
-
-RWPointerIterable#(.t: Type) : Abstract = (
-    to_rw_pointer_iterator(.value: $&Self) -> (.iterator: Iterator#(.t: $&t))
-)
-
-Iterator#(.t: Type) : Abstract = (
-    has_next(.self: &Self) -> (.ok: Bool)
-    next(.self: $&Self) -> (.value: t)
+Iterator#(.State: Type): Contract = (
+    .Item: Type
+    .has_next: (.self: &State) -> (.ok: Bool)
+    .next: (.self: $&State) -> (.value: Item)
 )
 ```
 

@@ -1,15 +1,15 @@
-A: Abstract = (read(.self: &Self) -> (.value: Int32) where {})
+A#(.Participant: Type): Contract = (.read: (.self: &Participant) -> (.value: Int32) where {})
 
 Box: Type = (.value: Int32)
 
-Box implements A
+implement A#(Box) (.read = _impl_read_Box)
 
-read(.self: &Box) -> (.value: Int32) := { value = self&.value }
+_impl_read_Box := (.self: &Box) -> (.value: Int32)  { value = self&.value }
 
 main() -> (.status_code: Int32) := {
     box :: Box = (.value = 1)
-    virtual ::= to_virtual#(.abstract: A)(.value = $&box)
-    if UIntNative(.value = virtual.data) == UIntNative(.value = $&box) {
+    virtual ::= to_virtual#(.contract: A)(.value = $&box)
+    if virtual.data | convert#(.to: UIntNative)(_) == $&box | convert#(.to: UIntNative)(_) {
         status_code = 0
     }
 }

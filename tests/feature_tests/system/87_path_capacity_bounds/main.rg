@@ -1,26 +1,5 @@
 FailingAllocator: Type = (.attempts: UIntNative = 0)
 
-allocate(
-        .self      : $&FailingAllocator,
-        .size      : UIntNative,
-        .alignment : UIntNative          = 1
-    ) -> (
-        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
-    ) := {
-    self&.attempts = self&.attempts + 1
-    result = ..error(.reason = ..out_of_memory)
-}
-
-deallocate(
-        .self      : $&FailingAllocator,
-        .data      : RawPointer#(.t: UInt8),
-        .size      : UIntNative,
-        .alignment : UIntNative
-    ) -> () := { abort }
-
-FailingAllocator implements Allocator
-FailingAllocator implements Deallocator
-
 main() -> (.status_code: Int32 = 0) := {
     native :: UIntNative = 0
     maximum ::= integer_limits(.value = native).maximum
@@ -44,3 +23,25 @@ main() -> (.status_code: Int32 = 0) := {
     }
     if failing.attempts != 0 { abort }
 }
+
+implement Allocator#(FailingAllocator)(
+    .allocate = (
+            .self      : $&FailingAllocator,
+            .size      : UIntNative,
+            .alignment : UIntNative          = 1
+        ) -> (
+            .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+        ) {
+        self&.attempts = self&.attempts + 1
+        result = ..error(.reason = ..out_of_memory)
+    }
+)
+
+implement Deallocator#(FailingAllocator)(
+    .deallocate = (
+            .self      : $&FailingAllocator,
+            .data      : RawPointer#(.t: UInt8),
+            .size      : UIntNative,
+            .alignment : UIntNative
+        ) -> () { abort }
+)

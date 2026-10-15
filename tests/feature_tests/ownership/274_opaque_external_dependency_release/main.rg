@@ -1,6 +1,10 @@
 unsafe_allocation := import("../../_support/unsafe_allocation")
 BorrowingOwner : Type = (.allocation: Allocation, .borrowed: $&UInt8)
-BorrowingOwner deinit(.self: $&BorrowingOwner) -> () := { deinit(.self = $&self&.allocation) }
+implement Deinit#(BorrowingOwner) (
+    .deinit = (.self: $&BorrowingOwner) -> () {
+        deinit(.self = $&self&.allocation)
+    }
+)
 
 store_one(.storage: $&Allocation, .slot: $&BorrowingOwner, .value: BorrowingOwner) -> () := {
     trusted_opaque_move_in#(.t: BorrowingOwner, .storage_type: Allocation)(.storage = storage, .destination = slot, .source = ~value)
@@ -12,9 +16,9 @@ release(.storage: $&Allocation) -> () := {
 
 main(.system: System) -> (.status_code: Int32 = 0) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    external_result ::= allocate(.self = $&allocator_storage, .size = 1)
-    slots_result ::= allocate(.self = $&allocator_storage, .size = size_of(.type = BorrowingOwner))
-    owned_result ::= allocate(.self = $&allocator_storage, .size = 1)
+    external_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
+    slots_result ::= allocate_bytes(.self = $&allocator_storage, .size = size_of(.type = BorrowingOwner))
+    owned_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
     match external_result {
         ..error _ { status_code = 1 }
         ..ok ~ external_payload {

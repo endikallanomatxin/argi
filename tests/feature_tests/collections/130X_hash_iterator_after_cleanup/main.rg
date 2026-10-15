@@ -6,11 +6,11 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     )!
     put(.self = $&map, .key = 1, .value = 10, .allocator = allocator)!
     iterator ::= to_key_iterator(.value = &map).iterator
-    deinit(.self = $&map, .allocator = allocator)
+    deinit(.self = $&map)
     if has_next(.self = &iterator).ok { abort }
 }
 
-main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+main#(.WriterType: Type: Writer#(WriterType))(.system: System, .writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
     run_main(.system = system)!!!
     status_code = 0
 }

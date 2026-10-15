@@ -1,8 +1,8 @@
 Record : Type = (.value: Int32)
-Record implements ImplicitlyCopyable
+implement ImplicitlyCopyable#(Record) ()
 main() -> () := {
     values : [1]Record = ((.value = 1))
-    view ::= array_view_ro(.array = &values).view
+    borrowed_view ::= view(.array = &values)
     target :: Record = (.value = 1)
-    observed ::= contains(.self = &view, .value = target).ok
+    observed ::= contains(.self = &borrowed_view, .value = target).ok
 }

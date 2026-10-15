@@ -6,13 +6,15 @@ initialize_container(.p: $&Container, .inner: Allocation) -> () := {
     p& = (.inner = ~inner)
 }
 
-Container deinit(.self: $&Container) -> () := {
-    deinit(.self = $&self&.inner)
-}
+implement Deinit#(Container) (
+    .deinit = (.self: $&Container) -> () {
+        deinit(.self = $&self&.inner)
+    }
+)
 
 main(.system: System) -> (.status_code: Int32) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    first_result ::= allocate(.self = $&allocator_storage, .size = 1)
+    first_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
     match first_result {
         ..error _ { status_code = 1 }
         ..ok ~ first_payload {
@@ -20,7 +22,7 @@ main(.system: System) -> (.status_code: Int32) := {
             old ::= &container.inner
             deinit(.self = $&container)
 
-            second_result ::= allocate(.self = $&allocator_storage, .size = 2)
+            second_result ::= allocate_bytes(.self = $&allocator_storage, .size = 2)
             match second_result {
                 ..error _ { status_code = 2 }
                 ..ok ~ second_payload {

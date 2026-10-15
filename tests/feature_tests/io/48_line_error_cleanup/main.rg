@@ -5,66 +5,24 @@ RecordingAllocator: Type = (
     .fail_after    : UIntNative                 = 999
 )
 
-RecordingAllocator implements Allocator
-RecordingAllocator implements Deallocator
-
-allocate(
-        .self      : $&RecordingAllocator,
-        .size      : UIntNative,
-        .alignment : UIntNative            = 1
-    ) -> (
-        .result : Errable#(Allocation, (..out_of_memory))
-    ) := {
-    if self&.allocations == self&.fail_after {
-        result = ..error(.reason = ..out_of_memory)
-        return
-    }
-
-    storage ::= malloc(.size = size, .ffi = self&.ffi)
-    if UIntNative(.value = storage) == 0 {
-        result = ..error(.reason = ..out_of_memory)
-        return
-    }
-    self&.allocations = self&.allocations + 1
-    deallocator: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(
-        .value = self
-    )
-    result = ..ok ~trusted_establish_allocation(
-        .storage     = storage
-        .size        = size
-        .alignment   = alignment
-        .deallocator = deallocator
-    )
-}
-
-deallocate(
-        .self      : $&RecordingAllocator,
-        .data      : RawPointer#(.t: UInt8),
-        .size      : UIntNative,
-        .alignment : UIntNative
-    ) -> () := {
-    self&.deallocations = self&.deallocations + 1
-    free(.address = data.address, .ffi = self&.ffi)
-}
-
 Source: Type = (.text: StringView, .position: UIntNative = 0, .fail_after: UIntNative = 999)
 
-Source implements Reader
+implement Reader#(Source)(
+    .read_byte = (.self: $&Source) -> (.result: Errable#(ReadByte, (..stream_read_failed))) {
+        if self&.position == self&.fail_after {
+            result = ..error(.reason = ..stream_read_failed)
+            return
+        }
+        if self&.position == self&.text.length {
+            result = ..ok ..end
+            return
+        }
 
-read_byte(.self: $&Source) -> (.result: Errable#(ReadByte, (..stream_read_failed))) := {
-    if self&.position == self&.fail_after {
-        result = ..error(.reason = ..stream_read_failed)
-        return
+        byte ::= bytes_get(&self&.text, self&.position).byte
+        self&.position = self&.position + 1
+        result = ..ok ..ok byte
     }
-    if self&.position == self&.text.length {
-        result = ..ok ..end
-        return
-    }
-
-    byte ::= bytes_get(&self&.text, self&.position).byte
-    self&.position = self&.position + 1
-    result = ..ok ..ok byte
-}
+)
 
 run_main(.system: System) -> !Void = ..ok Void() := {
     allocator ::= RecordingAllocator(.ffi = system.ffi)
@@ -92,7 +50,50 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     if allocator.allocations != 3 or allocator.deallocations != 3 { abort }
 }
 
-main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+main#(.WriterType: Type: Writer#(WriterType))(.system: System, .writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
     run_main(.system = system)!!!
     status_code = 0
 }
+
+implement Allocator#(RecordingAllocator)(
+    .allocate = (
+            .self      : $&RecordingAllocator,
+            .size      : UIntNative,
+            .alignment : UIntNative            = 1
+        ) -> (
+            .result : Errable#(Allocation, (..out_of_memory))
+        ) {
+        if self&.allocations == self&.fail_after {
+            result = ..error(.reason = ..out_of_memory)
+            return
+        }
+
+        storage ::= malloc(.size = size, .ffi = self&.ffi)
+        if storage | convert#(.to: UIntNative)(_) == 0 {
+            result = ..error(.reason = ..out_of_memory)
+            return
+        }
+        self&.allocations = self&.allocations + 1
+        deallocator: Virtual#(.contract: Deallocator) = to_virtual#(.contract: Deallocator)(
+            .value = self
+        )
+        result = ..ok ~trusted_establish_allocation(
+            .storage     = storage
+            .size        = size
+            .alignment   = alignment
+            .deallocator = deallocator
+        )
+    }
+)
+
+implement Deallocator#(RecordingAllocator)(
+    .deallocate = (
+            .self      : $&RecordingAllocator,
+            .data      : RawPointer#(.t: UInt8),
+            .size      : UIntNative,
+            .alignment : UIntNative
+        ) -> () {
+        self&.deallocations = self&.deallocations + 1
+        free(.address = data.address, .ffi = self&.ffi)
+    }
+)

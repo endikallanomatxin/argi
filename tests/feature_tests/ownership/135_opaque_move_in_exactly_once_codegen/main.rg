@@ -5,15 +5,17 @@ Tracked : Type = (
 
 drops :: Int32 = 0
 
-Tracked deinit(.self: $&Tracked) -> () := {
-    drops = drops + 1
-    deinit(.self = $&self&.allocation)
-}
+implement Deinit#(Tracked) (
+    .deinit = (.self: $&Tracked) -> () {
+        drops = drops + 1
+        deinit(.self = $&self&.allocation)
+    }
+)
 
 main(.system: System) -> (.status_code: Int32) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    owned_result ::= allocate(.self = $&allocator_storage, .size = 1)
-    slots_result ::= allocate(.self = $&allocator_storage, .size = size_of(.type = Tracked))
+    owned_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
+    slots_result ::= allocate_bytes(.self = $&allocator_storage, .size = size_of(.type = Tracked))
     match owned_result {
         ..error _ { status_code = 1 }
         ..ok ~ owned_payload {

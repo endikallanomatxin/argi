@@ -4,20 +4,20 @@ Pair : Type = (
     .stable: String
 )
 
-Pair deinit(.self: $&Pair, .allocator: $&Allocator) -> () := {
-    assume allocator
-
-    deinit(.self = $&self&.changing, .allocator = allocator)
-    deinit(.self = $&self&.stable, .allocator = allocator)
-}
+implement Deinit#(Pair) (
+    .deinit = (.self: $&Pair) -> () {
+            deinit(.self = $&self&.changing)
+        deinit(.self = $&self&.stable)
+    }
+)
 
 main(.system: System) -> (.status_code: Int32 = 0) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 
     pair ::= Pair(
-        .changing = unwrap_or_abort(.value = String(.allocator = $&allocator_storage, .capacity = 1)),
-        .stable = unwrap_or_abort(.value = String(.allocator = $&allocator_storage, .capacity = 1)),
+        .changing = unwrap_or_abort(.value = string_with_capacity(.allocator = $&allocator_storage, .capacity = 1)),
+        .stable = unwrap_or_abort(.value = string_with_capacity(.allocator = $&allocator_storage, .capacity = 1)),
     )
     stable_push ::= push_byte(.self = $&pair.stable, .byte = 42, .allocator = $&allocator_storage)
     if is(.value = stable_push, .variant = ..error) {
@@ -39,5 +39,5 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         status_code = 2
         return
     }
-    deinit(.self = $&pair, .allocator = $&allocator_storage)
+    deinit(.self = $&pair)
 }

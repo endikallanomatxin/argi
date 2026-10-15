@@ -1,9 +1,13 @@
 Token : Type = ()
 
-once Token init() -> (.result: Token) := {
+once _acquire_token := (.args: ()) -> (.result: Token) {
     result = ()
-
 }
+
+implement Init#(Token, ()) (
+    .Result: Type = Token
+    .init = _acquire_token
+)
 
 main() -> (.status_code: Int32) := {
     first := Token()

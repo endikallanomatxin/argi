@@ -2,7 +2,11 @@ Tracked: Type = (.id: Int32)
 
 drops :: Int32 = 0
 
-Tracked deinit(.self: $&Tracked) -> () := { drops = drops + 1 }
+implement Deinit#(Tracked) (
+    .deinit = (.self: $&Tracked) -> () {
+        drops = drops + 1
+    }
+)
 
 Wrapper: Type = (.tracked: Tracked, .text: String)
 
@@ -35,11 +39,11 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     query :: Int32 = 1
     remove(.self = $&map, .key = &query, .allocator = allocator)
     if drops != 2 { abort }
-    deinit(.self = $&map, .allocator = allocator)
+    deinit(.self = $&map)
     if drops != 21 { abort }
 }
 
-main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+main#(.WriterType: Type: Writer#(WriterType))(.system: System, .writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
     run_main(.system = system)!!!
     status_code = 0
 }

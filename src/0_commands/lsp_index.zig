@@ -1,6 +1,8 @@
+const evidence = @import("../4_semantics/global/contract_evidence.zig");
 const std = @import("std");
 const source_db = @import("../1_base/source_db.zig");
 const graph_mod = @import("../4_semantics/global/graph.zig");
+const standard_contracts = @import("../4_semantics/global/standard_contracts.zig");
 const types = @import("../4_semantics/global/types.zig");
 const primitives = @import("../4_semantics/primitives/schema.zig");
 
@@ -12,14 +14,18 @@ pub const Target = union(enum) {
     variant: graph_mod.GlobalVariantId,
 };
 
+pub const OperationIdentity = evidence.Operation;
+
 pub const Occurrence = struct {
     source: primitives.SourceRef,
+    constructor_call: bool = false,
+    operation: ?OperationIdentity = null,
     len: u32,
     target: Target,
     declaration: bool = false,
-    // Constructor calls spell their nominal family, while navigation targets
-    // the selected init declaration. These are distinct source identities.
-    constructor_call: bool = false,
+    // An operation keeps its contract spelling while navigation follows the
+    // selected implementation. The two names can differ for ordinary aliases.
+    operation_name_start: u32 = std.math.maxInt(u32),
 };
 
 /// Cold editor index derived from the final semantic graph. It intentionally
@@ -45,7 +51,7 @@ pub const Index = struct {
                 .{ .declaration = decl_id };
             try result.add(allocator, .{
                 .source = declaration.source,
-                .len = @intCast(graph.text(declaration.name).len),
+                .len = @intCast(graph.text(graph.declarationSourceName(decl_id)).len),
                 .target = target,
                 .declaration = true,
             });
@@ -78,17 +84,56 @@ pub const Index = struct {
             });
         }
 
+        // Operations retain their contract identity even when several contracts
+        // reuse one ordinary implementation. Navigation still follows the body.
+        for (graph.contract_operation_bindings.items) |operation| {
+            const declaration = graph.declaration(operation.declaration);
+            const target: Target = if (declaration.function_id) |function| .{ .function = function } else .{ .declaration = operation.declaration };
+            if (operation.alias_source) |source| try result.add(allocator, .{
+                .source = source,
+                .len = @intCast(graph.text(graph.declarationSourceName(operation.declaration)).len),
+                .target = target,
+            });
+            const identity: OperationIdentity = .{ .contract = operation.contract_declaration, .index = operation.requirement_index };
+            for ([_]primitives.SourceRef{ operation.requirement_source, operation.implementation_source }) |source| {
+                try result.add(allocator, .{
+                    .source = source,
+                    .len = operation.name.len,
+                    .target = target,
+                    .declaration = true,
+                    .operation = identity,
+                    .operation_name_start = operation.name.start,
+                });
+            }
+        }
+
         for (graph.nodes.items) |node| switch (node.content) {
             .function_call => |call| {
                 if (call.callee_value != null) continue;
-                const function = graph.functions.items[@intFromEnum(call.callee)];
-                const declaration = graph.declarations.items[@intFromEnum(function.declaration)];
-                const name = if (declaration.constructor_type) |owner| graph.declaration(owner).name else declaration.name;
+                const initialized = if (standard_contracts.initializedType(graph, call.callee)) |ty| switch (graph.resolvedSemanticType(ty) orelse continue) {
+                    .declared => |owner| owner,
+                    .generic => |identity| identity.base,
+                    else => null,
+                } else null;
+                const name = if (initialized) |owner| graph.declaration(owner).name else graph.callSourceName(call);
                 try result.add(allocator, .{
                     .source = node.source,
                     .len = @intCast(graph.text(name).len),
                     .target = .{ .function = call.callee },
-                    .constructor_call = declaration.constructor_type != null,
+                    .constructor_call = initialized != null,
+                    .operation = if (initialized == null) if (graph.callOperation(call)) |identity| (evidence.selectedOperation(graph, identity) orelse continue).identity else null else null,
+                    .operation_name_start = if (initialized == null and graph.callOperation(call) != null) name.start else std.math.maxInt(u32),
+                });
+            },
+            .virtual_call => |id| {
+                const call = graph.virtual_calls.items[@intFromEnum(id)];
+                const operation = evidence.virtualOperation(graph, call) orelse continue;
+                try result.add(allocator, .{
+                    .source = node.source,
+                    .len = call.method_name.len,
+                    .target = .{ .declaration = operation.contract },
+                    .operation = operation,
+                    .operation_name_start = call.method_name.start,
                 });
             },
             .struct_value_literal => {
@@ -130,7 +175,7 @@ pub const Index = struct {
                     .{ .declaration = decl_id };
                 try result.add(allocator, .{
                     .source = node.source,
-                    .len = @intCast(graph.text(declaration.name).len),
+                    .len = @intCast(graph.text(graph.declarationSourceName(decl_id)).len),
                     .target = target,
                 });
             },
@@ -175,7 +220,7 @@ pub const Index = struct {
                 existing.source.offset == value.source.offset and
                 existing.len == value.len and
                 existing.declaration == value.declaration and
-                targetsEqual(existing.target, value.target)) return;
+                referencesEqual(existing, value)) return;
         }
         try self.occurrences.append(allocator, value);
     }
@@ -200,14 +245,14 @@ pub const Index = struct {
             if (occurrence_file != requested) continue;
             if (!occurrence_matches_source(graph, db, occurrence)) continue;
             if (offset < occurrence.source.offset or offset >= occurrence.source.offset + occurrence.len) continue;
-            if (best == null or occurrence.len < best.?.len or (occurrence.declaration and !best.?.declaration)) best = occurrence;
+            if (best == null or occurrence.len < best.?.len or (occurrence.declaration and !best.?.declaration) or (occurrence.len == best.?.len and occurrence.operation != null and best.?.operation == null)) best = occurrence;
         }
         return best;
     }
 
     pub fn declarationOccurrence(self: *const Index, target: Target) ?Occurrence {
         for (self.occurrences.items) |occurrence|
-            if (occurrence.declaration and targetsEqual(occurrence.target, target)) return occurrence;
+            if (occurrence.declaration and occurrence.operation == null and targetsEqual(occurrence.target, target)) return occurrence;
         return null;
     }
 
@@ -225,10 +270,10 @@ pub const Index = struct {
         return switch (target) {
             .function => |id| blk: {
                 const function = graph.functions.items[@intFromEnum(id)];
-                break :blk graph.text(graph.declarations.items[@intFromEnum(function.declaration)].name);
+                break :blk graph.text(graph.declarationSourceName(function.declaration));
             },
             .binding => |id| graph.text(graph.bindings.items[@intFromEnum(id)].name),
-            .declaration => |id| graph.text(graph.declarations.items[@intFromEnum(id)].name),
+            .declaration => |id| graph.text(graph.declarationSourceName(id)),
             .field => |id| graph.text(graph.fields.items[@intFromEnum(id)].name),
             .variant => |id| graph.text(graph.variants.items[@intFromEnum(id)].name),
         };
@@ -252,10 +297,16 @@ pub fn occurrence_matches_source(graph: *const graph_mod.GlobalSemanticGraph, db
     const source = db.get(file).source;
     const name = blk: {
         if (occurrence.constructor_call) {
-            const function = graph.functions.items[@intFromEnum(occurrence.target.function)];
-            const owner = graph.declaration(function.declaration).constructor_type.?;
+            const ty = standard_contracts.initializedType(graph, occurrence.target.function) orelse return false;
+            const owner = switch (graph.resolvedSemanticType(ty) orelse return false) {
+                .declared => |id| id,
+                .generic => |identity| identity.base,
+                else => return false,
+            };
             break :blk graph.text(graph.declaration(owner).name);
         }
+        if (occurrence.operation_name_start != std.math.maxInt(u32))
+            break :blk graph.text(.{ .start = occurrence.operation_name_start, .len = occurrence.len });
         break :blk Index.targetName(graph, occurrence.target);
     };
     const offset: usize = occurrence.source.offset;
@@ -305,6 +356,15 @@ pub fn offsetForPosition(db: *const source_db.SourceDb, file: source_db.FileId, 
     return @intCast(raw);
 }
 
+pub fn referencesEqual(a: Occurrence, b: Occurrence) bool {
+    if (a.operation) |identity| {
+        const other = b.operation orelse return false;
+        return identity.contract == other.contract and identity.index == other.index;
+    }
+    if (b.operation != null) return false;
+    return targetsEqual(a.target, b.target);
+}
+
 pub fn targetsEqual(a: Target, b: Target) bool {
     return switch (a) {
         .function => |value| switch (b) {
@@ -340,5 +400,7 @@ fn lessOccurrence(_: void, a: Occurrence, b: Occurrence) bool {
 test "GlobalSG editor index keeps semantic identity in compact IDs" {
     try std.testing.expectEqual(@as(usize, 4), @sizeOf(graph_mod.GlobalFunctionId));
     try std.testing.expectEqual(@as(usize, 4), @sizeOf(graph_mod.GlobalBindingId));
-    try std.testing.expect(@sizeOf(Occurrence) <= 24);
+    // Operation spellings reuse the occurrence length and add one string offset.
+    try std.testing.expect(@sizeOf(OperationIdentity) == 8);
+    try std.testing.expect(@sizeOf(Occurrence) <= 40);
 }

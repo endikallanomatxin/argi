@@ -1,16 +1,20 @@
-Action: Abstract = (
-    run(.self: &Self, .target: $&Int32) -> () where {}
+Action#(.Participant: Type): Contract = (
+    .run: (.self: &Participant, .target: $&Int32) -> () where {}
 )
 
 Cell: Type = (.unused: Int32)
 
-Cell implements Action
+implement Action#(Cell) (.run = _impl_run_Cell)
 
 Change: Type = (.target: $&Int32)
 
-Change deinit(.self: $&Change) -> () := { self&.target&= 42 }
+implement Deinit#(Change) (
+    .deinit = (.self: $&Change) -> () {
+        self&.target&= 42
+    }
+)
 
-run(.self: &Cell, .target: $&Int32) -> () := {
+_impl_run_Cell := (.self: &Cell, .target: $&Int32) -> ()  {
     if true {
         discarded :: ?Change = ..some(.value = Change(target))
     }

@@ -10,7 +10,7 @@ release_if(.allocation: $&Allocation, .consume: Bool) -> (.result: ?Int32) := {
 
 main(.system: System) -> (.status_code: Int32 = 0) := {
     assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
-    allocation ::= unwrap_or_abort(allocate(.self = allocator, .size = 1))
+    allocation ::= unwrap_or_abort(allocate_bytes(.self = allocator, .size = 1))
     result ::= release_if($&allocation, false)
 
     match result {

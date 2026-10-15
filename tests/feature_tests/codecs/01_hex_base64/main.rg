@@ -24,7 +24,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     scratch ::= zeroed#(.t: [32]UInt8)()
     index :: UIntNative = 0
     while index < 32 {
-        scratch[index] = unwrap_or_abort(.value = UInt8(.value = [index * 29 + index % 5] % 256))
+        scratch[index] = unwrap_or_abort(.value = [[index * 29 + index % 5] % 256] | convert#(.to: UInt8)(_))
         index = index + 1
     }
     all_bytes ::= view(.array = &scratch)
@@ -70,7 +70,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     }
 }
 
-main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+main#(.WriterType: Type: Writer#(WriterType))(.system: System, .writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
     run_main(.system = system)!!!
     status_code = 0
 }

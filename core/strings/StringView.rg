@@ -3,7 +3,7 @@ StringView: Type = (
     .length : UIntNative
 )
 
-StringView implements ImplicitlyCopyable
+implement ImplicitlyCopyable#(StringView) ()
 
 string_view_byte_address(
         .self  : &StringView,
@@ -15,7 +15,7 @@ string_view_byte_address(
     reference = trusted_reference_offset#(.t: UInt8)(.base = self&.data, .elements = index)
 }
 
-bytes_get(
+_view_get_byte(
         .view  : &StringView,
         .index : UIntNative,
     ) -> (
@@ -48,24 +48,8 @@ equals(
     ok = true
 }
 
-operator == (
-        .left  : StringView,
-        .right : StringView,
-    ) -> (
-        .ok : Bool
-    ) := {
-    ok = equals(.left = left, .right = right).ok
-}
-
-operator != (
-        .left  : StringView,
-        .right : StringView,
-    ) -> (
-        .ok : Bool
-    ) := {
-    if equals(.left = left, .right = right).ok {
-        ok = false
-    } else {
-        ok = true
+implement Equal#(StringView, StringView, (.left: StringView, .right: StringView)) (
+    .equal = (.args: (.left: StringView, .right: StringView)) -> (.ok: Bool) {
+        ok = equals(.left = args.left, .right = args.right).ok
     }
-}
+)

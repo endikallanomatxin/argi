@@ -3,7 +3,6 @@ const std = @import("std");
 const syn = @import("../../3_syntax/syntax_tree.zig");
 const semantic_strings = @import("../primitives/strings.zig");
 const primitives = @import("../primitives/schema.zig");
-const callable = @import("../primitives/callable.zig");
 const module_entities = @import("entities.zig");
 const module_storage = @import("storage.zig");
 
@@ -71,8 +70,6 @@ pub const Declaration = struct {
     struct_fields: ?FieldRange = null,
     choice_variants: ?FieldRange = null,
     generic_parameter_count: ?u32 = null,
-    constructor_type: ?ModuleDeclId = null,
-    destructor_type: ?ModuleDeclId = null,
 };
 
 pub const FileOffsets = struct {
@@ -187,15 +184,15 @@ pub fn declarationSyntaxNode(files: []const FileInput, declaration: Declaration)
     for (tree.roots) |node| {
         if (tree.location(node).offset == declaration.source_offset) return node;
     }
+    for (tree.roots) |root| {
+        const conformance = tree.contractConformance(root) orelse continue;
+        const members = conformance.implementation_members;
+        for (tree.structTypeLiteral(members).?.fields) |field| {
+            const value = tree.structTypeField(field).?.default_value orelse continue;
+            if (tree.functionDeclaration(value) != null and tree.location(value).offset == declaration.source_offset) return value;
+        }
+    }
     return null;
-}
-
-pub fn operatorKindFromSyntax(value: syn.OperatorName) callable.OperatorKind {
-    return switch (value) {
-        .add => .add,
-        .equal => .equal,
-        .not_equal => .not_equal,
-    };
 }
 
 pub fn pointerMutabilityFromSyntax(value: syn.PointerMutability) primitives.PointerMutability {
@@ -258,7 +255,6 @@ pub const ModuleSemanticGraphBuilder = struct {
                 .type_reference_count = @intCast(self.graph.type_references.items.len - type_reference_base),
             });
         }
-        try associateLifecycleFunctions(&self.graph, files);
         try buildSymbolIndex(self.allocator, &self.graph);
         try predeclareTypes(self.allocator, &self.graph);
         resolveModuleTypeReferences(&self.graph);
@@ -316,7 +312,7 @@ fn resolveModuleTypeReferences(graph: *ModuleSemanticGraph) void {
         }
         for (graph.declarationsNamed(graph.text(reference.name))) |declaration_id| {
             switch (graph.declaration(declaration_id).kind) {
-                .type, .abstract_type => {
+                .type, .contract_type => {
                     reference.resolution = .{ .module = declaration_id };
                     reference.resolved_type = graph.declaration(declaration_id).type_id;
                     break;
@@ -327,38 +323,9 @@ fn resolveModuleTypeReferences(graph: *ModuleSemanticGraph) void {
     }
 }
 
-// Lifecycle functions belong to nominal declarations independently of their outputs.
-// Its compile-time parameters remain local to its own function signature.
-fn associateLifecycleFunctions(graph: *ModuleSemanticGraph, files: []const FileInput) !void {
-    for (graph.declarations.items) |*declaration| {
-        if (declaration.kind != .function) continue;
-        const node = declarationSyntaxNode(files, declaration.*) orelse continue;
-        const file = files[declaration.module_file_index];
-        const function = file.tree.functionDeclaration(node) orelse continue;
-        const token = function.constructor_type orelse function.destructor_type orelse continue;
-        const is_destructor = function.destructor_type != null;
-        const name = file.tree.tokenTextFromSource(file.source, token);
-        for (graph.declarations.items, 0..) |candidate, raw| {
-            if (candidate.kind != .type or !std.mem.eql(u8, graph.text(candidate.name), name)) continue;
-            if (is_destructor)
-                declaration.destructor_type = @enumFromInt(@as(u32, @intCast(raw)))
-            else
-                declaration.constructor_type = @enumFromInt(@as(u32, @intCast(raw)));
-            break;
-        }
-        if (declaration.constructor_type == null and declaration.destructor_type == null) {
-            if (file.diagnostics) |diagnostics| {
-                try diagnostics.add(file.tree.tokenLocation(token), .semantic, "{s} type '{s}' must name a type declared in this module", .{ if (is_destructor) "destructor" else "constructor", name });
-                return error.Reported;
-            }
-            return error.UnknownConstructorType;
-        }
-    }
-}
-
 fn predeclareTypes(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph) !void {
     for (graph.declarations.items, 0..) |*declaration, index| switch (declaration.kind) {
-        .type, .abstract_type => {
+        .type, .contract_type => {
             if (graph.types.items.len >= std.math.maxInt(u32)) return error.ModuleSemanticGraphTooLarge;
             declaration.type_id = @enumFromInt(@as(u32, @intCast(graph.types.items.len)));
             try graph.types.append(allocator, .{ .declared = @enumFromInt(@as(u32, @intCast(index))) });
@@ -376,7 +343,9 @@ fn buildFunctionInterfaces(allocator: std.mem.Allocator, graph: *ModuleSemanticG
             file_input.tree.testDeclaration(declaration_node).?.function
         else
             file_input.tree.functionDeclaration(declaration_node).?;
-        if (function.generic_params.len != 0 or function.generic_params_struct != null) continue;
+        // Inline members use parameterized IR even with no parameters. Their
+        // Args defaults must complete through the selected conformance path.
+        if (function.contract_member or function.generic_params.len != 0 or function.generic_params_struct != null) continue;
         const field_start = graph.fields.items.len;
         if (!try appendFields(allocator, graph, file_input, @intCast(declaration.module_file_index), function.input) or
             !try appendFields(allocator, graph, file_input, @intCast(declaration.module_file_index), function.output))
@@ -517,6 +486,7 @@ fn lowerType(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, tree: *c
             const child = try lowerType(allocator, graph, tree, source, module_file_index, child_node) orelse break :blk null;
             break :blk try appendType(allocator, graph, .{ .inferred_errable = child });
         },
+        .projection => null,
         .struct_literal => |literal| try lowerStructuralType(allocator, graph, tree, source, module_file_index, literal),
         .choice_literal => |literal| try lowerStructuralChoiceType(allocator, graph, tree, source, module_file_index, literal),
         .generic => |generic| try lowerGenericType(allocator, graph, tree, source, module_file_index, generic),
@@ -817,7 +787,7 @@ fn discoverFile(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, input
                 const value = tree.symbolDeclaration(node).?.value;
                 break :blk if (value != null and tree.tag(value.?) == .import_statement) .import_alias else .binding;
             },
-            .abstract_declaration => .abstract_type,
+            .contract_declaration => .contract_type,
             .type_declaration, .c_struct_declaration, .c_incomplete_declaration, .c_enum_declaration, .c_union_declaration, .c_function_pointer_declaration => .type,
             .choice_option_declaration => .choice_option,
             .function_declaration, .function_declaration_once => .function,
@@ -851,6 +821,25 @@ fn discoverFile(allocator: std.mem.Allocator, graph: *ModuleSemanticGraph, input
             .module_file_index = module_file_index,
             .generic_parameter_count = genericParameterCount(tree, node),
         });
+    }
+    for (tree.roots) |root| {
+        const conformance = tree.contractConformance(root) orelse continue;
+        const members = conformance.implementation_members;
+        for (tree.structTypeLiteral(members).?.fields) |field| {
+            const value = tree.structTypeField(field).?.default_value orelse continue;
+            if (tree.functionDeclaration(value) == null) continue;
+            // Implementation bodies have private declaration identities and
+            // never enter a source-visible global operation family.
+            const name = try std.fmt.allocPrint(allocator, "_implement${d}${d}${s}", .{ module_file_index, tree.location(root).offset, tree.tokenTextFromSource(source, tree.mainToken(value)) });
+            defer allocator.free(name);
+            try graph.declarations.append(allocator, .{
+                .kind = .function,
+                .name = try graph.addString(allocator, name),
+                .source_offset = tree.location(value).offset,
+                .module_file_index = module_file_index,
+                .generic_parameter_count = genericParameterCount(tree, value),
+            });
+        }
     }
     // Syntax-node order permits binary lookup during ModuleSema construction
     // without retaining a dense map for every expression node.

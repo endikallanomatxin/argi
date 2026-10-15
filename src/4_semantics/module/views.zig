@@ -40,8 +40,6 @@ pub fn declarationView(graph: *const graph_mod.ModuleSemanticGraph, id: entities
         .struct_fields = if (declaration.struct_fields) |range| .{ .start = range.start, .len = range.len } else null,
         .choice_variants = if (declaration.choice_variants) |range| .{ .start = range.start, .len = range.len } else null,
         .generic_parameter_count = declaration.generic_parameter_count,
-        .constructor_type = declaration.constructor_type,
-        .destructor_type = declaration.destructor_type,
         .struct_layout = if (semantic) |value| value.struct_layout else .regular,
         .choice_layout = if (semantic) |value| value.choice_layout else .regular,
     };
@@ -103,7 +101,7 @@ fn constructionField(graph: *const graph_mod.ModuleSemanticGraph, id: entities.M
     return .{
         .name = field.name,
         .ty = field.ty,
-        .storage_type = if (semantic) |value| value.storage_type else null,
+
         .source = .{ .file_index = field.module_file_index, .offset = field.source_offset },
         .default_value = if (semantic) |value| value.default_value else null,
     };

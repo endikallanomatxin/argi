@@ -1,5 +1,5 @@
 RGBColor: Type = (
-    .r : Float
-    .g : Float
-    .b : Float
+    .r : Float32
+    .g : Float32
+    .b : Float32
 )

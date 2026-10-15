@@ -8,18 +8,20 @@ second_drops :: Int32 = 0
 third_drops :: Int32 = 0
 fourth_drops :: Int32 = 0
 
-Tracked deinit(.self: $&Tracked) -> () := {
-    if self&.id == 1 { first_drops = first_drops + 1 }
-    if self&.id == 2 { second_drops = second_drops + 1 }
-    if self&.id == 3 { third_drops = third_drops + 1 }
-    if self&.id == 4 { fourth_drops = fourth_drops + 1 }
-    deinit(.self = $&self&.allocation)
-}
+implement Deinit#(Tracked) (
+    .deinit = (.self: $&Tracked) -> () {
+        if self&.id == 1 { first_drops = first_drops + 1 }
+        if self&.id == 2 { second_drops = second_drops + 1 }
+        if self&.id == 3 { third_drops = third_drops + 1 }
+        if self&.id == 4 { fourth_drops = fourth_drops + 1 }
+        deinit(.self = $&self&.allocation)
+    }
+)
 
-make_tracked(.allocator: $&Allocator, .id: Int32) -> (.result: Errable#(.t: Tracked, .reasons: (..out_of_memory))) := {
+make_tracked#(.AllocatorType: Type: Allocator#(AllocatorType))(.allocator: $&AllocatorType, .id: Int32) -> (.result: Errable#(.t: Tracked, .reasons: (..out_of_memory))) := {
     assume allocator
 
-    allocated ::= allocate(.self = allocator, .size = 1)
+    allocated ::= allocate_bytes(.self = allocator, .size = 1)
     match allocated {
         ..error _ { result = ..error(.reason = ..out_of_memory) }
         ..ok ~ payload {
@@ -53,14 +55,14 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
                                 ..ok ~ fourth {
                                     push_assume_capacity#(.t: Tracked)(.self = $&array, .value = ~first)
                                     push_assume_capacity#(.t: Tracked)(.self = $&array, .value = ~third)
-                                    inserted ::= insert#(.t: Tracked)(.self = $&array, .i = 1, .value = ~second)
+                                    inserted ::= insert(.self = $&array, .i = 1, .value = ~second)
                                     if is(.value = inserted, .variant = ..error) {
                                         status_code = 5
                                         return
                                     }
 
                                     one :: UIntNative = 1
-                                    replacement_result ::= set#(.t: Tracked)(.self = $&array, .index = one, .value = ~fourth, .allocator = $&allocator_storage).result
+                                    replacement_result ::= replace#(.t: Tracked)(.self = $&array, .index = one, .value = ~fourth, .allocator = $&allocator_storage).result
                                     if is(.value = replacement_result, .variant = ..error) {
                                         status_code = 5
                                         return
@@ -71,18 +73,18 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
                                     }
 
                                     zero :: UIntNative = 0
-                                    removed_result ::= remove#(.t: Tracked)(.self = $&array, .i = zero).result
+                                    removed_result ::= remove(.self = $&array, .i = zero).result
                                     if is(.value = removed_result, .variant = ..error) {
                                         status_code = 7
                                         return
                                     }
                                     removed ::= ~removed_result..ok
-                                    if removed.id != 1 or length#(.t: Tracked)(.self = &array).count != 2 {
+                                    if removed.id != 1 or length(.self = &array).count != 2 {
                                         status_code = 7
                                         return
                                     }
-                                    first_remaining_result ::= get_ro_ref#(.t: Tracked)(.self = &array, .index = 0).result
-                                    second_remaining_result ::= get_ro_ref#(.t: Tracked)(.self = &array, .index = 1).result
+                                    first_remaining_result ::= get_ro_ref(.self = &array, .index = 0).result
+                                    second_remaining_result ::= get_ro_ref(.self = &array, .index = 1).result
                                     if is(.value = first_remaining_result, .variant = ..error) {
                                         status_code = 8
                                         return
@@ -98,7 +100,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
                                         return
                                     }
 
-                                    deinit#(.t: Tracked)(.self = $&array)
+                                    deinit(.self = $&array)
                                     if first_drops != 0 or second_drops != 1 or third_drops != 1 or fourth_drops != 1 {
                                         status_code = 9
                                         return

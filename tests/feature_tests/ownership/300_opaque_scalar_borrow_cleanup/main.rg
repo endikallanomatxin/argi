@@ -1,15 +1,17 @@
 Borrowing : Type = (.counter: $&Int32)
-Borrowing deinit(.self: $&Borrowing) -> () := {
-    self&.counter& = self&.counter& + 1
-}
-exercise(.counter: $&Int32, .allocator: $&Allocator) -> () := {
+implement Deinit#(Borrowing) (
+    .deinit = (.self: $&Borrowing) -> () {
+        self&.counter& = self&.counter& + 1
+    }
+)
+exercise#(.AllocatorType: Type: Allocator#(AllocatorType))(.counter: $&Int32, .allocator: $&AllocatorType) -> () := {
     assume allocator
     array ::= unwrap_or_abort(.value = DynamicArray#(.t: Borrowing)(.capacity = 1))
     element ::= Borrowing(.counter = counter)
-    pushed ::= push#(.t: Borrowing)(.self = $&array, .value = ~element)
+    pushed ::= push(.self = $&array, .value = ~element)
     if is(.value = pushed, .variant = ..error) { abort }
 }
-forward(.counter: $&Int32, .allocator: $&Allocator) -> () := {
+forward#(.AllocatorType: Type: Allocator#(AllocatorType))(.counter: $&Int32, .allocator: $&AllocatorType) -> () := {
     exercise(.counter = counter, .allocator = allocator)
 }
 main(.system: System) -> (.status_code: Int32) := {
@@ -18,7 +20,7 @@ main(.system: System) -> (.status_code: Int32) := {
         assume allocator ::= system.page_allocator
         array ::= unwrap_or_abort(.value = DynamicArray#(.t: Borrowing)(.capacity = 1))
         element ::= Borrowing(.counter = $&counter)
-        pushed ::= push#(.t: Borrowing)(.self = $&array, .value = ~element)
+        pushed ::= push(.self = $&array, .value = ~element)
         if is(.value = pushed, .variant = ..error) { abort }
     }
     if counter != 1 { status_code = 1 return }

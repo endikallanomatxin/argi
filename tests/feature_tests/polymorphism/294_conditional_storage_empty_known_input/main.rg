@@ -2,11 +2,15 @@ unsafe_allocation := import ("../../_support/unsafe_allocation")
 
 Tracked: Type = (.drops: $&Int32)
 
-Tracked deinit(.self: $&Tracked) -> () := { self&.drops&= self&.drops&+ 1 }
+implement Deinit#(Tracked) (
+    .deinit = (.self: $&Tracked) -> () {
+        self&.drops&= self&.drops&+ 1
+    }
+)
 
-SlotProtocol: Abstract = (
-    put(.self: &Self, .storage: $&Allocation, .value: Tracked) -> () where retains(storage, value)
-    drain(.self: &Self, .storage: $&Allocation, .empty: Bool) -> (.result: ?Int32) where {
+SlotProtocol#(.Participant: Type): Contract = (
+    .put: (.self: &Participant, .storage: $&Allocation, .value: Tracked) -> () where retains(storage, value)
+    .drain: (.self: &Participant, .storage: $&Allocation, .empty: Bool) -> (.result: ?Int32) where {
         on result ..some { empties(storage) }
         on result ..none {}
     }
@@ -14,16 +18,16 @@ SlotProtocol: Abstract = (
 
 Backend: Type = ()
 
-Backend implements SlotProtocol
+implement SlotProtocol#(Backend) (.put = _impl_put_Backend, .drain = _impl_drain_Backend)
 
-put(.self: &Backend, .storage: $&Allocation, .value: Tracked) -> () := {
+_impl_put_Backend := (.self: &Backend, .storage: $&Allocation, .value: Tracked) -> ()  {
     slot ::= trusted_mutable_reinterpret_reference#(UInt8, Tracked)(
         unsafe_allocation.trusted_allocation_byte_rw(storage, 0).reference
     ).reference
     trusted_opaque_move_in#(Tracked, Allocation)(storage, slot, ~value)
 }
 
-drain(.self: &Backend, .storage: $&Allocation, .empty: Bool) -> (.result: ?Int32) := {
+_impl_drain_Backend := (.self: &Backend, .storage: $&Allocation, .empty: Bool) -> (.result: ?Int32)  {
     if empty {
         slot ::= trusted_mutable_reinterpret_reference#(UInt8, Tracked)(
             unsafe_allocation.trusted_allocation_byte_rw(storage, 0).reference

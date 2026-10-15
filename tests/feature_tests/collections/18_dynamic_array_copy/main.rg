@@ -3,32 +3,32 @@ main(.system: System) -> (.status_code: Int32) := {
     assume allocator ::= $&allocator_storage
 
     arr ::= unwrap_or_abort(.value = DynamicArray#(.t: Int32)(.capacity = 1))
-    #defer deinit(.self = $&arr, .allocator = $&allocator_storage)
+    #defer deinit(.self = $&arr)
 
     push(.self = $&arr, .value = 10, .allocator = $&allocator_storage)
     push(.self = $&arr, .value = 20, .allocator = $&allocator_storage)
 
-    copied_result ::= copy#(.t: Int32)(.self = &arr)
+    copied_result ::= FalliblyCopyable#(DynamicArray#(Int32), GeneralPurposeAllocator).copy(.self = &arr, .allocator = allocator)
     if is(.value = copied_result, .variant = ..error) {
         status_code = 5
         return
     }
     copied ::= ~copied_result..ok
-    #defer deinit(.self = $&copied, .allocator = $&allocator_storage)
+    #defer deinit(.self = $&copied)
 
-    set_result ::= set(.self = $&copied, .index = 0, .value = 99, .allocator = $&allocator_storage).result
+    set_result ::= replace(.self = $&copied, .index = 0, .value = 99, .allocator = $&allocator_storage).result
     if is(.value = set_result, .variant = ..error) {
         status_code = 6
         return
     }
     push(.self = $&copied, .value = 30, .allocator = $&allocator_storage)
 
-    if length#(.t: Int32)(.self = &arr).count != 2 {
+    if length(.self = &arr).count != 2 {
         status_code = 1
         return
     }
 
-    if length#(.t: Int32)(.self = &copied).count != 3 {
+    if length(.self = &copied).count != 3 {
         status_code = 2
         return
     }

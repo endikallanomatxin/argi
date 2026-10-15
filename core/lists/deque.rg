@@ -2,37 +2,53 @@
 -- logical order into new storage and moves every element exactly once.
 Deque#(.t: Type): Type = (._ring: RingBuffer#(.t: t))
 
-Deque init#(
-        .t : Type
-    )(
-        .capacity  : UIntNative  = 8,
-        .allocator : $&Allocator = reach allocator,
-    ) -> (
-        .result : Errable#(Deque#(.t: t), (..out_of_memory))
-    ) := {
-    actual :: UIntNative = capacity
+implement#(
+    .t        : Type,
+    .Provider : Type: Allocator
+) Init#(
+    Deque#(.t: t),
+    (
+        .capacity  : UIntNative = 8,
+        .allocator : $&Provider = reach allocator,
+    )
+) (
+        .Result : Type = Errable#(Deque#(.t: t), (..out_of_memory))
+        .init   = (
+                .args : (
+                    .capacity  : UIntNative = 8,
+                    .allocator : $&Provider = reach allocator,
+                )
+            ) -> (
+                .result : Result
+            ) {
+            capacity ::= args.capacity
+            allocator ::= args.allocator
 
-    if actual == 0 { actual = 1 }
-    match RingBuffer#(.t: t)(.capacity = actual, .allocator = allocator) {
-        ..ok ~ring { result = ..ok(._ring = ~ring) }
-        ..error _ { result = ..error(.reason = ..out_of_memory) }
-    }
-}
+            actual :: UIntNative = capacity
 
-length#(.t: Type)(.self: &Deque#(.t: t)) -> (.count: UIntNative) := {
-    count = self&._ring._length
-}
+            if actual == 0 { actual = 1 }
+            match RingBuffer#(.t: t)(.capacity = actual, .allocator = allocator) {
+                ..ok ~ring { result = ..ok(._ring = ~ring) }
+                ..error _ { result = ..error(.reason = ..out_of_memory) }
+            }
+        }
+    )
 
-capacity#(.t: Type)(.self: &Deque#(.t: t)) -> (.count: UIntNative) := {
+_collection_capacity_deque#(.t: Type)(.self: &Deque#(.t: t)) -> (.count: UIntNative) := {
     count = self&._ring._capacity
 }
 
+implement#(.t: Type) CollectionCapacity#(Deque#(.t: t)) (
+    .measure_capacity = _collection_capacity_deque
+)
+
 reserve#(
-        .t : Type
+        .t             : Type,
+        .AllocatorType : Type: Allocator#(AllocatorType)
     )(
         .self      : $&Deque#(.t: t),
         .capacity  : UIntNative,
-        .allocator : $&Allocator      = reach allocator,
+        .allocator : $&AllocatorType  = reach allocator,
     ) -> (
         .result : Errable#(Void, (..out_of_memory))
     ) := {
@@ -82,10 +98,11 @@ reserve#(
 }
 
 _deque_ensure_room#(
-        .t : Type
+        .t             : Type,
+        .AllocatorType : Type: Allocator#(AllocatorType)
     )(
         .self      : $&Deque#(.t: t),
-        .allocator : $&Allocator
+        .allocator : $&AllocatorType
     ) -> (
         .result : Errable#(Void, (..out_of_memory))
     ) := {
@@ -107,11 +124,12 @@ _deque_ensure_room#(
 }
 
 push_back#(
-        .t : Type
+        .t             : Type,
+        .AllocatorType : Type: Allocator#(AllocatorType)
     )(
         .self      : $&Deque#(.t: t),
         .value     : t,
-        .allocator : $&Allocator      = reach allocator,
+        .allocator : $&AllocatorType  = reach allocator,
     ) -> (
         .result : Errable#(Void, (..out_of_memory))
     ) := {
@@ -132,11 +150,12 @@ push_back#(
 }
 
 push_front#(
-        .t : Type
+        .t             : Type,
+        .AllocatorType : Type: Allocator#(AllocatorType)
     )(
         .self      : $&Deque#(.t: t),
         .value     : t,
-        .allocator : $&Allocator      = reach allocator,
+        .allocator : $&AllocatorType  = reach allocator,
     ) -> (
         .result : Errable#(Void, (..out_of_memory))
     ) := {
@@ -191,38 +210,6 @@ pop_back#(.t: Type)(.self: $&Deque#(.t: t)) -> (.result: Errable#(t, (..empty)))
     result = ..ok ~moved
 }
 
-get_ro_ref#(
-        .t : Type
-    )(
-        .self  : &Deque#(.t: t),
-        .index : UIntNative
-    ) -> (
-        .result : Errable#(&t, (..out_of_bounds))
-    ) := {
-    result = get_ro_ref(&self&._ring, .index = index)
-}
-
-get_rw_ref#(
-        .t : Type
-    )(
-        .self  : $&Deque#(.t: t),
-        .index : UIntNative
-    ) -> (
-        .result : Errable#($&t, (..out_of_bounds))
-    ) := {
-    if index >= self&._ring._length {
-        result = ..error(.reason = ..out_of_bounds)
-        return
-    }
-
-    pointer ::= _ring_buffer_occupied_pointer(&self&._ring, .index = index).pointer
-
-    result = ..ok depend_on#(.t: $&t)(
-        .value = pointer
-        .on    = erase_reference#(.t: _RingBufferShape)(.base = &self&._ring._shape).reference
-    ).result
-}
-
 get#(
         .t : Type: ImplicitlyCopyable
     )(
@@ -236,8 +223,56 @@ get#(
     result = ..ok pointer&
 }
 
-Deque#(.t: Type) implements Indexable#(.t: t)
+implement#(.t: Type) Deinit#(Deque#(.t: t)) (
+        .deinit = (
+                .self : $&Deque#(.t: t)
+            ) -> () {
+            deinit(.self = $&self&._ring)
+        }
+    )
 
-Deque deinit#(.t: Type)(.self: $&Deque#(.t: t), .allocator: $&Allocator = reach allocator) -> () := {
-    deinit(.self = $&self&._ring, .allocator = allocator)
-}
+implement#(.t: Type) Indexable#(Deque#(.t: t)) (
+        .Item : Type = t
+
+        .length = (
+                .self : &Deque#(.t: t)
+            ) -> (
+                .count : UIntNative
+            ) {
+            count = self&._ring._length
+        }
+
+        .get_ro_ref = (
+                .self  : &Deque#(.t: t),
+                .index : UIntNative
+            ) -> (
+                .result : Errable#(&t, (..out_of_bounds))
+            ) {
+            result = get_ro_ref(&self&._ring, .index = index)
+        }
+    )
+
+implement#(
+    .t : Type
+) IndexableMutable#(Deque#(.t: t)) (
+        .Item : Type = t
+
+        .get_rw_ref = (
+                .self  : $&Deque#(.t: t),
+                .index : UIntNative
+            ) -> (
+                .result : Errable#($&t, (..out_of_bounds))
+            ) {
+            if index >= self&._ring._length {
+                result = ..error(.reason = ..out_of_bounds)
+                return
+            }
+
+            pointer ::= _ring_buffer_occupied_pointer(&self&._ring, .index = index).pointer
+
+            result = ..ok depend_on#(.t: $&t)(
+                .value = pointer
+                .on    = erase_reference#(.t: _RingBufferShape)(.base = &self&._ring._shape).reference
+            ).result
+        }
+    )

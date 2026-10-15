@@ -3,16 +3,22 @@ Borrowing : Type = (.reference: $&UInt8)
 Domain : Type = (.marker: UInt8)
 Wrapper : Type = (.domain: Domain)
 
-Borrowing deinit(.self: $&Borrowing) -> () := {}
+implement Deinit#(Borrowing) (
+    .deinit = (.self: $&Borrowing) -> () {
 
-Domain deinit(.self: $&Domain) -> () := {
-    trusted_opaque_mark_empty(.storage = self)
-}
+    }
+)
+
+implement Deinit#(Domain) (
+    .deinit = (.self: $&Domain) -> () {
+        trusted_opaque_mark_empty(.storage = self)
+    }
+)
 
 main(.system: System) -> (.status_code: Int32) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    target_result ::= allocate(.self = $&allocator_storage, .size = 1)
-    storage_result ::= allocate(.self = $&allocator_storage, .size = size_of(.type = Borrowing))
+    target_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
+    storage_result ::= allocate_bytes(.self = $&allocator_storage, .size = size_of(.type = Borrowing))
     match target_result {
         ..error _ { status_code = 1 }
         ..ok ~ target_payload {

@@ -1,22 +1,28 @@
-Readable#(.item: Type): Abstract = (
-    read(.self: &Self) -> (.value: &item) where depends_on(value, self)
+Readable#(.Participant: Type): Contract = (
+    .item: Type
+
+    .read: (.self: &Participant) -> (.value: &item) where depends_on(value, self)
 )
 
 Box: Type = (.value: Int32)
 
-Box deinit(.self: $&Box) -> () := {}
+implement Deinit#(Box) (
+    .deinit = (.self: $&Box) -> () {
 
-Box implements Readable#(.item: Int32)
+    }
+)
 
-read(.self: &Box) -> (.value: &Int32) := { value = &self&.value }
+implement Readable#(Box) (.item: Type = Int32, .read = _impl_read_Box)
 
-consume(.input: &Virtual#(.abstract: Readable#(.item: Int32))) -> (.value: &Int32) := {
+_impl_read_Box := (.self: &Box) -> (.value: &Int32)  { value = &self&.value }
+
+consume(.input: &Virtual#(.contract: Readable#(.item: Int32))) -> (.value: &Int32) := {
     value = read(.self = input)
 }
 
 main() -> () := {
     box :: Box = (.value = 7)
-    handle ::= to_virtual#(.abstract: Readable#(.item: Int32))(.value = &box)
+    handle ::= to_virtual#(.contract: Readable#(.item: Int32))(.value = &box)
     reference ::= consume(.input = &handle).value
     deinit(.self = $&box)
     observed ::= reference&

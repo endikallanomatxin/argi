@@ -8,6 +8,7 @@ const core_mod = @import("core.zig");
 const dispatch_mod = @import("dispatch.zig");
 const reach_context = @import("reach_context.zig");
 const global_types = @import("types.zig");
+const standard_contracts = @import("standard_contracts.zig");
 const primitives = @import("../primitives/schema.zig");
 
 pub const Stats = struct {
@@ -199,7 +200,7 @@ pub const Resolver = struct {
             self.graph.nodes.items[@intFromEnum(target)] = self.graph.nodes.items[@intFromEnum(source)];
             return true;
         }
-        if (self.implementsNamedAbstract(ty, "ImplicitlyCopyable")) {
+        if (self.implementsNamedContract(ty, "ImplicitlyCopyable")) {
             const original = self.graph.nodes.items[@intFromEnum(source)];
             self.graph.nodes.items[@intFromEnum(target)] = original;
             self.stats.copies += 1;
@@ -207,10 +208,10 @@ pub const Resolver = struct {
         }
         // An explicit copy contract does not grant permission to insert that
         // operation implicitly. This also keeps fallible copy results visible.
-        if (self.findCopyFunction(ty) != null or !self.triviallyCopyable(ty)) {
+        if (self.hasExplicitCopyCapability(ty) or !self.triviallyCopyable(ty)) {
             // A binding use can still carry a temporal move error that Safety
             // must diagnose before the copy permission. Other expressions may
-            // be part of overload/initializer matching, where failure here
+            // be part of call/initializer matching, where failure here
             // must continue to reject the candidate.
             if (self.graph.nodes.items[@intFromEnum(source)].content != .binding_use) return false;
             const binding = self.graph.nodes.items[@intFromEnum(source)].content.binding_use;
@@ -245,21 +246,23 @@ pub const Resolver = struct {
     /// operation. Match value payloads use this permission even though they do
     /// not pass through a lowered `resolve_copy` node.
     pub fn canImplicitlyCopy(self: *Resolver, ty: global_sg.GlobalTypeId) bool {
-        if (self.implementsNamedAbstract(ty, "ImplicitlyCopyable")) return true;
-        if (self.findCopyFunction(ty) != null) return false;
+        if (self.implementsNamedContract(ty, "ImplicitlyCopyable")) return true;
+        if (self.hasExplicitCopyCapability(ty)) return false;
         return self.triviallyCopyable(ty);
     }
 
-    fn implementsNamedAbstract(self: *Resolver, concrete: global_sg.GlobalTypeId, name: []const u8) bool {
+    fn hasExplicitCopyCapability(self: *Resolver, ty: global_sg.GlobalTypeId) bool {
+        if (self.implementsNamedContract(ty, "InfalliblyCopyable")) return true;
         const dispatch = self.dispatch orelse return false;
-        for (self.graph.declarations.items, 0..) |declaration, raw| {
-            if (declaration.kind != .abstract_type or !std.mem.eql(u8, self.graph.text(declaration.name), name)) continue;
-            const abstract_decl: global_sg.GlobalDeclId = @enumFromInt(@as(u32, @intCast(raw)));
-            for (self.graph.types.items, 0..) |candidate, type_raw| {
-                if (candidate != .declared or candidate.declared != abstract_decl) continue;
-                const abstract_type: global_sg.GlobalTypeId = @enumFromInt(@as(u32, @intCast(type_raw)));
-                if (dispatch.abstracts.concreteImplements(concrete, abstract_type)) return true;
-            }
+        return dispatch.contracts.mayImplementFirstParticipant("FalliblyCopyable", ty) catch true;
+    }
+
+    fn implementsNamedContract(self: *Resolver, concrete: global_sg.GlobalTypeId, name: []const u8) bool {
+        const dispatch = self.dispatch orelse return false;
+        const declarations = self.graph.declarationsNamed(self.allocator, name) catch return false;
+        for (declarations) |contract_decl| {
+            if (self.graph.declaration(contract_decl).kind != .contract_type) continue;
+            if (dispatch.contracts.implements(concrete, contract_decl) catch false) return true;
         }
         return false;
     }
@@ -717,105 +720,21 @@ pub const Resolver = struct {
         const source = self.graph.nodes.items[@intFromEnum(target)].source;
         const address = try self.appendNode(source, pointer_ty, .{ .address_of = target });
 
-        var receiver_names = std.StringHashMap(void).init(self.allocator);
-        defer receiver_names.deinit();
-        try self.collectDestructorReceiverNames(module_index, target_ty, &receiver_names);
-
-        const previous_owner = self.core.destructor_owner;
-        self.core.destructor_owner = switch (self.graph.semanticType(target_ty)) {
-            .declared => |id| id,
-            .generic => |identity| identity.base,
-            else => null,
-        };
-        defer self.core.destructor_owner = previous_owner;
-        var selected: ?ResolvedDestructor = null;
-        var names = receiver_names.keyIterator();
-        while (names.next()) |name_ptr| {
-            const input = try self.singleNamedInput(name_ptr.*, address, source);
-            if (context == .global) self.graph.nodes.items[@intFromEnum(input)].content.struct_value_literal.assumed_fields = context.global.assumed_fields;
-            const dispatch_result = dispatch.resolveImplicitFunction(
-                module_index,
-                "deinit",
-                input,
-                context,
-            );
-            const call = dispatch_result catch |err| switch (err) {
-                error.DeferredImplicitFunction => continue,
-                error.AmbiguousImplicitFunction => return err,
-                else => return err,
-            } orelse continue;
-            const self_index = self.findReceiverIndex(call.function, call.input, target) orelse continue;
-            const candidate = ResolvedDestructor{
-                .function = call.function,
-                .input = call.input,
-                .self_field_index = self_index,
-            };
-            if (selected) |previous| {
-                if (previous.function != candidate.function or previous.self_field_index != candidate.self_field_index)
-                    return error.AmbiguousImplicitDestructor;
-            } else {
-                selected = candidate;
-            }
-        }
-        succeeded = selected != null;
-        if (selected) |call| try self.core.trackReachedCall(call.function, call.input, context, false);
-        return selected;
-    }
-
-    fn collectDestructorReceiverNames(
-        self: *Resolver,
-        module_index: usize,
-        target_ty: global_sg.GlobalTypeId,
-        names: *std.StringHashMap(void),
-    ) !void {
-        // Cleanup consults the nominal family before testing input compatibility.
-        // Receiver names are signature-local; the association does not invent self.
-        const owner = switch (self.graph.semanticType(target_ty)) {
-            .declared => |id| id,
-            .generic => |identity| identity.base,
-            else => return,
-        };
-        for (try self.graph.destructorsFor(self.allocator, owner)) |function_id| {
-            const function = self.graph.functions.items[@intFromEnum(function_id)];
-            if (!function.flags.is_deinit) continue;
-            if (!self.core.declarationVisible(module_index, function.declaration, null)) continue;
-            for (self.graph.fields.items[function.input.start..][0..function.input.len]) |field| {
-                const pointer = switch (self.graph.semanticType(field.ty)) {
-                    .pointer => |value| value,
-                    else => continue,
-                };
-                if (pointer.mutability != .read_write) continue;
-                try names.put(self.graph.text(field.name), {});
+        if (standard_contracts.standardDeclaration(self.graph, "Deinit")) |declaration| {
+            if (try dispatch.contracts.implements(target_ty, declaration)) {
+                const input = try self.singleNamedInput("self", address, source);
+                var participants = [_]global_sg.GlobalTypeId{target_ty};
+                const node = try dispatch.contracts.callOperationCandidate(module_index, .{
+                    .declaration = declaration,
+                    .participants = &participants,
+                }, "deinit", input, context, source) orelse return error.DeferredImplicitFunction;
+                const call = node.content.function_call;
+                succeeded = true;
+                return .{ .function = call.callee, .input = call.input, .self_field_index = 0 };
             }
         }
 
-        for (try self.graph.parameterizedDestructorsFor(self.allocator, self.modules, owner)) |candidate| {
-            const candidate_index: usize = @intCast(candidate.module_index);
-            const candidate_module = &self.modules[candidate_index];
-            const storage = &candidate_module.semantic.parameterized_storage;
-            const function = storage.parameterized_functions.items[@as(usize, @intCast(candidate.function_index))];
-            if (!function.is_deinit) continue;
-            const declaration = globalizer.globalDecl(self.offsets[candidate_index], function.declaration);
-            if (!self.core.declarationVisible(module_index, declaration, null)) continue;
-            const shape = switch (storage.ir.types.items[@intFromEnum(function.input)]) {
-                .resolved => |ty| switch (ty) {
-                    .structural => |value| value,
-                    else => continue,
-                },
-                else => continue,
-            };
-            for (storage.ir.fields.items[shape.fields.start..][0..shape.fields.len]) |field| {
-                const pointer = switch (storage.ir.types.items[@intFromEnum(field.ty)]) {
-                    .resolved => |ty| switch (ty) {
-                        .pointer => |value| value,
-                        else => continue,
-                    },
-                    else => continue,
-                };
-                if (pointer.mutability != .read_write) continue;
-                try names.put(candidate_module.text(field.name), {});
-            }
-        }
+        return null;
     }
 
     fn singleNamedInput(
@@ -834,26 +753,6 @@ pub const Resolver = struct {
         } });
     }
 
-    fn findReceiverIndex(
-        self: *const Resolver,
-        function_id: global_sg.GlobalFunctionId,
-        input: global_sg.GlobalNodeId,
-        target: global_sg.GlobalNodeId,
-    ) ?u32 {
-        const function = self.graph.functions.items[@intFromEnum(function_id)];
-        const literal = switch (self.graph.nodes.items[@intFromEnum(input)].content) {
-            .struct_value_literal => |value| value,
-            else => return null,
-        };
-        if (literal.fields.len != function.input.len) return null;
-        for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len], 0..) |field, index| {
-            const node = self.graph.nodes.items[@intFromEnum(field.value)];
-            if (node.content != .address_of or node.content.address_of != target) continue;
-            return @intCast(index);
-        }
-        return null;
-    }
-
     fn appendNode(
         self: *Resolver,
         source: primitives.SourceRef,
@@ -863,24 +762,6 @@ pub const Resolver = struct {
         const id: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.graph.nodes.items.len)));
         try self.graph.nodes.append(self.allocator, .{ .source = source, .ty = ty, .content = content });
         return id;
-    }
-
-    fn findCopyFunction(self: *Resolver, ty: global_sg.GlobalTypeId) ?global_sg.GlobalFunctionId {
-        // Explicit copy contracts can require resources such as an allocator.
-        // Those extra inputs do not grant permission for an implicit copy.
-        for (self.graph.functions.items, 0..) |function, raw| {
-            const declaration = self.graph.declarations.items[@intFromEnum(function.declaration)];
-            if (!std.mem.eql(u8, self.graph.text(declaration.name), "copy")) continue;
-            for (self.graph.fields.items[function.input.start..][0..function.input.len]) |field| {
-                if (!std.mem.eql(u8, self.graph.text(field.name), "self")) continue;
-                const receiver = switch (self.graph.semanticType(field.ty)) {
-                    .pointer => |pointer| pointer.child,
-                    else => field.ty,
-                };
-                if (global_types.equal(self.graph, receiver, ty)) return @enumFromInt(@as(u32, @intCast(raw)));
-            }
-        }
-        return null;
     }
 
     fn triviallyCopyable(self: *Resolver, ty: global_sg.GlobalTypeId) bool {

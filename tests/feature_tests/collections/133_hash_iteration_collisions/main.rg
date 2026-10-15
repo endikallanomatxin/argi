@@ -1,11 +1,17 @@
 CollisionPolicy: Type = ()
 
-CollisionPolicy implements ImplicitlyCopyable
-CollisionPolicy implements HashPolicy#(.key: Int32)
+implement ImplicitlyCopyable#(CollisionPolicy) ()
+implement HashPolicy#(CollisionPolicy, Int32)(
 
-hash(.self: &CollisionPolicy, .key: Int32) -> (.hash: UIntNative) := { hash = 7 }
+    .hash = (.self: &CollisionPolicy, .key: Int32) -> (.hash: UIntNative) { hash = 7 }
 
-eql(.self: &CollisionPolicy, .left: Int32, .right: Int32) -> (.ok: Bool) := { ok = left == right }
+    .eql = (.self: &CollisionPolicy, .left: Int32, .right: Int32) -> (.ok: Bool) {
+        ok = [
+            left
+            == right
+        ]
+    }
+)
 
 run_main(.system: System) -> !Void = ..ok Void() := {
     assume allocator := system.page_allocator
@@ -40,7 +46,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     if count != 3 { abort }
 }
 
-main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+main#(.WriterType: Type: Writer#(WriterType))(.system: System, .writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
     run_main(.system = system)!!!
     status_code = 0
 }

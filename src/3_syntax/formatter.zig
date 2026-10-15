@@ -117,7 +117,7 @@ fn formatOnce(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
                 indent += if (frame.signature) @as(usize, 8) else 4;
             };
             try out.appendNTimes(' ', indent);
-        } else if (needsSpace(previous.?, tag, tokens, i) or (previous.? == .binary_operator and i != 0 and layout.breaks[i - 1] != 0)) try out.append(' ');
+        } else if (layout.space_before[i] or needsSpace(previous.?, tag, tokens, i) or (previous.? == .binary_operator and i != 0 and layout.breaks[i - 1] != 0)) try out.append(' ');
         const start: usize = tokens.locations[i].offset;
         const end: usize = if (i + 1 < tokens.len) tokens.locations[i + 1].offset else source.len;
         const text = std.mem.trimEnd(u8, source[start..end], " \t\r\n");
@@ -208,6 +208,7 @@ const Layout = struct {
     suppress_newlines: []bool,
     scalar_groups: []bool,
     struct_literals: []bool,
+    space_before: []bool,
     syntax_tags: ?[]const syn.Node.Tag = null,
     root_count: usize = 0,
 
@@ -222,6 +223,7 @@ const Layout = struct {
             .suppress_newlines = try allocator.alloc(bool, tokens.len),
             .scalar_groups = try allocator.alloc(bool, tokens.len),
             .struct_literals = try allocator.alloc(bool, tokens.len),
+            .space_before = try allocator.alloc(bool, tokens.len),
         };
         @memset(layout.ends, 0);
         @memset(layout.breaks, 0);
@@ -232,6 +234,7 @@ const Layout = struct {
         @memset(layout.suppress_newlines, false);
         @memset(layout.scalar_groups, false);
         @memset(layout.struct_literals, false);
+        @memset(layout.space_before, false);
         var opens = std.array_list.Managed(usize).init(allocator);
         for (tokens.contents, 0..) |content, i| switch (content) {
             .open_parenthesis, .open_bracket, .open_brace => try opens.append(i),
@@ -270,6 +273,9 @@ const Layout = struct {
         };
         for (0..tree.nodes.len) |raw| {
             const node: syn.NodeIndex = @enumFromInt(@as(u32, @intCast(raw)));
+            if (tree.contractConformance(node)) |conformance| {
+                layout.space_before[@intFromEnum(tree.mainToken(conformance.implementation_members))] = true;
+            }
             if (tree.tag(node) == .struct_value_literal) {
                 layout.struct_literals[@intFromEnum(tree.mainToken(node))] = true;
             }
@@ -455,7 +461,7 @@ fn markOperatorChain(tree: *const syn.FileSyntaxTree, node: syn.NodeIndex, root:
 
 fn isGlobalDeclaration(tag: syn.Node.Tag) bool {
     return switch (tag) {
-        .function_declaration, .function_declaration_once, .test_declaration, .c_function_pointer_declaration, .type_declaration, .abstract_declaration, .c_enum_declaration, .c_union_declaration, .c_struct_declaration, .c_incomplete_declaration => true,
+        .function_declaration, .function_declaration_once, .test_declaration, .c_function_pointer_declaration, .type_declaration, .contract_declaration, .contract_conformance, .c_enum_declaration, .c_union_declaration, .c_struct_declaration, .c_incomplete_declaration => true,
         else => false,
     };
 }
@@ -463,11 +469,20 @@ fn isGlobalDeclaration(tag: syn.Node.Tag) bool {
 fn firstToken(tree: *const syn.FileSyntaxTree, node: syn.NodeIndex) usize {
     var first: usize = @intFromEnum(tree.mainToken(node));
     if (tree.tag(node) == .assume_statement and first != 0) return first - 1;
-    if (tree.functionCall(node)) |call| if (call.module_qualifier) |qualifier| {
-        return @min(first, @intFromEnum(qualifier));
+    if (tree.functionCall(node)) |call| {
+        if (call.contract_type) |contract_type| first = @min(first, firstToken(tree, contract_type));
+        if (call.module_qualifier) |qualifier| first = @min(first, @intFromEnum(qualifier));
+        return first;
+    }
+    if (tree.syntaxType(node)) |ty| switch (ty) {
+        .name => |name| if (name.qualifier_token) |qualifier| {
+            first = @min(first, @intFromEnum(qualifier));
+        },
+        .generic => |generic| first = @min(first, firstToken(tree, generic.base)),
+        .projection => |projection| first = @min(first, firstToken(tree, projection.base)),
+        else => {},
     };
     if (tree.functionDeclaration(node)) |function| {
-        if (function.constructor_type orelse function.destructor_type) |receiver| first = @intFromEnum(receiver);
         if (function.is_once and first != 0) first -= 1;
         return first;
     }
@@ -798,10 +813,10 @@ test "formatter preserves prefixes and grouping at statement boundaries" {
     );
 }
 
-test "formatter separates associated lifecycle declarations before their prefixes" {
+test "formatter separates scoped cleanup implementations from ordinary declarations" {
     try expectFormat(
-        "Point:Type=(.value:Int32)\nonce Point init(.value:Int32)->(.result:Point):={result=(.value=value)}\nPoint deinit(.self:$&Point)->():={}\n",
-        "Point: Type = (.value: Int32)\n\nonce Point init(.value: Int32) -> (.result: Point) := { result = (.value = value) }\n\nPoint deinit(.self: $&Point) -> () := {}\n",
+        "Point:Type=(.value:Int32)\nonce acquire(.value:Int32)->(.result:Point):={result=(.value=value)}\nimplement Deinit#(Point)(.deinit=(.self:$&Point)->(){})\n",
+        "Point: Type = (.value: Int32)\n\nonce acquire(.value: Int32) -> (.result: Point) := { result = (.value = value) }\n\nimplement Deinit#(Point) (.deinit = (.self: $&Point) -> () {})\n",
     );
 }
 

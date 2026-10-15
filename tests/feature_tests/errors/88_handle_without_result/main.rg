@@ -5,7 +5,11 @@ calls :: Int32 = 0
 
 Owner: Type = (.value: Int32)
 
-Owner deinit(.self: $&Owner) -> () := { drops = drops + 1 }
+implement Deinit#(Owner) (
+    .deinit = (.self: $&Owner) -> () {
+        drops = drops + 1
+    }
+)
 
 attempt(.fail: Bool) -> (.result: Errable#(Owner, (..missing))) := {
     calls = calls + 1

@@ -2,15 +2,15 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     assume allocator := system.page_allocator
     a ::= BitSet(.count = 10, .allocator = allocator)!
     b ::= BitSet(.count = 10, .allocator = allocator)!
-    set(.self = $&a, .index = 0)!
-    set(.self = $&a, .index = 9)!
-    set(.self = $&b, .index = 5)!
-    set(.self = $&b, .index = 9)!
+    set_bit(.self = $&a, .index = 0)!
+    set_bit(.self = $&a, .index = 9)!
+    set_bit(.self = $&b, .index = 5)!
+    set_bit(.self = $&b, .index = 9)!
     union_with(.self = $&a, .other = &b)!
     if count_set(.self = &a).count != 3 { abort }
     intersect_with(.self = $&a, .other = &b)!
     if count_set(.self = &a).count != 2 { abort }
-    if contains(.self = &a, .index = 0)! { abort }
+    if contains_bit(.self = &a, .index = 0)! { abort }
     difference_with(.self = $&a, .other = &b)!
     if count_set(.self = &a).count != 0 { abort }
     mismatched ::= BitSet(.count = 9, .allocator = allocator)!
@@ -22,7 +22,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     if count_set(.self = &b).count != 0 { abort }
     index :: UIntNative = 0
     while index < 10 {
-        set(.self = $&b, .index = index)!
+        set_bit(.self = $&b, .index = index)!
         index = index + 1
     }
     union_with(.self = $&b, .other = &b)!
@@ -33,7 +33,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
 
 }
 
-main(.system: System, .writer: $&Writer = reach writer) -> (.status_code: Int32 = 1) := {
+main#(.WriterType: Type: Writer#(WriterType))(.system: System, .writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
     run_main(.system = system)!!!
     status_code = 0
 }

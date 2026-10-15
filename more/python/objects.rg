@@ -23,32 +23,6 @@ _next(
         .handle : RawPointer#(.t: _PyObject)
     ): CFunction(.symbol = "_argi_python_next")
 
-call_method(
-        .self      : &Object,
-        .name      : StringView,
-        .arguments : ArrayViewRO#(.t: &Object) = _no_arguments(),
-        .keywords  : ?&Object                  = _no_keywords()
-    ) -> (
-        .result : Errable#(Object, (..python_error))
-    ) := {
-    method ::= attribute(.self = self, .name = name)!
-
-    result = call(.self = &method, .arguments = arguments, .keywords = keywords)
-}
-
-call_method(
-        .self      : &Object,
-        .name      : StringView,
-        .arguments : &Object,
-        .keywords  : ?&Object    = _no_keywords()
-    ) -> (
-        .result : Errable#(Object, (..python_error))
-    ) := {
-    method ::= attribute(.self = self, .name = name)!
-
-    result = call(.self = &method, .arguments = arguments, .keywords = keywords)
-}
-
 set_attribute(
         .self  : &Object,
         .name  : StringView,
@@ -87,7 +61,7 @@ tuple(
 
 -- Python's next protocol is fallible. Exhaustion is a successful absent value,
 -- so this iterator deliberately uses an explicit next call instead of promising
--- the core Iterator abstract's infallible next/has_next protocol.
+-- the core Iterator contract's infallible next/has_next protocol.
 PythonIterator: Type = (._object: Object)
 
 iterate(.self: &Object) -> (.result: Errable#(PythonIterator, (..python_error))) := {

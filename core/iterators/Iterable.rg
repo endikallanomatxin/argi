@@ -1,11 +1,17 @@
-Iterable#(.t: Type): Abstract = (
-    to_iterator(.value: &Self) -> (.iterator: Iterator#(.t: t))
+Iterable#(.Collection: Type): Contract = (
+    .Item         : Type
+    .IteratorType : Type
+    .to_iterator  : (.value: &Collection) -> (.iterator: IteratorType)
 )
 
-ROPointerIterable#(.t: Type): Abstract = (
-    to_ro_pointer_iterator(.value: &Self) -> (.iterator: Iterator#(.t: &t))
+ROPointerIterable#(.Collection: Type): Contract = (
+    .Item                   : Type
+    .IteratorType           : Type
+    .to_ro_pointer_iterator : (.value: &Collection) -> (.iterator: IteratorType)
 )
 
-RWPointerIterable#(.t: Type): Abstract = (
-    to_rw_pointer_iterator(.value: $&Self) -> (.iterator: Iterator#(.t: $&t))
+RWPointerIterable#(.Collection: Type): Contract = (
+    .Item                   : Type
+    .IteratorType           : Type
+    .to_rw_pointer_iterator : (.value: $&Collection) -> (.iterator: IteratorType)
 )

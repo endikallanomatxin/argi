@@ -24,5 +24,5 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         ..none { abort }
         ..some pointer { if pointer.value& != 999 { abort } }
     }
-    deinit(.self = $&map, .allocator = allocator)
+    deinit(.self = $&map)
 }

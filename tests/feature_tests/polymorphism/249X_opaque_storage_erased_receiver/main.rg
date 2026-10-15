@@ -1,12 +1,12 @@
-Drain: Abstract = (
-    drain(.self: $&Self) -> () where empties(self)
+Drain#(.Participant: Type): Contract = (
+    .drain: (.self: $&Participant) -> () where empties(self)
 )
 
 Cell: Type = ()
 
-Cell implements Drain
+implement Drain#(Cell) (.drain = _impl_drain_Cell)
 
-drain(.self: $&Cell) -> () := { trusted_opaque_mark_empty(self) }
+_impl_drain_Cell := (.self: $&Cell) -> ()  { trusted_opaque_mark_empty(self) }
 
 main() -> () := {
     cell ::= Cell()

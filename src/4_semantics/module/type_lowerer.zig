@@ -12,7 +12,7 @@ pub const LexicalModuleAlias = struct {
     path: primitives.StringRange,
 };
 
-// Virtual is a language-level runtime type constructor. Its abstract
+// Virtual is a language-level runtime type constructor. Its contract
 // argument describes a vtable contract, unlike an ordinary generic argument
 // whose type can be specialized from a concrete call input.
 pub fn isRuntimeVirtualType(tree: *const syn.FileSyntaxTree, source: []const u8, generic: syn.GenericType) bool {
@@ -57,6 +57,17 @@ pub const Context = struct {
             .struct_literal => |literal| self.lowerStructural(node, literal),
             .choice_literal => |literal| self.lowerChoice(node, literal),
             .generic => |generic| self.lowerGeneric(node, generic),
+            .projection => |projection| blk: {
+                const base = try self.lower(projection.base);
+                const external = try self.writer.addExternalRef(.{
+                    .kind = .type,
+                    .module_path = null,
+                    .name = try self.writer.addString(self.tree.tokenTextFromSource(self.source, projection.member_token)),
+                    .projection_base = base,
+                    .source = self.sourceRef(node),
+                });
+                break :blk try self.writer.addExternalType(external);
+            },
         };
     }
 
@@ -156,6 +167,31 @@ pub const Context = struct {
     }
 
     fn lowerGeneric(self: *Context, owner: syn.NodeIndex, generic: syn.GenericType) anyerror!entities.ModuleTypeId {
+        if (self.hasAssociatedConstant(generic.arguments)) {
+            const external_start = self.graph.semantic.external_refs.items.len;
+            const computed = try @import("parameterized/lowerer.zig").lowerConcreteTypeExpression(self.graph, self.writer, self.file_index, self.tree, self.source, owner);
+            // Preserve lexical import aliases in the anonymous expression.
+            for (self.graph.semantic.external_refs.items[external_start..]) |*external| {
+                const path = external.module_path orelse continue;
+                var alias_index = self.module_aliases.len;
+                while (alias_index != 0) {
+                    alias_index -= 1;
+                    const alias = self.module_aliases[alias_index];
+                    if (std.mem.eql(u8, self.graph.text(path), self.graph.text(alias.name))) {
+                        external.module_path = alias.path;
+                        break;
+                    }
+                }
+            }
+            const reference = try self.writer.addExternalRef(.{
+                .kind = .type,
+                .module_path = null,
+                .name = try self.writer.addString("compile-time type"),
+                .computed_type = computed,
+                .source = self.sourceRef(owner),
+            });
+            return self.writer.addExternalType(reference);
+        }
         const arguments_literal = self.tree.structTypeLiteral(generic.arguments) orelse return error.InvalidGenericArguments;
         const base = self.tree.syntaxType(generic.base) orelse return error.InvalidGenericBase;
         const base_name = if (base == .name and base.name.qualifier_token == null) self.tree.tokenTextFromSource(self.source, base.name.name_token) else "";
@@ -195,9 +231,9 @@ pub const Context = struct {
         if (isRuntimeVirtualType(self.tree, self.source, generic)) {
             if (arguments_literal.fields.len != 1) return error.InvalidVirtualArguments;
             const field = self.tree.structTypeField(arguments_literal.fields[0]) orelse return error.InvalidVirtualArguments;
-            if (!std.mem.eql(u8, type_arguments.name(self.tree, self.source, field, base_name), "abstract")) return error.InvalidVirtualArguments;
-            const abstract_type = try self.lower(field.type_node orelse return error.InvalidVirtualArguments);
-            return self.writer.addResolvedType(.{ .virtual = abstract_type });
+            if (!type_arguments.isVirtualContractParameter(type_arguments.name(self.tree, self.source, field, base_name))) return error.InvalidVirtualArguments;
+            const contract_type = try self.lower(field.type_node orelse return error.InvalidVirtualArguments);
+            return self.writer.addResolvedType(.{ .virtual = contract_type });
         }
         // Nested generic types may append to the same argument pool. Buffer
         // this level until their complete ranges have been published.
@@ -222,6 +258,19 @@ pub const Context = struct {
             .name => |name| self.lowerName(owner, name.name_token, name.qualifier_token, range),
             else => error.InvalidGenericBase,
         };
+    }
+
+    fn hasAssociatedConstant(self: *const Context, node: syn.NodeIndex) bool {
+        if (self.tree.tag(node) == .associated_type_projection) return true;
+        if (self.tree.binaryOperation(node)) |operation|
+            return self.hasAssociatedConstant(operation.lhs) or self.hasAssociatedConstant(operation.rhs);
+        if (self.tree.structTypeLiteral(node)) |literal| {
+            for (literal.fields) |field_node| {
+                const field = self.tree.structTypeField(field_node) orelse continue;
+                if (field.default_value) |value| if (self.hasAssociatedConstant(value)) return true;
+            }
+        }
+        return false;
     }
 
     fn evalComptimeInt(self: *Context, node: syn.NodeIndex) anyerror!i64 {
@@ -260,7 +309,7 @@ pub const Context = struct {
 
     fn localTypeDeclaration(self: *const Context, name: []const u8) ?entities.ModuleDeclId {
         for (self.graph.declarationsNamed(name)) |declaration| switch (self.graph.declarations.items[@intFromEnum(declaration)].kind) {
-            .type, .abstract_type => return declaration,
+            .type, .contract_type => return declaration,
             else => {},
         };
         return null;

@@ -60,7 +60,40 @@ pub fn verifyGlobal(graph: *const graph_mod.GlobalSemanticGraph) !void {
             }
         }
     }
-    for (graph.abstract_safety_conformances.items) |value| {
+    for (graph.contract_conformances.items) |value| {
+        try require(verify.idFits(value.context, graph.modules.items.len));
+        try require(verify.idFits(value.declaration, graph.declarations.items.len));
+        try require(graph.declarations.items[@intFromEnum(value.declaration)].kind == .contract_type);
+        try require(verify.rangeFits(value.participants, graph.generic_arguments.items.len));
+        try require(value.participants.len != 0);
+        try require(verify.rangeFits(value.operations, graph.function_refs.items.len));
+        try require(verify.rangeFits(value.operation_bindings, graph.contract_operation_bindings.items.len));
+        try require(verify.rangeFits(value.implementation_arguments, graph.generic_arguments.items.len));
+        for (graph.function_refs.items[value.operations.start..][0..value.operations.len]) |method| try require(verify.idFits(method, graph.functions.items.len));
+        for (graph.generic_arguments.items[value.participants.start..][0..value.participants.len]) |argument| try require(argument.value == .type);
+        try require(verify.rangeFits(value.associated_arguments, graph.generic_arguments.items.len));
+        try require(verify.sourceFits(value.source, graph.files.items.len));
+    }
+    for (graph.nodes.items) |node| {
+        if (node.content != .function_call) continue;
+        const call = node.content.function_call;
+        if (graph.callOperation(call)) |identity| {
+            try require(identity.conformance < graph.contract_conformances.items.len);
+            const conformance = graph.contract_conformances.items[identity.conformance];
+            try require(identity.index < conformance.operations.len);
+            try require(graph.function_refs.items[conformance.operations.start + identity.index] == call.callee);
+        }
+    }
+    for (graph.contract_operation_bindings.items) |binding| {
+        try require(verify.stringFits(binding.name, graph.strings.items));
+        try require(verify.idFits(binding.declaration, graph.declarations.items.len));
+        try require(graph.declaration(binding.declaration).kind == .function);
+    }
+    for (graph.contract_safety_conformances.items) |value| {
+        try require(value.selection.conformance < graph.contract_conformances.items.len);
+        const selected = graph.contract_conformances.items[value.selection.conformance];
+        try require(value.selection.index < selected.operations.len);
+        try require(graph.function_refs.items[selected.operations.start + value.selection.index] == value.method);
         try require(verify.idFits(value.method, graph.functions.items.len));
         try require(verify.sourceFits(value.source, graph.files.items.len));
         try require(verify.sourceFits(value.contract.source, graph.files.items.len));
@@ -125,9 +158,9 @@ fn verifyGenericInstances(graph: *const graph_mod.GlobalSemanticGraph) !void {
             try require(verify.idFits(generic.base, graph.declarations.items.len));
             switch (graph.declaration(generic.base).kind) {
                 .type => materialized_generic_count += 1,
-                // Parameterized abstract identities are semantic contracts, not
+                // Parameterized contract identities are semantic contracts, not
                 // runtime layouts. They intentionally have no GenericInstance.
-                .abstract_type => {},
+                .contract_type => {},
                 else => return error.InvalidGlobalSemanticGraph,
             }
         },
@@ -153,14 +186,14 @@ fn verifyGenericInstances(graph: *const graph_mod.GlobalSemanticGraph) !void {
     }
 }
 
-test "parameterized abstract identities do not require runtime generic instances" {
+test "parameterized contract identities do not require runtime generic instances" {
     const allocator = std.testing.allocator;
     var graph: graph_mod.GlobalSemanticGraph = .{};
     defer graph.deinit(allocator);
 
     const name = try graph.addString(allocator, "Iterable");
     try graph.declarations.append(allocator, .{
-        .kind = .abstract_type,
+        .kind = .contract_type,
         .name = name,
         .source = .{ .file_index = 0, .offset = 0 },
     });

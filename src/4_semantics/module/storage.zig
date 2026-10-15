@@ -2,7 +2,6 @@ const std = @import("std");
 const entities = @import("entities.zig");
 const parameterized_storage = @import("parameterized/storage.zig");
 const primitives = @import("../primitives/schema.zig");
-const callable = @import("../primitives/callable.zig");
 const type_shapes = @import("../primitives/type_shapes.zig");
 
 /// Frozen sizes of the discovery-time prefixes that precede canonical Module*
@@ -23,9 +22,6 @@ pub const Storage = struct {
     declaration_bindings: std.ArrayList(entities.DeclarationBinding) = .empty,
     module_aliases: std.ArrayList(entities.ModuleAlias) = .empty,
     function_semantics: std.ArrayList(entities.FunctionSemantic) = .empty,
-    /// Aligned with ModuleSemanticGraph.functions. `null` is a normal named
-    /// function; non-null is the semantic overload operator identity.
-    function_operators: std.ArrayList(?callable.OperatorKind) = .empty,
     field_semantics: std.ArrayList(entities.FieldSemantic) = .empty,
     variant_semantics: std.ArrayList(entities.VariantSemantic) = .empty,
 
@@ -81,7 +77,6 @@ pub const Storage = struct {
         self.declaration_bindings.deinit(allocator);
         self.module_aliases.deinit(allocator);
         self.function_semantics.deinit(allocator);
-        self.function_operators.deinit(allocator);
         self.field_semantics.deinit(allocator);
         self.variant_semantics.deinit(allocator);
         self.fields.deinit(allocator);
@@ -128,7 +123,6 @@ pub const Storage = struct {
             self.declaration_bindings.items.len * @sizeOf(entities.DeclarationBinding) +
             self.module_aliases.items.len * @sizeOf(entities.ModuleAlias) +
             self.function_semantics.items.len * @sizeOf(entities.FunctionSemantic) +
-            self.function_operators.items.len * @sizeOf(?callable.OperatorKind) +
             self.field_semantics.items.len * @sizeOf(entities.FieldSemantic) +
             self.variant_semantics.items.len * @sizeOf(entities.VariantSemantic) +
             self.fields.items.len * @sizeOf(entities.Field) +

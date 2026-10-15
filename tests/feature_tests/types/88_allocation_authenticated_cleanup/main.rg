@@ -1,7 +1,7 @@
 main(.system: System) -> (.status_code: Int32 = 0) := {
     allocator :: CAllocator
     allocator = CAllocator(.ffi = system.ffi)
-    allocation ::= unwrap_or_abort(.value = allocate(.self = $&allocator, .size = 32, .alignment = 8))
+    allocation ::= unwrap_or_abort(.value = allocate_bytes(.self = $&allocator, .size = 32, .alignment = 8))
     allocation.data.address = 1
     allocation.size = 0
     allocation.alignment = 0

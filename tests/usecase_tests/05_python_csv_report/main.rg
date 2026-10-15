@@ -11,9 +11,9 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         view($&zeroed#([4096]UInt8)())
     )
     #defer {
-        flush(output) handle error {
+        Writer#().flush(output) handle error {
             status_code = 1
-            report_trace(.trace = &error.trace, .writer = writer) handle ignored {}
+            report_trace(.tracer = error.tracer, .writer = writer) handle ignored {}
         }
     }
 
@@ -28,21 +28,21 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     column ::= "duration_ms"
     if argc == 3 { column = argument_view_at(system.args, 2) }
 
-    file_reader ::= open_read(system.file_system, path) handle error, value {
-        add_context(.context = path, .error_tracer = error.trace.tracer)
-        report_trace(.trace = &error.trace, .writer = writer) handle ignored {}
+    file_reader ::= File(.file_system = system.file_system, .path = path, .mode = ..read) handle error, value {
+        add_context(.context = path, .error_tracer = error.tracer)
+        report_trace(.tracer = error.tracer, .writer = writer) handle ignored {}
         status_code = 1
         return
     }
     text ::= read_all_limited($&file_reader, view($&zeroed#([8192]UInt8)()), 1048576) handle error, value {
-        add_context(.context = path, .error_tracer = error.trace.tracer)
-        report_trace(.trace = &error.trace, .writer = writer) handle ignored {}
+        add_context(.context = path, .error_tracer = error.tracer)
+        report_trace(.tracer = error.tracer, .writer = writer) handle ignored {}
         status_code = 1
         return
     }
     close($&file_reader) handle error, value {
-        add_context(.context = path, .error_tracer = error.trace.tracer)
-        report_trace(.trace = &error.trace, .writer = writer) handle ignored {}
+        add_context(.context = path, .error_tracer = error.tracer)
+        report_trace(.tracer = error.tracer, .writer = writer) handle ignored {}
         status_code = 1
         return
     }
@@ -51,7 +51,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     #defer {
         print_python_error(&interpreter, $&system.terminal&.stderr, allocator) handle error {
             status_code = 1
-            report_trace(.trace = &error.trace, .writer = writer) handle ignored {}
+            report_trace(.tracer = error.tracer, .writer = writer) handle ignored {}
         }
     }
 

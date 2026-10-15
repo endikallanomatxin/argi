@@ -15,24 +15,26 @@ main() -> (.status_code: Int32 = 0) := {
     if copied.count != 3 { abort }
     if position(.self = &reader).count != 3 { abort }
     if position(.self = &writer).count != 3 { abort }
-    match write_byte(.self = $&writer, .byte = 99) { ..ok _ { abort } ..error _ {} }
+    match Writer#().write_byte(.self = $&writer, .byte = 99) { ..ok _ { abort } ..error _ {} }
     if position(.self = &writer).count != 3 { abort }
-    match unwrap_or_abort(.value = read_byte(.self = $&reader)) {
+    match unwrap_or_abort(.value = Reader#().read_byte(.self = $&reader)) {
         ..end { abort }
         ..ok byte { if byte != 7 { abort } }
     }
-    match unwrap_or_abort(.value = read_byte(.self = $&reader)) { ..end {} ..ok _ { abort } }
-    unwrap_or_abort(.value = flush(.self = $&writer))
+    match unwrap_or_abort(.value = Reader#().read_byte(.self = $&reader)) {
+        ..end {} ..ok _ { abort }
+    }
+    unwrap_or_abort(.value = Writer#().flush(.self = $&writer))
     another :: [2]UInt8 = (0, 0)
     partial ::= ByteWriter(.bytes = view(.array = $&another))
     if [
-        unwrap_or_abort(.value = write_block(.self = $&partial, .buffer = view(.array = &source)))
+        unwrap_or_abort(.value = BlockWriter#().write_block(.self = $&partial, .buffer = view(.array = &source)))
         != 2
     ] { abort }
     if position(.self = &partial).count != 2 { abort }
-    empty ::= array_view_ro#(.t: UInt8)()
-    if unwrap_or_abort(.value = write_block(.self = $&partial, .buffer = empty)) != 0 { abort }
-    match write_block(.self = $&partial, .buffer = view(.array = &source)) {
+    empty ::= empty_array_view_ro#(.t: UInt8)()
+    if unwrap_or_abort(.value = BlockWriter#().write_block(.self = $&partial, .buffer = empty)) != 0 { abort }
+    match BlockWriter#().write_block(.self = $&partial, .buffer = view(.array = &source)) {
         ..ok _ { abort } ..error _ {}
     }
 

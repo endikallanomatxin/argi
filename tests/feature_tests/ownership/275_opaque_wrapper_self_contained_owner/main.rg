@@ -1,6 +1,10 @@
 unsafe_allocation := import("../../_support/unsafe_allocation")
 Owner : Type = (.allocation: Allocation)
-Owner deinit(.self: $&Owner) -> () := { deinit(.self = $&self&.allocation) }
+implement Deinit#(Owner) (
+    .deinit = (.self: $&Owner) -> () {
+        deinit(.self = $&self&.allocation)
+    }
+)
 
 store_one(.storage: $&Allocation, .slot: $&Owner, .value: Owner) -> () := {
     trusted_opaque_move_in#(.t: Owner, .storage_type: Allocation)(.storage = storage, .destination = slot, .source = ~value)
@@ -8,8 +12,8 @@ store_one(.storage: $&Allocation, .slot: $&Owner, .value: Owner) -> () := {
 
 main(.system: System) -> (.status_code: Int32 = 0) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    slots_result ::= allocate(.self = $&allocator_storage, .size = size_of(.type = Owner))
-    owned_result ::= allocate(.self = $&allocator_storage, .size = 1)
+    slots_result ::= allocate_bytes(.self = $&allocator_storage, .size = size_of(.type = Owner))
+    owned_result ::= allocate_bytes(.self = $&allocator_storage, .size = 1)
     match slots_result {
         ..error _ { status_code = 1 }
         ..ok ~ slots_payload {

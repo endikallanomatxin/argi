@@ -6,6 +6,7 @@ const diag = @import("../1_base/diagnostic.zig");
 const token = @import("../2_tokens/token.zig");
 const st = @import("../3_syntax/syntax_tree.zig");
 const graph_mod = @import("../4_semantics/global/graph.zig");
+const standard_contracts = @import("../4_semantics/global/standard_contracts.zig");
 const global_types = @import("../4_semantics/global/types.zig");
 const editor_index = @import("lsp_index.zig");
 const completion = @import("lsp_completion.zig");
@@ -410,7 +411,7 @@ pub const LanguageService = struct {
         var analysis = (try self.collectAnalysis(&work, doc)) orelse return null;
 
         const occurrence = analysis.index.occurrenceAt(&analysis.graph, &analysis.source_db, doc.path, position.line, position.character) orelse return null;
-        const contents = try formatHover(self.allocator, &analysis.graph, occurrence.target);
+        const contents = try formatHover(self.allocator, &analysis.graph, occurrence.target, if (occurrence.operation_name_start != std.math.maxInt(u32)) analysis.graph.text(.{ .start = occurrence.operation_name_start, .len = occurrence.len }) else null);
         return .{
             .range = sourceRange(&analysis, occurrence.source, occurrence.len) orelse return null,
             .contents = contents,
@@ -425,6 +426,14 @@ pub const LanguageService = struct {
         var analysis = (try self.collectAnalysis(&work, doc)) orelse return try self.syntax_definition(work, doc, position);
 
         const occurrence = analysis.index.occurrenceAt(&analysis.graph, &analysis.source_db, doc.path, position.line, position.character) orelse return null;
+        if (occurrence.operation != null and occurrence.target == .declaration and
+            occurrence.target.declaration == occurrence.operation.?.contract)
+        {
+            for (analysis.index.occurrences.items) |candidate| {
+                if (candidate.declaration and editor_index.referencesEqual(candidate, occurrence))
+                    return try self.definitionForOccurrence(&analysis, candidate);
+            }
+        }
         // Specialized functions retain their source declaration but have a distinct
         // function ID. Navigation follows that declaration, not the instance ID.
         const target = analysis.index.declarationOccurrence(occurrence.target) orelse switch (occurrence.target) {
@@ -433,7 +442,7 @@ pub const LanguageService = struct {
                 const declaration = analysis.graph.declarations.items[@intFromEnum(function.declaration)];
                 break :blk editor_index.Occurrence{
                     .source = declaration.source,
-                    .len = @intCast(analysis.graph.text(declaration.name).len),
+                    .len = @intCast(analysis.graph.text(analysis.graph.declarationSourceName(function.declaration)).len),
                     .target = occurrence.target,
                     .declaration = true,
                 };
@@ -480,7 +489,7 @@ pub const LanguageService = struct {
             output.deinit();
         }
         for (analysis.index.occurrences.items) |occurrence| {
-            if (!editor_index.targetsEqual(occurrence.target, selected.target)) continue;
+            if (!editor_index.referencesEqual(occurrence, selected)) continue;
             if (!include_declaration and occurrence.declaration) continue;
             const file = editor_index.sourceFileId(&analysis.graph, &analysis.source_db, occurrence.source) orelse continue;
             const range = sourceRange(&analysis, occurrence.source, occurrence.len) orelse continue;
@@ -516,14 +525,12 @@ pub const LanguageService = struct {
         var analysis = (try self.collectAnalysis(&work, doc)) orelse return null;
         const occurrence = analysis.index.occurrenceAt(&analysis.graph, &analysis.source_db, doc.path, position.line, position.character) orelse return null;
         if (occurrence.target == .function) {
-            const function = analysis.graph.functions.items[@intFromEnum(occurrence.target.function)];
-            // init is a reserved declaration name; renaming its calls would
-            // instead change the nominal family written at those positions.
-            if (analysis.graph.declaration(function.declaration).constructor_type != null) return null;
+            // Init operation wrappers retain their contract identity.
+            if (standard_contracts.initializedType(&analysis.graph, occurrence.target.function) != null) return null;
         }
         return .{
             .range = sourceRange(&analysis, occurrence.source, occurrence.len) orelse return null,
-            .placeholder = try self.allocator.dupe(u8, editor_index.Index.targetName(&analysis.graph, occurrence.target)),
+            .placeholder = try self.allocator.dupe(u8, if (occurrence.operation_name_start != std.math.maxInt(u32)) analysis.graph.text(.{ .start = occurrence.operation_name_start, .len = occurrence.len }) else editor_index.Index.targetName(&analysis.graph, occurrence.target)),
         };
     }
 
@@ -620,7 +627,7 @@ pub const LanguageService = struct {
         snapshot.files = files;
         var diagnostics = diag.Diagnostics.init(&work, files);
         defer diagnostics.deinit();
-        var pipeline = frontend.FrontendPipeline.init(work, self.io, &diagnostics, .{ .module_cache = &self.module_cache });
+        var pipeline = frontend.FrontendPipeline.init(work, self.io, &diagnostics, .{ .module_cache = &self.module_cache, .semantizing = .{ .exhaustive_function_bodies = true } });
         defer pipeline.deinit();
         const start = std.Io.Timestamp.now(self.io, .boot).nanoseconds;
         _ = pipeline.semantizeGlobalFiles(files) catch {};
@@ -722,6 +729,24 @@ fn augmentTypeOccurrences(
         const current_module = graph.files.items[global_file].module;
         for (0..tree.nodes.len) |raw| {
             const node: st.NodeIndex = @enumFromInt(@as(u32, @intCast(raw)));
+            if (tree.contractDeclaration(node)) |contract| {
+                const owner = findTypeDeclaration(graph, current_module, tree.tokenText(db, contract.name_token)) orelse continue;
+                for (contract.requires_functions, 0..) |requirement_node, operation_index| {
+                    const requirement = tree.contractFunctionRequirement(requirement_node) orelse continue;
+                    const spelling = tree.tokenText(db, requirement.name_token);
+                    // Requirement names are retained in relocated module strings.
+                    const name_start = std.mem.indexOf(u8, graph.strings.items, spelling) orelse continue;
+                    try index.add(allocator, .{
+                        .source = .{ .file_index = global_file, .offset = tree.tokenLocation(requirement.name_token).offset },
+                        .len = @intCast(spelling.len),
+                        .target = .{ .declaration = owner },
+                        .declaration = true,
+                        .operation = .{ .contract = owner, .index = @intCast(operation_index) },
+                        .operation_name_start = @intCast(name_start),
+                    });
+                }
+                continue;
+            }
             const ty = tree.syntaxType(node) orelse continue;
             const name = switch (ty) {
                 .name => |value| value,
@@ -742,7 +767,7 @@ fn augmentTypeOccurrences(
 fn findTypeDeclaration(graph: *const graph_mod.GlobalSemanticGraph, current_module: graph_mod.GlobalModuleId, name: []const u8) ?graph_mod.GlobalDeclId {
     var fallback: ?graph_mod.GlobalDeclId = null;
     for (graph.declarations.items, 0..) |declaration, raw| {
-        if (declaration.kind != .type and declaration.kind != .abstract_type) continue;
+        if (declaration.kind != .type and declaration.kind != .contract_type) continue;
         if (!std.mem.eql(u8, graph.text(declaration.name), name)) continue;
         const id: graph_mod.GlobalDeclId = @enumFromInt(@as(u32, @intCast(raw)));
         if (graph.moduleForDeclaration(id) == current_module) return id;
@@ -793,7 +818,7 @@ const HoverWriter = struct {
     }
 };
 
-fn formatHover(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSemanticGraph, target: editor_index.Target) ![]u8 {
+fn formatHover(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSemanticGraph, target: editor_index.Target, operation_name: ?[]const u8) ![]u8 {
     var output = std.array_list.Managed(u8).init(allocator);
     errdefer output.deinit();
     const writer = HoverWriter{ .allocator = allocator, .buffer = &output };
@@ -801,9 +826,8 @@ fn formatHover(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSeman
     switch (target) {
         .function => |id| {
             const function = graph.functions.items[@intFromEnum(id)];
-            const declaration = graph.declarations.items[@intFromEnum(function.declaration)];
             if (function.flags.is_once) try writer.writeAll("once ");
-            try writer.print("{s}(", .{graph.text(declaration.name)});
+            try writer.print("{s}(", .{operation_name orelse graph.text(graph.declarationSourceName(function.declaration))});
             try writeFieldRange(writer, graph, function.input);
             try writer.writeAll(") -> (");
             try writeFieldRange(writer, graph, function.output);
@@ -816,11 +840,13 @@ fn formatHover(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSeman
         },
         .declaration => |id| {
             const declaration = graph.declarations.items[@intFromEnum(id)];
-            const name = graph.text(declaration.name);
+            const name = graph.text(graph.declarationSourceName(id));
             switch (declaration.kind) {
-                .type, .abstract_type => {
-                    try writer.print("{s} : {s}", .{ name, if (declaration.kind == .type) "Type" else "Abstract" });
-                    if (declaration.type_id) |ty| {
+                .type, .contract_type => {
+                    if (operation_name) |operation| {
+                        try writer.print("{s} (operation of {s})", .{ operation, name });
+                    } else try writer.print("{s} : {s}", .{ name, if (declaration.kind == .type) "Type" else "Contract" });
+                    if (if (operation_name == null) declaration.type_id else null) |ty| {
                         const self_reference = switch (graph.types.items[@intFromEnum(ty)]) {
                             .declared => |target_decl| target_decl == id,
                             else => false,
@@ -912,9 +938,9 @@ fn writeType(writer: HoverWriter, graph: *const graph_mod.GlobalSemanticGraph, t
             }
             try writer.writeAll(")");
         },
-        .virtual => |abstract_type| {
-            try writer.writeAll("Virtual#(.abstract: ");
-            try writeType(writer, graph, abstract_type);
+        .virtual => |contract_type| {
+            try writer.writeAll("Virtual#(.contract: ");
+            try writeType(writer, graph, contract_type);
             try writer.writeAll(")");
         },
     }
@@ -956,7 +982,7 @@ fn classifySyntax(allocator: std.mem.Allocator, tree: *const st.FileSyntaxTree, 
             try markSyntax(tree, classes, ty.name_token, TOKEN_INDEX.type_, declaration);
             try type_names.put(tree.tokenTextFromSource(source, ty.name_token), {});
         }
-        if (tree.abstractDeclaration(node)) |ty| try markSyntax(tree, classes, ty.name_token, TOKEN_INDEX.type_, declaration);
+        if (tree.contractDeclaration(node)) |ty| try markSyntax(tree, classes, ty.name_token, TOKEN_INDEX.type_, declaration);
         if (tree.symbolDeclaration(node)) |binding| {
             const readonly = if (binding.mutability == .constant) @as(u32, 1) << MOD_INDEX.readonly else 0;
             try markSyntax(tree, classes, binding.name_token, TOKEN_INDEX.variable, declaration | readonly);
@@ -1026,7 +1052,7 @@ fn classifyOccurrences(allocator: std.mem.Allocator, analysis: *const Analysis, 
                     classification.modifiers |= @as(u32, 1) << MOD_INDEX.readonly;
             },
             .declaration => |id| classification.type_index = switch (graph.declarations.items[@intFromEnum(id)].kind) {
-                .type, .abstract_type => TOKEN_INDEX.type_,
+                .type, .contract_type => TOKEN_INDEX.type_,
                 .import_alias => TOKEN_INDEX.namespace,
                 .function, .test_function => TOKEN_INDEX.function,
                 .choice_option => TOKEN_INDEX.enum_member,
@@ -1167,11 +1193,11 @@ fn outlineNodes(work: std.mem.Allocator, file: *const editor_syntax.File, nodes:
             name_token = decl.name_token;
             kind = 23;
             if (file.tree.structTypeLiteral(decl.value)) |value| children = value.fields;
-        } else if (file.tree.abstractDeclaration(node)) |decl| {
+        } else if (file.tree.contractDeclaration(node)) |decl| {
             name_token = decl.name_token;
             kind = 11;
             children = decl.requires_functions;
-        } else if (file.tree.abstractFunctionRequirement(node)) |decl| {
+        } else if (file.tree.contractFunctionRequirement(node)) |decl| {
             name_token = decl.name_token;
             kind = 6;
         } else if (file.tree.symbolDeclaration(node)) |decl| {
@@ -1263,11 +1289,11 @@ fn expectSemanticToken(data: []const u32, source: []const u8, needle: []const u8
 test "LSP semantic tokens distinguish resolved names without synthetic recoloring" {
     const code =
         \\Point : Type = (.x: Int32)
-        \\Point init(.x: Int32) -> (.result: Point) := { result = (.x = x) }
-        \\Point deinit(.self: $&Point) -> () := {}
+        \\implement Init#(Point, (.x: Int32)) (.Result: Type = Point, .init = (.args: (.x: Int32)) -> (.result: Result) { result = (.x = args.x) })
+        \\implement Deinit#(Point) (.deinit = (.self: $&Point) -> () {})
         \\Box#(.t: Type) : Type = (.value: t)
-        \\Box init#(.t: Type)(.value: t) -> (.result: Box#(.t: t)) := { result = (.value = value) }
-        \\Box deinit#(.t: Type)(.self: $&Box#(.t: t)) -> () := {}
+        \\implement#(.t: Type) Init#(Box#(.t: t), (.value: t)) (.Result: Type = Box#(.t: t), .init = (.args: (.value: t)) -> (.result: Result) { result = (.value = args.value) })
+        \\implement#(.t: Type) Deinit#(Box#(.t: t)) (.deinit = (.self: $&Box#(.t: t)) -> () {})
         \\identity(.value: Int32) -> (.result: Int32) := { result = value }
         \\main(.system: System) -> (.status_code: Int32 = 0) := {
         \\    assume writer := $&system.terminal&.stdout
@@ -1288,12 +1314,12 @@ test "LSP semantic tokens distinguish resolved names without synthetic recolorin
     var data = try service.semanticTokensFull("file:///colors.rg");
     defer data.deinit();
     try expectSemanticToken(data.items, code, "Point :", TOKEN_INDEX.type_, 1);
-    try expectSemanticToken(data.items, code, "Point init", TOKEN_INDEX.type_, 0);
-    try expectSemanticToken(data.items, code, "Point deinit", TOKEN_INDEX.type_, 0);
-    try expectSemanticToken(data.items, code, "Box init", TOKEN_INDEX.type_, 0);
-    try expectSemanticToken(data.items, code, "Box deinit", TOKEN_INDEX.type_, 0);
-    try expectSemanticToken(data.items, code, "init(.x:", TOKEN_INDEX.function, 1);
-    try expectSemanticToken(data.items, code, "deinit(.self:", TOKEN_INDEX.function, 1);
+    try expectSemanticToken(data.items, code, "Point, (.x:", TOKEN_INDEX.type_, 0);
+    try expectSemanticToken(data.items, code, "Point) (.deinit", TOKEN_INDEX.type_, 0);
+    try expectSemanticToken(data.items, code, "Box#(.t: t),", TOKEN_INDEX.type_, 0);
+    try expectSemanticToken(data.items, code, "Box#(.t: t)) (.deinit", TOKEN_INDEX.type_, 0);
+    try expectSemanticToken(data.items, code, "init =", TOKEN_INDEX.function, 1);
+    try expectSemanticToken(data.items, code, "deinit =", TOKEN_INDEX.function, 1);
     try expectSemanticToken(data.items, code, "identity(.value:", TOKEN_INDEX.function, 1);
     try expectSemanticToken(data.items, code, "value: Int32", TOKEN_INDEX.parameter, 3);
     try expectSemanticToken(data.items, code, "value }", TOKEN_INDEX.parameter, 2);
@@ -1364,10 +1390,10 @@ test "LSP navigation and hovers use written symbols and source declarations" {
 test "LSP constructor navigation finds selected init bodies and default record declarations" {
     const code =
         \\MyType : Type = (.value: Int32)
-        \\MyType init() -> (.result: MyType) := { result = (.value = 0) }
-        \\MyType init(.value: Int32) -> (.result: MyType) := { result = (.value = value) }
+        \\implement Init#(MyType, ()) (.Result: Type = MyType, .init = (.args: ()) -> (.result: Result) { result = (.value = 0) })
+        \\implement Init#(MyType, (.value: Int32)) (.Result: Type = MyType, .init = (.args: (.value: Int32)) -> (.result: Result) { result = (.value = args.value) })
         \\Box#(.t: Type) : Type = (.value: t)
-        \\Box init#(.t: Type)(.value: t) -> (.result: Box#(.t: t)) := { result = (.value = value) }
+        \\implement#(.t: Type) Init#(Box#(.t: t), (.value: t)) (.Result: Type = Box#(.t: t), .init = (.args: (.value: t)) -> (.result: Result) { result = (.value = args.value) })
         \\main() -> (.status_code: Int32 = 0) := {
         \\    first ::= MyType()
         \\    second ::= MyType(2)
@@ -1382,7 +1408,7 @@ test "LSP constructor navigation finds selected init bodies and default record d
     try tmp.dir.createDir(std.testing.io, "library", .default_dir);
     try tmp.dir.writeFile(std.testing.io, .{
         .sub_path = "library/thing.rg",
-        .data = "Thing : Type = (.value: Int32)\nThing init(.value: Int32) -> (.result: Thing) := { result = (.value = value) }\n",
+        .data = "Thing : Type = (.value: Int32)\nimplement Init#(Thing, (.value: Int32)) (.Result: Type = Thing, .init = (.args: (.value: Int32)) -> (.result: Result) { result = (.value = args.value) })\n",
     });
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.rg", .data = code });
     const path = try @import("../test_support.zig").tmpFilePath(&tmp, "main.rg");
@@ -1858,4 +1884,116 @@ test "LSP positional type arguments remain type tokens" {
         try std.testing.expect(!std.mem.eql(u8, child.name, "Int32"));
         try std.testing.expect(!std.mem.eql(u8, child.name, "Reasons"));
     }
+}
+
+test "LSP scoped implementation navigation retains written operation names" {
+    const code =
+        \\Reader#(.T: Type): Contract = (.read: (.value: &T) -> (.result: Int32))
+        \\Cell: Type = (.value: Int32)
+        \\implement Reader#(Cell) (
+        \\    .read = (.value: &Cell) -> (.result: Int32) { result = value&.value }
+        \\)
+        \\main := () -> (.status_code: Int32 = 0) {
+        \\    cell ::= Cell(42)
+        \\    answer ::= Reader#(Cell).read(&cell).result
+        \\}
+    ;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.rg", .data = code });
+    const path = try @import("../test_support.zig").tmpFilePath(&tmp, "main.rg");
+    defer std.testing.allocator.free(path);
+    var service = LanguageService.init(std.testing.allocator, std.testing.io);
+    defer service.deinit();
+    const uri = "file:///scoped-operations.rg";
+    const diagnostics = try service.openDocument(uri, path, 1, code);
+    defer diagnostics.deinit();
+    try std.testing.expectEqual(@as(usize, 0), diagnostics.items.len);
+    const position = Position{ .line = 7, .character = 29 };
+    const definition = (try service.definition(uri, position)).?;
+    defer definition.deinit(std.testing.allocator);
+    try std.testing.expectEqualStrings(path, definition.path);
+    try std.testing.expectEqual(@as(u32, 3), definition.range.start.line);
+    try std.testing.expectEqual(@as(u32, 5), definition.range.start.character);
+    try std.testing.expectEqual(@as(u32, 9), definition.range.end.character);
+    const hover = (try service.hover(uri, position)).?;
+    defer std.testing.allocator.free(hover.contents);
+    try std.testing.expect(std.mem.startsWith(u8, hover.contents, "```argi\nread("));
+    try std.testing.expect(std.mem.indexOf(u8, hover.contents, "_implement") == null);
+    const prepared = (try service.prepareRename(uri, position)).?;
+    defer prepared.deinit(std.testing.allocator);
+    try std.testing.expectEqualStrings("read", prepared.placeholder);
+    const edits = try service.rename(uri, position, "fetch");
+    defer edits.deinit();
+    try std.testing.expectEqual(@as(usize, 3), edits.items.len);
+}
+
+test "LSP renames scoped operations independently of shared aliases" {
+    const code =
+        \\First#(.T: Type): Contract = (.read: (.value: &T) -> (.result: Int32) where {})
+        \\Second#(.T: Type): Contract = (.read: (.value: &T) -> (.result: Int32) where {})
+        \\Cell: Type = (.value: Int32)
+        \\shared := (.value: &Cell) -> (.result: Int32) { result = value&.value }
+        \\implement First#(Cell) (.read = shared)
+        \\implement Second#(Cell) (.read = shared)
+        \\_read_virtual := (.value: &Virtual#(.contract: First)) -> (.result: Int32) { result = read(value).result }
+        \\main := () -> (.status_code: Int32 = 0) {
+        \\    cell ::= Cell(42)
+        \\    first ::= First#(Cell).read(&cell).result
+        \\    second ::= Second#(Cell).read(&cell).result
+        \\    virtual ::= to_virtual#(.contract: First)(&cell)
+        \\    answer ::= _read_virtual(&virtual).result
+        \\}
+    ;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.rg", .data = code });
+    const path = try @import("../test_support.zig").tmpFilePath(&tmp, "main.rg");
+    defer std.testing.allocator.free(path);
+    var service = LanguageService.init(std.testing.allocator, std.testing.io);
+    defer service.deinit();
+    const uri = "file:///shared-operations.rg";
+    const diagnostics = try service.openDocument(uri, path, 1, code);
+    defer diagnostics.deinit();
+    try std.testing.expectEqual(@as(usize, 0), diagnostics.items.len);
+    const hover = (try service.hover(uri, .{ .line = 9, .character = 27 })).?;
+    defer std.testing.allocator.free(hover.contents);
+    try std.testing.expect(std.mem.startsWith(u8, hover.contents, "```argi\nread("));
+    const edits = try service.rename(uri, .{ .line = 9, .character = 27 }, "fetch");
+    defer edits.deinit();
+    try std.testing.expectEqual(@as(usize, 4), edits.items.len);
+    for (edits.items) |edit| try std.testing.expect(edit.range.start.line == 0 or edit.range.start.line == 4 or edit.range.start.line == 6 or edit.range.start.line == 9);
+    const alias_edits = try service.rename(uri, .{ .line = 3, .character = 2 }, "read_cell");
+    defer alias_edits.deinit();
+    try std.testing.expectEqual(@as(usize, 3), alias_edits.items.len);
+    for (alias_edits.items) |edit| try std.testing.expect(edit.range.start.line == 3 or edit.range.start.line == 4 or edit.range.start.line == 5);
+}
+
+test "LSP proves unused concrete conformance safety promises" {
+    const code =
+        \\Releaser#(.Participant: Type): Contract = (
+        \\    .release: (.self: &Participant, .resource: $&Resource) -> () where consumes(resource)
+        \\)
+        \\Manager: Type = (.unused: Int32)
+        \\Resource: Type = (.value: Int32)
+        \\implement Deinit#(Resource) (.deinit = (.self: $&Resource) -> () {})
+        \\implement Releaser#(Manager) (
+        \\    .release = (.self: &Manager, .resource: $&Resource) -> () {}
+        \\)
+        \\main := () -> () {}
+    ;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "main.rg", .data = code });
+    const path = try @import("../test_support.zig").tmpFilePath(&tmp, "main.rg");
+    defer std.testing.allocator.free(path);
+    var service = LanguageService.init(std.testing.allocator, std.testing.io);
+    defer service.deinit();
+    const diagnostics = try service.openDocument("file:///unused-conformance.rg", path, 1, code);
+    defer diagnostics.deinit();
+    var found = false;
+    for (diagnostics.items) |entry| if (std.mem.indexOf(u8, entry.message, "cannot prove consumes") != null) {
+        found = true;
+    };
+    try std.testing.expect(found);
 }
