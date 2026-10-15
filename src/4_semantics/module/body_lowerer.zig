@@ -270,7 +270,13 @@ const Context = struct {
     }
 
     fn lowerBlock(self: *Context, node: syn.NodeIndex) anyerror!entities.ModuleBlockId {
-        const block = self.tree.codeBlock(node) orelse return error.ExpectedCodeBlock;
+        // Else-if syntax is a nested statement, but branch semantics use blocks.
+        const source_statements = if (self.tree.codeBlock(node)) |block|
+            block.statements
+        else if (self.tree.ifStatement(node) != null)
+            &.{node}
+        else
+            return error.ExpectedCodeBlock;
         try self.pushScope();
         defer self.popScope();
         var nodes = std.array_list.Managed(entities.ModuleNodeId).init(self.allocator);
@@ -281,7 +287,7 @@ const Context = struct {
         self.temporary_declarations = &temporaries;
         defer self.temporary_declarations = previous_temporaries;
         var ret_val: ?entities.ModuleNodeId = null;
-        for (block.statements) |statement| {
+        for (source_statements) |statement| {
             temporaries.clearRetainingCapacity();
             if (self.tree.tag(statement) == .assume_statement) {
                 if (self.tree.assumedDeclaration(statement)) |declaration| {

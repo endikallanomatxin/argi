@@ -53,20 +53,6 @@ resolution. Distinguish definite errors from missing bindings without exposing
 errors from losing candidates. Explicit and inferred calls now share argument
 publication, but their initial inference rules remain distinct.
 
-Verify contextual fixed-array initialization in parameterized ordinary bodies:
-`[1]UInt8 = (0)` previously produced an incorrect generic-input mismatch. Keep
-this issue independent of contract evidence and virtual representation.
-
-## Independent parameterized lowering follow-up
-
-- TODO: Normalize an `else if` node into a branch block before calling
-  `blockAsNode`; the current parameterized operand traversal assumes every else
-  branch is a code block and can report ExpectedParameterizedBlock without a
-  useful source diagnostic. The scalar classification currently uses nested blocks.
-- TODO: Supply known comparison-operand context to bare choice tags in generic
-  bodies. The comparison adapters intentionally call ordinary Ordering predicates,
-  whose fixed input types already provide that context.
-
 ## Validation
 
 Use focused contract, polymorphism and editor checks with parallel workers,

@@ -13090,3 +13090,30 @@ test "compiler fixture frontend policy preserves explicit workers and run select
     defer allocator.free(other);
     try expectEqual(@as(usize, 2), other.len);
 }
+
+test "feature_tests/polymorphism/328_generic_else_if" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/328_generic_else_if");
+    try runExpect("tests/feature_tests/polymorphism/328_generic_else_if", 0);
+}
+
+test "feature_tests/polymorphism/329_generic_choice_comparison" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/329_generic_choice_comparison");
+    try runExpect("tests/feature_tests/polymorphism/329_generic_choice_comparison", 0);
+}
+
+test "feature_tests/polymorphism/330_generic_contextual_arrays" {
+    try expectSuccessfulBuild("tests/feature_tests/polymorphism/330_generic_contextual_arrays");
+    try runExpect("tests/feature_tests/polymorphism/330_generic_contextual_arrays", 0);
+}
+
+test "feature_tests/polymorphism/331X_generic_array_length" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/331X_generic_array_length", "array initializer has 2 elements; expected 1", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/332X_generic_array_element" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/332X_generic_array_element", "integer literal 256 does not fit in 'UInt8'", "failed without a diagnostic");
+}
+
+test "feature_tests/polymorphism/333X_generic_choice_unknown_tag" {
+    try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/333X_generic_choice_unknown_tag", "no generic function named 'invalid'", "failed without a diagnostic");
+}

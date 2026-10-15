@@ -134,12 +134,13 @@ implement#(.Value: Type: _BuiltinOrdering) Compare#(Value, Value) (
             ) -> (
                 .order : Ordering
             ) {
-            if __scalar_less_than(.left = left, .right = right) { order = ..less } else {
-                if __scalar_greater_than(.left = left, .right = right) { order = ..greater } else {
-                    if __scalar_equal(.left = left, .right = right) { order = ..equal } else {
-                        order = ..unordered
-                    }
-                }
+            if __scalar_less_than(.left = left, .right = right) { order = ..less } else if __scalar_greater_than(
+                .left  = left
+                .right = right
+            ) { order = ..greater } else if __scalar_equal(.left = left, .right = right) {
+                order = ..equal
+            } else {
+                order = ..unordered
             }
         }
     )

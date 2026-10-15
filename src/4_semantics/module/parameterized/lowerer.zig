@@ -1034,7 +1034,13 @@ pub const Context = struct {
     }
 
     fn lowerBlock(self: *Context, node: syn.NodeIndex) anyerror!ir.ParameterizedBlockId {
-        const block = self.tree.codeBlock(node) orelse return error.ExpectedParameterizedBlock;
+        // Else-if syntax is a nested statement, but branch semantics use blocks.
+        const source_statements = if (self.tree.codeBlock(node)) |block|
+            block.statements
+        else if (self.tree.ifStatement(node) != null)
+            &.{node}
+        else
+            return error.ExpectedParameterizedBlock;
         const binding_mark = self.bindings.items.len;
         defer self.bindings.shrinkRetainingCapacity(binding_mark);
         var statements: std.ArrayList(ir.ParameterizedNodeId) = .empty;
@@ -1045,7 +1051,7 @@ pub const Context = struct {
         self.temporary_declarations = &temporaries;
         defer self.temporary_declarations = previous_temporaries;
         var ret_val: ?ir.ParameterizedNodeId = null;
-        for (block.statements) |statement| {
+        for (source_statements) |statement| {
             temporaries.clearRetainingCapacity();
             if (self.tree.tag(statement) == .assume_statement) {
                 if (self.tree.assumedDeclaration(statement)) |declaration| {

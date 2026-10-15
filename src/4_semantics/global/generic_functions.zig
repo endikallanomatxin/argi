@@ -2156,6 +2156,18 @@ pub const Resolver = struct {
             const local = storage.nodes.items[@intFromEnum(id)];
             if (local == .pending) {
                 const pending = storage.pending.items[@intFromEnum(local.pending)];
+                if (pending == .resolve_expression and pending.resolve_expression.kind == .list_value) {
+                    // Pass the element context before building the list, including
+                    // nested arrays and out-of-range literals checked by safety.
+                    if (global_types.arrayElement(self.resolver.graph, expected)) |element| {
+                        const operands = pending.resolve_expression.operands;
+                        for (storage.node_refs.items[operands.start..][0..operands.len]) |child|
+                            _ = try self.instantiateNodeWithExpected(child, element);
+                    }
+                    const global = try self.instantiateNode(id);
+                    self.resolver.core.contextualizeStoredValue(global, expected);
+                    return global;
+                }
                 if (pending == .resolve_expression and pending.resolve_expression.kind == .choice_literal) {
                     if (self.node_map.get(@intFromEnum(id))) |existing| return existing;
                     const global: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.resolver.graph.nodes.items.len)));
@@ -2170,7 +2182,7 @@ pub const Resolver = struct {
                 }
             } else if (local.resolved.content == .struct_value_literal) {
                 return self.instantiateStructValueWithExpected(id, local.resolved, expected);
-            } else if (local.resolved.content == .string_literal or local.resolved.content == .int_literal) {
+            } else if (local.resolved.content == .string_literal or local.resolved.content == .int_literal or local.resolved.content == .float_literal) {
                 const global = try self.instantiateNode(id);
                 const current = self.resolver.graph.nodes.items[@intFromEnum(global)].ty;
                 if (current == null or !global_types.equal(self.resolver.graph, current.?, expected))
@@ -2373,6 +2385,15 @@ pub const Resolver = struct {
             } };
         }
 
+        fn isBareChoiceTag(self: *InstanceContext, id: ir.ParameterizedNodeId) bool {
+            const storage = &self.resolver.modules[self.module_index].semantic.parameterized_storage.ir;
+            const node = storage.nodes.items[@intFromEnum(id)];
+            if (node != .pending) return false;
+            const pending = storage.pending.items[@intFromEnum(node.pending)];
+            return pending == .resolve_expression and pending.resolve_expression.kind == .choice_literal and
+                pending.resolve_expression.operands.len == 0;
+        }
+
         fn instantiateChoiceTag(self: *InstanceContext, id: ir.ParameterizedNodeId, choice_type: global_sg.GlobalTypeId) !global_sg.GlobalNodeId {
             if (self.node_map.get(@intFromEnum(id))) |existing| return existing;
             const storage = &self.resolver.modules[self.module_index].semantic.parameterized_storage.ir;
@@ -2466,7 +2487,24 @@ pub const Resolver = struct {
                     try self.contextualizeOrdinaryChoiceArguments(name, storage.node_refs.items[value.operands.start]);
             var operands = std.array_list.Managed(global_sg.GlobalNodeId).init(self.resolver.allocator);
             defer operands.deinit();
-            for (storage.node_refs.items[value.operands.start..][0..value.operands.len]) |operand|
+            const local_operands = storage.node_refs.items[value.operands.start..][0..value.operands.len];
+            // Equality against a bare variant is a tag test. Infer its identity
+            // from the other operand before attempting to instantiate the tag.
+            // Canonicalize reversed tests so refinement and codegen see the value first.
+            if (value.kind == .comparison and value.detail == .comparison and
+                (value.detail.comparison == .equal or value.detail.comparison == .not_equal) and local_operands.len == 2)
+            {
+                for (0..2) |tag_index| {
+                    if (!self.isBareChoiceTag(local_operands[tag_index]) or self.isBareChoiceTag(local_operands[1 - tag_index])) continue;
+                    const other = try self.instantiateNode(local_operands[1 - tag_index]);
+                    const choice_type = self.resolver.graph.node(other).ty orelse continue;
+                    if (global_types.variants(self.resolver.graph, choice_type) == null) continue;
+                    try operands.append(other);
+                    try operands.append(try self.instantiateChoiceTag(local_operands[tag_index], choice_type));
+                    break;
+                }
+            }
+            if (operands.items.len == 0) for (local_operands) |operand|
                 try operands.append(try self.instantiateNode(operand));
 
             return switch (value.kind) {
@@ -2491,6 +2529,15 @@ pub const Resolver = struct {
                         null);
                 },
                 .binary => self.resolveBinary(operands.items, value.source, value.detail, value.assumed_arguments),
+                .list_value => blk: {
+                    const start: u32 = @intCast(self.resolver.graph.node_refs.items.len);
+                    try self.resolver.graph.node_refs.appendSlice(self.resolver.allocator, operands.items);
+                    break :blk .{
+                        .source = self.resolver.sourceFor(self.module_index, value.source),
+                        .ty = null,
+                        .content = .{ .list_literal = .{ .elements = .{ .start = start, .len = @intCast(operands.items.len) } } },
+                    };
+                },
                 .comparison => self.resolveComparison(operands.items, value.source, value.detail, value.assumed_arguments),
                 .logical => self.resolveLogical(operands.items, value.source, value.detail),
                 .index => self.resolveIndex(operands.items, value.source, false),
@@ -2516,7 +2563,6 @@ pub const Resolver = struct {
                 .error_propagation, .error_context => self.resolveErrorPropagation(operands.items, value.source),
                 .pipe => if (operands.items.len != 0) self.resolver.graph.nodes.items[@intFromEnum(operands.items[operands.items.len - 1])] else error.InvalidParameterizedPipe,
                 .struct_value,
-                .list_value,
                 .choice_literal,
                 .unwrap_or,
                 .unwrap_or_do,
