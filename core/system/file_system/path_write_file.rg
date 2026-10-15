@@ -198,4 +198,3 @@ implement FileWriting#(&Path) (
         )
     .write_file = _path_write_file_owned
 )
-

@@ -95,4 +95,3 @@ implement PathRenaming#(&Path) (
     .Result: Type = Errable#(Bool, (..path_rename_failed))
     .rename = _path_rename_owned
 )
-

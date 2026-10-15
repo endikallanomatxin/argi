@@ -86,4 +86,3 @@ implement PathRemoval#(&Path) (
     .Result: Type = Errable#(Bool, (..path_remove_failed))
     .remove = _path_remove_owned
 )
-

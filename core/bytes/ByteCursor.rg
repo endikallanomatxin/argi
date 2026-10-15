@@ -25,4 +25,3 @@ implement ByteCursor#(ByteWriter) (
     .cursor_remaining = _byte_writer_remaining
     .cursor_skip = _byte_writer_skip
 )
-

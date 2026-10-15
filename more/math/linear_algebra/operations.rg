@@ -102,4 +102,3 @@ implement#(
     .set = _math_set_dynamic_matrix
     .get = _math_get_dynamic_matrix
 )
-

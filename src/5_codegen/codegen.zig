@@ -202,11 +202,8 @@ pub const CodeGenerator = struct {
 
     fn predeclareFunctions(self: *CodeGenerator) !void {
         for (self.graph.functions.items, 0..) |function, raw| {
-            // Abstract contract instances are compile-time dispatch metadata.
-            // Runtime calls and vtables reference their selected concrete
-            // implementations, so an abstract Self type must not enter ABI
-            // lowering as though it were a material runtime type. Callback
-            // signature rows describe pointer types and have no LLVM symbols.
+            // Callback prototype rows describe function pointer types rather
+            // than runtime symbols. Their selected bodies are declared separately.
             if (function.flags.is_c_function_pointer) continue;
             // Declarations that promised a body but have no global body are
             // semantic contracts/templates, not runtime ABI symbols.

@@ -12,8 +12,8 @@
 
 Use `#( … )` to **declare** generic parameters. The binder can appear in:
 
-* declarations of **types** and **contracts** (including legacy abstracts),
-* **functions** and **operators**.
+* declarations of **types**, **contracts**, and **functions**,
+* **implement** declarations, with the binder immediately after `implement`.
 
 ```argi
 -- Generic type
@@ -58,7 +58,7 @@ has an inferred error set. Supplying a reasons type retains an explicit set.
 
 ```argi
 sum#(.t: Type: Number#(t)) (.xs: []t) -> (.result: t)
--- t must implement the Number abstract
+-- t must satisfy the Number contract
 ```
 
 ## Constraint Design

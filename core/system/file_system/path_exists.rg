@@ -73,4 +73,3 @@ implement PathExistence#(&Path) (
     .Result: Type = Bool
     .exists = _path_exists_owned
 )
-
