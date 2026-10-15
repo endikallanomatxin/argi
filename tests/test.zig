@@ -71,9 +71,32 @@ fn clean(name: []const u8) !void {
     };
 }
 
+// Fixture processes already run in parallel. Keep their frontend work serial
+// unless a concurrency test explicitly chooses another policy.
+fn compilerTestArgs(argv: []const []const u8) ![][]const u8 {
+    const allocator = std.testing.allocator;
+    if (argv.len < 2) return allocator.dupe([]const u8, argv);
+    const executable = std.fs.path.basename(argv[0]);
+    const compiler = std.mem.eql(u8, executable, "argi") or std.mem.eql(u8, executable, "argi.exe");
+    const is_run = std.mem.eql(u8, argv[1], "run");
+    const builds = is_run or std.mem.eql(u8, argv[1], "build") or std.mem.eql(u8, argv[1], "check");
+    if (!compiler or !builds) return allocator.dupe([]const u8, argv);
+    for (argv[2..]) |arg| if (std.mem.eql(u8, arg, "--frontend-jobs")) return allocator.dupe([]const u8, argv);
+    // Keep a selected run executable first, before ordinary build flags.
+    const insert: usize = if (is_run and argv.len > 2 and !std.mem.startsWith(u8, argv[2], "--")) 3 else 2;
+    const result = try allocator.alloc([]const u8, argv.len + 2);
+    @memcpy(result[0..insert], argv[0..insert]);
+    result[insert] = "--frontend-jobs";
+    result[insert + 1] = "1";
+    @memcpy(result[insert + 2 ..], argv[insert..]);
+    return result;
+}
+
 fn runChild(argv: []const []const u8) !std.process.RunResult {
+    const test_args = try compilerTestArgs(argv);
+    defer std.testing.allocator.free(test_args);
     const result = try std.process.run(std.testing.allocator, std.testing.io, .{
-        .argv = argv,
+        .argv = test_args,
         .cwd = .{ .path = compilerRoot() },
     });
     return normalizeRunResult(result);
@@ -103,8 +126,10 @@ fn runArgiCommandWithEnv(
         argv[idx + 1] = arg;
     }
 
+    const test_args = try compilerTestArgs(argv);
+    defer std.testing.allocator.free(test_args);
     const result = try std.process.run(std.testing.allocator, std.testing.io, .{
-        .argv = argv,
+        .argv = test_args,
         .cwd = .{ .path = compilerRoot() },
         .environ_map = env_map,
     });
@@ -120,8 +145,10 @@ fn expectArgiBuildSuccess(args: []const []const u8) !void {
 }
 
 fn runChildInCwd(argv: []const []const u8, cwd: []const u8) !std.process.RunResult {
+    const test_args = try compilerTestArgs(argv);
+    defer std.testing.allocator.free(test_args);
     const result = try std.process.run(std.testing.allocator, std.testing.io, .{
-        .argv = argv,
+        .argv = test_args,
         .cwd = .{ .path = cwd },
     });
     return normalizeRunResult(result);
@@ -132,8 +159,10 @@ fn runChildInCwdWithEnv(
     cwd: []const u8,
     env_map: *const std.process.Environ.Map,
 ) !std.process.RunResult {
+    const test_args = try compilerTestArgs(argv);
+    defer std.testing.allocator.free(test_args);
     const result = try std.process.run(std.testing.allocator, std.testing.io, .{
-        .argv = argv,
+        .argv = test_args,
         .cwd = .{ .path = cwd },
         .environ_map = env_map,
     });
@@ -7608,7 +7637,7 @@ test "argi run inherits stdin stdout and stderr" {
     const installed_argi = try installedArgiPath();
     defer std.testing.allocator.free(installed_argi);
     var child = try std.process.spawn(std.testing.io, .{
-        .argv = &.{ installed_argi, "run", module_dir },
+        .argv = &.{ installed_argi, "run", module_dir, "--frontend-jobs", "1" },
         .stdin = .pipe,
         .stdout = .pipe,
         .stderr = .pipe,
@@ -13041,4 +13070,23 @@ test "feature_tests/contracts/334X_ordered_no_implicit_borrow" {
 
 test "feature_tests/contracts/335X_ordered_requires_total" {
     try buildExpectFail("tests/feature_tests/contracts/335X_ordered_requires_total", "does not satisfy contract constraint 'TotalOrder'");
+}
+
+test "compiler fixture frontend policy preserves explicit workers and run selection" {
+    const allocator = std.testing.allocator;
+    const normal = try compilerTestArgs(&.{ argi_bin, "build", "module" });
+    defer allocator.free(normal);
+    try expectEqualStrings("--frontend-jobs", normal[2]);
+    try expectEqualStrings("1", normal[3]);
+    const explicit = try compilerTestArgs(&.{ argi_bin, "build", "module", "--frontend-jobs", "8" });
+    defer allocator.free(explicit);
+    try expectEqual(@as(usize, 5), explicit.len);
+    try expectEqualStrings("8", explicit[4]);
+    const selected = try compilerTestArgs(&.{ argi_bin, "run", "example" });
+    defer allocator.free(selected);
+    try expectEqualStrings("example", selected[2]);
+    try expectEqualStrings("--frontend-jobs", selected[3]);
+    const other = try compilerTestArgs(&.{ "native-program", "build" });
+    defer allocator.free(other);
+    try expectEqual(@as(usize, 2), other.len);
 }

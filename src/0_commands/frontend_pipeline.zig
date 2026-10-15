@@ -30,6 +30,7 @@ pub const FrontendPipeline = struct {
         target: @import("../1_base/target.zig").Config = .{},
         semantizing: SemantizingOptions = .{},
         collect_stats: bool = false,
+        module_jobs: usize = 1,
         entry_module_dir: ?[]const u8 = null,
         module_cache: ?*cache.ModuleCache = null,
     };
@@ -43,6 +44,7 @@ pub const FrontendPipeline = struct {
     syntax_root_list: std.array_list.Managed(st.SyntaxRef),
     module_graphs: std.ArrayList(module_sg.ModuleSemanticGraph) = .empty,
     module_entries: std.ArrayList(*cache.ModuleCache.Entry) = .empty,
+    module_arenas: std.ArrayList(std.heap.ArenaAllocator) = .empty,
     module_cache_hits: usize = 0,
     module_cache_misses: usize = 0,
     tokenizing_ns: u64 = 0,
@@ -83,6 +85,7 @@ pub const FrontendPipeline = struct {
         self.clearModuleGraphs();
         self.module_graphs.deinit(self.allocator);
         self.module_entries.deinit(self.allocator);
+        self.module_arenas.deinit(self.allocator);
         for (self.syntax_files.items) |*file| file.deinit(self.allocator);
         self.syntax_files.deinit();
         self.syntax_root_list.deinit();
@@ -389,10 +392,6 @@ pub const FrontendPipeline = struct {
                 .is_entry = file.file_id == self.entry_file,
             });
         }
-        // Discover every module before semantic finishing. This exposes the
-        // bundled-core declaration surface early enough to derive the language
-        // prelude without making ordinary ModuleSema depend on arbitrary user
-        // modules.
         var core_hash = cache.ContentHash.init(.{});
         if (self.options.module_cache != null) {
             for (groups.items) |*group| {
@@ -408,47 +407,79 @@ pub const FrontendPipeline = struct {
         }
         const core_fingerprint = cache.finishHash(&core_hash);
         try self.module_graphs.ensureTotalCapacity(self.allocator, groups.items.len);
-        if (self.options.module_cache != null)
-            try self.module_entries.ensureTotalCapacity(self.allocator, groups.items.len);
-        for (groups.items) |group| {
-            if (self.options.module_cache) |session| {
+        try self.module_entries.ensureTotalCapacity(self.allocator, groups.items.len);
+        try self.module_arenas.ensureTotalCapacity(self.allocator, groups.items.len);
+        const jobs = try self.allocator.alloc(ModuleJob, groups.items.len);
+        defer self.allocator.free(jobs);
+        var initialized: usize = 0;
+        var active_jobs: usize = 0;
+        defer for (jobs[0..initialized]) |*job| job.diagnostics.deinit();
+        // Cache access and leases stay on the coordinator. All task slots and
+        // arenas have stable addresses before any worker can start.
+        for (groups.items, 0..) |group, index| {
+            const arena: *std.heap.ArenaAllocator = if (self.options.module_cache) |session| blk: {
                 const fingerprint = self.moduleFingerprint(group.source_fingerprint, core_fingerprint);
-                if (session.acquire(group.dir, fingerprint)) |entry| {
-                    self.module_entries.appendAssumeCapacity(entry);
-                    self.module_graphs.appendAssumeCapacity(entry.graph);
-                    self.module_cache_hits += 1;
-                } else {
-                    const entry = try session.create(fingerprint);
-                    errdefer entry.release();
-                    entry.graph = try module_sg.buildForTarget(entry.allocator(), group.dir, group.files.items, self.options.target);
-                    self.module_entries.appendAssumeCapacity(entry);
-                    self.module_graphs.appendAssumeCapacity(entry.graph);
-                    self.module_cache_misses += 1;
-                }
-            } else {
-                const graph = try module_sg.buildForTarget(self.allocator, group.dir, group.files.items, self.options.target);
-                self.module_graphs.appendAssumeCapacity(graph);
+                const hit = session.acquire(group.dir, fingerprint);
+                const entry = hit orelse try session.create(fingerprint);
+                self.module_entries.appendAssumeCapacity(entry);
+                self.module_graphs.appendAssumeCapacity(entry.graph);
+                if (hit != null) self.module_cache_hits += 1 else self.module_cache_misses += 1;
+                break :blk &entry.arena;
+            } else blk: {
+                self.module_arenas.appendAssumeCapacity(std.heap.ArenaAllocator.init(self.allocator));
+                self.module_graphs.appendAssumeCapacity(.{});
+                break :blk &self.module_arenas.items[index];
+            };
+            const job = &jobs[index];
+            job.* = .{
+                .arena = arena,
+                .original_backing = arena.child_allocator,
+                .needs_run = !self.module_graphs.items[index].semantic.local_semantics_complete,
+                .allocator = arena.allocator(),
+                .graph = &self.module_graphs.items[index],
+                .dir = group.dir,
+                .files = group.files.items,
+                .target = self.options.target,
+                .diagnostics = undefined,
+            };
+            job.diagnostics = diag.Diagnostics.initBorrowed(&job.allocator, self.diagnostics);
+            initialized += 1;
+            active_jobs += @intFromBool(job.needs_run);
+            for (job.files) |*file| file.diagnostics = &job.diagnostics;
+        }
+        const workers = @min(@max(1, self.options.module_jobs), active_jobs);
+        if (workers <= 1) {
+            for (jobs) |*job| job.run();
+        } else {
+            // The caller's allocator may be an arena. Only backing growth is
+            // serialized; each module's allocation state belongs to one task.
+            var backing: @import("locked_allocator.zig").LockedAllocator = .{ .child_allocator = if (self.options.module_cache) |session| session.allocator else self.allocator, .io = self.io };
+            for (jobs) |*job| {
+                if (job.needs_run) job.arena.child_allocator = backing.allocator();
             }
+            defer {
+                for (jobs) |*job| {
+                    if (job.needs_run) job.arena.child_allocator = job.original_backing;
+                }
+            }
+            var queue: ModuleQueue = .{ .jobs = jobs };
+            var group: std.Io.Group = .init;
+            defer group.cancel(self.io);
+            for (0..workers) |_| group.async(self.io, ModuleQueue.work, .{&queue});
+            try group.await(self.io);
         }
-
-        // Finish each durable module once. Contract bounds are explicit and
-        // imported identities resolve during global semantics.
-        for (self.module_graphs.items, 0..) |*module, module_index| {
-            if (module.semantic.local_semantics_complete) continue;
-            const module_allocator = if (self.options.module_cache != null)
-                self.module_entries.items[module_index].allocator()
-            else
-                self.allocator;
-            const stats = try module_semantizer.finish(
-                module_allocator,
-                module,
-                groups.items[module_index].files.items,
-                self.diagnostics,
-            );
-            self.module_lowered_functions += stats.lowered_functions;
+        // Publish in source module order, never worker completion order. Copy
+        // diagnostic text into the invocation's storage before task cleanup.
+        var failure: ?anyerror = null;
+        for (jobs, 0..) |*job, index| {
+            for (job.diagnostics.list.items) |message|
+                try self.diagnostics.add(message.loc, message.kind, "{s}", .{message.msg});
+            if (failure == null) failure = job.failure;
+            self.module_lowered_functions += job.stats.lowered_functions;
             if (self.options.module_cache != null)
-                self.module_entries.items[module_index].graph = module.*;
+                self.module_entries.items[index].graph = self.module_graphs.items[index];
         }
+        if (failure) |err| return err;
 
         // Cached graphs are immutable module-local artifacts.
         if (!self.diagnostics.hasErrors()) if (self.options.module_cache) |session| {
@@ -475,6 +506,45 @@ pub const FrontendPipeline = struct {
         );
         self.global_semantic_ns = @intCast(std.Io.Timestamp.now(self.io, .boot).nanoseconds - global_start);
     }
+
+    const ModuleJob = struct {
+        arena: *std.heap.ArenaAllocator,
+        original_backing: std.mem.Allocator,
+        needs_run: bool,
+        allocator: std.mem.Allocator,
+        graph: *module_sg.ModuleSemanticGraph,
+        dir: []const u8,
+        files: []module_sg.FileInput,
+        target: @import("../1_base/target.zig").Config,
+        diagnostics: diag.Diagnostics,
+        stats: module_semantizer.BuildStats = .{},
+        failure: ?anyerror = null,
+
+        fn run(job: *ModuleJob) void {
+            if (job.graph.semantic.local_semantics_complete) return;
+            job.graph.* = module_sg.buildForTarget(job.allocator, job.dir, job.files, job.target) catch |err| {
+                job.failure = err;
+                return;
+            };
+            job.stats = module_semantizer.finish(job.allocator, job.graph, job.files, &job.diagnostics) catch |err| {
+                job.failure = err;
+                return;
+            };
+        }
+    };
+
+    const ModuleQueue = struct {
+        jobs: []ModuleJob,
+        next: std.atomic.Value(usize) = .init(0),
+
+        fn work(queue: *ModuleQueue) void {
+            while (true) {
+                const index = queue.next.fetchAdd(1, .monotonic);
+                if (index >= queue.jobs.len) return;
+                queue.jobs[index].run();
+            }
+        }
+    };
 
     fn hashFile(hash: *cache.ContentHash, file: module_sg.FileInput) void {
         cache.hashBytes(hash, file.path);
@@ -509,7 +579,11 @@ pub const FrontendPipeline = struct {
             for (self.module_entries.items) |entry| entry.release();
             self.module_entries.clearRetainingCapacity();
         } else {
-            for (self.module_graphs.items) |*graph| graph.deinit(self.allocator);
+            for (self.module_graphs.items, self.module_arenas.items) |*graph, *arena| {
+                graph.deinit(arena.allocator());
+                arena.deinit();
+            }
+            self.module_arenas.clearRetainingCapacity();
         }
         self.module_graphs.clearRetainingCapacity();
     }

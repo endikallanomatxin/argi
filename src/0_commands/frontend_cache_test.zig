@@ -24,13 +24,18 @@ fn compile(files: []const sf.SourceFile, session: ?*ModuleCache, options: fronte
 }
 
 fn compileForTarget(files: []const sf.SourceFile, session: ?*ModuleCache, options: frontend.FrontendPipeline.SemantizingOptions, target: @import("../1_base/target.zig").Config) !Result {
+    return compileWithExecution(files, session, options, target, std.testing.io, 1);
+}
+
+fn compileWithExecution(files: []const sf.SourceFile, session: ?*ModuleCache, options: frontend.FrontendPipeline.SemantizingOptions, target: @import("../1_base/target.zig").Config, io: std.Io, jobs: usize) !Result {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
     var diagnostics = diag.Diagnostics.init(&allocator, files);
     defer diagnostics.deinit();
-    var pipeline = frontend.FrontendPipeline.init(allocator, std.testing.io, &diagnostics, .{
+    var pipeline = frontend.FrontendPipeline.init(allocator, io, &diagnostics, .{
         .module_cache = session,
+        .module_jobs = jobs,
         .semantizing = options,
         .target = target,
     });
@@ -641,4 +646,78 @@ test "frontend module cache preserves scoped implementation bodies" {
     defer rejected.deinit();
     try std.testing.expect(rejected.failure != null);
     try std.testing.expect(std.mem.indexOf(u8, rejected.diagnostics, "incompatible associated result") != null);
+}
+
+test "parallel module semantics preserves IR across cache lifetimes and edits" {
+    var threaded = std.Io.Threaded.init(std.heap.page_allocator, .{ .async_limit = .limited(3) });
+    defer threaded.deinit();
+    const io = threaded.io();
+    var session = ModuleCache.init(std.testing.allocator, .{});
+    defer session.deinit();
+    const files = [_]sf.SourceFile{
+        .{ .path = "app/main.rg", .code = main_source },
+        .{ .path = "dep/answer.rg", .code = dep_source },
+        .{ .path = "other/extra.rg", .code = "extra() -> (.result: Int32) := { result = 11 }" },
+    };
+    const serial = try compileWithExecution(&files, null, .{}, .{}, io, 1);
+    defer serial.deinit();
+    const cold = try compileWithExecution(&files, &session, .{}, .{}, io, 4);
+    defer cold.deinit();
+    try std.testing.expectEqual(null, cold.failure);
+    try std.testing.expectEqualStrings(serial.ir, cold.ir);
+    try std.testing.expectEqualStrings(serial.diagnostics, cold.diagnostics);
+    try std.testing.expectEqual(@as(usize, 3), cold.misses);
+    const warm = try compileWithExecution(&files, &session, .{}, .{}, io, 4);
+    defer warm.deinit();
+    try std.testing.expectEqual(@as(usize, 3), warm.hits);
+    try std.testing.expectEqualStrings(serial.ir, warm.ir);
+    var edited = files;
+    edited[1].code = "answer() -> (.result: Int32) := { result = 9 }";
+    const changed = try compileWithExecution(&edited, &session, .{}, .{}, io, 4);
+    defer changed.deinit();
+    const changed_serial = try compileWithExecution(&edited, null, .{}, .{}, io, 1);
+    defer changed_serial.deinit();
+    try std.testing.expectEqual(@as(usize, 2), changed.hits);
+    try std.testing.expectEqual(@as(usize, 1), changed.misses);
+    try std.testing.expectEqual(null, changed.failure);
+    try std.testing.expectEqualStrings(changed_serial.ir, changed.ir);
+}
+
+test "parallel module semantics retains deterministic local failure diagnostics" {
+    var threaded = std.Io.Threaded.init(std.heap.page_allocator, .{ .async_limit = .limited(3) });
+    defer threaded.deinit();
+    const io = threaded.io();
+    const files = [_]sf.SourceFile{
+        .{ .path = "app/main.rg", .code = "main() -> () := {}" },
+        .{ .path = "first/bad.rg", .code = "same() -> () := {}\nsame() -> () := {}" },
+        .{ .path = "second/bad.rg", .code = "duplicate() -> () := {}\nduplicate() -> () := {}" },
+    };
+    const serial = try compileWithExecution(&files, null, .{}, .{}, io, 1);
+    defer serial.deinit();
+    try std.testing.expect(serial.failure != null);
+    try std.testing.expect(serial.diagnostics.len != 0);
+    var session = ModuleCache.init(std.testing.allocator, .{});
+    defer session.deinit();
+    for (0..3) |_| {
+        const parallel = try compileWithExecution(&files, &session, .{}, .{}, io, 4);
+        defer parallel.deinit();
+        try std.testing.expectEqual(serial.failure, parallel.failure);
+        try std.testing.expectEqualStrings(serial.diagnostics, parallel.diagnostics);
+        try std.testing.expectEqual(@as(usize, 0), session.entries.items.len);
+    }
+}
+
+test "parallel module semantics permits inline execution when async is unavailable" {
+    var threaded = std.Io.Threaded.init(std.heap.page_allocator, .{ .async_limit = .nothing });
+    defer threaded.deinit();
+    const files = [_]sf.SourceFile{
+        .{ .path = "app/main.rg", .code = main_source },
+        .{ .path = "dep/answer.rg", .code = dep_source },
+    };
+    const parallel = try compileWithExecution(&files, null, .{}, .{}, threaded.io(), 4);
+    defer parallel.deinit();
+    const serial = try compile(files[0..], null, .{});
+    defer serial.deinit();
+    try std.testing.expectEqual(null, parallel.failure);
+    try std.testing.expectEqualStrings(serial.ir, parallel.ir);
 }

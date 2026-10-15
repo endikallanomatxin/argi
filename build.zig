@@ -168,6 +168,9 @@ pub fn build(b: *std.Build) void {
     });
     benchmark_mod.addOptions("frontend_build_options", frontend_build_options);
     const benchmark_exe = b.addExecutable(.{ .name = "frontend-benchmark", .root_module = benchmark_mod });
+    const benchmark_install = b.addInstallArtifact(benchmark_exe, .{});
+    const benchmark_build = b.step("build-frontend-benchmark", "Build and install the frontend benchmark without running it");
+    benchmark_build.dependOn(&benchmark_install.step);
     const benchmark_run = b.addRunArtifact(benchmark_exe);
     if (b.args) |args| benchmark_run.addArgs(args);
     const benchmark_step = b.step("benchmark-frontend", "Measure clean and reused frontend compilations");

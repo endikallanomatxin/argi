@@ -103,6 +103,12 @@ feature first.
   `zig build -Doptimize=ReleaseSafe benchmark-frontend -- <module-directory>`
   (optional iteration count). It compares clean/reused frontend work and edits;
   source collection, codegen, and linking are outside these timings.
+  The parallel ModuleSema experiment accepts `--frontend-jobs N` on CLI builds
+  (default auto: half the detected logical CPUs, capped at 8). Use 1 when
+  an outer build already schedules many compiler processes. Fixture helpers and
+  `argi test` select one frontend worker; concurrency tests explicitly override it.
+  Pass `[iterations] [frontend-jobs]` to benchmark-frontend to compare
+  bounded worker counts. Keep benchmark runs separate from active test suites.
 
 - When investigating compiler memory growth or recursive function-summary
   expansion, run focused tests serially with `-j1 -Dtest-jobs=1` and apply a

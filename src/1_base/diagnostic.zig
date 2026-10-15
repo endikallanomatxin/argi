@@ -22,6 +22,7 @@ pub const Diagnostics = struct {
     source_files: []const sf.SourceFile, // slice inmutable
     source_db: source_db.SourceDb,
     owned_source_files: ?[]sf.SourceFile = null,
+    owns_source_db: bool = true,
     list: std.array_list.Managed(Diagnostic),
 
     pub fn init(
@@ -36,13 +37,26 @@ pub const Diagnostics = struct {
         };
     }
 
+    /// A task-local bag over a frozen source index. The owner must outlive it;
+    /// borrowed bags cannot append sources.
+    pub fn initBorrowed(a: *const std.mem.Allocator, owner: *const Diagnostics) Diagnostics {
+        return .{
+            .arena = a,
+            .source_files = owner.source_files,
+            .source_db = owner.source_db,
+            .owns_source_db = false,
+            .list = std.array_list.Managed(Diagnostic).init(a.*),
+        };
+    }
+
     pub fn deinit(self: *Diagnostics) void {
         self.list.deinit();
-        self.source_db.deinit(self.arena.*);
+        if (self.owns_source_db) self.source_db.deinit(self.arena.*);
         if (self.owned_source_files) |files| self.arena.free(files);
     }
 
     pub fn appendSource(self: *Diagnostics, source: sf.SourceFile) !source_db.FileId {
+        std.debug.assert(self.owns_source_db);
         const files = try self.arena.alloc(sf.SourceFile, self.source_files.len + 1);
         errdefer self.arena.free(files);
         @memcpy(files[0..self.source_files.len], self.source_files);

@@ -46,6 +46,7 @@ fn printHelp() void {
     std.debug.print("  help                                   Show this help\n", .{});
     std.debug.print("\nBuild flags:\n", .{});
     std.debug.print("  --output <path>                        Write the final binary there\n", .{});
+    std.debug.print("  --frontend-jobs <auto|count>            Module workers (default: auto; half CPUs, capped at 8)\n", .{});
     std.debug.print("  --emit-llvm <path>                     Write the emitted LLVM IR there\n", .{});
     std.debug.print("  --emit-obj <path>                      Write the object file there as an extra output\n", .{});
     std.debug.print("  --just-emit-obj <path>                 Emit an object file there and skip final linking\n", .{});

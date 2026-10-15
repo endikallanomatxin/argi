@@ -15,7 +15,7 @@ const Sample = struct {
     misses: usize = 0,
 };
 
-fn measure(io: std.Io, files: []const sf.SourceFile, session: ?*ModuleCache, edit: ?usize, revision: usize) !Sample {
+fn measure(io: std.Io, files: []const sf.SourceFile, session: ?*ModuleCache, edit: ?usize, revision: usize, jobs: usize) !Sample {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -25,6 +25,7 @@ fn measure(io: std.Io, files: []const sf.SourceFile, session: ?*ModuleCache, edi
     defer diagnostics.deinit();
     var pipeline = frontend.FrontendPipeline.init(allocator, io, &diagnostics, .{
         .collect_stats = true,
+        .module_jobs = jobs,
         .module_cache = session,
     });
     defer pipeline.deinit();
@@ -49,16 +50,16 @@ fn milliseconds(ns: u64, iterations: usize) f64 {
     return @as(f64, @floatFromInt(ns)) / @as(f64, @floatFromInt(iterations)) / 1_000_000;
 }
 
-fn benchmark(io: std.Io, files: []const sf.SourceFile, name: []const u8, edit: ?usize, iterations: usize, reuse: bool) !void {
+fn benchmark(io: std.Io, files: []const sf.SourceFile, name: []const u8, edit: ?usize, iterations: usize, reuse: bool, jobs: usize) !void {
     var session = ModuleCache.init(std.heap.page_allocator, .{});
     defer session.deinit();
     const cache = if (reuse) &session else null;
     // Prime both paths before timing to avoid mixing initial process/LLVM setup
     // with steady-state rebuilds. A cold session is reported separately.
-    _ = try measure(io, files, cache, null, 0);
+    _ = try measure(io, files, cache, null, 0, jobs);
     var totals: Sample = .{};
     for (0..iterations) |index| {
-        const sample = try measure(io, files, cache, edit, index);
+        const sample = try measure(io, files, cache, edit, index, jobs);
         inline for (std.meta.fields(Sample)) |field| @field(totals, field.name) += @field(sample, field.name);
     }
     std.debug.print("{s},{s},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d:.3},{d},{d},{d:.2}\n", .{
@@ -74,12 +75,15 @@ fn benchmark(io: std.Io, files: []const sf.SourceFile, name: []const u8, edit: ?
 pub fn main(init: std.process.Init) !void {
     var allocator = init.arena.allocator();
     const args = try init.minimal.args.toSlice(allocator);
-    if (args.len < 2 or args.len > 3) {
-        std.debug.print("Usage: zig build benchmark-frontend -- <module-directory> [iterations]\n", .{});
+    if (args.len < 2 or args.len > 4) {
+        std.debug.print("Usage: zig build benchmark-frontend -- <module-directory> [iterations] [frontend-jobs]\n", .{});
         return error.InvalidArguments;
     }
-    const iterations = if (args.len == 3) try std.fmt.parseInt(usize, args[2], 10) else 10;
+    const iterations = if (args.len >= 3) try std.fmt.parseInt(usize, args[2], 10) else 10;
     if (iterations == 0) return error.InvalidArguments;
+    const policy: @import("0_commands/frontend_jobs.zig").Jobs = if (args.len == 4) try @import("0_commands/frontend_jobs.zig").Jobs.parse(args[3]) else .auto;
+    const jobs = policy.resolve();
+    std.debug.print("Frontend jobs: {d}\n", .{jobs});
     const dir = try std.fs.path.resolve(allocator, &.{args[1]});
     const files = try sf.collectModule(&allocator, init.io, "core", dir);
     var local: ?usize = null;
@@ -94,7 +98,7 @@ pub fn main(init: std.process.Init) !void {
     }
     var cold = ModuleCache.init(std.heap.page_allocator, .{});
     defer cold.deinit();
-    const sample = try measure(init.io, files.items, &cold, null, 0);
+    const sample = try measure(init.io, files.items, &cold, null, 0, jobs);
     std.debug.print("Cold session: {d:.3} ms, {d} modules, {d:.2} MiB retained\n", .{
         milliseconds(sample.total, 1),                                cold.entries.items.len,
         @as(f64, @floatFromInt(cold.retained_bytes)) / (1024 * 1024),
@@ -102,7 +106,7 @@ pub fn main(init: std.process.Init) !void {
     std.debug.print("scenario,mode,frontend_ms,tokenizing_ms,syntaxing_ms,module_ms,global_ms,safety_ms,hits,misses,retained_MiB\n", .{});
     for ([_][]const u8{ "unchanged", "local_edit", "import_edit", "core_edit" }, [_]?usize{ null, local, imported, core }, 0..) |name, edit, index| {
         if (index != 0 and edit == null) continue;
-        try benchmark(init.io, files.items, name, edit, iterations, false);
-        try benchmark(init.io, files.items, name, edit, iterations, true);
+        try benchmark(init.io, files.items, name, edit, iterations, false, jobs);
+        try benchmark(init.io, files.items, name, edit, iterations, true, jobs);
     }
 }

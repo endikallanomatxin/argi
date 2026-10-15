@@ -8,6 +8,7 @@ pub const BuildFlags = struct {
     show_semantic_graph: bool = false,
     stats: bool = false,
     use_cache: bool = true,
+    frontend_jobs: @import("frontend_jobs.zig").Jobs = .auto,
     cc: ?[]const u8 = null,
     cc_args: []const []const u8 = &.{},
     c_sysroot: ?[]const u8 = null,
@@ -61,7 +62,11 @@ pub fn parseBuildArgs(allocator: std.mem.Allocator, args: []const []const u8) !P
     var idx: usize = 0;
     while (idx < args.len) : (idx += 1) {
         const arg = args[idx];
-        if (std.mem.eql(u8, arg, "--on-build-error-show-cascade")) {
+        if (std.mem.eql(u8, arg, "--frontend-jobs")) {
+            idx += 1;
+            if (idx >= args.len) return error.MissingFlagValue;
+            parsed.flags.frontend_jobs = try @import("frontend_jobs.zig").Jobs.parse(args[idx]);
+        } else if (std.mem.eql(u8, arg, "--on-build-error-show-cascade")) {
             parsed.flags.show_cascade = true;
         } else if (std.mem.eql(u8, arg, "--on-build-error-show-syntax-tree")) {
             parsed.flags.show_syntax_tree = true;
@@ -548,4 +553,15 @@ test "build flags keep target C driver arguments separate from Argi sysroot" {
     try std.testing.expectEqualStrings("--target=aarch64-linux-gnu", parsed.flags.cc_args[0]);
     try std.testing.expectEqualStrings("/target", parsed.flags.c_sysroot.?);
     try std.testing.expectEqualStrings("/argi", parsed.flags.sysroot_path.?);
+}
+
+test "frontend worker counts require a bounded positive integer" {
+    const allocator = std.testing.allocator;
+    const parsed = try parseBuildArgs(allocator, &.{ "--frontend-jobs", "4" });
+    defer allocator.free(parsed.flags.native_inputs);
+    defer allocator.free(parsed.flags.cc_args);
+    try std.testing.expectEqual(@as(usize, 4), parsed.flags.frontend_jobs.count);
+    for ([_][]const u8{ "0", "257", "-1", "many" }) |value|
+        try std.testing.expectError(error.InvalidFrontendJobs, parseBuildArgs(allocator, &.{ "--frontend-jobs", value }));
+    try std.testing.expectError(error.MissingFlagValue, parseBuildArgs(allocator, &.{"--frontend-jobs"}));
 }
