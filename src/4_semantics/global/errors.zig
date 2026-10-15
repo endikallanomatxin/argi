@@ -3,6 +3,7 @@ const module_sg = @import("../module/graph.zig");
 const module_entities = @import("../module/entities.zig");
 const global_sg = @import("graph.zig");
 const globalizer = @import("globalizer.zig");
+const reachability = @import("reachability.zig");
 const reach_context = @import("reach_context.zig");
 const resolution = @import("resolution.zig");
 const core_mod = @import("core.zig");
@@ -15,23 +16,50 @@ pub const Stats = struct {
 };
 
 pub const Resolver = struct {
+    const ReasonCandidate = struct { function: global_sg.GlobalFunctionId, declared: global_sg.GlobalTypeId };
     allocator: std.mem.Allocator,
     graph: *global_sg.GlobalSemanticGraph,
     modules: []const module_sg.ModuleSemanticGraph,
     offsets: []const globalizer.Offsets,
     core: *core_mod.Resolver,
     stats: Stats = .{},
+    reason_candidates: std.ArrayList(ReasonCandidate) = .empty,
+    collected_reasons: std.ArrayList(global_sg.GlobalVariantId) = .empty,
+
+    pub fn deinit(self: *Resolver) void {
+        self.reason_candidates.deinit(self.allocator);
+        self.collected_reasons.deinit(self.allocator);
+    }
 
     /// Compute effective reason summaries until recursive call chains stop
     /// changing. Open inferred signatures grow their declared reason choice;
     /// explicit signatures retain a separate subset summary.
-    pub fn inferFunctionErrorReasons(self: *Resolver) !bool {
+    pub fn inferFunctionErrorReasons(self: *Resolver, reachable: ?*const reachability.FunctionSet) !bool {
+        // Signatures can change between global rounds. Rebuild this list on
+        // every invocation, but resolve each signature only once while its
+        // reason summaries converge. Only scratch capacity survives the pass.
+        self.reason_candidates.clearRetainingCapacity();
+        for (self.graph.functions.items, 0..) |*function, raw| {
+            const id: global_sg.GlobalFunctionId = @enumFromInt(raw);
+            // A newly specialized open signature may be inspected before its
+            // call joins the execution graph. Preserve those signature roots.
+            if (reachable) |set| if (!set.contains(id) and !function.flags.uses_inferred_error_reasons) continue;
+            const declared = self.functionReasonType(function.*) orelse {
+                function.inferred_error_reasons = null;
+                continue;
+            };
+            if (function.body == null) {
+                if (function.inferred_error_reasons == null) function.inferred_error_reasons = declared;
+                continue;
+            }
+            try self.reason_candidates.append(self.allocator, .{ .function = id, .declared = declared });
+        }
         var any_changed = false;
         var round: usize = 0;
         while (round <= self.graph.functions.items.len) : (round += 1) {
             var changed = false;
-            for (0..self.graph.functions.items.len) |raw| {
-                if (try self.inferOne(@enumFromInt(@as(u32, @intCast(raw))))) changed = true;
+            for (self.reason_candidates.items) |candidate| {
+                if (try self.inferOne(candidate.function, candidate.declared)) changed = true;
             }
             any_changed = any_changed or changed;
             if (!changed) break;
@@ -39,27 +67,20 @@ pub const Resolver = struct {
         return any_changed;
     }
 
-    fn inferOne(self: *Resolver, function_id: global_sg.GlobalFunctionId) !bool {
+    fn inferOne(self: *Resolver, function_id: global_sg.GlobalFunctionId, declared: global_sg.GlobalTypeId) !bool {
         const function = &self.graph.functions.items[@intFromEnum(function_id)];
-        const declared = self.functionReasonType(function.*) orelse {
-            function.inferred_error_reasons = null;
-            return false;
-        };
-        const body = function.body orelse {
-            if (function.inferred_error_reasons == null) function.inferred_error_reasons = declared;
-            return false;
-        };
-        var collected: std.ArrayList(global_sg.GlobalVariantId) = .empty;
-        defer collected.deinit(self.allocator);
+        const body = function.body.?;
+        const collected = &self.collected_reasons;
+        collected.clearRetainingCapacity();
         // Output defaults execute before the body and can supply its result
         // unchanged. Include their reasons just like explicit assignments.
         for (self.graph.binding_refs.items[function.output_bindings.start..][0..function.output_bindings.len]) |binding| {
             if (self.graph.binding(binding).initialization) |value| {
-                try self.markErrableNode(value, &collected);
-                try self.collectNode(function.*, value, &collected);
+                try self.markErrableNode(value, collected);
+                try self.collectNode(function.*, value, collected);
             }
         }
-        try self.collectBlock(function.*, body, &collected);
+        try self.collectBlock(function.*, body, collected);
 
         if (function.flags.uses_inferred_error_reasons) {
             const changed = try self.replaceOpenReasons(declared, collected.items);
@@ -383,6 +404,7 @@ pub const Resolver = struct {
     /// first resolves. Keep transparent result unwrapping tied to the final
     /// payload identity rather than retaining its provisional structural shape.
     pub fn refreshPropagationResults(self: *Resolver) bool {
+        if (self.graph.error_propagations.items.len == 0 and self.graph.error_contexts.items.len == 0) return false;
         var changed = false;
         for (self.graph.nodes.items) |*node| {
             switch (node.content) {
@@ -793,4 +815,68 @@ test "error context accepts only read-only character pointers" {
     try std.testing.expect(resolver.validContextType(@enumFromInt(2)));
     try std.testing.expect(!resolver.validContextType(@enumFromInt(3)));
     try std.testing.expect(!resolver.validContextType(@enumFromInt(4)));
+}
+
+test "error inference reuses scratch storage without retaining prior reasons" {
+    const allocator = std.testing.allocator;
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    try graph.variants.append(allocator, .{ .name = try graph.addString(allocator, "first"), .payload_type = null, .source = source, .value = 0 });
+    try graph.variants.append(allocator, .{ .name = try graph.addString(allocator, "second"), .payload_type = null, .source = source, .value = 0 });
+    for ([_]primitives.Range(global_sg.GlobalVariantId){ .{ .start = 0, .len = 2 }, .{ .start = 0, .len = 1 }, .{ .start = 1, .len = 1 } }) |variants|
+        try graph.types.append(allocator, .{ .structural_choice = .{ .variants = variants } });
+    const Helper = struct {
+        fn errable(g: *global_sg.GlobalSemanticGraph, a: std.mem.Allocator, reason: global_sg.GlobalTypeId) !global_sg.GlobalTypeId {
+            const fields: u32 = @intCast(g.fields.items.len);
+            try g.fields.append(a, .{ .name = try g.addString(a, "reason"), .ty = reason, .source = source });
+            const payload: global_sg.GlobalTypeId = @enumFromInt(g.types.items.len);
+            try g.types.append(a, .{ .structural = .{ .fields = .{ .start = fields, .len = 1 } } });
+            const variants: u32 = @intCast(g.variants.items.len);
+            try g.variants.append(a, .{ .name = try g.addString(a, "error"), .payload_type = payload, .source = source, .value = 0 });
+            const result: global_sg.GlobalTypeId = @enumFromInt(g.types.items.len);
+            try g.types.append(a, .{ .structural_choice = .{ .variants = .{ .start = variants, .len = 1 } } });
+            return result;
+        }
+    };
+    const declared = try Helper.errable(&graph, allocator, @enumFromInt(0));
+    const output: u32 = @intCast(graph.fields.items.len);
+    try graph.fields.append(allocator, .{ .name = try graph.addString(allocator, "result"), .ty = declared, .source = source });
+    for ([_]global_sg.GlobalTypeId{ @enumFromInt(1), @enumFromInt(2) }, 0..) |reason, index| {
+        const ty = try Helper.errable(&graph, allocator, reason);
+        try graph.nodes.append(allocator, .{ .source = source, .ty = ty, .content = .{ .choice_literal = .{ .choice_type = ty, .variant = global_types.findVariant(&graph, ty, "error").?.id, .payload = null } } });
+        try graph.blocks.append(allocator, .{ .nodes = .{ .start = 0, .len = 0 }, .ret_val = @enumFromInt(index) });
+        try graph.functions.append(allocator, .{ .declaration = @enumFromInt(index), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = output, .len = 1 }, .body = @enumFromInt(index), .inferred_error_reasons = reason });
+    }
+    var failing = std.testing.FailingAllocator.init(allocator, .{});
+    var resolver: Resolver = .{ .allocator = failing.allocator(), .graph = &graph, .modules = &.{}, .offsets = &.{}, .core = undefined };
+    defer resolver.deinit();
+    var reachable = reachability.FunctionSet.init(allocator);
+    defer reachable.deinit();
+    failing.fail_index = 0;
+    try std.testing.expect(!try resolver.inferFunctionErrorReasons(&reachable));
+    failing.fail_index = std.math.maxInt(usize);
+    // Open signatures can be needed before a newly specialized call is reached.
+    graph.functions.items[0].flags.uses_inferred_error_reasons = true;
+    graph.functions.items[0].inferred_error_reasons = null;
+    graph.types.items[0] = .{ .inferred_choice = .{ .identity = 0, .kind = .reasons, .variants = .{ .start = 0, .len = 1 } } };
+    try std.testing.expect(!try resolver.inferFunctionErrorReasons(&reachable));
+    try std.testing.expectEqual(@as(?global_sg.GlobalTypeId, @enumFromInt(0)), graph.functions.items[0].inferred_error_reasons);
+    graph.functions.items[0].flags.uses_inferred_error_reasons = false;
+    graph.functions.items[0].inferred_error_reasons = @enumFromInt(1);
+    graph.types.items[0] = .{ .structural_choice = .{ .variants = .{ .start = 0, .len = 2 } } };
+    try std.testing.expect(!try resolver.inferFunctionErrorReasons(null));
+    failing.fail_index = failing.alloc_index;
+    try std.testing.expect(!try resolver.inferFunctionErrorReasons(null));
+    failing.fail_index = std.math.maxInt(usize);
+    graph.blocks.items[0].ret_val = @enumFromInt(1);
+    try std.testing.expect(try resolver.inferFunctionErrorReasons(null));
+    const inferred = graph.functions.items[0].inferred_error_reasons.?;
+    try std.testing.expect(global_types.findVariant(&graph, inferred, "second") != null);
+    try std.testing.expect(global_types.findVariant(&graph, inferred, "first") == null);
+    // A later global round can finish or change a signature in place.
+    graph.fields.items[output].ty = graph.nodes.items[0].ty.?;
+    try std.testing.expect(try resolver.inferFunctionErrorReasons(null));
+    for (graph.functions.items) |function|
+        try std.testing.expectEqual(@as(u32, 0), global_types.variants(&graph, function.inferred_error_reasons.?).?.len);
 }

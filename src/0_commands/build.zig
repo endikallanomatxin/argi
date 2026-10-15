@@ -175,6 +175,8 @@ fn printStats(
     std.debug.print("      field access types:      {d:.3} ms\n", .{milliseconds(semantic_timings.field_access_types_ns)});
     std.debug.print("      sugar types:             {d:.3} ms\n", .{milliseconds(semantic_timings.sugar_types_ns)});
     std.debug.print("    error reason inference:    {d:.3} ms\n", .{milliseconds(semantic_timings.error_inference_ns)});
+    std.debug.print("      reason summaries:        {d:.3} ms\n", .{milliseconds(semantic_timings.error_summary_ns)});
+    std.debug.print("      propagation refresh:     {d:.3} ms\n", .{milliseconds(semantic_timings.error_refresh_ns)});
     std.debug.print("    implicit generic constraints: {d:.3} ms\n", .{milliseconds(semantic_timings.generic_constraints_ns)});
     const generic_selection = semantic.generic_selection;
     std.debug.print("  generic function applicability (phase times are disjoint):\n", .{});

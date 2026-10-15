@@ -1128,6 +1128,11 @@ pub const Resolver = struct {
             };
             const located = self.generics.findTypeParameterized(identity.base) orelse continue;
             const storage = &self.modules[located.module_index].semantic.parameterized_storage;
+            const parameters = storage.comptime_parameters.items[located.parameterized.parameters.start..][0..located.parameterized.parameters.len];
+            const has_constraints = for (parameters) |parameter| {
+                if (parameter.kind == .type and parameter.constraint != null) break true;
+            } else false;
+            if (!has_constraints) continue;
             var bindings = try generic_mod.Resolver.Bindings.init(
                 self.allocator,
                 storage.comptime_parameters.items.len,
@@ -2643,4 +2648,26 @@ test "closed symbolic patterns compare without substitutions or graph mutation" 
     try graph.markTypeUnresolved(allocator, @enumFromInt(1));
     try std.testing.expect(!try resolver.symbolicTypesEqual(concrete, equivalent));
     try std.testing.expectEqual(@as(usize, 2), graph.types.items.len);
+}
+
+test "unconstrained generic types need no constraint substitutions" {
+    const allocator = std.testing.allocator;
+    var module: module_sg.ModuleSemanticGraph = .{};
+    defer module.deinit(allocator);
+    try module.semantic.parameterized_storage.comptime_parameters.append(allocator, .{ .name = .{ .start = 0, .len = 0 }, .kind = .type });
+    try module.semantic.parameterized_storage.parameterized_types.append(allocator, .{ .declaration = @enumFromInt(0), .parameters = .{ .start = 0, .len = 1 }, .body = @enumFromInt(0) });
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    try graph.modules.append(allocator, .{ .dir = .{ .start = 0, .len = 0 }, .files = .{ .start = 0, .len = 0 }, .declarations = .{ .start = 0, .len = 1 } });
+    try graph.types.append(allocator, .{ .generic = .{ .base = @enumFromInt(0), .arguments = .{ .start = 0, .len = 1 } } });
+    try graph.types.append(allocator, .{ .builtin = .Int32 });
+    try graph.generic_arguments.append(allocator, .{ .name = .{ .start = 0, .len = 0 }, .value = .{ .type = @enumFromInt(1) } });
+    const modules = [_]module_sg.ModuleSemanticGraph{module};
+    const offsets = [_]globalizer.Offsets{std.mem.zeroes(globalizer.Offsets)};
+    var failing = std.testing.FailingAllocator.init(allocator, .{ .fail_index = 0 });
+    var generics: generic_mod.Resolver = .{ .allocator = failing.allocator(), .graph = &graph, .modules = &modules, .offsets = &offsets, .core = undefined };
+    defer generics.deinit();
+    var resolver: Resolver = .{ .allocator = failing.allocator(), .graph = &graph, .modules = &modules, .offsets = &offsets, .core = undefined, .generics = &generics };
+    defer resolver.deinit();
+    try std.testing.expectEqual(null, try resolver.findGenericTypeConstraintFailure());
 }

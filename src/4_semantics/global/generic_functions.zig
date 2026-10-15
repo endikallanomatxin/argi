@@ -2504,6 +2504,7 @@ pub const Resolver = struct {
             const propagated_error = global_types.findVariant(self.resolver.graph, propagated_ty, "error") orelse return error.InvalidParameterizedErrorPropagation;
             const propagated_error_payload = propagated_error.variant.payload_type orelse error_payload;
             var errors: errors_mod.Resolver = .{ .allocator = self.resolver.allocator, .graph = self.resolver.graph, .modules = self.resolver.modules, .offsets = self.resolver.offsets, .core = self.resolver.core };
+            defer errors.deinit();
             if (!errors.errorPayloadCanPropagate(error_payload, propagated_error_payload)) return error.IncompatibleParameterizedErrorPayload;
             try errors.absorbErrorPayloadReasons(error_payload, propagated_error_payload);
             const ok_fields = if (self.resolver.graph.types.items[@intFromEnum(ok_payload)] == .structural) global_types.fields(self.resolver.graph, ok_payload) else null;

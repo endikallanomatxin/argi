@@ -26,6 +26,15 @@ not allocate module-wide substitution bindings. Mixed concrete/symbolic comparis
 reuse the conservative shape filter before materialization, rejecting incompatible
 nominal identities without constructing irrelevant generic instances.
 
+Generic constraint diagnostics allocate substitutions only for declarations with
+applicable type constraints. Error inference rebuilds its candidate signatures
+on each global pass and reuses scratch capacity across functions and rounds;
+recursive convergence and signature changes remain observable. Executable builds
+infer summaries for reached functions, including inferred-signature roots;
+exhaustive checks and editor diagnostics retain all bodies. Propagation refresh
+skips its node scan when neither propagation nor context records exist. Summary
+inference and propagation refresh have separate profiling counters.
+
 Reprofile per-module substitution maps and full-pool materialization sweeps
 before replacing them with function-local storage or unresolved-item worklists.
 Preserve signature binding/default identities and speculative rollback when

@@ -64,6 +64,8 @@ pub const Stats = struct {
         field_access_types_ns: u64 = 0,
         sugar_types_ns: u64 = 0,
         error_inference_ns: u64 = 0,
+        error_summary_ns: u64 = 0,
+        error_refresh_ns: u64 = 0,
         cleanup_ns: u64 = 0,
         implicit_destructor_ns: u64 = 0,
         generic_constraints_ns: u64 = 0,
@@ -385,6 +387,7 @@ pub fn semantizeWithOptions(
         .offsets = relocation.offsets.items,
         .core = &core,
     };
+    defer errors.deinit();
     var dispatch = dispatch_mod.Resolver{
         .core = &core,
         .generic_functions = &generic_functions,
@@ -506,6 +509,8 @@ pub fn semantizeWithOptions(
     var profile_field_access_types_ns: i96 = 0;
     var profile_sugar_types_ns: i96 = 0;
     var profile_errors_ns: i96 = 0;
+    var profile_error_summary_ns: i96 = 0;
+    var profile_error_refresh_ns: i96 = 0;
     var profile_finalize_ns: i96 = 0;
     var profile_finalize_count: usize = 0;
 
@@ -593,8 +598,11 @@ pub fn semantizeWithOptions(
             if (try control.materializeSugarTypes()) changed = true;
             profileAccumulate(options.profile_io, sweep_start, &profile_sugar_types_ns);
             const errors_start = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
-            if (try errors.inferFunctionErrorReasons()) changed = true;
+            if (try errors.inferFunctionErrorReasons(reachable)) changed = true;
+            profileAccumulate(options.profile_io, errors_start, &profile_error_summary_ns);
+            const refresh_start = profileTimestamp(options.profile_io);
             if (errors.refreshPropagationResults()) changed = true;
+            profileAccumulate(options.profile_io, refresh_start, &profile_error_refresh_ns);
             if (options.profile_io) |io| profile_errors_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - errors_start;
             if (try completePropagatedReachCalls(&core, modules, relocation.offsets.items)) changed = true;
             // Evidence selected by newly specialized bodies belongs to this
@@ -878,6 +886,8 @@ pub fn semantizeWithOptions(
         .field_access_types_ns = @intCast(profile_field_access_types_ns),
         .sugar_types_ns = @intCast(profile_sugar_types_ns),
         .error_inference_ns = @intCast(profile_errors_ns),
+        .error_summary_ns = @intCast(profile_error_summary_ns),
+        .error_refresh_ns = @intCast(profile_error_refresh_ns),
         .cleanup_ns = @intCast(profile_finalize_ns),
         .implicit_destructor_ns = @intCast(ownership.profile_destructor_ns),
         .source_generic_selection_ns = @intCast(generic_functions.profile_source_selection_ns),

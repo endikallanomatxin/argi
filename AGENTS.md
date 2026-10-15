@@ -369,6 +369,9 @@ feature first.
   Automatic cleanup counts as Deinit use, and reached virtual construction
   proves all operations in its evidence. `argi check` and editor diagnostics
   use exhaustive body proofs, including unused concrete implementations.
+  Error-reason inference follows the same execution reachability, retaining
+  inferred-signature roots. Exhaustive checks infer every body. Rebuild candidate
+  signatures on each global pass; reuse only scratch capacity across passes.
 - Contract safety conformance is checked after concrete summaries converge.
   Static selection and virtual table construction share declaration validation
   and implementation proofs. Static conformance metadata belongs to GlobalSG,
