@@ -41,24 +41,24 @@ Allocation: Type = (
 -- are not themselves evidence that storage was acquired. Private bounds keep
 -- that assertion intact when the receipt crosses ordinary caller code.
 trusted_establish_allocation(
-        .storage     : UIntNative,
-        .size        : UIntNative,
-        .alignment   : UIntNative,
-        .deallocator : Virtual#(.contract: Deallocator),
-        .anchor      : &Any                              = erase_reference#(.t: UInt8)(.base = &allocation_static_anchor).reference,
-    ) -> (
-        .allocation : Allocation
-    ) := {
+    .storage     : UIntNative,
+    .size        : UIntNative,
+    .alignment   : UIntNative,
+    .deallocator : Virtual#(.contract: Deallocator),
+    .anchor      : &Any = erase_reference#(.t: UInt8)(
+        .base = &allocation_static_anchor
+    ).reference,
+) -> (.allocation: Allocation) := {
     _require_allocation_alignment(.alignment = alignment)
 
     if storage == 0 and size != 0 { abort }
     if storage % alignment != 0 { abort }
     if storage + size < storage { abort }
     allocation = (
-        .data               = raw_pointer#(.t: UInt8)(.address = storage).raw
-        .size               = size
-        .alignment          = alignment
-        .anchor             = anchor
+        .data = raw_pointer#(.t: UInt8)(.address = storage).raw
+        .size = size
+        .alignment = alignment
+        .anchor = anchor
         .deallocator        = deallocator
         ._storage_address   = storage
         ._storage_size      = size
@@ -71,14 +71,14 @@ trusted_establish_allocation(
 -- remain authoritative while forwarding moves the receipt. Establishment
 -- consumes that receipt through the ordinary move rules.
 establish_allocation(
-        .storage     : AcquiredStorage,
-        .size        : UIntNative,
-        .alignment   : UIntNative,
-        .deallocator : Virtual#(.contract: Deallocator),
-        .anchor      : &Any                              = erase_reference#(.t: UInt8)(.base = &allocation_static_anchor).reference,
-    ) -> (
-        .allocation : Allocation
-    ) := {
+    .storage     : AcquiredStorage,
+    .size        : UIntNative,
+    .alignment   : UIntNative,
+    .deallocator : Virtual#(.contract: Deallocator),
+    .anchor      : &Any = erase_reference#(.t: UInt8)(
+        .base = &allocation_static_anchor
+    ).reference,
+) -> (.allocation: Allocation) := {
     _require_allocation_alignment(.alignment = alignment)
 
     if size > storage._size { abort }
@@ -99,7 +99,8 @@ implement Deinit#(Allocation) (
         -- Cleanup may touch backing metadata; an ended region cannot be released.
         live ::= self&.anchor&
         data ::= raw_pointer#(.t: UInt8)(.address = self&._storage_address).raw
-        Deallocator#().deallocate(
+        Deallocator#(
+        ).deallocate(
             $&self&.deallocator
             .data      = data
             .size      = self&._release_size

@@ -4,51 +4,38 @@ Duration: Type = (._nanoseconds: UInt64)
 implement ImplicitlyCopyable#(Duration) ()
 
 implement Init#(Duration, (.nanoseconds: UInt64)) (
-        .Result : Type = Duration
-        .init   = (
-                .args : (.nanoseconds: UInt64)
-            ) -> (
-                .result : Result
-            ) {
-            nanoseconds ::= args.nanoseconds
+    .Result : Type = Duration
+    .init   = (.args: (.nanoseconds: UInt64)) -> (.result: Result) {
+        nanoseconds ::= args.nanoseconds
 
-            result = (._nanoseconds = nanoseconds)
-        }
-    )
+        result = (._nanoseconds = nanoseconds)
+    }
+)
 
-_duration_checked(
-        .value : Errable#(UInt64, (..out_of_range))
-    ) -> (
-        .result : Errable#(Duration, (..out_of_range))
-    ) := {
+_duration_checked(.value: Errable#(UInt64, (..out_of_range))) -> (
+    .result : Errable#(Duration, (..out_of_range))
+) := {
     match value {
         ..ok nanoseconds { result = ..ok Duration(.nanoseconds = nanoseconds) }
         ..error error { result = ..error error }
     }
 }
 
-_duration_scaled(
-        .value : UInt64,
-        .scale : UInt64
-    ) -> (
-        .result : Errable#(Duration, (..out_of_range))
-    ) := {
+_duration_scaled(.value: UInt64, .scale: UInt64) -> (
+    .result : Errable#(Duration, (..out_of_range))
+) := {
     result = _duration_checked(.value = checked_multiply(.left = value, .right = scale)).result
 }
 
-duration_from_microseconds(
-        .microseconds : UInt64
-    ) -> (
-        .result : Errable#(Duration, (..out_of_range))
-    ) := {
+duration_from_microseconds(.microseconds: UInt64) -> (
+    .result : Errable#(Duration, (..out_of_range))
+) := {
     result = _duration_scaled(.value = microseconds, .scale = 1000).result
 }
 
-duration_from_milliseconds(
-        .milliseconds : UInt64
-    ) -> (
-        .result : Errable#(Duration, (..out_of_range))
-    ) := {
+duration_from_milliseconds(.milliseconds: UInt64) -> (
+    .result : Errable#(Duration, (..out_of_range))
+) := {
     result = _duration_scaled(.value = milliseconds, .scale = 1000000).result
 }
 
@@ -59,7 +46,7 @@ duration_from_seconds(.seconds: UInt64) -> (.result: Errable#(Duration, (..out_o
 _nanoseconds_Duration(.self: &Duration) -> (.value: UInt64) := { value = self&._nanoseconds }
 
 implement NanosecondCount#(Duration) (
-    .Count            : Type                  = UInt64
+    .Count : Type = UInt64
     .nanosecond_count = _nanoseconds_Duration
 )
 
@@ -69,23 +56,13 @@ milliseconds(.self: &Duration) -> (.value: UInt64) := { value = self&._nanosecon
 
 seconds(.self: &Duration) -> (.value: UInt64) := { value = self&._nanoseconds / 1000000000 }
 
-add(
-        .left  : Duration,
-        .right : Duration
-    ) -> (
-        .result : Errable#(Duration, (..out_of_range))
-    ) := {
+add(.left: Duration, .right: Duration) -> (.result: Errable#(Duration, (..out_of_range))) := {
     result = _duration_checked(
         .value = checked_add(.left = left._nanoseconds, .right = right._nanoseconds)
     ).result
 }
 
-subtract(
-        .left  : Duration,
-        .right : Duration
-    ) -> (
-        .result : Errable#(Duration, (..out_of_range))
-    ) := {
+subtract(.left: Duration, .right: Duration) -> (.result: Errable#(Duration, (..out_of_range))) := {
     result = _duration_checked(
         .value = checked_subtract(.left = left._nanoseconds, .right = right._nanoseconds)
     ).result

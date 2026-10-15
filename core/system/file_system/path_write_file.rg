@@ -14,21 +14,17 @@ AllocatingFileWriting#(.PathValue: Type, .Provider: Type: Allocator#(Provider)):
     ) -> (.result: Result)
 )
 
-_path_write_file_c := (
-        .self : &FileSystem,
-        .path : &Char,
-        .text : &String,
-    ) -> (
-        .result : Errable#(
-            Void,
-            (
-                ..path_open_failed,
-                ..stream_write_failed,
-                ..stream_flush_failed,
-                ..stream_close_failed
-            )
+_path_write_file_c := (.self: &FileSystem, .path: &Char, .text: &String) -> (
+    .result : Errable#(
+        Void,
+        (
+            ..path_open_failed,
+            ..stream_write_failed,
+            ..stream_flush_failed,
+            ..stream_close_failed
         )
-    ) {
+    )
+) {
     assume ffi := self&._ffi
     open_result ::= File(.file_system = self, .path = path, .mode = ..write)
     file :: File
@@ -83,46 +79,37 @@ _path_write_file_c := (
     result = ..ok Void()
 }
 
-_path_write_file_string := (
-        .self : &FileSystem,
-        .path : &String,
-        .text : &String,
-    ) -> (
-        .result : Errable#(
-            Void,
-            (
-                ..path_open_failed,
-                ..stream_write_failed,
-                ..stream_flush_failed,
-                ..stream_close_failed
-            )
+_path_write_file_string := (.self: &FileSystem, .path: &String, .text: &String) -> (
+    .result : Errable#(
+        Void,
+        (
+            ..path_open_failed,
+            ..stream_write_failed,
+            ..stream_flush_failed,
+            ..stream_close_failed
         )
-    ) {
+    )
+) {
     assume ffi := self&._ffi
     c_path ::= as_c_string(path)
 
     result = write_file(self, .path = c_path, .text = text)
 }
 
-_path_write_file_view#(
-        .Provider : Type: Allocator#(Provider)
-    ) := (
-        .self      : &FileSystem,
-        .path      : StringView,
-        .text      : &String,
-        .allocator : $&Provider,
-    ) -> (
-        .result : Errable#(
-            Void,
-            (
-                ..path_open_failed,
-                ..stream_write_failed,
-                ..stream_flush_failed,
-                ..stream_close_failed,
-                ..out_of_memory
-            )
+_path_write_file_view#(.Provider: Type: Allocator#(Provider)) := (
+    .self: &FileSystem, .path: StringView, .text: &String, .allocator: $&Provider
+) -> (
+    .result : Errable#(
+        Void,
+        (
+            ..path_open_failed,
+            ..stream_write_failed,
+            ..stream_flush_failed,
+            ..stream_close_failed,
+            ..out_of_memory
         )
-    ) {
+    )
+) {
     assume ffi := self&._ffi
     assume allocator
 
@@ -137,21 +124,17 @@ _path_write_file_view#(
     }
 }
 
-_path_write_file_owned := (
-        .self : &FileSystem,
-        .path : &Path,
-        .text : &String,
-    ) -> (
-        .result : Errable#(
-            Void,
-            (
-                ..path_open_failed,
-                ..stream_write_failed,
-                ..stream_flush_failed,
-                ..stream_close_failed
-            )
+_path_write_file_owned := (.self: &FileSystem, .path: &Path, .text: &String) -> (
+    .result : Errable#(
+        Void,
+        (
+            ..path_open_failed,
+            ..stream_write_failed,
+            ..stream_flush_failed,
+            ..stream_close_failed
         )
-    ) {
+    )
+) {
     assume ffi := self&._ffi
 
     result = write_file(self, .path = &path&.text, .text = text)

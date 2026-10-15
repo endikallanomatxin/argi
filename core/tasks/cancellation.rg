@@ -4,27 +4,16 @@
 -- the language's transfer rules, independently of this native atomic storage.
 CancellationSource: Type = (._state: AtomicUInt32)
 
-implement Init#(
-    CancellationSource,
-    (
-        .ffi : $&ForeignFunctionInterface = reach ffi,
-    )
-) (
-        .Result : Type = Errable#(CancellationSource, (..out_of_memory))
-        .init   = (
-                .args : (
-                    .ffi : $&ForeignFunctionInterface = reach ffi,
-                )
-            ) -> (
-                .result : Result
-            ) {
-            ffi ::= args.ffi
+implement Init#(CancellationSource, (.ffi: $&ForeignFunctionInterface = reach ffi)) (
+    .Result : Type = Errable#(CancellationSource, (..out_of_memory))
+    .init   = (.args: (.ffi: $&ForeignFunctionInterface = reach ffi)) -> (.result: Result) {
+        ffi ::= args.ffi
 
-            state ::= AtomicUInt32(.ffi = ffi)!
+        state ::= AtomicUInt32(.ffi = ffi)!
 
-            result = ..ok(._state = ~state)
-        }
-    )
+        result = ..ok(._state = ~state)
+    }
+)
 
 implement Deinit#(CancellationSource) (
     .deinit = (.self: $&CancellationSource) -> () {
@@ -43,24 +32,21 @@ cancellation_token(.self: &CancellationSource) -> (.token: CancellationToken) :=
 cancel(.self: $&CancellationSource) -> () := { store($&self&._state, .value = 1) }
 
 is_cancelled(.self: CancellationToken) -> (.value: Bool) := {
-    value = [
-        load(&self._source&._state).value
-        != 0
-    ]
+    value = [load(&self._source&._state).value != 0]
 }
 
-CancellationContext: Type = (.token: ?CancellationToken = ..none, .deadline: ?Deadline = ..none)
+CancellationContext: Type = (
+    .token    : ?CancellationToken = ..none,
+    .deadline : ?Deadline = ..none
+)
 
 implement ImplicitlyCopyable#(CancellationContext) ()
 
 -- The caller supplies a monotonic reading to make checkpoints deterministic
 -- and avoid unnecessary system calls. Cancellation wins when both apply.
-check_cancelled(
-        .self : CancellationContext,
-        .now  : MonotonicInstant
-    ) -> (
-        .result : Errable#(Void, (..cancelled, ..deadline_exceeded)) = ..ok Void()
-    ) := {
+check_cancelled(.self: CancellationContext, .now: MonotonicInstant) -> (
+    .result : Errable#(Void, (..cancelled, ..deadline_exceeded)) = ..ok Void()
+) := {
     match self.token {
         ..none {}
         ..some entry {

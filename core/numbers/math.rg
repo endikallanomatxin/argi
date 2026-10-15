@@ -40,10 +40,7 @@ abs_float#(.t: Type: Float)(.value: t) -> (.result: t) := {
 
     result = _float_replace_bits(
         .value = value
-        .bits  = [
-            encoding.bits
-            % [encoding.fraction_unit * encoding.exponent_limit]
-        ]
+        .bits  = [encoding.bits % [encoding.fraction_unit * encoding.exponent_limit]]
     ).result
 }
 

@@ -5,6 +5,6 @@ once _acquire_foreign_function_interface := (.args: ()) -> (.result: ForeignFunc
 }
 
 implement Init#(ForeignFunctionInterface, ()) (
-    .Result : Type                                = ForeignFunctionInterface
+    .Result : Type = ForeignFunctionInterface
     .init   = _acquire_foreign_function_interface
 )

@@ -3,12 +3,12 @@ System: Type = (
     .memory         : $&Memory
     .page_allocator : $&PageAllocator
     .terminal       : $&Terminal
-    .args           : $&Arguments
+    .args : $&Arguments
     .env_vars       : $&EnvironmentVariables
     .file_system    : $&FileSystem
     .network        : $&Network
     .proc_man       : $&ProcessManager
-    .clock          : $&Clock
+    .clock : $&Clock
     .rand_gen       : $&RandomNumberGenerator
-    .ffi            : $&ForeignFunctionInterface
+    .ffi : $&ForeignFunctionInterface
 )

@@ -7,55 +7,32 @@ BufferedWriter#(.base_type: Type: Writer#(base_type)): Type = (
     .length : UIntNative
 )
 
-implement#(
-    .base_type : Type: Writer#(base_type)
-) Init#(
-    BufferedWriter#(.base_type: base_type),
-    (
-        .base   : $&base_type,
-        .buffer : ArrayView#(.t: UInt8),
-    )
+implement#(.base_type: Type: Writer#(base_type)) Init#(
+    BufferedWriter#(.base_type: base_type), (.base: $&base_type, .buffer: ArrayView#(.t: UInt8))
 ) (
-        .Result : Type = BufferedWriter#(.base_type: base_type)
-        .init   = (
-                .args : (
-                    .base   : $&base_type,
-                    .buffer : ArrayView#(.t: UInt8),
-                )
-            ) -> (
-                .result : Result
-            ) {
-            base ::= args.base
-            buffer ::= args.buffer
+    .Result : Type = BufferedWriter#(.base_type: base_type)
+    .init   = (.args: (.base: $&base_type, .buffer: ArrayView#(.t: UInt8))) -> (.result: Result) {
+        base ::= args.base
+        buffer ::= args.buffer
 
-            result = (.base = base, .buffer = buffer, .length = 0)
-        }
-    )
+        result = (.base = base, .buffer = buffer, .length = 0)
+    }
+)
 
-implement#(
-    .base_type : Type: Writer#(base_type)
-) Deinit#(BufferedWriter#(.base_type: base_type)) (
-        .deinit = (
-                .self : $&BufferedWriter#(.base_type: base_type)
-            ) -> () {
-            buffered_writer_flush(self)
-        }
-    )
+implement#(.base_type: Type: Writer#(base_type)) Deinit#(BufferedWriter#(.base_type: base_type)) (
+    .deinit = (.self: $&BufferedWriter#(.base_type: base_type)) -> () {
+        buffered_writer_flush(self)
+    }
+)
 
-buffered_writer_flush#(
-        .base_type : Type: Writer#(base_type)
-    )(
-        .self : $&BufferedWriter#(.base_type: base_type)
-    ) -> (
-        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-    ) := {
+buffered_writer_flush#(.base_type: Type: Writer#(base_type))(
+    .self : $&BufferedWriter#(.base_type: base_type)
+) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) := {
     i :: UIntNative = 0
 
     while i < self&.length {
         remaining ::= self&.length - i
-        view ::= unwrap_or_abort(
-            .value = slice(&self&.buffer, .start = i, .count = remaining)
-        )
+        view ::= unwrap_or_abort(.value = slice(&self&.buffer, .start = i, .count = remaining))
         wrote ::= write(self&.base, .value = view)
         if is(.value = wrote, .variant = ..error) {
             self&.length = 0
@@ -84,38 +61,31 @@ buffered_writer_flush#(
     result = ..ok Void()
 }
 
-implement#(
-    .base_type : Type: Writer#(base_type)
-) Writer#(BufferedWriter#(.base_type: base_type)) (
-        .write_byte = (
-                .self : $&BufferedWriter#(.base_type: base_type),
-                .byte : UInt8
-            ) -> (
-                .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-            ) {
-            if length(&self&.buffer) == 0 {
-                result = Writer#().write_byte(self&.base, .byte = byte)
-                return
-            }
-
-            ptr ::= unwrap_or_abort(.value = get_rw_ref($&self&.buffer, .index = self&.length))
-            ptr&= byte
-            next_length ::= self&.length + 1
-            self&.length = next_length
-
-            if next_length == length(&self&.buffer) {
-                result = buffered_writer_flush(self)
-                return
-            }
-
-            result = ..ok Void()
+implement#(.base_type: Type: Writer#(base_type)) Writer#(BufferedWriter#(.base_type: base_type)) (
+    .write_byte = (.self: $&BufferedWriter#(.base_type: base_type), .byte: UInt8) -> (
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+    ) {
+        if length(&self&.buffer) == 0 {
+            result = Writer#().write_byte(self&.base, .byte = byte)
+            return
         }
 
-        .flush = (
-                .self : $&BufferedWriter#(.base_type: base_type)
-            ) -> (
-                .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-            ) {
+        ptr ::= unwrap_or_abort(.value = get_rw_ref($&self&.buffer, .index = self&.length))
+        ptr&= byte
+        next_length ::= self&.length + 1
+        self&.length = next_length
+
+        if next_length == length(&self&.buffer) {
             result = buffered_writer_flush(self)
+            return
         }
-    )
+
+        result = ..ok Void()
+    }
+
+    .flush = (.self: $&BufferedWriter#(.base_type: base_type)) -> (
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+    ) {
+        result = buffered_writer_flush(self)
+    }
+)

@@ -5,15 +5,10 @@ OwnedByteLine: Type = (.bytes: DynamicArray#(.t: UInt8), .terminated: Bool)
 -- one lookahead byte; callers must stop after any error. Capacity is reserved
 -- before reading each payload byte, so allocation failure does not consume it.
 read_line_owned#(
-        .SelfType      : Type: Reader#(SelfType),
-        .AllocatorType : Type: Allocator#(AllocatorType)
-    )(
-        .self      : $&SelfType,
-        .maximum   : UIntNative,
-        .allocator : $&AllocatorType = reach allocator
-    ) -> (
-        .result : Errable#(?OwnedByteLine, (..stream_read_failed, ..line_too_long, ..out_of_memory))
-    ) := {
+    .SelfType: Type: Reader#(SelfType), .AllocatorType: Type: Allocator#(AllocatorType)
+)(.self: $&SelfType, .maximum: UIntNative, .allocator: $&AllocatorType = reach allocator) -> (
+    .result : Errable#(?OwnedByteLine, (..stream_read_failed, ..line_too_long, ..out_of_memory))
+) := {
     assume allocator
     bytes ::= DynamicArray#(.t: UInt8)(.capacity = 1)!
     terminated ::= false
@@ -64,40 +59,23 @@ OwnedLineReader#(.t: Type: Reader#(t)): Type = (
     ._ended   : Bool
 )
 
-implement#(
-    .t : Type: Reader#(t)
-) Init#(
-    OwnedLineReader#(.t: t),
-    (
-        .source  : $&t,
-        .maximum : UIntNative,
-    )
+implement#(.t: Type: Reader#(t)) Init#(
+    OwnedLineReader#(.t: t), (.source: $&t, .maximum: UIntNative)
 ) (
-        .Result : Type = OwnedLineReader#(.t: t)
-        .init   = (
-                .args : (
-                    .source  : $&t,
-                    .maximum : UIntNative,
-                )
-            ) -> (
-                .result : Result
-            ) {
-            source ::= args.source
-            maximum ::= args.maximum
+    .Result : Type = OwnedLineReader#(.t: t)
+    .init   = (.args: (.source: $&t, .maximum: UIntNative)) -> (.result: Result) {
+        source ::= args.source
+        maximum ::= args.maximum
 
-            result = (._source = source, ._maximum = maximum, ._ended = false)
-        }
-    )
+        result = (._source = source, ._maximum = maximum, ._ended = false)
+    }
+)
 
-next#(
-        .t             : Type: Reader#(t),
-        .AllocatorType : Type: Allocator#(AllocatorType)
-    )(
-        .self      : $&OwnedLineReader#(.t: t),
-        .allocator : $&AllocatorType            = reach allocator
-    ) -> (
-        .result : Errable#(?OwnedByteLine, (..stream_read_failed, ..line_too_long, ..out_of_memory))
-    ) := {
+next#(.t: Type: Reader#(t), .AllocatorType: Type: Allocator#(AllocatorType))(
+    .self: $&OwnedLineReader#(.t: t), .allocator: $&AllocatorType = reach allocator
+) -> (
+    .result : Errable#(?OwnedByteLine, (..stream_read_failed, ..line_too_long, ..out_of_memory))
+) := {
     assume allocator
 
     if self&._ended {
@@ -106,10 +84,7 @@ next#(
     }
 
     self&._ended = true
-    line ::= ~read_line_owned(
-        self&._source
-        .maximum = self&._maximum
-    )!
+    line ::= ~read_line_owned(self&._source, .maximum = self&._maximum)!
 
     match line {
         ..none { result = ..ok ..none } ..some ~entry {

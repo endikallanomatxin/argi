@@ -17,9 +17,9 @@ implement Deinit#(CsvRecord) (
 -- bare CR is invalid outside quotes. Empty input has no records; a blank line
 -- contains one empty field. Encoding and width validation belong to the consumer.
 CsvReader: Type = (
-    ._text               : StringView,
-    ._position           : UIntNative,
-    ._ended              : Bool,
+    ._text : StringView,
+    ._position : UIntNative,
+    ._ended : Bool,
     .maximum_field_bytes : UIntNative,
     .maximum_fields      : UIntNative
 )
@@ -27,44 +27,37 @@ CsvReader: Type = (
 implement Init#(
     CsvReader,
     (
-        .text                : StringView,
+        .text : StringView,
         .maximum_field_bytes : UIntNative  = 1048576,
         .maximum_fields      : UIntNative  = 1024,
     )
 ) (
-        .Result : Type = CsvReader
-        .init   = (
-                .args : (
-                    .text                : StringView,
-                    .maximum_field_bytes : UIntNative  = 1048576,
-                    .maximum_fields      : UIntNative  = 1024,
-                )
-            ) -> (
-                .result : Result
-            ) {
-            text ::= args.text
-            maximum_field_bytes ::= args.maximum_field_bytes
-            maximum_fields ::= args.maximum_fields
+    .Result : Type = CsvReader
+    .init   = (
+        .args : (
+            .text : StringView,
+            .maximum_field_bytes : UIntNative  = 1048576,
+            .maximum_fields      : UIntNative  = 1024,
+        )
+    ) -> (.result: Result) {
+        text ::= args.text
+        maximum_field_bytes ::= args.maximum_field_bytes
+        maximum_fields ::= args.maximum_fields
 
-            result = (
-                ._text               = text
-                ._position           = 0
-                ._ended              = false
-                .maximum_field_bytes = maximum_field_bytes
-                .maximum_fields      = maximum_fields
-            )
-        }
-    )
+        result = (
+            ._text = text
+            ._position = 0
+            ._ended = false
+            .maximum_field_bytes = maximum_field_bytes
+            .maximum_fields      = maximum_fields
+        )
+    }
+)
 
 -- Errors are terminal, and no partially decoded record escapes.
-next#(
-        .AllocatorType : Type: Allocator#(AllocatorType)
-    )(
-        .self      : $&CsvReader,
-        .allocator : $&AllocatorType = reach allocator
-    ) -> (
-        .result : Errable#(?CsvRecord, CsvReasons)
-    ) := {
+next#(.AllocatorType: Type: Allocator#(AllocatorType))(
+    .self: $&CsvReader, .allocator: $&AllocatorType = reach allocator
+) -> (.result: Errable#(?CsvRecord, CsvReasons)) := {
     assume allocator
 
     if self&._ended or self&._position == self&._text.length {
@@ -87,10 +80,7 @@ next#(
         if position < self&._text.length {
             if bytes_get(.view = &self&._text, .index = position).byte == 34 {
                 quoted = true
-                position = [
-                    position
-                    + 1
-                ]
+                position = [position + 1]
             }
         }
         closed ::= false
@@ -139,10 +129,7 @@ next#(
         if separator == 10 { break }
         if separator == 13 and position < self&._text.length {
             if bytes_get(.view = &self&._text, .index = position).byte == 10 {
-                position = [
-                    position
-                    + 1
-                ]
+                position = [position + 1]
                 break
             }
         }
@@ -157,14 +144,9 @@ next#(
 }
 
 -- Quote every field for unambiguous output. Writes may make partial progress.
-write_record#(
-        .WriterType : Type: Writer#(WriterType)
-    )(
-        .writer : $&WriterType,
-        .fields : ArrayViewRO#(.t: StringView)
-    ) -> (
-        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()
-    ) := {
+write_record#(.WriterType: Type: Writer#(WriterType))(
+    .writer: $&WriterType, .fields: ArrayViewRO#(.t: StringView)
+) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()) := {
     index :: UIntNative = 0
 
     while index < length(&fields).count {

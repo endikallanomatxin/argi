@@ -4,17 +4,25 @@ math ::= import ("math/linear_algebra")
 -- weights stay compact while their products with the design matrix are dense.
 main() -> (.status_code: Int32 = 0) := {
     design: math.Matrix#(.rows = 3, .cols = 2, .t: Float64) = (
-        .values = ((1.0, 0.0), (1.0, 1.0), (1.0, 2.0))
+        .values = (
+            (1.0, 0.0),
+            (1.0, 1.0),
+            (1.0, 2.0)
+        )
     )
     observations: math.Matrix#(.rows = 3, .cols = 1, .t: Float64) = (
-        .values = ((1.0), (3.0), (5.0))
+        .values = (
+            (1.0),
+            (3.0),
+            (5.0)
+        )
     )
     weights ::= math.Diagonal#(.n = 3, .t: Float64)(.values = (1.0, 2.0, 1.0))
     weighted_design ::= &weights * &design
     weighted_observations ::= &weights * &observations
-    transposed ::= math.MatrixTransposition#(math.Matrix#(.rows = 3, .cols = 2, .t: Float64)).transpose(
-        &design
-    )
+    transposed ::= math.MatrixTransposition#(
+        math.Matrix#(.rows = 3, .cols = 2, .t: Float64)
+    ).transpose(&design)
     normal ::= &transposed * &weighted_design
     rhs ::= &transposed * &weighted_observations
     determinant ::= [

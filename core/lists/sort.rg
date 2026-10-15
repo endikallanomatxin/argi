@@ -1,14 +1,9 @@
 -- Restore a max heap whose children below root are already heaps.
 _sift_down#(
-        .t          : Type: ImplicitlyCopyable,
-        .policy     : Type: OrderPolicy#(policy, t),
-        .Collection : Type: IndexableMutable#(.Item: t)
-    ) := (
-        .self  : $&Collection,
-        .order : &policy,
-        .start : UIntNative,
-        .count : UIntNative,
-    ) -> () {
+    .t : Type: ImplicitlyCopyable,
+    .policy     : Type: OrderPolicy#(policy, t),
+    .Collection : Type: IndexableMutable#(.Item: t)
+) := (.self: $&Collection, .order: &policy, .start: UIntNative, .count: UIntNative) -> () {
     root ::= start
     -- This guard proves that 2 * root + 1 is an existing child and that
     -- child arithmetic cannot overflow, even at the maximum native length.
@@ -18,10 +13,7 @@ _sift_down#(
             left ::= unwrap_or_abort(.value = get_ro_ref(self, .index = child))&
             right ::= unwrap_or_abort(.value = get_ro_ref(self, .index = child + 1))&
             if OrderPolicy#(policy, t).less(order, .left = left, .right = right).ok {
-                child = [
-                    child
-                    + 1
-                ]
+                child = [child + 1]
             }
         }
         parent ::= unwrap_or_abort(.value = get_ro_ref(self, .index = root))&
@@ -37,13 +29,10 @@ _sift_down#(
 -- Iterative heapsort uses constant auxiliary space and never resizes storage.
 -- Policy-equivalent elements can change relative order.
 sort#(
-        .t          : Type: ImplicitlyCopyable,
-        .policy     : Type: OrderPolicy#(policy, t),
-        .Collection : Type: IndexableMutable#(.Item: t)
-    ) := (
-        .self  : $&Collection,
-        .order : &policy,
-    ) -> () {
+    .t : Type: ImplicitlyCopyable,
+    .policy     : Type: OrderPolicy#(policy, t),
+    .Collection : Type: IndexableMutable#(.Item: t)
+) := (.self: $&Collection, .order: &policy) -> () {
     count ::= length(self).count
 
     if count < 2 { return }

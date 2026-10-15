@@ -4,18 +4,13 @@ BufferReading#(.Stream: Type): Contract = (
 )
 
 implement#(.Stream: Type: Reader#(Stream)) BufferReading#(Stream) (
-    .Result : Type         = Errable#(UIntNative, (..stream_read_failed))
+    .Result : Type = Errable#(UIntNative, (..stream_read_failed))
     .read   = _reader_read
 )
 
-_reader_read#(
-        .Stream : Type: Reader#(Stream)
-    )(
-        .self   : $&Stream,
-        .buffer : ArrayView#(.t: UInt8),
-    ) -> (
-        .result : Errable#(UIntNative, (..stream_read_failed))
-    ) := {
+_reader_read#(.Stream: Type: Reader#(Stream))(.self: $&Stream, .buffer: ArrayView#(.t: UInt8)) -> (
+    .result : Errable#(UIntNative, (..stream_read_failed))
+) := {
     copied :: UIntNative = 0
 
     while copied < length(&buffer).count {

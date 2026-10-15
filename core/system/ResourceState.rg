@@ -8,13 +8,9 @@ OpenState#(.Resource: Type): Contract = (
     .check_open : (.self: &Resource) -> (.ok: Bool)
 )
 
-close#(
-        .Resource : Type: Closeable#(Resource)
-    ) := (
-        .self : $&Resource
-    ) -> (
-        .result : Closeable#(Resource).Result
-    ) {
+close#(.Resource: Type: Closeable#(Resource)) := (.self: $&Resource) -> (
+    .result : Closeable#(Resource).Result
+) {
     result = ~Closeable#(Resource).close_resource(.self = self)
 }
 

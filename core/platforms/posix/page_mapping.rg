@@ -7,39 +7,41 @@
 
     _memory_getpagesize() -> (.size: UIntNative): ExternFunction
     _memory_mmap(
-        .hint            : UIntNative,
-        .length          : UIntNative,
+        .hint : UIntNative,
+        .length : UIntNative,
         .protection      : Int32,
-        .flags           : Int32,
+        .flags : Int32,
         .file_descriptor : Int32,
-        .offset          : UIntNative
+        .offset : UIntNative
     ) -> (.address: UIntNative): ExternFunction
     _memory_munmap(.address: UIntNative, .length: UIntNative) -> (.status: Int32): ExternFunction
 
     _memory_map_anonymous(.length: UIntNative) -> (.address: UIntNative) := {
         #if target_os("linux") {
             address = _memory_mmap(
-                .hint            = 0,
-                .length          = length,
+                .hint = 0,
+                .length = length,
                 .protection      = _posix_memory_read_write,
-                .flags           = _linux_private_anonymous,
+                .flags = _linux_private_anonymous,
                 .file_descriptor = -1,
-                .offset          = 0
+                .offset = 0
             ).address
         }#else {
             address = _memory_mmap(
-                .hint            = 0,
-                .length          = length,
+                .hint = 0,
+                .length = length,
                 .protection      = _posix_memory_read_write,
-                .flags           = _darwin_private_anonymous,
+                .flags = _darwin_private_anonymous,
                 .file_descriptor = -1,
-                .offset          = 0
+                .offset = 0
             ).address
         }
     }
 
     -- POSIX may release alignment padding independently from the returned range.
-    _memory_acquire_aligned(.length: UIntNative, .alignment: UIntNative) -> (.address: UIntNative) := {
+    _memory_acquire_aligned(.length: UIntNative, .alignment: UIntNative) -> (
+        .address : UIntNative
+    ) := {
         page_size ::= _memory_getpagesize().size
         extra :: UIntNative = 0
         if alignment > page_size { extra = alignment - page_size }

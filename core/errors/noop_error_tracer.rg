@@ -7,16 +7,15 @@ noop_error_tracer :: Virtual#(.contract: ErrorTracer) = to_virtual#(.contract: E
 )
 
 implement ErrorTracer#(NoopErrorTracer) (
-    .add_context = (.self: $&NoopErrorTracer, .location: SourceLocationId, .context: StringView) -> () {}
+    .add_context = (
+        .self: $&NoopErrorTracer, .location: SourceLocationId, .context: StringView
+    ) -> () {}
 
     .reset_context = (.self: $&NoopErrorTracer) -> () {}
 
-    .report = (
-            .self   : $&NoopErrorTracer,
-            .writer : $&Virtual#(.contract: Writer)
-        ) -> (
-            .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-        ) {
+    .report = (.self: $&NoopErrorTracer, .writer: $&Virtual#(.contract: Writer)) -> (
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+    ) {
         result = ..ok Void()
     }
 )

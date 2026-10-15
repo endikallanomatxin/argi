@@ -3,10 +3,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     assume writer ::= $&system.terminal&.stderr
     assume allocator := system.page_allocator
     stdin ::= $&system.terminal&.stdin
-    output ::= $&BufferedWriter(
-        $&system.terminal&.stdout
-        view($&zeroed#([8192]UInt8)())
-    )
+    output ::= $&BufferedWriter($&system.terminal&.stdout, view($&zeroed#([8192]UInt8)()))
     #defer {
         Writer#().flush(output) handle error {
             status_code = 1
@@ -15,11 +12,9 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     }
 
     specs ::= (CliSpec("help", "h", "Show help"),)
-    arguments ::= parse_cli(
-        .source = system.args
-        .specs  = view(&specs)
-        .start  = 1
-    )!!! { status_code = 1 }
+    arguments ::= parse_cli(.source = system.args, .specs = view(&specs), .start = 1)!!! {
+        status_code = 1
+    }
 
     for option in arguments.options {
         if option.name == "help" {
@@ -41,9 +36,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
                 transfer_stream(stdin, output)!!! { status_code = 1 }
             } else {
                 file_reader ::= File(
-                    .file_system = system.file_system
-                    .path        = path
-                    .mode        = ..read
+                    .file_system = system.file_system, .path = path, .mode = ..read
                 ) handle error, value {
                     add_context(.context = path, .error_tracer = error.tracer)
                     report_trace(.tracer = error.tracer, .writer = writer) handle ignored {}

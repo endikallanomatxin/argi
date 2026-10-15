@@ -2,19 +2,12 @@
 -- Successful assertions do not construct diagnostics or require an allocator.
 _TestDiagnostic: Type = (._bytes: [128]UInt8, ._length: UIntNative)
 
-implement Init#(
-    _TestDiagnostic,
-    ()
-) (
-        .Result : Type = _TestDiagnostic
-        .init   = (
-                .args : ()
-            ) -> (
-                .result : Result
-            ) {
-            result = (._bytes = zeroed#(.t: [128]UInt8)(), ._length = 0)
-        }
-    )
+implement Init#(_TestDiagnostic, ()) (
+    .Result : Type = _TestDiagnostic
+    .init   = (.args: ()) -> (.result: Result) {
+        result = (._bytes = zeroed#(.t: [128]UInt8)(), ._length = 0)
+    }
+)
 
 _testing_append(.self: $&_TestDiagnostic, .text: StringView) -> () := {
     index :: UIntNative = 0
@@ -40,12 +33,9 @@ _testing_detail(.self: &_TestDiagnostic) -> (.text: StringView) := {
     text = (.data = &self&._bytes[0], .length = self&._length)
 }
 
-_testing_failure(
-        .detail  : StringView,
-        .message : StringView
-    ) -> (
-        .result : Errable#(Void, (..test_failed))
-    ) := {
+_testing_failure(.detail: StringView, .message: StringView) -> (
+    .result : Errable#(Void, (..test_failed))
+) := {
     if message.length != 0 { add_context(.context = message) }
     test_fail_impl()!! detail
 
@@ -58,15 +48,9 @@ fail(.message: StringView) -> (.result: Errable#(Void, (..test_failed))) := {
     result = ..ok Void()
 }
 
-_assert_equal_integer#(
-        .t : Type: Int
-    )(
-        .expected : t,
-        .actual   : t,
-        .message  : StringView = ""
-    ) -> (
-        .result : Errable#(Void, (..test_failed))
-    ) := {
+_assert_equal_integer#(.t: Type: Int)(.expected: t, .actual: t, .message: StringView = "") -> (
+    .result : Errable#(Void, (..test_failed))
+) := {
     if expected == actual {
         result = ..ok Void()
         return
@@ -78,21 +62,12 @@ _assert_equal_integer#(
     _testing_append($&diagnostic, .text = ", actual ")
     _testing_append_number($&diagnostic, .value = actual)
 
-    result = _testing_failure(
-        .detail  = _testing_detail(&diagnostic).text
-        .message = message
-    )
+    result = _testing_failure(.detail = _testing_detail(&diagnostic).text, .message = message)
 }
 
-_assert_equal_float#(
-        .t : Type: Float
-    )(
-        .expected : t,
-        .actual   : t,
-        .message  : StringView = ""
-    ) -> (
-        .result : Errable#(Void, (..test_failed))
-    ) := {
+_assert_equal_float#(.t: Type: Float)(.expected: t, .actual: t, .message: StringView = "") -> (
+    .result : Errable#(Void, (..test_failed))
+) := {
     if expected == actual {
         result = ..ok Void()
         return
@@ -104,19 +79,12 @@ _assert_equal_float#(
     _testing_append($&diagnostic, .text = ", actual ")
     _testing_append_number($&diagnostic, .value = actual)
 
-    result = _testing_failure(
-        .detail  = _testing_detail(&diagnostic).text
-        .message = message
-    )
+    result = _testing_failure(.detail = _testing_detail(&diagnostic).text, .message = message)
 }
 
-_assert_equal_bool(
-        .expected : Bool,
-        .actual   : Bool,
-        .message  : StringView = ""
-    ) -> (
-        .result : Errable#(Void, (..test_failed))
-    ) := {
+_assert_equal_bool(.expected: Bool, .actual: Bool, .message: StringView = "") -> (
+    .result : Errable#(Void, (..test_failed))
+) := {
     if expected == actual {
         result = ..ok Void()
         return
@@ -137,13 +105,8 @@ _testing_lengths(.self: $&_TestDiagnostic, .expected: UIntNative, .actual: UIntN
 }
 
 _testing_compare_text(
-        .expected : StringView,
-        .actual   : StringView,
-        .kind     : StringView,
-        .message  : StringView  = ""
-    ) -> (
-        .result : Errable#(Void, (..test_failed))
-    ) := {
+    .expected: StringView, .actual: StringView, .kind: StringView, .message: StringView = ""
+) -> (.result: Errable#(Void, (..test_failed))) := {
     common ::= expected.length
 
     if actual.length < common { common = actual.length }
@@ -170,64 +133,44 @@ _testing_compare_text(
 
     if index < expected.length {
         _testing_append_number(
-            $&diagnostic
-            .value = bytes_get(.view = &expected, .index = index).byte
+            $&diagnostic, .value = bytes_get(.view = &expected, .index = index).byte
         )
-    } else { _testing_append($&diagnostic, .text = "<end>") }
+    } else {
+        _testing_append($&diagnostic, .text = "<end>")
+    }
     _testing_append($&diagnostic, .text = ", actual ")
 
     if index < actual.length {
         _testing_append_number(
-            $&diagnostic
-            .value = bytes_get(.view = &actual, .index = index).byte
+            $&diagnostic, .value = bytes_get(.view = &actual, .index = index).byte
         )
-    } else { _testing_append($&diagnostic, .text = "<end>") }
+    } else {
+        _testing_append($&diagnostic, .text = "<end>")
+    }
     _testing_lengths($&diagnostic, .expected = expected.length, .actual = actual.length)
 
-    result = _testing_failure(
-        .detail  = _testing_detail(&diagnostic).text
-        .message = message
-    )
+    result = _testing_failure(.detail = _testing_detail(&diagnostic).text, .message = message)
 }
 
-_assert_text_views(
-        .expected : StringView,
-        .actual   : StringView,
-        .message  : StringView  = ""
-    ) -> (
-        .result : Errable#(Void, (..test_failed))
-    ) := {
+_assert_text_views(.expected: StringView, .actual: StringView, .message: StringView = "") -> (
+    .result : Errable#(Void, (..test_failed))
+) := {
     result = _testing_compare_text(
-        .expected = expected
-        .actual   = actual
-        .message  = message
-        .kind     = "strings"
+        .expected = expected, .actual = actual, .message = message, .kind = "strings"
     )
 }
 
-_assert_owned_strings(
-        .expected : &String,
-        .actual   : &String,
-        .message  : StringView = ""
-    ) -> (
-        .result : Errable#(Void, (..test_failed))
-    ) := {
+_assert_owned_strings(.expected: &String, .actual: &String, .message: StringView = "") -> (
+    .result : Errable#(Void, (..test_failed))
+) := {
     result = expect_equal_strings(
-        .expected = as_view(expected)
-        .actual   = as_view(actual)
-        .message  = message
+        .expected = as_view(expected), .actual = as_view(actual), .message = message
     )
 }
 
-expect_equal_views#(
-        .t : Type
-    )(
-        .expected : ArrayViewRO#(.t: t),
-        .actual   : ArrayViewRO#(.t: t),
-        .message  : StringView           = ""
-    ) -> (
-        .result : Errable#(Void, (..test_failed))
-    ) := {
+expect_equal_views#(.t: Type)(
+    .expected: ArrayViewRO#(.t: t), .actual: ArrayViewRO#(.t: t), .message: StringView = ""
+) -> (.result: Errable#(Void, (..test_failed))) := {
     expected_length ::= length(&expected).count
     actual_length ::= length(&actual).count
     common ::= expected_length
@@ -237,12 +180,10 @@ expect_equal_views#(
 
     while index < common {
         left ::= trusted_reference_offset#(.t: t)(
-            .base     = data(&expected).pointer
-            .elements = index
+            .base = data(&expected).pointer, .elements = index
         ).reference
         right ::= trusted_reference_offset#(.t: t)(
-            .base     = data(&actual).pointer
-            .elements = index
+            .base = data(&actual).pointer, .elements = index
         ).reference
         if left&!= right&{ break }
         index = index + 1
@@ -258,19 +199,14 @@ expect_equal_views#(
     _testing_append_number($&diagnostic, .value = index)
     _testing_lengths($&diagnostic, .expected = expected_length, .actual = actual_length)
 
-    result = _testing_failure(
-        .detail  = _testing_detail(&diagnostic).text
-        .message = message
-    )
+    result = _testing_failure(.detail = _testing_detail(&diagnostic).text, .message = message)
 }
 
 expect_equal_bytes(
-        .expected : ArrayViewRO#(.t: UInt8),
-        .actual   : ArrayViewRO#(.t: UInt8),
-        .message  : StringView               = ""
-    ) -> (
-        .result : Errable#(Void, (..test_failed))
-    ) := {
+    .expected : ArrayViewRO#(.t: UInt8),
+    .actual   : ArrayViewRO#(.t: UInt8),
+    .message  : StringView = ""
+) -> (.result: Errable#(Void, (..test_failed))) := {
     expected_length ::= length(&expected).count
     actual_length ::= length(&actual).count
     left ::= ""
@@ -285,9 +221,6 @@ expect_equal_bytes(
     }
 
     result = _testing_compare_text(
-        .expected = left
-        .actual   = right
-        .message  = message
-        .kind     = "bytes"
+        .expected = left, .actual = right, .message = message, .kind = "bytes"
     )
 }

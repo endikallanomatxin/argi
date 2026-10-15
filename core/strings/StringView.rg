@@ -5,31 +5,16 @@ StringView: Type = (
 
 implement ImplicitlyCopyable#(StringView) ()
 
-string_view_byte_address(
-        .self  : &StringView,
-        .index : UIntNative,
-    ) -> (
-        .reference : &UInt8
-    ) := {
+string_view_byte_address(.self: &StringView, .index: UIntNative) -> (.reference: &UInt8) := {
     if index >= self&.length { abort }
     reference = trusted_reference_offset#(.t: UInt8)(.base = self&.data, .elements = index)
 }
 
-_view_get_byte(
-        .view  : &StringView,
-        .index : UIntNative,
-    ) -> (
-        .byte : UInt8
-    ) := {
+_view_get_byte(.view: &StringView, .index: UIntNative) -> (.byte: UInt8) := {
     byte = string_view_byte_address(view, .index = index).reference&
 }
 
-equals(
-        .left  : StringView,
-        .right : StringView,
-    ) -> (
-        .ok : Bool
-    ) := {
+equals(.left: StringView, .right: StringView) -> (.ok: Bool) := {
     if left.length != right.length {
         ok = false
         return
@@ -38,7 +23,10 @@ equals(
     i :: UIntNative = 0
 
     while i < left.length {
-        if bytes_get(.view = &left, .index = i).byte != bytes_get(.view = &right, .index = i).byte {
+        if [
+            bytes_get(.view = &left, .index = i).byte
+            != bytes_get(.view = &right, .index = i).byte
+        ] {
             ok = false
             return
         }

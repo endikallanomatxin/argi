@@ -9,45 +9,29 @@ view#(.Source: Type: ViewOf#(Source)) := (.array: Source) -> (.result: ViewOf#(S
 }
 
 implement#(.n: UIntNative, .t: Type) ViewOf#($&Array#(.n = n, .t: t)) (
-        .Result    : Type = ArrayView#(.t: t)
-        .make_view = (
-                .array : $&Array#(.n = n, .t: t)
-            ) -> (
-                .result : Result
-            ) {
-            result = _fixed_array_view(.array = array)
-        }
-    )
+    .Result    : Type = ArrayView#(.t: t)
+    .make_view = (.array: $&Array#(.n = n, .t: t)) -> (.result: Result) {
+        result = _fixed_array_view(.array = array)
+    }
+)
 
 implement#(.n: UIntNative, .t: Type) ViewOf#(&Array#(.n = n, .t: t)) (
-        .Result    : Type = ArrayViewRO#(.t: t)
-        .make_view = (
-                .array : &Array#(.n = n, .t: t)
-            ) -> (
-                .result : Result
-            ) {
-            result = _fixed_array_view_ro(.array = array)
-        }
-    )
+    .Result    : Type = ArrayViewRO#(.t: t)
+    .make_view = (.array: &Array#(.n = n, .t: t)) -> (.result: Result) {
+        result = _fixed_array_view_ro(.array = array)
+    }
+)
 
 implement#(.t: Type) ViewOf#($&DynamicArray#(.t: t)) (
-        .Result    : Type = ArrayView#(.t: t)
-        .make_view = (
-                .array : $&DynamicArray#(.t: t)
-            ) -> (
-                .result : Result
-            ) {
-            result = _dynamic_array_view(.array = array)
-        }
-    )
+    .Result    : Type = ArrayView#(.t: t)
+    .make_view = (.array: $&DynamicArray#(.t: t)) -> (.result: Result) {
+        result = _dynamic_array_view(.array = array)
+    }
+)
 
 implement#(.t: Type) ViewOf#(&DynamicArray#(.t: t)) (
-        .Result    : Type = ArrayViewRO#(.t: t)
-        .make_view = (
-                .array : &DynamicArray#(.t: t)
-            ) -> (
-                .result : Result
-            ) {
-            result = _dynamic_array_view_ro(.array = array)
-        }
-    )
+    .Result    : Type = ArrayViewRO#(.t: t)
+    .make_view = (.array: &DynamicArray#(.t: t)) -> (.result: Result) {
+        result = _dynamic_array_view_ro(.array = array)
+    }
+)

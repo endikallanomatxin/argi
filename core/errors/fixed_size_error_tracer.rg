@@ -20,25 +20,21 @@ _error_trace_stride() -> (.size: UIntNative) := {
 -- The buffer is initialized caller-owned storage, not an allocation owned by
 -- the tracer. Trailing bytes that do not fit a complete slot are unused.
 implement Init#(FixedSizeErrorTracer, (.buffer: ArrayView#(.t: UInt8))) (
-        .Result : Type = FixedSizeErrorTracer
+    .Result : Type = FixedSizeErrorTracer
 
-        .init = (
-                .args : (.buffer: ArrayView#(.t: UInt8))
-            ) -> (
-                .result : Result
-            ) {
-            buffer ::= args.buffer
-            capacity ::= length(&buffer).count / _error_trace_stride().size
+    .init = (.args: (.buffer: ArrayView#(.t: UInt8))) -> (.result: Result) {
+        buffer ::= args.buffer
+        capacity ::= length(&buffer).count / _error_trace_stride().size
 
-            result = (
-                ._buffer   = buffer
-                ._capacity = capacity
-                ._length   = 0
-                ._next     = capacity / 2
-                ._dropped  = false
-            )
-        }
-    )
+        result = (
+            ._buffer   = buffer
+            ._capacity = capacity
+            ._length   = 0
+            ._next     = capacity / 2
+            ._dropped  = false
+        )
+    }
+)
 
 -- Ending the tracer invalidates its handles without releasing caller storage.
 implement Deinit#(FixedSizeErrorTracer) (
@@ -46,12 +42,9 @@ implement Deinit#(FixedSizeErrorTracer) (
     }
 )
 
-_error_trace_header(
-        .self  : $&FixedSizeErrorTracer,
-        .index : UIntNative
-    ) -> (
-        .header : ArrayView#(.t: UInt8)
-    ) := {
+_error_trace_header(.self: $&FixedSizeErrorTracer, .index: UIntNative) -> (
+    .header : ArrayView#(.t: UInt8)
+) := {
     assume error_tracer ::= $&noop_error_tracer
 
     if index >= self&._capacity { abort }
@@ -68,21 +61,18 @@ _error_trace_header(
 -- A byte buffer (including an offset slice) need not align ErrorTraceEntry.
 -- Only numeric fields are stored; no reference is reconstructed from bytes.
 _error_trace_store_entry(
-        .self  : $&FixedSizeErrorTracer,
-        .index : UIntNative,
-        .entry : ErrorTraceEntry
-    ) -> () := {
-    first ::= trusted_reinterpret_reference#(.from: ErrorTraceEntry, .to: UInt8)(.base = &entry).reference
+    .self: $&FixedSizeErrorTracer, .index: UIntNative, .entry: ErrorTraceEntry
+) -> () := {
+    first ::= trusted_reinterpret_reference#(.from: ErrorTraceEntry, .to: UInt8)(
+        .base = &entry
+    ).reference
     bytes ::= _trusted_array_view_ro(.data = first, .length = size_of(.type = ErrorTraceEntry))
     memcpy_bytes(.dst = _error_trace_header(self, .index = index), .src = bytes)
 }
 
-_error_trace_load_entry(
-        .self  : $&FixedSizeErrorTracer,
-        .index : UIntNative
-    ) -> (
-        .entry : ErrorTraceEntry
-    ) := {
+_error_trace_load_entry(.self: $&FixedSizeErrorTracer, .index: UIntNative) -> (
+    .entry : ErrorTraceEntry
+) := {
     entry = (.location = (.value = 0), .context_length = 0)
     first ::= trusted_mutable_reinterpret_reference#(.from: ErrorTraceEntry, .to: UInt8)(
         .base = $&entry
@@ -102,10 +92,8 @@ implement ErrorTracer#(FixedSizeErrorTracer) (
     }
 
     .add_context = (
-            .self     : $&FixedSizeErrorTracer,
-            .location : SourceLocationId,
-            .context  : StringView
-        ) -> () {
+        .self: $&FixedSizeErrorTracer, .location: SourceLocationId, .context: StringView
+    ) -> () {
         assume error_tracer ::= $&noop_error_tracer
 
         if self&._capacity == 0 {
@@ -132,9 +120,7 @@ implement ErrorTracer#(FixedSizeErrorTracer) (
         }
 
         _error_trace_store_entry(
-            self
-            .index = index
-            .entry = (.location = location, .context_length = count)
+            self, .index = index, .entry = (.location = location, .context_length = count)
         )
         slot_offset ::= index * _error_trace_stride().size
         offset ::= slot_offset + size_of(.type = ErrorTraceEntry)
@@ -143,25 +129,16 @@ implement ErrorTracer#(FixedSizeErrorTracer) (
         while i < count {
             byte ::= bytes_get(.view = &context, .index = i).byte
             destination ::= unwrap_or_abort(
-                .value = get_rw_ref(
-                    $&self&._buffer
-                    .index = [
-                        offset
-                        + i
-                    ]
-                )
+                .value = get_rw_ref($&self&._buffer, .index = [offset + i])
             )
             destination&= byte
             i = i + 1
         }
     }
 
-    .report = (
-            .self   : $&FixedSizeErrorTracer,
-            .writer : $&Virtual#(.contract: Writer)
-        ) -> (
-            .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-        ) {
+    .report = (.self: $&FixedSizeErrorTracer, .writer: $&Virtual#(.contract: Writer)) -> (
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+    ) {
         assume error_tracer ::= $&noop_error_tracer
         write_trace_text(.text = "error trace (most recent first):\n", .writer = writer)!
 

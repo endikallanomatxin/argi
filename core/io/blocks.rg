@@ -3,27 +3,15 @@
 ..unexpected_eof
 ..invalid_stream_buffer
 
-read_exact#(
-        .SelfType : Type: BlockReader#(SelfType)
-    )(
-        .self   : $&SelfType,
-        .buffer : ArrayView#(.t: UInt8)
-    ) -> (
-        .result : Errable#(Void, (..stream_read_failed, ..unexpected_eof))
-    ) := {
+read_exact#(.SelfType: Type: BlockReader#(SelfType))(
+    .self: $&SelfType, .buffer: ArrayView#(.t: UInt8)
+) -> (.result: Errable#(Void, (..stream_read_failed, ..unexpected_eof))) := {
     total ::= length(&buffer).count
     count :: UIntNative = 0
 
     while count < total {
         tail ::= unwrap_or_abort(
-            .value = slice(
-                &buffer
-                .start = count
-                .count = [
-                    total
-                    - count
-                ]
-            )
+            .value = slice(&buffer, .start = count, .count = [total - count])
         )
         got ::= BlockReader#().read_block(self, .buffer = tail)!
         if got == 0 {
@@ -37,27 +25,15 @@ read_exact#(
     result = ..ok Void()
 }
 
-write_all#(
-        .SelfType : Type: BlockWriter#(SelfType)
-    )(
-        .self   : $&SelfType,
-        .buffer : ArrayViewRO#(.t: UInt8)
-    ) -> (
-        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-    ) := {
+write_all#(.SelfType: Type: BlockWriter#(SelfType))(
+    .self: $&SelfType, .buffer: ArrayViewRO#(.t: UInt8)
+) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) := {
     total ::= length(&buffer).count
     count :: UIntNative = 0
 
     while count < total {
         tail ::= unwrap_or_abort(
-            .value = slice(
-                &buffer
-                .start = count
-                .count = [
-                    total
-                    - count
-                ]
-            )
+            .value = slice(&buffer, .start = count, .count = [total - count])
         )
         wrote ::= BlockWriter#().write_block(self, .buffer = tail)!
         if wrote == 0 {
@@ -72,24 +48,19 @@ write_all#(
 }
 
 copy_stream#(
-        .ReaderType : Type: BlockReader#(ReaderType),
-        .WriterType : Type: BlockWriter#(WriterType)
-    )(
-        .reader : $&ReaderType,
-        .writer : $&WriterType,
-        .buffer : ArrayView#(.t: UInt8)
-    ) -> (
-        .result : Errable#(
-            UIntNative,
-            (
-                ..stream_read_failed,
-                ..stream_write_failed,
-                ..stream_flush_failed,
-                ..invalid_stream_buffer,
-                ..size_overflow
-            )
+    .ReaderType: Type: BlockReader#(ReaderType), .WriterType: Type: BlockWriter#(WriterType)
+)(.reader: $&ReaderType, .writer: $&WriterType, .buffer: ArrayView#(.t: UInt8)) -> (
+    .result : Errable#(
+        UIntNative,
+        (
+            ..stream_read_failed,
+            ..stream_write_failed,
+            ..stream_flush_failed,
+            ..invalid_stream_buffer,
+            ..size_overflow
         )
-    ) := {
+    )
+) := {
     size ::= length(&buffer).count
 
     if size == 0 {
@@ -126,15 +97,9 @@ ReadUntil: Type = (.count: UIntNative, .termination: ReadUntilEnd)
 
 implement ImplicitlyCopyable#(ReadUntil) ()
 
-read_until#(
-        .SelfType : Type: Reader#(SelfType)
-    )(
-        .self      : $&SelfType,
-        .buffer    : ArrayView#(.t: UInt8),
-        .delimiter : UInt8
-    ) -> (
-        .result : Errable#(ReadUntil, (..stream_read_failed))
-    ) := {
+read_until#(.SelfType: Type: Reader#(SelfType))(
+    .self: $&SelfType, .buffer: ArrayView#(.t: UInt8), .delimiter: UInt8
+) -> (.result: Errable#(ReadUntil, (..stream_read_failed))) := {
     count :: UIntNative = 0
 
     while count < length(&buffer).count {

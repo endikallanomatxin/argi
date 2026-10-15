@@ -21,48 +21,34 @@ skip(.message: &Char) -> (.result: Errable#(Void, (..test_skipped))) := {
     result = ..ok Void()
 }
 
-expect(
-        .condition : Bool,
-        .message   : StringView = ""
-    ) -> (
-        .result : Errable#(Void, (..test_failed))
-    ) := {
+expect(.condition: Bool, .message: StringView = "") -> (
+    .result : Errable#(Void, (..test_failed))
+) := {
     if condition {
         result = ..ok Void()
         return
     }
 
-    result = _testing_failure(.detail = "expect failed: condition was false", .message = message)
+    result = _testing_failure(
+        .detail = "expect failed: condition was false", .message = message
+    )
 }
 
-_assert_equal_generic#(
-        .t : Type
-    )(
-        .expected : t,
-        .actual   : t,
-        .message  : StringView = "",
-    ) -> (
-        .result : Errable#(Void, (..test_failed))
-    ) := {
+_assert_equal_generic#(.t: Type)(.expected: t, .actual: t, .message: StringView = "") -> (
+    .result : Errable#(Void, (..test_failed))
+) := {
     if expected == actual {
         result = ..ok Void()
         return
     }
 
     result = _testing_failure(
-        .detail  = "expect_equal failed: expected and actual differ"
-        .message = message
+        .detail = "expect_equal failed: expected and actual differ", .message = message
     )
 }
 
-expect_error#(
-        .t       : Type,
-        .reasons : Type
-    )(
-        .expected_reason : reasons,
-        .actual_result   : Errable#(t, reasons),
-    ) -> (
-        .result : Errable#(Void, (..test_failed))
-    ) := {
+expect_error#(.t: Type, .reasons: Type)(
+    .expected_reason: reasons, .actual_result: Errable#(t, reasons)
+) -> (.result: Errable#(Void, (..test_failed))) := {
     fail(.message = "testing.expect_error must be lowered by the compiler")!
 }

@@ -3,9 +3,5 @@ InfalliblyCopyable#(.Value: Type): Contract = (
 )
 
 implement#(.t: Type: ImplicitlyCopyable) InfalliblyCopyable#(t) (
-        .copy = (
-                .self : &t
-            ) -> (
-                .value : t
-            ) { value = self&}
-    )
+    .copy = (.self: &t) -> (.value: t) { value = self&}
+)

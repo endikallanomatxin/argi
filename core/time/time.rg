@@ -9,24 +9,17 @@ UnixTimestamp: Type = (._seconds: Int64, ._nanoseconds: UInt32)
 implement ImplicitlyCopyable#(UnixTimestamp) ()
 
 implement Init#(UnixTimestamp, (.seconds: Int64)) (
-        .Result : Type = UnixTimestamp
-        .init   = (
-                .args : (.seconds: Int64)
-            ) -> (
-                .result : Result
-            ) {
-            seconds ::= args.seconds
+    .Result : Type = UnixTimestamp
+    .init   = (.args: (.seconds: Int64)) -> (.result: Result) {
+        seconds ::= args.seconds
 
-            result = (._seconds = seconds, ._nanoseconds = 0)
-        }
-    )
+        result = (._seconds = seconds, ._nanoseconds = 0)
+    }
+)
 
-unix_timestamp_precise(
-        .seconds     : Int64,
-        .nanoseconds : UInt32
-    ) -> (
-        .result : Errable#(UnixTimestamp, (..out_of_range))
-    ) := {
+unix_timestamp_precise(.seconds: Int64, .nanoseconds: UInt32) -> (
+    .result : Errable#(UnixTimestamp, (..out_of_range))
+) := {
     if nanoseconds >= 1000000000 {
         result = ..error(.reason = ..out_of_range)
         return
@@ -42,16 +35,13 @@ _nanoseconds_UnixTimestamp(.self: &UnixTimestamp) -> (.value: UInt32) := {
 }
 
 implement NanosecondCount#(UnixTimestamp) (
-    .Count            : Type                       = UInt32
+    .Count : Type = UInt32
     .nanosecond_count = _nanoseconds_UnixTimestamp
 )
 
-elapsed(
-        .start : MonotonicInstant,
-        .end   : MonotonicInstant
-    ) -> (
-        .result : Errable#(Duration, (..out_of_range))
-    ) := {
+elapsed(.start: MonotonicInstant, .end: MonotonicInstant) -> (
+    .result : Errable#(Duration, (..out_of_range))
+) := {
     if end._nanoseconds < start._nanoseconds {
         result = ..error(.reason = ..out_of_range)
         return
@@ -61,9 +51,7 @@ elapsed(
 }
 
 implement Equal#(
-    MonotonicInstant,
-    MonotonicInstant,
-    (.left: MonotonicInstant, .right: MonotonicInstant)
+    MonotonicInstant, MonotonicInstant, (.left: MonotonicInstant, .right: MonotonicInstant)
 ) (
     .equal = (.args: (.left: MonotonicInstant, .right: MonotonicInstant)) -> (.ok: Bool) {
         ok = args.left._nanoseconds == args.right._nanoseconds
@@ -79,7 +67,9 @@ implement Equal#(UnixTimestamp, UnixTimestamp, (.left: UnixTimestamp, .right: Un
     }
 )
 
-_compare_MonotonicInstant(.left: MonotonicInstant, .right: MonotonicInstant) -> (.order: Int32 = 0) := {
+_compare_MonotonicInstant(.left: MonotonicInstant, .right: MonotonicInstant) -> (
+    .order : Int32 = 0
+) := {
     if left._nanoseconds < right._nanoseconds { order = -1 }
     if left._nanoseconds > right._nanoseconds { order = 1 }
 }
@@ -107,22 +97,22 @@ implement TimeCompare#(UnixTimestamp) (.compare_value = _compare_UnixTimestamp)
 -- Clock carries permission to call the platform; pure time values carry none.
 Clock: Type = (._ffi: $&ForeignFunctionInterface)
 
-once _acquire_clock := (.args: (.ffi: $&ForeignFunctionInterface = reach ffi)) -> (.result: Clock) {
+once _acquire_clock := (.args: (.ffi: $&ForeignFunctionInterface = reach ffi)) -> (
+    .result : Clock
+) {
     ffi ::= args.ffi
 
     result = (._ffi = ffi)
 }
 
 implement Init#(Clock, (.ffi: $&ForeignFunctionInterface = reach ffi)) (
-    .Result : Type           = Clock
+    .Result : Type = Clock
     .init   = _acquire_clock
 )
 
-monotonic_now(
-        .self : &Clock = reach clock
-    ) -> (
-        .result : Errable#(MonotonicInstant, (..clock_read_failed, ..out_of_range))
-    ) := {
+monotonic_now(.self: &Clock = reach clock) -> (
+    .result : Errable#(MonotonicInstant, (..clock_read_failed, ..out_of_range))
+) := {
     assume ffi ::= self&._ffi
     reading ::= _platform_monotonic()
 
@@ -142,11 +132,9 @@ monotonic_now(
     result = ..ok(._nanoseconds = reading.seconds * 1000000000 + fraction)
 }
 
-wall_now(
-        .self : &Clock = reach clock
-    ) -> (
-        .result : Errable#(UnixTimestamp, (..clock_read_failed, ..out_of_range))
-    ) := {
+wall_now(.self: &Clock = reach clock) -> (
+    .result : Errable#(UnixTimestamp, (..clock_read_failed, ..out_of_range))
+) := {
     assume ffi ::= self&._ffi
     reading ::= _platform_wall()
 
@@ -163,12 +151,9 @@ wall_now(
     result = ..ok(._seconds = reading.seconds, ._nanoseconds = reading.nanoseconds)
 }
 
-sleep(
-        .duration : Duration,
-        .self     : &Clock    = reach clock
-    ) -> (
-        .result : Errable#(Void, (..sleep_failed))
-    ) := {
+sleep(.duration: Duration, .self: &Clock = reach clock) -> (
+    .result : Errable#(Void, (..sleep_failed))
+) := {
     assume ffi ::= self&._ffi
 
     if duration._nanoseconds == 0 {
@@ -178,10 +163,7 @@ sleep(
 
     whole ::= duration._nanoseconds / 1000000000
     fraction ::= unwrap_or_abort(
-        .value = [
-            [duration._nanoseconds % 1000000000]
-            | convert#(.to: UInt32)(_)
-        ]
+        .value = [[duration._nanoseconds % 1000000000] | convert#(.to: UInt32)(_)]
     ).result
 
     if _platform_sleep(.seconds = whole, .nanoseconds = fraction).status != 0 {

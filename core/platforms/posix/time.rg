@@ -4,7 +4,9 @@
     _clock_gettime(.id: CInt, .time: $&_PosixTimespec) -> (.status: CInt): CFunction(
         .symbol = "clock_gettime"
     )
-    _clock_nanosleep(.request: &_PosixTimespec, .remaining: $&_PosixTimespec) -> (.status: CInt): CFunction(
+    _clock_nanosleep(.request: &_PosixTimespec, .remaining: $&_PosixTimespec) -> (
+        .status : CInt
+    ): CFunction(
         .symbol = "nanosleep"
     )
     #if target_os("linux") {
@@ -25,7 +27,9 @@
         id :: CInt = 1
         #if target_os("macos") { id = 6 }
         if _clock_gettime(.id = id, .time = $&time).status != 0 { return }
-        if time.seconds < 0 or time.nanoseconds < 0 or time.nanoseconds >= 1000000000 { return }
+        if time.seconds < 0 or time.nanoseconds < 0 or time.nanoseconds >= 1000000000 {
+            return
+        }
         seconds = unwrap_or_abort(.value = time.seconds | convert#(.to: UInt64)(_)).result
         nanoseconds = unwrap_or_abort(.value = time.nanoseconds | convert#(.to: UInt32)(_)).result
         status = 0

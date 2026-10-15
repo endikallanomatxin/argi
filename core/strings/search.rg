@@ -1,12 +1,8 @@
 -- Compares a byte pattern within the recorded view extent. No reference is
 -- formed for an empty pattern, including an empty view at its end.
-_string_view_matches_at(
-        .self    : StringView,
-        .pattern : StringView,
-        .start   : UIntNative,
-    ) -> (
-        .ok : Bool
-    ) := {
+_string_view_matches_at(.self: StringView, .pattern: StringView, .start: UIntNative) -> (
+    .ok : Bool
+) := {
     if start > self.length {
         ok = false
         return
@@ -68,12 +64,7 @@ ends_with(.self: StringView, .pattern: StringView) -> (.ok: Bool) := {
     }
 
     ok = _string_view_matches_at(
-        self
-        .pattern = pattern
-        .start   = [
-            self.length
-            - pattern.length
-        ]
+        self, .pattern = pattern, .start = [self.length - pattern.length]
     ).ok
 }
 

@@ -9,7 +9,9 @@
         if _platform_path_is_separator(.byte = first).ok {
             length = 1
             if view&.length >= 2 {
-                if _platform_path_is_separator(.byte = bytes_get(.view = view, .index = 1).byte).ok {
+                if _platform_path_is_separator(
+                    .byte = bytes_get(.view = view, .index = 1).byte
+                ).ok {
                     -- A UNC root includes both the server and share components.
                     index :: UIntNative = 2
                     while index < view&.length {

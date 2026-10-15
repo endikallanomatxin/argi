@@ -48,9 +48,11 @@ _identifiers_valid(.text: StringView, .allow_numeric_zeroes: Bool) -> (.ok: Bool
             numeric = true
         } else {
             byte ::= bytes_get(.view = &text, .index = i).byte
-            if _digit(.byte = byte).ok {} else {
+            if _digit(.byte = byte).ok {
+            } else {
                 numeric = false
-                if byte == 45 or [byte >= 65 and byte <= 90] or [byte >= 97 and byte <= 122] {} else {
+                if byte == 45 or [byte >= 65 and byte <= 90] or [byte >= 97 and byte <= 122] {
+                } else {
                     return
                 }
             }
@@ -103,11 +105,10 @@ parse(.text: StringView) -> (.result: Errable#(VersionView, (..invalid_input))) 
                 pre_end = pre_end + 1
             }
             pre ::= string_view_slice(
-                .view   = &text
-                .start  = third.end + 1
-                .length = pre_end - third.end - 1
+                .view = &text, .start = third.end + 1, .length = pre_end - third.end - 1
             )
-            if _identifiers_valid(.text = pre, .allow_numeric_zeroes = false).ok {} else {
+            if _identifiers_valid(.text = pre, .allow_numeric_zeroes = false).ok {
+            } else {
                 result = ..error(.reason = ..invalid_input)
                 return
             }
@@ -120,11 +121,10 @@ parse(.text: StringView) -> (.result: Errable#(VersionView, (..invalid_input))) 
             return
         }
         build ::= string_view_slice(
-            .view   = &text
-            .start  = pre_end + 1
-            .length = text.length - pre_end - 1
+            .view = &text, .start = pre_end + 1, .length = text.length - pre_end - 1
         )
-        if _identifiers_valid(.text = build, .allow_numeric_zeroes = true).ok {} else {
+        if _identifiers_valid(.text = build, .allow_numeric_zeroes = true).ok {
+        } else {
             result = ..error(.reason = ..invalid_input)
             return
         }
@@ -139,25 +139,14 @@ parse(.text: StringView) -> (.result: Errable#(VersionView, (..invalid_input))) 
     )
 }
 
-implement Init#(
-    VersionView,
-    (
-        .text : StringView,
-    )
-) (
-        .Result : Type = Errable#(VersionView, (..invalid_input))
-        .init   = (
-                .args : (
-                    .text : StringView,
-                )
-            ) -> (
-                .result : Result
-            ) {
-            text ::= args.text
+implement Init#(VersionView, (.text: StringView)) (
+    .Result : Type = Errable#(VersionView, (..invalid_input))
+    .init   = (.args: (.text: StringView)) -> (.result: Result) {
+        text ::= args.text
 
-            result = parse(.text = text)
-        }
-    )
+        result = parse(.text = text)
+    }
+)
 
 implement TextViewOf#(&VersionView) (
     .text_view = (.self: &VersionView) -> (.view: StringView) { view = self&._text }
@@ -289,7 +278,9 @@ _pre_compare(.left: StringView, .right: StringView) -> (.order: Int32) := {
         }
         av ::= string_view_slice(.view = &left, .start = a, .length = ae.end - a)
         bv ::= string_view_slice(.view = &right, .start = b, .length = be.end - b)
-        if ae.numeric { order = _numeric_compare(.left = av, .right = bv).order } else {
+        if ae.numeric {
+            order = _numeric_compare(.left = av, .right = bv).order
+        } else {
             order = _lexical_compare(.left = av, .right = bv).order
         }
         if order != 0 { return }
@@ -304,18 +295,23 @@ _pre_compare(.left: StringView, .right: StringView) -> (.order: Int32) := {
 }
 
 compare(.left: &VersionView, .right: &VersionView) -> (.order: Int32) := {
-    order = _numeric_compare(.left = major(.self = left).text, .right = major(.self = right).text).order
+    order = _numeric_compare(
+        .left = major(.self = left).text, .right = major(.self = right).text
+    ).order
 
     if order != 0 { return }
-    order = _numeric_compare(.left = minor(.self = left).text, .right = minor(.self = right).text).order
+    order = _numeric_compare(
+        .left = minor(.self = left).text, .right = minor(.self = right).text
+    ).order
 
     if order != 0 { return }
-    order = _numeric_compare(.left = patch(.self = left).text, .right = patch(.self = right).text).order
+    order = _numeric_compare(
+        .left = patch(.self = left).text, .right = patch(.self = right).text
+    ).order
 
     if order != 0 { return }
     order = _pre_compare(
-        .left  = pre_release(.self = left).text
-        .right = pre_release(.self = right).text
+        .left = pre_release(.self = left).text, .right = pre_release(.self = right).text
     ).order
 }
 
@@ -334,37 +330,23 @@ implement Equal#(VersionView, VersionView, (.left: &VersionView, .right: &Versio
 )
 
 implement#(.Provider: Type: Allocator) StringFormatting#(&VersionView, Provider) (
-        .render = (
-                .value     : &VersionView,
-                .allocator : $&Provider
-            ) -> (
-                .result : Errable#(String, (..out_of_memory))
-            ) {
-            result = ~format(.value = as_view(.self = value).view, .allocator = allocator)
-        }
-        .append = (
-                .out       : $&String,
-                .value     : &VersionView,
-                .allocator : $&Provider
-            ) -> (
-                .result : Errable#(Void, (..out_of_memory))
-            ) {
-            result = format_into(
-                .out       = out
-                .value     = as_view(.self = value).view
-                .allocator = allocator
-            )
-        }
-    )
+    .render = (.value: &VersionView, .allocator: $&Provider) -> (
+        .result : Errable#(String, (..out_of_memory))
+    ) {
+        result = ~format(.value = as_view(.self = value).view, .allocator = allocator)
+    }
+    .append = (.out: $&String, .value: &VersionView, .allocator: $&Provider) -> (
+        .result : Errable#(Void, (..out_of_memory))
+    ) {
+        result = format_into(
+            .out = out, .value = as_view(.self = value).view, .allocator = allocator
+        )
+    }
+)
 
 implement#(.Stream: Type: WriteValue#(Stream, StringView)) WriteValue#(Stream, &VersionView) (
-        .Result      : Type = WriteValue#(Stream, StringView).Result
-        .write_value = (
-                .self  : $&Stream,
-                .value : &VersionView
-            ) -> (
-                .result : Result
-            ) {
-            result = ~write(.self = self, .value = as_view(.self = value).view)
-        }
-    )
+    .Result      : Type = WriteValue#(Stream, StringView).Result
+    .write_value = (.self: $&Stream, .value: &VersionView) -> (.result: Result) {
+        result = ~write(.self = self, .value = as_view(.self = value).view)
+    }
+)

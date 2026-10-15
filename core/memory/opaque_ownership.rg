@@ -14,14 +14,9 @@ trusted_opaque_move#(.t: Type)(.destination: $&t, .source: t) -> () := {
 -- dependencies introduced later by mutation through an opaque slot pointer.
 -- Pointer provenance retains the concrete storage generation observed when
 -- the pointer was created; refreshing the domain never rebinds old aliases.
-trusted_opaque_move_in#(
-        .t            : Type,
-        .storage_type : Type
-    )(
-        .storage     : $&storage_type,
-        .destination : $&t,
-        .source      : t
-    ) -> () := {
+trusted_opaque_move_in#(.t: Type, .storage_type: Type)(
+    .storage: $&storage_type, .destination: $&t, .source: t
+) -> () := {
     destination&= source
 }
 
@@ -29,15 +24,9 @@ trusted_opaque_move_in#(
 -- slot becomes empty and the returned value becomes responsible for cleanup.
 -- `storage` identifies the conservative domain; it has no runtime role. The
 -- caller guarantees that `slot` contains exactly one live value.
-trusted_opaque_move_out#(
-        .t            : Type,
-        .storage_type : Type
-    )(
-        .storage : $&storage_type,
-        .slot    : $&t
-    ) -> (
-        .result : t
-    ) := {
+trusted_opaque_move_out#(.t: Type, .storage_type: Type)(.storage: $&storage_type, .slot: $&t) -> (
+    .result : t
+) := {
     result = slot&
 }
 

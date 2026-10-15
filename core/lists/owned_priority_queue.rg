@@ -5,83 +5,56 @@ OwnedPriorityQueue#(.t: Type, .order: Type: BorrowedOrderPolicy#(order, t)): Typ
     ._order : &order
 )
 
-implement#(
-    .t        : Type,
-    .order    : Type: BorrowedOrderPolicy#(order, t),
-    .Provider : Type: Allocator
-) Init#(
+implement#(.t: Type, .order: Type: BorrowedOrderPolicy#(order, t), .Provider: Type: Allocator) Init#(
     OwnedPriorityQueue#(.t: t, .order: order),
-    (
-        .order     : &order,
-        .allocator : $&Provider = reach allocator,
-        .capacity  : UIntNative = 8,
-    )
+    (.order: &order, .allocator: $&Provider = reach allocator, .capacity: UIntNative = 8)
 ) (
-        .Result : Type = Errable#(OwnedPriorityQueue#(.t: t, .order: order), (..out_of_memory))
-        .init   = (
-                .args : (
-                    .order     : &order,
-                    .allocator : $&Provider = reach allocator,
-                    .capacity  : UIntNative = 8,
-                )
-            ) -> (
-                .result : Result
-            ) {
-            order ::= args.order
-            allocator ::= args.allocator
-            capacity ::= args.capacity
+    .Result : Type = Errable#(OwnedPriorityQueue#(.t: t, .order: order), (..out_of_memory))
+    .init   = (
+        .args : (
+            .order: &order, .allocator: $&Provider = reach allocator, .capacity: UIntNative = 8
+        )
+    ) -> (.result: Result) {
+        order ::= args.order
+        allocator ::= args.allocator
+        capacity ::= args.capacity
 
-            assume allocator
-            items ::= DynamicArray#(.t: t)(.allocator = allocator, .capacity = capacity)!
+        assume allocator
+        items ::= DynamicArray#(.t: t)(.allocator = allocator, .capacity = capacity)!
 
-            result = ..ok(._items = ~items, ._order = order)
+        result = ..ok(._items = ~items, ._order = order)
+    }
+)
+
+implement#(.t: Type, .order: Type: BorrowedOrderPolicy#(order, t)) Deinit#(
+    OwnedPriorityQueue#(.t: t, .order: order)
+) (
+    .deinit = (.self: $&OwnedPriorityQueue#(.t: t, .order: order)) -> () {
+        while length(&self&._items).count > 0 {
+            discarded ::= ~unwrap_or_abort(
+                .value = Removable#(DynamicArray#(.t: t)).pop($&self&._items)
+            )
         }
-    )
 
-implement#(
-    .t     : Type,
-    .order : Type: BorrowedOrderPolicy#(order, t)
-) Deinit#(OwnedPriorityQueue#(.t: t, .order: order)) (
-        .deinit = (
-                .self : $&OwnedPriorityQueue#(.t: t, .order: order)
-            ) -> () {
-            while length(&self&._items).count > 0 {
-                discarded ::= ~unwrap_or_abort(
-                    .value = Removable#(DynamicArray#(.t: t)).pop($&self&._items)
-                )
-            }
+        deinit(.self = $&self&._items)
+    }
+)
 
-            deinit(.self = $&self&._items)
-        }
-    )
+_collection_length_owned_priority_queue#(.t: Type, .order: Type: BorrowedOrderPolicy#(order, t))(
+    .self : &OwnedPriorityQueue#(.t: t, .order: order)
+) -> (.count: UIntNative) := { count = length(&self&._items).count }
 
-_collection_length_owned_priority_queue#(
-        .t     : Type,
-        .order : Type: BorrowedOrderPolicy#(order, t)
-    )(
-        .self : &OwnedPriorityQueue#(.t: t, .order: order)
-    ) -> (
-        .count : UIntNative
-    ) := { count = length(&self&._items).count }
-
-implement#(
-    .t     : Type,
-    .order : Type: BorrowedOrderPolicy#(order, t)
-) CollectionLength#(OwnedPriorityQueue#(.t: t, .order: order)) (
+implement#(.t: Type, .order: Type: BorrowedOrderPolicy#(order, t)) CollectionLength#(
+    OwnedPriorityQueue#(.t: t, .order: order)
+) (
     .measure_length = _collection_length_owned_priority_queue
 )
 
 _queue_push_owned_priority_queue#(
-        .t        : Type,
-        .order    : Type: BorrowedOrderPolicy#(order, t),
-        .Provider : Type: Allocator
-    )(
-        .self      : $&OwnedPriorityQueue#(.t: t, .order: order),
-        .value     : t,
-        .allocator : $&Provider
-    ) -> (
-        .result : Errable#(Void, (..out_of_memory)) = ..ok Void()
-    ) := {
+    .t: Type, .order: Type: BorrowedOrderPolicy#(order, t), .Provider: Type: Allocator
+)(.self: $&OwnedPriorityQueue#(.t: t, .order: order), .value: t, .allocator: $&Provider) -> (
+    .result : Errable#(Void, (..out_of_memory)) = ..ok Void()
+) := {
     assume allocator
     owned ::= ~value
 
@@ -110,33 +83,27 @@ _queue_push_owned_priority_queue#(
     }
 }
 
-peek_ref#(
-        .t     : Type,
-        .order : Type: BorrowedOrderPolicy#(order, t)
-    )(
-        .self : &OwnedPriorityQueue#(.t: t, .order: order)
-    ) -> (
-        .value : ?&t = ..none
-    ) := {
+peek_ref#(.t: Type, .order: Type: BorrowedOrderPolicy#(order, t))(
+    .self : &OwnedPriorityQueue#(.t: t, .order: order)
+) -> (.value: ?&t = ..none) := {
     if length(&self&._items).count == 0 { return }
     value = ..some(
-        .value = _trusted_dynamic_array_get_ro_ref#(.t: t)(.array = &self&._items, .index = 0).reference
+        .value = _trusted_dynamic_array_get_ro_ref#(.t: t)(
+            .array = &self&._items, .index = 0
+        ).reference
     )
 }
 
-_queue_pop_owned_priority_queue#(
-        .t     : Type,
-        .order : Type: BorrowedOrderPolicy#(order, t)
-    )(
-        .self : $&OwnedPriorityQueue#(.t: t, .order: order)
-    ) -> (
-        .result : ?t = ..none
-    ) := {
+_queue_pop_owned_priority_queue#(.t: Type, .order: Type: BorrowedOrderPolicy#(order, t))(
+    .self : $&OwnedPriorityQueue#(.t: t, .order: order)
+) -> (.result: ?t = ..none) := {
     count ::= length(&self&._items).count
 
     if count == 0 { return }
     _swap_owned_array#(.t: t)($&self&._items, .left = 0, .right = count - 1)
-    extracted ::= ~unwrap_or_abort(.value = Removable#(DynamicArray#(.t: t)).pop($&self&._items))
+    extracted ::= ~unwrap_or_abort(
+        .value = Removable#(DynamicArray#(.t: t)).pop($&self&._items)
+    )
     result = ..some(.value = ~extracted)
     count = count - 1
     root :: UIntNative = 0
@@ -145,14 +112,11 @@ _queue_pop_owned_priority_queue#(
         child ::= root * 2 + 1
         if child + 1 < count {
             left ::= unwrap_or_abort(.value = get_ro_ref(&self&._items, .index = child))
-            right ::= unwrap_or_abort(
-                .value = get_ro_ref(&self&._items, .index = child + 1)
-            )
-            if BorrowedOrderPolicy#(order, t).less(self&._order, .left = right, .right = left).ok {
-                child = [
-                    child
-                    + 1
-                ]
+            right ::= unwrap_or_abort(.value = get_ro_ref(&self&._items, .index = child + 1))
+            if BorrowedOrderPolicy#(
+                order, t
+            ).less(self&._order, .left = right, .right = left).ok {
+                child = [child + 1]
             }
         }
         a ::= unwrap_or_abort(.value = get_ro_ref(&self&._items, .index = child))
@@ -168,15 +132,14 @@ _queue_pop_owned_priority_queue#(
 implement#(.t: Type, .order: Type: BorrowedOrderPolicy#(order, t)) Queue#(
     OwnedPriorityQueue#(.t: t, .order: order)
 ) (
-    .Item   : Type                            = t
-    .Result : Type                            = ?t
+    .Item   : Type = t
+    .Result : Type = ?t
     .pop    = _queue_pop_owned_priority_queue
 )
 
 implement#(.t: Type, .order: Type: BorrowedOrderPolicy#(order, t), .Provider: Type: Allocator) QueueInsertion#(
-    OwnedPriorityQueue#(.t: t, .order: order),
-    Provider
+    OwnedPriorityQueue#(.t: t, .order: order), Provider
 ) (
-    .Result : Type                             = Errable#(Void, (..out_of_memory))
+    .Result : Type = Errable#(Void, (..out_of_memory))
     .push   = _queue_push_owned_priority_queue
 )

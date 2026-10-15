@@ -47,7 +47,5 @@ Resizable#(.Collection: Type, .Provider: Type: Allocator#(Provider)): Contract =
         .i         : UIntNative,
         .value     : Item,
         .allocator : $&Provider    = reach allocator
-    ) -> (
-        .result : Errable#(Void, (..out_of_memory, ..out_of_bounds))
-    )
+    ) -> (.result: Errable#(Void, (..out_of_memory, ..out_of_bounds)))
 )

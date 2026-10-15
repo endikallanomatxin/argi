@@ -1,15 +1,8 @@
 -- Decimal inputs are rounded from exact rational integers, without an
 -- intermediate floating-point format or a dependency on the host library.
-_float_parse#(
-        .t : Type: Float
-    )(
-        .text             : StringView,
-        .precision        : Int32,
-        .maximum_exponent : Int32,
-        .minimum_exponent : Int32,
-    ) -> (
-        .result : Errable#(t, (..invalid_input, ..out_of_range))
-    ) := {
+_float_parse#(.t: Type: Float)(
+    .text: StringView, .precision: Int32, .maximum_exponent: Int32, .minimum_exponent: Int32
+) -> (.result: Errable#(t, (..invalid_input, ..out_of_range))) := {
     if text.length == 0 {
         result = ..error(.reason = ..invalid_input)
         return
@@ -101,7 +94,9 @@ _float_parse#(
             if exponent <= cap / 10 {
                 exponent = exponent * 10 + digit
                 if exponent > cap { exponent = cap }
-            } else { exponent = cap }
+            } else {
+                exponent = cap
+            }
             index = index + 1
         }
         if start == index {
@@ -125,7 +120,9 @@ _float_parse#(
     positive_power :: UIntNative = significant - retained
     negative_power :: UIntNative = fractional
 
-    if exponent_negative { negative_power = negative_power + exponent } else {
+    if exponent_negative {
+        negative_power = negative_power + exponent
+    } else {
         positive_power = positive_power + exponent
     }
 
@@ -243,41 +240,26 @@ _float_parse#(
     result = ..ok value
 }
 
-parse_float16(
-        .text : StringView
-    ) -> (
-        .result : Errable#(Float16, (..invalid_input, ..out_of_range))
-    ) := {
+parse_float16(.text: StringView) -> (
+    .result : Errable#(Float16, (..invalid_input, ..out_of_range))
+) := {
     result = _float_parse#(.t: Float16)(
-        .text             = text
-        .precision        = 11
-        .maximum_exponent = 15
-        .minimum_exponent = -24
+        .text = text, .precision = 11, .maximum_exponent = 15, .minimum_exponent = -24
     ).result
 }
 
-parse_float32(
-        .text : StringView
-    ) -> (
-        .result : Errable#(Float32, (..invalid_input, ..out_of_range))
-    ) := {
+parse_float32(.text: StringView) -> (
+    .result : Errable#(Float32, (..invalid_input, ..out_of_range))
+) := {
     result = _float_parse#(.t: Float32)(
-        .text             = text
-        .precision        = 24
-        .maximum_exponent = 127
-        .minimum_exponent = -149
+        .text = text, .precision = 24, .maximum_exponent = 127, .minimum_exponent = -149
     ).result
 }
 
-parse_float64(
-        .text : StringView
-    ) -> (
-        .result : Errable#(Float64, (..invalid_input, ..out_of_range))
-    ) := {
+parse_float64(.text: StringView) -> (
+    .result : Errable#(Float64, (..invalid_input, ..out_of_range))
+) := {
     result = _float_parse#(.t: Float64)(
-        .text             = text
-        .precision        = 53
-        .maximum_exponent = 1023
-        .minimum_exponent = -1074
+        .text = text, .precision = 53, .maximum_exponent = 1023, .minimum_exponent = -1074
     ).result
 }

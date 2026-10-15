@@ -10,30 +10,19 @@ _NumpyReasons: Type = (python ..python_error, ..numpy_shape_mismatch)
 -- represents a one-dimensional native-endian Float64 array of this length.
 Vector64: Type = (._object: python.Object, ._length: UIntNative)
 
-implement Init#(
-    Vector64,
-    (
-        .interpreter : &python.Python,
-        .values      : ArrayViewRO#(.t: Float64),
-    )
-) (
-        .Result : Type = Errable#(Vector64, _PythonReasons)
-        .init   = (
-                .args : (
-                    .interpreter : &python.Python,
-                    .values      : ArrayViewRO#(.t: Float64),
-                )
-            ) -> (
-                .result : Result
-            ) {
-            interpreter ::= args.interpreter
-            values ::= args.values
+implement Init#(Vector64, (.interpreter: &python.Python, .values: ArrayViewRO#(.t: Float64))) (
+    .Result : Type = Errable#(Vector64, _PythonReasons)
+    .init   = (.args: (.interpreter: &python.Python, .values: ArrayViewRO#(.t: Float64))) -> (
+        .result : Result
+    ) {
+        interpreter ::= args.interpreter
+        values ::= args.values
 
-            object ::= python.numeric_array(.self = interpreter, .values = values)!
+        object ::= python.numeric_array(.self = interpreter, .values = values)!
 
-            result = ..ok(._object = ~object, ._length = length(&values).count)
-        }
-    )
+        result = ..ok(._object = ~object, ._length = length(&values).count)
+    }
+)
 
 implement Deinit#(Vector64) (
     .deinit = (.self: $&Vector64) -> () {
@@ -43,12 +32,7 @@ implement Deinit#(Vector64) (
 
 length(.self: &Vector64) -> (.count: UIntNative) := { count = self&._length }
 
-add(
-        .left  : &Vector64,
-        .right : &Vector64
-    ) -> (
-        .result : Errable#(Vector64, _NumpyReasons)
-    ) := {
+add(.left: &Vector64, .right: &Vector64) -> (.result: Errable#(Vector64, _NumpyReasons)) := {
     if left&._length != right&._length {
         result = ..error(.reason = ..numpy_shape_mismatch)
         return
@@ -56,20 +40,13 @@ add(
 
     arguments: [1]&python.Object = (&right&._object)
     object ::= python.call_method(
-        .self      = &left&._object
-        .name      = "__add__"
-        .arguments = view(&arguments)
+        .self = &left&._object, .name = "__add__", .arguments = view(&arguments)
     )!
 
     result = ..ok(._object = ~object, ._length = left&._length)
 }
 
-multiply(
-        .left  : &Vector64,
-        .right : &Vector64
-    ) -> (
-        .result : Errable#(Vector64, _NumpyReasons)
-    ) := {
+multiply(.left: &Vector64, .right: &Vector64) -> (.result: Errable#(Vector64, _NumpyReasons)) := {
     if left&._length != right&._length {
         result = ..error(.reason = ..numpy_shape_mismatch)
         return
@@ -77,20 +54,13 @@ multiply(
 
     arguments: [1]&python.Object = (&right&._object)
     object ::= python.call_method(
-        .self      = &left&._object
-        .name      = "__mul__"
-        .arguments = view(&arguments)
+        .self = &left&._object, .name = "__mul__", .arguments = view(&arguments)
     )!
 
     result = ..ok(._object = ~object, ._length = left&._length)
 }
 
-dot(
-        .left  : &Vector64,
-        .right : &Vector64
-    ) -> (
-        .result : Errable#(Float64, _NumpyReasons)
-    ) := {
+dot(.left: &Vector64, .right: &Vector64) -> (.result: Errable#(Float64, _NumpyReasons)) := {
     if left&._length != right&._length {
         result = ..error(.reason = ..numpy_shape_mismatch)
         return
@@ -98,9 +68,7 @@ dot(
 
     arguments: [1]&python.Object = (&right&._object)
     object ::= python.call_method(
-        .self      = &left&._object
-        .name      = "dot"
-        .arguments = view(&arguments)
+        .self = &left&._object, .name = "dot", .arguments = view(&arguments)
     )!
     value ::= python.to_float64(.self = &object)!
 
@@ -114,12 +82,9 @@ sum(.self: &Vector64) -> (.result: Errable#(Float64, _NumpyReasons)) := {
     result = ..ok value
 }
 
-copy_values(
-        .self        : &Vector64,
-        .destination : ArrayView#(.t: Float64)
-    ) -> (
-        .result : Errable#(UIntNative, _NumpyReasons)
-    ) := {
+copy_values(.self: &Vector64, .destination: ArrayView#(.t: Float64)) -> (
+    .result : Errable#(UIntNative, _NumpyReasons)
+) := {
     if length(&destination).count < self&._length {
         result = ..error(.reason = ..numpy_shape_mismatch)
         return

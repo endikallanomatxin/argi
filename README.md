@@ -36,7 +36,14 @@ It’s an early work-in-progress.
   and LSP. Use `argi format [paths...]` to format files or directories,
   `argi format --check [paths...]` to check without writing, and
   `argi format file.rg --stdout` to preview a file. Editors can request document
-  formatting through the LSP.
+  formatting through the LSP. Calls and function signature groups flatten when they
+  fit within 96 columns including indentation. Otherwise, arguments share one
+  indented continuation line when they fit, or use one argument per line. Closing
+  delimiters resume on the following line. Nesting uses four spaces; comments
+  preserve the layout needed to retain them. Conditional chains expand all branches
+  together, short scalar expressions retain their grouping on one line, and nested
+  matrix lists keep one row per line. Optional field alignment adds at most eight
+  spaces; chained calls include their member suffix in the width budget.
 
 
 ## Repository structure

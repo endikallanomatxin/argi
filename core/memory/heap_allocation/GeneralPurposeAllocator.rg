@@ -32,41 +32,27 @@ GeneralPurposeAllocator: Type = (
     ._large_head        : UIntNative
 )
 
-implement#(
-    .Provider : Type: Allocator
-) Init#(
-    GeneralPurposeAllocator,
-    (
-        .allocator : $&Provider = reach allocator,
-    )
+implement#(.Provider: Type: Allocator) Init#(
+    GeneralPurposeAllocator, (.allocator: $&Provider = reach allocator)
 ) (
-        .Result : Type = GeneralPurposeAllocator
-        .init   = (
-                .args : (
-                    .allocator : $&Provider = reach allocator,
-                )
-            ) -> (
-                .result : Result
-            ) {
-            allocator ::= args.allocator
+    .Result : Type = GeneralPurposeAllocator
+    .init   = (.args: (.allocator: $&Provider = reach allocator)) -> (.result: Result) {
+        allocator ::= args.allocator
 
-            result = (
-                ._backing_allocator = to_virtual#(.contract: Allocator)(.value = allocator)
-                ._bucket_size       = 4096
-                ._bucket_head       = 0
-                ._large_head        = 0
-            )
-        }
-    )
+        result = (
+            ._backing_allocator = to_virtual#(.contract: Allocator)(.value = allocator)
+            ._bucket_size       = 4096
+            ._bucket_head       = 0
+            ._large_head        = 0
+        )
+    }
+)
 
 -- Only bundled core may turn the allocator's live metadata address into a
 -- reference. The backing block stays live until its last slot is released.
-_trusted_general_purpose_bucket(
-        .address : UIntNative,
-        .owner   : $&GeneralPurposeAllocator
-    ) -> (
-        .bucket : $&_GeneralPurposeBucket
-    ) := {
+_trusted_general_purpose_bucket(.address: UIntNative, .owner: $&GeneralPurposeAllocator) -> (
+    .bucket : $&_GeneralPurposeBucket
+) := {
     raw ::= raw_pointer#(.t: _GeneralPurposeBucket)(.address = address).raw
     bucket = trusted_establish_inherited_reference#(.t: _GeneralPurposeBucket)(
         .raw  = raw
@@ -74,12 +60,9 @@ _trusted_general_purpose_bucket(
     ).reference
 }
 
-_trusted_general_purpose_large(
-        .address : UIntNative,
-        .owner   : $&GeneralPurposeAllocator
-    ) -> (
-        .record : $&_GeneralPurposeLarge
-    ) := {
+_trusted_general_purpose_large(.address: UIntNative, .owner: $&GeneralPurposeAllocator) -> (
+    .record : $&_GeneralPurposeLarge
+) := {
     raw ::= raw_pointer#(.t: _GeneralPurposeLarge)(.address = address).raw
     record = trusted_establish_inherited_reference#(.t: _GeneralPurposeLarge)(
         .raw  = raw
@@ -90,12 +73,8 @@ _trusted_general_purpose_large(
 -- The bitmap follows _GeneralPurposeBucket in the first backing chunk and is
 -- initialized explicitly, regardless of the backing allocator's contents.
 _trusted_general_purpose_used_word(
-        .bucket_address : UIntNative,
-        .slot           : UIntNative,
-        .owner          : $&GeneralPurposeAllocator,
-    ) -> (
-        .word : $&UIntNative
-    ) := {
+    .bucket_address: UIntNative, .slot: UIntNative, .owner: $&GeneralPurposeAllocator
+) -> (.word: $&UIntNative) := {
     bits_per_word ::= size_of(.type = UIntNative) * 8
     word_index ::= slot / bits_per_word
     address ::= [
@@ -110,7 +89,9 @@ _trusted_general_purpose_used_word(
     ).reference
 }
 
-_general_purpose_slot_size(.size: UIntNative, .alignment: UIntNative) -> (.slot_size: UIntNative) := {
+_general_purpose_slot_size(.size: UIntNative, .alignment: UIntNative) -> (
+    .slot_size : UIntNative
+) := {
     slot_size = size
 
     if slot_size < alignment { slot_size = alignment }
@@ -135,16 +116,15 @@ _general_purpose_bit(.index: UIntNative) -> (.bit: UIntNative) := {
     }
 }
 
-_general_purpose_small_address(
-        .self      : $&GeneralPurposeAllocator,
-        .slot_size : UIntNative,
-    ) -> (
-        .result : Errable#(_GeneralPurposeMapped, (..out_of_memory))
-    ) := {
+_general_purpose_small_address(.self: $&GeneralPurposeAllocator, .slot_size: UIntNative) -> (
+    .result : Errable#(_GeneralPurposeMapped, (..out_of_memory))
+) := {
     bucket_address :: UIntNative = self&._bucket_head
 
     while bucket_address != 0 {
-        bucket ::= _trusted_general_purpose_bucket(.address = bucket_address, .owner = self).bucket
+        bucket ::= _trusted_general_purpose_bucket(
+            .address = bucket_address, .owner = self
+        ).bucket
         slot_count ::= self&._bucket_size / slot_size
         if bucket&.slot_size == slot_size and bucket&.live_count < slot_count {
             -- The cursor never skips a free slot: release lowers it whenever
@@ -154,9 +134,7 @@ _general_purpose_small_address(
             while slot < slot_count {
                 bit ::= _general_purpose_bit(.index = slot % bits_per_word).bit
                 word ::= _trusted_general_purpose_used_word(
-                    .bucket_address = bucket_address
-                    .slot           = slot
-                    .owner          = self
+                    .bucket_address = bucket_address, .slot = slot, .owner = self
                 ).word
                 quotient ::= word&/ bit
                 if quotient % 2 == 0 {
@@ -183,9 +161,7 @@ _general_purpose_small_address(
     }
 
     allocated ::= allocate_bytes(
-        $&self&._backing_allocator
-        .size      = mapping_size
-        .alignment = self&._bucket_size
+        $&self&._backing_allocator, .size = mapping_size, .alignment = self&._bucket_size
     )
 
     match allocated {
@@ -194,7 +170,9 @@ _general_purpose_small_address(
             backing ::= ~payload
             mapped_address ::= backing.data.address
             anchor ::= backing.anchor
-            bucket ::= _trusted_general_purpose_bucket(.address = mapped_address, .owner = self).bucket
+            bucket ::= _trusted_general_purpose_bucket(
+                .address = mapped_address, .owner = self
+            ).bucket
             trusted_opaque_move(.destination = $&bucket&.storage, .source = ~backing)
             bucket&.anchor = anchor
             bucket&.next = self&._bucket_head
@@ -205,17 +183,13 @@ _general_purpose_small_address(
             slot :: UIntNative = 0
             while slot < word_count {
                 word ::= _trusted_general_purpose_used_word(
-                    .bucket_address = mapped_address
-                    .slot           = slot
-                    .owner          = self
+                    .bucket_address = mapped_address, .slot = slot, .owner = self
                 ).word
                 word&= 0
                 slot = slot + size_of(.type = UIntNative) * 8
             }
             word ::= _trusted_general_purpose_used_word(
-                .bucket_address = mapped_address
-                .slot           = 0
-                .owner          = self
+                .bucket_address = mapped_address, .slot = 0, .owner = self
             ).word
             word&= 1
             self&._bucket_head = mapped_address
@@ -226,16 +200,10 @@ _general_purpose_small_address(
 }
 
 _general_purpose_large_address(
-        .self      : $&GeneralPurposeAllocator,
-        .size      : UIntNative,
-        .alignment : UIntNative,
-    ) -> (
-        .result : Errable#(_GeneralPurposeMapped, (..out_of_memory))
-    ) := {
+    .self: $&GeneralPurposeAllocator, .size: UIntNative, .alignment: UIntNative
+) -> (.result: Errable#(_GeneralPurposeMapped, (..out_of_memory))) := {
     allocated ::= allocate_bytes(
-        $&self&._backing_allocator
-        .size      = size
-        .alignment = alignment
+        $&self&._backing_allocator, .size = size, .alignment = alignment
     )
 
     match allocated {
@@ -256,8 +224,7 @@ _general_purpose_large_address(
                     record_storage ::= ~metadata_payload
                     record_address ::= record_storage.data.address
                     record ::= _trusted_general_purpose_large(
-                        .address = record_address
-                        .owner   = self
+                        .address = record_address, .owner = self
                     ).record
                     address ::= backing.data.address
                     anchor ::= backing.anchor
@@ -269,8 +236,7 @@ _general_purpose_large_address(
                     record&.size = size
                     record&.alignment = alignment
                     trusted_opaque_move(
-                        .destination = $&record&.metadata
-                        .source      = ~record_storage
+                        .destination = $&record&.metadata, .source = ~record_storage
                     )
                     self&._large_head = record_address
                     result = ..ok(.address = address, .anchor = anchor)
@@ -285,13 +251,9 @@ has_live_allocations(.self: &GeneralPurposeAllocator) -> (.has_live: Bool) := {
 }
 
 implement Allocator#(GeneralPurposeAllocator) (
-    .allocate = (
-            .self      : $&GeneralPurposeAllocator,
-            .size      : UIntNative,
-            .alignment : UIntNative,
-        ) -> (
-            .result : Errable#(Allocation, (..out_of_memory))
-        ) {
+    .allocate = (.self: $&GeneralPurposeAllocator, .size: UIntNative, .alignment: UIntNative) -> (
+        .result : Errable#(Allocation, (..out_of_memory))
+    ) {
         _require_allocation_alignment(.alignment = alignment)
         slot_size ::= _general_purpose_slot_size(.size = size, .alignment = alignment).slot_size
         mapped :: Errable#(_GeneralPurposeMapped, (..out_of_memory))
@@ -307,9 +269,7 @@ implement Allocator#(GeneralPurposeAllocator) (
             ..ok mapping {
                 deallocator :: Virtual#(.contract: Deallocator) = to_virtual#(
                     .contract : Deallocator
-                )(
-                    .value = self
-                )
+                )(.value = self)
                 allocation ::= trusted_establish_allocation(
                     .storage     = mapping.address
                     .size        = size
@@ -325,18 +285,20 @@ implement Allocator#(GeneralPurposeAllocator) (
 
 implement Deallocator#(GeneralPurposeAllocator) (
     .deallocate = (
-            .self      : $&GeneralPurposeAllocator,
-            .data      : RawPointer#(.t: UInt8),
-            .size      : UIntNative,
-            .alignment : UIntNative,
-        ) -> () {
+        .self      : $&GeneralPurposeAllocator,
+        .data      : RawPointer#(.t: UInt8),
+        .size      : UIntNative,
+        .alignment : UIntNative,
+    ) -> () {
         slot_size ::= _general_purpose_slot_size(.size = size, .alignment = alignment).slot_size
 
         if slot_size > self&._bucket_size / 2 {
             previous_address :: UIntNative = 0
             record_address :: UIntNative = self&._large_head
             while record_address != 0 {
-                record ::= _trusted_general_purpose_large(.address = record_address, .owner = self).record
+                record ::= _trusted_general_purpose_large(
+                    .address = record_address, .owner = self
+                ).record
                 if record&.address == data.address {
                     if record&.size != size or record&.alignment != alignment { abort }
                     next_address ::= record&.next
@@ -344,18 +306,15 @@ implement Deallocator#(GeneralPurposeAllocator) (
                         self&._large_head = next_address
                     } else {
                         previous ::= _trusted_general_purpose_large(
-                            .address = previous_address
-                            .owner   = self
+                            .address = previous_address, .owner = self
                         ).record
                         previous&.next = next_address
                     }
                     storage ::= trusted_opaque_move_out#(
-                        .t            : Allocation,
-                        .storage_type : _GeneralPurposeLarge
+                        .t: Allocation, .storage_type: _GeneralPurposeLarge
                     )(.storage = record, .slot = $&record&.storage).result
                     metadata ::= trusted_opaque_move_out#(
-                        .t            : Allocation,
-                        .storage_type : _GeneralPurposeLarge
+                        .t: Allocation, .storage_type: _GeneralPurposeLarge
                     )(.storage = record, .slot = $&record&.metadata).result
                     deinit(.self = $&storage)
                     deinit(.self = $&metadata)
@@ -372,7 +331,9 @@ implement Deallocator#(GeneralPurposeAllocator) (
         bucket_address :: UIntNative = self&._bucket_head
 
         while bucket_address != 0 {
-            bucket ::= _trusted_general_purpose_bucket(.address = bucket_address, .owner = self).bucket
+            bucket ::= _trusted_general_purpose_bucket(
+                .address = bucket_address, .owner = self
+            ).bucket
             data_start ::= bucket_address + self&._bucket_size
             if data.address >= data_start and data.address - data_start < self&._bucket_size {
                 if bucket&.slot_size != slot_size { abort }
@@ -382,9 +343,7 @@ implement Deallocator#(GeneralPurposeAllocator) (
                 bits_per_word ::= size_of(.type = UIntNative) * 8
                 bit ::= _general_purpose_bit(.index = slot % bits_per_word).bit
                 word ::= _trusted_general_purpose_used_word(
-                    .bucket_address = bucket_address
-                    .slot           = slot
-                    .owner          = self
+                    .bucket_address = bucket_address, .slot = slot, .owner = self
                 ).word
                 quotient ::= word&/ bit
                 if quotient % 2 == 0 { abort }
@@ -397,14 +356,12 @@ implement Deallocator#(GeneralPurposeAllocator) (
                         self&._bucket_head = next_address
                     } else {
                         previous ::= _trusted_general_purpose_bucket(
-                            .address = previous_address
-                            .owner   = self
+                            .address = previous_address, .owner = self
                         ).bucket
                         previous&.next = next_address
                     }
                     storage ::= trusted_opaque_move_out#(
-                        .t            : Allocation,
-                        .storage_type : _GeneralPurposeBucket
+                        .t: Allocation, .storage_type: _GeneralPurposeBucket
                     )(.storage = bucket, .slot = $&bucket&.storage).result
                     deinit(.self = $&storage)
                 }

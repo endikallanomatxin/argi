@@ -1,12 +1,8 @@
 -- Internal byte subranges are checked against the source view's recorded
 -- extent. Empty results use static storage and form no one-past reference.
-_string_view_subrange(
-        .self  : StringView,
-        .start : UIntNative,
-        .count : UIntNative,
-    ) -> (
-        .view : StringView
-    ) := {
+_string_view_subrange(.self: StringView, .start: UIntNative, .count: UIntNative) -> (
+    .view : StringView
+) := {
     if start > self.length { abort }
     if count > self.length - start { abort }
     if count == 0 {
@@ -15,7 +11,9 @@ _string_view_subrange(
     }
 
     view = (
-        .data   = trusted_reference_offset#(.t: UInt8)(.base = self.data, .elements = start).reference
+        .data = trusted_reference_offset#(.t: UInt8)(
+            .base = self.data, .elements = start
+        ).reference
         .length = count
     )
 }
@@ -55,13 +53,9 @@ trim(.self: StringView) -> (.view: StringView) := {
 
 -- Validate by subtraction before forming a borrowed reference. Empty results
 -- use static storage, including a slice at the source extent.
-slice(
-        .self  : StringView,
-        .start : UIntNative,
-        .count : UIntNative
-    ) -> (
-        .result : Errable#(StringView, (..out_of_bounds))
-    ) := {
+slice(.self: StringView, .start: UIntNative, .count: UIntNative) -> (
+    .result : Errable#(StringView, (..out_of_bounds))
+) := {
     if start > self.length {
         result = ..error(.reason = ..out_of_bounds)
         return

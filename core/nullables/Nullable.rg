@@ -3,14 +3,7 @@ Nullable#(.t: Type): Type = (
     ..some(.value: t)
 )
 
-unwrap_or#(
-        .t : Type
-    )(
-        .value   : Nullable#(.t: t),
-        .default : t,
-    ) -> (
-        .result : t
-    ) := {
+unwrap_or#(.t: Type)(.value: Nullable#(.t: t), .default: t) -> (.result: t) := {
     match value {
         ..some ~payload {
             result = payload.value

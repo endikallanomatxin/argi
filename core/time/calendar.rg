@@ -13,10 +13,7 @@ UtcDateTime: Type = (
 implement ImplicitlyCopyable#(UtcDateTime) ()
 
 is_leap_year(.year: Int32) -> (.ok: Bool) := {
-    ok = [
-        year % 4 == 0
-        and [year % 100 != 0 or year % 400 == 0]
-    ]
+    ok = [year % 4 == 0 and [year % 100 != 0 or year % 400 == 0]]
 }
 
 days_in_month(.year: Int32, .month: UInt32) -> (.count: UInt32 = 0) := {
@@ -45,11 +42,7 @@ valid_utc_date(.date: UtcDateTime) -> (.ok: Bool) := {
     ]
 }
 
-unix_timestamp(
-        .date : UtcDateTime
-    ) -> (
-        .result : Errable#(UnixTimestamp, (..out_of_range))
-    ) := {
+unix_timestamp(.date: UtcDateTime) -> (.result: Errable#(UnixTimestamp, (..out_of_range))) := {
     if valid_utc_date(.date = date).ok == false {
         result = ..error(.reason = ..out_of_range)
         return
@@ -64,10 +57,7 @@ unix_timestamp(
             days
             + days_in_month(.year = date.year, .month = month).count | convert#(.to: Int64)(_)
         ]
-        month = [
-            month
-            + 1
-        ]
+        month = [month + 1]
     }
 
     days = days + date.day | convert#(.to: Int64)(_) - 1
@@ -81,11 +71,7 @@ unix_timestamp(
     result = unix_timestamp_precise(.seconds = seconds, .nanoseconds = date.nanoseconds)
 }
 
-utc_date(
-        .timestamp : UnixTimestamp
-    ) -> (
-        .result : Errable#(UtcDateTime, (..out_of_range))
-    ) := {
+utc_date(.timestamp: UnixTimestamp) -> (.result: Errable#(UtcDateTime, (..out_of_range))) := {
     seconds ::= unix_seconds(&timestamp).value
 
     if seconds < -62135596800 or seconds > 253402300799 {
@@ -111,39 +97,24 @@ utc_date(
     month :: UInt32 = 1
 
     while true {
-        month_days ::= days_in_month(.year = year, .month = month).count | convert#(.to: Int64)(_)
+        month_days ::= [
+            days_in_month(.year = year, .month = month).count
+            | convert#(.to: Int64)(_)
+        ]
         if days < month_days { break }
         days = days - month_days
         month = month + 1
     }
 
     result = ..ok(
-        .year  = year
-        .month = month
-        .day   = unwrap_or_abort(
-            .value = [
-                days
-                + 1
-            ] | convert#(.to: UInt32)(_)
-        )
-        .hour = unwrap_or_abort(
-            .value = [
-                within
-                / 3600
-            ] | convert#(.to: UInt32)(_)
-        )
+        .year   = year
+        .month  = month
+        .day    = unwrap_or_abort(.value = [days + 1] | convert#(.to: UInt32)(_))
+        .hour   = unwrap_or_abort(.value = [within / 3600] | convert#(.to: UInt32)(_))
         .minute = unwrap_or_abort(
-            .value = [
-                [within % 3600]
-                / 60
-            ] | convert#(.to: UInt32)(_)
+            .value = [[within % 3600] / 60] | convert#(.to: UInt32)(_)
         )
-        .second = unwrap_or_abort(
-            .value = [
-                within
-                % 60
-            ] | convert#(.to: UInt32)(_)
-        )
+        .second      = unwrap_or_abort(.value = [within % 60] | convert#(.to: UInt32)(_))
         .nanoseconds = nanoseconds(&timestamp).value
     )
 }

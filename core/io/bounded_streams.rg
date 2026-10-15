@@ -24,24 +24,23 @@ implement ImplicitlyCopyable#(StreamCopyResult) ()
 -- A limit is a stopping point, not an assertion that the source ended. No
 -- lookahead byte is consumed, including when the limit is zero or exactly met.
 copy_stream_limited#(
-        .ReaderType : Type: BlockReader#(ReaderType),
-        .WriterType : Type: BlockWriter#(WriterType)
-    )(
-        .reader : $&ReaderType,
-        .writer : $&WriterType,
-        .buffer : ArrayView#(.t: UInt8),
-        .limit  : UIntNative
-    ) -> (
-        .result : Errable#(
-            StreamCopyResult,
-            (
-                ..stream_read_failed,
-                ..stream_write_failed,
-                ..stream_flush_failed,
-                ..invalid_stream_buffer
-            )
+    .ReaderType: Type: BlockReader#(ReaderType), .WriterType: Type: BlockWriter#(WriterType)
+)(
+    .reader : $&ReaderType,
+    .writer : $&WriterType,
+    .buffer : ArrayView#(.t: UInt8),
+    .limit  : UIntNative
+) -> (
+    .result : Errable#(
+        StreamCopyResult,
+        (
+            ..stream_read_failed,
+            ..stream_write_failed,
+            ..stream_flush_failed,
+            ..invalid_stream_buffer
         )
-    ) := {
+    )
+) := {
     copied :: UIntNative = 0
 
     if limit == 0 {
@@ -59,9 +58,7 @@ copy_stream_limited#(
     while copied < limit {
         request ::= limit - copied
         if request > size { request = size }
-        destination ::= unwrap_or_abort(
-            .value = slice(&buffer, .start = 0, .count = request)
-        )
+        destination ::= unwrap_or_abort(.value = slice(&buffer, .start = 0, .count = request))
         got ::= BlockReader#().read_block(reader, .buffer = destination)!
         if got > request { abort }
         if got == 0 {
@@ -79,25 +76,24 @@ copy_stream_limited#(
 -- Return complete binary data or release the partial owner on every error.
 -- Capacity growth is capped independently of the caller's scratch extent.
 read_all_limited#(
-        .SelfType      : Type: BlockReader#(SelfType),
-        .AllocatorType : Type: Allocator#(AllocatorType)
-    )(
-        .self      : $&SelfType,
-        .buffer    : ArrayView#(.t: UInt8),
-        .limit     : UIntNative,
-        .allocator : $&AllocatorType
-    ) -> (
-        .result : Errable#(
-            String,
-            (
-                ..stream_read_failed,
-                ..invalid_stream_buffer,
-                ..size_limit_exceeded,
-                ..size_overflow,
-                ..out_of_memory
-            )
+    .SelfType: Type: BlockReader#(SelfType), .AllocatorType: Type: Allocator#(AllocatorType)
+)(
+    .self      : $&SelfType,
+    .buffer    : ArrayView#(.t: UInt8),
+    .limit     : UIntNative,
+    .allocator : $&AllocatorType
+) -> (
+    .result : Errable#(
+        String,
+        (
+            ..stream_read_failed,
+            ..invalid_stream_buffer,
+            ..size_limit_exceeded,
+            ..size_overflow,
+            ..out_of_memory
         )
-    ) := {
+    )
+) := {
     assume allocator
     maximum ::= _bounded_stream_maximum().value
 
@@ -135,9 +131,7 @@ read_all_limited#(
             deinit(.self = $&out)
             out = ~fresh
         }
-        destination ::= unwrap_or_abort(
-            .value = slice(&buffer, .start = 0, .count = request)
-        )
+        destination ::= unwrap_or_abort(.value = slice(&buffer, .start = 0, .count = request))
         got ::= BlockReader#().read_block(self, .buffer = destination)!
         if got > request { abort }
         if got == 0 {

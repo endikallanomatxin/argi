@@ -20,43 +20,21 @@ CliParser#(.t: Type: ArgumentSource#(t)): Type = (
     ._positionals  : Bool
 )
 
-implement#(
-    .t : Type: ArgumentSource#(t)
-) Init#(
-    CliParser#(.t: t),
-    (
-        .source : &t,
-        .start  : UIntNative = 0,
-    )
+implement#(.t: Type: ArgumentSource#(t)) Init#(
+    CliParser#(.t: t), (.source: &t, .start: UIntNative = 0)
 ) (
-        .Result : Type = CliParser#(.t: t)
-        .init   = (
-                .args : (
-                    .source : &t,
-                    .start  : UIntNative = 0,
-                )
-            ) -> (
-                .result : Result
-            ) {
-            source ::= args.source
-            start ::= args.start
+    .Result : Type = CliParser#(.t: t)
+    .init   = (.args: (.source: &t, .start: UIntNative = 0)) -> (.result: Result) {
+        source ::= args.source
+        start ::= args.start
 
-            result = (
-                ._source       = source
-                ._index        = start
-                ._short_offset = 0
-                ._positionals  = false
-            )
-        }
-    )
+        result = (._source = source, ._index = start, ._short_offset = 0, ._positionals = false)
+    }
+)
 
-next#(
-        .t : Type: ArgumentSource#(t)
-    )(
-        .self : $&CliParser#(.t: t)
-    ) -> (
-        .result : Errable#(?CliArgument, (..invalid_option))
-    ) := {
+next#(.t: Type: ArgumentSource#(t))(.self: $&CliParser#(.t: t)) -> (
+    .result : Errable#(?CliArgument, (..invalid_option))
+) := {
     while self&._index < length(self&._source).count {
         text ::= unwrap_or_abort(.value = get(self&._source, .index = self&._index))
         if self&._short_offset > 0 {
@@ -68,7 +46,9 @@ next#(
                 self&._index = self&._index + 1
                 self&._short_offset = 0
             }
-            result = ..ok ..some(.value = ..option(.name = name, .value = ..none, .short = true))
+            result = ..ok ..some(
+                .value = ..option(.name = name, .value = ..none, .short = true)
+            )
             return
         }
         self&._index = self&._index + 1
@@ -107,36 +87,22 @@ next#(
         if end < text.length {
             attached = ..some(
                 .value = unwrap_or_abort(
-                    .value = slice(
-                        text
-                        .start = [
-                            end
-                            + 1
-                        ]
-                        .count = [
-                            text.length
-                            - end
-                            - 1
-                        ]
-                    )
+                    .value = slice(text, .start = [end + 1], .count = [text.length - end - 1])
                 )
             )
         }
-        result = ..ok ..some(.value = ..option(.name = name, .value = attached, .short = false))
+        result = ..ok ..some(
+            .value = ..option(.name = name, .value = attached, .short = false)
+        )
         return
     }
 
     result = ..ok ..none
 }
 
-take_value#(
-        .t : Type: ArgumentSource#(t)
-    )(
-        .self   : $&CliParser#(.t: t),
-        .option : CliOption
-    ) -> (
-        .result : Errable#(StringView, (..missing_option_value))
-    ) := {
+take_value#(.t: Type: ArgumentSource#(t))(.self: $&CliParser#(.t: t), .option: CliOption) -> (
+    .result : Errable#(StringView, (..missing_option_value))
+) := {
     match option.value { ..some entry {
             result = ..ok entry.value
             return
@@ -147,14 +113,7 @@ take_value#(
         start ::= self&._short_offset
         if bytes_get(.view = &text, .index = start).byte == 61 { start = start + 1 }
         result = ..ok unwrap_or_abort(
-            .value = slice(
-                text
-                .start = start
-                .count = [
-                    text.length
-                    - start
-                ]
-            )
+            .value = slice(text, .start = start, .count = [text.length - start])
         )
         self&._short_offset = 0
         self&._index = self&._index + 1

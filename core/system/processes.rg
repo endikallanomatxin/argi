@@ -11,17 +11,15 @@ _process_builder_free(.builder: UIntNative) -> (): CFunction(
 )
 
 _process_spawn(
-        .builder : UIntNative,
-        .input   : Int32,
-        .output  : Int32,
-        .error   : Int32,
-        .handle  : $&UIntNative,
-        .stdin   : $&UIntNative,
-        .stdout  : $&UIntNative,
-        .stderr  : $&UIntNative,
-    ) -> (
-        .status : Int32
-    ): CFunction(.symbol = "_argi_process_spawn")
+    .builder : UIntNative,
+    .input   : Int32,
+    .output  : Int32,
+    .error   : Int32,
+    .handle  : $&UIntNative,
+    .stdin   : $&UIntNative,
+    .stdout  : $&UIntNative,
+    .stderr  : $&UIntNative,
+) -> (.status: Int32): CFunction(.symbol = "_argi_process_spawn")
 
 _process_wait(.handle: UIntNative, .code: $&UInt32, .signal: $&UInt32) -> (.status: Int32): CFunction(
     .symbol = "_argi_process_wait"
@@ -47,18 +45,16 @@ _process_stream_write(.handle: UIntNative, .byte: UInt8) -> (.status: Int32): CF
 
 ProcessManager: Type = (._ffi: $&ForeignFunctionInterface)
 
-once _acquire_process_manager := (
-        .args : (.ffi: $&ForeignFunctionInterface = reach ffi)
-    ) -> (
-        .result : ProcessManager
-    ) {
+once _acquire_process_manager := (.args: (.ffi: $&ForeignFunctionInterface = reach ffi)) -> (
+    .result : ProcessManager
+) {
     ffi ::= args.ffi
 
     result = (._ffi = ffi)
 }
 
 implement Init#(ProcessManager, (.ffi: $&ForeignFunctionInterface = reach ffi)) (
-    .Result : Type                     = ProcessManager
+    .Result : Type = ProcessManager
     .init   = _acquire_process_manager
 )
 
@@ -112,18 +108,17 @@ _process_no_arguments() -> (.value: ArrayViewRO#(.t: StringView)) := {
 _process_inherit() -> (.value: ProcessStreamMode) := { value = ..inherit }
 
 spawn(
-        .executable : StringView,
-        .arguments  : ArrayViewRO#(.t: StringView) = _process_no_arguments(),
-        .stdin      : ProcessStreamMode            = _process_inherit(),
-        .stdout     : ProcessStreamMode            = _process_inherit(),
-        .stderr     : ProcessStreamMode            = _process_inherit(),
-        .self       : &ProcessManager              = reach proc_man,
-    ) -> (
-        .result : Errable#(
-            Process,
-            (..invalid_process_argument, ..out_of_memory, ..process_spawn_failed)
-        )
-    ) := {
+    .executable : StringView,
+    .arguments  : ArrayViewRO#(.t: StringView) = _process_no_arguments(),
+    .stdin      : ProcessStreamMode = _process_inherit(),
+    .stdout     : ProcessStreamMode = _process_inherit(),
+    .stderr     : ProcessStreamMode = _process_inherit(),
+    .self       : &ProcessManager = reach proc_man,
+) -> (
+    .result : Errable#(
+        Process, (..invalid_process_argument, ..out_of_memory, ..process_spawn_failed)
+    )
+) := {
     assume ffi := self&._ffi
     builder ::= _process_builder().address
 
@@ -133,18 +128,14 @@ spawn(
     }
 
     status :: Int32 = _process_argument(
-        .builder = builder
-        .bytes   = executable.data
-        .length  = executable.length
+        .builder = builder, .bytes = executable.data, .length = executable.length
     ).status
     i :: UIntNative = 0
 
     while status == 0 and i < length(&arguments).count {
         argument ::= unwrap_or_abort(.value = get_ro_ref(&arguments, .index = i)).result
         status = _process_argument(
-            .builder = builder
-            .bytes   = argument&.data
-            .length  = argument&.length
+            .builder = builder, .bytes = argument&.data, .length = argument&.length
         ).status
         i = i + 1
     }
@@ -193,11 +184,7 @@ spawn(
     )
 }
 
-wait(
-        .self : $&Process
-    ) -> (
-        .result : Errable#(ProcessExitStatus, (..process_wait_failed))
-    ) := {
+wait(.self: $&Process) -> (.result: Errable#(ProcessExitStatus, (..process_wait_failed))) := {
     assume ffi := self&._ffi
 
     if self&._handle == 0 {
@@ -221,11 +208,7 @@ wait(
     result = ..ok ..exited(.code = code)
 }
 
-terminate(
-        .self : $&Process
-    ) -> (
-        .result : Errable#(Void, (..process_terminate_failed))
-    ) := {
+terminate(.self: $&Process) -> (.result: Errable#(Void, (..process_terminate_failed))) := {
     assume ffi := self&._ffi
 
     if self&._handle == 0 {
@@ -243,7 +226,9 @@ terminate(
 
 _is_open_ProcessStream(.self: &ProcessStream) -> (.ok: Bool) := { ok = self&._handle != 0 }
 
-_close_ProcessStream(.self: $&ProcessStream) -> (.result: Errable#(Void, (..stream_close_failed))) := {
+_close_ProcessStream(.self: $&ProcessStream) -> (
+    .result : Errable#(Void, (..stream_close_failed))
+) := {
     assume ffi := self&._ffi
     handle ::= self&._handle
     self&._handle = 0
@@ -257,11 +242,9 @@ _close_ProcessStream(.self: $&ProcessStream) -> (.result: Errable#(Void, (..stre
 }
 
 implement Reader#(ProcessStream) (
-    .read_byte = (
-            .self : $&ProcessStream
-        ) -> (
-            .result : Errable#(ReadByte, (..stream_read_failed))
-        ) {
+    .read_byte = (.self: $&ProcessStream) -> (
+        .result : Errable#(ReadByte, (..stream_read_failed))
+    ) {
         assume ffi := self&._ffi
 
         if self&._handle == 0 or self&._writable {
@@ -306,12 +289,9 @@ implement Deinit#(Process) (
 )
 
 implement Writer#(ProcessStream) (
-    .write_byte = (
-            .self : $&ProcessStream,
-            .byte : UInt8
-        ) -> (
-            .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-        ) {
+    .write_byte = (.self: $&ProcessStream, .byte: UInt8) -> (
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+    ) {
         assume ffi := self&._ffi
 
         if self&._handle == 0 or self&._writable == false {
@@ -327,11 +307,9 @@ implement Writer#(ProcessStream) (
         result = ..ok Void()
     }
 
-    .flush = (
-            .self : $&ProcessStream
-        ) -> (
-            .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-        ) {
+    .flush = (.self: $&ProcessStream) -> (
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+    ) {
         if self&._handle == 0 or self&._writable == false {
             result = ..error(.reason = ..stream_flush_failed)
             return
@@ -342,7 +320,7 @@ implement Writer#(ProcessStream) (
 )
 
 implement Closeable#(ProcessStream) (
-    .Result         : Type                 = Errable#(Void, (..stream_close_failed))
+    .Result         : Type = Errable#(Void, (..stream_close_failed))
     .close_resource = _close_ProcessStream
 )
 

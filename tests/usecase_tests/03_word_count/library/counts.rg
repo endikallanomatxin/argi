@@ -1,8 +1,8 @@
 count_text(
-        .self      : $&OwnedHashMap#(.key: String, .value: UIntNative, .policy: StringHashPolicy),
-        .text      : StringView,
-        .allocator : $&PageAllocator
-    ) -> !Void = ..ok Void() := {
+    .self      : $&OwnedHashMap#(.key: String, .value: UIntNative, .policy: StringHashPolicy),
+    .text      : StringView,
+    .allocator : $&PageAllocator
+) -> !Void = ..ok Void() := {
     assume allocator
 
     validate_utf8(text)!
@@ -21,13 +21,13 @@ count_text(
 }
 
 count_directory(
-        .self        : $&OwnedHashMap#(.key: String, .value: UIntNative, .policy: StringHashPolicy),
-        .path        : StringView,
-        .limit       : UIntNative,
-        .buffer      : ArrayView#(.t: UInt8),
-        .file_system : $&FileSystem,
-        .allocator   : $&PageAllocator
-    ) -> !Void = ..ok Void() := {
+    .self        : $&OwnedHashMap#(.key: String, .value: UIntNative, .policy: StringHashPolicy),
+    .path        : StringView,
+    .limit       : UIntNative,
+    .buffer      : ArrayView#(.t: UInt8),
+    .file_system : $&FileSystem,
+    .allocator   : $&PageAllocator
+) -> !Void = ..ok Void() := {
     assume allocator
     assume file_system
 
@@ -44,9 +44,7 @@ count_directory(
 
                 if info.kind == ..file {
                     file_reader ::= File(
-                        .file_system = file_system
-                        .path        = full_path
-                        .mode        = ..read
+                        .file_system = file_system, .path = full_path, .mode = ..read
                     )!! full_path
                     text ::= read_all_limited($&file_reader, buffer, limit)!! full_path
                     close($&file_reader)!! full_path

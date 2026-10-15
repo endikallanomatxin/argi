@@ -16,55 +16,43 @@ RingBuffer#(.t: Type): Type = (
     ._shape      : _RingBufferShape
 )
 
-implement#(
-    .t        : Type,
-    .Provider : Type: Allocator
-) Init#(
-    RingBuffer#(.t: t),
-    (
-        .capacity  : UIntNative,
-        .allocator : $&Provider  = reach allocator,
-    )
+implement#(.t: Type, .Provider: Type: Allocator) Init#(
+    RingBuffer#(.t: t), (.capacity: UIntNative, .allocator: $&Provider = reach allocator)
 ) (
-        .Result : Type = Errable#(RingBuffer#(.t: t), (..invalid_capacity, ..out_of_memory))
-        .init   = (
-                .args : (
-                    .capacity  : UIntNative,
-                    .allocator : $&Provider  = reach allocator,
-                )
-            ) -> (
-                .result : Result
-            ) {
-            capacity ::= args.capacity
-            allocator ::= args.allocator
+    .Result : Type = Errable#(RingBuffer#(.t: t), (..invalid_capacity, ..out_of_memory))
+    .init   = (.args: (.capacity: UIntNative, .allocator: $&Provider = reach allocator)) -> (
+        .result : Result
+    ) {
+        capacity ::= args.capacity
+        allocator ::= args.allocator
 
-            constructed :: RingBuffer#(.t: t)
+        constructed :: RingBuffer#(.t: t)
 
-            if capacity == 0 {
-                result = ..error(.reason = ..invalid_capacity)
-                return
-            }
-
-            element_size ::= size_of(.type = t)
-            maximum ::= integer_limits(.value = capacity).maximum
-
-            if element_size != 0 and capacity > maximum / element_size {
-                result = ..error(.reason = ..out_of_memory)
-                return
-            }
-
-            allocation ::= allocate#(.t: t)(allocator, .count = capacity)!
-            constructed = (
-                ._allocation = ~allocation
-                ._capacity   = capacity
-                ._head       = 0
-                ._length     = 0
-                ._shape      = (.marker = 0)
-            )
-
-            result = ..ok ~constructed
+        if capacity == 0 {
+            result = ..error(.reason = ..invalid_capacity)
+            return
         }
-    )
+
+        element_size ::= size_of(.type = t)
+        maximum ::= integer_limits(.value = capacity).maximum
+
+        if element_size != 0 and capacity > maximum / element_size {
+            result = ..error(.reason = ..out_of_memory)
+            return
+        }
+
+        allocation ::= allocate#(.t: t)(allocator, .count = capacity)!
+        constructed = (
+            ._allocation = ~allocation
+            ._capacity   = capacity
+            ._head       = 0
+            ._length     = 0
+            ._shape      = (.marker = 0)
+        )
+
+        result = ..ok ~constructed
+    }
+)
 
 _collection_capacity_ring_buffer#(.t: Type)(.self: &RingBuffer#(.t: t)) -> (.count: UIntNative) := {
     count = self&._capacity
@@ -74,14 +62,9 @@ implement#(.t: Type) CollectionCapacity#(RingBuffer#(.t: t)) (
     .measure_capacity = _collection_capacity_ring_buffer
 )
 
-_ring_buffer_physical_index#(
-        .t : Type
-    )(
-        .self  : &RingBuffer#(.t: t),
-        .index : UIntNative
-    ) -> (
-        .physical : UIntNative
-    ) := {
+_ring_buffer_physical_index#(.t: Type)(.self: &RingBuffer#(.t: t), .index: UIntNative) -> (
+    .physical : UIntNative
+) := {
     if index >= self&._capacity { abort }
     -- Subtract before adding: head + index could overflow even when the
     -- wrapped physical index belongs to the allocation.
@@ -100,34 +83,20 @@ _invalidate_ring_buffer_shape#(.t: Type)(.self: $&RingBuffer#(.t: t)) -> () := {
     shape&= (.marker = 0)
 }
 
-_ring_buffer_occupied_pointer#(
-        .t : Type
-    )(
-        .self  : &RingBuffer#(.t: t),
-        .index : UIntNative
-    ) -> (
-        .pointer : $&t
-    ) := {
+_ring_buffer_occupied_pointer#(.t: Type)(.self: &RingBuffer#(.t: t), .index: UIntNative) -> (
+    .pointer : $&t
+) := {
     if index >= self&._length { abort }
     physical ::= _ring_buffer_physical_index(self, .index = index).physical
     slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &self&._allocation, .index = physical)
     pointer = trusted_establish_allocation_slot#(.t: t)(
-        .allocation = &self&._allocation
-        .slot       = slot._raw
-        .anchor     = self&._allocation.anchor
+        .allocation = &self&._allocation, .slot = slot._raw, .anchor = self&._allocation.anchor
     ).reference
 }
 
-_queue_push_ring_buffer#(
-        .t        : Type,
-        .Provider : Type: Allocator
-    )(
-        .self      : $&RingBuffer#(.t: t),
-        .value     : t,
-        .allocator : $&Provider,
-    ) -> (
-        .result : Errable#(Void, (..full))
-    ) := {
+_queue_push_ring_buffer#(.t: Type, .Provider: Type: Allocator)(
+    .self: $&RingBuffer#(.t: t), .value: t, .allocator: $&Provider
+) -> (.result: Errable#(Void, (..full))) := {
     assume allocator
     owned ::= ~value
 
@@ -138,20 +107,26 @@ _queue_push_ring_buffer#(
 
     physical ::= _ring_buffer_physical_index(self, .index = self&._length).physical
     slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &self&._allocation, .index = physical)
-    _trusted_uninit_write#(.t: t)(.allocation = $&self&._allocation, .slot = slot, .value = ~owned)
+    _trusted_uninit_write#(.t: t)(
+        .allocation = $&self&._allocation, .slot = slot, .value = ~owned
+    )
     _invalidate_ring_buffer_shape(self)
     self&._length = self&._length + 1
 
     result = ..ok Void()
 }
 
-_queue_pop_ring_buffer#(.t: Type)(.self: $&RingBuffer#(.t: t)) -> (.result: Errable#(t, (..empty))) := {
+_queue_pop_ring_buffer#(.t: Type)(.self: $&RingBuffer#(.t: t)) -> (
+    .result : Errable#(t, (..empty))
+) := {
     if self&._length == 0 {
         result = ..error(.reason = ..empty)
         return
     }
 
-    slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &self&._allocation, .index = self&._head)
+    slot ::= _trusted_uninit_slot#(.t: t)(
+        .allocation = &self&._allocation, .index = self&._head
+    )
     value ::= _trusted_uninit_take#(.t: t)(.allocation = $&self&._allocation, .slot = slot)
     _invalidate_ring_buffer_shape(self)
     self&._length = self&._length - 1
@@ -163,56 +138,47 @@ _queue_pop_ring_buffer#(.t: Type)(.self: $&RingBuffer#(.t: t)) -> (.result: Erra
 }
 
 implement#(.t: Type) Deinit#(RingBuffer#(.t: t)) (
-        .deinit = (
-                .self : $&RingBuffer#(.t: t)
-            ) -> () {
-            while self&._length > 0 {
-                discarded ::= ~unwrap_or_abort(.value = pop(self))
-            }
-
-            trusted_opaque_mark_empty(.storage = $&self&._allocation)
-            deinit(.self = $&self&._allocation)
+    .deinit = (.self: $&RingBuffer#(.t: t)) -> () {
+        while self&._length > 0 {
+            discarded ::= ~unwrap_or_abort(.value = pop(self))
         }
-    )
+
+        trusted_opaque_mark_empty(.storage = $&self&._allocation)
+        deinit(.self = $&self&._allocation)
+    }
+)
 
 implement#(.t: Type) Indexable#(RingBuffer#(.t: t)) (
-        .Item : Type = t
+    .Item : Type = t
 
-        .length = (
-                .self : &RingBuffer#(.t: t)
-            ) -> (
-                .count : UIntNative
-            ) { count = self&._length }
+    .length = (.self: &RingBuffer#(.t: t)) -> (.count: UIntNative) { count = self&._length }
 
-        .get_ro_ref = (
-                .self  : &RingBuffer#(.t: t),
-                .index : UIntNative
-            ) -> (
-                .result : Errable#(&t, (..out_of_bounds))
-            ) {
-            if index >= self&._length {
-                result = ..error(.reason = ..out_of_bounds)
-                return
-            }
-
-            mutable ::= _ring_buffer_occupied_pointer(self, .index = index).pointer
-            reference ::= read_reference#(.t: t)(.base = mutable).reference
-            borrowed ::= depend_on#(.t: &t)(
-                .value = reference
-                .on    = erase_reference#(.t: _RingBufferShape)(.base = &self&._shape).reference
-            ).result
-
-            result = ..ok borrowed
+    .get_ro_ref = (.self: &RingBuffer#(.t: t), .index: UIntNative) -> (
+        .result : Errable#(&t, (..out_of_bounds))
+    ) {
+        if index >= self&._length {
+            result = ..error(.reason = ..out_of_bounds)
+            return
         }
-    )
+
+        mutable ::= _ring_buffer_occupied_pointer(self, .index = index).pointer
+        reference ::= read_reference#(.t: t)(.base = mutable).reference
+        borrowed ::= depend_on#(.t: &t)(
+            .value = reference
+            .on    = erase_reference#(.t: _RingBufferShape)(.base = &self&._shape).reference
+        ).result
+
+        result = ..ok borrowed
+    }
+)
 
 implement#(.t: Type) Queue#(RingBuffer#(.t: t)) (
-    .Item   : Type                   = t
-    .Result : Type                   = Errable#(t, (..empty))
+    .Item   : Type = t
+    .Result : Type = Errable#(t, (..empty))
     .pop    = _queue_pop_ring_buffer
 )
 
 implement#(.t: Type, .Provider: Type: Allocator) QueueInsertion#(RingBuffer#(.t: t), Provider) (
-    .Result : Type                    = Errable#(Void, (..full))
+    .Result : Type = Errable#(Void, (..full))
     .push   = _queue_push_ring_buffer
 )

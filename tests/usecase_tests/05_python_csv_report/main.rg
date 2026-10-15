@@ -6,10 +6,7 @@ p := import ("python")
 main(.system: System) -> (.status_code: Int32 = 0) := {
     assume writer ::= $&system.terminal&.stderr
     assume allocator := system.page_allocator
-    output ::= $&BufferedWriter(
-        $&system.terminal&.stdout
-        view($&zeroed#([4096]UInt8)())
-    )
+    output ::= $&BufferedWriter($&system.terminal&.stdout, view($&zeroed#([4096]UInt8)()))
     #defer {
         Writer#().flush(output) handle error {
             status_code = 1
@@ -19,7 +16,9 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
 
     argc ::= length(system.args).count
     if argc < 2 or argc > 3 {
-        print("Usage: csv-report <file.csv> [duration-column]", .writer = output)!!! { status_code = 1 }
+        print("Usage: csv-report <file.csv> [duration-column]", .writer = output)!!! {
+            status_code = 1
+        }
         invalid_arguments()!!! { status_code = 1 }
         return
     }
@@ -61,8 +60,12 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     statistics ::= p.import_module(&interpreter, "statistics")!!! { status_code = 1 }
 
     source ::= p.string(&interpreter, as_view(&text))!!! { status_code = 1 }
-    stream ::= p.call_method(&io, "StringIO", .arguments = view(&(&source)))!!! { status_code = 1 }
-    rows ::= p.call_method(&csv, "DictReader", .arguments = view(&(&stream)))!!! { status_code = 1 }
+    stream ::= p.call_method(&io, "StringIO", .arguments = view(&(&source)))!!! {
+        status_code = 1
+    }
+    rows ::= p.call_method(&csv, "DictReader", .arguments = view(&(&stream)))!!! {
+        status_code = 1
+    }
     column_key ::= p.string(&interpreter, column)!!! { status_code = 1 }
     samples ::= p.list(&interpreter)!!! { status_code = 1 }
     iterator ::= p.iterate(&rows)!!! { status_code = 1 }
@@ -85,15 +88,21 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     }
 
     count ::= p.length(&samples)!!! { status_code = 1 }
-    mean ::= p.call_method(&statistics, "fmean", .arguments = view(&(&samples)))!!! { status_code = 1 }
-    median ::= p.call_method(&statistics, "median", .arguments = view(&(&samples)))!!! { status_code = 1 }
+    mean ::= p.call_method(&statistics, "fmean", .arguments = view(&(&samples)))!!! {
+        status_code = 1
+    }
+    median ::= p.call_method(&statistics, "median", .arguments = view(&(&samples)))!!! {
+        status_code = 1
+    }
     precision ::= p.string(&interpreter, ".2f")!!! { status_code = 1 }
-    mean_text ::= p.call_method(&builtins, "format", .arguments = view(&(&mean, &precision)))!!! { status_code = 1 }
+    mean_text ::= p.call_method(&builtins, "format", .arguments = view(&(&mean, &precision)))!!! {
+        status_code = 1
+    }
     median_text ::= p.call_method(
-        &builtins
-        "format"
-        .arguments = view(&(&median, &precision))
-    )!!! { status_code = 1 }
+        &builtins, "format", .arguments = view(&(&median, &precision))
+    )!!! {
+        status_code = 1
+    }
     mean_result ::= p.to_string(&mean_text)!!! { status_code = 1 }
     median_result ::= p.to_string(&median_text)!!! { status_code = 1 }
 
@@ -105,11 +114,8 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     print(as_view(&median_result), .writer = output)!!! { status_code = 1 }
 }
 
-print_python_error(
-        .interpreter : &p.Python,
-        .writer      : $&File,
-        .allocator   : $&PageAllocator
-    ) -> !Void = ..ok Void() := {
+print_python_error(.interpreter: &p.Python, .writer: $&File, .allocator: $&PageAllocator) -> !Void = ..ok Void(
+) := {
     assume allocator
     assume writer
 

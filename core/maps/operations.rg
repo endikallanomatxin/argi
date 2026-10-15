@@ -44,7 +44,8 @@ StringMapInsertion#(
     .Provider : Type: Allocator#(Provider)
 ): Contract = (
     .Value : Type
-    .put   : (.allocator: $&Provider = reach allocator, .self: $&Map, .key: Query, .value: Value) -> ()
+    .put   : (.allocator: $&Provider = reach allocator, .self: $&Map, .key: Query, .value: Value) -> (
+    )
 )
 
 MapRemoval#(.Map: Type, .Provider: Type: Allocator#(Provider)): Contract = (
@@ -73,33 +74,30 @@ MapExtraction#(.Map: Type): Contract = (
     .extract : (.self: $&Map, .key: Key) -> (.result: Result)
 )
 
-implement#(
-    .value : Type,
-    .Query : Type: StringMapKey#(Query)
-) StringMapLookup#(StringHashMap#(.value: value), Query) (
-    .Value : Type                   = value
+implement#(.value: Type, .Query: Type: StringMapKey#(Query)) StringMapLookup#(
+    StringHashMap#(.value: value), Query
+) (
+    .Value : Type = value
     .get   = _map_get_StringHashMap
 )
 
 implement#(
-    .value    : Type,
-    .Provider : Type: Allocator#(Provider),
-    .Query    : Type: StringMapKey#(Query)
+    .value: Type, .Provider: Type: Allocator#(Provider), .Query: Type: StringMapKey#(Query)
 ) StringMapInsertion#(StringHashMap#(.value: value), Query, Provider) (
-    .Value : Type                   = value
+    .Value : Type = value
     .put   = _map_put_StringHashMap
 )
 
-implement#(
-    .value : Type
-) TextMapBorrowedLookup#(OwnedHashMap#(.key: String, .value: value, .policy: StringHashPolicy)) (
-    .Value      : Type                                = value
+implement#(.value: Type) TextMapBorrowedLookup#(
+    OwnedHashMap#(.key: String, .value: value, .policy: StringHashPolicy)
+) (
+    .Value      : Type = value
     .get_ro_ref = _map_get_ro_ref_owned_string_lookup
 )
 
-implement#(
-    .value : Type
-) TextMapMembership#(OwnedHashMap#(.key: String, .value: value, .policy: StringHashPolicy)) (
+implement#(.value: Type) TextMapMembership#(
+    OwnedHashMap#(.key: String, .value: value, .policy: StringHashPolicy)
+) (
     .contains = _map_contains_owned_string_lookup
 )
 
@@ -109,36 +107,30 @@ implement#(
     .policy   : Type: BorrowedHashPolicy#(policy, key),
     .Provider : Type: Allocator#(Provider)
 ) MapRemoval#(OwnedHashMap#(.key: key, .value: value, .policy: policy), Provider) (
-    .Key    : Type                       = &key
+    .Key    : Type = &key
     .remove = _map_remove_owned_hash_map
 )
 
-implement#(
-    .key    : Type,
-    .value  : Type,
-    .policy : Type: BorrowedHashPolicy#(policy, key)
-) MapExtraction#(OwnedHashMap#(.key: key, .value: value, .policy: policy)) (
-    .Key     : Type                        = &key
-    .Result  : Type                        = ?OwnedHashMapEntry#(.key: key, .value: value)
+implement#(.key: Type, .value: Type, .policy: Type: BorrowedHashPolicy#(policy, key)) MapExtraction#(
+    OwnedHashMap#(.key: key, .value: value, .policy: policy)
+) (
+    .Key     : Type = &key
+    .Result  : Type = ?OwnedHashMapEntry#(.key: key, .value: value)
     .extract = _map_extract_owned_hash_map
 )
 
-implement#(
-    .key    : Type,
-    .value  : Type,
-    .policy : Type: BorrowedHashPolicy#(policy, key)
-) MapBorrowedLookup#(OwnedHashMap#(.key: key, .value: value, .policy: policy)) (
-    .Key        : Type                           = &key
-    .Value      : Type                           = value
+implement#(.key: Type, .value: Type, .policy: Type: BorrowedHashPolicy#(policy, key)) MapBorrowedLookup#(
+    OwnedHashMap#(.key: key, .value: value, .policy: policy)
+) (
+    .Key        : Type = &key
+    .Value      : Type = value
     .get_ro_ref = _map_get_ro_ref_owned_hash_map
 )
 
-implement#(
-    .key    : Type,
-    .value  : Type,
-    .policy : Type: BorrowedHashPolicy#(policy, key)
-) MapMembership#(OwnedHashMap#(.key: key, .value: value, .policy: policy)) (
-    .Key      : Type                         = &key
+implement#(.key: Type, .value: Type, .policy: Type: BorrowedHashPolicy#(policy, key)) MapMembership#(
+    OwnedHashMap#(.key: key, .value: value, .policy: policy)
+) (
+    .Key      : Type = &key
     .contains = _map_contains_owned_hash_map
 )
 
@@ -148,8 +140,8 @@ implement#(
     .policy   : Type: BorrowedHashPolicy#(policy, key),
     .Provider : Type: Allocator#(Provider)
 ) MapInsertion#(OwnedHashMap#(.key: key, .value: value, .policy: policy), Provider) (
-    .Key   : Type                    = key
-    .Value : Type                    = value
+    .Key   : Type = key
+    .Value : Type = value
     .put   = _map_put_owned_hash_map
 )
 
@@ -170,12 +162,11 @@ implement#(
     .reserve = _map_reserve_owned_hash_set
 )
 
-implement#(
-    .key    : Type,
-    .policy : Type: BorrowedHashPolicy#(policy, key)
-) MapExtraction#(OwnedHashSet#(.key: key, .policy: policy)) (
-    .Key     : Type                        = &key
-    .Result  : Type                        = ?key
+implement#(.key: Type, .policy: Type: BorrowedHashPolicy#(policy, key)) MapExtraction#(
+    OwnedHashSet#(.key: key, .policy: policy)
+) (
+    .Key     : Type = &key
+    .Result  : Type = ?key
     .extract = _map_extract_owned_hash_set
 )
 
@@ -184,15 +175,14 @@ implement#(
     .policy   : Type: BorrowedHashPolicy#(policy, key),
     .Provider : Type: Allocator#(Provider)
 ) MapRemoval#(OwnedHashSet#(.key: key, .policy: policy), Provider) (
-    .Key    : Type                       = &key
+    .Key    : Type = &key
     .remove = _map_remove_owned_hash_set
 )
 
-implement#(
-    .key    : Type,
-    .policy : Type: BorrowedHashPolicy#(policy, key)
-) MapMembership#(OwnedHashSet#(.key: key, .policy: policy)) (
-    .Key      : Type                         = &key
+implement#(.key: Type, .policy: Type: BorrowedHashPolicy#(policy, key)) MapMembership#(
+    OwnedHashSet#(.key: key, .policy: policy)
+) (
+    .Key      : Type = &key
     .contains = _map_contains_owned_hash_set
 )
 
@@ -201,7 +191,7 @@ implement#(
     .policy   : Type: BorrowedHashPolicy#(policy, key),
     .Provider : Type: Allocator#(Provider)
 ) SetInsertion#(OwnedHashSet#(.key: key, .policy: policy), Provider) (
-    .Key    : Type                       = key
+    .Key    : Type = key
     .insert = _map_insert_owned_hash_set
 )
 
@@ -210,15 +200,14 @@ implement#(
     .policy   : Type: HashPolicy#(policy, key),
     .Provider : Type: Allocator#(Provider)
 ) MapRemoval#(HashSet#(.key: key, .policy: policy), Provider) (
-    .Key    : Type                 = key
+    .Key    : Type = key
     .remove = _map_remove_hash_set
 )
 
-implement#(
-    .key    : Type: ImplicitlyCopyable,
-    .policy : Type: HashPolicy#(policy, key)
-) MapMembership#(HashSet#(.key: key, .policy: policy)) (
-    .Key      : Type                   = key
+implement#(.key: Type: ImplicitlyCopyable, .policy: Type: HashPolicy#(policy, key)) MapMembership#(
+    HashSet#(.key: key, .policy: policy)
+) (
+    .Key      : Type = key
     .contains = _map_contains_hash_set
 )
 
@@ -227,7 +216,7 @@ implement#(
     .policy   : Type: HashPolicy#(policy, key),
     .Provider : Type: Allocator#(Provider)
 ) SetInsertion#(HashSet#(.key: key, .policy: policy), Provider) (
-    .Key    : Type                 = key
+    .Key    : Type = key
     .insert = _map_insert_hash_set
 )
 
@@ -237,7 +226,7 @@ implement#(
     .policy   : Type: HashPolicy#(policy, key),
     .Provider : Type: Allocator#(Provider)
 ) MapRemoval#(HashMap#(.key: key, .value: value, .policy: policy), Provider) (
-    .Key    : Type                 = key
+    .Key    : Type = key
     .remove = _map_remove_hash_map
 )
 
@@ -246,8 +235,8 @@ implement#(
     .value  : Type: ImplicitlyCopyable,
     .policy : Type: HashPolicy#(policy, key)
 ) MapBorrowedLookup#(HashMap#(.key: key, .value: value, .policy: policy)) (
-    .Key        : Type                     = key
-    .Value      : Type                     = value
+    .Key        : Type = key
+    .Value      : Type = value
     .get_ro_ref = _map_get_ro_ref_hash_map
 )
 
@@ -256,7 +245,7 @@ implement#(
     .value  : Type: ImplicitlyCopyable,
     .policy : Type: HashPolicy#(policy, key)
 ) MapMembership#(HashMap#(.key: key, .value: value, .policy: policy)) (
-    .Key      : Type                   = key
+    .Key      : Type = key
     .contains = _map_contains_hash_map
 )
 
@@ -265,8 +254,8 @@ implement#(
     .value  : Type: ImplicitlyCopyable,
     .policy : Type: HashPolicy#(policy, key)
 ) MapLookup#(HashMap#(.key: key, .value: value, .policy: policy)) (
-    .Key   : Type              = key
-    .Value : Type              = value
+    .Key   : Type = key
+    .Value : Type = value
     .get   = _map_get_hash_map
 )
 
@@ -276,7 +265,7 @@ implement#(
     .policy   : Type: HashPolicy#(policy, key),
     .Provider : Type: Allocator#(Provider)
 ) MapInsertion#(HashMap#(.key: key, .value: value, .policy: policy), Provider) (
-    .Key   : Type              = key
-    .Value : Type              = value
+    .Key   : Type = key
+    .Value : Type = value
     .put   = _map_put_hash_map
 )

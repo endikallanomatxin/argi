@@ -8,19 +8,12 @@ _ArenaBlock: Type = (
 -- reset. Updating only the marker would leave the former generation ended.
 ArenaDomain: Type = (.marker: Bool)
 
-implement Init#(
-    ArenaDomain,
-    ()
-) (
-        .Result : Type = ArenaDomain
-        .init   = (
-                .args : ()
-            ) -> (
-                .result : Result
-            ) {
-            result = (.marker = false)
-        }
-    )
+implement Init#(ArenaDomain, ()) (
+    .Result : Type = ArenaDomain
+    .init   = (.args: ()) -> (.result: Result) {
+        result = (.marker = false)
+    }
+)
 
 implement Deinit#(ArenaDomain) (
     .deinit = (.self: $&ArenaDomain) -> () {
@@ -31,51 +24,40 @@ implement Deinit#(ArenaDomain) (
 -- until the first allocation; all blocks come from the chosen backing policy.
 ArenaAllocator: Type = (
     ._backing_allocator    : Virtual#(.contract: Allocator)
-    .domain                : ArenaDomain
-    ._block_head           : UIntNative
-    .block_count           : UIntNative
-    .block_size            : UIntNative
+    .domain : ArenaDomain
+    ._block_head : UIntNative
+    .block_count : UIntNative
+    .block_size : UIntNative
     ._current_block_offset : UIntNative
 )
 
-implement#(
-    .Provider : Type: Allocator
-) Init#(
-    ArenaAllocator,
-    (
-        .allocator  : $&Provider = reach allocator,
-        .block_size : UIntNative = 4096,
-    )
+implement#(.Provider: Type: Allocator) Init#(
+    ArenaAllocator, (.allocator: $&Provider = reach allocator, .block_size: UIntNative = 4096)
 ) (
-        .Result : Type = Errable#(ArenaAllocator, (..out_of_memory))
-        .init   = (
-                .args : (
-                    .allocator  : $&Provider = reach allocator,
-                    .block_size : UIntNative = 4096,
-                )
-            ) -> (
-                .result : Result
-            ) {
-            allocator ::= args.allocator
-            block_size ::= args.block_size
+    .Result : Type = Errable#(ArenaAllocator, (..out_of_memory))
+    .init   = (
+        .args : (.allocator: $&Provider = reach allocator, .block_size: UIntNative = 4096)
+    ) -> (.result: Result) {
+        allocator ::= args.allocator
+        block_size ::= args.block_size
 
-            constructed :: ArenaAllocator
+        constructed :: ArenaAllocator
 
-            actual_block_size ::= block_size
+        actual_block_size ::= block_size
 
-            if actual_block_size == 0 { actual_block_size = 1 }
-            constructed = (
-                ._backing_allocator    = to_virtual#(.contract: Allocator)(.value = allocator)
-                .domain                = ArenaDomain()
-                ._block_head           = 0
-                .block_count           = 0
-                .block_size            = actual_block_size
-                ._current_block_offset = 0
-            )
+        if actual_block_size == 0 { actual_block_size = 1 }
+        constructed = (
+            ._backing_allocator    = to_virtual#(.contract: Allocator)(.value = allocator)
+            .domain = ArenaDomain()
+            ._block_head = 0
+            .block_count = 0
+            .block_size = actual_block_size
+            ._current_block_offset = 0
+        )
 
-            result = ..ok ~constructed
-        }
-    )
+        result = ..ok ~constructed
+    }
+)
 
 _trusted_arena_block(.address: UIntNative, .owner: $&ArenaAllocator) -> (.block: $&_ArenaBlock) := {
     raw ::= raw_pointer#(.t: _ArenaBlock)(.address = address).raw
@@ -90,8 +72,7 @@ arena_free_blocks(.self: $&ArenaAllocator) -> () := {
         block ::= _trusted_arena_block(.address = self&._block_head, .owner = self).block
         next ::= block&.next
         storage ::= trusted_opaque_move_out#(.t: Allocation, .storage_type: _ArenaBlock)(
-            .storage = block
-            .slot    = $&block&.storage
+            .storage = block, .slot = $&block&.storage
         ).result
         self&._block_head = next
         deinit(.self = $&storage)
@@ -115,13 +96,9 @@ implement Deinit#(ArenaAllocator) (
 )
 
 implement Allocator#(ArenaAllocator) (
-    .allocate = (
-            .self      : $&ArenaAllocator,
-            .size      : UIntNative,
-            .alignment : UIntNative
-        ) -> (
-            .result : Errable#(Allocation, (..out_of_memory))
-        ) {
+    .allocate = (.self: $&ArenaAllocator, .size: UIntNative, .alignment: UIntNative) -> (
+        .result : Errable#(Allocation, (..out_of_memory))
+    ) {
         _require_allocation_alignment(.alignment = alignment)
         required ::= size
 
@@ -160,9 +137,7 @@ implement Allocator#(ArenaAllocator) (
             header_alignment ::= alignment_of(.type = _ArenaBlock)
             if block_alignment < header_alignment { block_alignment = header_alignment }
             allocated ::= allocate_bytes(
-                $&self&._backing_allocator
-                .size      = new_size
-                .alignment = block_alignment
+                $&self&._backing_allocator, .size = new_size, .alignment = block_alignment
             )
             match allocated {
                 ..error _ {
@@ -191,10 +166,12 @@ implement Allocator#(ArenaAllocator) (
             .value = self
         )
         allocation :: Allocation = (
-            .data               = raw_pointer#(.t: UInt8)(.address = address).raw
-            .size               = size
-            .alignment          = alignment
-            .anchor             = erase_mutable_reference#(.t: ArenaDomain)(.base = $&self&.domain).reference
+            .data      = raw_pointer#(.t: UInt8)(.address = address).raw
+            .size      = size
+            .alignment = alignment
+            .anchor    = erase_mutable_reference#(.t: ArenaDomain)(
+                .base = $&self&.domain
+            ).reference
             .deallocator        = deallocator
             ._storage_address   = address
             ._storage_size      = size
@@ -209,9 +186,9 @@ implement Allocator#(ArenaAllocator) (
 
 implement Deallocator#(ArenaAllocator) (
     .deallocate = (
-            .self      : $&ArenaAllocator,
-            .data      : RawPointer#(.t: UInt8),
-            .size      : UIntNative,
-            .alignment : UIntNative
-        ) -> () {}
+        .self      : $&ArenaAllocator,
+        .data      : RawPointer#(.t: UInt8),
+        .size      : UIntNative,
+        .alignment : UIntNative
+    ) -> () {}
 )

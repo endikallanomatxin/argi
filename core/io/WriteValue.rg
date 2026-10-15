@@ -5,14 +5,8 @@ WriteValue#(.Stream: Type, .Value: Type): Contract = (
     .write_value : (.self: $&Stream, .value: Value) -> (.result: Result)
 )
 
-write#(
-        .Value  : Type,
-        .Stream : Type: WriteValue#(Stream, Value)
-    ) := (
-        .self  : $&Stream,
-        .value : Value
-    ) -> (
-        .result : WriteValue#(Stream, Value).Result
-    ) {
+write#(.Value: Type, .Stream: Type: WriteValue#(Stream, Value)) := (
+    .self: $&Stream, .value: Value
+) -> (.result: WriteValue#(Stream, Value).Result) {
     result = ~WriteValue#(Stream, Value).write_value(.self = self, .value = ~value)
 }

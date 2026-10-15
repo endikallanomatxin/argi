@@ -7,13 +7,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
 
     specs ::= (
         CliSpec("help", "h", "Show help"),
-        CliSpec(
-            "root"
-            "r"
-            "Directory to visit"
-            .value_name = "PATH"
-            .required   = true
-        ),
+        CliSpec("root", "r", "Directory to visit", .value_name = "PATH", .required = true),
         CliSpec(
             "depth"
             "d"
@@ -36,11 +30,9 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         }
     }
 
-    parsed ::= parse_cli(
-        .source = system.args
-        .specs  = view(&specs)
-        .start  = 1
-    )!!! { status_code = 1 }
+    parsed ::= parse_cli(.source = system.args, .specs = view(&specs), .start = 1)!!! {
+        status_code = 1
+    }
 
     root ::= "."
     maximum_depth :: UIntNative = 64
@@ -56,10 +48,9 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         }
     }
 
-    walker ::= DirectoryWalker(
-        .path          = root
-        .maximum_depth = maximum_depth
-    )!!! { status_code = 1 }
+    walker ::= DirectoryWalker(.path = root, .maximum_depth = maximum_depth)!!! {
+        status_code = 1
+    }
 
     while true {
         match [next($&walker)!!! { status_code = 1 }] {

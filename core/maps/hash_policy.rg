@@ -10,13 +10,12 @@ UIntNativeHashPolicy: Type = ()
 implement ImplicitlyCopyable#(UIntNativeHashPolicy) ()
 
 implement HashPolicy#(UIntNativeHashPolicy, UIntNative) (
-    .hash = (.self: &UIntNativeHashPolicy, .key: UIntNative) -> (.hash: UIntNative) { hash = key }
+    .hash = (.self: &UIntNativeHashPolicy, .key: UIntNative) -> (.hash: UIntNative) {
+        hash = key
+    }
 
     .eql = (.self: &UIntNativeHashPolicy, .left: UIntNative, .right: UIntNative) -> (.ok: Bool) {
-        ok = [
-            left
-            == right
-        ]
+        ok = [left == right]
     }
 )
 
@@ -47,10 +46,7 @@ implement HashPolicy#(Int32HashPolicy, Int32) (
     }
 
     .eql = (.self: &Int32HashPolicy, .left: Int32, .right: Int32) -> (.ok: Bool) {
-        ok = [
-            left
-            == right
-        ]
+        ok = [left == right]
     }
 )
 

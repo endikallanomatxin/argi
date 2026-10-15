@@ -4,38 +4,32 @@ FileSystem: Type = (._ffi: $&ForeignFunctionInterface)
 ..path_remove_failed
 ..path_rename_failed
 
-once _acquire_file_system := (
-        .args : (.ffi: $&ForeignFunctionInterface = reach ffi)
-    ) -> (
-        .result : FileSystem
-    ) {
+once _acquire_file_system := (.args: (.ffi: $&ForeignFunctionInterface = reach ffi)) -> (
+    .result : FileSystem
+) {
     ffi ::= args.ffi
 
     result._ffi = ffi
 }
 
 implement Init#(FileSystem, (.ffi: $&ForeignFunctionInterface = reach ffi)) (
-    .Result : Type                 = FileSystem
+    .Result : Type = FileSystem
     .init   = _acquire_file_system
 )
 
-_read_c_file#(
-        .Provider : Type: Allocator#(Provider)
-    ) := (
-        .self      : &FileSystem,
-        .path      : &Char,
-        .allocator : $&Provider,
-    ) -> (
-        .result : Errable#(
-            String,
-            (
-                ..path_open_failed,
-                ..stream_read_failed,
-                ..stream_close_failed,
-                ..out_of_memory
-            )
+_read_c_file#(.Provider: Type: Allocator#(Provider)) := (
+    .self: &FileSystem, .path: &Char, .allocator: $&Provider
+) -> (
+    .result : Errable#(
+        String,
+        (
+            ..path_open_failed,
+            ..stream_read_failed,
+            ..stream_close_failed,
+            ..out_of_memory
         )
-    ) {
+    )
+) {
     assume ffi := self&._ffi
     assume allocator
 
@@ -101,23 +95,19 @@ _read_c_file#(
     result = ..ok ~text
 }
 
-_read_string_file#(
-        .Provider : Type: Allocator#(Provider)
-    ) := (
-        .self      : &FileSystem,
-        .path      : &String,
-        .allocator : $&Provider,
-    ) -> (
-        .result : Errable#(
-            String,
-            (
-                ..path_open_failed,
-                ..stream_read_failed,
-                ..stream_close_failed,
-                ..out_of_memory
-            )
+_read_string_file#(.Provider: Type: Allocator#(Provider)) := (
+    .self: &FileSystem, .path: &String, .allocator: $&Provider
+) -> (
+    .result : Errable#(
+        String,
+        (
+            ..path_open_failed,
+            ..stream_read_failed,
+            ..stream_close_failed,
+            ..out_of_memory
         )
-    ) {
+    )
+) {
     assume ffi := self&._ffi
     assume allocator
 
@@ -126,23 +116,19 @@ _read_string_file#(
     result = read_file(self, .path = c_path, .allocator = allocator)
 }
 
-_read_view_file#(
-        .Provider : Type: Allocator#(Provider)
-    ) := (
-        .self      : &FileSystem,
-        .path      : StringView,
-        .allocator : $&Provider,
-    ) -> (
-        .result : Errable#(
-            String,
-            (
-                ..path_open_failed,
-                ..stream_read_failed,
-                ..stream_close_failed,
-                ..out_of_memory
-            )
+_read_view_file#(.Provider: Type: Allocator#(Provider)) := (
+    .self: &FileSystem, .path: StringView, .allocator: $&Provider
+) -> (
+    .result : Errable#(
+        String,
+        (
+            ..path_open_failed,
+            ..stream_read_failed,
+            ..stream_close_failed,
+            ..out_of_memory
         )
-    ) {
+    )
+) {
     assume ffi := self&._ffi
     assume allocator
 
@@ -156,23 +142,19 @@ _read_view_file#(
     }
 }
 
-_read_path_file#(
-        .Provider : Type: Allocator#(Provider)
-    ) := (
-        .self      : &FileSystem,
-        .path      : &Path,
-        .allocator : $&Provider,
-    ) -> (
-        .result : Errable#(
-            String,
-            (
-                ..path_open_failed,
-                ..stream_read_failed,
-                ..stream_close_failed,
-                ..out_of_memory
-            )
+_read_path_file#(.Provider: Type: Allocator#(Provider)) := (
+    .self: &FileSystem, .path: &Path, .allocator: $&Provider
+) -> (
+    .result : Errable#(
+        String,
+        (
+            ..path_open_failed,
+            ..stream_read_failed,
+            ..stream_close_failed,
+            ..out_of_memory
         )
-    ) {
+    )
+) {
     assume ffi := self&._ffi
     assume allocator
 

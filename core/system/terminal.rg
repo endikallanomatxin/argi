@@ -6,11 +6,9 @@ Terminal: Type = (
     .stderr : File
 )
 
-once _acquire_terminal := (
-        .args : (.ffi: $&ForeignFunctionInterface = reach ffi)
-    ) -> (
-        .result : Terminal
-    ) {
+once _acquire_terminal := (.args: (.ffi: $&ForeignFunctionInterface = reach ffi)) -> (
+    .result : Terminal
+) {
     assume ffi := args.ffi
 
     init_stdin(.p = $&result.stdin)
@@ -19,7 +17,7 @@ once _acquire_terminal := (
 }
 
 implement Init#(Terminal, (.ffi: $&ForeignFunctionInterface = reach ffi)) (
-    .Result : Type              = Terminal
+    .Result : Type = Terminal
     .init   = _acquire_terminal
 )
 
@@ -33,15 +31,10 @@ implement Deinit#(Terminal) (
 )
 
 read_line_into_buffer#(
-        .AllocatorType : Type: Allocator#(AllocatorType),
-        .ReaderType    : Type: Reader#(ReaderType)
-    )(
-        .buffer    : $&String,
-        .allocator : $&AllocatorType,
-        .reader    : $&ReaderType,
-    ) -> (
-        .result : Errable#(Void, (..stream_read_failed))
-    ) := {
+    .AllocatorType: Type: Allocator#(AllocatorType), .ReaderType: Type: Reader#(ReaderType)
+)(.buffer: $&String, .allocator: $&AllocatorType, .reader: $&ReaderType) -> (
+    .result : Errable#(Void, (..stream_read_failed))
+) := {
     assume allocator
     assume reader
 
@@ -69,11 +62,7 @@ read_line_into_buffer#(
                             break
                         }
 
-                        pushed ::= push_byte(
-                            buffer
-                            .byte      = payload
-                            .allocator = allocator
-                        )
+                        pushed ::= push_byte(buffer, .byte = payload, .allocator = allocator)
                         match pushed {
                             ..ok _ {
                             }
@@ -92,14 +81,10 @@ read_line_into_buffer#(
 }
 
 read_line#(
-        .AllocatorType : Type: Allocator#(AllocatorType),
-        .ReaderType    : Type: Reader#(ReaderType)
-    )(
-        .allocator : $&AllocatorType,
-        .reader    : $&ReaderType,
-    ) -> (
-        .result : Errable#(ReadLine, (..stream_read_failed, ..out_of_memory))
-    ) := {
+    .AllocatorType: Type: Allocator#(AllocatorType), .ReaderType: Type: Reader#(ReaderType)
+)(.allocator: $&AllocatorType, .reader: $&ReaderType) -> (
+    .result : Errable#(ReadLine, (..stream_read_failed, ..out_of_memory))
+) := {
     assume allocator
     assume reader
 
@@ -126,32 +111,24 @@ read_line#(
     result = ..ok ..ok ~line
 }
 
-flush#(
-        .WriterType : Type: Writer#(WriterType)
-    ) := (
-        .writer : $&WriterType,
-    ) -> (
-        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-    ) {
+flush#(.WriterType: Type: Writer#(WriterType)) := (.writer: $&WriterType) -> (
+    .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+) {
     assume writer
 
     result = Writer#().flush(.self = writer)
 }
 
-print_error#(
-        .WriterType : Type: Writer#(WriterType)
-    )(
-        .value  : StringView,
-        .writer : $&WriterType,
-    ) -> (
-        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-    ) := {
+print_error#(.WriterType: Type: Writer#(WriterType))(.value: StringView, .writer: $&WriterType) -> (
+    .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+) := {
     assume writer
 
     i :: UIntNative = 0
 
     while i < value.length {
-        wrote ::= Writer#().write_byte(writer, .byte = bytes_get(.view = &value, .index = i).byte)
+        wrote ::= Writer#(
+        ).write_byte(writer, .byte = bytes_get(.view = &value, .index = i).byte)
         match wrote {
             ..ok _ {
             }
@@ -170,29 +147,18 @@ print_error#(
     result = ..ok Void()
 }
 
-flush_error#(
-        .WriterType : Type: Writer#(WriterType)
-    )(
-        .writer : $&WriterType,
-    ) -> (
-        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-    ) := {
+flush_error#(.WriterType: Type: Writer#(WriterType))(.writer: $&WriterType) -> (
+    .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+) := {
     assume writer
 
     result = Writer#().flush(.self = writer)
 }
 
 -- Rendering is selected by WriteValue, not an ordinary print overload family.
-print#(
-        .Value  : Type,
-        .Stream : Type: WriteValue#(Stream, Value)
-    ) := (
-        .value      : Value,
-        .writer     : $&Stream   = reach writer,
-        .terminator : StringView = "\n"
-    ) -> (
-        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
-    ) {
+print#(.Value: Type, .Stream: Type: WriteValue#(Stream, Value)) := (
+    .value: Value, .writer: $&Stream = reach writer, .terminator: StringView = "\n"
+) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) {
     write(.self = writer, .value = ~value)!
     result = write(.self = writer, .value = terminator)
 }

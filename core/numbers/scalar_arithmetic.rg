@@ -27,63 +27,47 @@ implement _BuiltinArithmetic#(Float32) ()
 implement _BuiltinArithmetic#(Float64) ()
 
 implement#(.Value: Type: _BuiltinArithmetic) Add#(Value, Value, (.left: Value, .right: Value)) (
-        .Result : Type = Value
-        .add    = (
-                .args : (.left: Value, .right: Value)
-            ) -> (
-                .result : Result
-            ) {
-            result = __scalar_add(.left = args.left, .right = args.right)
-        }
-    )
+    .Result : Type = Value
+    .add    = (.args: (.left: Value, .right: Value)) -> (.result: Result) {
+        result = __scalar_add(.left = args.left, .right = args.right)
+    }
+)
 
-implement#(.Value: Type: _BuiltinArithmetic) Subtract#(Value, Value, (.left: Value, .right: Value)) (
-        .Result   : Type = Value
-        .subtract = (
-                .args : (.left: Value, .right: Value)
-            ) -> (
-                .result : Result
-            ) {
-            result = __scalar_subtract(.left = args.left, .right = args.right)
-        }
-    )
+implement#(.Value: Type: _BuiltinArithmetic) Subtract#(
+    Value, Value, (.left: Value, .right: Value)
+) (
+    .Result   : Type = Value
+    .subtract = (.args: (.left: Value, .right: Value)) -> (.result: Result) {
+        result = __scalar_subtract(.left = args.left, .right = args.right)
+    }
+)
 
-implement#(.Value: Type: _BuiltinArithmetic) Multiply#(Value, Value, (.left: Value, .right: Value)) (
-        .Result   : Type = Value
-        .multiply = (
-                .args : (.left: Value, .right: Value)
-            ) -> (
-                .result : Result
-            ) {
-            result = __scalar_multiply(.left = args.left, .right = args.right)
-        }
-    )
+implement#(.Value: Type: _BuiltinArithmetic) Multiply#(
+    Value, Value, (.left: Value, .right: Value)
+) (
+    .Result   : Type = Value
+    .multiply = (.args: (.left: Value, .right: Value)) -> (.result: Result) {
+        result = __scalar_multiply(.left = args.left, .right = args.right)
+    }
+)
 
-implement#(.Value: Type: _BuiltinArithmetic) Divide#(Value, Value, (.left: Value, .right: Value)) (
-        .Result : Type = Value
-        .divide = (
-                .args : (.left: Value, .right: Value)
-            ) -> (
-                .result : Result
-            ) {
-            result = __scalar_divide(.left = args.left, .right = args.right)
-        }
-    )
+implement#(.Value: Type: _BuiltinArithmetic) Divide#(
+    Value, Value, (.left: Value, .right: Value)
+) (
+    .Result : Type = Value
+    .divide = (.args: (.left: Value, .right: Value)) -> (.result: Result) {
+        result = __scalar_divide(.left = args.left, .right = args.right)
+    }
+)
 
 implement#(.Value: Type: _BuiltinArithmetic) Remainder#(
-    Value,
-    Value,
-    (.left: Value, .right: Value)
+    Value, Value, (.left: Value, .right: Value)
 ) (
-        .Result    : Type = Value
-        .remainder = (
-                .args : (.left: Value, .right: Value)
-            ) -> (
-                .result : Result
-            ) {
-            result = __scalar_remainder(.left = args.left, .right = args.right)
-        }
-    )
+    .Result    : Type = Value
+    .remainder = (.args: (.left: Value, .right: Value)) -> (.result: Result) {
+        result = __scalar_remainder(.left = args.left, .right = args.right)
+    }
+)
 
 _BuiltinEquality#(.Value: Type): Contract = ()
 
@@ -118,59 +102,39 @@ implement _BuiltinEquality#(Char) ()
 implement _BuiltinEquality#(RawPointer) ()
 
 implement#(.Value: Type: _BuiltinEquality) Equal#(Value, Value, (.left: Value, .right: Value)) (
-        .equal = (
-                .args : (.left: Value, .right: Value)
-            ) -> (
-                .ok : Bool
-            ) {
-            ok = __scalar_equal(.left = args.left, .right = args.right)
-        }
-    )
+    .equal = (.args: (.left: Value, .right: Value)) -> (.ok: Bool) {
+        ok = __scalar_equal(.left = args.left, .right = args.right)
+    }
+)
 
 implement#(.Value: Type: _BuiltinOrdering) Compare#(Value, Value) (
-        .compare = (
-                .left  : Value,
-                .right : Value
-            ) -> (
-                .order : Ordering
-            ) {
-            if __scalar_less_than(.left = left, .right = right) { order = ..less } else if __scalar_greater_than(
-                .left  = left
-                .right = right
-            ) { order = ..greater } else if __scalar_equal(.left = left, .right = right) {
-                order = ..equal
-            } else {
-                order = ..unordered
-            }
+    .compare = (.left: Value, .right: Value) -> (.order: Ordering) {
+        if __scalar_less_than(.left = left, .right = right) {
+            order = ..less
+        } else if __scalar_greater_than(.left = left, .right = right) {
+            order = ..greater
+        } else if __scalar_equal(.left = left, .right = right) {
+            order = ..equal
+        } else {
+            order = ..unordered
         }
-    )
+    }
+)
 
 implement#(.Value: Type: _BuiltinOrdering) CompareRelations#(Value, Value) (
-        .less_than = (
-                .left  : Value,
-                .right : Value
-            ) -> (
-                .ok : Bool
-            ) { ok = __scalar_less_than(.left = left, .right = right) }
-        .less_than_or_equal = (
-                .left  : Value,
-                .right : Value
-            ) -> (
-                .ok : Bool
-            ) { ok = __scalar_less_than_or_equal(.left = left, .right = right) }
-        .greater_than = (
-                .left  : Value,
-                .right : Value
-            ) -> (
-                .ok : Bool
-            ) { ok = __scalar_greater_than(.left = left, .right = right) }
-        .greater_than_or_equal = (
-                .left  : Value,
-                .right : Value
-            ) -> (
-                .ok : Bool
-            ) { ok = __scalar_greater_than_or_equal(.left = left, .right = right) }
-    )
+    .less_than = (.left: Value, .right: Value) -> (.ok: Bool) {
+        ok = __scalar_less_than(.left = left, .right = right)
+    }
+    .less_than_or_equal = (.left: Value, .right: Value) -> (.ok: Bool) {
+        ok = __scalar_less_than_or_equal(.left = left, .right = right)
+    }
+    .greater_than = (.left: Value, .right: Value) -> (.ok: Bool) {
+        ok = __scalar_greater_than(.left = left, .right = right)
+    }
+    .greater_than_or_equal = (.left: Value, .right: Value) -> (.ok: Bool) {
+        ok = __scalar_greater_than_or_equal(.left = left, .right = right)
+    }
+)
 
 _BuiltinOrdering#(.Value: Type): Contract = ()
 

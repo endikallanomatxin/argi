@@ -1,35 +1,22 @@
 _set_attribute(
-        .context : UIntNative,
-        .object  : RawPointer#(.t: _PyObject),
-        .bytes   : &UInt8,
-        .length  : UIntNative,
-        .value   : RawPointer#(.t: _PyObject)
-    ) -> (
-        .status : Int32
-    ): CFunction(.symbol = "_argi_python_set_attribute")
+    .context : UIntNative,
+    .object  : RawPointer#(.t: _PyObject),
+    .bytes   : &UInt8,
+    .length  : UIntNative,
+    .value   : RawPointer#(.t: _PyObject)
+) -> (.status: Int32): CFunction(.symbol = "_argi_python_set_attribute")
 
-_iterator(
-        .context : UIntNative,
-        .object  : RawPointer#(.t: _PyObject)
-    ) -> (
-        .handle : RawPointer#(.t: _PyObject)
-    ): CFunction(.symbol = "_argi_python_iterator")
+_iterator(.context: UIntNative, .object: RawPointer#(.t: _PyObject)) -> (
+    .handle : RawPointer#(.t: _PyObject)
+): CFunction(.symbol = "_argi_python_iterator")
 
-_next(
-        .context   : UIntNative,
-        .object    : RawPointer#(.t: _PyObject),
-        .exhausted : $&Int32
-    ) -> (
-        .handle : RawPointer#(.t: _PyObject)
-    ): CFunction(.symbol = "_argi_python_next")
+_next(.context: UIntNative, .object: RawPointer#(.t: _PyObject), .exhausted: $&Int32) -> (
+    .handle : RawPointer#(.t: _PyObject)
+): CFunction(.symbol = "_argi_python_next")
 
-set_attribute(
-        .self  : &Object,
-        .name  : StringView,
-        .value : &Object
-    ) -> (
-        .result : Errable#(Void, (..python_error))
-    ) := {
+set_attribute(.self: &Object, .name: StringView, .value: &Object) -> (
+    .result : Errable#(Void, (..python_error))
+) := {
     assume ffi := self&._python&._ffi
 
     if [
@@ -37,9 +24,8 @@ set_attribute(
             .context = self&._python&._handle
             .object  = self&._handle
             .bytes   = name.data
-
-            .length = name.length
-            .value  = value&._handle
+            .length  = name.length
+            .value   = value&._handle
         ).status
         != 0
     ] {
@@ -50,12 +36,9 @@ set_attribute(
     result = ..ok Void()
 }
 
-tuple(
-        .self   : &Python,
-        .values : ArrayViewRO#(.t: &Object) = _no_arguments()
-    ) -> (
-        .result : Errable#(Object, (..python_error))
-    ) := {
+tuple(.self: &Python, .values: ArrayViewRO#(.t: &Object) = _no_arguments()) -> (
+    .result : Errable#(Object, (..python_error))
+) := {
     result = positional_arguments(.self = self, .values = values)
 }
 

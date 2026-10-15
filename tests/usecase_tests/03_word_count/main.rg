@@ -4,10 +4,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     assume writer ::= $&system.terminal&.stderr
     assume allocator := system.page_allocator
     assume file_system := system.file_system
-    output ::= $&BufferedWriter(
-        $&system.terminal&.stdout
-        view($&zeroed#([8192]UInt8)())
-    )
+    output ::= $&BufferedWriter($&system.terminal&.stdout, view($&zeroed#([8192]UInt8)()))
     #defer {
         Writer#().flush(output) handle error {
             status_code = 1
@@ -32,10 +29,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         StringHashPolicy()
     )!!! { status_code = 1 }
     words.count_directory(
-        $&counts
-        argument_view_at(system.args, 1)
-        limit
-        view($&zeroed#([8192]UInt8)())
+        $&counts, argument_view_at(system.args, 1), limit, view($&zeroed#([8192]UInt8)())
     )!!! { status_code = 1 }
 
     for entry in counts {

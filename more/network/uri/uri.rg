@@ -76,7 +76,9 @@ _scheme_valid(.text: StringView) -> (.ok: Bool = false) := {
             or byte == 45
             or byte == 46
         ] {
-        } else { return }
+        } else {
+            return
+        }
         i = i + 1
     }
 
@@ -92,13 +94,7 @@ _component_valid(.text: StringView, .kind: UInt8) -> (.ok: Bool = false) := {
             if text.length - i < 3 { return }
             if [
                 _hex(.byte = bytes_get(.view = &text, .index = i + 1).byte).ok == false
-                or _hex(
-                    .byte = bytes_get(
-                        .view = &text
-
-                        .index = i + 2
-                    ).byte
-                ).ok == false
+                or _hex(.byte = bytes_get(.view = &text, .index = i + 2).byte).ok == false
             ] { return }
             i = i + 3
         } else {
@@ -173,10 +169,7 @@ parse(.text: StringView) -> (.result: Errable#(UriView, (..invalid_input))) := {
     if query_start - start >= 2 {
         if [
             bytes_get(.view = &text, .index = start).byte == 47
-            and bytes_get(
-                .view  = &text
-                .index = start + 1
-            ).byte == 47
+            and bytes_get(.view = &text, .index = start + 1).byte == 47
         ] {
             i = start + 2
             while i < query_start {
@@ -201,7 +194,9 @@ parse(.text: StringView) -> (.result: Errable#(UriView, (..invalid_input))) := {
     }
 
     if query_start < fragment_start {
-        candidate ::= _slice(.text = text, .start = query_start + 1, .end = fragment_start).value
+        candidate ::= _slice(
+            .text = text, .start = query_start + 1, .end = fragment_start
+        ).value
         if _component_valid(.text = candidate, .kind = 2).ok == false {
             result = ..error(.reason = ..invalid_input)
             return
@@ -210,7 +205,9 @@ parse(.text: StringView) -> (.result: Errable#(UriView, (..invalid_input))) := {
     }
 
     if fragment_start < text.length {
-        candidate ::= _slice(.text = text, .start = fragment_start + 1, .end = text.length).value
+        candidate ::= _slice(
+            .text = text, .start = fragment_start + 1, .end = text.length
+        ).value
         if _component_valid(.text = candidate, .kind = 2).ok == false {
             result = ..error(.reason = ..invalid_input)
             return
@@ -270,7 +267,8 @@ _ip_literal_valid(.text: StringView) -> (.ok: Bool = false) := {
         if i == text.length { return }
         while i < text.length {
             byte ::= bytes_get(.view = &text, .index = i).byte
-            if _unreserved(.byte = byte).ok or _subdelimiter(.byte = byte).ok or byte == 58 {} else {
+            if _unreserved(.byte = byte).ok or _subdelimiter(.byte = byte).ok or byte == 58 {
+            } else {
                 return
             }
             i = i + 1
@@ -308,7 +306,9 @@ _ip_literal_valid(.text: StringView) -> (.ok: Bool = false) := {
             if part.length > 4 { return }
             j :: UIntNative = 0
             while j < part.length {
-                if _hex(.byte = bytes_get(.view = &part, .index = j).byte).ok == false { return }
+                if _hex(.byte = bytes_get(.view = &part, .index = j).byte).ok == false {
+                    return
+                }
                 j = j + 1
             }
             groups = groups + 1
@@ -387,20 +387,12 @@ _authority_valid(.text: StringView) -> (.ok: Bool = false) := {
 
 -- Recompose already encoded components. Validation rejects delimiter injection
 -- and ambiguous relative paths rather than silently changing their meaning.
-build#(
-        .AllocatorType : Type: Allocator#(AllocatorType)
-    )(
-        .value     : UriView,
-        .allocator : $&AllocatorType
-    ) -> (
-        .result : Errable#(String, (..invalid_input, ..out_of_memory))
-    ) := {
+build#(.AllocatorType: Type: Allocator#(AllocatorType))(
+    .value: UriView, .allocator: $&AllocatorType
+) -> (.result: Errable#(String, (..invalid_input, ..out_of_memory))) := {
     if [
         is(.value = value.scheme, .variant = ..none)
-        and is(
-            .value   = value.authority
-            .variant = ..none
-        )
+        and is(.value = value.authority, .variant = ..none)
     ] {
         i :: UIntNative = 0
         while i < value.path.length {
@@ -433,11 +425,7 @@ build#(
             if value.path.length >= 2 {
                 if [
                     bytes_get(.view = &value.path, .index = 0).byte == 47
-                    and bytes_get(
-                        .view = &value.path
-
-                        .index = 1
-                    ).byte == 47
+                    and bytes_get(.view = &value.path, .index = 1).byte == 47
                 ] {
                     result = ..error(.reason = ..invalid_input)
                     return
@@ -494,14 +482,9 @@ build#(
     result = ..ok ~output
 }
 
-encode_component#(
-        .AllocatorType : Type: Allocator#(AllocatorType)
-    )(
-        .text      : StringView,
-        .allocator : $&AllocatorType
-    ) -> (
-        .result : Errable#(String, (..out_of_memory))
-    ) := {
+encode_component#(.AllocatorType: Type: Allocator#(AllocatorType))(
+    .text: StringView, .allocator: $&AllocatorType
+) -> (.result: Errable#(String, (..out_of_memory))) := {
     output ::= string_with_capacity(.allocator = allocator, .capacity = 0)!
     hex: StringView = "0123456789ABCDEF"
     i :: UIntNative = 0
@@ -515,22 +498,14 @@ encode_component#(
             push_byte(
                 .self = $&output
                 .byte = bytes_get(
-                    .view  = &hex
-                    .index = [
-                        [byte / 16]
-                        | convert#(.to: UIntNative)(_)
-                    ]
+                    .view = &hex, .index = [[byte / 16] | convert#(.to: UIntNative)(_)]
                 ).byte
                 .allocator = allocator
             )!
             push_byte(
                 .self = $&output
                 .byte = bytes_get(
-                    .view  = &hex
-                    .index = [
-                        [byte % 16]
-                        | convert#(.to: UIntNative)(_)
-                    ]
+                    .view = &hex, .index = [[byte % 16] | convert#(.to: UIntNative)(_)]
                 ).byte
                 .allocator = allocator
             )!
@@ -541,14 +516,9 @@ encode_component#(
     result = ..ok ~output
 }
 
-decode_component#(
-        .AllocatorType : Type: Allocator#(AllocatorType)
-    )(
-        .text      : StringView,
-        .allocator : $&AllocatorType
-    ) -> (
-        .result : Errable#(String, (..invalid_input, ..out_of_memory))
-    ) := {
+decode_component#(.AllocatorType: Type: Allocator#(AllocatorType))(
+    .text: StringView, .allocator: $&AllocatorType
+) -> (.result: Errable#(String, (..invalid_input, ..out_of_memory))) := {
     output ::= string_with_capacity(.allocator = allocator, .capacity = 0)!
     i :: UIntNative = 0
 
@@ -579,11 +549,7 @@ AuthorityView: Type = (.userinfo: ?StringView, .host: StringView, .port: ?String
 
 implement ImplicitlyCopyable#(AuthorityView) ()
 
-authority_parts(
-        .text : StringView
-    ) -> (
-        .result : Errable#(AuthorityView, (..invalid_input))
-    ) := {
+authority_parts(.text: StringView) -> (.result: Errable#(AuthorityView, (..invalid_input))) := {
     if _authority_valid(.text = text).ok == false {
         result = ..error(.reason = ..invalid_input)
         return
@@ -616,7 +582,9 @@ authority_parts(
     while i < text.length {
         if bytes_get(.view = &text, .index = i).byte == 58 {
             end = i
-            port = ..some(.value = _slice(.text = text, .start = i + 1, .end = text.length).value)
+            port = ..some(
+                .value = _slice(.text = text, .start = i + 1, .end = text.length).value
+            )
             break
         }
         i = i + 1

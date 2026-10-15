@@ -17,23 +17,13 @@ fclose(.stream: &Any) -> (.status: Int32): ExternFunction
 
 fflush(.stream: &Any) -> (.status: Int32): ExternFunction
 
-fread(
-        .buffer : $&UInt8,
-        .size   : UIntNative,
-        .count  : UIntNative,
-        .stream : &Any
-    ) -> (
-        .count : UIntNative
-    ): ExternFunction
+fread(.buffer: $&UInt8, .size: UIntNative, .count: UIntNative, .stream: &Any) -> (
+    .count : UIntNative
+): ExternFunction
 
-fwrite(
-        .buffer : &UInt8,
-        .size   : UIntNative,
-        .count  : UIntNative,
-        .stream : &Any
-    ) -> (
-        .count : UIntNative
-    ): ExternFunction
+fwrite(.buffer: &UInt8, .size: UIntNative, .count: UIntNative, .stream: &Any) -> (
+    .count : UIntNative
+): ExternFunction
 
 feof(.stream: &Any) -> (.status: Int32): ExternFunction
 
@@ -58,12 +48,7 @@ _aligned_free(.address: UIntNative) -> (): ExternFunction
 
 memcpy(.dst: $&Any, .src: &Any, .n: UIntNative) -> (): ExternFunction
 
-fread_into(
-        .buffer : ArrayView#(.t: UInt8),
-        .stream : &Any,
-    ) -> (
-        .count : UIntNative
-    ) := {
+fread_into(.buffer: ArrayView#(.t: UInt8), .stream: &Any) -> (.count: UIntNative) := {
     if length(&buffer).count == 0 {
         count = 0
         return
@@ -97,14 +82,9 @@ implement _FileWriteBuffer#(ArrayViewRO#(.t: UInt8)) (
     .bytes = _write_buffer_readonly
 )
 
-fwrite_from#(
-        .Buffer : Type: _FileWriteBuffer#(Buffer)
-    ) := (
-        .buffer : Buffer,
-        .stream : &Any
-    ) -> (
-        .count : UIntNative
-    ) {
+fwrite_from#(.Buffer: Type: _FileWriteBuffer#(Buffer)) := (.buffer: Buffer, .stream: &Any) -> (
+    .count : UIntNative
+) {
     if length(&buffer).count == 0 {
         count = 0
         return
@@ -122,13 +102,9 @@ malloc(.size: UIntNative, .ffi: $&ForeignFunctionInterface) -> (.address: UIntNa
     address = _malloc(.size = size).address
 }
 
-aligned_alloc(
-        .alignment : UIntNative,
-        .size      : UIntNative,
-        .ffi       : $&ForeignFunctionInterface
-    ) -> (
-        .address : UIntNative
-    ) := {
+aligned_alloc(.alignment: UIntNative, .size: UIntNative, .ffi: $&ForeignFunctionInterface) -> (
+    .address : UIntNative
+) := {
     address = _aligned_alloc(.alignment = alignment, .size = size).address
 }
 

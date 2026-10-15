@@ -849,19 +849,15 @@ _FloatExactDigits: Type = (
 )
 
 _FloatEncoding: Type = (
-    .bits           : UInt64
+    .bits : UInt64
     .fraction_unit  : UInt64
     .exponent_limit : UInt64
-    .bias           : Int32
+    .bias : Int32
 )
 
-_float_encoding#(
-        .Value : Type: _FloatRepresentation#(Value)
-    ) := (
-        .value : Value
-    ) -> (
-        .encoding : _FloatEncoding
-    ) {
+_float_encoding#(.Value: Type: _FloatRepresentation#(Value)) := (.value: Value) -> (
+    .encoding : _FloatEncoding
+) {
     encoding = _FloatRepresentation#(Value).encoding(.value = value)
 }
 
@@ -880,13 +876,11 @@ _float_exact_digits(.integer: _FloatDecimalInteger) -> (.digits: _FloatExactDigi
 }
 
 _float_inside_interval(
-        .candidate : &_FloatDecimalInteger,
-        .lower     : &_FloatDecimalInteger,
-        .upper     : &_FloatDecimalInteger,
-        .closed    : Bool
-    ) -> (
-        .inside : Bool
-    ) := {
+    .candidate : &_FloatDecimalInteger,
+    .lower     : &_FloatDecimalInteger,
+    .upper     : &_FloatDecimalInteger,
+    .closed    : Bool
+) -> (.inside: Bool) := {
     low ::= _float_integer_compare(.left = candidate, .right = lower).order
     high ::= _float_integer_compare(.left = candidate, .right = upper).order
     inside = [low > 0 or [low == 0 and closed]] and [high < 0 or [high == 0 and closed]]
@@ -1070,16 +1064,10 @@ _float_encode#(.t: Type: Float)(.value: t) -> (.text: _FloatText) := {
         ceil ::= floor
         _float_integer_add_multiple($&ceil, .other = &place, .factor = 1)
         floor_ok ::= _float_inside_interval(
-            .candidate = &floor
-            .lower     = &lower
-            .upper     = &upper
-            .closed    = closed
+            .candidate = &floor, .lower = &lower, .upper = &upper, .closed = closed
         ).inside
         ceil_ok ::= _float_inside_interval(
-            .candidate = &ceil
-            .lower     = &lower
-            .upper     = &upper
-            .closed    = closed
+            .candidate = &ceil, .lower = &lower, .upper = &upper, .closed = closed
         ).inside
         if floor_ok or ceil_ok {
             prefer_ceil ::= false
@@ -1104,7 +1092,9 @@ _float_encode#(.t: Type: Float)(.value: t) -> (.text: _FloatText) := {
                 unwrap_or_abort(.value = [count - index - 1] | convert#(.to: Int32)(_)).result
                 - decimal_scale
             ]
-            text = _float_render(.coefficient = coefficient, .power = power, .negative = negative).text
+            text = _float_render(
+                .coefficient = coefficient, .power = power, .negative = negative
+            ).text
             return
         }
         _float_integer_divide_ten($&place)

@@ -9,12 +9,9 @@ StringSplitIterator: Type = (
 
 -- A borrowed traversal starts from the current cursor without advancing it.
 
-split(
-        .self      : StringView,
-        .separator : StringView,
-    ) -> (
-        .result : Errable#(StringSplitIterator, (..empty_separator))
-    ) := {
+split(.self: StringView, .separator: StringView) -> (
+    .result : Errable#(StringSplitIterator, (..empty_separator))
+) := {
     if separator.length == 0 {
         result = ..error(.reason = ..empty_separator)
         return
@@ -24,65 +21,46 @@ split(
 }
 
 implement Iterable#(StringSplitIterator) (
-        .Item         : Type = StringView
-        .IteratorType : Type = StringSplitIterator
+    .Item         : Type = StringView
+    .IteratorType : Type = StringSplitIterator
 
-        .to_iterator = (
-                .value : &StringSplitIterator
-            ) -> (
-                .iterator : StringSplitIterator
-            ) {
-            iterator = (
-                ._text      = value&._text
-                ._separator = value&._separator
-                ._start     = value&._start
-                ._done      = value&._done
-            )
-        }
-    )
+    .to_iterator = (.value: &StringSplitIterator) -> (.iterator: StringSplitIterator) {
+        iterator = (
+            ._text      = value&._text
+            ._separator = value&._separator
+            ._start     = value&._start
+            ._done      = value&._done
+        )
+    }
+)
 
 implement Iterator#(StringSplitIterator) (
-        .Item : Type = StringView
+    .Item : Type = StringView
 
-        .has_next = (
-                .self : &StringSplitIterator
-            ) -> (
-                .ok : Bool
-            ) {
-            ok = self&._done == false
-        }
+    .has_next = (.self: &StringSplitIterator) -> (.ok: Bool) {
+        ok = self&._done == false
+    }
 
-        .next = (
-                .self : $&StringSplitIterator
-            ) -> (
-                .value : StringView
-            ) {
-            if self&._done { abort }
-            start ::= self&._start
-            remaining ::= _string_view_subrange(
-                self&._text
-                .start = start
-                .count = [
-                    self&._text.length
-                    - start
-                ]
-            ).view
+    .next = (.self: $&StringSplitIterator) -> (.value: StringView) {
+        if self&._done { abort }
+        start ::= self&._start
+        remaining ::= _string_view_subrange(
+            self&._text, .start = start, .count = [self&._text.length - start]
+        ).view
 
-            match find(remaining, .pattern = self&._separator).index {
-                ..none {
-                    value = remaining
-                    self&._done = true
-                }
-                ..some payload {
-                    value = _string_view_subrange(
-                        self&._text
-                        .start = start
-                        .count = payload.value
-                    ).view
-                    -- The matched separator lies inside the remaining extent, so
-                    -- both additions stay within the original text length.
-                    self&._start = start + payload.value + self&._separator.length
-                }
+        match find(remaining, .pattern = self&._separator).index {
+            ..none {
+                value = remaining
+                self&._done = true
+            }
+            ..some payload {
+                value = _string_view_subrange(
+                    self&._text, .start = start, .count = payload.value
+                ).view
+                -- The matched separator lies inside the remaining extent, so
+                -- both additions stay within the original text length.
+                self&._start = start + payload.value + self&._separator.length
             }
         }
-    )
+    }
+)

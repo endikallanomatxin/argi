@@ -1,7 +1,9 @@
 -- The system source is a capability, independent of deterministic Pcg32 state.
 RandomNumberGenerator: Type = (._ffi: $&ForeignFunctionInterface)
 
-once _acquire_random_number_generator := (.args: (.ffi: $&ForeignFunctionInterface = reach ffi)) -> (
+once _acquire_random_number_generator := (
+    .args : (.ffi: $&ForeignFunctionInterface = reach ffi)
+) -> (
     .result : RandomNumberGenerator
 ) {
     ffi ::= args.ffi
@@ -10,7 +12,7 @@ once _acquire_random_number_generator := (.args: (.ffi: $&ForeignFunctionInterfa
 }
 
 implement Init#(RandomNumberGenerator, (.ffi: $&ForeignFunctionInterface = reach ffi))(
-    .Result : Type                             = RandomNumberGenerator
+    .Result : Type = RandomNumberGenerator
     .init   = _acquire_random_number_generator
 )
 

@@ -4,7 +4,9 @@ _atomic_create(.initial: UInt32) -> (.handle: UIntNative): CFunction(
 
 _atomic_destroy(.handle: UIntNative) -> (): CFunction(.symbol = "_argi_atomic_u32_destroy")
 
-_atomic_load(.handle: UIntNative) -> (.value: UInt32): CFunction(.symbol = "_argi_atomic_u32_load")
+_atomic_load(.handle: UIntNative) -> (.value: UInt32): CFunction(
+    .symbol = "_argi_atomic_u32_load"
+)
 
 _atomic_store(.handle: UIntNative, .value: UInt32) -> (): CFunction(
     .symbol = "_argi_atomic_u32_store"
@@ -29,35 +31,26 @@ _atomic_compare(.handle: UIntNative, .expected: UInt32, .desired: UInt32) -> (.p
 AtomicUInt32: Type = (._handle: UIntNative, ._ffi: $&ForeignFunctionInterface)
 
 implement Init#(
-    AtomicUInt32,
-    (
-        .initial : UInt32                     = 0,
-        .ffi     : $&ForeignFunctionInterface = reach ffi,
-    )
+    AtomicUInt32, (.initial: UInt32 = 0, .ffi: $&ForeignFunctionInterface = reach ffi)
 ) (
-        .Result : Type = Errable#(AtomicUInt32, (..out_of_memory))
-        .init   = (
-                .args : (
-                    .initial : UInt32                     = 0,
-                    .ffi     : $&ForeignFunctionInterface = reach ffi,
-                )
-            ) -> (
-                .result : Result
-            ) {
-            initial ::= args.initial
-            ffi ::= args.ffi
+    .Result : Type = Errable#(AtomicUInt32, (..out_of_memory))
+    .init   = (.args: (.initial: UInt32 = 0, .ffi: $&ForeignFunctionInterface = reach ffi)) -> (
+        .result : Result
+    ) {
+        initial ::= args.initial
+        ffi ::= args.ffi
 
-            assume ffi
-            handle ::= _atomic_create(.initial = initial).handle
+        assume ffi
+        handle ::= _atomic_create(.initial = initial).handle
 
-            if handle == 0 {
-                result = ..error(.reason = ..out_of_memory)
-                return
-            }
-
-            result = ..ok(._handle = handle, ._ffi = ffi)
+        if handle == 0 {
+            result = ..error(.reason = ..out_of_memory)
+            return
         }
-    )
+
+        result = ..ok(._handle = handle, ._ffi = ffi)
+    }
+)
 
 implement Deinit#(AtomicUInt32) (
     .deinit = (.self: $&AtomicUInt32) -> () {
@@ -87,16 +80,13 @@ fetch_add(.self: $&AtomicUInt32, .value: UInt32) -> (.previous: UInt32) := {
     previous = _atomic_add(.handle = self&._handle, .value = value).previous
 }
 
-compare_exchange(
-        .self     : $&AtomicUInt32,
-        .expected : UInt32,
-        .desired  : UInt32
-    ) -> (
-        .observed : UInt32,
-        .swapped  : Bool
-    ) := {
+compare_exchange(.self: $&AtomicUInt32, .expected: UInt32, .desired: UInt32) -> (
+    .observed: UInt32, .swapped: Bool
+) := {
     assume ffi := self&._ffi
-    packed ::= _atomic_compare(.handle = self&._handle, .expected = expected, .desired = desired).packed
+    packed ::= _atomic_compare(
+        .handle = self&._handle, .expected = expected, .desired = desired
+    ).packed
     observed = unwrap_or_abort(.value = [packed % 4294967296] | convert#(.to: UInt32)(_))
     swapped = packed / 4294967296 != 0
 }

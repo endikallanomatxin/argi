@@ -17,12 +17,9 @@ implement Deinit#(AcquiredStorage) (
 
 -- This attaches acquired bytes to an existing temporal domain. The caller
 -- arranges physical cleanup with that domain; no initialized T is created.
-establish_inherited_storage(
-        .storage : AcquiredStorage,
-        .root    : &Any
-    ) -> (
-        .raw : RawPointer#(.t: UInt8)
-    ) := {
+establish_inherited_storage(.storage: AcquiredStorage, .root: &Any) -> (
+    .raw : RawPointer#(.t: UInt8)
+) := {
     raw = trusted_establish_inherited_storage(.address = storage._address, .root = root).raw
 }
 
@@ -39,12 +36,8 @@ acquired_storage_alignment(.storage: &AcquiredStorage) -> (.alignment: UIntNativ
 }
 
 acquire_heap_storage(
-        .size      : UIntNative,
-        .alignment : UIntNative,
-        .ffi       : $&ForeignFunctionInterface,
-    ) -> (
-        .result : Errable#(AcquiredStorage, (..out_of_memory))
-    ) := {
+    .size: UIntNative, .alignment: UIntNative, .ffi: $&ForeignFunctionInterface
+) -> (.result: Errable#(AcquiredStorage, (..out_of_memory))) := {
     _require_allocation_alignment(.alignment = alignment)
     physical_alignment ::= alignment
     pointer_alignment ::= alignment_of(.type = UIntNative)
@@ -64,7 +57,9 @@ acquire_heap_storage(
         }
     }
 
-    address ::= aligned_alloc(.alignment = physical_alignment, .size = physical_size, .ffi = ffi).address
+    address ::= aligned_alloc(
+        .alignment = physical_alignment, .size = physical_size, .ffi = ffi
+    ).address
 
     if address == 0 {
         result = ..error(.reason = ..out_of_memory)
@@ -76,18 +71,12 @@ acquire_heap_storage(
     result = ..ok(._address = address, ._size = size, ._alignment = alignment)
 }
 
-acquire_page_storage(
-        .memory    : $&Memory,
-        .size      : UIntNative,
-        .alignment : UIntNative,
-    ) -> (
-        .result : Errable#(AcquiredStorage, (..out_of_memory))
-    ) := {
+acquire_page_storage(.memory: $&Memory, .size: UIntNative, .alignment: UIntNative) -> (
+    .result : Errable#(AcquiredStorage, (..out_of_memory))
+) := {
     assume ffi := memory&._ffi
     acquired ::= _memory_map_aligned(
-        .size      = size
-        .alignment = alignment
-        .page_size = memory&._page_size
+        .size = size, .alignment = alignment, .page_size = memory&._page_size
     )
 
     match acquired {

@@ -5,9 +5,9 @@
 ..invalid_cli_schema
 
 CliSpec: Type = (
-    .name          : StringView,
+    .name : StringView,
     .short_name    : StringView  = "",
-    .help          : StringView  = "",
+    .help : StringView  = "",
     .value_name    : StringView  = "",
     .required      : Bool        = false,
     .repeatable    : Bool        = false,
@@ -39,17 +39,12 @@ CliReasons: Type = (
 -- Specs and results borrow their text. Callers retain both the argument source
 -- and schema until matches are destroyed. Every option uses a canonical long
 -- name; aliases and defaults are resolved without copying argument bytes.
-parse_cli#(
-        .t             : Type: ArgumentSource#(t),
-        .AllocatorType : Type: Allocator#(AllocatorType)
-    )(
-        .source    : &t,
-        .specs     : ArrayViewRO#(.t: CliSpec),
-        .start     : UIntNative                 = 0,
-        .allocator : $&AllocatorType            = reach allocator
-    ) -> (
-        .result : Errable#(CliMatches, CliReasons)
-    ) := {
+parse_cli#(.t: Type: ArgumentSource#(t), .AllocatorType: Type: Allocator#(AllocatorType))(
+    .source    : &t,
+    .specs     : ArrayViewRO#(.t: CliSpec),
+    .start     : UIntNative = 0,
+    .allocator : $&AllocatorType = reach allocator
+) -> (.result: Errable#(CliMatches, CliReasons)) := {
     assume allocator
     count ::= length(&specs).count
     index :: UIntNative = 0
@@ -126,7 +121,9 @@ parse_cli#(
                                 } else {
                                     match option.value {
                                         ..some _ {
-                                            result = ..error(.reason = ..unexpected_option_value)
+                                            result = ..error(
+                                                .reason = ..unexpected_option_value
+                                            )
                                             return
                                         } ..none {}
                                     }
@@ -185,16 +182,12 @@ parse_cli#(
     result = ..ok(.options = ~options, .positionals = ~positionals)
 }
 
-write_cli_help#(
-        .WriterType : Type: Writer#(WriterType)
-    )(
-        .writer  : $&WriterType,
-        .program : StringView,
-        .about   : StringView,
-        .specs   : ArrayViewRO#(.t: CliSpec)
-    ) -> (
-        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()
-    ) := {
+write_cli_help#(.WriterType: Type: Writer#(WriterType))(
+    .writer  : $&WriterType,
+    .program : StringView,
+    .about   : StringView,
+    .specs   : ArrayViewRO#(.t: CliSpec)
+) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()) := {
     write(writer, .value = about)!
     write(writer, .value = "\nUsage: ")!
     write(writer, .value = program)!

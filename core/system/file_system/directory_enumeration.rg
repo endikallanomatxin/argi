@@ -2,19 +2,19 @@
 DirectoryEnumeration#(.State: Type, .Provider: Type: Allocator#(Provider)): Contract = (
     .Item   : Type
     .Result : Type
-    .next   : (.self: $&State, .allocator: $&Provider = reach allocator) -> (
-        .result : Result
-    )
+    .next   : (.self: $&State, .allocator: $&Provider = reach allocator) -> (.result: Result)
 )
 
 implement#(.Provider: Type: Allocator#(Provider)) DirectoryEnumeration#(Directory, Provider) (
-    .Item   : Type            = DirectoryEntry
-    .Result : Type            = Errable#(Nullable#(.t: DirectoryEntry), _FilesystemReasons)
+    .Item   : Type = DirectoryEntry
+    .Result : Type = Errable#(Nullable#(.t: DirectoryEntry), _FilesystemReasons)
     .next   = _next_directory
 )
 
-implement#(.Provider: Type: Allocator#(Provider)) DirectoryEnumeration#(DirectoryWalker, Provider) (
-    .Item   : Type                   = WalkEntry
-    .Result : Type                   = Errable#(?WalkEntry, _FilesystemReasons)
+implement#(.Provider: Type: Allocator#(Provider)) DirectoryEnumeration#(
+    DirectoryWalker, Provider
+) (
+    .Item   : Type = WalkEntry
+    .Result : Type = Errable#(?WalkEntry, _FilesystemReasons)
     .next   = _next_directory_walker
 )

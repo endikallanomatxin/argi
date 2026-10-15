@@ -7,16 +7,12 @@ compare#(.Value: Type: TimeCompare#(Value)) := (.left: Value, .right: Value) -> 
 }
 
 NanosecondCount#(.Value: Type): Contract = (
-    .Count            : Type
+    .Count : Type
     .nanosecond_count : (.self: &Value) -> (.value: Count)
 )
 
-nanoseconds#(
-        .Value : Type: NanosecondCount#(Value)
-    ) := (
-        .self : &Value
-    ) -> (
-        .value : NanosecondCount#(Value).Count
-    ) {
+nanoseconds#(.Value: Type: NanosecondCount#(Value)) := (.self: &Value) -> (
+    .value : NanosecondCount#(Value).Count
+) {
     value = NanosecondCount#(Value).nanosecond_count(.self = self)
 }

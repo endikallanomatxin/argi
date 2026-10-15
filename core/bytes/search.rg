@@ -29,12 +29,8 @@ equals(.left: ArrayViewRO#(.t: UInt8), .right: ArrayViewRO#(.t: UInt8)) -> (.ok:
 }
 
 _bytes_match_at(
-        .self    : ArrayViewRO#(.t: UInt8),
-        .pattern : ArrayViewRO#(.t: UInt8),
-        .start   : UIntNative
-    ) -> (
-        .ok : Bool = false
-    ) := {
+    .self: ArrayViewRO#(.t: UInt8), .pattern: ArrayViewRO#(.t: UInt8), .start: UIntNative
+) -> (.ok: Bool = false) := {
     size ::= length(&self).count
     count ::= length(&pattern).count
 
@@ -53,12 +49,9 @@ _bytes_match_at(
 }
 
 -- Empty patterns match at zero forward and at the extent in reverse searches.
-find(
-        .self    : ArrayViewRO#(.t: UInt8),
-        .pattern : ArrayViewRO#(.t: UInt8)
-    ) -> (
-        .index : ?UIntNative = ..none
-    ) := {
+find(.self: ArrayViewRO#(.t: UInt8), .pattern: ArrayViewRO#(.t: UInt8)) -> (
+    .index : ?UIntNative = ..none
+) := {
     size ::= length(&self).count
     count ::= length(&pattern).count
 
@@ -76,12 +69,9 @@ find(
     }
 }
 
-find_last(
-        .self    : ArrayViewRO#(.t: UInt8),
-        .pattern : ArrayViewRO#(.t: UInt8)
-    ) -> (
-        .index : ?UIntNative = ..none
-    ) := {
+find_last(.self: ArrayViewRO#(.t: UInt8), .pattern: ArrayViewRO#(.t: UInt8)) -> (
+    .index : ?UIntNative = ..none
+) := {
     size ::= length(&self).count
     count ::= length(&pattern).count
 
@@ -115,7 +105,9 @@ starts_with(.self: ArrayViewRO#(.t: UInt8), .pattern: ArrayViewRO#(.t: UInt8)) -
     ok = _bytes_match_at(self, .pattern = pattern, .start = 0).ok
 }
 
-ends_with(.self: ArrayViewRO#(.t: UInt8), .pattern: ArrayViewRO#(.t: UInt8)) -> (.ok: Bool = false) := {
+ends_with(.self: ArrayViewRO#(.t: UInt8), .pattern: ArrayViewRO#(.t: UInt8)) -> (
+    .ok : Bool = false
+) := {
     size ::= length(&self).count
     count ::= length(&pattern).count
 

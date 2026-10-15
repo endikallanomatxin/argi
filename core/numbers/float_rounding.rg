@@ -1,11 +1,6 @@
-_float_replace_bits#(
-        .Value : Type: _FloatRepresentation#(Value)
-    ) := (
-        .value : Value,
-        .bits  : UInt64
-    ) -> (
-        .result : Value
-    ) {
+_float_replace_bits#(.Value: Type: _FloatRepresentation#(Value)) := (
+    .value: Value, .bits: UInt64
+) -> (.result: Value) {
     result = _FloatRepresentation#(Value).replace_bits(.value = value, .bits = bits)
 }
 
@@ -38,7 +33,9 @@ truncate_float#(.t: Type: Float)(.value: t) -> (.result: t) := {
         shifts = shifts - 1
     }
 
-    result = _float_replace_bits(.value = value, .bits = encoding.bits - magnitude % unit).result
+    result = _float_replace_bits(
+        .value = value, .bits = encoding.bits - magnitude % unit
+    ).result
 }
 
 floor_float#(.t: Type: Float)(.value: t) -> (.result: t) := {

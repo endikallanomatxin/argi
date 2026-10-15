@@ -14,7 +14,9 @@ TextBytes#(.Text: Type): Contract = (
     .byte_at : (.view: &Text, .index: UIntNative) -> (.byte: UInt8)
 )
 
-bytes_get#(.Text: Type: TextBytes#(Text)) := (.view: &Text, .index: UIntNative) -> (.byte: UInt8) {
+bytes_get#(.Text: Type: TextBytes#(Text)) := (.view: &Text, .index: UIntNative) -> (
+    .byte : UInt8
+) {
     byte = TextBytes#(Text).byte_at(.view = view, .index = index)
 }
 

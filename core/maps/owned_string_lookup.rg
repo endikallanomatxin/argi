@@ -1,13 +1,9 @@
 -- StringView probes use the same digest and equality as owning String keys.
 -- They never create a temporary owner or expose mutable keys.
-_owned_string_find#(
-        .value : Type
-    )(
-        .self : &OwnedHashMap#(.key: String, .value: value, .policy: StringHashPolicy),
-        .key  : StringView
-    ) -> (
-        .index : ?UIntNative = ..none
-    ) := {
+_owned_string_find#(.value: Type)(
+    .self : &OwnedHashMap#(.key: String, .value: value, .policy: StringHashPolicy),
+    .key  : StringView
+) -> (.index: ?UIntNative = ..none) := {
     digest ::= string_hash_map_hash(.key = &key).hash
     count ::= capacity(self).count
     position ::= digest % count
@@ -29,25 +25,17 @@ _owned_string_find#(
     }
 }
 
-_map_contains_owned_string_lookup#(
-        .value : Type
-    ) := (
-        .self : &OwnedHashMap#(.key: String, .value: value, .policy: StringHashPolicy),
-        .key  : StringView
-    ) -> (
-        .ok : Bool
-    ) {
+_map_contains_owned_string_lookup#(.value: Type) := (
+    .self : &OwnedHashMap#(.key: String, .value: value, .policy: StringHashPolicy),
+    .key  : StringView
+) -> (.ok: Bool) {
     ok = _owned_string_find(self, .key = key).index ?
 }
 
-_map_get_ro_ref_owned_string_lookup#(
-        .value : Type
-    ) := (
-        .self : &OwnedHashMap#(.key: String, .value: value, .policy: StringHashPolicy),
-        .key  : StringView
-    ) -> (
-        .result : ?&value = ..none
-    ) {
+_map_get_ro_ref_owned_string_lookup#(.value: Type) := (
+    .self : &OwnedHashMap#(.key: String, .value: value, .policy: StringHashPolicy),
+    .key  : StringView
+) -> (.result: ?&value = ..none) {
     match _owned_string_find(self, .key = key).index {
         ..none {}
         ..some found {
@@ -61,14 +49,10 @@ _map_get_ro_ref_owned_string_lookup#(
     }
 }
 
-get_ref#(
-        .value : Type
-    )(
-        .self : $&OwnedHashMap#(.key: String, .value: value, .policy: StringHashPolicy),
-        .key  : StringView
-    ) -> (
-        .result : ?$&value = ..none
-    ) := {
+get_ref#(.value: Type)(
+    .self : $&OwnedHashMap#(.key: String, .value: value, .policy: StringHashPolicy),
+    .key  : StringView
+) -> (.result: ?$&value = ..none) := {
     match _owned_string_find(self, .key = key).index {
         ..none {}
         ..some found {

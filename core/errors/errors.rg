@@ -5,14 +5,7 @@ Errable#(.t: Type, .reasons: Type): Type = (
     ..error Error#(.reasons = reasons)
 )
 
-unwrap_or_abort#(
-        .t       : Type,
-        .reasons : Type
-    )(
-        .value : Errable#(t, reasons)
-    ) -> (
-        .result : t
-    ) := {
+unwrap_or_abort#(.t: Type, .reasons: Type)(.value: Errable#(t, reasons)) -> (.result: t) := {
     match value {
         ..ok ~payload { result = ~payload }
         ..error _ { abort }

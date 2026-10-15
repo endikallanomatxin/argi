@@ -14,14 +14,9 @@ remaining#(.Cursor: Type: ByteCursor#(Cursor)) := (.self: &Cursor) -> (.count: U
     count = ByteCursor#(Cursor).cursor_remaining(.self = self)
 }
 
-skip#(
-        .Cursor : Type: ByteCursor#(Cursor)
-    ) := (
-        .self  : $&Cursor,
-        .count : UIntNative
-    ) -> (
-        .result : Errable#(Void, (..out_of_bounds))
-    ) {
+skip#(.Cursor: Type: ByteCursor#(Cursor)) := (.self: $&Cursor, .count: UIntNative) -> (
+    .result : Errable#(Void, (..out_of_bounds))
+) {
     result = ByteCursor#(Cursor).cursor_skip(.self = self, .count = count)
 }
 

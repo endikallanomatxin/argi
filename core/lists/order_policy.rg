@@ -10,10 +10,7 @@ implement ImplicitlyCopyable#(Int32OrderPolicy) ()
 
 implement OrderPolicy#(Int32OrderPolicy, Int32) (
     .less = (.self: &Int32OrderPolicy, .left: Int32, .right: Int32) -> (.ok: Bool) {
-        ok = [
-            left
-            < right
-        ]
+        ok = [left < right]
     }
 )
 
@@ -22,11 +19,10 @@ UIntNativeOrderPolicy: Type = ()
 implement ImplicitlyCopyable#(UIntNativeOrderPolicy) ()
 
 implement OrderPolicy#(UIntNativeOrderPolicy, UIntNative) (
-    .less = (.self: &UIntNativeOrderPolicy, .left: UIntNative, .right: UIntNative) -> (.ok: Bool) {
-        ok = [
-            left
-            < right
-        ]
+    .less = (.self: &UIntNativeOrderPolicy, .left: UIntNative, .right: UIntNative) -> (
+        .ok : Bool
+    ) {
+        ok = [left < right]
     }
 )
 
@@ -35,7 +31,9 @@ StringViewOrderPolicy: Type = ()
 implement ImplicitlyCopyable#(StringViewOrderPolicy) ()
 
 implement OrderPolicy#(StringViewOrderPolicy, StringView) (
-    .less = (.self: &StringViewOrderPolicy, .left: StringView, .right: StringView) -> (.ok: Bool) {
+    .less = (.self: &StringViewOrderPolicy, .left: StringView, .right: StringView) -> (
+        .ok : Bool
+    ) {
         index :: UIntNative = 0
 
         while index < left.length and index < right.length {

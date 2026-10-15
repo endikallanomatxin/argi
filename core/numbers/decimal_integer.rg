@@ -263,7 +263,8 @@ _FloatDecimalInteger: Type = (
     .used : UIntNative = 1
 )
 
-_float_integer_multiply(.self: $&_FloatDecimalInteger, .factor: UInt32, .addend: UInt32 = 0) -> () := {
+_float_integer_multiply(.self: $&_FloatDecimalInteger, .factor: UInt32, .addend: UInt32 = 0) -> (
+) := {
     carry :: UInt32 = addend
     index :: UIntNative = 0
 
@@ -281,12 +282,9 @@ _float_integer_multiply(.self: $&_FloatDecimalInteger, .factor: UInt32, .addend:
     }
 }
 
-_float_integer_compare(
-        .left  : &_FloatDecimalInteger,
-        .right : &_FloatDecimalInteger
-    ) -> (
-        .order : Int32
-    ) := {
+_float_integer_compare(.left: &_FloatDecimalInteger, .right: &_FloatDecimalInteger) -> (
+    .order : Int32
+) := {
     if left&.used < right&.used {
         order = -1
         return
@@ -363,10 +361,7 @@ _float_integer_from_u64(.value: UInt64) -> (.integer: _FloatDecimalInteger) := {
 
     while true {
         integer.words[integer.used] = unwrap_or_abort(
-            .value = [
-                [remaining % 65536]
-                | convert#(.to: UInt32)(_)
-            ]
+            .value = [[remaining % 65536] | convert#(.to: UInt32)(_)]
         ).result
         integer.used = integer.used + 1
         remaining = remaining / 65536
@@ -389,10 +384,8 @@ _float_integer_divide_ten(.self: $&_FloatDecimalInteger) -> (.remainder: UInt32)
 }
 
 _float_integer_add_multiple(
-        .self   : $&_FloatDecimalInteger,
-        .other  : &_FloatDecimalInteger,
-        .factor : UInt32
-    ) -> () := {
+    .self: $&_FloatDecimalInteger, .other: &_FloatDecimalInteger, .factor: UInt32
+) -> () := {
     carry :: UInt32 = 0
     index :: UIntNative = 0
 
