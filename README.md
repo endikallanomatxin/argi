@@ -4,7 +4,8 @@
 
 Argi is a general purpose programming language that aims to bridge the gap
 between the convenience of high-level languages (Python, Julia...) and the
-performance and control of low-level languages (C, Zig...).
+performance and control of low-level languages (C, Zig...), with compile-time
+guarantees for memory safety and resource management.
 
 It’s an early work-in-progress.
 
@@ -17,48 +18,36 @@ It’s an early work-in-progress.
   compile-time checks for value validity and reference lifetimes across moves,
   cleanup, and storage reuse.
 - 🎯 Explicitness without annoyance:
-  - ⚠️ Application-visible side effects are designed to be explicit.
+  - ⚠️ Side effects are explicit.
   - 🔐 Capability-based design for resource management.
   - 🪶 `assume` for lexical implicit arguments and `reach` for propagating
     dependencies through intermediate calls.
 - 🚫 No objects or inheritance.
-- 🔀 Polymorphism through:
-  - 🎛️ Contract-scoped multiple dispatch
-  - ⚙️ Compile-time parameters (Rust's generics style)
-  - 📜 Contracts with named participants, associated elements and explicit implementations
-  - 🎭 Virtual types for runtime dynamic dispatch.
-- ❓ Errable and Nullable types, with nominal error reasons, reason-set
-  inference, and explicit propagation with optional trace context.
+- 🔀 Polymorphism:
+  - ⚙️ Compile-time parameters specialize types and functions.
+  - 📜 Contracts specify operations and requirements for one or more types.
+    Implementations explicitly fulfill those requirements. More specific
+    implementations can provide specialized behavior.
+  - 🎭 Virtual types provide runtime dispatch.
+- ❓ Errable and Nullable types make errors and missing values explicit.
 - 📚 Two official module libraries: foundational `core` and domain-oriented
-  `more`. Some modules remain design sketches; consult their implementations
-  for supported APIs.
-- 🛠️ Tooling for building, exhaustive checking, testing, scaffolding, formatting,
-  and LSP. Use `argi format [paths...]` to format files or directories,
-  `argi format --check [paths...]` to check without writing, and
-  `argi format file.rg --stdout` to preview a file. Editors can request document
-  formatting through the LSP. Calls and function signature groups flatten when they
-  fit within 96 columns including indentation. Otherwise, arguments share one
-  indented continuation line when they fit, or use one argument per line. Closing
-  delimiters resume on the following line. Nesting uses four spaces; comments
-  preserve the layout needed to retain them. Conditional chains expand all branches
-  together, short scalar expressions retain their grouping on one line, and nested
-  matrix lists keep one row per line. Optional field alignment adds at most eight
-  spaces; chained calls include their member suffix in the width budget.
+  `more`.
+- 🛠️ Built-in tools for building, checking, testing, project scaffolding,
+  formatting, and editor support through LSP.
 
 
-## Repository structure
+## Installation
 
-- 💭 Language design notes are in [`description/`](description/).
-- ⚙️ The compiler source code is in [`src/`](src/) and is written in **Zig**,
-targeting **LLVM**.
-- 📚 The core library is in [`core/`](core/), and additional official libraries
-are in [`more/`](more/).
-- 🧪 Example programs and tests are in [`tests/`](tests/).
+Download a [release package](https://github.com/endikallanomatxin/argi/releases/latest)
+for Linux or macOS on x86_64 or ARM64. Extract it and add its `bin` directory to
+`PATH`, keeping `bin` and `lib` together. A system C compiler/linker is required;
+Zig and a separate LLVM installation are not.
 
+See the [binary installation guide](.github/scripts/binary_installation.md) for
+platform requirements and setup. To build from source, including on Windows,
+see [CONTRIBUTING.md](CONTRIBUTING.md#building-from-source).
 
-## Usage
-
-Create and run a program:
+## Quick start
 
 ```sh
 argi init hello
@@ -66,111 +55,13 @@ cd hello
 argi run
 ```
 
-`argi init` without a name initializes the current directory; `argi init --lib`
-creates a library. Existing files are preserved. The generated entrypoint
-sets up allocator, error tracing, and I/O capabilities:
+Use `argi run --release` for an optimized build, or `argi help` for available commands.
 
-```rg
-main(.system: System) -> (.status_code: Int32 = 0) := {
-    assume ffi ::= system.ffi
-    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
-    assume error_tracer ::= FixedSizeErrorTracer(
-        .buffer = view($&zeroed#(.t: [4096]UInt8)()),
-    ) | to_virtual#(ErrorTracer)($&_) | $&_
-    assume writer ::= $&BufferedWriter#(.base_type: File)(
-        .base = $&system.terminal&.stdout,
-        .buffer = view($&zeroed#(.t: [4096]UInt8)()),
-    )
-    assume reader ::= $&system.terminal&.stdin
-}
-```
+## Learn more
 
-| Command | Purpose |
-| --- | --- |
-| `argi build [dir]` | Compile the current package or a selected module. |
-| `argi run` | Compile and run the default executable. |
-| `argi check [dir]` | Check all function bodies, including unreachable ones. |
-| `argi test [dir]` | Run language-level tests. |
-| `argi lsp` | Start the language server. |
+- [Usage guide](docs/usage.md): projects, commands, formatting, and cross-compilation.
+- [Language documentation](description/README.md).
+- [Application examples](tests/usecase_tests/).
+- [Development and compiler tests](CONTRIBUTING.md).
 
-Use `--target aarch64-linux-gnu --just-emit-obj output.o` to emit a Linux
-ARM64 object; the default target is native. `argi run` requires a compatible
-native target. For an ARM64 executable, select a target-configured driver with
-`--cc aarch64-linux-gnu-gcc`. `--cc-arg` supplies individual driver arguments
-and `--c-sysroot` selects its C sysroot; `--sysroot` still selects Argi core.
-
-Use `--release` with `build` or `run` for optimized executables. See `argi help`
-for target selection, output paths, and LLVM/object emission options.
-
-Packages declare executables in `argi.toml`; outputs go to
-`build/debug/<name>`, including when selecting a declared entry module directly.
-Standalone modules use `build/output`; test artifacts and reusable compiler
-snapshots use `.argi-cache/`. Use `--no-cache` for a fresh frontend build and
-`--stats` to inspect module reuse.
-See [package configuration](description/02_modules.md) and
-[language-level testing](description/72_testing.md).
-
-The LSP provides diagnostics, semantic highlighting, hover, completion,
-document symbols, and navigation to definitions.
-
-## Installation
-
-### Binary packages
-
-Download your platform's archive and `SHA256SUMS` from the
-[latest release](https://github.com/endikallanomatxin/argi/releases/latest).
-Linux x86_64/ARM64 and macOS Intel/Apple Silicon packages include the compiler,
-core, and LLVM runtime. Extract the package and add its `bin` directory to
-`PATH`, keeping `bin` and `lib` together.
-
-You need a system C compiler/linker to build Argi programs, but no Zig or
-separate LLVM installation. See the
-[binary installation guide](.github/scripts/binary_installation.md) for supported
-OS versions, checksum verification, and platform setup. Windows binaries are
-not published; see the [Windows source-build guide](.github/scripts/windows_development.md).
-
-### From source
-
-Building the compiler requires Zig 0.16.x and LLVM 21 development files:
-
-```sh
-zig build                    # local installation in zig-out/
-zig build -p ~/.local        # user installation, including core
-export PATH="$HOME/.local/bin:$PATH"
-```
-
-LLVM is located through `llvm-config-21` or `llvm-config`; override paths with
-`LLVM_INCLUDE_DIR`, `LLVM_LIB_DIR`, and `LLVM_LIBS` when needed. Argi uses `cc`
-(`gcc` on Windows) to link programs; set `CC` to select another compiler. `--sysroot` or
-`ARGI_SYSROOT` can select another Argi installation prefix.
-
-## Compiler tests
-
-Run the compiler's regression suite with:
-
-```sh
-zig build test --summary all
-```
-
-Program tests automatically use the available CPU count, capped at 16 worker
-processes. `-Dtest-jobs=N` selects another count; the build job limit (`-jN`)
-controls how many workers may run concurrently. For example, use
-`zig build test -j16 -Dtest-jobs=16` to request 16 concurrent workers.
-Installation and tests that touch shared state finish before the fixture workers
-start. Parallel tests of the same fixture run on one worker. Compiler unit tests retain
-Zig's standard runner.
-
-Use `-Dtest-jobs=1 -j1` for the standard serial test runner, especially when
-investigating compiler memory growth. `-Dtest-filter=contracts/` limits cases to
-that name fragment, and `-Dtest-progress=true` records active case names in
-`.zig-cache/program-tests/serial.log` and `worker-N.log`. These logs update while
-cases run, and each worker writes its totals there when finished. Terminal
-progress also shows active cases. With the standard serial runner, progress
-prints each case directly. Avoid overlapping separate build invocations that
-reinstall the bundled libraries.
-
-## Release status
-
-The latest experimental release is [0.3.0](releases/0.3.0.md).
-`main` and annotated version tags contain published releases; `develop`
-contains work for the next release. Breaking changes are expected.
+Breaking changes are expected while Argi is experimental.
