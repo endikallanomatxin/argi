@@ -15,6 +15,7 @@ const contract_mod = @import("contracts.zig");
 const global_types = @import("types.zig");
 const primitives = @import("../primitives/schema.zig");
 const implementation_arguments = @import("implementation_arguments.zig");
+const instantiation_map = @import("instantiation_map.zig");
 const standard_contracts = @import("standard_contracts.zig");
 
 pub const Stats = struct {
@@ -1787,7 +1788,7 @@ pub const Resolver = struct {
         }
 
         const context_started = if (self.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
-        var context = try InstanceContext.init(self, located.module_index, located.parameterized, &substitutions);
+        var context = InstanceContext.init(self, located.module_index, located.parameterized, &substitutions);
         if (self.profile_io) |io| self.profile_instance_context_init_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - context_started;
         defer context.deinit();
         const input_bindings = try context.instantiateBindingRange(located.parameterized.input_bindings);
@@ -1853,14 +1854,14 @@ pub const Resolver = struct {
             var substitutions = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
             defer substitutions.deinit(self.allocator);
             try self.generics.bindGlobalArguments(located.module_index, located.parameterized.parameters, instance.arguments, &substitutions);
-            var context = try InstanceContext.init(self, located.module_index, located.parameterized, &substitutions);
+            var context = InstanceContext.init(self, located.module_index, located.parameterized, &substitutions);
             defer context.deinit();
             context.function = instance.function;
             inline for (.{ "input_bindings", "output_bindings" }) |name| {
                 const local = @field(located.parameterized, name);
                 const global = @field(function, name);
                 for (0..local.len) |offset| {
-                    context.binding_map[local.start + offset] = self.graph.binding_refs.items[global.start + offset];
+                    try context.binding_map.put(self.allocator, local.start + offset, self.graph.binding_refs.items[global.start + offset]);
                 }
             }
             const saved_publication = self.publishing_signature;
@@ -1962,9 +1963,9 @@ pub const Resolver = struct {
         module_index: usize,
         parameterized: parameterized_storage.ParameterizedFunction,
         substitutions: *generic_mod.Resolver.Bindings,
-        binding_map: []?global_sg.GlobalBindingId,
-        node_map: []?global_sg.GlobalNodeId,
-        block_map: []?global_sg.GlobalBlockId,
+        binding_map: instantiation_map.Map(global_sg.GlobalBindingId),
+        node_map: instantiation_map.Map(global_sg.GlobalNodeId),
+        block_map: instantiation_map.Map(global_sg.GlobalBlockId),
         function: ?global_sg.GlobalFunctionId = null,
 
         fn init(
@@ -1972,31 +1973,23 @@ pub const Resolver = struct {
             module_index: usize,
             parameterized: parameterized_storage.ParameterizedFunction,
             substitutions: *generic_mod.Resolver.Bindings,
-        ) !InstanceContext {
+        ) InstanceContext {
             const storage = &resolver.modules[module_index].semantic.parameterized_storage.ir;
-            const bindings = try resolver.allocator.alloc(?global_sg.GlobalBindingId, storage.bindings.items.len);
-            errdefer resolver.allocator.free(bindings);
-            const nodes = try resolver.allocator.alloc(?global_sg.GlobalNodeId, storage.nodes.items.len);
-            errdefer resolver.allocator.free(nodes);
-            const blocks = try resolver.allocator.alloc(?global_sg.GlobalBlockId, storage.blocks.items.len);
-            @memset(bindings, null);
-            @memset(nodes, null);
-            @memset(blocks, null);
             return .{
                 .resolver = resolver,
                 .module_index = module_index,
                 .parameterized = parameterized,
                 .substitutions = substitutions,
-                .binding_map = bindings,
-                .node_map = nodes,
-                .block_map = blocks,
+                .binding_map = .init(storage.bindings.items.len),
+                .node_map = .init(storage.nodes.items.len),
+                .block_map = .init(storage.blocks.items.len),
             };
         }
 
         fn deinit(self: *InstanceContext) void {
-            self.resolver.allocator.free(self.binding_map);
-            self.resolver.allocator.free(self.node_map);
-            self.resolver.allocator.free(self.block_map);
+            self.binding_map.deinit(self.resolver.allocator);
+            self.node_map.deinit(self.resolver.allocator);
+            self.block_map.deinit(self.resolver.allocator);
         }
 
         fn instantiateBindingRange(self: *InstanceContext, range: primitives.Range(ir.ParameterizedBindingId)) !global_sg.BindingRange {
@@ -2010,7 +2003,7 @@ pub const Resolver = struct {
         }
 
         fn instantiateBinding(self: *InstanceContext, id: ir.ParameterizedBindingId) !global_sg.GlobalBindingId {
-            if (self.binding_map[@intFromEnum(id)]) |existing| return existing;
+            if (self.binding_map.get(@intFromEnum(id))) |existing| return existing;
             const module = &self.resolver.modules[self.module_index];
             const storage = &module.semantic.parameterized_storage.ir;
             const source = storage.bindings.items[@intFromEnum(id)];
@@ -2027,7 +2020,7 @@ pub const Resolver = struct {
                 .deferred_initialization = source.deferred_initialization,
                 .mutability = source.mutability,
             });
-            self.binding_map[@intFromEnum(id)] = global;
+            try self.binding_map.put(self.resolver.allocator, @intFromEnum(id), global);
             if (source.cleanup_arguments) |node| {
                 const arguments = try self.instantiateNode(node);
                 self.resolver.graph.bindings.items[@intFromEnum(global)].cleanup_arguments = arguments;
@@ -2051,11 +2044,11 @@ pub const Resolver = struct {
         }
 
         fn instantiateBlock(self: *InstanceContext, id: ir.ParameterizedBlockId) anyerror!global_sg.GlobalBlockId {
-            if (self.block_map[@intFromEnum(id)]) |existing| return existing;
+            if (self.block_map.get(@intFromEnum(id))) |existing| return existing;
             const local = self.resolver.modules[self.module_index].semantic.parameterized_storage.ir.blocks.items[@intFromEnum(id)];
             const global: global_sg.GlobalBlockId = @enumFromInt(@as(u32, @intCast(self.resolver.graph.blocks.items.len)));
             try self.resolver.graph.blocks.append(self.resolver.allocator, .{ .nodes = .{ .start = 0, .len = 0 }, .ret_val = null });
-            self.block_map[@intFromEnum(id)] = global;
+            try self.block_map.put(self.resolver.allocator, @intFromEnum(id), global);
 
             const storage = &self.resolver.modules[self.module_index].semantic.parameterized_storage.ir;
             var nodes: std.ArrayList(global_sg.GlobalNodeId) = .empty;
@@ -2074,7 +2067,7 @@ pub const Resolver = struct {
         }
 
         fn instantiateNode(self: *InstanceContext, id: ir.ParameterizedNodeId) anyerror!global_sg.GlobalNodeId {
-            if (self.node_map[@intFromEnum(id)]) |existing| return existing;
+            if (self.node_map.get(@intFromEnum(id))) |existing| return existing;
             const storage = &self.resolver.modules[self.module_index].semantic.parameterized_storage.ir;
             const local = storage.nodes.items[@intFromEnum(id)];
             const global: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.resolver.graph.nodes.items.len)));
@@ -2083,7 +2076,7 @@ pub const Resolver = struct {
                 .ty = null,
                 .content = .break_statement,
             });
-            self.node_map[@intFromEnum(id)] = global;
+            try self.node_map.put(self.resolver.allocator, @intFromEnum(id), global);
             if (local == .pending) {
                 const pending = storage.pending.items[@intFromEnum(local.pending)];
                 if (pending == .resolve_expression and pending.resolve_expression.kind == .defer_value) {
@@ -2117,10 +2110,10 @@ pub const Resolver = struct {
             if (local == .pending) {
                 const pending = storage.pending.items[@intFromEnum(local.pending)];
                 if (pending == .resolve_expression and pending.resolve_expression.kind == .choice_literal) {
-                    if (self.node_map[@intFromEnum(id)]) |existing| return existing;
+                    if (self.node_map.get(@intFromEnum(id))) |existing| return existing;
                     const global: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.resolver.graph.nodes.items.len)));
                     try self.resolver.graph.nodes.append(self.resolver.allocator, .{ .source = .{ .file_index = 0, .offset = 0 }, .ty = null, .content = .break_statement });
-                    self.node_map[@intFromEnum(id)] = global;
+                    try self.node_map.put(self.resolver.allocator, @intFromEnum(id), global);
                     // Resolving payloads can grow the node pool. Compute the
                     // value before taking the destination slot's address.
                     const resolved = try self.resolveChoiceLiteral(pending.resolve_expression, expected);
@@ -2141,10 +2134,10 @@ pub const Resolver = struct {
         }
 
         fn instantiateStructValueWithExpected(self: *InstanceContext, id: ir.ParameterizedNodeId, node: ir.ResolvedNode, expected: global_sg.GlobalTypeId) !global_sg.GlobalNodeId {
-            if (self.node_map[@intFromEnum(id)]) |existing| return existing;
+            if (self.node_map.get(@intFromEnum(id))) |existing| return existing;
             const global: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.resolver.graph.nodes.items.len)));
             try self.resolver.graph.nodes.append(self.resolver.allocator, .{ .source = .{ .file_index = 0, .offset = 0 }, .ty = null, .content = .break_statement });
-            self.node_map[@intFromEnum(id)] = global;
+            try self.node_map.put(self.resolver.allocator, @intFromEnum(id), global);
             const storage = &self.resolver.modules[self.module_index].semantic.parameterized_storage.ir;
             const expected_fields = global_types.fields(self.resolver.graph, expected) orelse return error.ParameterizedStructExpectedNonStruct;
             const local_fields = node.content.struct_value_literal.fields;
@@ -2334,7 +2327,7 @@ pub const Resolver = struct {
         }
 
         fn instantiateChoiceTag(self: *InstanceContext, id: ir.ParameterizedNodeId, choice_type: global_sg.GlobalTypeId) !global_sg.GlobalNodeId {
-            if (self.node_map[@intFromEnum(id)]) |existing| return existing;
+            if (self.node_map.get(@intFromEnum(id))) |existing| return existing;
             const storage = &self.resolver.modules[self.module_index].semantic.parameterized_storage.ir;
             const local = storage.nodes.items[@intFromEnum(id)];
             const pending = switch (local) {
@@ -2354,7 +2347,7 @@ pub const Resolver = struct {
                 .ty = ty,
                 .content = .{ .int_literal = variant.variant.value },
             });
-            self.node_map[@intFromEnum(id)] = global;
+            try self.node_map.put(self.resolver.allocator, @intFromEnum(id), global);
             self.resolver.stats.nodes += 1;
             return global;
         }
@@ -3264,4 +3257,19 @@ test "generic inference binds comptime integer expressions" {
     try std.testing.expect(try resolver.inferIntExpression(0, @enumFromInt(0), 7, &bindings));
     try std.testing.expectEqual(@as(?i64, 7), bindings.ints[0]);
     try std.testing.expectError(error.ConflictingGenericArgument, resolver.inferIntExpression(0, @enumFromInt(0), 8, &bindings));
+}
+
+test "generic instance contexts reserve maps only when entries are used" {
+    const allocator = std.testing.allocator;
+    var module: module_sg.ModuleSemanticGraph = .{};
+    defer module.deinit(allocator);
+    try module.semantic.parameterized_storage.ir.bindings.appendNTimes(allocator, undefined, 1000);
+    try module.semantic.parameterized_storage.ir.nodes.appendNTimes(allocator, undefined, 10000);
+    try module.semantic.parameterized_storage.ir.blocks.appendNTimes(allocator, undefined, 1000);
+    const modules = [_]module_sg.ModuleSemanticGraph{module};
+    var failing = std.testing.FailingAllocator.init(allocator, .{ .fail_index = 0 });
+    var resolver: Resolver = .{ .allocator = failing.allocator(), .graph = undefined, .modules = &modules, .offsets = &.{}, .core = undefined, .generics = undefined };
+    var substitutions: generic_mod.Resolver.Bindings = .{ .types = &.{}, .ints = &.{} };
+    var context = Resolver.InstanceContext.init(&resolver, 0, std.mem.zeroes(parameterized_storage.ParameterizedFunction), &substitutions);
+    defer context.deinit();
 }

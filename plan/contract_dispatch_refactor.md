@@ -35,6 +35,12 @@ exhaustive checks and editor diagnostics retain all bodies. Propagation refresh
 skips its node scan when neither propagation nor context records exist. Summary
 inference and propagation refresh have separate profiling counters.
 
+Instance ID translations use lazy pages rather than initializing module-sized
+value maps for every function or signature probe. Pages remain instance-local,
+including speculative work and deferred body reconstruction. Default string
+literal lookup uses the complete declaration index with traversal fallback;
+binding materialization visits compact unresolved-state metadata first.
+
 Reprofile per-module substitution maps and full-pool materialization sweeps
 before replacing them with function-local storage or unresolved-item worklists.
 Preserve signature binding/default identities and speculative rollback when

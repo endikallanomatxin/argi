@@ -211,9 +211,10 @@ pub const Resolver = struct {
 
     pub fn materializeBindingTypes(self: *Resolver) !bool {
         var changed = false;
-        for (self.graph.bindings.items, 0..) |*binding, raw| {
+        for (self.graph.construction.binding_type_resolution.items, 0..) |state, raw| {
+            if (state != .unresolved) continue;
             const id: global_sg.GlobalBindingId = @enumFromInt(@as(u32, @intCast(raw)));
-            if (!self.graph.isBindingTypeUnresolved(id)) continue;
+            const binding = &self.graph.bindings.items[raw];
             const initialization = binding.initialization orelse continue;
             if (self.graph.node(initialization).content == .list_literal) {
                 const array_type = try self.inferArrayLiteralType(initialization) orelse continue;
@@ -292,16 +293,26 @@ pub const Resolver = struct {
     }
 
     pub fn defaultStringLiteralType(self: *const Resolver) ?global_sg.GlobalTypeId {
-        for (self.graph.declarations.items, 0..) |declaration, raw| {
-            if (declaration.kind != .type or !std.mem.eql(u8, self.graph.text(declaration.name), "StringView")) continue;
-            const id: global_sg.GlobalDeclId = @enumFromInt(@as(u32, @intCast(raw)));
-            const owner = self.graph.moduleForDeclaration(id) orelse continue;
-            if (!self.graph.modules.items[@intFromEnum(owner)].is_bundled_core) continue;
-            const ty = declaration.type_id orelse continue;
-            if (self.graph.isTypeUnresolved(ty)) continue;
-            return ty;
+        if (self.graph.indexedDeclarationsNamed("StringView")) |declarations| {
+            for (declarations) |id| if (self.stringLiteralDeclarationType(id)) |ty| return ty;
+            return null;
+        }
+        // Partial indexes cannot prove absence. Keep the ordinary traversal
+        // until relocation or speculative publication completes the index.
+        for (0..self.graph.declarations.items.len) |raw| {
+            if (self.stringLiteralDeclarationType(@enumFromInt(raw))) |ty| return ty;
         }
         return null;
+    }
+
+    fn stringLiteralDeclarationType(self: *const Resolver, id: global_sg.GlobalDeclId) ?global_sg.GlobalTypeId {
+        const declaration = self.graph.declaration(id);
+        if (declaration.kind != .type or !std.mem.eql(u8, self.graph.text(declaration.name), "StringView")) return null;
+        const owner = self.graph.moduleForDeclaration(id) orelse return null;
+        if (!self.graph.modules.items[@intFromEnum(owner)].is_bundled_core) return null;
+        const ty = declaration.type_id orelse return null;
+        if (self.graph.isTypeUnresolved(ty)) return null;
+        return ty;
     }
 
     pub fn materializeStringLiteralTypes(self: *Resolver) bool {
@@ -2247,4 +2258,58 @@ test "reached signature rollback restores interfaces before discarded pools are 
     try std.testing.expectEqual(@as(u32, 0), graph.functions.items[0].input.len);
     try std.testing.expectEqual(@as(u32, 0), graph.functions.items[0].input_bindings.len);
     try std.testing.expectEqual(@as(usize, 0), graph.binding_refs.items.len);
+}
+
+test "string literal type lookup respects incomplete indexes and unresolved core types" {
+    const allocator = std.testing.allocator;
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    const name = try graph.addString(allocator, "StringView");
+    try graph.types.appendNTimes(allocator, .{ .builtin = .Int32 }, 3);
+    try graph.markTypeUnresolved(allocator, @enumFromInt(1));
+    for (0..2) |raw|
+        try graph.declarations.append(allocator, .{ .name = name, .source = source, .kind = .type, .type_id = @enumFromInt(raw) });
+    try graph.modules.append(allocator, .{ .dir = name, .files = .{ .start = 0, .len = 0 }, .declarations = .{ .start = 0, .len = 1 } });
+    try graph.modules.append(allocator, .{ .dir = name, .is_bundled_core = true, .files = .{ .start = 0, .len = 0 }, .declarations = .{ .start = 1, .len = 1 } });
+    const resolver: Resolver = .{ .allocator = allocator, .graph = &graph, .modules = &.{}, .offsets = &.{} };
+    try std.testing.expectEqual(null, resolver.defaultStringLiteralType());
+    _ = try graph.declarationsNamed(allocator, "StringView");
+    try std.testing.expectEqual(null, resolver.defaultStringLiteralType());
+    try graph.declarations.append(allocator, .{ .name = name, .source = source, .kind = .type, .type_id = @enumFromInt(2) });
+    graph.modules.items[1].declarations.len = 2;
+    try std.testing.expectEqual(@as(?global_sg.GlobalTypeId, @enumFromInt(2)), resolver.defaultStringLiteralType());
+    _ = try graph.declarationsNamed(allocator, "StringView");
+    try std.testing.expectEqual(@as(?global_sg.GlobalTypeId, @enumFromInt(2)), resolver.defaultStringLiteralType());
+    try graph.resolveType(@enumFromInt(1), .{ .builtin = .Int32 });
+    try std.testing.expectEqual(@as(?global_sg.GlobalTypeId, @enumFromInt(1)), resolver.defaultStringLiteralType());
+}
+
+test "binding materialization follows pending states as bindings are appended" {
+    const allocator = std.testing.allocator;
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    const source: primitives.SourceRef = .{ .file_index = 0, .offset = 0 };
+    const name = try graph.addString(allocator, "value");
+    try graph.types.appendSlice(allocator, &.{ .{ .builtin = .Int32 }, .{ .builtin = .Bool } });
+    try graph.nodes.append(allocator, .{ .source = source, .ty = @enumFromInt(1), .content = .{ .bool_literal = true } });
+    try graph.nodes.append(allocator, .{ .source = source, .ty = null, .content = .{ .int_literal = 1 } });
+    try graph.bindings.append(allocator, .{ .name = name, .source = source, .ty = @enumFromInt(0), .initialization = @enumFromInt(0), .mutability = .constant });
+    try graph.bindings.append(allocator, .{ .name = name, .source = source, .ty = @enumFromInt(0), .mutability = .constant });
+    try graph.bindings.append(allocator, .{ .name = name, .source = source, .ty = @enumFromInt(0), .initialization = @enumFromInt(1), .mutability = .constant });
+    try graph.markBindingTypeUnresolved(allocator, @enumFromInt(1));
+    try graph.markBindingTypeUnresolved(allocator, @enumFromInt(2));
+    var resolver: Resolver = .{ .allocator = allocator, .graph = &graph, .modules = &.{}, .offsets = &.{} };
+    try std.testing.expect(!try resolver.materializeBindingTypes());
+    graph.nodes.items[1].ty = @enumFromInt(0);
+    try std.testing.expect(try resolver.materializeBindingTypes());
+    try std.testing.expect(graph.isBindingTypeUnresolved(@enumFromInt(1)));
+    try std.testing.expect(!graph.isBindingTypeUnresolved(@enumFromInt(2)));
+    try graph.resolveBindingType(@enumFromInt(1), @enumFromInt(1));
+    try std.testing.expect(!try resolver.materializeBindingTypes());
+    try graph.bindings.append(allocator, .{ .name = name, .source = source, .ty = @enumFromInt(0), .initialization = @enumFromInt(0), .mutability = .constant });
+    try graph.markBindingTypeUnresolved(allocator, @enumFromInt(3));
+    try std.testing.expect(try resolver.materializeBindingTypes());
+    try std.testing.expectEqual(@as(global_sg.GlobalTypeId, @enumFromInt(1)), graph.bindings.items[3].ty);
+    try std.testing.expectEqual(@as(global_sg.GlobalTypeId, @enumFromInt(0)), graph.bindings.items[0].ty);
 }

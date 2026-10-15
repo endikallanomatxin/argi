@@ -41,6 +41,7 @@ const semantic_globalizer = @import("4_semantics/global/globalizer.zig");
 const global_semantic_core = @import("4_semantics/global/core.zig");
 const global_semantic_control = @import("4_semantics/global/control.zig");
 const global_semantic_generics = @import("4_semantics/global/generics.zig");
+const global_instantiation_map = @import("4_semantics/global/instantiation_map.zig");
 const global_semantic_generic_functions = @import("4_semantics/global/generic_functions.zig");
 const global_semantic_contracts = @import("4_semantics/global/contracts.zig");
 const global_semantic_errors = @import("4_semantics/global/errors.zig");
@@ -108,6 +109,7 @@ test {
     _ = global_semantic_core;
     _ = global_semantic_control;
     _ = global_semantic_generics;
+    _ = global_instantiation_map;
     _ = global_semantic_generic_functions;
     _ = global_semantic_contracts;
     _ = global_semantic_errors;
