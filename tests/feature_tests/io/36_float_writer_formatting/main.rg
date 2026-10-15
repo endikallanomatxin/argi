@@ -8,14 +8,18 @@ RecordingWriter: Type = (
 
 expect_written#(.t: Type: Float)(.value: t, .expected: StringView) -> () := {
     base ::= RecordingWriter(.expected = expected)
-    unwrap_or_abort(.value = WriteValue#(RecordingWriter, t).write_value(.self = $&base, .value = value))
-    if base.count != expected.length { abort }
+    unwrap_or_abort(
+        .value = WriteValue#(RecordingWriter, t).write_value(.self = $&base, .value = value)
+    )
+    if base.count != byte_length(&expected).count { abort }
     base.count = 0
-    unwrap_or_abort(.value = WriteValue#(RecordingWriter, t).write_value(.self = $&base, .value = value))
-    if base.count != expected.length { abort }
+    unwrap_or_abort(
+        .value = WriteValue#(RecordingWriter, t).write_value(.self = $&base, .value = value)
+    )
+    if base.count != byte_length(&expected).count { abort }
     base.count = 0
     unwrap_or_abort(.value = print(.value = value, .writer = $&base, .terminator = ""))
-    if base.count != expected.length or base.flush_calls != 0 { abort }
+    if base.count != byte_length(&expected).count or base.flush_calls != 0 { abort }
 }
 
 -- Expected texts come from exact rational midpoint intervals, independently
@@ -770,16 +774,24 @@ main() -> (.status_code: Int32 = 0) := {
     value64 = 1.2345678901234567
     expect_written(.value = value64, .expected = "1.2345678901234567")
     bits16_31744: UInt16 = 31744
-    value16 = trusted_reinterpret_reference#(.from: UInt16, .to: Float16)(.base = &bits16_31744).reference&
+    value16 = trusted_reinterpret_reference#(.from: UInt16, .to: Float16)(
+        .base = &bits16_31744
+    ).reference&
     expect_written(.value = value16, .expected = "inf")
     bits16_64512: UInt16 = 64512
-    value16 = trusted_reinterpret_reference#(.from: UInt16, .to: Float16)(.base = &bits16_64512).reference&
+    value16 = trusted_reinterpret_reference#(.from: UInt16, .to: Float16)(
+        .base = &bits16_64512
+    ).reference&
     expect_written(.value = value16, .expected = "-inf")
     bits16_31745: UInt16 = 31745
-    value16 = trusted_reinterpret_reference#(.from: UInt16, .to: Float16)(.base = &bits16_31745).reference&
+    value16 = trusted_reinterpret_reference#(.from: UInt16, .to: Float16)(
+        .base = &bits16_31745
+    ).reference&
     expect_written(.value = value16, .expected = "nan")
     bits16_64513: UInt16 = 64513
-    value16 = trusted_reinterpret_reference#(.from: UInt16, .to: Float16)(.base = &bits16_64513).reference&
+    value16 = trusted_reinterpret_reference#(.from: UInt16, .to: Float16)(
+        .base = &bits16_64513
+    ).reference&
     expect_written(.value = value16, .expected = "nan")
     bits32_2139095040: UInt32 = 2139095040
     value32 = trusted_reinterpret_reference#(.from: UInt32, .to: Float32)(
@@ -828,57 +840,56 @@ main() -> (.status_code: Int32 = 0) := {
     unwrap_or_abort(.value = print(.value = 1.5, .terminator = "<>"))
     value64 = 0.1
     unwrap_or_abort(.value = print(.value = value64, .terminator = ""))
-    if lines.count != lines.expected.length or lines.flush_calls != 0 { abort }
+    if lines.count != byte_length(&lines.expected).count or lines.flush_calls != 0 { abort }
     partial ::= RecordingWriter(.expected = "1.2345", .fail_at = 2)
     value64 = 1.2345
     failed ::= print(.value = value64, .writer = $&partial)
     if is(.value = failed, .variant = ..error) {
         if failed ..error.reason != ..stream_write_failed { abort }
-    } else { abort }
+    } else {
+        abort
+    }
     if partial.count != 2 or partial.flush_calls != 0 { abort }
     first ::= RecordingWriter(.expected = "", .fail_at = 0, .flush_failure = true)
-    first_failed ::= WriteValue#(RecordingWriter, Float64).write_value(.self = $&first, .value = value64)
+    first_failed ::= WriteValue#(
+        RecordingWriter, Float64
+    ).write_value(.self = $&first, .value = value64)
     if is(.value = first_failed, .variant = ..error) {
         if first_failed ..error.reason != ..stream_flush_failed { abort }
-    } else { abort }
+    } else {
+        abort
+    }
     suffix ::= RecordingWriter(.expected = "1.2345", .fail_at = 6, .flush_failure = true)
     suffix_failed ::= print(.value = value64, .writer = $&suffix)
     if is(.value = suffix_failed, .variant = ..error) {
         if suffix_failed ..error.reason != ..stream_flush_failed { abort }
-    } else { abort }
+    } else {
+        abort
+    }
     if suffix.count != 6 or suffix.flush_calls != 0 { abort }
 }
 
-implement Writer#(RecordingWriter)(
-    .write_byte = (
-            .self : $&RecordingWriter,
-            .byte : UInt8
-        ) -> (
-            .result : Errable#(
-                .t       : Void,
-                .reasons : (..stream_write_failed, ..stream_flush_failed)
-            )
-        ) {
+implement Writer#(RecordingWriter) (
+    .write_byte = (.self: $&RecordingWriter, .byte: UInt8) -> (
+        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+    ) {
         if self&.count == self&.fail_at {
-            if self&.flush_failure { result = ..error(.reason = ..stream_flush_failed) } else {
+            if self&.flush_failure {
+                result = ..error(.reason = ..stream_flush_failed)
+            } else {
                 result = ..error(.reason = ..stream_write_failed)
             }
             return
         }
-        if self&.count >= self&.expected.length { abort }
+        if self&.count >= byte_length(&self&.expected).count { abort }
         if byte != bytes_get(.view = &self&.expected, .index = self&.count).byte { abort }
         self&.count = self&.count + 1
         result = ..ok Void()
     }
 
-    .flush = (
-            .self : $&RecordingWriter
-        ) -> (
-            .result : Errable#(
-                .t       : Void,
-                .reasons : (..stream_write_failed, ..stream_flush_failed)
-            )
-        ) {
+    .flush = (.self: $&RecordingWriter) -> (
+        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+    ) {
         self&.flush_calls = self&.flush_calls + 1
         result = ..ok Void()
     }

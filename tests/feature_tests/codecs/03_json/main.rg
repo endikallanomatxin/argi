@@ -20,31 +20,19 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     )
     for text in cases {
         match json.validate(.text = text) {
-            ..ok _ { abort } ..error error { if [
-                    error.reason
-                    != ..invalid_json
-                ] { abort } }
+            ..ok _ { abort } ..error error { if [error.reason != ..invalid_json] { abort } }
         }
     }
     match json.validate(.text = "[[]]", .maximum_depth = 1) {
-        ..ok _ { abort } ..error error { if [
-                error.reason
-                != ..json_depth_exceeded
-            ] { abort } }
+        ..ok _ { abort } ..error error { if [error.reason != ..json_depth_exceeded] { abort } }
     }
     cursor ::= json.JsonCursor(.text = "[1,true,\"x\"]")!
     count :: UIntNative = 0
     while true {
         match json.next(.self = $&cursor)! {
             ..none { break } ..some token {
-                if [
-                    token.value.lexeme.length
-                    == 0
-                ] { abort }
-                count = [
-                    count
-                    + 1
-                ]
+                if [byte_length(&token.value.lexeme).count == 0] { abort }
+                count = [count + 1]
             }
         }
     }
@@ -52,18 +40,27 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     match json.next(.self = $&cursor)! { ..none {} ..some _ { abort } }
     assume allocator := system.page_allocator
     decoded ::= json.decode_string(
-        .text      = "\"caf\\u00e9 \\uD83D\\uDE42\\n\""
-        .allocator = allocator
+        .text = "\"caf\\u00e9 \\uD83D\\uDE42\\n\"", .allocator = allocator
     )!
     if as_view(.self = &decoded) != "café 🙂\n" { abort }
     storage ::= zeroed#(.t: [64]UInt8)()
     writer ::= ByteWriter(.bytes = view(.array = $&storage))
     json.write_string(.writer = $&writer, .text = as_view(.self = &decoded))!
-    text :: StringView = (.data = &storage[0], .length = 18)
+    text_storage ::= unwrap_or_abort(
+        .value = string_from_bytes(
+            .bytes = unwrap_or_abort(
+                .value = slice(&view(&storage), .start = 0, .count = 18)
+            )
+            .allocator = system.page_allocator
+        )
+    )
+    text ::= as_view(&text_storage)
     json.validate(.text = text)!
 }
 
-main#(.WriterType: Type: Writer#(WriterType))(.system: System, .writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
+main#(.WriterType: Type: Writer#(WriterType))(
+    .system: System, .writer: $&WriterType = reach writer
+) -> (.status_code: Int32 = 1) := {
     run_main(.system = system)!!!
     status_code = 0
 }

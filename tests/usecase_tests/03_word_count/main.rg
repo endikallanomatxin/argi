@@ -22,14 +22,19 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
 
     limit :: UIntNative = 1048576
     if argc == 3 {
-        limit = parse_uintnative(argument_view_at(system.args, 2))!!! { status_code = 1 }
+        limit = parse_uintnative(unwrap_or_abort(.value = argument_view_at(system.args, 2)))!!! {
+            status_code = 1
+        }
     }
 
     counts ::= OwnedHashMap#(.key: String, .value: UIntNative, .policy: StringHashPolicy)(
         StringHashPolicy()
     )!!! { status_code = 1 }
     words.count_directory(
-        $&counts, argument_view_at(system.args, 1), limit, view($&zeroed#([8192]UInt8)())
+        $&counts
+        unwrap_or_abort(.value = argument_view_at(system.args, 1))
+        limit
+        view($&zeroed#([8192]UInt8)())
     )!!! { status_code = 1 }
 
     for entry in counts {

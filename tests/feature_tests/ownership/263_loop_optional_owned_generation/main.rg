@@ -1,15 +1,17 @@
-Holder : Type = (
-    .buffer: String
+Holder: Type = (
+    .buffer : String
 )
 
 implement#(.AllocatorProvider: Type: Allocator) Init#(Holder, (.allocator: $&AllocatorProvider)) (
-    .Result: Type = Holder
-    .init = (.args: (.allocator: $&AllocatorProvider)) -> (.result: Result) {
+    .Result : Type = Holder
+    .init   = (.args: (.allocator: $&AllocatorProvider)) -> (.result: Result) {
         allocator ::= ~args.allocator
 
         assume allocator
 
-        result.buffer = unwrap_or_abort(.value = string_with_capacity(.allocator = allocator, .capacity = 1))
+        result.buffer = unwrap_or_abort(
+            .value = string_with_capacity(.allocator = allocator, .capacity = 1)
+        )
     }
 )
 
@@ -19,10 +21,12 @@ implement Deinit#(Holder) (
     }
 )
 
-append#(.AllocatorType: Type: Allocator#(AllocatorType))(.self: $&Holder, .allocator: $&AllocatorType) -> () := {
+append#(.AllocatorType: Type: Allocator#(AllocatorType))(
+    .self: $&Holder, .allocator: $&AllocatorType
+) -> () := {
     assume allocator
 
-    _ ::= push_byte(.self = $&self&.buffer, .byte = 65, .allocator = allocator)
+    _ ::= push_ascii(.self = $&self&.buffer, .byte = 65, .allocator = allocator)
 }
 
 main(.system: System) -> (.status_code: Int32 = 0) := {
@@ -36,7 +40,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         i = i + 1
     }
 
-    if holder.buffer.length != 1 {
+    if byte_length(&holder.buffer).count != 1 {
         status_code = 1
         return
     }

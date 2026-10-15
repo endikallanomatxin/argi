@@ -2,16 +2,16 @@ main(.system: System) -> (.status_code: Int32) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
     original ::= unwrap_or_abort(.value = String(.length = 3))
-    bytes_set(.string = $&original, .index = 0, .value = 65)
-    bytes_set(.string = $&original, .index = 1, .value = 114)
-    bytes_set(.string = $&original, .index = 2, .value = 103)
+    _ ::= unwrap_or_abort(.value = set_ascii(.self = $&original, .index = 0, .byte = 65))
+    _ ::= unwrap_or_abort(.value = set_ascii(.self = $&original, .index = 1, .byte = 114))
+    _ ::= unwrap_or_abort(.value = set_ascii(.self = $&original, .index = 2, .byte = 103))
 
     copied_result ::= copy(.self = &original, .allocator = allocator)
     match copied_result {
         ..error _ { status_code = 4 }
         ..ok ~copied_payload {
             copied ::= ~copied_payload
-            bytes_set(.string = $&copied, .index = 0, .value = 66)
+            _ ::= unwrap_or_abort(.value = set_ascii(.self = $&copied, .index = 0, .byte = 66))
 
             original_first ::= bytes_get(.view = &original, .index = 0).byte
             copied_first ::= bytes_get(.view = &copied, .index = 0).byte

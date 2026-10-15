@@ -9,5 +9,5 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     )
     view ::= as_view(.self = &text).view
     deinit(.self = $&text)
-    observed ::= view.data&
+    observed ::= byte_data(.text = view).reference&
 }

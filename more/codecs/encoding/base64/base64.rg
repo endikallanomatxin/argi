@@ -62,20 +62,24 @@ encode#(.AllocatorType: Type: Allocator#(AllocatorType))(
                 | convert#(.to: UInt32)(_)
             ]
         }
-        bytes_set(
-            .string = $&text
-            .index  = output
-            .value  = bytes_get(
-                .view = &alphabet, .index = [[a / 4] | convert#(.to: UIntNative)(_)]
-            ).byte
+        _ ::= unwrap_or_abort(
+            .value = set_ascii(
+                .self  = $&text
+                .index = output
+                .byte  = bytes_get(
+                    .view = &alphabet, .index = [[a / 4] | convert#(.to: UIntNative)(_)]
+                ).byte
+            )
         )
-        bytes_set(
-            .string = $&text
-            .index  = output + 1
-            .value  = bytes_get(
-                .view  = &alphabet
-                .index = [[a % 4] * 16 + b / 16] | convert#(.to: UIntNative)(_)
-            ).byte
+        _ ::= unwrap_or_abort(
+            .value = set_ascii(
+                .self  = $&text
+                .index = output + 1
+                .byte  = bytes_get(
+                    .view  = &alphabet
+                    .index = [[a % 4] * 16 + b / 16] | convert#(.to: UIntNative)(_)
+                ).byte
+            )
         )
         third :: UInt8 = 61
         fourth :: UInt8 = 61
@@ -90,8 +94,12 @@ encode#(.AllocatorType: Type: Allocator#(AllocatorType))(
                 .view = &alphabet, .index = [[c % 64] | convert#(.to: UIntNative)(_)]
             ).byte
         }
-        bytes_set(.string = $&text, .index = output + 2, .value = third)
-        bytes_set(.string = $&text, .index = output + 3, .value = fourth)
+        _ ::= unwrap_or_abort(
+            .value = set_ascii(.self = $&text, .index = output + 2, .byte = third)
+        )
+        _ ::= unwrap_or_abort(
+            .value = set_ascii(.self = $&text, .index = output + 3, .byte = fourth)
+        )
         -- The final partial group must not form an index beyond native size.
         if count - index <= 3 { break }
         index = index + 3
@@ -108,24 +116,26 @@ decode#(.AllocatorType: Type: Allocator#(AllocatorType))(
 ) -> (.result: Errable#(DynamicArray#(.t: UInt8), (..invalid_base64, ..out_of_memory))) := {
     assume allocator
 
-    if text.length % 4 != 0 {
+    if byte_length(&text).count % 4 != 0 {
         result = ..error(.reason = ..invalid_base64)
         return
     }
 
-    count ::= text.length / 4 * 3
+    count ::= byte_length(&text).count / 4 * 3
     padding :: UIntNative = 0
 
-    if text.length > 0 {
-        if bytes_get(.view = &text, .index = text.length - 1).byte == 61 { padding = 1 }
-        if bytes_get(.view = &text, .index = text.length - 2).byte == 61 {
+    if byte_length(&text).count > 0 {
+        if bytes_get(.view = &text, .index = byte_length(&text).count - 1).byte == 61 {
+            padding = 1
+        }
+        if bytes_get(.view = &text, .index = byte_length(&text).count - 2).byte == 61 {
             padding = padding + 1
         }
     }
 
     index :: UIntNative = 0
 
-    while index < text.length - padding {
+    while index < byte_length(&text).count - padding {
         if _value(.byte = bytes_get(.view = &text, .index = index).byte).value == 255 {
             result = ..error(.reason = ..invalid_base64)
             return
@@ -135,7 +145,9 @@ decode#(.AllocatorType: Type: Allocator#(AllocatorType))(
 
     if padding > 0 {
         last ::= _value(
-            .byte = bytes_get(.view = &text, .index = text.length - padding - 1).byte
+            .byte = bytes_get(
+                .view = &text, .index = byte_length(&text).count - padding - 1
+            ).byte
         ).value
         if [padding == 2 and last % 16 != 0] or [padding == 1 and last % 4 != 0] {
             result = ..error(.reason = ..invalid_base64)
@@ -146,7 +158,7 @@ decode#(.AllocatorType: Type: Allocator#(AllocatorType))(
     bytes ::= DynamicArray#(.t: UInt8)(.allocator = allocator, .capacity = count - padding)!
     index = 0
 
-    while index < text.length {
+    while index < byte_length(&text).count {
         a ::= _value(.byte = bytes_get(.view = &text, .index = index).byte).value
         b ::= _value(.byte = bytes_get(.view = &text, .index = index + 1).byte).value
         c ::= _value(.byte = bytes_get(.view = &text, .index = index + 2).byte).value

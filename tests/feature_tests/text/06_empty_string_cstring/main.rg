@@ -5,7 +5,7 @@ main(.system: System) -> (.status_code: Int32) := {
 
     text ::= unwrap_or_abort(.value = String(.length = 0))
 
-    if text.length != 0 {
+    if byte_length(&text).count != 0 {
         status_code = 1
         return
     }

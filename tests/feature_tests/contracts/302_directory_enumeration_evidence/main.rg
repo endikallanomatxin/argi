@@ -1,14 +1,16 @@
 RefusingAllocator: Type = ()
+
 implement Allocator#(RefusingAllocator) (
-    .allocate = (.self: $&RefusingAllocator, .size: UIntNative, .alignment: UIntNative) -> (.result: Errable#(Allocation, (..out_of_memory))) {
+    .allocate = (.self: $&RefusingAllocator, .size: UIntNative, .alignment: UIntNative) -> (
+        .result : Errable#(Allocation, (..out_of_memory))
+    ) {
         result = ..error(.reason = ..out_of_memory)
     }
 )
 
-advance_directory#(
-    .State: Type
-    .Provider: Type: Allocator#(Provider)
-) := (.self: $&State, .allocator: $&Provider) -> (.result: DirectoryEnumeration#(State, Provider).Result) {
+advance_directory#(.State: Type, .Provider: Type: Allocator#(Provider)) := (
+    .self: $&State, .allocator: $&Provider
+) -> (.result: DirectoryEnumeration#(State, Provider).Result) {
     result = ~DirectoryEnumeration#(State, Provider).next(.self = self, .allocator = allocator)
 }
 
@@ -20,7 +22,7 @@ run_main := (.system: System) -> !Void = ..ok Void() {
         ..none { abort }
         ..some ~entry {
             item: DirectoryEnumeration#(Directory, PageAllocator).Item = ~entry.value
-            if item.name.length == 0 { abort }
+            if byte_length(&item.name).count == 0 { abort }
         }
     }
 

@@ -18,10 +18,16 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     deinit(.self = $&array)
     -- Search returns an independent index, not a reference to destroyed data.
     match index { ..none { abort } ..some payload { if payload.value != 1 { abort } } }
-    text : [3]StringView = ("one", "two", "two")
+    text: [3]StringView = ("one", "two", "two")
     words ::= view(.array = &text)
-    bytes : [3]UInt8 = (116, 119, 111)
-    needle :: StringView = (.data = &bytes[0], .length = 3)
+    bytes: [3]UInt8 = (116, 119, 111)
+    needle_storage ::= unwrap_or_abort(
+        .value = string_from_bytes(
+            .bytes     = unwrap_or_abort(.value = slice(&view(&bytes), .start = 0, .count = 3))
+            .allocator = system.page_allocator
+        )
+    )
+    needle ::= as_view(&needle_storage)
     match find(.self = &words, .value = needle).index {
         ..none { abort }
         ..some payload { if payload.value != 1 { abort } }

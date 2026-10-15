@@ -26,7 +26,7 @@ add_context_text := (
     ).add_context(
         .self     = error_tracer
         .location = location
-        .context  = c_string_as_view(.text = context).view
+        .context  = _trusted_c_string_view(.text = context).view
     )
 }
 

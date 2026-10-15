@@ -3,11 +3,11 @@ main(.system: System) -> (.status_code: Int32) := {
     assume allocator ::= $&allocator_storage
 
     text ::= unwrap_or_abort(.value = String(.length = 2))
-    bytes_set(.string = $&text, .index = 0, .value = 79)
-    bytes_set(.string = $&text, .index = 1, .value = 75)
+    _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = 0, .byte = 79))
+    _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = 1, .byte = 75))
 
     view ::= as_view(.self = &text)
-    if view.length != 2 {
+    if byte_length(&view).count != 2 {
         status_code = 1
         return
     }

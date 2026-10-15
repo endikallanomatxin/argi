@@ -50,9 +50,9 @@ _format_bool_into#(.Provider: Type: Allocator)(
     assume allocator
 
     if value {
-        result = push_c_string(out, .text = "true")
+        result = push_view(out, .view = "true")
     } else {
-        result = push_c_string(out, .text = "false")
+        result = push_view(out, .view = "false")
     }
 }
 
@@ -61,7 +61,7 @@ _format_text_owned#(.Provider: Type: Allocator)(.value: StringView, .allocator: 
 ) := {
     assume allocator
 
-    out ::= string_with_capacity(.capacity = value.length)!
+    out ::= string_with_capacity(.capacity = value._length)!
     push_view($&out, .view = value)!
 
     result = ..ok ~out

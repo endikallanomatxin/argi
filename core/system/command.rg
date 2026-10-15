@@ -26,6 +26,8 @@ CliMatches: Type = (
 )
 
 CliReasons: Type = (
+    ..invalid_utf8,
+    ..out_of_bounds,
     ..invalid_option,
     ..missing_option_value,
     ..unknown_option,
@@ -51,12 +53,12 @@ parse_cli#(.t: Type: ArgumentSource#(t), .AllocatorType: Type: Allocator#(Alloca
 
     while index < count {
         spec ::= unwrap_or_abort(.value = get(&specs, .index = index))
-        if spec.name.length == 0 or spec.short_name.length > 1 {
+        if spec.name._length == 0 or spec.short_name._length > 1 {
             result = ..error(.reason = ..invalid_cli_schema)
             return
         }
         cursor :: UIntNative = 0
-        while cursor < spec.name.length {
+        while cursor < spec.name._length {
             byte ::= bytes_get(.view = &spec.name, .index = cursor).byte
             if byte == 61 or byte == 32 or byte == 0 {
                 result = ..error(.reason = ..invalid_cli_schema)
@@ -69,7 +71,7 @@ parse_cli#(.t: Type: ArgumentSource#(t), .AllocatorType: Type: Allocator#(Alloca
             other ::= unwrap_or_abort(.value = get(&specs, .index = previous))
             if [
                 other.name == spec.name
-                or [spec.short_name.length > 0 and other.short_name == spec.short_name]
+                or [spec.short_name._length > 0 and other.short_name == spec.short_name]
             ] {
                 result = ..error(.reason = ..invalid_cli_schema)
                 return
@@ -114,7 +116,7 @@ parse_cli#(.t: Type: ArgumentSource#(t), .AllocatorType: Type: Allocator#(Alloca
                                     }
                                 }
                                 value :: ?StringView = ..none
-                                if spec.value_name.length > 0 {
+                                if spec.value_name._length > 0 {
                                     value = ..some(
                                         .value = take_value($&parser, .option = option)!
                                     )
@@ -197,14 +199,14 @@ write_cli_help#(.WriterType: Type: Writer#(WriterType))(
     while index < length(&specs).count {
         spec ::= unwrap_or_abort(.value = get(&specs, .index = index))
         write(writer, .value = "  ")!
-        if spec.short_name.length > 0 {
+        if spec.short_name._length > 0 {
             write(writer, .value = "-")!
             write(writer, .value = spec.short_name)!
             write(writer, .value = ", ")!
         }
         write(writer, .value = "--")!
         write(writer, .value = spec.name)!
-        if spec.value_name.length > 0 {
+        if spec.value_name._length > 0 {
             write(writer, .value = " <")!
             write(writer, .value = spec.value_name)!
             write(writer, .value = ">")!

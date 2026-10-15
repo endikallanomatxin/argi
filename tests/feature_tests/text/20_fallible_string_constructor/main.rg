@@ -6,7 +6,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         ..error _ { status_code = 1 }
         ..ok ~value {
             string ::= ~value
-            if string.length != 3 { status_code = 2 }
+            if byte_length(&string).count != 3 { status_code = 2 }
             deinit(.self = $&string)
         }
     }

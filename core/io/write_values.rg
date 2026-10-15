@@ -2,7 +2,7 @@ implement#(.Stream: Type: Writer#(Stream)) WriteValue#(Stream, StringView) (
     .Result      : Type = Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     .write_value = (.self: $&Stream, .value: StringView) -> (.result: Result) {
         i :: UIntNative = 0
-        while i < value.length {
+        while i < value._length {
             Writer#().write_byte(self, .byte = bytes_get(.view = &value, .index = i).byte)!
             i = i + 1
         }

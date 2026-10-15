@@ -1,15 +1,13 @@
-make_text#(.AllocatorType: Type: Allocator#(AllocatorType))(
-        .allocator : $&AllocatorType,
-    ) -> (
-        .result : Errable#(.t: String, .reasons: (..out_of_memory))
-    ) := {
+make_text#(.AllocatorType: Type: Allocator#(AllocatorType))(.allocator: $&AllocatorType) -> (
+    .result : Errable#(.t: String, .reasons: (..out_of_memory))
+) := {
     assume allocator
 
     created ::= string_with_capacity(.allocator = allocator, .capacity = 4)
     match created {
         ..ok ~created_payload {
             text ::= ~created_payload
-            pushed ::= push_byte(.self = $&text, .byte = 65, .allocator = allocator)
+            pushed ::= push_ascii(.self = $&text, .byte = 65, .allocator = allocator)
             if is(.value = pushed, .variant = ..error) {
                 deinit(.self = $&text)
                 result = ..error(.reason = ..out_of_memory)

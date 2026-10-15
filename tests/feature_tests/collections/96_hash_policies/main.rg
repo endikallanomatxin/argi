@@ -1,4 +1,4 @@
-main() -> (.status_code: Int32 = 0) := {
+main(.system: System) -> (.status_code: Int32 = 0) := {
     native ::= UIntNativeHashPolicy()
     integer ::= Int32HashPolicy()
     text ::= StringViewHashPolicy()
@@ -21,14 +21,24 @@ main() -> (.status_code: Int32 = 0) := {
     ] { abort }
     bytes: [3]UInt8 = (97, 0, 98)
     same: [3]UInt8 = (97, 0, 98)
-    left :: StringView = (.data = &bytes[0], .length = 3)
-    right :: StringView = (.data = &same[0], .length = 3)
+    left_storage ::= unwrap_or_abort(
+        .value = string_from_bytes(
+            .bytes     = unwrap_or_abort(.value = slice(&view(&bytes), .start = 0, .count = 3))
+            .allocator = system.page_allocator
+        )
+    )
+    left ::= as_view(&left_storage)
+    right_storage ::= unwrap_or_abort(
+        .value = string_from_bytes(
+            .bytes     = unwrap_or_abort(.value = slice(&view(&same), .start = 0, .count = 3))
+            .allocator = system.page_allocator
+        )
+    )
+    right ::= as_view(&right_storage)
     if [
-        HashPolicy#(StringViewHashPolicy, StringView).eql(
-            .self  = &text
-            .left  = left
-            .right = right
-        ).ok
+        HashPolicy#(
+            StringViewHashPolicy, StringView
+        ).eql(.self = &text, .left = left, .right = right).ok
         == false
     ] { abort }
     if [
@@ -39,9 +49,7 @@ main() -> (.status_code: Int32 = 0) := {
         HashPolicy#(StringViewHashPolicy, StringView).hash(.self = &text, .key = left).hash
         != string_hash_map_hash(.key = &left).hash
     ] { abort }
-    if HashPolicy#(StringViewHashPolicy, StringView).eql(
-        .self  = &text
-        .left  = left
-        .right = "ab"
-    ).ok { abort }
+    if HashPolicy#(
+        StringViewHashPolicy, StringView
+    ).eql(.self = &text, .left = left, .right = "ab").ok { abort }
 }

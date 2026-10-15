@@ -112,10 +112,13 @@ implement ErrorTracer#(FixedSizeErrorTracer) (
             self&._length = self&._length + 1
         }
 
-        count ::= context.length
+        count ::= context._length
 
         if count > 128 {
             count = 128
+            while _string_boundary(.text = context, .offset = count).ok == false {
+                count = count - 1
+            }
             self&._dropped = true
         }
 

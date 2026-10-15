@@ -12,17 +12,15 @@ main(.system: System) -> (.status_code: Int32) := {
             out ::= ~output_payload
 
             step_1 ::= format_into(
-                .out       = $&out
-                .value     = "answer="
-                .allocator = $&allocator_storage
+                .out = $&out, .value = "answer=", .allocator = $&allocator_storage
             )
             step_2 ::= format_into(.out = $&out, .value = 42, .allocator = $&allocator_storage)
             step_3 ::= format_into(
-                .out       = $&out
-                .value     = ", ok="
-                .allocator = $&allocator_storage
+                .out = $&out, .value = ", ok=", .allocator = $&allocator_storage
             )
-            step_4 ::= format_into(.out = $&out, .value = true, .allocator = $&allocator_storage)
+            step_4 ::= format_into(
+                .out = $&out, .value = true, .allocator = $&allocator_storage
+            )
             if [
                 is(.value = step_1, .variant = ..ok)
                 and is(.value = step_2, .variant = ..ok)
@@ -66,7 +64,7 @@ main(.system: System) -> (.status_code: Int32) := {
         }
     }
 
-    view ::= c_string_as_view(.text = "demo")
+    view ::= "demo"
     view_result ::= format(.value = view, .allocator = $&allocator_storage)
     match view_result {
         ..error _ {

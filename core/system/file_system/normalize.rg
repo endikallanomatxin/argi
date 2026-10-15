@@ -11,7 +11,7 @@ normalize_path#(.AllocatorType: Type: Allocator#(AllocatorType))(
     assume allocator
     index :: UIntNative = 0
 
-    while index < view.length {
+    while index < view._length {
         if bytes_get(.view = &view, .index = index).byte == 0 {
             result = ..error(.reason = ..invalid_path) return
         }
@@ -21,7 +21,7 @@ normalize_path#(.AllocatorType: Type: Allocator#(AllocatorType))(
     root ::= _platform_path_root_length(.view = &view).length
     prefix ::= root
     #if target_os("windows") {
-        if view.length >= 2 {
+        if view._length >= 2 {
             a ::= bytes_get(.view = &view, .index = 0).byte
             b ::= bytes_get(.view = &view, .index = 1).byte
             if path_is_separator(.byte = a).ok and path_is_separator(.byte = b).ok and root <= 1 {
@@ -36,15 +36,15 @@ normalize_path#(.AllocatorType: Type: Allocator#(AllocatorType))(
     parts ::= DynamicArray#(.t: StringView)(.allocator = allocator, .capacity = 1)!
     index = prefix
 
-    while index < view.length {
-        while index < view.length {
+    while index < view._length {
+        while index < view._length {
             if path_is_separator(.byte = bytes_get(.view = &view, .index = index).byte).ok == false {
                 break
             }
             index = index + 1
         }
         start ::= index
-        while index < view.length {
+        while index < view._length {
             if path_is_separator(.byte = bytes_get(.view = &view, .index = index).byte).ok {
                 break
             }
@@ -66,13 +66,13 @@ normalize_path#(.AllocatorType: Type: Allocator#(AllocatorType))(
         push(.self = $&parts, .value = part, .allocator = allocator)!
     }
 
-    text ::= string_with_capacity(.allocator = allocator, .capacity = view.length)!
+    text ::= string_with_capacity(.allocator = allocator, .capacity = view._length)!
     index = 0
 
     while index < prefix {
         byte ::= bytes_get(.view = &view, .index = index).byte
         if path_is_separator(.byte = byte).ok { byte = 47 }
-        push_byte($&text, .byte = byte, .allocator = allocator)!
+        _string_push_byte($&text, .byte = byte, .allocator = allocator)!
         index = index + 1
     }
 
@@ -80,9 +80,9 @@ normalize_path#(.AllocatorType: Type: Allocator#(AllocatorType))(
 
     while index < length(&parts).count {
         if index > 0 or root > 0 {
-            if text.length > 0 {
-                if bytes_get(.view = &as_view(&text), .index = text.length - 1).byte != 47 {
-                    push_byte($&text, .byte = 47, .allocator = allocator)!
+            if text._length > 0 {
+                if bytes_get(.view = &as_view(&text), .index = text._length - 1).byte != 47 {
+                    _string_push_byte($&text, .byte = 47, .allocator = allocator)!
                 }
             }
         }
@@ -91,7 +91,7 @@ normalize_path#(.AllocatorType: Type: Allocator#(AllocatorType))(
         index = index + 1
     }
 
-    if text.length == 0 { push_byte($&text, .byte = 46, .allocator = allocator)! }
+    if text._length == 0 { _string_push_byte($&text, .byte = 46, .allocator = allocator)! }
 
     result = ..ok Path(.text = ~text)
 }

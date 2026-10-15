@@ -23,8 +23,8 @@ set_attribute(.self: &Object, .name: StringView, .value: &Object) -> (
         _set_attribute(
             .context = self&._python&._handle
             .object  = self&._handle
-            .bytes   = name.data
-            .length  = name.length
+            .bytes   = byte_data(.text = name).reference
+            .length  = byte_length(&name).count
             .value   = value&._handle
         ).status
         != 0

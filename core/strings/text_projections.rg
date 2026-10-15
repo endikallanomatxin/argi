@@ -8,10 +8,9 @@ as_view#(.Source: Type: TextViewOf#(Source)) := (.self: Source) -> (.view: Strin
 
 implement TextViewOf#(&String) (.text_view = _string_text_view)
 
-implement TextViewOf#(&Char) (.text_view = _c_text_view)
-
 TextBytes#(.Text: Type): Contract = (
-    .byte_at : (.view: &Text, .index: UIntNative) -> (.byte: UInt8)
+    .measure_bytes : (.self: &Text) -> (.count: UIntNative)
+    .byte_at       : (.view: &Text, .index: UIntNative) -> (.byte: UInt8)
 )
 
 bytes_get#(.Text: Type: TextBytes#(Text)) := (.view: &Text, .index: UIntNative) -> (
@@ -20,6 +19,20 @@ bytes_get#(.Text: Type: TextBytes#(Text)) := (.view: &Text, .index: UIntNative) 
     byte = TextBytes#(Text).byte_at(.view = view, .index = index)
 }
 
-implement TextBytes#(String) (.byte_at = _string_get_byte)
+implement TextBytes#(String) (
+    .byte_at       = _string_get_byte,
+    .measure_bytes = _string_byte_length
+)
 
-implement TextBytes#(StringView) (.byte_at = _view_get_byte)
+implement TextBytes#(StringView) (
+    .byte_at       = _view_get_byte,
+    .measure_bytes = _view_byte_length
+)
+
+_string_byte_length(.self: &String) -> (.count: UIntNative) := { count = self&._length }
+
+_view_byte_length(.self: &StringView) -> (.count: UIntNative) := { count = self&._length }
+
+byte_length#(.Text: Type: TextBytes#(Text))(.self: &Text) -> (.count: UIntNative) := {
+    count = TextBytes#(Text).measure_bytes(.self = self)
+}

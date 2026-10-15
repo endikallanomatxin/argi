@@ -29,15 +29,6 @@ _string_key_from_view(.key: &StringView) -> (.view: StringView) := {
 
 implement StringMapKey#(&StringView) (.key_view = _string_key_from_view)
 
-_string_key_from_c_string(.key: &Char) -> (.view: StringView) := {
-    view = (
-        .data   = trusted_reinterpret_reference#(.from: Char, .to: UInt8)(.base = key).reference
-        .length = c_string_length(.text = key).length
-    )
-}
-
-implement StringMapKey#(&Char) (.key_view = _string_key_from_c_string)
-
 _string_key_from_string(.key: &String) -> (.view: StringView) := {
     key_view ::= as_view(key)
     view = key_view
@@ -72,7 +63,7 @@ string_hash_map_hash(.key: &StringView) -> (.hash: UIntNative) := {
     hash = 7
     index :: UIntNative = 0
 
-    while index < key&.length {
+    while index < key&._length {
         byte ::= bytes_get(.view = key, .index = index).byte
         digit ::= _string_hash_byte_value(.byte = byte).value
         hash = hash * multiplier + digit

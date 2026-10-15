@@ -33,16 +33,20 @@ implement#(.t: Type: ArgumentSource#(t)) Init#(
 )
 
 next#(.t: Type: ArgumentSource#(t))(.self: $&CliParser#(.t: t)) -> (
-    .result : Errable#(?CliArgument, (..invalid_option))
+    .result : Errable#(?CliArgument, (..invalid_option, ..invalid_utf8, ..out_of_bounds))
 ) := {
     while self&._index < length(self&._source).count {
-        text ::= unwrap_or_abort(.value = get(self&._source, .index = self&._index))
+        text ::= get(self&._source, .index = self&._index)!
         if self&._short_offset > 0 {
+            if bytes_get(.view = &text, .index = self&._short_offset).byte >= 128 {
+                result = ..error(.reason = ..invalid_option)
+                return
+            }
             name ::= unwrap_or_abort(
                 .value = slice(text, .start = self&._short_offset, .count = 1)
             )
             self&._short_offset = self&._short_offset + 1
-            if self&._short_offset == text.length {
+            if self&._short_offset == text._length {
                 self&._index = self&._index + 1
                 self&._short_offset = 0
             }
@@ -52,7 +56,7 @@ next#(.t: Type: ArgumentSource#(t))(.self: $&CliParser#(.t: t)) -> (
             return
         }
         self&._index = self&._index + 1
-        if self&._positionals or text.length < 2 {
+        if self&._positionals or text._length < 2 {
             result = ..ok ..some(.value = ..positional text)
             return
         }
@@ -69,9 +73,9 @@ next#(.t: Type: ArgumentSource#(t))(.self: $&CliParser#(.t: t)) -> (
             self&._short_offset = 1
             continue
         }
-        end ::= text.length
+        end ::= text._length
         index :: UIntNative = 2
-        while index < text.length {
+        while index < text._length {
             if bytes_get(.view = &text, .index = index).byte == 61 {
                 end = index
                 break
@@ -84,10 +88,10 @@ next#(.t: Type: ArgumentSource#(t))(.self: $&CliParser#(.t: t)) -> (
         }
         name ::= unwrap_or_abort(.value = slice(text, .start = 2, .count = end - 2))
         attached :: ?StringView = ..none
-        if end < text.length {
+        if end < text._length {
             attached = ..some(
                 .value = unwrap_or_abort(
-                    .value = slice(text, .start = [end + 1], .count = [text.length - end - 1])
+                    .value = slice(text, .start = [end + 1], .count = [text._length - end - 1])
                 )
             )
         }
@@ -101,7 +105,7 @@ next#(.t: Type: ArgumentSource#(t))(.self: $&CliParser#(.t: t)) -> (
 }
 
 take_value#(.t: Type: ArgumentSource#(t))(.self: $&CliParser#(.t: t), .option: CliOption) -> (
-    .result : Errable#(StringView, (..missing_option_value))
+    .result : Errable#(StringView, (..missing_option_value, ..invalid_utf8, ..out_of_bounds))
 ) := {
     match option.value { ..some entry {
             result = ..ok entry.value
@@ -109,11 +113,11 @@ take_value#(.t: Type: ArgumentSource#(t))(.self: $&CliParser#(.t: t), .option: C
         } ..none {} }
 
     if self&._short_offset > 0 {
-        text ::= unwrap_or_abort(.value = get(self&._source, .index = self&._index))
+        text ::= get(self&._source, .index = self&._index)!
         start ::= self&._short_offset
         if bytes_get(.view = &text, .index = start).byte == 61 { start = start + 1 }
         result = ..ok unwrap_or_abort(
-            .value = slice(text, .start = start, .count = [text.length - start])
+            .value = slice(text, .start = start, .count = [text._length - start])
         )
         self&._short_offset = 0
         self&._index = self&._index + 1
@@ -125,6 +129,6 @@ take_value#(.t: Type: ArgumentSource#(t))(.self: $&CliParser#(.t: t), .option: C
         return
     }
 
-    result = ..ok unwrap_or_abort(.value = get(self&._source, .index = self&._index))
+    result = ..ok get(self&._source, .index = self&._index)!
     self&._index = self&._index + 1
 }

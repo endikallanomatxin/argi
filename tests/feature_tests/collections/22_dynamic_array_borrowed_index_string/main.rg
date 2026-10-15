@@ -3,8 +3,8 @@ main(.system: System) -> (.status_code: Int32) := {
     assume allocator ::= $&allocator_storage
 
     text ::= unwrap_or_abort(.value = String(.allocator = $&allocator_storage, .length = 2))
-    bytes_set(.string = $&text, .index = 0, .value = 79)
-    bytes_set(.string = $&text, .index = 1, .value = 75)
+    _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = 0, .byte = 79))
+    _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = 1, .byte = 75))
 
     strings ::= unwrap_or_abort(.value = DynamicArray#(.t: String)(.capacity = 1))
     #defer deinit(.self = $&strings)
@@ -27,7 +27,7 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
     mutable_ptr: $&String = mutable_ptr_result ..ok
-    bytes_set(.string = mutable_ptr, .index = 0, .value = 78)
+    _ ::= unwrap_or_abort(.value = set_ascii(.self = mutable_ptr, .index = 0, .byte = 78))
 
     final_ptr_result ::= get_reference(.self = &strings, .index = 0).result
     if is(.value = final_ptr_result, .variant = ..error) {

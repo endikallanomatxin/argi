@@ -1,10 +1,14 @@
-helper#(.AllocatorType: Type: Allocator#(AllocatorType))(.allocator: $&AllocatorType) -> (.ok: Bool) := {
+helper#(.AllocatorType: Type: Allocator#(AllocatorType))(.allocator: $&AllocatorType) -> (
+    .ok : Bool
+) := {
     assume allocator
 
-    text ::= unwrap_or_abort(.value = string_with_capacity(.allocator = allocator, .capacity = 1))
+    text ::= unwrap_or_abort(
+        .value = string_with_capacity(.allocator = allocator, .capacity = 1)
+    )
     #defer deinit(.self = $&text)
 
-    match push_byte(.self = $&text, .byte = 65, .allocator = allocator) {
+    match push_ascii(.self = $&text, .byte = 65, .allocator = allocator) {
         ..ok _ {
         }
         ..error _ {
@@ -13,7 +17,7 @@ helper#(.AllocatorType: Type: Allocator#(AllocatorType))(.allocator: $&Allocator
         }
     }
 
-    if text.length != 1 {
+    if byte_length(&text).count != 1 {
         ok = false
         return
     }

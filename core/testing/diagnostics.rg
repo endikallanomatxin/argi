@@ -12,10 +12,16 @@ implement Init#(_TestDiagnostic, ()) (
 _testing_append(.self: $&_TestDiagnostic, .text: StringView) -> () := {
     index :: UIntNative = 0
 
-    while index < text.length and self&._length < 128 {
-        self&._bytes[self&._length] = bytes_get(.view = &text, .index = index).byte
-        self&._length = self&._length + 1
-        index = index + 1
+    while index < text._length {
+        decoded ::= unwrap_or_abort(.value = utf8_decode(.text = text, .offset = index))
+        if decoded.width > 128 - self&._length { return }
+        offset :: UIntNative = 0
+        while offset < decoded.width {
+            self&._bytes[self&._length] = bytes_get(.view = &text, .index = index + offset).byte
+            self&._length = self&._length + 1
+            offset = offset + 1
+        }
+        index = index + decoded.width
     }
 }
 
@@ -30,13 +36,13 @@ _testing_append_float#(.t: Type: Float)(.self: $&_TestDiagnostic, .value: t) -> 
 }
 
 _testing_detail(.self: &_TestDiagnostic) -> (.text: StringView) := {
-    text = (.data = &self&._bytes[0], .length = self&._length)
+    text = (._data = &self&._bytes[0], ._length = self&._length)
 }
 
 _testing_failure(.detail: StringView, .message: StringView) -> (
     .result : Errable#(Void, (..test_failed))
 ) := {
-    if message.length != 0 { add_context(.context = message) }
+    if message._length != 0 { add_context(.context = message) }
     test_fail_impl()!! detail
 
     result = ..ok Void()
@@ -104,23 +110,26 @@ _testing_lengths(.self: $&_TestDiagnostic, .expected: UIntNative, .actual: UIntN
     _testing_append_number(self, .value = actual)
 }
 
-_testing_compare_text(
-    .expected: StringView, .actual: StringView, .kind: StringView, .message: StringView = ""
+_testing_compare_byte_ranges(
+    .expected : ArrayViewRO#(UInt8),
+    .actual   : ArrayViewRO#(UInt8),
+    .kind     : StringView,
+    .message  : StringView = ""
 ) -> (.result: Errable#(Void, (..test_failed))) := {
-    common ::= expected.length
+    common ::= length(&expected).count
 
-    if actual.length < common { common = actual.length }
+    if length(&actual).count < common { common = length(&actual).count }
     index :: UIntNative = 0
 
     while index < common {
         if [
-            bytes_get(.view = &expected, .index = index).byte
-            != bytes_get(.view = &actual, .index = index).byte
+            unwrap_or_abort(.value = get(&expected, .index = index))
+            != unwrap_or_abort(.value = get(&actual, .index = index))
         ] { break }
         index = index + 1
     }
 
-    if index == common and expected.length == actual.length {
+    if index == common and length(&expected).count == length(&actual).count {
         result = ..ok Void()
         return
     }
@@ -131,23 +140,25 @@ _testing_compare_text(
     _testing_append_number($&diagnostic, .value = index)
     _testing_append($&diagnostic, .text = ": expected ")
 
-    if index < expected.length {
+    if index < length(&expected).count {
         _testing_append_number(
-            $&diagnostic, .value = bytes_get(.view = &expected, .index = index).byte
+            $&diagnostic, .value = unwrap_or_abort(.value = get(&expected, .index = index))
         )
     } else {
         _testing_append($&diagnostic, .text = "<end>")
     }
     _testing_append($&diagnostic, .text = ", actual ")
 
-    if index < actual.length {
+    if index < length(&actual).count {
         _testing_append_number(
-            $&diagnostic, .value = bytes_get(.view = &actual, .index = index).byte
+            $&diagnostic, .value = unwrap_or_abort(.value = get(&actual, .index = index))
         )
     } else {
         _testing_append($&diagnostic, .text = "<end>")
     }
-    _testing_lengths($&diagnostic, .expected = expected.length, .actual = actual.length)
+    _testing_lengths(
+        $&diagnostic, .expected = length(&expected).count, .actual = length(&actual).count
+    )
 
     result = _testing_failure(.detail = _testing_detail(&diagnostic).text, .message = message)
 }
@@ -155,8 +166,11 @@ _testing_compare_text(
 _assert_text_views(.expected: StringView, .actual: StringView, .message: StringView = "") -> (
     .result : Errable#(Void, (..test_failed))
 ) := {
-    result = _testing_compare_text(
-        .expected = expected, .actual = actual, .message = message, .kind = "strings"
+    result = _testing_compare_byte_ranges(
+        .expected = string_bytes(.text = expected)
+        .actual   = string_bytes(.text = actual)
+        .message  = message
+        .kind     = "strings"
     )
 }
 
@@ -207,20 +221,7 @@ expect_equal_bytes(
     .actual   : ArrayViewRO#(.t: UInt8),
     .message  : StringView = ""
 ) -> (.result: Errable#(Void, (..test_failed))) := {
-    expected_length ::= length(&expected).count
-    actual_length ::= length(&actual).count
-    left ::= ""
-    right ::= ""
-
-    if expected_length != 0 {
-        left = (.data = data(&expected).pointer, .length = expected_length)
-    }
-
-    if actual_length != 0 {
-        right = (.data = data(&actual).pointer, .length = actual_length)
-    }
-
-    result = _testing_compare_text(
-        .expected = left, .actual = right, .message = message, .kind = "bytes"
+    result = _testing_compare_byte_ranges(
+        .expected = expected, .actual = actual, .message = message, .kind = "bytes"
     )
 }

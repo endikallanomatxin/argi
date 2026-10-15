@@ -1,7 +1,10 @@
 semver := import ("semver")
+
 main() -> (.status_code: Int32 = 0) := {
     first ::= unwrap_or_abort(.value = semver.parse(.text = "1.2.3-alpha.2+001")).result
-    second ::= unwrap_or_abort(.value = semver.VersionView(.text = "1.2.3-alpha.11+other")).result
+    second ::= unwrap_or_abort(
+        .value = semver.VersionView(.text = "1.2.3-alpha.11+other")
+    ).result
     if semver.compare(.left = &first, .right = &second).order != -1 { abort }
     if semver.major(.self = &first).text != "1" { abort }
     if semver.minor(.self = &first).text != "2" { abort }
@@ -9,12 +12,12 @@ main() -> (.status_code: Int32 = 0) := {
     if semver.pre_release(.self = &first).text != "alpha.2" { abort }
     if semver.build_metadata(.self = &first).text != "001" { abort }
     stable ::= unwrap_or_abort(.value = semver.parse(.text = "0.0.0")).result
-    if semver.pre_release(.self = &stable).text.length != 0 { abort }
-    if semver.build_metadata(.self = &stable).text.length != 0 { abort }
+    if byte_length(&semver.pre_release(.self = &stable).text).count != 0 { abort }
+    if byte_length(&semver.build_metadata(.self = &stable).text).count != 0 { abort }
     copy ::= stable
     if semver.equals(.left = &stable, .right = &copy).ok == false { abort }
     nul_bytes: [7]UInt8 = (49, 46, 50, 46, 51, 0, 65)
-    nul: StringView = (.data = &nul_bytes[0], .length = 7)
+    nul: StringView = "1.2.3\0A"
     check_invalid(.text = nul)
     check_valid(.text = "0.0.0")
     check_valid(.text = "1.2.3")
@@ -58,10 +61,16 @@ main() -> (.status_code: Int32 = 0) := {
     check_order(.a = "2.0.0", .b = "2.1.0", .order = -1)
     check_order(.a = "2.1.0", .b = "2.1.1", .order = -1)
     check_order(.a = "1.2.3+x", .b = "1.2.3+y", .order = 0)
-    check_order(.a = "999999999999999999999999999.0.0", .b = "1000000000000000000000000000.0.0",
-        .order = -1)
-    check_order(.a = "1.2.3-9999999999999999999999999", .b = "1.2.3-10000000000000000000000000",
-        .order = -1)
+    check_order(
+        .a     = "999999999999999999999999999.0.0"
+        .b     = "1000000000000000000000000000.0.0"
+        .order = -1
+    )
+    check_order(
+        .a     = "1.2.3-9999999999999999999999999"
+        .b     = "1.2.3-10000000000000000000000000"
+        .order = -1
+    )
     check_order(.a = "1.2.3-A", .b = "1.2.3-a", .order = -1)
     check_order(.a = "1.2.3-9", .b = "1.2.3--", .order = -1)
     check_order(.a = "1.2.3-a.1", .b = "1.2.3-a.1.0", .order = -1)
@@ -71,12 +80,14 @@ check_valid(.text: StringView) -> () := {
     parsed ::= unwrap_or_abort(.value = semver.parse(.text = text)).result
     if as_view(.self = &parsed).view != text { abort }
 }
+
 check_invalid(.text: StringView) -> () := {
     match semver.parse(.text = text) {
         ..error error { if error.reason != ..invalid_input { abort } }
         ..ok _ { abort }
     }
 }
+
 check_order(.a: StringView, .b: StringView, .order: Int32) -> () := {
     left ::= unwrap_or_abort(.value = semver.parse(.text = a)).result
     right ::= unwrap_or_abort(.value = semver.parse(.text = b)).result

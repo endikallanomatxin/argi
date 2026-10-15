@@ -1,4 +1,4 @@
-first(.source: &Virtual#(ArgumentSource)) -> (.result: Errable#(StringView, (..out_of_bounds))) := {
+first(.source: &Virtual#(ArgumentSource)) -> (.result: Errable#(StringView, (..out_of_bounds, ..invalid_utf8))) := {
     result = get(source, 0)
 }
 
@@ -18,5 +18,5 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
 
     native ::= to_virtual#(ArgumentSource)(system.args)
     if length(&native) == 0 { abort }
-    if unwrap_or_abort(get(&native, 0)).length == 0 { abort }
+    if byte_length(&unwrap_or_abort(get(&native, 0))).count == 0 { abort }
 }

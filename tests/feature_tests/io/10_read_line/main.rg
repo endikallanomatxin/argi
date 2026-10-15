@@ -2,12 +2,10 @@ DummyInput: Type = (
     .index : UIntNative = 0
 )
 
-implement Reader#(DummyInput)(
-    .read_byte = (
-            .self : $&DummyInput
-        ) -> (
-            .result : Errable#(.t: ReadByte, .reasons: (..stream_read_failed))
-        ) {
+implement Reader#(DummyInput) (
+    .read_byte = (.self: $&DummyInput) -> (
+        .result : Errable#(.t: ReadByte, .reasons: (..stream_read_failed))
+    ) {
         if self&.index == 0 {
             self&.index = 1
             result = ..ok ..ok 79
@@ -54,7 +52,7 @@ main(.system: System) -> (.status_code: Int32) := {
     }
     line ::= ~outer ..ok
 
-    if line.length != 2 {
+    if byte_length(&line).count != 2 {
         status_code = 3
         return
     }

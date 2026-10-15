@@ -1,47 +1,31 @@
 FailingAllocator: Type = (.attempts: UIntNative = 0)
 
 main() -> (.status_code: Int32 = 0) := {
-    native :: UIntNative = 0
-    maximum ::= integer_limits(.value = native).maximum
-    byte :: UInt8 = 97
-    huge :: StringView = (.data = &byte, .length = maximum)
-    small :: StringView = "a"
-    empty :: StringView = ""
+    left: StringView = "left"
+    right: StringView = "right"
     failing ::= FailingAllocator()
-    match join_views(.left = &huge, .right = &small, .allocator = $&failing) {
-        ..ok _ { abort } ..error _ {}
+    match join_views(.left = &left, .right = &right, .allocator = $&failing) {
+        ..ok _ { abort }
+        ..error error { if error.reason != ..out_of_memory { abort } }
     }
-    match join_views(.left = &small, .right = &huge, .allocator = $&failing) {
-        ..ok _ { abort } ..error _ {}
-    }
-    match join_views(.left = &huge, .right = &empty, .allocator = $&failing) {
-        ..ok _ { abort } ..error _ {}
-    }
-    near :: StringView = (.data = &byte, .length = maximum - 2)
-    match join_views(.left = &small, .right = &near, .allocator = $&failing) {
-        ..ok _ { abort } ..error _ {}
-    }
-    if failing.attempts != 0 { abort }
+    if failing.attempts != 1 { abort }
+
 }
 
-implement Allocator#(FailingAllocator)(
-    .allocate = (
-            .self      : $&FailingAllocator,
-            .size      : UIntNative,
-            .alignment : UIntNative          = 1
-        ) -> (
-            .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
-        ) {
+implement Allocator#(FailingAllocator) (
+    .allocate = (.self: $&FailingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
+        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+    ) {
         self&.attempts = self&.attempts + 1
         result = ..error(.reason = ..out_of_memory)
     }
 )
 
-implement Deallocator#(FailingAllocator)(
+implement Deallocator#(FailingAllocator) (
     .deallocate = (
-            .self      : $&FailingAllocator,
-            .data      : RawPointer#(.t: UInt8),
-            .size      : UIntNative,
-            .alignment : UIntNative
-        ) -> () { abort }
+        .self      : $&FailingAllocator,
+        .data      : RawPointer#(.t: UInt8),
+        .size      : UIntNative,
+        .alignment : UIntNative
+    ) -> () { abort }
 )

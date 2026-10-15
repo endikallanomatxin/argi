@@ -16,22 +16,16 @@ main(.system: System) -> (.status_code: Int32) := {
     o :: UInt8 = 111
     bang :: UInt8 = 33
 
-    bytes_set(.string = $&text, .index = zero, .value = h)
-    bytes_set(.string = $&text, .index = one, .value = e)
-    bytes_set(.string = $&text, .index = two, .value = l)
-    bytes_set(.string = $&text, .index = three, .value = l)
-    bytes_set(.string = $&text, .index = four, .value = o)
-    bytes_set(.string = $&text, .index = five, .value = bang)
+    _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = zero, .byte = h))
+    _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = one, .byte = e))
+    _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = two, .byte = l))
+    _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = three, .byte = l))
+    _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = four, .byte = o))
+    _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = five, .byte = bang))
 
     view ::= as_view(.self = &text)
-    hello: StringView = (
-        .data   = view.data
-        .length = 5
-    )
-    hello_again: StringView = (
-        .data   = view.data
-        .length = 5
-    )
+    hello ::= unwrap_or_abort(.value = slice(.self = view, .start = 0, .count = 5))
+    hello_again ::= unwrap_or_abort(.value = slice(.self = view, .start = 0, .count = 5))
 
     if equals(.left = hello, .right = hello_again).ok {
     } else {

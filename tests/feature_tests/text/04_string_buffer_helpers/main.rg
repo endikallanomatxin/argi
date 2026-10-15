@@ -2,33 +2,33 @@ DummyWriter: Type = (
     .bytes : String
 )
 
-implement#(.AllocatorProvider: Type: Allocator) Init#(DummyWriter, (.allocator : $&AllocatorProvider)) (
-    .Result: Type = DummyWriter
-    .init = (.args: (.allocator : $&AllocatorProvider)) -> (.result: Result) {
+implement#(.AllocatorProvider: Type: Allocator) Init#(
+    DummyWriter, (.allocator: $&AllocatorProvider)
+) (
+    .Result : Type = DummyWriter
+    .init   = (.args: (.allocator: $&AllocatorProvider)) -> (.result: Result) {
         allocator ::= ~args.allocator
 
         assume allocator
 
-        result.bytes = unwrap_or_abort(.value = string_with_capacity(.allocator = allocator, .capacity = 16))
+        result.bytes = unwrap_or_abort(
+            .value = string_with_capacity(.allocator = allocator, .capacity = 16)
+        )
     }
 )
 
 implement Deinit#(DummyWriter) (
-    .deinit = (.self : $&DummyWriter) -> () {
+    .deinit = (.self: $&DummyWriter) -> () {
         deinit(.self = $&self&.bytes)
     }
 )
 
 append_test_byte#(.AllocatorType: Type: Allocator#(AllocatorType))(
-        .self      : $&DummyWriter,
-        .byte      : UInt8,
-        .allocator : $&AllocatorType
-    ) -> (
-        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
-    ) := {
+    .self: $&DummyWriter, .byte: UInt8, .allocator: $&AllocatorType
+) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
     assume allocator
 
-    pushed ::= push_byte(.self = $&self&.bytes, .byte = byte, .allocator = allocator)
+    pushed ::= push_ascii(.self = $&self&.bytes, .byte = byte, .allocator = allocator)
     if is(.value = pushed, .variant = ..error) {
         result = ..error(.reason = ..stream_write_failed)
         return
@@ -40,7 +40,9 @@ main(.system: System) -> (.status_code: Int32) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 
-    buffer ::= unwrap_or_abort(.value = string_with_capacity(.allocator = $&allocator_storage, .capacity = 16))
+    buffer ::= unwrap_or_abort(
+        .value = string_with_capacity(.allocator = $&allocator_storage, .capacity = 16)
+    )
     match push_c_string(.self = $&buffer, .text = "OK") {
         ..ok _ {
         }
@@ -50,14 +52,14 @@ main(.system: System) -> (.status_code: Int32) := {
         }
     }
 
-    if buffer.length != 2 {
+    if byte_length(&buffer).count != 2 {
         status_code = 1
         return
     }
 
     writer ::= DummyWriter(.allocator = $&allocator_storage)
     i :: UIntNative = 0
-    while i < buffer.length {
+    while i < byte_length(&buffer).count {
         append_test_byte(
             .self      = $&writer
             .byte      = bytes_get(.view = &buffer, .index = i).byte
@@ -67,7 +69,7 @@ main(.system: System) -> (.status_code: Int32) := {
     }
     append_test_byte(.self = $&writer, .byte = 10, .allocator = $&allocator_storage)
 
-    if writer.bytes.length != 3 {
+    if byte_length(&writer.bytes).count != 3 {
         status_code = 2
         return
     }

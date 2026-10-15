@@ -103,10 +103,10 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     owned ::= read_all_limited(
         .self = $&source, .buffer = view(.array = $&scratch), .limit = 4, .allocator = allocator
     )!
-    if owned.length != 4 or capacity(.self = &owned).value > 4 { abort }
+    if length(&owned).count != 4 or capacity(.self = &owned).count > 4 { abort }
     if [
-        bytes_get(.view = &owned, .index = 1).byte != 0
-        or bytes_get(.view = &owned, .index = 3).byte != 10
+        unwrap_or_abort(.value = get(&owned, .index = 1)) != 0
+        or unwrap_or_abort(.value = get(&owned, .index = 3)) != 10
     ] { abort }
     source.position = 0
     other ::= read_all_limited(
@@ -115,7 +115,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         .limit     = 8
         .allocator = allocator
     )!
-    if other.length != 4 or capacity(.self = &other).value > 8 { abort }
+    if length(&other).count != 4 or capacity(.self = &other).count > 8 { abort }
     source.position = 0
     match read_all_limited(
         .self = $&source, .buffer = view(.array = $&scratch), .limit = 2, .allocator = allocator
@@ -142,7 +142,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     nothing ::= read_all_limited(
         .self = $&source, .buffer = view(.array = $&scratch), .limit = 0, .allocator = allocator
     )!
-    if nothing.length != 0 { abort }
+    if length(&nothing).count != 0 { abort }
     calls = source.calls
     match read_all_limited(
         .self = $&source, .buffer = empty, .limit = 4, .allocator = allocator

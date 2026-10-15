@@ -2,11 +2,12 @@ write_trace_text(.text: &Char, .writer: $&Virtual#(.contract: Writer)) -> (
     .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
 ) := {
     assume error_tracer ::= $&noop_error_tracer
-    view ::= c_string_as_view(.text = text).view
+    bytes ::= _c_string_bytes(.text = text)
     i :: UIntNative = 0
 
-    while i < view.length {
-        Writer#().write_byte(writer, .byte = bytes_get(.view = &view, .index = i).byte)!
+    while i < length(&bytes).count {
+        byte ::= unwrap_or_abort(.value = get(&bytes, .index = i))
+        Writer#().write_byte(writer, .byte = byte)!
         i = i + 1
     }
 

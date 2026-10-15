@@ -14,26 +14,9 @@ from_literal(.data: &Char) -> (.text: &Char) := {
 as_c_string(.self: &String) -> (.text: &Char) := {
     text = trusted_reinterpret_reference#(.from: UInt8, .to: Char)(
         .base = _trusted_allocation_byte_ro(
-            .allocation = &self&.allocation, .offset = 0
+            .allocation = &self&._allocation, .offset = 0
         ).reference
     ).reference
-}
-
-string_view_has_c_string_layout(.self: &StringView) -> (.ok: Bool) := {
-    i :: UIntNative = 0
-
-    while i < self&.length {
-        if bytes_get(.view = self, .index = i).byte == 0 {
-            ok = false
-            return
-        }
-        i = i + 1
-    }
-
-    terminator_ptr ::= trusted_reference_offset#(.t: UInt8)(
-        .base = self&.data, .elements = self&.length
-    )
-    ok = terminator_ptr&== 0
 }
 
 copy_c_string#(.Provider: Type: Allocator#(Provider)) := (
@@ -41,11 +24,11 @@ copy_c_string#(.Provider: Type: Allocator#(Provider)) := (
 ) -> (.result: Errable#(OwnedCString, (..out_of_memory))) {
     assume allocator
 
-    if self.length == integer_limits(.value = self.length).maximum {
+    if self._length == integer_limits(.value = self._length).maximum {
         result = ..error(.reason = ..out_of_memory)
         return
     }
-    size :: UIntNative = self.length + 1
+    size :: UIntNative = self._length + 1
     allocated ::= Allocator#(Provider).allocate(.self = allocator, .size = size, .alignment = 1)
 
     match allocated {
@@ -60,7 +43,7 @@ copy_c_string#(.Provider: Type: Allocator#(Provider)) := (
             ).reference
 
             i :: UIntNative = 0
-            while i < self.length {
+            while i < self._length {
                 ptr ::= trusted_mutable_reference_offset#(.t: UInt8)(
                     .base = data, .elements = i
                 ).reference
@@ -69,7 +52,7 @@ copy_c_string#(.Provider: Type: Allocator#(Provider)) := (
             }
 
             nul_ptr ::= trusted_mutable_reference_offset#(.t: UInt8)(
-                .base = data, .elements = self.length
+                .base = data, .elements = self._length
             ).reference
             nul_ptr&= 0
 
@@ -81,11 +64,23 @@ copy_c_string#(.Provider: Type: Allocator#(Provider)) := (
     }
 }
 
-_c_text_view(.self: &Char) -> (.view: StringView) := {
-    view = (
+_c_string_bytes(.text: &Char) -> (.bytes: ArrayViewRO#(UInt8)) := {
+    size ::= c_string_length(.text = text).length
+    if size == 0 {
+        bytes = empty_array_view_ro#(UInt8)().array
+        return
+    }
+    bytes = _trusted_array_view_ro#(UInt8)(
         .data = trusted_reinterpret_reference#(.from: Char, .to: UInt8)(
-            .base = self
+            .base = text
         ).reference
-        .length = strlen(.string = self).length
-    )
+        .length = size
+    ).array
+}
+
+string_from_c_string#(.Provider: Type: Allocator)(
+    .text: &Char, .allocator: $&Provider = reach allocator
+) -> (.result: Errable#(String, (..invalid_utf8, ..out_of_memory))) := {
+    assume allocator
+    result = string_from_bytes(.bytes = _c_string_bytes(.text = text), .allocator = allocator)
 }

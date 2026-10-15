@@ -2,9 +2,11 @@ main(.system: System) -> (.status_code: Int32) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 
-    buffer ::= unwrap_or_abort(.value = string_with_capacity(.allocator = $&allocator_storage, .capacity = 8))
+    buffer ::= unwrap_or_abort(
+        .value = string_with_capacity(.allocator = $&allocator_storage, .capacity = 8)
+    )
 
-    match push_byte(.self = $&buffer, .byte = 79) {
+    match push_ascii(.self = $&buffer, .byte = 79) {
         ..ok _ {
         }
         ..error _ {
@@ -13,7 +15,7 @@ main(.system: System) -> (.status_code: Int32) := {
         }
     }
 
-    match push_byte(.self = $&buffer, .byte = 75) {
+    match push_ascii(.self = $&buffer, .byte = 75) {
         ..ok _ {
         }
         ..error _ {
@@ -22,7 +24,7 @@ main(.system: System) -> (.status_code: Int32) := {
         }
     }
 
-    if buffer.length != 2 {
+    if byte_length(&buffer).count != 2 {
         status_code = 1
         return
     }

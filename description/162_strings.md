@@ -51,20 +51,18 @@ Several escape sequences are supported:
 
 ## Implementation
 
-`String` owns an `Allocation` and records its logical byte length. Its storage
-includes a trailing NUL. `StringView` borrows a byte region and records its length;
-it need not refer to an owning String or include a terminator:
+`String` owns valid UTF-8 text and a trailing NUL. `StringView` borrows valid
+UTF-8 text and records its byte length; it need not include a terminator.
+Both representations are private. Embedded NULs are valid text.
 
-```rg
-StringView: Type = (
-    .data   : &UInt8
-    .length : UIntNative
-)
-```
+Arbitrary bytes use `DynamicArray#(UInt8)` or byte array views.
+`string_from_bytes(.bytes, .allocator)` validates and copies them, returning
+`invalid_utf8` or `out_of_memory` on failure. Later changes to the source bytes
+do not affect the resulting text. There is no public unchecked byte-to-text view.
+`string_from_c_string` performs the same validation and copy for C input.
 
-Neither type guarantees valid UTF-8. `Utf8View` provides checked Unicode scalar
-iteration, as described below. There is no separate mutable string-view type;
-mutable byte storage uses `ArrayView#(UInt8)`.
+`string_bytes(.text)` exposes a read-only byte view. Text mutation invalidates
+borrowed views; it cannot grant mutable access to the representation.
 
 Copying a string view should copy only the descriptor. It should never imply
 ownership of the underlying bytes.
@@ -177,18 +175,22 @@ The text model uses these conventions:
   temporary buffering used while reading.
 - string literals materialize as borrowed read-only `StringView`.
 - raw `&Char` stays as the explicit C-string boundary, reached through helpers
-  such as `as_c_string(...)` / `as_view(...)` instead of being the default
+  such as `as_c_string(...)` / `string_from_c_string(...)` instead of being the default
   language-level type of `"..."`.
-- `String(.length = n)` returns the result of allocating exactly `n` bytes.
+- `String(.length = n)` returns the result of allocating `n` zero bytes plus a trailing NUL.
 - `deinit(.self = $&string)` releases the backing allocation.
 - `copy(.self = string)` allocates a second backing buffer and copies the
   bytes, so value semantics stay independent.
 - `String` itself is not directly indexable.
 - byte-level access is explicit:
   - `bytes_get(.view = &string, .index = i)`
-  - `bytes_set(.string = $&string, .index = i, .value = b)`
+  - `set_ascii(.self = $&string, .index = i, .byte = b)` checks the index and
+    requires both the old and new byte to be ASCII.
+  - `push_ascii`, `push_scalar`, and `push_view` append ASCII, a Unicode scalar,
+    or validated text. `push_ascii` aborts for a non-ASCII byte; arbitrary
+    byte input must use checked decoding instead.
 - `slice(.self = as_view(&string), .start = start, .count = count)` returns a
-  checked borrowed byte range; it does not validate UTF-8 boundaries.
+  checked borrowed text range; both ends must be UTF-8 scalar boundaries.
 - `codepoints(.text = as_view(&string))` validates bytes and returns a borrowed
   `Utf8View` for scalar iteration. `utf8_decode` supports checked byte offsets.
 
@@ -318,8 +320,8 @@ zero terminator; appending to a string allocates only when its capacity grows.
 
 ## Strict UTF-8 operations
 
-Byte-oriented `String` and `StringView` operations do not establish valid UTF-8.
-Text decoding is explicit and accepts bounded views, including embedded NULs.
+`String` and `StringView` guarantee valid UTF-8. Byte decoding is explicit and
+accepts bounded byte views, including embedded NULs.
 
 `UnicodeScalar(.value: UInt32)` checks the Unicode scalar range: zero through
 U+10FFFF, excluding U+D800 through U+DFFF. Invalid input reports
@@ -332,14 +334,16 @@ consumed `.width` in bytes. An offset at or beyond the end reports
 overlong encodings, surrogate encodings, and values above U+10FFFF report
 `invalid_utf8`. Decoding does not replace invalid bytes or skip them.
 
-`validate_utf8(.text)` checks the complete view and returns its scalar count.
+`validate_utf8_bytes(.bytes)` checks arbitrary bytes and returns their scalar
+count. `utf8_decode_bytes(.bytes, .offset)` decodes one scalar.
+`validate_utf8(.text)` returns a text view's scalar count.
 Empty text is valid and has count zero. `utf8_encoded_length(.scalar)` returns
 one through four. `utf8_encode(.scalar, .buffer, .offset = 0)` writes the shortest
 UTF-8 encoding to initialized mutable byte storage and returns its width. It
 checks the whole destination first; `out_of_bounds` leaves every byte unchanged,
 including for oversized offsets. These operations allocate no storage.
 
-`Utf8Decoder(.text)` borrows a byte view and starts at offset zero.
+`Utf8Decoder(.text)` or `Utf8Decoder(.bytes)` starts at offset zero.
 `next_codepoint(.self)` returns an errable optional scalar: none at end,
 `invalid_utf8` on malformed input, or a scalar and an advanced byte position on
 success. `position(.self)` reports that byte position. Failure preserves the
@@ -353,11 +357,11 @@ iterates `UnicodeScalar` values without allocation. Iterators retain backing
 storage lifetimes; copied scalars are independent values. `next` requires a
 successful `has_next` and aborts at end.
 
-Validation does not freeze backing storage. Keep its bytes unchanged while
-using a validated view or iterator. Iteration rechecks each encoding and aborts
-if that obligation is violated by malformed content. UTF-8 decoding performs no
-normalization, case folding, grapheme segmentation, or display-width calculation;
-a scalar count is not a count of user-perceived characters.
+Text views preserve their validity through storage dependencies: mutating the
+owning string invalidates existing views. Checked byte decoders do not certify
+or freeze their source. UTF-8 decoding performs no normalization, case folding,
+grapheme segmentation, or display-width calculation; a scalar count is not a
+count of user-perceived characters.
 
 `parse_uintnative(.text, .base = 10)` reads an unsigned integer using the
 compilation target's pointer width. It has the same digit and error contracts
@@ -380,8 +384,8 @@ lifetime and remain valid when the iterator advances. Unicode whitespace is
 not a separator; UTF-8 bytes and embedded NULs otherwise remain unchanged.
 
 `slice(.self: StringView, .start, .count)` checks byte ranges and returns an
-`Errable` view with `out_of_bounds` on failure. It does not require codepoint
-boundaries or UTF-8 validation. Empty slices at the extent succeed without
+`Errable` view with `out_of_bounds` for invalid ranges and
+`invalid_utf8_boundary` when either end splits a scalar. Empty slices at the extent succeed without
 forming a one-past reference. Oversized counts and offsets cannot wrap.
 
 Whitespace iterators also support `for token in split_whitespace(.self = text)`.

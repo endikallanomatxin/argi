@@ -9,5 +9,5 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     )
     borrowed_view ::= as_view(.self = &text).view
     deinit(.self = $&text)
-    observed ::= borrowed_view.data&
+    observed ::= byte_data(.text = borrowed_view).reference&
 }

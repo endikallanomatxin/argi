@@ -7,22 +7,24 @@ main(.system: System) -> (.status_code: Int32) := {
     }
 
     arg0_text ::= argument_at(.self = system.args, .index = 0)
-    arg0_ptr : &Char = arg0_text
+    arg0_ptr: &Char = arg0_text
     arg0_len ::= strlen(.string = arg0_ptr).length
 
-    arg0_view ::= argument_view_at(.self = system.args, .index = 0)
-    if arg0_view.length != arg0_len {
+    arg0_view ::= unwrap_or_abort(.value = argument_view_at(.self = system.args, .index = 0))
+    if byte_length(&arg0_view).count != arg0_len {
         status_code = 2
         return
     }
 
-    if arg0_view.length < 1 {
+    if byte_length(&arg0_view).count < 1 {
         status_code = 3
         return
     }
 
-    first_ptr ::= trusted_reinterpret_reference#(.from: Char, .to: UInt8)(.base = arg0_ptr).reference
-    if bytes_get(.view = &arg0_view, .index = 0).byte != first_ptr& {
+    first_ptr ::= trusted_reinterpret_reference#(.from: Char, .to: UInt8)(
+        .base = arg0_ptr
+    ).reference
+    if bytes_get(.view = &arg0_view, .index = 0).byte != first_ptr&{
         status_code = 4
         return
     }

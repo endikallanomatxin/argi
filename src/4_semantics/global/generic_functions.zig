@@ -357,8 +357,15 @@ pub const Resolver = struct {
         const operands = [_]global_sg.GlobalNodeId{ globalizer.globalNode(o, value.left), globalizer.globalNode(o, value.right) };
         self.core.contextualizeArithmeticPair(&operands);
         const call = try self.makeComparisonCall(module_index, value.operator, &operands, reach, assumed) orelse return .deferred;
-        self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = try self.comparisonResult(self.lowerSelectedScalarComparison(call, if (value.operator == .not_equal) .equal else value.operator, &operands), value.operator);
+        try self.patchComparisonResult(globalizer.globalNode(o, value.node), self.lowerSelectedScalarComparison(call, if (value.operator == .not_equal) .equal else value.operator, &operands), value.operator);
         return .resolved;
+    }
+
+    fn patchComparisonResult(self: *Resolver, target: global_sg.GlobalNodeId, call: global_sg.Node, operator: primitives.ComparisonOperator) !void {
+        // Negation appends nodes and can relocate the node buffer. Resolve it
+        // before taking the destination element's address.
+        const result = try self.comparisonResult(call, operator);
+        self.graph.nodes.items[@intFromEnum(target)] = result;
     }
 
     fn comparisonResult(self: *Resolver, call: global_sg.Node, operator: primitives.ComparisonOperator) !global_sg.Node {
@@ -3103,7 +3110,15 @@ pub const Resolver = struct {
             if (self.resolver.core.isUnpackedOutputField(value, name))
                 return self.resolver.graph.nodes.items[@intFromEnum(value)];
             _ = try self.resolver.generics.ensureGenericInstance(ty);
-            const hit = global_types.findField(self.resolver.graph, ty, name) orelse return error.UnknownParameterizedField;
+            const hit = global_types.findField(self.resolver.graph, ty, name) orelse {
+                if (self.resolver.generics.comptime_failure == null) {
+                    self.resolver.generics.comptime_failure = .{
+                        .source = self.resolver.sourceFor(self.module_index, source),
+                        .reason = try std.fmt.allocPrint(self.resolver.allocator, "type has no field '{s}'", .{name}),
+                    };
+                }
+                return error.UnknownParameterizedField;
+            };
             return .{
                 .source = self.resolver.sourceFor(self.module_index, source),
                 .ty = hit.field.ty,
@@ -3363,4 +3378,26 @@ test "generic instance contexts reserve maps only when entries are used" {
     var substitutions: generic_mod.Resolver.Bindings = .{ .types = &.{}, .ints = &.{} };
     var context = Resolver.InstanceContext.init(&resolver, 0, std.mem.zeroes(parameterized_storage.ParameterizedFunction), &substitutions);
     defer context.deinit();
+}
+
+test "comparison negation patches its destination after node storage grows" {
+    const allocator = std.testing.allocator;
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    var core: core_mod.Resolver = .{ .allocator = allocator, .graph = &graph, .modules = &.{}, .offsets = &.{} };
+    var generics: generic_mod.Resolver = .{ .allocator = allocator, .graph = &graph, .modules = &.{}, .offsets = &.{}, .core = &core };
+    var resolver: Resolver = .{ .allocator = allocator, .graph = &graph, .modules = &.{}, .offsets = &.{}, .core = &core, .generics = &generics };
+    const boolean = try generics.internType(.{ .builtin = .Bool });
+    try graph.nodes.ensureTotalCapacityPrecise(allocator, 1);
+    const placeholder: global_sg.Node = .{ .source = .{ .file_index = 0, .offset = 0 }, .ty = boolean, .content = .{ .bool_literal = false } };
+    try graph.nodes.appendNTimes(allocator, placeholder, graph.nodes.capacity);
+    const capacity = graph.nodes.capacity;
+    var selected = placeholder;
+    selected.content = .{ .bool_literal = true };
+    try resolver.patchComparisonResult(@enumFromInt(0), selected, .not_equal);
+    try std.testing.expect(graph.nodes.capacity > capacity);
+    const comparison = graph.nodes.items[0].content.comparison;
+    try std.testing.expectEqual(primitives.ComparisonOperator.equal, comparison.operator);
+    try std.testing.expect(graph.node(comparison.left).content.bool_literal);
+    try std.testing.expect(!graph.node(comparison.right).content.bool_literal);
 }

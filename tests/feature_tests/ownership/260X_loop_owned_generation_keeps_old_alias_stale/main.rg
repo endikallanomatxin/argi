@@ -3,14 +3,14 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     assume ffi := system.ffi
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     buffer ::= unwrap_or_abort(.value = string_with_capacity(.allocator = $&allocator_storage, .capacity = 1))
-    first ::= push_byte(.self = $&buffer, .byte = 65, .allocator = $&allocator_storage)
+    first ::= push_ascii(.self = $&buffer, .byte = 65, .allocator = $&allocator_storage)
     if is(.value = first, .variant = ..error) {
         return
     }
-    old_data ::= unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&buffer.allocation, .offset = 0).reference
+    old_data ::= string_byte_reference(.string = &buffer, .index = 0).reference
     i :: UIntNative = 0
     while i < 1 {
-        pushed ::= push_byte(.self = $&buffer, .byte = 66, .allocator = $&allocator_storage)
+        pushed ::= push_ascii(.self = $&buffer, .byte = 66, .allocator = $&allocator_storage)
         if is(.value = pushed, .variant = ..error) {
             status_code = 1
             return

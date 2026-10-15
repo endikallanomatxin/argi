@@ -18,7 +18,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     )
 
     if length(system.args).count == 2 {
-        argument ::= argument_view_at(system.args, 1)
+        argument ::= unwrap_or_abort(.value = argument_view_at(system.args, 1))
         if argument == "--help" or argument == "-h" {
             write_cli_help(
                 .program = "tree"

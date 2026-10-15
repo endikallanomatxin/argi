@@ -15,8 +15,9 @@ implement ArgumentSource#(CliArgumentViews) (
     }
 
     .get = (.self: &CliArgumentViews, .index: UIntNative) -> (
-        .result : Errable#(StringView, (..out_of_bounds))
+        .result : Errable#(StringView, (..out_of_bounds, ..invalid_utf8))
     ) {
-        result = get(&self&._values, .index = index)
+        value ::= get(&self&._values, .index = index)!
+        result = ..ok value
     }
 )

@@ -621,6 +621,10 @@ pub const Tokenizer = struct {
                     return TokenizerError.UnknownCharacter;
                 }
                 const text_end = self.location.offset;
+                if (!std.unicode.utf8ValidateSlice(self.source[text_start..text_end])) {
+                    try self.diagnostics.add(loc, .syntax, "string literal is not valid UTF-8", .{});
+                    return TokenizerError.UnknownCharacter;
+                }
                 // Close the quote.
                 _ = self.advance();
 
@@ -744,4 +748,13 @@ test "tokenizer invalid numeric literals" {
     try expectTokenizerDiagnostics("1..2", true);
     try expectTokenizerDiagnostics("1.2.3", true);
     try expectTokenizerDiagnostics("1.", true);
+}
+
+test "tokenizer requires valid UTF-8 in string literals" {
+    try expectTokenizerDiagnostics("\"caf\xc3\xa9\"", false);
+    try expectTokenizerDiagnostics("\"\xf0\x9f\x98\x80\"", false);
+    try expectTokenizerDiagnostics("\"\xc0\x80\"", true);
+    try expectTokenizerDiagnostics("\"\xed\xa0\x80\"", true);
+    try expectTokenizerDiagnostics("\"\xf4\x90\x80\x80\"", true);
+    try expectTokenizerDiagnostics("\"\xe2\x82\"", true);
 }

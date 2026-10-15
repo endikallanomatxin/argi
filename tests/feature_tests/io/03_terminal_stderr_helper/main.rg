@@ -12,7 +12,7 @@ main(.system: System) -> (.status_code: Int32) := {
     )
     assume writer ::= $&stderr_storage
     text ::= unwrap_or_abort(.value = String(.length = 1))
-    bytes_set(.string = $&text, .index = 0, .value = 69)
+    _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = 0, .byte = 69))
     view ::= as_view(.self = &text)
 
     print_error(.writer = $&stderr_storage, .value = view)
@@ -21,22 +21,17 @@ main(.system: System) -> (.status_code: Int32) := {
     status_code = stderr_storage.write_count * 10 + stderr_storage.flush_count
 }
 
-implement Writer#(DummyOutput)(
-    .write_byte = (
-            .self : $&DummyOutput,
-            .byte : UInt8
-        ) -> (
-            .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
-        ) {
+implement Writer#(DummyOutput) (
+    .write_byte = (.self: $&DummyOutput, .byte: UInt8) -> (
+        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+    ) {
         self&.write_count = self&.write_count + 1
         result = ..ok(.value = Void())
     }
 
-    .flush = (
-            .self : $&DummyOutput
-        ) -> (
-            .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
-        ) {
+    .flush = (.self: $&DummyOutput) -> (
+        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+    ) {
         self&.flush_count = self&.flush_count + 1
         result = ..ok(.value = Void())
     }

@@ -77,5 +77,5 @@ _decimal_encode#(.t: Type: Int)(.value: t) -> (.text: _DecimalText) := {
 }
 
 _decimal_view(.self: &_DecimalText) -> (.view: StringView) := {
-    view = (.data = &self&.bytes[self&.start], .length = 20 - self&.start)
+    view = (._data = &self&.bytes[self&.start], ._length = 20 - self&.start)
 }

@@ -164,8 +164,8 @@ resolve_addresses(
     if passive { wildcard = 1 }
     handle :: UIntNative = 0
     status ::= _network_resolve(
-        .host     = host.data
-        .length   = host.length
+        .host     = host._data
+        .length   = host._length
         .port     = port
         .family   = selected_family
         .datagram = datagram

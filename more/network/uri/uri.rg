@@ -63,11 +63,11 @@ _hex(.byte: UInt8) -> (.value: UInt8, .ok: Bool = true) := {
 }
 
 _scheme_valid(.text: StringView) -> (.ok: Bool = false) := {
-    if text.length == 0 { return }
+    if byte_length(&text).count == 0 { return }
     if _alpha(.byte = bytes_get(.view = &text, .index = 0).byte).ok == false { return }
     i :: UIntNative = 1
 
-    while i < text.length {
+    while i < byte_length(&text).count {
         byte ::= bytes_get(.view = &text, .index = i).byte
         if [
             _alpha(.byte = byte).ok
@@ -88,10 +88,10 @@ _scheme_valid(.text: StringView) -> (.ok: Bool = false) := {
 _component_valid(.text: StringView, .kind: UInt8) -> (.ok: Bool = false) := {
     i :: UIntNative = 0
 
-    while i < text.length {
+    while i < byte_length(&text).count {
         byte ::= bytes_get(.view = &text, .index = i).byte
         if byte == 37 {
-            if text.length - i < 3 { return }
+            if byte_length(&text).count - i < 3 { return }
             if [
                 _hex(.byte = bytes_get(.view = &text, .index = i + 1).byte).ok == false
                 or _hex(.byte = bytes_get(.view = &text, .index = i + 2).byte).ok == false
@@ -121,10 +121,10 @@ _slice(.text: StringView, .start: UIntNative, .end: UIntNative) -> (.value: Stri
 
 -- Delimiters are recognized before any decoding. Encoded separators remain data.
 parse(.text: StringView) -> (.result: Errable#(UriView, (..invalid_input))) := {
-    fragment_start ::= text.length
+    fragment_start ::= byte_length(&text).count
     i :: UIntNative = 0
 
-    while i < text.length {
+    while i < byte_length(&text).count {
         if bytes_get(.view = &text, .index = i).byte == 35 {
             fragment_start = i
             break
@@ -204,9 +204,9 @@ parse(.text: StringView) -> (.result: Errable#(UriView, (..invalid_input))) := {
         query = ..some(.value = candidate)
     }
 
-    if fragment_start < text.length {
+    if fragment_start < byte_length(&text).count {
         candidate ::= _slice(
-            .text = text, .start = fragment_start + 1, .end = text.length
+            .text = text, .start = fragment_start + 1, .end = byte_length(&text).count
         ).value
         if _component_valid(.text = candidate, .kind = 2).ok == false {
             result = ..error(.reason = ..invalid_input)
@@ -230,14 +230,16 @@ _ipv4_valid(.text: StringView) -> (.ok: Bool = false) := {
     i :: UIntNative = 0
     number :: UIntNative = 0
 
-    while i <= text.length {
-        boundary ::= i == text.length
-        if i < text.length { boundary = bytes_get(.view = &text, .index = i).byte == 46 }
+    while i <= byte_length(&text).count {
+        boundary ::= i == byte_length(&text).count
+        if i < byte_length(&text).count {
+            boundary = [bytes_get(.view = &text, .index = i).byte == 46]
+        }
         if boundary {
             if i == start or i - start > 3 or number > 255 { return }
             if i - start > 1 and bytes_get(.view = &text, .index = start).byte == 48 { return }
             groups = groups + 1
-            if i == text.length { break }
+            if i == byte_length(&text).count { break }
             start = i + 1
             number = 0
         } else {
@@ -252,20 +254,20 @@ _ipv4_valid(.text: StringView) -> (.ok: Bool = false) := {
 }
 
 _ip_literal_valid(.text: StringView) -> (.ok: Bool = false) := {
-    if text.length == 0 { return }
+    if byte_length(&text).count == 0 { return }
     first ::= bytes_get(.view = &text, .index = 0).byte
 
     if first == 118 or first == 86 {
         i :: UIntNative = 1
-        while i < text.length {
+        while i < byte_length(&text).count {
             if _hex(.byte = bytes_get(.view = &text, .index = i).byte).ok == false { break }
             i = i + 1
         }
-        if i == 1 or i == text.length { return }
+        if i == 1 or i == byte_length(&text).count { return }
         if bytes_get(.view = &text, .index = i).byte != 46 { return }
         i = i + 1
-        if i == text.length { return }
-        while i < text.length {
+        if i == byte_length(&text).count { return }
+        while i < byte_length(&text).count {
             byte ::= bytes_get(.view = &text, .index = i).byte
             if _unreserved(.byte = byte).ok or _subdelimiter(.byte = byte).ok or byte == 58 {
             } else {
@@ -281,17 +283,17 @@ _ip_literal_valid(.text: StringView) -> (.ok: Bool = false) := {
     compressed ::= false
     i :: UIntNative = 0
 
-    while i < text.length {
+    while i < byte_length(&text).count {
         if bytes_get(.view = &text, .index = i).byte == 58 {
-            if compressed or text.length - i < 2 { return }
+            if compressed or byte_length(&text).count - i < 2 { return }
             if bytes_get(.view = &text, .index = i + 1).byte != 58 { return }
             compressed = true
             i = i + 2
-            if i == text.length { break }
+            if i == byte_length(&text).count { break }
         }
         start ::= i
         dotted ::= false
-        while i < text.length {
+        while i < byte_length(&text).count {
             byte ::= bytes_get(.view = &text, .index = i).byte
             if byte == 58 { break }
             if byte == 46 { dotted = true }
@@ -300,12 +302,14 @@ _ip_literal_valid(.text: StringView) -> (.ok: Bool = false) := {
         if i == start { return }
         part ::= _slice(.text = text, .start = start, .end = i).value
         if dotted {
-            if i != text.length or _ipv4_valid(.text = part).ok == false { return }
+            if i != byte_length(&text).count or _ipv4_valid(.text = part).ok == false {
+                return
+            }
             groups = groups + 2
         } else {
-            if part.length > 4 { return }
+            if byte_length(&part).count > 4 { return }
             j :: UIntNative = 0
-            while j < part.length {
+            while j < byte_length(&part).count {
                 if _hex(.byte = bytes_get(.view = &part, .index = j).byte).ok == false {
                     return
                 }
@@ -314,12 +318,12 @@ _ip_literal_valid(.text: StringView) -> (.ok: Bool = false) := {
             groups = groups + 1
         }
         if groups > 8 { return }
-        if i < text.length {
-            if text.length - i >= 2 {
+        if i < byte_length(&text).count {
+            if byte_length(&text).count - i >= 2 {
                 if bytes_get(.view = &text, .index = i + 1).byte == 58 { continue }
             }
             i = i + 1
-            if i == text.length { return }
+            if i == byte_length(&text).count { return }
         }
     }
 
@@ -331,7 +335,7 @@ _authority_valid(.text: StringView) -> (.ok: Bool = false) := {
     host_start :: UIntNative = 0
     i :: UIntNative = 0
 
-    while i < text.length {
+    while i < byte_length(&text).count {
         byte ::= bytes_get(.view = &text, .index = i).byte
         if byte == 64 {
             if host_start != 0 { return }
@@ -342,27 +346,27 @@ _authority_valid(.text: StringView) -> (.ok: Bool = false) := {
         i = i + 1
     }
 
-    host_end ::= text.length
-    port_start ::= text.length
+    host_end ::= byte_length(&text).count
+    port_start ::= byte_length(&text).count
 
-    if host_start < text.length {
+    if host_start < byte_length(&text).count {
         if bytes_get(.view = &text, .index = host_start).byte == 91 {
             i = host_start + 1
-            while i < text.length {
+            while i < byte_length(&text).count {
                 if bytes_get(.view = &text, .index = i).byte == 93 { break }
                 i = i + 1
             }
-            if i == text.length or i == host_start + 1 { return }
+            if i == byte_length(&text).count or i == host_start + 1 { return }
             literal ::= _slice(.text = text, .start = host_start + 1, .end = i).value
             if _ip_literal_valid(.text = literal).ok == false { return }
             host_end = i + 1
-            if host_end < text.length {
+            if host_end < byte_length(&text).count {
                 if bytes_get(.view = &text, .index = host_end).byte != 58 { return }
                 port_start = host_end + 1
             }
         } else {
             i = host_start
-            while i < text.length {
+            while i < byte_length(&text).count {
                 byte ::= bytes_get(.view = &text, .index = i).byte
                 if byte == 58 {
                     host_end = i
@@ -377,7 +381,7 @@ _authority_valid(.text: StringView) -> (.ok: Bool = false) := {
 
     i = port_start
 
-    while i < text.length {
+    while i < byte_length(&text).count {
         if _digit(.byte = bytes_get(.view = &text, .index = i).byte).ok == false { return }
         i = i + 1
     }
@@ -395,7 +399,7 @@ build#(.AllocatorType: Type: Allocator#(AllocatorType))(
         and is(.value = value.authority, .variant = ..none)
     ] {
         i :: UIntNative = 0
-        while i < value.path.length {
+        while i < byte_length(&value.path).count {
             byte ::= bytes_get(.view = &value.path, .index = i).byte
             if byte == 47 { break }
             if byte == 58 {
@@ -416,13 +420,13 @@ build#(.AllocatorType: Type: Allocator#(AllocatorType))(
                 return
             }
             push_view(.self = $&output, .view = item.value, .allocator = allocator)!
-            push_byte(.self = $&output, .byte = 58, .allocator = allocator)!
+            push_ascii(.self = $&output, .byte = 58, .allocator = allocator)!
         }
     }
 
     match value.authority {
         ..none {
-            if value.path.length >= 2 {
+            if byte_length(&value.path).count >= 2 {
                 if [
                     bytes_get(.view = &value.path, .index = 0).byte == 47
                     and bytes_get(.view = &value.path, .index = 1).byte == 47
@@ -437,7 +441,7 @@ build#(.AllocatorType: Type: Allocator#(AllocatorType))(
                 result = ..error(.reason = ..invalid_input)
                 return
             }
-            if value.path.length > 0 {
+            if byte_length(&value.path).count > 0 {
                 if bytes_get(.view = &value.path, .index = 0).byte != 47 {
                     result = ..error(.reason = ..invalid_input)
                     return
@@ -462,7 +466,7 @@ build#(.AllocatorType: Type: Allocator#(AllocatorType))(
                 result = ..error(.reason = ..invalid_input)
                 return
             }
-            push_byte(.self = $&output, .byte = 63, .allocator = allocator)!
+            push_ascii(.self = $&output, .byte = 63, .allocator = allocator)!
             push_view(.self = $&output, .view = item.value, .allocator = allocator)!
         }
     }
@@ -474,7 +478,7 @@ build#(.AllocatorType: Type: Allocator#(AllocatorType))(
                 result = ..error(.reason = ..invalid_input)
                 return
             }
-            push_byte(.self = $&output, .byte = 35, .allocator = allocator)!
+            push_ascii(.self = $&output, .byte = 35, .allocator = allocator)!
             push_view(.self = $&output, .view = item.value, .allocator = allocator)!
         }
     }
@@ -489,20 +493,20 @@ encode_component#(.AllocatorType: Type: Allocator#(AllocatorType))(
     hex: StringView = "0123456789ABCDEF"
     i :: UIntNative = 0
 
-    while i < text.length {
+    while i < byte_length(&text).count {
         byte ::= bytes_get(.view = &text, .index = i).byte
         if _unreserved(.byte = byte).ok {
-            push_byte(.self = $&output, .byte = byte, .allocator = allocator)!
+            push_ascii(.self = $&output, .byte = byte, .allocator = allocator)!
         } else {
-            push_byte(.self = $&output, .byte = 37, .allocator = allocator)!
-            push_byte(
+            push_ascii(.self = $&output, .byte = 37, .allocator = allocator)!
+            push_ascii(
                 .self = $&output
                 .byte = bytes_get(
                     .view = &hex, .index = [[byte / 16] | convert#(.to: UIntNative)(_)]
                 ).byte
                 .allocator = allocator
             )!
-            push_byte(
+            push_ascii(
                 .self = $&output
                 .byte = bytes_get(
                     .view = &hex, .index = [[byte % 16] | convert#(.to: UIntNative)(_)]
@@ -518,14 +522,14 @@ encode_component#(.AllocatorType: Type: Allocator#(AllocatorType))(
 
 decode_component#(.AllocatorType: Type: Allocator#(AllocatorType))(
     .text: StringView, .allocator: $&AllocatorType
-) -> (.result: Errable#(String, (..invalid_input, ..out_of_memory))) := {
-    output ::= string_with_capacity(.allocator = allocator, .capacity = 0)!
+) -> (.result: Errable#(String, (..invalid_input, ..invalid_utf8, ..out_of_memory))) := {
+    output ::= DynamicArray#(UInt8)(.allocator = allocator, .capacity = 0)!
     i :: UIntNative = 0
 
-    while i < text.length {
+    while i < byte_length(&text).count {
         byte ::= bytes_get(.view = &text, .index = i).byte
         if byte == 37 {
-            if text.length - i < 3 {
+            if byte_length(&text).count - i < 3 {
                 result = ..error(.reason = ..invalid_input)
                 return
             }
@@ -538,11 +542,12 @@ decode_component#(.AllocatorType: Type: Allocator#(AllocatorType))(
             byte = high.value * 16 + low.value
             i = i + 2
         }
-        push_byte(.self = $&output, .byte = byte, .allocator = allocator)!
+        push(.self = $&output, .value = byte, .allocator = allocator)!
         i = i + 1
     }
 
-    result = ..ok ~output
+    copied ::= string_from_bytes(.bytes = view(&output), .allocator = allocator)!
+    result = ..ok ~copied
 }
 
 AuthorityView: Type = (.userinfo: ?StringView, .host: StringView, .port: ?StringView)
@@ -560,7 +565,7 @@ authority_parts(.text: StringView) -> (.result: Errable#(AuthorityView, (..inval
     start :: UIntNative = 0
     i :: UIntNative = 0
 
-    while i < text.length {
+    while i < byte_length(&text).count {
         if bytes_get(.view = &text, .index = i).byte == 64 {
             userinfo = ..some(.value = _slice(.text = text, .start = 0, .end = i).value)
             start = i + 1
@@ -569,21 +574,23 @@ authority_parts(.text: StringView) -> (.result: Errable#(AuthorityView, (..inval
         i = i + 1
     }
 
-    end ::= text.length
+    end ::= byte_length(&text).count
     i = start
 
-    if i < text.length {
+    if i < byte_length(&text).count {
         if bytes_get(.view = &text, .index = i).byte == 91 {
             while bytes_get(.view = &text, .index = i).byte != 93 { i = i + 1 }
             i = i + 1
         }
     }
 
-    while i < text.length {
+    while i < byte_length(&text).count {
         if bytes_get(.view = &text, .index = i).byte == 58 {
             end = i
             port = ..some(
-                .value = _slice(.text = text, .start = i + 1, .end = text.length).value
+                .value = _slice(
+                    .text = text, .start = i + 1, .end = byte_length(&text).count
+                ).value
             )
             break
         }

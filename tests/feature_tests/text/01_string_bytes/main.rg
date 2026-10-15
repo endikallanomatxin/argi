@@ -3,9 +3,9 @@ main(.system: System) -> (.status_code: Int32) := {
     assume allocator ::= $&allocator_storage
     text ::= unwrap_or_abort(.value = String(.length = 3))
 
-    bytes_set(.string = $&text, .index = 0, .value = 65)
-    bytes_set(.string = $&text, .index = 1, .value = 114)
-    bytes_set(.string = $&text, .index = 2, .value = 103)
+    _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = 0, .byte = 65))
+    _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = 1, .byte = 114))
+    _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = 2, .byte = 103))
 
     first ::= bytes_get(.view = &text, .index = 0).byte
     second ::= bytes_get(.view = &text, .index = 1).byte

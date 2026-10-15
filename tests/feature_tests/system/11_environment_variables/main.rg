@@ -3,22 +3,21 @@ main(.system: System) -> (.status_code: Int32) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 
-    home_literal ::= from_literal(.data = "HOME")
-    path_literal ::= from_literal(.data = "PATH")
-    missing_literal ::= from_literal(.data = "ARGI_ENV_SHOULD_NOT_EXIST_475")
-    home_key ::= as_view(.self = home_literal)
-    path_key ::= as_view(.self = path_literal)
-    missing_key ::= as_view(.self = missing_literal)
+
+
+    home_key ::= "HOME"
+    path_key ::= "PATH"
+    missing_key ::= "ARGI_ENV_SHOULD_NOT_EXIST_475"
 
     home_has ::= has(.self = system.env_vars, .key = home_key)
-    if is(.value = home_has, .variant = ..ok) and home_has..ok {
+    if is(.value = home_has, .variant = ..ok) and home_has ..ok {
     } else {
         status_code = 1
         return
     }
 
     path_has ::= has(.self = system.env_vars, .key = path_key)
-    if is(.value = path_has, .variant = ..ok) and path_has..ok {
+    if is(.value = path_has, .variant = ..ok) and path_has ..ok {
     } else {
         status_code = 2
         return
@@ -29,9 +28,9 @@ main(.system: System) -> (.status_code: Int32) := {
         status_code = 6
         return
     }
-    home ::= home_result..ok
-    if home? {
-        if home.length < 1 {
+    home ::= home_result ..ok
+    if home ?{
+        if byte_length(&home).count < 1 {
             status_code = 4
             return
         }
@@ -45,8 +44,8 @@ main(.system: System) -> (.status_code: Int32) := {
         status_code = 7
         return
     }
-    missing ::= missing_result..ok
-    if missing? {
+    missing ::= missing_result ..ok
+    if missing ?{
         status_code = 5
         return
     }

@@ -5,9 +5,11 @@ check_exit(.status: ProcessExitStatus, .expected: UInt32) -> () := {
     }
 }
 
-check_bytes#(.ReaderType: Type: Reader#(ReaderType))(.reader: $&ReaderType, .expected: StringView) -> () := {
+check_bytes#(.ReaderType: Type: Reader#(ReaderType))(
+    .reader: $&ReaderType, .expected: StringView
+) -> () := {
     i :: UIntNative = 0
-    while i < expected.length {
+    while i < byte_length(&expected).count {
         next ::= unwrap_or_abort(.value = Reader#().read_byte(.self = reader)).result
         match next {
             ..ok byte { if byte != bytes_get(.view = &expected, .index = i).byte { abort } }
@@ -25,7 +27,7 @@ child_main(.system: System) -> (.status: Int32 = 7) := {
     if length(.self = system.args).count != 7 { abort }
     expected: Array#(.n = 4, .t: StringView) = ("a b", "a\"b", "trail\\", "á;$(no)")
     empty ::= unwrap_or_abort(.value = get(.self = system.args, .index = 2)).result
-    if empty.length != 0 { abort }
+    if byte_length(&empty).count != 0 { abort }
     i :: UIntNative = 0
     while i < 4 {
         value ::= unwrap_or_abort(.value = get(.self = system.args, .index = i + 3)).result
@@ -73,16 +75,13 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     quick: [1]StringView = ("quick")
     inherited ::= unwrap_or_abort(
         .value = spawn(
-            .executable = executable
-            .arguments  = view(.array = &quick)
-            .stdin      = ..discard
+            .executable = executable, .arguments = view(.array = &quick), .stdin = ..discard
         )
     ).result
     if is_open(.self = &inherited.stdin).ok or is_open(.self = &inherited.stdout).ok { abort }
     match Reader#().read_byte(.self = $&inherited.stdout) { ..error _ {} ..ok _ { abort } }
     check_exit(
-        .status   = unwrap_or_abort(.value = wait(.self = $&inherited)).result
-        .expected = 23
+        .status = unwrap_or_abort(.value = wait(.self = $&inherited)).result, .expected = 23
     )
 
 }

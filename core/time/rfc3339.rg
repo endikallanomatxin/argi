@@ -22,7 +22,7 @@ _date_digits(.text: StringView, .start: UIntNative, .count: UIntNative) -> (
 }
 
 parse_utc(.text: StringView) -> (.result: Errable#(UtcDateTime, (..invalid_datetime))) := {
-    if text.length < 20 or text.length > 30 {
+    if text._length < 20 or text._length > 30 {
         result = ..error(.reason = ..invalid_datetime)
         return
     }
@@ -33,7 +33,7 @@ parse_utc(.text: StringView) -> (.result: Errable#(UtcDateTime, (..invalid_datet
         or bytes_get(.view = &text, .index = 10).byte != 84
         or bytes_get(.view = &text, .index = 13).byte != 58
         or bytes_get(.view = &text, .index = 16).byte != 58
-        or bytes_get(.view = &text, .index = text.length - 1).byte != 90
+        or bytes_get(.view = &text, .index = text._length - 1).byte != 90
     ] {
         result = ..error(.reason = ..invalid_datetime)
         return
@@ -41,12 +41,12 @@ parse_utc(.text: StringView) -> (.result: Errable#(UtcDateTime, (..invalid_datet
 
     fraction :: UInt32 = 0
 
-    if text.length != 20 {
-        if text.length < 22 or bytes_get(.view = &text, .index = 19).byte != 46 {
+    if text._length != 20 {
+        if text._length < 22 or bytes_get(.view = &text, .index = 19).byte != 46 {
             result = ..error(.reason = ..invalid_datetime)
             return
         }
-        digits ::= text.length - 21
+        digits ::= text._length - 21
         fraction = _date_digits(.text = text, .start = 20, .count = digits)!
         while digits < 9 {
             fraction = fraction * 10

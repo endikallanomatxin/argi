@@ -53,15 +53,18 @@ argument_at(.self: &Arguments, .index: UIntNative) -> (.text: &Char) := {
     text = read_reference#(.t: Char)(.base = inherited).reference
 }
 
-argument_view_at(.self: &Arguments, .index: UIntNative) -> (.view: StringView) := {
+argument_view_at(.self: &Arguments, .index: UIntNative) -> (
+    .result : Errable#(StringView, (..out_of_bounds, ..invalid_utf8))
+) := {
+    if index >= self&.count {
+        result = ..error(.reason = ..out_of_bounds)
+        return
+    }
     assume ffi := self&._ffi
     text ::= argument_at(self, .index = index)
-    view = (
-        .data = trusted_reinterpret_reference#(.from: Char, .to: UInt8)(
-            .base = text
-        ).reference
-        .length = strlen(.string = text).length
-    )
+    bytes ::= _c_string_bytes(.text = text)
+    _ ::= validate_utf8_bytes(.bytes = bytes)!
+    result = ..ok _trusted_c_string_view(.text = text)
 }
 
 implement Iterable#(Arguments) (
@@ -81,8 +84,12 @@ implement Iterator#(ArgumentsIterator) (
     }
 
     .next = (.self: $&ArgumentsIterator) -> (.value: StringView) {
+        assume error_tracer ::= $&noop_error_tracer
         current_index :: UIntNative = self&.index
-        value = argument_view_at(self&.args, .index = current_index)
+        match argument_view_at(self&.args, .index = current_index) {
+            ..ok text { value = text }
+            ..error _ { abort }
+        }
         self&= (.args = self&.args, .index = current_index + 1)
     }
 )
@@ -93,13 +100,13 @@ implement ArgumentSource#(Arguments) (
     }
 
     .get = (.self: &Arguments, .index: UIntNative) -> (
-        .result : Errable#(StringView, (..out_of_bounds))
+        .result : Errable#(StringView, (..out_of_bounds, ..invalid_utf8))
     ) {
         if index >= self&.count {
             result = ..error(.reason = ..out_of_bounds)
             return
         }
 
-        result = ..ok argument_view_at(self, .index = index)
+        result = argument_view_at(self, .index = index)
     }
 )

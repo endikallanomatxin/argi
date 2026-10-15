@@ -33,57 +33,75 @@ implement Deinit#(Terminal) (
 read_line_into_buffer#(
     .AllocatorType: Type: Allocator#(AllocatorType), .ReaderType: Type: Reader#(ReaderType)
 )(.buffer: $&String, .allocator: $&AllocatorType, .reader: $&ReaderType) -> (
-    .result : Errable#(Void, (..stream_read_failed))
+    .result : Errable#(Void, (..stream_read_failed, ..invalid_utf8))
 ) := {
     assume allocator
     assume reader
 
     clear(buffer)
+    pending: [4]UInt8 = (0, 0, 0, 0)
+    count :: UIntNative = 0
+    width :: UIntNative = 0
 
-    while 1 == 1 {
-        if has_space(buffer).ok {
-        } else {
-            break
-        }
-
-        next ::= Reader#().read_byte(reader)
-        match next {
+    -- Keep caller-visible text valid between reader callbacks. Incomplete
+    -- encodings stay in local byte storage until the complete scalar is checked.
+    while byte_length(buffer).count + count < capacity(buffer).value {
+        match Reader#().read_byte(reader) {
             ..error _ {
+                clear(buffer)
                 result = ..error(.reason = ..stream_read_failed)
                 return
             }
             ..ok next_value {
                 match next_value {
-                    ..end {
-                        break
-                    }
-                    ..ok payload {
-                        if payload == 10 {
-                            break
-                        }
-
-                        pushed ::= push_byte(buffer, .byte = payload, .allocator = allocator)
-                        match pushed {
-                            ..ok _ {
-                            }
-                            ..error _ {
-                                result = ..error(.reason = ..stream_read_failed)
+                    ..end { break }
+                    ..ok byte {
+                        if byte == 10 { break }
+                        if count == 0 {
+                            width = 0
+                            if byte < 128 { width = 1 }
+                            if byte >= 194 and byte <= 223 { width = 2 }
+                            if byte >= 224 and byte <= 239 { width = 3 }
+                            if byte >= 240 and byte <= 244 { width = 4 }
+                            if width == 0 {
+                                clear(buffer)
+                                result = ..error(.reason = ..invalid_utf8)
                                 return
                             }
+                        }
+                        pending[count] = byte
+                        count = count + 1
+                        if count == width {
+                            source ::= unwrap_or_abort(
+                                .value = slice(&view(&pending), .start = 0, .count = count)
+                            )
+                            match validate_utf8_bytes(.bytes = source) {
+                                ..ok _ { _string_append_bytes(buffer, .source = source) }
+                                ..error _ {
+                                    clear(buffer)
+                                    result = ..error(.reason = ..invalid_utf8)
+                                    return
+                                }
+                            }
+                            count = 0
                         }
                     }
                 }
             }
         }
     }
-
+    if count != 0 {
+        clear(buffer)
+        result = ..error(.reason = ..invalid_utf8)
+        return
+    }
     result = ..ok Void()
 }
 
 read_line#(
     .AllocatorType: Type: Allocator#(AllocatorType), .ReaderType: Type: Reader#(ReaderType)
 )(.allocator: $&AllocatorType, .reader: $&ReaderType) -> (
-    .result : Errable#(ReadLine, (..stream_read_failed, ..out_of_memory))
+    .result : Errable#(ReadLine, (..stream_read_failed, ..out_of_memory, ..invalid_utf8))
 ) := {
     assume allocator
     assume reader
@@ -95,7 +113,7 @@ read_line#(
     while true {
         match Reader#().read_byte(reader)! {
             ..end {
-                if line.length == 0 {
+                if line._length == 0 {
                     result = ..ok ..end
                     return
                 }
@@ -103,11 +121,12 @@ read_line#(
             }
             ..ok byte {
                 if byte == 10 { break }
-                push_byte($&line, .byte = byte)!
+                _string_push_byte($&line, .byte = byte)!
             }
         }
     }
 
+    _ ::= _validate_string(.self = &line)!
     result = ..ok ..ok ~line
 }
 
@@ -126,7 +145,7 @@ print_error#(.WriterType: Type: Writer#(WriterType))(.value: StringView, .writer
 
     i :: UIntNative = 0
 
-    while i < value.length {
+    while i < value._length {
         wrote ::= Writer#(
         ).write_byte(writer, .byte = bytes_get(.view = &value, .index = i).byte)
         match wrote {

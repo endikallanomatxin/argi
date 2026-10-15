@@ -6,7 +6,7 @@ main(.system: System) -> (.status_code: Int32) := {
     }
 
     arg0 ::= system.args[0]
-    arg0_explicit ::= argument_view_at(.self = system.args, .index = 0)
+    arg0_explicit ::= unwrap_or_abort(.value = argument_view_at(.self = system.args, .index = 0))
 
     if arg0.length != arg0_explicit.length {
         status_code = 2

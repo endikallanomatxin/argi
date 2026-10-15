@@ -70,19 +70,20 @@ _exception_text#(.AllocatorType: Type: Allocator#(AllocatorType))(
 ) -> (.result: Errable#(String, (..out_of_memory))) := {
     assume ffi := self&._ffi
     count ::= _exception_size(.handle = self&._handle, .part = part).length
-    text ::= string_with_length(.allocator = allocator, .length = count)!
+    text ::= _native_byte_buffer(.allocator = allocator, .count = count)!
+    storage ::= view($&text)
 
     if [
         _exception_copy(
             .handle      = self&._handle
             .part        = part
-            .destination = text.allocation.data
+            .destination = _native_buffer_address(.bytes = storage).address
             .length      = count
         ).status
         != 0
     ] { abort }
 
-    result = ..ok ~text
+    result = _native_text(.bytes = view(&text), .allocator = allocator)
 }
 
 exception_type#(.AllocatorType: Type: Allocator#(AllocatorType))(

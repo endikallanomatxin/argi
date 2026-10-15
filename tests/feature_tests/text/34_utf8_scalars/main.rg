@@ -44,14 +44,16 @@ run_main() -> !Void = ..ok Void() := {
         boundary_index = boundary_index + 1
         if width != utf8_encoded_length(.scalar = scalar).count { abort }
         if bytes[0] != 99 or bytes[5] != 99 { abort }
-        text :: StringView = (.data = &bytes[1], .length = width)
-        decoded ::= utf8_decode(.text = text)!
-        if scalar_value(.self = decoded.scalar).value != code or decoded.width != width { abort }
-        if validate_utf8(.text = text)! != 1 { abort }
+        text ::= unwrap_or_abort(.value = slice(&view(&bytes), .start = 1, .count = width))
+        decoded ::= utf8_decode_bytes(.bytes = text)!
+        if scalar_value(.self = decoded.scalar).value != code or decoded.width != width {
+            abort
+        }
+        if validate_utf8_bytes(.bytes = text)! != 1 { abort }
     }
     text :: StringView = "Aé€🙂"
     validated ::= codepoints(.text = text)!
-    if length(.self = &validated).count != 4 or text.length != 10 { abort }
+    if length(.self = &validated).count != 4 or byte_length(&text).count != 10 { abort }
     if equals(.left = utf8_bytes(.self = &validated).text, .right = text).ok == false { abort }
     expected :: [4]UInt32 = (65, 233, 8364, 128578)
     index :: UIntNative = 0
@@ -79,7 +81,9 @@ run_main() -> !Void = ..ok Void() := {
     for scalar in empty { abort }
 }
 
-main#(.WriterType: Type: Writer#(WriterType))(.writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
+main#(.WriterType: Type: Writer#(WriterType))(.writer: $&WriterType = reach writer) -> (
+    .status_code : Int32 = 1
+) := {
     run_main()!!!
     status_code = 0
 }

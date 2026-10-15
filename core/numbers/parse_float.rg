@@ -3,7 +3,7 @@
 _float_parse#(.t: Type: Float)(
     .text: StringView, .precision: Int32, .maximum_exponent: Int32, .minimum_exponent: Int32
 ) -> (.result: Errable#(t, (..invalid_input, ..out_of_range))) := {
-    if text.length == 0 {
+    if text._length == 0 {
         result = ..error(.reason = ..invalid_input)
         return
     }
@@ -27,7 +27,7 @@ _float_parse#(.t: Type: Float)(
     retained :: UIntNative = 0
     sticky ::= false
 
-    while index < text.length {
+    while index < text._length {
         byte ::= bytes_get(.view = &text, .index = index).byte
         if byte == 46 {
             if point {
@@ -65,14 +65,14 @@ _float_parse#(.t: Type: Float)(
     exponent_negative ::= false
     exponent :: UIntNative = 0
 
-    if index < text.length {
+    if index < text._length {
         byte ::= bytes_get(.view = &text, .index = index).byte
         if byte != 101 and byte != 69 {
             result = ..error(.reason = ..invalid_input)
             return
         }
         index = index + 1
-        if index < text.length {
+        if index < text._length {
             sign ::= bytes_get(.view = &text, .index = index).byte
             if sign == 45 or sign == 43 {
                 exponent_negative = sign == 45
@@ -83,8 +83,8 @@ _float_parse#(.t: Type: Float)(
         -- The exponent cannot be cancelled by more fractional/significand
         -- digits than the input contains. Saturation still scans every byte,
         -- preserving invalid-input precedence even after an enormous exponent.
-        cap ::= text.length + 2048
-        while index < text.length {
+        cap ::= text._length + 2048
+        while index < text._length {
             digit_byte ::= bytes_get(.view = &text, .index = index).byte
             if digit_byte < 48 or digit_byte > 57 {
                 result = ..error(.reason = ..invalid_input)

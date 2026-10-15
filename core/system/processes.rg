@@ -128,14 +128,14 @@ spawn(
     }
 
     status :: Int32 = _process_argument(
-        .builder = builder, .bytes = executable.data, .length = executable.length
+        .builder = builder, .bytes = executable._data, .length = executable._length
     ).status
     i :: UIntNative = 0
 
     while status == 0 and i < length(&arguments).count {
         argument ::= unwrap_or_abort(.value = get_reference(&arguments, .index = i)).result
         status = _process_argument(
-            .builder = builder, .bytes = argument&.data, .length = argument&.length
+            .builder = builder, .bytes = argument&._data, .length = argument&._length
         ).status
         i = i + 1
     }

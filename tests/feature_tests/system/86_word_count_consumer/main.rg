@@ -33,9 +33,8 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     expect_count(.self = &counts, .word = "🙂", .expected = 2, .allocator = allocator)!
     if length(.self = &counts).count != 3 { abort }
     invalid :: [1]UInt8 = (255)
-    bad :: StringView = (.data = &invalid[0], .length = 1)
-    match words.count_text(.self = $&counts, .text = bad, .allocator = allocator) {
-        ..ok _ { abort }
+    match string_from_bytes(.bytes = view(&invalid), .allocator = allocator) {
+        ..ok ~text { abort }
         ..error error { if error.reason != ..invalid_utf8 { abort } }
     }
     if length(.self = &counts).count != 3 { abort }

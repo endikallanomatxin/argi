@@ -1,8 +1,8 @@
 RecordingAllocator: Type = (
-    .ffi           : $&ForeignFunctionInterface
-    .allocations   : UIntNative                 = 0
-    .deallocations : UIntNative                 = 0
-    .last_size     : UIntNative                 = 0
+    .ffi : $&ForeignFunctionInterface
+    .allocations   : UIntNative = 0
+    .deallocations : UIntNative = 0
+    .last_size     : UIntNative = 0
 )
 
 main(.system: System) -> (.status_code: Int32 = 0) := {
@@ -10,21 +10,17 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     parts: [3]StringView = ("ab", "", "c")
     output ::= unwrap_or_abort(
         .value = join(
-            .parts     = view(.array = &parts)
-            .separator = "-"
-            .allocator = $&allocator
+            .parts = view(.array = &parts), .separator = "-", .allocator = $&allocator
         )
     )
     if allocator.allocations != 1 or allocator.last_size != 6 { abort }
-    if bytes_get(.view = &output, .index = output.length).byte != 0 { abort }
+    if bytes_get(.view = &output, .index = byte_length(&output).count).byte != 0 { abort }
     deinit(.self = $&output)
     if allocator.deallocations != 1 { abort }
     empty: [0]StringView = ()
     output_empty ::= unwrap_or_abort(
         .value = join(
-            .parts     = view(.array = &empty)
-            .separator = ","
-            .allocator = $&allocator
+            .parts = view(.array = &empty), .separator = ",", .allocator = $&allocator
         )
     )
     if allocator.allocations != 2 or allocator.last_size != 1 { abort }
@@ -32,14 +28,10 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     if allocator.deallocations != 2 { abort }
 }
 
-implement Allocator#(RecordingAllocator)(
-    .allocate = (
-            .self      : $&RecordingAllocator,
-            .size      : UIntNative,
-            .alignment : UIntNative            = 1
-        ) -> (
-            .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
-        ) {
+implement Allocator#(RecordingAllocator) (
+    .allocate = (.self: $&RecordingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
+        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+    ) {
         self&.allocations = self&.allocations + 1
         self&.last_size = size
         storage ::= malloc(.size = size, .ffi = self&.ffi)
@@ -51,22 +43,19 @@ implement Allocator#(RecordingAllocator)(
             .value = self
         )
         allocation ::= trusted_establish_allocation(
-            .storage     = storage
-            .size        = size
-            .alignment   = alignment
-            .deallocator = deallocator
+            .storage = storage, .size = size, .alignment = alignment, .deallocator = deallocator
         )
         result = ..ok ~allocation
     }
 )
 
-implement Deallocator#(RecordingAllocator)(
+implement Deallocator#(RecordingAllocator) (
     .deallocate = (
-            .self      : $&RecordingAllocator,
-            .data      : RawPointer#(.t: UInt8),
-            .size      : UIntNative,
-            .alignment : UIntNative
-        ) -> () {
+        .self      : $&RecordingAllocator,
+        .data      : RawPointer#(.t: UInt8),
+        .size      : UIntNative,
+        .alignment : UIntNative
+    ) -> () {
         self&.deallocations = self&.deallocations + 1
         free(.address = data.address, .ffi = self&.ffi)
     }

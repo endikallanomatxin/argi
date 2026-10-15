@@ -4,7 +4,7 @@ replace#(.AllocatorType: Type: Allocator#(AllocatorType))(
     .replacement : StringView,
     .allocator   : $&AllocatorType,
 ) -> (.result: Errable#(String, (..out_of_memory, ..size_overflow, ..empty_pattern))) := {
-    if pattern.length == 0 {
+    if pattern._length == 0 {
         result = ..error(.reason = ..empty_pattern)
         return
     }
@@ -17,17 +17,17 @@ replace#(.AllocatorType: Type: Allocator#(AllocatorType))(
     -- storage, then copy into a fresh buffer so overlapping inputs are safe.
     for segment in parts {
         if first == false {
-            if replacement.length > limit - total {
+            if replacement._length > limit - total {
                 result = ..error(.reason = ..size_overflow)
                 return
             }
-            total = total + replacement.length
+            total = total + replacement._length
         }
-        if segment.length > limit - total {
+        if segment._length > limit - total {
             result = ..error(.reason = ..size_overflow)
             return
         }
-        total = total + segment.length
+        total = total + segment._length
         first = false
     }
 
@@ -38,10 +38,10 @@ replace#(.AllocatorType: Type: Allocator#(AllocatorType))(
     for segment in parts {
         if first == false {
             _string_copy_view_into(.output = $&output, .offset = offset, .source = replacement)
-            offset = offset + replacement.length
+            offset = offset + replacement._length
         }
         _string_copy_view_into(.output = $&output, .offset = offset, .source = segment)
-        offset = offset + segment.length
+        offset = offset + segment._length
         first = false
     }
 

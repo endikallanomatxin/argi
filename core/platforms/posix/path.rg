@@ -4,7 +4,7 @@
     }
 
     _platform_path_root_length(.view: &StringView) -> (.length: UIntNative = 0) := {
-        if view&.length > 0 {
+        if view&._length > 0 {
             if bytes_get(.view = view, .index = 0).byte == 47 { length = 1 }
         }
     }

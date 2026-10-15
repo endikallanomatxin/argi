@@ -11,7 +11,7 @@ _integer_parse_digit#(.t: Type: Int)(.byte: UInt8) -> (.value: ?t) := {
     index :: UIntNative = 0
     digit :: t = 0
 
-    while index < alphabet.length {
+    while index < alphabet._length {
         if bytes_get(.view = &alphabet, .index = index).byte == normalized {
             value = ..some(.value = digit)
             return
@@ -31,7 +31,7 @@ _integer_parse#(.t: Type: Int)(
         return
     }
 
-    if text.length == 0 {
+    if text._length == 0 {
         result = ..error(.reason = ..invalid_input)
         return
     }
@@ -51,7 +51,7 @@ _integer_parse#(.t: Type: Int)(
         if first == 43 { index = 1 }
     }
 
-    if index == text.length {
+    if index == text._length {
         result = ..error(.reason = ..invalid_input)
         return
     }
@@ -66,7 +66,7 @@ _integer_parse#(.t: Type: Int)(
 
     accumulated :: t = 0
 
-    while index < text.length {
+    while index < text._length {
         decoded ::= _integer_parse_digit#(.t: t)(
             .byte = bytes_get(.view = &text, .index = index).byte
         ).value

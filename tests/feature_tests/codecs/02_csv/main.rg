@@ -39,7 +39,15 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     storage ::= zeroed#(.t: [64]UInt8)()
     writer ::= ByteWriter(.bytes = view(.array = $&storage))
     csv.write_record(.writer = $&writer, .fields = view(.array = &fields))!
-    text :: StringView = (.data = &storage[0], .length = 20)
+    text_storage ::= unwrap_or_abort(
+        .value = string_from_bytes(
+            .bytes = unwrap_or_abort(
+                .value = slice(&view(&storage), .start = 0, .count = 20)
+            )
+            .allocator = system.page_allocator
+        )
+    )
+    text ::= as_view(&text_storage)
     if text != "\"a,b\",\"\"\"quoted\"\"\"\r\n" { abort }
 }
 

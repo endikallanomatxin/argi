@@ -36,7 +36,7 @@ _write_record#(.WriterType: Type: Writer#(WriterType))(
     write(.self = writer, .value = ": ")!
     index :: UIntNative = 0
 
-    while index < message.length {
+    while index < byte_length(&message).count {
         byte ::= bytes_get(.view = &message, .index = index).byte
         if byte == 10 {
             write(.self = writer, .value = "\\n")!

@@ -16,13 +16,13 @@ main() -> (.status_code: Int32 = 0) := {
     words ::= split_whitespace(.self = "one two three")
     while has_next(.self = &words).ok {
         word ::= next(.self = $&words).value
-        if word.length == 0 { abort }
+        if byte_length(&word).count == 0 { abort }
         count = count + 1
     }
     if count != 3 { abort }
     count = 0
     for word in split_whitespace(.self = "one two three") {
-        if word.length == 0 { abort }
+        if byte_length(&word).count == 0 { abort }
         count = count + 1
     }
     if count != 3 { abort }

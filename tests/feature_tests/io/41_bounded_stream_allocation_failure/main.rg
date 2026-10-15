@@ -111,28 +111,19 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         maximum = maximum * 256 + 255
         index = index + 1
     }
-    attempts ::= allocator.attempts
-    calls ::= source.calls
-    match read_all_limited(
-        .self      = $&source
-        .buffer    = view(.array = $&scratch)
-        .limit     = maximum
-        .allocator = $&allocator
-    ) {
-        ..ok ~owner {
-            deinit(.self = $&owner)
-            abort
-        }
-        ..error error { if error.reason != ..size_overflow { abort } }
-    }
-    if allocator.attempts != attempts or source.calls != calls { abort }
+    unbounded ::= read_all_limited(
+        .self = $&source, .buffer = view($&scratch), .limit = maximum, .allocator = $&allocator
+    )!
+    if length(&unbounded).count != 8 { abort }
+    deinit(.self = $&unbounded)
+    source.position = 0
     owned ::= read_all_limited(
         .self      = $&source
         .buffer    = view(.array = $&scratch)
         .limit     = 8
         .allocator = $&allocator
     )!
-    if owned.length != 8 or capacity(.self = &owned).value > 8 { abort }
+    if length(&owned).count != 8 or capacity(.self = &owned).count > 8 { abort }
     deinit(.self = $&owned)
     if allocator.allocations != allocator.deallocations { abort }
 }

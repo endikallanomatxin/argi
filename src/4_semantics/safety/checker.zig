@@ -5826,6 +5826,9 @@ pub const SafetyChecker = struct {
             } else {
                 var joined = try destination.*.clone(self.allocator, if (self.collect_stats) &self.stats else null);
                 try self.joinState(&joined, destination, source);
+                var join_context = LoopJoinContext.init(self.allocator);
+                defer join_context.deinit();
+                try self.widenLoopOwnedRoots(&join_context, &joined, destination, source);
                 destination.deinit();
                 destination.* = joined;
             }

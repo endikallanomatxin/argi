@@ -6508,10 +6508,10 @@ test "feature_tests/types/66_error_tracer_context_copy" {
     try expectSuccessfulBuild(path);
     try runExpectStderr(path, 0,
         \\error trace (most recent first):
-        \\  at tests/feature_tests/types/66_error_tracer_context_copy/main.rg:10:12: AB
-        \\        fail() !! view
-        \\               ^
-        \\  at tests/feature_tests/types/66_error_tracer_context_copy/main.rg:2:31
+        \\  at tests/feature_tests/types/66_error_tracer_context_copy/main.rg:14:11: AB
+        \\        fail()!! view
+        \\              ^
+        \\  at tests/feature_tests/types/66_error_tracer_context_copy/main.rg:3:31
         \\    fail() -> !Void := { result = ..error(.reason = ..copy_test_failure) }
         \\                                  ^
         \\
@@ -13121,4 +13121,61 @@ test "feature_tests/polymorphism/333X_generic_choice_unknown_tag" {
 test "usecase_tests/06_weighted_regression" {
     try expectSuccessfulBuild("tests/usecase_tests/06_weighted_regression");
     try runExpect("tests/usecase_tests/06_weighted_regression", 0);
+}
+
+test "feature_tests/text/69_utf8_text_boundary" {
+    try expectSuccessfulBuild("tests/feature_tests/text/69_utf8_text_boundary");
+    try run("tests/feature_tests/text/69_utf8_text_boundary");
+}
+
+test "feature_tests/text/70X_string_private_storage" {
+    try buildExpectFail("tests/feature_tests/text/70X_string_private_storage", "field '_length' is private");
+}
+
+test "feature_tests/text/71X_text_view_private_storage" {
+    try buildExpectFail("tests/feature_tests/text/71X_text_view_private_storage", "field '_length' is private");
+}
+
+test "feature_tests/text/72X_text_view_after_clear" {
+    try buildExpectFail("tests/feature_tests/text/72X_text_view_after_clear", "ended");
+}
+
+test "feature_tests/text/73X_text_view_positional" {
+    try buildExpectFail("tests/feature_tests/text/73X_text_view_positional", "field '_data' is private");
+}
+
+test "feature_tests/text/74X_text_view_public_labels" {
+    try buildExpectFail("tests/feature_tests/text/74X_text_view_public_labels", "field '_data' is private");
+}
+
+test "feature_tests/text/75_utf8_allocator_callback" {
+    try expectSuccessfulBuild("tests/feature_tests/text/75_utf8_allocator_callback");
+    try run("tests/feature_tests/text/75_utf8_allocator_callback");
+}
+
+test "feature_tests/text/76_utf8_copy_after_loop_continue" {
+    try expectSuccessfulBuild("tests/feature_tests/text/76_utf8_copy_after_loop_continue");
+    try run("tests/feature_tests/text/76_utf8_copy_after_loop_continue");
+}
+
+test "feature_tests/text/77X_text_bytes_before_loop_growth" {
+    try buildExpectFail("tests/feature_tests/text/77X_text_bytes_before_loop_growth", "ended");
+}
+
+test "feature_tests/text/78_utf8_bounded_line" {
+    try expectSuccessfulBuild("tests/feature_tests/text/78_utf8_bounded_line");
+    try run("tests/feature_tests/text/78_utf8_bounded_line");
+}
+
+test "feature_tests/text/79X_text_view_after_ascii_edit" {
+    try buildExpectFail("tests/feature_tests/text/79X_text_view_after_ascii_edit", "ended");
+}
+
+test "feature_tests/text/80X_text_view_after_append" {
+    try buildExpectFail("tests/feature_tests/text/80X_text_view_after_append", "ended");
+}
+
+test "feature_tests/text/81_utf8_copy_outlives_source" {
+    try expectSuccessfulBuild("tests/feature_tests/text/81_utf8_copy_outlives_source");
+    try run("tests/feature_tests/text/81_utf8_copy_outlives_source");
 }

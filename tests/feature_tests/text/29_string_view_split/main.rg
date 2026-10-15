@@ -36,8 +36,8 @@ main() -> (.status_code: Int32 = 0) := {
     expect_segment(.iterator = $&longer, .expected = "a")
     if first_segment(.text = "first,second").view != "first" { abort }
     bytes: [3]UInt8 = (97, 0, 98)
-    binary :: StringView = (.data = &bytes[0], .length = 3)
-    separator :: StringView = (.data = &bytes[1], .length = 1)
+    binary: StringView = "a\0b"
+    separator: StringView = "\0"
     zero ::= unwrap_or_abort(.value = split(.self = binary, .separator = separator))
     expect_segment(.iterator = $&zero, .expected = "a")
     expect_segment(.iterator = $&zero, .expected = "b")

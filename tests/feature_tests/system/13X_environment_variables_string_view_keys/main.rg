@@ -3,10 +3,10 @@ main(.system: System) -> (.status_code: Int32) := {
     assume allocator ::= $&allocator_storage
 
     home_string ::= unwrap_or_abort(.value = String(.length = 4))
-    bytes_set(.string = $&home_string, .index = 0, .value = 72)
-    bytes_set(.string = $&home_string, .index = 1, .value = 79)
-    bytes_set(.string = $&home_string, .index = 2, .value = 77)
-    bytes_set(.string = $&home_string, .index = 3, .value = 69)
+    _ ::= unwrap_or_abort(.value = set_ascii(.self = $&home_string, .index = 0, .byte = 72))
+    _ ::= unwrap_or_abort(.value = set_ascii(.self = $&home_string, .index = 1, .byte = 79))
+    _ ::= unwrap_or_abort(.value = set_ascii(.self = $&home_string, .index = 2, .byte = 77))
+    _ ::= unwrap_or_abort(.value = set_ascii(.self = $&home_string, .index = 3, .byte = 69))
 
     home_view ::= as_view(.self = &home_string)
 

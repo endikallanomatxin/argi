@@ -16,10 +16,10 @@ main(.system: System) -> (.status_code: Int32) := {
     }
 
     text ::= unwrap_or_abort(.value = String(.allocator = $&allocator_storage, .length = 4))
-    bytes_set(.string = $&text, .index = 0, .value = 65)
-    bytes_set(.string = $&text, .index = 1, .value = 114)
-    bytes_set(.string = $&text, .index = 2, .value = 103)
-    bytes_set(.string = $&text, .index = 3, .value = 105)
+    _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = 0, .byte = 65))
+    _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = 1, .byte = 114))
+    _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = 2, .byte = 103))
+    _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = 3, .byte = 105))
 
     write_result ::= write_file(.self = system.file_system, .path = path, .text = &text)
     if is(.value = write_result, .variant = ..ok) {
@@ -36,7 +36,7 @@ main(.system: System) -> (.status_code: Int32) := {
     }
     read_back ::= ~read_back_result ..ok
 
-    if read_back.length != 4 {
+    if byte_length(&read_back).count != 4 {
         status_code = 4
         return
     }

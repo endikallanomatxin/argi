@@ -5,7 +5,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     array ::= unwrap_or_abort(.value = DynamicArray#(.t: String)(.capacity = 1))
     #defer deinit(.self = $&array)
     text ::= unwrap_or_abort(.value = String(.length = 1))
-    bytes_set(.string = $&text, .index = 0, .value = 65)
+    _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = 0, .byte = 65))
     pushed ::= push(.self = $&array, .value = ~text)
     if is(.value = pushed, .variant = ..error) {
         status_code = 1
@@ -24,7 +24,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
             duplicate ::= dynamic_array_element_mutable_reference#(.t: String)(
                 .array = $&copied, .offset = 0
             ).pointer
-            bytes_set(.string = duplicate, .index = 0, .value = 66)
+            _ ::= unwrap_or_abort(.value = set_ascii(.self = duplicate, .index = 0, .byte = 66))
             if bytes_get(.view = original, .index = 0).byte != 65 {
                 status_code = 3
                 return

@@ -893,7 +893,7 @@ _float_text_byte(.text: $&_FloatText, .byte: UInt8) -> () := {
 }
 
 _float_text_view(.self: &_FloatText) -> (.view: StringView) := {
-    view = (.data = &self&.bytes[0], .length = self&.length)
+    view = (._data = &self&.bytes[0], ._length = self&.length)
 }
 
 _float_render(.coefficient: UInt64, .power: Int32, .negative: Bool) -> (.text: _FloatText) := {

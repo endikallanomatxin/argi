@@ -26,10 +26,10 @@ main() -> (.status_code: Int32 = 0) := {
     if starts_with(.self = "ab", .pattern = "abc").ok { abort }
     if ends_with(.self = "ab", .pattern = "abc").ok { abort }
     bytes: [3]UInt8 = (97, 0, 98)
-    text :: StringView = (.data = &bytes[0], .length = 3)
-    zero :: StringView = (.data = &bytes[1], .length = 1)
+    text: StringView = "a\0b"
+    zero: StringView = "\0"
     expect_position(.text = text, .pattern = zero, .expected = 1)
     expect_position(.text = text, .pattern = "b", .expected = 2)
-    bounded :: StringView = (.data = &bytes[0], .length = 1)
+    bounded: StringView = "a"
     if contains(.self = bounded, .pattern = "b").ok { abort }
 }

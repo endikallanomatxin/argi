@@ -18,7 +18,7 @@ main(.system: System) -> (.status_code: Int32) := {
     first_length :: UIntNative = 0
     for arg in system.args {
         if seen == 0 {
-            first_length = arg.length
+            first_length = byte_length(&arg).count
         }
         seen = seen + 1
     }

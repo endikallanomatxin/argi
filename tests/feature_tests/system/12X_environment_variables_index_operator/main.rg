@@ -1,9 +1,9 @@
 main(.system: System) -> (.status_code: Int32) := {
     assume ffi := system.ffi
-    home_literal ::= from_literal(.data = "HOME")
-    missing_literal ::= from_literal(.data = "ARGI_ENV_SHOULD_NOT_EXIST_476")
-    home_key ::= as_view(.self = home_literal)
-    missing_key ::= as_view(.self = missing_literal)
+
+
+    home_key ::= "HOME"
+    missing_key ::= "ARGI_ENV_SHOULD_NOT_EXIST_476"
 
     home_result ::= system.env_vars[home_key]
     if is(.value = home_result, .variant = ..error) {

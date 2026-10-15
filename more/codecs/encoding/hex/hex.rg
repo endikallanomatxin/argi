@@ -19,19 +19,23 @@ encode#(.AllocatorType: Type: Allocator#(AllocatorType))(
 
     while index < count {
         byte ::= unwrap_or_abort(.value = get(.self = &bytes, .index = index))
-        bytes_set(
-            .string = $&text
-            .index  = index * 2
-            .value  = bytes_get(
-                .view = &alphabet, .index = [byte / 16] | convert#(.to: UIntNative)(_)
-            ).byte
+        _ ::= unwrap_or_abort(
+            .value = set_ascii(
+                .self  = $&text
+                .index = index * 2
+                .byte  = bytes_get(
+                    .view = &alphabet, .index = [byte / 16] | convert#(.to: UIntNative)(_)
+                ).byte
+            )
         )
-        bytes_set(
-            .string = $&text
-            .index  = index * 2 + 1
-            .value  = bytes_get(
-                .view = &alphabet, .index = [byte % 16] | convert#(.to: UIntNative)(_)
-            ).byte
+        _ ::= unwrap_or_abort(
+            .value = set_ascii(
+                .self  = $&text
+                .index = index * 2 + 1
+                .byte  = bytes_get(
+                    .view = &alphabet, .index = [byte % 16] | convert#(.to: UIntNative)(_)
+                ).byte
+            )
         )
         index = index + 1
     }
@@ -45,14 +49,14 @@ decode#(.AllocatorType: Type: Allocator#(AllocatorType))(
 ) -> (.result: Errable#(DynamicArray#(.t: UInt8), (..invalid_hex, ..out_of_memory))) := {
     assume allocator
 
-    if text.length % 2 != 0 {
+    if byte_length(&text).count % 2 != 0 {
         result = ..error(.reason = ..invalid_hex)
         return
     }
 
     index :: UIntNative = 0
 
-    while index < text.length {
+    while index < byte_length(&text).count {
         if _digit(.byte = bytes_get(.view = &text, .index = index).byte).value == 255 {
             result = ..error(.reason = ..invalid_hex)
             return
@@ -60,10 +64,12 @@ decode#(.AllocatorType: Type: Allocator#(AllocatorType))(
         index = index + 1
     }
 
-    bytes ::= DynamicArray#(.t: UInt8)(.allocator = allocator, .capacity = text.length / 2)!
+    bytes ::= DynamicArray#(.t: UInt8)(
+        .allocator = allocator, .capacity = [byte_length(&text).count / 2]
+    )!
     index = 0
 
-    while index < text.length {
+    while index < byte_length(&text).count {
         high ::= _digit(.byte = bytes_get(.view = &text, .index = index).byte).value
         low ::= _digit(.byte = bytes_get(.view = &text, .index = index + 1).byte).value
         push_assume_capacity(.self = $&bytes, .value = high * 16 + low)

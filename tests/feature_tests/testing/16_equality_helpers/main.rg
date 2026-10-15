@@ -6,14 +6,21 @@ test equality_helpers(.system: System) -> !() := {
     testing.expect_equal(.expected = "abc", .actual = "abc")!
     testing.expect_equal_strings(.expected = "", .actual = "")!
     bytes :: [3]UInt8 = (65, 0, 90)
-    text :: StringView = (.data = &bytes[0], .length = 3)
+    text_storage ::= unwrap_or_abort(
+        .value = string_from_bytes(
+            .bytes     = unwrap_or_abort(.value = slice(&view(&bytes), .start = 0, .count = 3))
+            .allocator = system.page_allocator
+        )
+    )
+    text ::= as_view(&text_storage)
     testing.expect_equal_strings(.expected = text, .actual = text)!
     values :: [3]Int32 = (1, 2, 3)
     testing.expect_equal_views(
-        .expected = view(.array = &values)
-        .actual   = view(.array = &values)
+        .expected = view(.array = &values), .actual = view(.array = &values)
     )!
-    testing.expect_equal_bytes(.expected = view(.array = &bytes), .actual = view(.array = &bytes))!
+    testing.expect_equal_bytes(
+        .expected = view(.array = &bytes), .actual = view(.array = &bytes)
+    )!
     empty ::= empty_array_view_ro#(.t: UInt8)()
     testing.expect_equal_bytes(.expected = empty, .actual = empty)!
     assume allocator := system.page_allocator

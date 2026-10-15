@@ -49,7 +49,8 @@ count_directory(
                     text ::= read_all_limited($&file_reader, buffer, limit)!! full_path
                     close($&file_reader)!! full_path
 
-                    count_text(self, as_view(&text))!! full_path
+                    decoded ::= string_from_bytes(.bytes = view(&text))!! full_path
+                    count_text(self, as_view(&decoded))!! full_path
                 }
             }
         }

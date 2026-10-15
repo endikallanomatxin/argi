@@ -26,7 +26,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     if drops != 4 { abort }
     strings ::= Deque#(.t: String)(.capacity = 1)!
     text ::= String(.allocator = allocator, .length = 1)!
-    bytes_set(.string = $&text, .index = 0, .value = 65)
+    _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = 0, .byte = 65))
     push_front(.self = $&strings, .value = ~text)!
     reserve(.self = $&strings, .capacity = 8)!
     extracted ::= pop_back(.self = $&strings)!
@@ -34,7 +34,9 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     if as_view(.self = &extracted).view != "A" { abort }
 }
 
-main#(.WriterType: Type: Writer#(WriterType))(.system: System, .writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
+main#(.WriterType: Type: Writer#(WriterType))(
+    .system: System, .writer: $&WriterType = reach writer
+) -> (.status_code: Int32 = 1) := {
     run_main(.system = system)!!!
     status_code = 0
 }

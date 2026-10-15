@@ -1,14 +1,12 @@
 CollisionPolicy: Type = (.marker: Int32 = 0)
 
 implement ImplicitlyCopyable#(CollisionPolicy) ()
-implement HashPolicy#(CollisionPolicy, Int32)(
+
+implement HashPolicy#(CollisionPolicy, Int32) (
 
     .hash = (.self: &CollisionPolicy, .key: Int32) -> (.hash: UIntNative) { hash = 7 }
     .eql  = (.self: &CollisionPolicy, .left: Int32, .right: Int32) -> (.ok: Bool) {
-        ok = [
-            left
-            == right
-        ]
+        ok = [left == right]
     }
 )
 
@@ -16,14 +14,15 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     assume allocator ::= system.page_allocator
     set ::= unwrap_or_abort(
         .value = HashSet#(.key: Int32, .policy: CollisionPolicy)(
-            .policy    = CollisionPolicy()
-            .allocator = allocator
+            .policy = CollisionPolicy(), .allocator = allocator
         )
     )
     index :: Int32 = 0
     while index < 40 {
         if [
-            unwrap_or_abort(.value = insert(.self = $&set, .key = index, .allocator = allocator))
+            unwrap_or_abort(
+                .value = insert(.self = $&set, .key = index, .allocator = allocator)
+            )
             == false
         ] { abort }
         if unwrap_or_abort(.value = insert(.self = $&set, .key = index, .allocator = allocator)) {
@@ -35,7 +34,9 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     index = 0
     while index < 40 {
         if contains(.self = &set, .key = index).ok == false { abort }
-        if remove(.self = $&set, .key = index, .allocator = allocator).removed == false { abort }
+        if remove(.self = $&set, .key = index, .allocator = allocator).removed == false {
+            abort
+        }
         if contains(.self = &set, .key = index).ok { abort }
         index = index + 1
     }
@@ -44,14 +45,25 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     deinit(.self = $&set)
     text ::= unwrap_or_abort(
         .value = HashSet#(.key: StringView, .policy: StringViewHashPolicy)(
-            .policy    = StringViewHashPolicy()
-            .allocator = allocator
+            .policy = StringViewHashPolicy(), .allocator = allocator
         )
     )
     bytes: [3]UInt8 = (97, 0, 98)
     same: [3]UInt8 = (97, 0, 98)
-    left :: StringView = (.data = &bytes[0], .length = 3)
-    right :: StringView = (.data = &same[0], .length = 3)
+    left_storage ::= unwrap_or_abort(
+        .value = string_from_bytes(
+            .bytes     = unwrap_or_abort(.value = slice(&view(&bytes), .start = 0, .count = 3))
+            .allocator = system.page_allocator
+        )
+    )
+    left ::= as_view(&left_storage)
+    right_storage ::= unwrap_or_abort(
+        .value = string_from_bytes(
+            .bytes     = unwrap_or_abort(.value = slice(&view(&same), .start = 0, .count = 3))
+            .allocator = system.page_allocator
+        )
+    )
+    right ::= as_view(&right_storage)
     if [
         unwrap_or_abort(.value = insert(.self = $&text, .key = left, .allocator = allocator))
         == false

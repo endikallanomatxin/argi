@@ -107,10 +107,10 @@ implement Init#(
 
         assume ffi
         handle ::= _start(
-            .program        = program_name.data
-            .program_length = program_name.length
-            .home = home.data
-            .home_length    = home.length
+            .program        = byte_data(.text = program_name).reference
+            .program_length = byte_length(&program_name).count
+            .home = byte_data(.text = home).reference
+            .home_length    = byte_length(&home).count
         ).handle
 
         if handle == 0 {
@@ -155,7 +155,9 @@ import_module(.self: &Python, .name: StringView) -> (
     result = _owned(
         .self   = self
         .handle = _import(
-            .context = self&._handle, .bytes = name.data, .length = name.length
+            .context = self&._handle
+            .bytes   = byte_data(.text = name).reference
+            .length  = byte_length(&name).count
         ).handle
     )
 }
@@ -166,19 +168,24 @@ string(.self: &Python, .value: StringView) -> (.result: Errable#(Object, (..pyth
     result = _owned(
         .self   = self
         .handle = _string(
-            .context = self&._handle, .bytes = value.data, .length = value.length
+            .context = self&._handle
+            .bytes   = byte_data(.text = value).reference
+            .length  = byte_length(&value).count
         ).handle
     )
 }
 
-bytes(.self: &Python, .value: StringView) -> (.result: Errable#(Object, (..python_error))) := {
+bytes(.self: &Python, .value: ArrayViewRO#(UInt8)) -> (
+    .result : Errable#(Object, (..python_error))
+) := {
     assume ffi := self&._ffi
-
+    empty: UInt8 = 0
+    source :: &UInt8 = &empty
+    count ::= length(&value).count
+    if count != 0 { source = data(&value).pointer }
     result = _owned(
         .self   = self
-        .handle = _bytes(
-            .context = self&._handle, .bytes = value.data, .length = value.length
-        ).handle
+        .handle = _bytes(.context = self&._handle, .bytes = source, .length = count).handle
     )
 }
 
@@ -199,8 +206,8 @@ attribute(.self: &Object, .name: StringView) -> (.result: Errable#(Object, (..py
         .handle = _attribute(
             .context = self&._python&._handle
             .object  = self&._handle
-            .bytes   = name.data
-            .length  = name.length
+            .bytes   = byte_data(.text = name).reference
+            .length  = byte_length(&name).count
         ).handle
     )
 }
@@ -578,9 +585,9 @@ set_item(.self: &Object, .key: &Object, .value: &Object) -> (
     result = ..ok Void()
 }
 
-_copy_text#(.AllocatorType: Type: Allocator#(AllocatorType))(
+_copy_python_bytes#(.AllocatorType: Type: Allocator#(AllocatorType))(
     .self: &Object, .kind: Int32, .allocator: $&AllocatorType
-) -> (.result: Errable#(String, (..python_error, ..out_of_memory))) := {
+) -> (.result: Errable#(DynamicArray#(UInt8), (..python_error, ..out_of_memory))) := {
     assume ffi := self&._python&._ffi
     count :: UIntNative = 0
 
@@ -597,14 +604,15 @@ _copy_text#(.AllocatorType: Type: Allocator#(AllocatorType))(
         return
     }
 
-    text ::= string_with_length(.allocator = allocator, .length = count)!
+    text ::= _native_byte_buffer(.allocator = allocator, .count = count)!
+    storage ::= view($&text)
 
     if [
         _text_copy(
             .context     = self&._python&._handle
             .object      = self&._handle
             .kind        = kind
-            .destination = text.allocation.data
+            .destination = _native_buffer_address(.bytes = storage).address
             .length      = count
         ).status
         != 0
@@ -619,13 +627,15 @@ _copy_text#(.AllocatorType: Type: Allocator#(AllocatorType))(
 to_string#(.AllocatorType: Type: Allocator#(AllocatorType))(
     .self: &Object, .allocator: $&AllocatorType
 ) -> (.result: Errable#(String, (..python_error, ..out_of_memory))) := {
-    result = _copy_text(.self = self, .kind = 0, .allocator = allocator)
+    bytes ::= _copy_python_bytes(.self = self, .kind = 0, .allocator = allocator)!
+    decoded ::= _native_text(.bytes = view(&bytes), .allocator = allocator)!
+    result = ..ok ~decoded
 }
 
 to_bytes#(.AllocatorType: Type: Allocator#(AllocatorType))(
     .self: &Object, .allocator: $&AllocatorType
-) -> (.result: Errable#(String, (..python_error, ..out_of_memory))) := {
-    result = _copy_text(.self = self, .kind = 1, .allocator = allocator)
+) -> (.result: Errable#(DynamicArray#(UInt8), (..python_error, ..out_of_memory))) := {
+    result = _copy_python_bytes(.self = self, .kind = 1, .allocator = allocator)
 }
 
 error_text#(.AllocatorType: Type: Allocator#(AllocatorType))(
@@ -633,11 +643,14 @@ error_text#(.AllocatorType: Type: Allocator#(AllocatorType))(
 ) -> (.result: Errable#(String, (..python_error, ..out_of_memory))) := {
     assume ffi := self&._ffi
     count ::= _error_size(.context = self&._handle).length
-    text ::= string_with_length(.allocator = allocator, .length = count)!
+    text ::= _native_byte_buffer(.allocator = allocator, .count = count)!
+    storage ::= view($&text)
 
     if [
         _error_copy(
-            .context = self&._handle, .destination = text.allocation.data, .length = count
+            .context     = self&._handle
+            .destination = _native_buffer_address(.bytes = storage).address
+            .length      = count
         ).status
         != 0
     ] {
@@ -645,7 +658,8 @@ error_text#(.AllocatorType: Type: Allocator#(AllocatorType))(
         return
     }
 
-    result = ..ok ~text
+    decoded ::= _native_text(.bytes = view(&text), .allocator = allocator)!
+    result = ..ok ~decoded
 }
 
 _zero_signed() -> (.value: Int64) := { value = 0 }

@@ -5,11 +5,11 @@ main(.system: System) -> (.status_code: Int32) := {
     left :: String = unwrap_or_abort(
         .value = String(.allocator = $&allocator_storage, .length = 5)
     )
-    bytes_set(.string = $&left, .index = 0, .value = 104)
-    bytes_set(.string = $&left, .index = 1, .value = 101)
-    bytes_set(.string = $&left, .index = 2, .value = 108)
-    bytes_set(.string = $&left, .index = 3, .value = 108)
-    bytes_set(.string = $&left, .index = 4, .value = 111)
+    _ ::= unwrap_or_abort(.value = set_ascii(.self = $&left, .index = 0, .byte = 104))
+    _ ::= unwrap_or_abort(.value = set_ascii(.self = $&left, .index = 1, .byte = 101))
+    _ ::= unwrap_or_abort(.value = set_ascii(.self = $&left, .index = 2, .byte = 108))
+    _ ::= unwrap_or_abort(.value = set_ascii(.self = $&left, .index = 3, .byte = 108))
+    _ ::= unwrap_or_abort(.value = set_ascii(.self = $&left, .index = 4, .byte = 111))
 
     left_view ::= as_view(.self = &left)
     combined_result ::= &left_view + "\n"

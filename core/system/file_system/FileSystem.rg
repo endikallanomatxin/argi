@@ -25,6 +25,7 @@ _read_c_file#(.Provider: Type: Allocator#(Provider)) := (
         (
             ..path_open_failed,
             ..stream_read_failed,
+            ..invalid_utf8,
             ..stream_close_failed,
             ..out_of_memory
         )
@@ -71,7 +72,7 @@ _read_c_file#(.Provider: Type: Allocator#(Provider)) := (
         }
 
         payload ::= next_value ..ok
-        grew ::= push_byte($&text, .byte = payload, .allocator = allocator)
+        grew ::= _string_push_byte($&text, .byte = payload, .allocator = allocator)
         match grew {
             ..ok _ {
             }
@@ -92,6 +93,7 @@ _read_c_file#(.Provider: Type: Allocator#(Provider)) := (
         return
     }
 
+    _ ::= _validate_string(.self = &text)!
     result = ..ok ~text
 }
 
@@ -103,6 +105,7 @@ _read_string_file#(.Provider: Type: Allocator#(Provider)) := (
         (
             ..path_open_failed,
             ..stream_read_failed,
+            ..invalid_utf8,
             ..stream_close_failed,
             ..out_of_memory
         )
@@ -124,6 +127,7 @@ _read_view_file#(.Provider: Type: Allocator#(Provider)) := (
         (
             ..path_open_failed,
             ..stream_read_failed,
+            ..invalid_utf8,
             ..stream_close_failed,
             ..out_of_memory
         )
@@ -150,6 +154,7 @@ _read_path_file#(.Provider: Type: Allocator#(Provider)) := (
         (
             ..path_open_failed,
             ..stream_read_failed,
+            ..invalid_utf8,
             ..stream_close_failed,
             ..out_of_memory
         )

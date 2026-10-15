@@ -4,15 +4,14 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     directory_path: StringView = "tests/feature_tests/system/80_filesystem_operations/build/sample"
     create_directory(.path = directory_path)!
     match create_directory(.path = directory_path) {
-        ..ok _ { abort } ..error error { if [
-                error.reason
-                != ..already_exists
-            ] { abort } }
+        ..ok _ { abort } ..error error { if [error.reason != ..already_exists] { abort } }
     }
     info ::= metadata(.path = directory_path)!
     if info.kind != ..directory { abort }
     file_path: StringView = "tests/feature_tests/system/80_filesystem_operations/build/sample/bytes.bin"
-    file ::= File(.file_system = file_system, .path = file_path, .allocator = allocator, .mode = ..write)!
+    file ::= File(
+        .file_system = file_system, .path = file_path, .allocator = allocator, .mode = ..write
+    )!
     input: [4]UInt8 = (65, 0, 66, 67)
     write_all(.self = $&file, .buffer = view(.array = &input))!
     if position(.self = $&file)! != 4 { abort }
@@ -25,7 +24,9 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     entry ::= next(.self = $&directory)!
     match entry {
         ..none { abort }
-        ..some ~payload { if as_view(.self = &payload.value.name).view != "bytes.bin" { abort } }
+        ..some ~payload {
+            if as_view(.self = &payload.value.name).view != "bytes.bin" { abort }
+        }
     }
     match next(.self = $&directory)! { ..some ~payload { abort } ..none {} }
     match next(.self = $&directory)! { ..some ~payload { abort } ..none {} }
@@ -33,22 +34,26 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     remove(.self = file_system, .path = file_path, .allocator = allocator)!
     remove_directory(.path = directory_path)!
     match metadata(.path = directory_path) {
-        ..ok _ { abort } ..error error { if [
-                error.reason
-                != ..path_not_found
-            ] { abort } }
+        ..ok _ { abort } ..error error { if [error.reason != ..path_not_found] { abort } }
     }
     invalid: [3]UInt8 = (97, 0, 98)
-    invalid_path: StringView = (.data = &invalid[0], .length = 3)
+    invalid_path_storage ::= unwrap_or_abort(
+        .value = string_from_bytes(
+            .bytes = unwrap_or_abort(
+                .value = slice(&view(&invalid), .start = 0, .count = 3)
+            )
+            .allocator = system.page_allocator
+        )
+    )
+    invalid_path ::= as_view(&invalid_path_storage)
     match create_directory(.path = invalid_path) {
-        ..ok _ { abort } ..error error { if [
-                error.reason
-                != ..invalid_path
-            ] { abort } }
+        ..ok _ { abort } ..error error { if [error.reason != ..invalid_path] { abort } }
     }
 }
 
-main#(.WriterType: Type: Writer#(WriterType))(.system: System, .writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
+main#(.WriterType: Type: Writer#(WriterType))(
+    .system: System, .writer: $&WriterType = reach writer
+) -> (.status_code: Int32 = 1) := {
     run_main(.system = system)!!!
     status_code = 0
 }

@@ -6,6 +6,7 @@
 ..filesystem_failed
 
 _FilesystemReasons: Type = (
+    ..invalid_utf8,
     ..invalid_path,
     ..path_not_found,
     ..permission_denied,
@@ -82,7 +83,7 @@ create_directory(.self: &FileSystem = reach file_system, .path: StringView) -> (
     .result : Errable#(Void, _FilesystemReasons)
 ) := {
     assume ffi := self&._ffi
-    status ::= _fs_mkdir(.bytes = path.data, .length = path.length).status
+    status ::= _fs_mkdir(.bytes = path._data, .length = path._length).status
 
     if status != 0 {
         result = ..error(.reason = _fs_reason(.status = status).reason)
@@ -96,7 +97,7 @@ remove_directory(.self: &FileSystem = reach file_system, .path: StringView) -> (
     .result : Errable#(Void, _FilesystemReasons)
 ) := {
     assume ffi := self&._ffi
-    status ::= _fs_rmdir(.bytes = path.data, .length = path.length).status
+    status ::= _fs_rmdir(.bytes = path._data, .length = path._length).status
 
     if status != 0 {
         result = ..error(.reason = _fs_reason(.status = status).reason)
@@ -126,8 +127,8 @@ metadata(.self: &FileSystem = reach file_system, .path: StringView, .follow_link
 
     if follow_links {
         status = _fs_metadata(
-            .bytes       = path.data
-            .length      = path.length
+            .bytes       = path._data
+            .length      = path._length
             .kind        = $&kind
             .size        = $&size
             .seconds     = $&seconds
@@ -135,8 +136,8 @@ metadata(.self: &FileSystem = reach file_system, .path: StringView, .follow_link
         ).status
     } else {
         status = _fs_metadata_nofollow(
-            .bytes       = path.data
-            .length      = path.length
+            .bytes       = path._data
+            .length      = path._length
             .kind        = $&kind
             .size        = $&size
             .seconds     = $&seconds
@@ -176,7 +177,7 @@ implement Init#(Directory, (.self: &FileSystem = reach file_system, .path: Strin
         assume ffi := self&._ffi
         handle :: UIntNative = 0
         status ::= _fs_directory_open(
-            .bytes = path.data, .length = path.length, .handle = $&handle
+            .bytes = path._data, .length = path._length, .handle = $&handle
         ).status
 
         if status != 0 {
@@ -219,7 +220,7 @@ _next_directory#(.Provider: Type: Allocator#(Provider)) := (
         copied ::= _fs_directory_copy(
             .handle = self&._handle
             .bytes  = _trusted_allocation_byte_rw(
-                .allocation = $&name.allocation, .offset = 0
+                .allocation = $&name._allocation, .offset = 0
             ).reference
             .capacity = size
         ).status
@@ -229,6 +230,7 @@ _next_directory#(.Provider: Type: Allocator#(Provider)) := (
         }
     }
 
+    _ ::= _validate_string(.self = &name)!
     result = ..ok ..some(.value = (.name = ~name))
 }
 
@@ -338,10 +340,10 @@ implement#(.Provider: Type: Allocator) Init#(
         assume allocator
         handle :: UIntNative = 0
         status ::= _fs_temp_create(
-            .parent        = parent.data
-            .parent_length = parent.length
-            .prefix        = prefix.data
-            .prefix_length = prefix.length
+            .parent        = parent._data
+            .parent_length = parent._length
+            .prefix        = prefix._data
+            .prefix_length = prefix._length
             .handle        = $&handle
         ).status
 
@@ -359,7 +361,7 @@ implement#(.Provider: Type: Allocator) Init#(
             }
             ..ok ~name {
                 target ::= _trusted_allocation_byte_rw(
-                    .allocation = $&name.allocation, .offset = 0
+                    .allocation = $&name._allocation, .offset = 0
                 ).reference
                 if [
                     _fs_temp_copy(.handle = handle, .bytes = target, .capacity = count).status
@@ -368,6 +370,13 @@ implement#(.Provider: Type: Allocator) Init#(
                     _fs_temp_cleanup(.handle = handle)
                     result = ..error(.reason = ..filesystem_failed)
                     return
+                }
+                match _validate_string(.self = &name) {
+                    ..ok _ {} ..error _ {
+                        _fs_temp_cleanup(.handle = handle)
+                        result = ..error(.reason = ..invalid_utf8)
+                        return
+                    }
                 }
                 result = ..ok(._filesystem = self, ._handle = handle, ._path = ~name)
             }

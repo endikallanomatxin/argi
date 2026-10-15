@@ -1775,7 +1775,7 @@ pub const CodeGenerator = struct {
         const trace = types.findField(self.graph, error_ty, "tracer") orelse return CodegenError.InvalidType;
         const trace_value = c.LLVMBuildExtractValue(self.builder, error_value, trace.index, "error.tracer");
         const context_value = if (context_node) |node| try self.visitNode(node) else null;
-        const is_view = if (context_value) |value| if (value.ty) |ty| types.findField(self.graph, ty, "length") != null else false else false;
+        const is_view = if (context_value) |value| if (value.ty) |ty| self.isStringView(ty) else false else false;
         const helper = try self.runtimeFunction(if (is_view) "_add_error_context" else "_add_error_context_text");
         const function_id = try self.coreFunctionId(if (is_view) "_add_error_context" else "_add_error_context_text");
         const function = self.graph.function(function_id);
@@ -2624,7 +2624,7 @@ pub const CodeGenerator = struct {
         if (range.len != 2) return false;
         const data = self.graph.fields.items[range.start];
         const length = self.graph.fields.items[range.start + 1];
-        if (!std.mem.eql(u8, self.graph.text(data.name), "data") or !std.mem.eql(u8, self.graph.text(length.name), "length")) return false;
+        if (!std.mem.eql(u8, self.graph.text(data.name), "_data") or !std.mem.eql(u8, self.graph.text(length.name), "_length")) return false;
         const pointer = switch (self.graph.types.items[@intFromEnum(data.ty)]) {
             .pointer => |value| value,
             else => return false,

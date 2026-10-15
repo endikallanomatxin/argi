@@ -15,7 +15,7 @@ _digit(.byte: UInt8) -> (.ok: Bool) := { ok = byte >= 48 and byte <= 57 }
 _numeric_end(.text: &StringView, .start: UIntNative) -> (.end: UIntNative, .ok: Bool) := {
     end = start
 
-    while end < text&.length {
+    while end < byte_length(&text&).count {
         if _digit(.byte = bytes_get(.view = text, .index = end).byte).ok {} else { break }
         end = end + 1
     }
@@ -30,20 +30,22 @@ _numeric_end(.text: &StringView, .start: UIntNative) -> (.end: UIntNative, .ok: 
 _identifiers_valid(.text: StringView, .allow_numeric_zeroes: Bool) -> (.ok: Bool) := {
     ok = false
 
-    if text.length == 0 { return }
+    if byte_length(&text).count == 0 { return }
     start :: UIntNative = 0
     i :: UIntNative = 0
     numeric ::= true
 
-    while i <= text.length {
-        boundary :: Bool = i == text.length
-        if i < text.length { boundary = bytes_get(.view = &text, .index = i).byte == 46 }
+    while i <= byte_length(&text).count {
+        boundary :: Bool = i == byte_length(&text).count
+        if i < byte_length(&text).count {
+            boundary = [bytes_get(.view = &text, .index = i).byte == 46]
+        }
         if boundary {
             if i == start { return }
             if numeric and allow_numeric_zeroes == false and i - start > 1 {
                 if bytes_get(.view = &text, .index = start).byte == 48 { return }
             }
-            if i == text.length { break }
+            if i == byte_length(&text).count { break }
             start = i + 1
             numeric = true
         } else {
@@ -66,7 +68,7 @@ _identifiers_valid(.text: StringView, .allow_numeric_zeroes: Bool) -> (.ok: Bool
 parse(.text: StringView) -> (.result: Errable#(VersionView, (..invalid_input))) := {
     first ::= _numeric_end(.text = &text, .start = 0)
 
-    if first.ok == false or first.end == text.length {
+    if first.ok == false or first.end == byte_length(&text).count {
         result = ..error(.reason = ..invalid_input)
         return
     }
@@ -78,7 +80,7 @@ parse(.text: StringView) -> (.result: Errable#(VersionView, (..invalid_input))) 
 
     second ::= _numeric_end(.text = &text, .start = first.end + 1)
 
-    if second.ok == false or second.end == text.length {
+    if second.ok == false or second.end == byte_length(&text).count {
         result = ..error(.reason = ..invalid_input)
         return
     }
@@ -97,10 +99,10 @@ parse(.text: StringView) -> (.result: Errable#(VersionView, (..invalid_input))) 
 
     pre_end :: UIntNative = third.end
 
-    if third.end < text.length {
+    if third.end < byte_length(&text).count {
         if bytes_get(.view = &text, .index = third.end).byte == 45 {
             pre_end = third.end + 1
-            while pre_end < text.length {
+            while pre_end < byte_length(&text).count {
                 if bytes_get(.view = &text, .index = pre_end).byte == 43 { break }
                 pre_end = pre_end + 1
             }
@@ -115,13 +117,15 @@ parse(.text: StringView) -> (.result: Errable#(VersionView, (..invalid_input))) 
         }
     }
 
-    if pre_end < text.length {
+    if pre_end < byte_length(&text).count {
         if bytes_get(.view = &text, .index = pre_end).byte != 43 {
             result = ..error(.reason = ..invalid_input)
             return
         }
         build ::= string_view_slice(
-            .view = &text, .start = pre_end + 1, .length = text.length - pre_end - 1
+            .view   = &text
+            .start  = pre_end + 1
+            .length = [byte_length(&text).count - pre_end - 1]
         )
         if _identifiers_valid(.text = build, .allow_numeric_zeroes = true).ok {
         } else {
@@ -186,7 +190,7 @@ pre_release(.self: &VersionView) -> (.text: StringView) := {
 }
 
 build_metadata(.self: &VersionView) -> (.text: StringView) := {
-    if self&._pre_end == self&._text.length {
+    if self&._pre_end == byte_length(&self&._text).count {
         text = string_view_slice(.view = &self&._text, .start = 0, .length = 0)
         return
     }
@@ -194,14 +198,14 @@ build_metadata(.self: &VersionView) -> (.text: StringView) := {
     text = string_view_slice(
         .view   = &self&._text
         .start  = self&._pre_end + 1
-        .length = self&._text.length - self&._pre_end - 1
+        .length = byte_length(&self&._text).count - self&._pre_end - 1
     )
 }
 
 _lexical_compare(.left: StringView, .right: StringView) -> (.order: Int32) := {
     i :: UIntNative = 0
 
-    while i < left.length and i < right.length {
+    while i < byte_length(&left).count and i < byte_length(&right).count {
         a ::= bytes_get(.view = &left, .index = i).byte
         b ::= bytes_get(.view = &right, .index = i).byte
         if a < b {
@@ -217,19 +221,19 @@ _lexical_compare(.left: StringView, .right: StringView) -> (.order: Int32) := {
 
     order = 0
 
-    if left.length < right.length { order = -1 }
-    if left.length > right.length { order = 1 }
+    if byte_length(&left).count < byte_length(&right).count { order = -1 }
+    if byte_length(&left).count > byte_length(&right).count { order = 1 }
 }
 
 -- Validated numeric text has no leading zeroes. Length comparison therefore
 -- establishes magnitude before a same-length lexical comparison.
 _numeric_compare(.left: StringView, .right: StringView) -> (.order: Int32) := {
-    if left.length < right.length {
+    if byte_length(&left).count < byte_length(&right).count {
         order = -1
         return
     }
 
-    if left.length > right.length {
+    if byte_length(&left).count > byte_length(&right).count {
         order = 1
         return
     }
@@ -241,7 +245,7 @@ _identifier_end(.text: &StringView, .start: UIntNative) -> (.end: UIntNative, .n
     end = start
     numeric = true
 
-    while end < text&.length {
+    while end < byte_length(&text&).count {
         byte ::= bytes_get(.view = text, .index = end).byte
         if byte == 46 { break }
         if _digit(.byte = byte).ok {} else { numeric = false }
@@ -252,12 +256,12 @@ _identifier_end(.text: &StringView, .start: UIntNative) -> (.end: UIntNative, .n
 _pre_compare(.left: StringView, .right: StringView) -> (.order: Int32) := {
     order = 0
 
-    if left.length == 0 {
-        if right.length > 0 { order = 1 }
+    if byte_length(&left).count == 0 {
+        if byte_length(&right).count > 0 { order = 1 }
         return
     }
 
-    if right.length == 0 {
+    if byte_length(&right).count == 0 {
         order = -1
         return
     }
@@ -265,7 +269,7 @@ _pre_compare(.left: StringView, .right: StringView) -> (.order: Int32) := {
     a :: UIntNative = 0
     b :: UIntNative = 0
 
-    while a < left.length and b < right.length {
+    while a < byte_length(&left).count and b < byte_length(&right).count {
         ae ::= _identifier_end(.text = &left, .start = a)
         be ::= _identifier_end(.text = &right, .start = b)
         if ae.numeric and be.numeric == false {
@@ -284,9 +288,9 @@ _pre_compare(.left: StringView, .right: StringView) -> (.order: Int32) := {
             order = _lexical_compare(.left = av, .right = bv).order
         }
         if order != 0 { return }
-        if ae.end == left.length or be.end == right.length {
-            if ae.end < left.length { order = 1 }
-            if be.end < right.length { order = -1 }
+        if ae.end == byte_length(&left).count or be.end == byte_length(&right).count {
+            if ae.end < byte_length(&left).count { order = 1 }
+            if be.end < byte_length(&right).count { order = -1 }
             return
         }
         a = ae.end + 1

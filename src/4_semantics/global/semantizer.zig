@@ -1942,6 +1942,8 @@ fn diagnosePrivateFields(
             if (field.field.source.file_index >= graph.files.items.len) continue;
             const owner_module = graph.files.items[field.field.source.file_index].module;
             if (@intFromEnum(owner_module) == module_index) continue;
+            if (graph.modules.items[module_index].is_bundled_core and
+                graph.modules.items[@intFromEnum(owner_module)].is_bundled_core) continue;
             try diagnostics.add(
                 diagnosticLocation(graph, diagnostics, globalSource(offsets[module_index], access.source)),
                 .semantic,
@@ -1951,31 +1953,46 @@ fn diagnosePrivateFields(
             return true;
         }
     }
-    // A contextual struct literal can initialize a field without producing a
-    // field-access operation. Check its resolved type after construction has
-    // filled the literal, including when it was passed through an assignment.
+    // Check contextual construction against destination fields, including
+    // lists whose shape cannot be materialized as the requested record.
+    for (graph.bindings.items) |binding| {
+        const initialization = binding.initialization orelse continue;
+        const node = graph.node(initialization);
+        if (node.content != .list_literal and node.content != .struct_value_literal) continue;
+        if (try diagnosePrivateConstruction(graph, binding.ty, node.source, diagnostics)) return true;
+    }
     for (graph.nodes.items) |node| {
-        const literal = switch (node.content) {
-            .struct_value_literal => |value| value,
-            else => continue,
-        };
-        const ty = node.ty orelse continue;
-        if (node.source.file_index >= graph.files.items.len) continue;
-        const caller_module = graph.files.items[node.source.file_index].module;
-        for (graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |value_field| {
-            const name = graph.text(value_field.name);
-            if (!std.mem.startsWith(u8, name, "_")) continue;
-            const field = global_types.findField(graph, ty, name) orelse continue;
-            if (field.field.source.file_index >= graph.files.items.len) continue;
-            if (graph.files.items[field.field.source.file_index].module == caller_module) continue;
-            try diagnostics.add(
-                diagnosticLocation(graph, diagnostics, node.source),
-                .semantic,
-                "field '{s}' is private to its module",
-                .{name},
-            );
-            return true;
-        }
+        if (node.content != .struct_value_literal) continue;
+        if (try diagnosePrivateConstruction(graph, node.ty orelse continue, node.source, diagnostics)) return true;
+    }
+    return false;
+}
+
+fn diagnosePrivateConstruction(
+    graph: *const global_sg.GlobalSemanticGraph,
+    ty: global_sg.GlobalTypeId,
+    source: primitives.SourceRef,
+    diagnostics: *diagnostics_mod.Diagnostics,
+) !bool {
+    if (@intFromEnum(ty) >= graph.types.items.len) return false;
+    const fields = global_types.fields(graph, ty) orelse return false;
+    if (source.file_index >= graph.files.items.len) return false;
+    const caller_module = graph.files.items[source.file_index].module;
+    for (graph.fields.items[fields.start..][0..fields.len]) |field| {
+        const name = graph.text(field.name);
+        if (!std.mem.startsWith(u8, name, "_")) continue;
+        if (field.source.file_index >= graph.files.items.len) continue;
+        const owner_module = graph.files.items[field.source.file_index].module;
+        if (owner_module == caller_module) continue;
+        if (graph.modules.items[@intFromEnum(caller_module)].is_bundled_core and
+            graph.modules.items[@intFromEnum(owner_module)].is_bundled_core) continue;
+        try diagnostics.add(
+            diagnosticLocation(graph, diagnostics, source),
+            .semantic,
+            "field '{s}' is private to its module",
+            .{name},
+        );
+        return true;
     }
     return false;
 }

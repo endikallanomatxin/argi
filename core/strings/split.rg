@@ -12,7 +12,7 @@ StringSplitIterator: Type = (
 split(.self: StringView, .separator: StringView) -> (
     .result : Errable#(StringSplitIterator, (..empty_separator))
 ) := {
-    if separator.length == 0 {
+    if separator._length == 0 {
         result = ..error(.reason = ..empty_separator)
         return
     }
@@ -45,7 +45,7 @@ implement Iterator#(StringSplitIterator) (
         if self&._done { abort }
         start ::= self&._start
         remaining ::= _string_view_subrange(
-            self&._text, .start = start, .count = [self&._text.length - start]
+            self&._text, .start = start, .count = [self&._text._length - start]
         ).view
 
         match find(remaining, .pattern = self&._separator).index {
@@ -59,7 +59,7 @@ implement Iterator#(StringSplitIterator) (
                 ).view
                 -- The matched separator lies inside the remaining extent, so
                 -- both additions stay within the original text length.
-                self&._start = start + payload.value + self&._separator.length
+                self&._start = start + payload.value + self&._separator._length
             }
         }
     }

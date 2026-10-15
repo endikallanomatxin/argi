@@ -23,9 +23,9 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         return
     }
 
-    path ::= argument_view_at(system.args, 1)
+    path ::= unwrap_or_abort(.value = argument_view_at(system.args, 1))
     column ::= "duration_ms"
-    if argc == 3 { column = argument_view_at(system.args, 2) }
+    if argc == 3 { column = unwrap_or_abort(.value = argument_view_at(system.args, 2)) }
 
     file_reader ::= File(.file_system = system.file_system, .path = path, .mode = ..read) handle error, value {
         add_context(.context = path, .error_tracer = error.tracer)
@@ -59,7 +59,8 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     builtins ::= p.import_module(&interpreter, "builtins")!!! { status_code = 1 }
     statistics ::= p.import_module(&interpreter, "statistics")!!! { status_code = 1 }
 
-    source ::= p.string(&interpreter, as_view(&text))!!! { status_code = 1 }
+    decoded ::= string_from_bytes(.bytes = view(&text))!!! { status_code = 1 }
+    source ::= p.string(&interpreter, as_view(&decoded))!!! { status_code = 1 }
     stream ::= p.call_method(&io, "StringIO", .arguments = view(&(&source)))!!! {
         status_code = 1
     }

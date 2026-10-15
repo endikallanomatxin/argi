@@ -29,13 +29,15 @@ implement ImplicitlyCopyable#(_Utf8Decode) ()
 
 -- Keep the proven decoder infallible so validated iteration has no error-tracer
 -- dependency. Public operations translate these outcomes into their Errable contract.
-_utf8_decode(.text: StringView, .offset: UIntNative) -> (.result: _Utf8Decode) := {
-    if offset >= text.length {
+_utf8_decode_bytes(.bytes: ArrayViewRO#(UInt8), .offset: UIntNative) -> (.result: _Utf8Decode) := {
+    if offset >= length(&bytes).count {
         result = ..outside
         return
     }
 
-    first ::= bytes_get(.view = &text, .index = offset).byte
+    first ::= trusted_reference_offset#(UInt8)(
+        .base = data(&bytes).pointer, .elements = offset
+    ).reference&
     code :: UInt32 = 0
     width :: UIntNative = 0
     minimum :: UInt32 = 0
@@ -68,7 +70,7 @@ _utf8_decode(.text: StringView, .offset: UIntNative) -> (.result: _Utf8Decode) :
         return
     }
 
-    if width > text.length - offset {
+    if width > length(&bytes).count - offset {
         result = ..invalid
         return
     }
@@ -76,7 +78,9 @@ _utf8_decode(.text: StringView, .offset: UIntNative) -> (.result: _Utf8Decode) :
     index :: UIntNative = 1
 
     while index < width {
-        byte ::= bytes_get(.view = &text, .index = offset + index).byte
+        byte ::= trusted_reference_offset#(UInt8)(
+            .base = data(&bytes).pointer, .elements = [offset + index]
+        ).reference&
         if byte < 128 or byte > 191 {
             result = ..invalid
             return
@@ -93,6 +97,31 @@ _utf8_decode(.text: StringView, .offset: UIntNative) -> (.result: _Utf8Decode) :
     result = ..valid(.decoded = (.scalar = (._value = code), .width = width))
 }
 
+_utf8_decode(.text: StringView, .offset: UIntNative) -> (.result: _Utf8Decode) := {
+    result = _utf8_decode_bytes(.bytes = string_bytes(.text = text), .offset = offset)
+}
+
+-- Validation of arbitrary bytes does not publish a borrowed text view.
+validate_utf8_bytes(.bytes: ArrayViewRO#(UInt8)) -> (
+    .result : Errable#(UIntNative, (..invalid_utf8))
+) := {
+    offset :: UIntNative = 0
+    count :: UIntNative = 0
+    size ::= length(&bytes).count
+    while offset < size {
+        match _utf8_decode_bytes(.bytes = bytes, .offset = offset).result {
+            ..valid payload { offset = offset + payload.decoded.width }
+            ..invalid {
+                result = ..error(.reason = ..invalid_utf8)
+                return
+            }
+            ..outside { abort }
+        }
+        count = count + 1
+    }
+    result = ..ok count
+}
+
 utf8_decode(.text: StringView, .offset: UIntNative = 0) -> (
     .result : Errable#(Utf8Decoded, (..invalid_utf8, ..out_of_bounds))
 ) := {
@@ -107,7 +136,7 @@ validate_utf8(.text: StringView) -> (.result: Errable#(UIntNative, (..invalid_ut
     offset :: UIntNative = 0
     count :: UIntNative = 0
 
-    while offset < text.length {
+    while offset < text._length {
         match _utf8_decode(.text = text, .offset = offset).result {
             ..valid payload { offset = offset + payload.decoded.width }
             ..invalid {
@@ -189,26 +218,26 @@ utf8_encode(.scalar: UnicodeScalar, .buffer: ArrayView#(.t: UInt8), .offset: UIn
     result = ..ok width
 }
 
-Utf8Decoder: Type = (._text: StringView, ._offset: UIntNative)
+Utf8Decoder: Type = (._bytes: ArrayViewRO#(UInt8), ._offset: UIntNative)
 
 implement Init#(Utf8Decoder, (.text: StringView)) (
     .Result : Type = Utf8Decoder
     .init   = (.args: (.text: StringView)) -> (.result: Result) {
         text ::= args.text
 
-        result = (._text = text, ._offset = 0)
+        result = (._bytes = string_bytes(.text = text), ._offset = 0)
     }
 )
 
 position(.self: &Utf8Decoder) -> (.count: UIntNative) := { count = self&._offset }
 
 next_codepoint(.self: $&Utf8Decoder) -> (.result: Errable#(?UnicodeScalar, (..invalid_utf8))) := {
-    if self&._offset == self&._text.length {
+    if self&._offset == length(&self&._bytes).count {
         result = ..ok ..none
         return
     }
 
-    match _utf8_decode(.text = self&._text, .offset = self&._offset).result {
+    match _utf8_decode_bytes(.bytes = self&._bytes, .offset = self&._offset).result {
         ..valid payload {
             self&._offset = self&._offset + payload.decoded.width
             result = ..ok ..some(.value = payload.decoded.scalar)
@@ -217,6 +246,13 @@ next_codepoint(.self: $&Utf8Decoder) -> (.result: Errable#(?UnicodeScalar, (..in
         ..outside { abort }
     }
 }
+
+implement Init#(Utf8Decoder, (.bytes: ArrayViewRO#(UInt8))) (
+    .Result : Type = Utf8Decoder
+    .init   = (.args: (.bytes: ArrayViewRO#(UInt8))) -> (.result: Result) {
+        result = (._bytes = args.bytes, ._offset = 0)
+    }
+)
 
 -- Validation borrows bytes rather than freezing or owning them. Callers must
 -- keep their contents unchanged while using the validated view and its iterator.
@@ -258,7 +294,7 @@ implement Iterator#(Utf8Iterator) (
     .Item : Type = UnicodeScalar
 
     .has_next = (.self: &Utf8Iterator) -> (.ok: Bool) {
-        ok = self&._offset < self&._text.length
+        ok = self&._offset < self&._text._length
     }
 
     .next = (.self: $&Utf8Iterator) -> (.value: UnicodeScalar) {
@@ -272,3 +308,13 @@ implement Iterator#(Utf8Iterator) (
         }
     }
 )
+
+utf8_decode_bytes(.bytes: ArrayViewRO#(UInt8), .offset: UIntNative = 0) -> (
+    .result : Errable#(Utf8Decoded, (..invalid_utf8, ..out_of_bounds))
+) := {
+    match _utf8_decode_bytes(.bytes = bytes, .offset = offset).result {
+        ..valid payload { result = ..ok payload.decoded }
+        ..invalid { result = ..error(.reason = ..invalid_utf8) }
+        ..outside { result = ..error(.reason = ..out_of_bounds) }
+    }
+}

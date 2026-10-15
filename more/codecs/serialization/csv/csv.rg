@@ -1,4 +1,4 @@
-CsvReasons: Type = (..invalid_csv, ..out_of_memory, ..size_limit_exceeded)
+CsvReasons: Type = (..invalid_csv, ..invalid_utf8, ..out_of_memory, ..size_limit_exceeded)
 
 CsvRecord: Type = (.fields: DynamicArray#(.t: String))
 
@@ -60,7 +60,7 @@ next#(.AllocatorType: Type: Allocator#(AllocatorType))(
 ) -> (.result: Errable#(?CsvRecord, CsvReasons)) := {
     assume allocator
 
-    if self&._ended or self&._position == self&._text.length {
+    if self&._ended or self&._position == byte_length(&self&._text).count {
         result = ..ok ..none
         return
     }
@@ -75,27 +75,27 @@ next#(.AllocatorType: Type: Allocator#(AllocatorType))(
             result = ..error(.reason = ..size_limit_exceeded)
             return
         }
-        field ::= string_with_capacity(.capacity = 16)!
+        field ::= DynamicArray#(UInt8)(.capacity = 16)!
         quoted ::= false
-        if position < self&._text.length {
+        if position < byte_length(&self&._text).count {
             if bytes_get(.view = &self&._text, .index = position).byte == 34 {
                 quoted = true
                 position = [position + 1]
             }
         }
         closed ::= false
-        while position < self&._text.length {
+        while position < byte_length(&self&._text).count {
             byte ::= bytes_get(.view = &self&._text, .index = position).byte
             if quoted {
                 if byte == 34 {
                     position = position + 1
-                    if position < self&._text.length {
+                    if position < byte_length(&self&._text).count {
                         if bytes_get(.view = &self&._text, .index = position).byte == 34 {
-                            if field.length >= self&.maximum_field_bytes {
+                            if length(&field).count >= self&.maximum_field_bytes {
                                 result = ..error(.reason = ..size_limit_exceeded)
                                 return
                             }
-                            push_byte(.self = $&field, .byte = 34)!
+                            push(.self = $&field, .value = 34)!
                             position = position + 1
                             continue
                         }
@@ -110,24 +110,25 @@ next#(.AllocatorType: Type: Allocator#(AllocatorType))(
                     return
                 }
             }
-            if field.length >= self&.maximum_field_bytes {
+            if length(&field).count >= self&.maximum_field_bytes {
                 result = ..error(.reason = ..size_limit_exceeded)
                 return
             }
-            push_byte(.self = $&field, .byte = byte)!
+            push(.self = $&field, .value = byte)!
             position = position + 1
         }
         if quoted and closed == false {
             result = ..error(.reason = ..invalid_csv)
             return
         }
-        push(.self = $&record.fields, .value = ~field)!
-        if position == self&._text.length { break }
+        text ::= string_from_bytes(.bytes = view(&field))!
+        push(.self = $&record.fields, .value = ~text)!
+        if position == byte_length(&self&._text).count { break }
         separator ::= bytes_get(.view = &self&._text, .index = position).byte
         position = position + 1
         if separator == 44 { continue }
         if separator == 10 { break }
-        if separator == 13 and position < self&._text.length {
+        if separator == 13 and position < byte_length(&self&._text).count {
             if bytes_get(.view = &self&._text, .index = position).byte == 10 {
                 position = [position + 1]
                 break
@@ -154,7 +155,7 @@ write_record#(.WriterType: Type: Writer#(WriterType))(
         text ::= unwrap_or_abort(.value = get(.self = &fields, .index = index))
         Writer#().write_byte(.self = writer, .byte = 34)!
         cursor :: UIntNative = 0
-        while cursor < text.length {
+        while cursor < byte_length(&text).count {
             byte ::= bytes_get(.view = &text, .index = cursor).byte
             Writer#().write_byte(.self = writer, .byte = byte)!
             if byte == 34 { Writer#().write_byte(.self = writer, .byte = byte)! }
