@@ -13,7 +13,7 @@ FaultReader: Type = (
 )
 
 implement BlockReader#(FaultReader) (
-    .read_block = (.self: $&FaultReader, .buffer: ArrayView#(.t: UInt8)) -> (
+    .read_block = (.self: $&FaultReader, .buffer: MutableArrayView#(.t: UInt8)) -> (
         .result : Errable#(.t: UIntNative, .reasons: (..stream_read_failed))
     ) {
         self&.calls = self&.calls + 1

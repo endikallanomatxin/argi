@@ -3,15 +3,18 @@
 -- Failed writes discard pending bytes because partial progress is unknown.
 BufferedWriter#(.base_type: Type: Writer#(base_type)): Type = (
     .base   : $&base_type
-    .buffer : ArrayView#(.t: UInt8)
+    .buffer : MutableArrayView#(.t: UInt8)
     .length : UIntNative
 )
 
 implement#(.base_type: Type: Writer#(base_type)) Init#(
-    BufferedWriter#(.base_type: base_type), (.base: $&base_type, .buffer: ArrayView#(.t: UInt8))
+    BufferedWriter#(.base_type: base_type),
+    (.base: $&base_type, .buffer: MutableArrayView#(.t: UInt8))
 ) (
     .Result : Type = BufferedWriter#(.base_type: base_type)
-    .init   = (.args: (.base: $&base_type, .buffer: ArrayView#(.t: UInt8))) -> (.result: Result) {
+    .init   = (.args: (.base: $&base_type, .buffer: MutableArrayView#(.t: UInt8))) -> (
+        .result : Result
+    ) {
         base ::= args.base
         buffer ::= args.buffer
 

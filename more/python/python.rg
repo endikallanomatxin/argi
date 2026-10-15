@@ -175,7 +175,7 @@ string(.self: &Python, .value: StringView) -> (.result: Errable#(Object, (..pyth
     )
 }
 
-bytes(.self: &Python, .value: ArrayViewRO#(UInt8)) -> (
+bytes(.self: &Python, .value: ArrayView#(UInt8)) -> (
     .result : Errable#(Object, (..python_error))
 ) := {
     assume ffi := self&._ffi
@@ -283,15 +283,15 @@ to_float64(.self: &Object) -> (.result: Errable#(Float64, (..python_error))) := 
     result = ..ok value
 }
 
-_no_arguments() -> (.value: ArrayViewRO#(.t: &Object)) := {
-    value = empty_array_view_ro#(.t: &Object)()
+_no_arguments() -> (.value: ArrayView#(.t: &Object)) := {
+    value = empty_array_view#(.t: &Object)()
 }
 
 _no_keywords() -> (.value: ?&Object) := { value = ..none }
 
 _call_from_view(
     .self      : &Object,
-    .arguments : ArrayViewRO#(.t: &Object) = _no_arguments(),
+    .arguments : ArrayView#(.t: &Object) = _no_arguments(),
     .keywords  : ?&Object = _no_keywords()
 ) -> (.result: Errable#(Object, (..python_error))) := {
     assume ffi := self&._python&._ffi
@@ -340,7 +340,7 @@ _call_from_view(
     result = _owned(.self = self&._python, .handle = handle)
 }
 
-implement _PythonCall#(ArrayViewRO#(.t: &Object)) (.invoke = _call_from_view)
+implement _PythonCall#(ArrayView#(.t: &Object)) (.invoke = _call_from_view)
 
 _bool(.context: UIntNative, .object: RawPointer#(.t: _PyObject)) -> (.status: Int32): CFunction(
     .symbol = "_argi_python_bool"

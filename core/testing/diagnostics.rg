@@ -111,10 +111,10 @@ _testing_lengths(.self: $&_TestDiagnostic, .expected: UIntNative, .actual: UIntN
 }
 
 _testing_compare_byte_ranges(
-    .expected : ArrayViewRO#(UInt8),
-    .actual   : ArrayViewRO#(UInt8),
+    .expected : ArrayView#(UInt8),
+    .actual   : ArrayView#(UInt8),
     .kind     : StringView,
-    .message  : StringView = ""
+    .message  : StringView         = ""
 ) -> (.result: Errable#(Void, (..test_failed))) := {
     common ::= length(&expected).count
 
@@ -183,7 +183,7 @@ _assert_owned_strings(.expected: &String, .actual: &String, .message: StringView
 }
 
 expect_equal_views#(.t: Type)(
-    .expected: ArrayViewRO#(.t: t), .actual: ArrayViewRO#(.t: t), .message: StringView = ""
+    .expected: ArrayView#(.t: t), .actual: ArrayView#(.t: t), .message: StringView = ""
 ) -> (.result: Errable#(Void, (..test_failed))) := {
     expected_length ::= length(&expected).count
     actual_length ::= length(&actual).count
@@ -217,9 +217,7 @@ expect_equal_views#(.t: Type)(
 }
 
 expect_equal_bytes(
-    .expected : ArrayViewRO#(.t: UInt8),
-    .actual   : ArrayViewRO#(.t: UInt8),
-    .message  : StringView = ""
+    .expected: ArrayView#(.t: UInt8), .actual: ArrayView#(.t: UInt8), .message: StringView = ""
 ) -> (.result: Errable#(Void, (..test_failed))) := {
     result = _testing_compare_byte_ranges(
         .expected = expected, .actual = actual, .message = message, .kind = "bytes"

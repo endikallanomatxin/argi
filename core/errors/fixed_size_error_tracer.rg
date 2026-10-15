@@ -6,7 +6,7 @@ implement ImplicitlyCopyable#(ErrorTraceEntry) ()
 -- retains early frames; the second half replaces recent frames in a ring.
 -- All errors referring to this tracer share the same diagnostic log.
 FixedSizeErrorTracer: Type = (
-    ._buffer   : ArrayView#(.t: UInt8)
+    ._buffer   : MutableArrayView#(.t: UInt8)
     ._capacity : UIntNative
     ._length   : UIntNative
     ._next     : UIntNative
@@ -19,10 +19,10 @@ _error_trace_stride() -> (.size: UIntNative) := {
 
 -- The buffer is initialized caller-owned storage, not an allocation owned by
 -- the tracer. Trailing bytes that do not fit a complete slot are unused.
-implement Init#(FixedSizeErrorTracer, (.buffer: ArrayView#(.t: UInt8))) (
+implement Init#(FixedSizeErrorTracer, (.buffer: MutableArrayView#(.t: UInt8))) (
     .Result : Type = FixedSizeErrorTracer
 
-    .init = (.args: (.buffer: ArrayView#(.t: UInt8))) -> (.result: Result) {
+    .init = (.args: (.buffer: MutableArrayView#(.t: UInt8))) -> (.result: Result) {
         buffer ::= args.buffer
         capacity ::= length(&buffer).count / _error_trace_stride().size
 
@@ -43,7 +43,7 @@ implement Deinit#(FixedSizeErrorTracer) (
 )
 
 _error_trace_header(.self: $&FixedSizeErrorTracer, .index: UIntNative) -> (
-    .header : ArrayView#(.t: UInt8)
+    .header : MutableArrayView#(.t: UInt8)
 ) := {
     assume error_tracer ::= $&noop_error_tracer
 
@@ -66,7 +66,7 @@ _error_trace_store_entry(
     first ::= trusted_reinterpret_reference#(.from: ErrorTraceEntry, .to: UInt8)(
         .base = &entry
     ).reference
-    bytes ::= _trusted_array_view_ro(.data = first, .length = size_of(.type = ErrorTraceEntry))
+    bytes ::= _trusted_array_view(.data = first, .length = size_of(.type = ErrorTraceEntry))
     memcpy_bytes(.dst = _error_trace_header(self, .index = index), .src = bytes)
 }
 
@@ -77,7 +77,9 @@ _error_trace_load_entry(.self: $&FixedSizeErrorTracer, .index: UIntNative) -> (
     first ::= trusted_mutable_reinterpret_reference#(.from: ErrorTraceEntry, .to: UInt8)(
         .base = $&entry
     ).reference
-    bytes ::= _trusted_array_view(.data = first, .length = size_of(.type = ErrorTraceEntry))
+    bytes ::= _trusted_mutable_array_view(
+        .data = first, .length = size_of(.type = ErrorTraceEntry)
+    )
     memcpy_bytes(.dst = bytes, .src = _error_trace_header(self, .index = index))
     -- The caller still has access to the backing bytes. Never let corrupted
     -- metadata turn one bounded slot into a read across adjacent slots.

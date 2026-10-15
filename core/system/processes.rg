@@ -101,15 +101,15 @@ _process_mode(.value: ProcessStreamMode) -> (.mode: Int32) := {
     mode = 0
 }
 
-_process_no_arguments() -> (.value: ArrayViewRO#(.t: StringView)) := {
-    value = empty_array_view_ro#(.t: StringView)()
+_process_no_arguments() -> (.value: ArrayView#(.t: StringView)) := {
+    value = empty_array_view#(.t: StringView)()
 }
 
 _process_inherit() -> (.value: ProcessStreamMode) := { value = ..inherit }
 
 spawn(
     .executable : StringView,
-    .arguments  : ArrayViewRO#(.t: StringView) = _process_no_arguments(),
+    .arguments  : ArrayView#(.t: StringView) = _process_no_arguments(),
     .stdin      : ProcessStreamMode = _process_inherit(),
     .stdout     : ProcessStreamMode = _process_inherit(),
     .stderr     : ProcessStreamMode = _process_inherit(),

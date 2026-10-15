@@ -43,14 +43,19 @@ arr[i] = x  -- assignment through the indexed place
 ## Array views
 
 Views are library abstractions. The language has no native slice type.
-`ArrayViewRO` and `ArrayView` provide non-owning views of proven
-contiguous storage. A safe constructor derives the extent from its source;
-pointer-and-length construction belongs to trusted code.
+`ArrayView#(T)` grants read access to proven contiguous storage;
+`MutableArrayView#(T)` also grants write access. Neither owns the elements,
+freezes their contents, or implies exclusive access. Another permitted access
+may change the values observed through an `ArrayView`.
 
-The pointer and length fields are private. `single_array_view#(.t: T)(.data = $&element)`
-creates a one-element view; `view(.array = $&array)`
-derives the length from a fixed `[N]T`. The read-only constructors use
-`single_array_view_ro` and `view(.array = &array)` in the same way. Zero-length fixed
+A safe constructor derives the extent from its source; pointer-and-length
+construction belongs to trusted code. The reference and length fields are private.
+`view(.array = &array)` derives an `ArrayView` from a fixed `[N]T`, while
+`view(.array = $&array)` derives a `MutableArrayView`.
+`single_array_view(.data = &element)` and
+`single_mutable_array_view(.data = $&element)` create one-element views.
+`as_readonly(&mutable_view)` returns an `ArrayView` over the same storage,
+reducing the permissions of the returned handle. Zero-length fixed
 arrays produce empty views without establishing an element reference. An
 empty view has length zero, rejects every index, and has no element reference;
 `data` requires a nonempty view and aborts otherwise. Zero-length bulk-copy
@@ -215,8 +220,8 @@ implicitly copyable elements. Borrowed reads support owning elements without
 copying them.
 
 `DynamicArray<T>` supplies read-only and mutable indexed borrowing and
-resizing. `ArrayView<T>` supplies read-only and mutable indexed borrowing;
-`ArrayViewRO<T>` supplies read-only borrowing. All three supply value reads
+resizing. `MutableArrayView<T>` supplies read-only and mutable indexed borrowing;
+`ArrayView<T>` supplies read-only borrowing. All three supply value reads
 when `T` is implicitly copyable. Views are non-owning and do not resize.
 
 ## Equality search
@@ -342,14 +347,13 @@ invalidate them. Returned references retain the same shape dependency. Calling
 
 The unique ordinary `view(.array)` function selects `ViewOf#(Source)` evidence.
 Source is the complete reference type, including mutability. For `$&[N]T`,
-Result is ArrayView(T); for `&[N]T`, Result is ArrayViewRO(T). Result does not
+Result is MutableArrayView(T); for `&[N]T`, Result is ArrayView(T). Result does not
 participate in selection. Generic callers can require ViewOf(Source) and retain
 the associated result projection until specialization.
 
 Both conformances reuse the checked fixed-array view algorithms, preserve backing
 storage dependencies and return independent empty views for zero-size arrays.
-A returned nonempty view cannot outlive its backing array. This replaces the two
-ordinary view overloads. DynamicArray uses the same evidence model, preserving
-its shape dependencies. The former array_view and array_view_ro families are
-removed; empty_array_view_ro and single_array_view/single_array_view_ro are
+A returned nonempty view cannot outlive its backing array. DynamicArray uses the
+same evidence model, preserving its shape dependencies.
+`empty_array_view`, `single_array_view`, and `single_mutable_array_view` are
 uniquely named factories.

@@ -28,7 +28,7 @@ copy_stream_limited#(
 )(
     .reader : $&ReaderType,
     .writer : $&WriterType,
-    .buffer : ArrayView#(.t: UInt8),
+    .buffer : MutableArrayView#(.t: UInt8),
     .limit  : UIntNative
 ) -> (
     .result : Errable#(
@@ -79,7 +79,7 @@ read_all_limited#(
     .SelfType: Type: BlockReader#(SelfType), .AllocatorType: Type: Allocator#(AllocatorType)
 )(
     .self      : $&SelfType,
-    .buffer    : ArrayView#(.t: UInt8),
+    .buffer    : MutableArrayView#(.t: UInt8),
     .limit     : UIntNative,
     .allocator : $&AllocatorType
 ) -> (

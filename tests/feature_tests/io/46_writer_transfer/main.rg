@@ -1,5 +1,5 @@
 Source: Type = (
-    .bytes : ArrayViewRO#(.t: UInt8)
+    .bytes : ArrayView#(.t: UInt8)
     .position        : UIntNative = 0
     .largest_request : UIntNative = 0
     .fail : Bool = false
@@ -7,7 +7,7 @@ Source: Type = (
 )
 
 implement BlockReader#(Source) (
-    .read_block = (.self: $&Source, .buffer: ArrayView#(.t: UInt8)) -> (
+    .read_block = (.self: $&Source, .buffer: MutableArrayView#(.t: UInt8)) -> (
         .result : Errable#(UIntNative, (..stream_read_failed))
     ) {
         size ::= length(&buffer).count

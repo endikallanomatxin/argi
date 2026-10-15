@@ -64,13 +64,13 @@ copy_c_string#(.Provider: Type: Allocator#(Provider)) := (
     }
 }
 
-_c_string_bytes(.text: &Char) -> (.bytes: ArrayViewRO#(UInt8)) := {
+_c_string_bytes(.text: &Char) -> (.bytes: ArrayView#(UInt8)) := {
     size ::= c_string_length(.text = text).length
     if size == 0 {
-        bytes = empty_array_view_ro#(UInt8)().array
+        bytes = empty_array_view#(UInt8)().array
         return
     }
-    bytes = _trusted_array_view_ro#(UInt8)(
+    bytes = _trusted_array_view#(UInt8)(
         .data = trusted_reinterpret_reference#(.from: Char, .to: UInt8)(
             .base = text
         ).reference

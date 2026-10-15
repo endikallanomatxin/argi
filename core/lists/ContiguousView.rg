@@ -19,14 +19,14 @@ slice#(.View: Type: ContiguousView#(View)) := (
     result = ContiguousView#(View).subrange(.self = self, .start = start, .count = count)
 }
 
-implement#(.t: Type) ContiguousView#(ArrayView#(.t: t)) (
+implement#(.t: Type) ContiguousView#(MutableArrayView#(.t: t)) (
     .Reference : Type = $&t
-    .base      = _array_view_data
-    .subrange  = _array_view_slice
+    .base      = _mutable_array_view_data
+    .subrange  = _mutable_array_view_slice
 )
 
-implement#(.t: Type) ContiguousView#(ArrayViewRO#(.t: t)) (
+implement#(.t: Type) ContiguousView#(ArrayView#(.t: t)) (
     .Reference : Type = &t
-    .base      = _array_view_ro_data
-    .subrange  = _array_view_ro_slice
+    .base      = _array_view_data
+    .subrange  = _array_view_slice
 )

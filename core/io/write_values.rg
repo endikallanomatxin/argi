@@ -17,9 +17,9 @@ implement#(.Stream: Type: Writer#(Stream)) WriteValue#(Stream, &String) (
     }
 )
 
-implement#(.Stream: Type: Writer#(Stream)) WriteValue#(Stream, ArrayView#(.t: UInt8)) (
+implement#(.Stream: Type: Writer#(Stream)) WriteValue#(Stream, MutableArrayView#(.t: UInt8)) (
     .Result      : Type = Errable#(UIntNative, (..stream_write_failed, ..stream_flush_failed))
-    .write_value = (.self: $&Stream, .value: ArrayView#(.t: UInt8)) -> (.result: Result) {
+    .write_value = (.self: $&Stream, .value: MutableArrayView#(.t: UInt8)) -> (.result: Result) {
         wrote_count :: UIntNative = 0
         while wrote_count < length(&value).count {
             byte ::= unwrap_or_abort(.value = get_reference(&value, .index = wrote_count))

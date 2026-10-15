@@ -164,7 +164,7 @@ implement Reader#(File) (
         }
 
         byte :: UInt8 = 0
-        byte_view ::= single_array_view#(.t: UInt8)(.data = $&byte)
+        byte_view ::= single_mutable_array_view#(.t: UInt8)(.data = $&byte)
         read_count ::= fread_into(
             .buffer = byte_view, .stream = file_stream_pointer(self).stream
         ).count
@@ -189,7 +189,7 @@ implement Reader#(File) (
     }
 )
 
-_read_file(.self: $&File, .buffer: ArrayView#(.t: UInt8)) -> (
+_read_file(.self: $&File, .buffer: MutableArrayView#(.t: UInt8)) -> (
     .result : Errable#(UIntNative, (..stream_read_failed))
 ) := {
     assume ffi := self&._ffi
@@ -212,7 +212,7 @@ _read_file(.self: $&File, .buffer: ArrayView#(.t: UInt8)) -> (
     result = ..ok read_count
 }
 
-_file_write(.self: $&File, .value: ArrayView#(.t: UInt8)) -> (
+_file_write(.self: $&File, .value: MutableArrayView#(.t: UInt8)) -> (
     .result : Errable#(UIntNative, (..stream_write_failed, ..stream_flush_failed))
 ) := {
     assume ffi := self&._ffi
@@ -235,13 +235,13 @@ _file_write(.self: $&File, .value: ArrayView#(.t: UInt8)) -> (
     result = ..ok wrote
 }
 
-implement WriteValue#(File, ArrayView#(.t: UInt8)) (
+implement WriteValue#(File, MutableArrayView#(.t: UInt8)) (
     .Result      : Type = Errable#(UIntNative, (..stream_write_failed, ..stream_flush_failed))
     .write_value = _file_write
 )
 
 implement BlockWriter#(File) (
-    .write_block = (.self: $&File, .buffer: ArrayViewRO#(.t: UInt8)) -> (
+    .write_block = (.self: $&File, .buffer: ArrayView#(.t: UInt8)) -> (
         .result : Errable#(UIntNative, (..stream_write_failed, ..stream_flush_failed))
     ) {
         assume ffi := self&._ffi
@@ -295,7 +295,7 @@ implement Writer#(File) (
         }
 
         single_byte :: UInt8 = byte
-        byte_view ::= single_array_view#(.t: UInt8)(.data = $&single_byte)
+        byte_view ::= single_mutable_array_view#(.t: UInt8)(.data = $&single_byte)
         wrote ::= fwrite_from(
             .buffer = byte_view, .stream = file_stream_pointer(self).stream
         ).count

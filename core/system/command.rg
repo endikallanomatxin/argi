@@ -43,7 +43,7 @@ CliReasons: Type = (
 -- name; aliases and defaults are resolved without copying argument bytes.
 parse_cli#(.t: Type: ArgumentSource#(t), .AllocatorType: Type: Allocator#(AllocatorType))(
     .source    : &t,
-    .specs     : ArrayViewRO#(.t: CliSpec),
+    .specs     : ArrayView#(.t: CliSpec),
     .start     : UIntNative = 0,
     .allocator : $&AllocatorType = reach allocator
 ) -> (.result: Errable#(CliMatches, CliReasons)) := {
@@ -188,7 +188,7 @@ write_cli_help#(.WriterType: Type: Writer#(WriterType))(
     .writer  : $&WriterType,
     .program : StringView,
     .about   : StringView,
-    .specs   : ArrayViewRO#(.t: CliSpec)
+    .specs   : ArrayView#(.t: CliSpec)
 ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()) := {
     write(writer, .value = about)!
     write(writer, .value = "\nUsage: ")!

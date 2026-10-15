@@ -43,12 +43,12 @@ implement Equal#(StringView, StringView, (.left: StringView, .right: StringView)
 )
 
 -- Byte views do not promise UTF-8 and never grant writable access to text.
-string_bytes(.text: StringView) -> (.bytes: ArrayViewRO#(UInt8)) := {
+string_bytes(.text: StringView) -> (.bytes: ArrayView#(UInt8)) := {
     if text._length == 0 {
-        bytes = empty_array_view_ro#(UInt8)().array
+        bytes = empty_array_view#(UInt8)().array
         return
     }
-    bytes = _trusted_array_view_ro#(UInt8)(.data = text._data, .length = text._length).array
+    bytes = _trusted_array_view#(UInt8)(.data = text._data, .length = text._length).array
 }
 
 byte_data(.text: StringView) -> (.reference: &UInt8) := {

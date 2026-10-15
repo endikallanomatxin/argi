@@ -137,7 +137,7 @@ saturates at the largest capacity that leaves room for the terminator.
 The infallible `string_append_byte` and `string_append_bytes` helpers require
 sufficient existing capacity and abort before writing if that precondition fails.
 
-`join(.parts, .separator, .allocator)` accepts an `ArrayViewRO#(StringView)`
+`join(.parts, .separator, .allocator)` accepts an `ArrayView#(StringView)`
 and produces a new owning `String`. It inserts the separator only between
 parts, preserves empty parts and embedded NULs, and accepts an empty separator.
 An empty list produces an owning empty string. Parts and separator may overlap;

@@ -107,13 +107,13 @@ implement#(.Provider: Type: Allocator) FalliblyCopyable#(String, Provider) (
         )
 
         if allocation_size > 0 {
-            dst_view ::= _trusted_array_view#(.t: UInt8)(
+            dst_view ::= _trusted_mutable_array_view#(.t: UInt8)(
                 .data = _trusted_allocation_byte_rw(
                     .allocation = $&out._allocation, .offset = 0
                 ).reference
                 .length = allocation_size
             )
-            src_view ::= _trusted_array_view_ro#(.t: UInt8)(
+            src_view ::= _trusted_array_view#(.t: UInt8)(
                 .data = _trusted_allocation_byte_ro(
                     .allocation = &self&._allocation, .offset = 0
                 ).reference
@@ -251,10 +251,10 @@ ensure_capacity_growing#(.AllocatorType: Type: Allocator#(AllocatorType))(
             ).reference
 
             if self&._length > 0 {
-                dst_view ::= _trusted_array_view#(.t: UInt8)(
+                dst_view ::= _trusted_mutable_array_view#(.t: UInt8)(
                     .data = new_data, .length = self&._length
                 )
-                src_view ::= _trusted_array_view_ro#(.t: UInt8)(
+                src_view ::= _trusted_array_view#(.t: UInt8)(
                     .data = _trusted_allocation_byte_ro(
                         .allocation = &self&._allocation, .offset = 0
                     ).reference
@@ -289,7 +289,7 @@ _string_append_byte(.self: $&String, .byte: UInt8) -> () := {
     _string_set_byte(.string = self, .index = self&._length, .value = 0)
 }
 
-_string_append_bytes(.self: $&String, .source: ArrayViewRO#(.t: UInt8)) -> () := {
+_string_append_bytes(.self: $&String, .source: ArrayView#(.t: UInt8)) -> () := {
     current_capacity ::= capacity(self).value
 
     if self&._length > current_capacity { abort }
@@ -300,7 +300,7 @@ _string_append_bytes(.self: $&String, .source: ArrayViewRO#(.t: UInt8)) -> () :=
         dest_data ::= _trusted_allocation_byte_rw(
             .allocation = $&self&._allocation, .offset = self&._length
         ).reference
-        dest_view ::= _trusted_array_view#(.t: UInt8)(
+        dest_view ::= _trusted_mutable_array_view#(.t: UInt8)(
             .data = dest_data, .length = length(&source).count
         )
         memcpy_bytes(.dst = dest_view, .src = source)
@@ -373,7 +373,7 @@ push_c_string#(.AllocatorType: Type: Allocator#(AllocatorType))(
         }
     }
 
-    source_view ::= _trusted_array_view_ro#(.t: UInt8)(
+    source_view ::= _trusted_array_view#(.t: UInt8)(
         .data = trusted_reinterpret_reference#(.from: Char, .to: UInt8)(
             .base = text
         ).reference
@@ -417,9 +417,7 @@ push_view#(.AllocatorType: Type: Allocator#(AllocatorType))(
         }
     }
 
-    source_view ::= _trusted_array_view_ro#(.t: UInt8)(
-        .data = view._data, .length = view._length
-    )
+    source_view ::= _trusted_array_view#(.t: UInt8)(.data = view._data, .length = view._length)
     _string_append_bytes(self, .source = source_view)
 
     result = ..ok Void()
@@ -480,10 +478,10 @@ concat_views#(.AllocatorType: Type: Allocator#(AllocatorType))(
         ..error _ { result = ..error(.reason = ..out_of_memory) }
         ..ok ~payload {
             temp ::= ~payload
-            left_view ::= _trusted_array_view_ro#(.t: UInt8)(
+            left_view ::= _trusted_array_view#(.t: UInt8)(
                 .data = left&._data, .length = left&._length
             )
-            right_view ::= _trusted_array_view_ro#(.t: UInt8)(
+            right_view ::= _trusted_array_view#(.t: UInt8)(
                 .data = right&._data, .length = right&._length
             )
             _string_append_bytes($&temp, .source = left_view)
@@ -644,7 +642,7 @@ implement#(.Provider: Type: Allocator) Concatenation#(&String, &String, Provider
 -- Copy before validation: allocator callbacks may mutate borrowed input bytes.
 -- Only the independent, fully validated text escapes this function.
 string_from_bytes#(.Provider: Type: Allocator)(
-    .bytes: ArrayViewRO#(UInt8), .allocator: $&Provider = reach allocator
+    .bytes: ArrayView#(UInt8), .allocator: $&Provider = reach allocator
 ) -> (.result: Errable#(String, (..invalid_utf8, ..out_of_memory))) := {
     assume allocator
     size ::= length(&bytes).count
@@ -686,7 +684,7 @@ _validate_string(.self: &String) -> (.result: Errable#(Void, (..invalid_utf8))) 
         result = ..ok Void()
         return
     }
-    bytes ::= _trusted_array_view_ro#(UInt8)(
+    bytes ::= _trusted_array_view#(UInt8)(
         .data = _trusted_allocation_byte_ro(
             .allocation = &self&._allocation, .offset = 0
         ).reference

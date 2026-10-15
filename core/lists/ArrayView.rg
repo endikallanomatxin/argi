@@ -1,33 +1,28 @@
+-- Borrowed views over proven contiguous initialized storage. Permissions
+-- describe access through this handle; neither view owns or freezes the values.
+-- Private references and lengths must describe the same live region.
 ArrayView#(.t: Type): Type = (
-    --
-    -- Non-owning view over a contiguous initialized region of elements.
-    -- Empty views carry no element reference; data() requires a nonempty view.
-    --
-    -- The pointer and length must describe the same live region. Ordinary
-    -- constructors derive the length from a referenced object; raw storage
-    -- requires an explicit trusted boundary.
-    --
-    ._data   : ?$&t
-    ._length : UIntNative
-)
-
-ArrayViewRO#(.t: Type): Type = (
     ._data   : ?&t
     ._length : UIntNative
 )
 
+MutableArrayView#(.t: Type): Type = (
+    ._data   : ?$&t
+    ._length : UIntNative
+)
+
+implement#(.t: Type) ImplicitlyCopyable#(MutableArrayView#(.t: t)) ()
+
 implement#(.t: Type) ImplicitlyCopyable#(ArrayView#(.t: t)) ()
 
-implement#(.t: Type) ImplicitlyCopyable#(ArrayViewRO#(.t: t)) ()
-
-_array_view_data#(.t: Type)(.self: &ArrayView#(.t: t)) -> (.pointer: $&t) := {
+_mutable_array_view_data#(.t: Type)(.self: &MutableArrayView#(.t: t)) -> (.pointer: $&t) := {
     match self&._data {
         ..none { abort }
         ..some payload { pointer = payload.value }
     }
 }
 
-_array_view_ro_data#(.t: Type)(.self: &ArrayViewRO#(.t: t)) -> (.pointer: &t) := {
+_array_view_data#(.t: Type)(.self: &ArrayView#(.t: t)) -> (.pointer: &t) := {
     match self&._data {
         ..none { abort }
         ..some payload { pointer = payload.value }
@@ -35,20 +30,20 @@ _array_view_ro_data#(.t: Type)(.self: &ArrayViewRO#(.t: t)) -> (.pointer: &t) :=
 }
 
 -- Empty views need no backing reference and remain independent of storage.
-empty_array_view_ro#(.t: Type)() -> (.array: ArrayViewRO#(.t: t)) := {
+empty_array_view#(.t: Type)() -> (.array: ArrayView#(.t: t)) := {
     array = (._data = ..none, ._length = 0)
 }
 
-single_array_view_ro#(.t: Type)(.data: &t) -> (.array: ArrayViewRO#(.t: t)) := {
+single_array_view#(.t: Type)(.data: &t) -> (.array: ArrayView#(.t: t)) := {
     array = (._data = ..some(.value = data), ._length = 1)
 }
 
-single_array_view#(.t: Type)(.data: $&t) -> (.array: ArrayView#(.t: t)) := {
+single_mutable_array_view#(.t: Type)(.data: $&t) -> (.array: MutableArrayView#(.t: t)) := {
     array = (._data = ..some(.value = data), ._length = 1)
 }
 
-_fixed_array_view_ro#(.n: UIntNative, .t: Type)(.array: &Array#(.n = n, .t: t)) -> (
-    .view : ArrayViewRO#(.t: t)
+_fixed_array_view#(.n: UIntNative, .t: Type)(.array: &Array#(.n = n, .t: t)) -> (
+    .view : ArrayView#(.t: t)
 ) := {
     if n == 0 {
         view = (._data = ..none, ._length = 0)
@@ -61,8 +56,8 @@ _fixed_array_view_ro#(.n: UIntNative, .t: Type)(.array: &Array#(.n = n, .t: t)) 
     view = (._data = ..some(.value = first), ._length = n)
 }
 
-_fixed_array_view#(.n: UIntNative, .t: Type)(.array: $&Array#(.n = n, .t: t)) -> (
-    .view : ArrayView#(.t: t)
+_fixed_mutable_array_view#(.n: UIntNative, .t: Type)(.array: $&Array#(.n = n, .t: t)) -> (
+    .view : MutableArrayView#(.t: t)
 ) := {
     if n == 0 {
         view = (._data = ..none, ._length = 0)
@@ -79,9 +74,7 @@ _fixed_array_view#(.n: UIntNative, .t: Type)(.array: $&Array#(.n = n, .t: t)) ->
 -- derive the extent from the array and retain its validity dependencies.
 -- Core callers must prove the requested contiguous range belongs to the
 -- live backing storage and initialize an element before reading it.
-_trusted_array_view_ro#(.t: Type)(.data: &t, .length: UIntNative) -> (
-    .array : ArrayViewRO#(.t: t)
-) := {
+_trusted_array_view#(.t: Type)(.data: &t, .length: UIntNative) -> (.array: ArrayView#(.t: t)) := {
     if length == 0 {
         array = (._data = ..none, ._length = 0)
         return
@@ -90,7 +83,9 @@ _trusted_array_view_ro#(.t: Type)(.data: &t, .length: UIntNative) -> (
     array = (._data = ..some(.value = data), ._length = length)
 }
 
-_trusted_array_view#(.t: Type)(.data: $&t, .length: UIntNative) -> (.array: ArrayView#(.t: t)) := {
+_trusted_mutable_array_view#(.t: Type)(.data: $&t, .length: UIntNative) -> (
+    .array : MutableArrayView#(.t: t)
+) := {
     if length == 0 {
         array = (._data = ..none, ._length = 0)
         return
@@ -102,9 +97,9 @@ _trusted_array_view#(.t: Type)(.data: $&t, .length: UIntNative) -> (.array: Arra
     )
 }
 
-set#(.t: Type: ImplicitlyCopyable)(.self: $&ArrayView#(.t: t), .index: UIntNative, .value: t) -> (
-    .result : Errable#(Void, (..out_of_bounds))
-) := {
+set#(.t: Type: ImplicitlyCopyable)(
+    .self: $&MutableArrayView#(.t: t), .index: UIntNative, .value: t
+) -> (.result: Errable#(Void, (..out_of_bounds))) := {
     if index >= self&._length {
         result = ..error(.reason = ..out_of_bounds)
         return
@@ -118,15 +113,36 @@ set#(.t: Type: ImplicitlyCopyable)(.self: $&ArrayView#(.t: t), .index: UIntNativ
     result = ..ok Void()
 }
 
-as_readonly#(.t: Type)(.self: &ArrayView#(.t: t)) -> (.view: ArrayViewRO#(.t: t)) := {
+as_readonly#(.t: Type)(.self: &MutableArrayView#(.t: t)) -> (.view: ArrayView#(.t: t)) := {
     if self&._length == 0 {
-        view = empty_array_view_ro#(.t: t)().array
+        view = empty_array_view#(.t: t)().array
         return
     }
 
     first ::= read_reference#(.t: t)(.base = data(self).pointer).reference
-    view = _trusted_array_view_ro#(.t: t)(.data = first, .length = self&._length).array
+    view = _trusted_array_view#(.t: t)(.data = first, .length = self&._length).array
 }
+
+implement#(.t: Type) Indexable#(MutableArrayView#(.t: t)) (
+    .Item : Type = t
+
+    .length = (.self: &MutableArrayView#(.t: t)) -> (.count: UIntNative) {
+        count = self&._length
+    }
+
+    .get_reference = (.self: &MutableArrayView#(.t: t), .index: UIntNative) -> (
+        .result : Errable#(&t, (..out_of_bounds))
+    ) {
+        if index >= self&._length {
+            result = ..error(.reason = ..out_of_bounds)
+            return
+        }
+
+        result = ..ok trusted_reference_offset#(.t: t)(
+            .base = data(self).pointer, .elements = index
+        ).reference
+    }
+)
 
 implement#(.t: Type) Indexable#(ArrayView#(.t: t)) (
     .Item : Type = t
@@ -149,31 +165,10 @@ implement#(.t: Type) Indexable#(ArrayView#(.t: t)) (
     }
 )
 
-implement#(.t: Type) Indexable#(ArrayViewRO#(.t: t)) (
+implement#(.t: Type) IndexableMutable#(MutableArrayView#(.t: t)) (
     .Item : Type = t
 
-    .length = (.self: &ArrayViewRO#(.t: t)) -> (.count: UIntNative) {
-        count = self&._length
-    }
-
-    .get_reference = (.self: &ArrayViewRO#(.t: t), .index: UIntNative) -> (
-        .result : Errable#(&t, (..out_of_bounds))
-    ) {
-        if index >= self&._length {
-            result = ..error(.reason = ..out_of_bounds)
-            return
-        }
-
-        result = ..ok trusted_reference_offset#(.t: t)(
-            .base = data(self).pointer, .elements = index
-        ).reference
-    }
-)
-
-implement#(.t: Type) IndexableMutable#(ArrayView#(.t: t)) (
-    .Item : Type = t
-
-    .get_mutable_reference = (.self: $&ArrayView#(.t: t), .index: UIntNative) -> (
+    .get_mutable_reference = (.self: $&MutableArrayView#(.t: t), .index: UIntNative) -> (
         .result : Errable#($&t, (..out_of_bounds))
     ) {
         if index >= self&._length {
@@ -187,10 +182,10 @@ implement#(.t: Type) IndexableMutable#(ArrayView#(.t: t)) (
     }
 )
 
-implement#(.t: Type: ImplicitlyCopyable) IndexableValue#(ArrayView#(.t: t)) (
+implement#(.t: Type: ImplicitlyCopyable) IndexableValue#(MutableArrayView#(.t: t)) (
     .Item : Type = t
 
-    .get = (.self: &ArrayView#(.t: t), .index: UIntNative) -> (
+    .get = (.self: &MutableArrayView#(.t: t), .index: UIntNative) -> (
         .result : Errable#(t, (..out_of_bounds))
     ) {
         if index >= self&._length {
@@ -206,10 +201,10 @@ implement#(.t: Type: ImplicitlyCopyable) IndexableValue#(ArrayView#(.t: t)) (
     }
 )
 
-implement#(.t: Type: ImplicitlyCopyable) IndexableValue#(ArrayViewRO#(.t: t)) (
+implement#(.t: Type: ImplicitlyCopyable) IndexableValue#(ArrayView#(.t: t)) (
     .Item : Type = t
 
-    .get = (.self: &ArrayViewRO#(.t: t), .index: UIntNative) -> (
+    .get = (.self: &ArrayView#(.t: t), .index: UIntNative) -> (
         .result : Errable#(t, (..out_of_bounds))
     ) {
         match get_reference(self, .index = index).result {

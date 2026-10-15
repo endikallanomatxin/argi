@@ -26,7 +26,7 @@ _value(.byte: UInt8) -> (.value: UInt32 = 255) := {
 
 -- RFC 4648 standard alphabet with required padding; no inserted whitespace.
 encode#(.AllocatorType: Type: Allocator#(AllocatorType))(
-    .bytes: ArrayViewRO#(.t: UInt8), .allocator: $&AllocatorType = reach allocator
+    .bytes: ArrayView#(.t: UInt8), .allocator: $&AllocatorType = reach allocator
 ) -> (.result: Errable#(String, (..out_of_memory, ..out_of_range))) := {
     assume allocator
     alphabet ::= _alphabet().text

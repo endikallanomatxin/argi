@@ -33,8 +33,8 @@ implement#(.t: Type: Scalar, .Provider: Type: Allocator) Init#(
     (
         .rows      : UIntNative,
         .cols      : UIntNative,
-        .values    : ArrayViewRO#(.t: t),
-        .allocator : $&Provider = reach allocator,
+        .values    : ArrayView#(.t: t),
+        .allocator : $&Provider         = reach allocator,
     )
 ) (
     .Result : Type = Errable#(DynamicMatrix#(.t: t), (..dimension_mismatch, ..out_of_memory))
@@ -42,8 +42,8 @@ implement#(.t: Type: Scalar, .Provider: Type: Allocator) Init#(
         .args : (
             .rows      : UIntNative,
             .cols      : UIntNative,
-            .values    : ArrayViewRO#(.t: t),
-            .allocator : $&Provider = reach allocator,
+            .values    : ArrayView#(.t: t),
+            .allocator : $&Provider         = reach allocator,
         )
     ) -> (.result: Result) {
         rows ::= args.rows
@@ -235,10 +235,10 @@ DynamicVector#(.t: Type: Scalar): Type = (._values: DynamicArray#(.t: t))
 
 implement#(.t: Type: Scalar, .Provider: Type: Allocator) Init#(
     DynamicVector#(.t: t),
-    (.values: ArrayViewRO#(.t: t), .allocator: $&Provider = reach allocator)
+    (.values: ArrayView#(.t: t), .allocator: $&Provider = reach allocator)
 ) (
     .Result : Type = Errable#(DynamicVector#(.t: t), (..out_of_memory))
-    .init   = (.args: (.values: ArrayViewRO#(.t: t), .allocator: $&Provider = reach allocator)) -> (
+    .init   = (.args: (.values: ArrayView#(.t: t), .allocator: $&Provider = reach allocator)) -> (
         .result : Result
     ) {
         values ::= args.values

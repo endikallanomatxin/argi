@@ -21,7 +21,7 @@ _limited_block_remaining#(.t: Type: BlockReader#(t))(.self: &LimitedReader#(.t: 
 }
 
 implement#(.t: Type: BlockReader#(t)) BlockReader#(LimitedReader#(.t: t)) (
-    .read_block = (.self: $&LimitedReader#(.t: t), .buffer: ArrayView#(.t: UInt8)) -> (
+    .read_block = (.self: $&LimitedReader#(.t: t), .buffer: MutableArrayView#(.t: UInt8)) -> (
         .result : Errable#(UIntNative, (..stream_read_failed))
     ) {
         count ::= length(&buffer).count

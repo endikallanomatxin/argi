@@ -1,5 +1,5 @@
 window(.array: $&DynamicArray#(.t: UIntNative), .start: UIntNative, .count: UIntNative) -> (
-    .result : Errable#(.t: ArrayView#(.t: UIntNative), .reasons: (..out_of_bounds))
+    .result : Errable#(.t: MutableArrayView#(.t: UIntNative), .reasons: (..out_of_bounds))
 ) := {
     borrowed_view ::= view(.array = array)
     result = slice(.self = &borrowed_view, .start = start, .count = count).result

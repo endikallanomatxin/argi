@@ -5,7 +5,7 @@ FaultReader: Type = (
 )
 
 implement BlockReader#(FaultReader) (
-    .read_block = (.self: $&FaultReader, .buffer: ArrayView#(.t: UInt8)) -> (
+    .read_block = (.self: $&FaultReader, .buffer: MutableArrayView#(.t: UInt8)) -> (
         .result : Errable#(.t: UIntNative, .reasons: (..stream_read_failed))
     ) {
         self&.calls = self&.calls + 1
@@ -32,7 +32,7 @@ FaultWriter: Type = (
 )
 
 implement BlockWriter#(FaultWriter) (
-    .write_block = (.self: $&FaultWriter, .buffer: ArrayViewRO#(.t: UInt8)) -> (
+    .write_block = (.self: $&FaultWriter, .buffer: ArrayView#(.t: UInt8)) -> (
         .result : Errable#(
             .t: UIntNative, .reasons: (..stream_write_failed, ..stream_flush_failed)
         )

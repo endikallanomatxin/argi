@@ -8,7 +8,7 @@ _digit(.byte: UInt8) -> (.value: UInt8 = 255) := {
 
 -- Lowercase output, with checked capacity. Text and bytes never alias output.
 encode#(.AllocatorType: Type: Allocator#(AllocatorType))(
-    .bytes: ArrayViewRO#(.t: UInt8), .allocator: $&AllocatorType = reach allocator
+    .bytes: ArrayView#(.t: UInt8), .allocator: $&AllocatorType = reach allocator
 ) -> (.result: Errable#(String, (..out_of_memory, ..out_of_range))) := {
     assume allocator
     count ::= length(&bytes).count

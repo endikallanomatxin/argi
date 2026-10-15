@@ -497,7 +497,7 @@ _set_timeout_UdpSocket(.self: $&UdpSocket, .milliseconds: UInt32) -> (
     result = ..ok Void()
 }
 
-_read_tcp(.self: $&TcpConnection, .buffer: ArrayView#(.t: UInt8)) -> (
+_read_tcp(.self: $&TcpConnection, .buffer: MutableArrayView#(.t: UInt8)) -> (
     .result : Errable#(UIntNative, (..socket_read_failed))
 ) := {
     assume ffi := self&._network&._ffi
@@ -525,7 +525,7 @@ _read_tcp(.self: $&TcpConnection, .buffer: ArrayView#(.t: UInt8)) -> (
     result = ..ok received
 }
 
-_tcp_write(.self: $&TcpConnection, .value: ArrayViewRO#(.t: UInt8)) -> (
+_tcp_write(.self: $&TcpConnection, .value: ArrayView#(.t: UInt8)) -> (
     .result : Errable#(UIntNative, (..socket_write_failed))
 ) := {
     assume ffi := self&._network&._ffi
@@ -552,7 +552,7 @@ _tcp_write(.self: $&TcpConnection, .value: ArrayViewRO#(.t: UInt8)) -> (
     result = ..ok sent
 }
 
-implement WriteValue#(TcpConnection, ArrayViewRO#(.t: UInt8)) (
+implement WriteValue#(TcpConnection, ArrayView#(.t: UInt8)) (
     .Result      : Type = Errable#(UIntNative, (..socket_write_failed))
     .write_value = _tcp_write
 )
@@ -572,7 +572,7 @@ DatagramReceived: Type = (.count: UIntNative, .peer: NetworkAddress)
 
 implement ImplicitlyCopyable#(DatagramReceived) ()
 
-send_to(.self: $&UdpSocket, .peer: NetworkAddress, .buffer: ArrayViewRO#(.t: UInt8)) -> (
+send_to(.self: $&UdpSocket, .peer: NetworkAddress, .buffer: ArrayView#(.t: UInt8)) -> (
     .result : Errable#(
         UIntNative, (..invalid_network_argument, ..datagram_too_large, ..socket_write_failed)
     )
@@ -612,7 +612,7 @@ send_to(.self: $&UdpSocket, .peer: NetworkAddress, .buffer: ArrayViewRO#(.t: UIn
     result = ..ok sent
 }
 
-receive_from(.self: $&UdpSocket, .buffer: ArrayView#(.t: UInt8)) -> (
+receive_from(.self: $&UdpSocket, .buffer: MutableArrayView#(.t: UInt8)) -> (
     .result : Errable#(DatagramReceived, (..datagram_truncated, ..socket_read_failed))
 ) := {
     assume ffi := self&._network&._ffi
@@ -659,7 +659,7 @@ implement Reader#(TcpConnection) (
 )
 
 implement BlockReader#(TcpConnection) (
-    .read_block = (.self: $&TcpConnection, .buffer: ArrayView#(.t: UInt8)) -> (
+    .read_block = (.self: $&TcpConnection, .buffer: MutableArrayView#(.t: UInt8)) -> (
         .result : Errable#(UIntNative, (..stream_read_failed))
     ) {
         match read(self, .buffer = buffer) {
@@ -670,7 +670,7 @@ implement BlockReader#(TcpConnection) (
 )
 
 implement BlockWriter#(TcpConnection) (
-    .write_block = (.self: $&TcpConnection, .buffer: ArrayViewRO#(.t: UInt8)) -> (
+    .write_block = (.self: $&TcpConnection, .buffer: ArrayView#(.t: UInt8)) -> (
         .result : Errable#(UIntNative, (..stream_write_failed, ..stream_flush_failed))
     ) {
         match write(self, .value = buffer) {

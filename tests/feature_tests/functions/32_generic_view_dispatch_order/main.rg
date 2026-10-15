@@ -1,4 +1,4 @@
-require_mutable(.value: ArrayView#(.t: Float64)) -> () := {}
+require_mutable(.value: MutableArrayView#(.t: Float64)) -> () := {}
 forward#(.n: UIntNative)(.array: $&Array#(.n = n, .t: Float64)) -> () := {
     require_mutable(.value = view(.array = array))
 }

@@ -9,7 +9,7 @@ _binary_range(.length: UIntNative, .offset: UIntNative, .width: UIntNative) -> (
     if offset <= length { ok = width <= length - offset }
 }
 
-read_uint16_at(.bytes: ArrayViewRO#(.t: UInt8), .offset: UIntNative = 0, .order: ByteOrder) -> (
+read_uint16_at(.bytes: ArrayView#(.t: UInt8), .offset: UIntNative = 0, .order: ByteOrder) -> (
     .result : Errable#(UInt16, (..out_of_bounds))
 ) := {
     if [_binary_range(.length = length(&bytes).count, .offset = offset, .width = 2).ok == false] {
@@ -33,7 +33,10 @@ read_uint16_at(.bytes: ArrayViewRO#(.t: UInt8), .offset: UIntNative = 0, .order:
 }
 
 write_uint16_at(
-    .bytes: ArrayView#(.t: UInt8), .offset: UIntNative = 0, .value: UInt16, .order: ByteOrder
+    .bytes  : MutableArrayView#(.t: UInt8),
+    .offset : UIntNative = 0,
+    .value  : UInt16,
+    .order  : ByteOrder
 ) -> (.result: Errable#(Void, (..out_of_bounds))) := {
     -- Prove the whole range before any destination byte changes.
     if [_binary_range(.length = length(&bytes).count, .offset = offset, .width = 2).ok == false] {
@@ -57,7 +60,7 @@ write_uint16_at(
     result = ..ok Void()
 }
 
-read_uint32_at(.bytes: ArrayViewRO#(.t: UInt8), .offset: UIntNative = 0, .order: ByteOrder) -> (
+read_uint32_at(.bytes: ArrayView#(.t: UInt8), .offset: UIntNative = 0, .order: ByteOrder) -> (
     .result : Errable#(UInt32, (..out_of_bounds))
 ) := {
     if [_binary_range(.length = length(&bytes).count, .offset = offset, .width = 4).ok == false] {
@@ -81,7 +84,10 @@ read_uint32_at(.bytes: ArrayViewRO#(.t: UInt8), .offset: UIntNative = 0, .order:
 }
 
 write_uint32_at(
-    .bytes: ArrayView#(.t: UInt8), .offset: UIntNative = 0, .value: UInt32, .order: ByteOrder
+    .bytes  : MutableArrayView#(.t: UInt8),
+    .offset : UIntNative = 0,
+    .value  : UInt32,
+    .order  : ByteOrder
 ) -> (.result: Errable#(Void, (..out_of_bounds))) := {
     -- Prove the whole range before any destination byte changes.
     if [_binary_range(.length = length(&bytes).count, .offset = offset, .width = 4).ok == false] {
@@ -105,7 +111,7 @@ write_uint32_at(
     result = ..ok Void()
 }
 
-read_uint64_at(.bytes: ArrayViewRO#(.t: UInt8), .offset: UIntNative = 0, .order: ByteOrder) -> (
+read_uint64_at(.bytes: ArrayView#(.t: UInt8), .offset: UIntNative = 0, .order: ByteOrder) -> (
     .result : Errable#(UInt64, (..out_of_bounds))
 ) := {
     if [_binary_range(.length = length(&bytes).count, .offset = offset, .width = 8).ok == false] {
@@ -129,7 +135,10 @@ read_uint64_at(.bytes: ArrayViewRO#(.t: UInt8), .offset: UIntNative = 0, .order:
 }
 
 write_uint64_at(
-    .bytes: ArrayView#(.t: UInt8), .offset: UIntNative = 0, .value: UInt64, .order: ByteOrder
+    .bytes  : MutableArrayView#(.t: UInt8),
+    .offset : UIntNative = 0,
+    .value  : UInt64,
+    .order  : ByteOrder
 ) -> (.result: Errable#(Void, (..out_of_bounds))) := {
     -- Prove the whole range before any destination byte changes.
     if [_binary_range(.length = length(&bytes).count, .offset = offset, .width = 8).ok == false] {

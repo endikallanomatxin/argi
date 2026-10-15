@@ -29,7 +29,7 @@ implement ImplicitlyCopyable#(_Utf8Decode) ()
 
 -- Keep the proven decoder infallible so validated iteration has no error-tracer
 -- dependency. Public operations translate these outcomes into their Errable contract.
-_utf8_decode_bytes(.bytes: ArrayViewRO#(UInt8), .offset: UIntNative) -> (.result: _Utf8Decode) := {
+_utf8_decode_bytes(.bytes: ArrayView#(UInt8), .offset: UIntNative) -> (.result: _Utf8Decode) := {
     if offset >= length(&bytes).count {
         result = ..outside
         return
@@ -102,7 +102,7 @@ _utf8_decode(.text: StringView, .offset: UIntNative) -> (.result: _Utf8Decode) :
 }
 
 -- Validation of arbitrary bytes does not publish a borrowed text view.
-validate_utf8_bytes(.bytes: ArrayViewRO#(UInt8)) -> (
+validate_utf8_bytes(.bytes: ArrayView#(UInt8)) -> (
     .result : Errable#(UIntNative, (..invalid_utf8))
 ) := {
     offset :: UIntNative = 0
@@ -174,9 +174,9 @@ utf8_encoded_length(.scalar: UnicodeScalar) -> (.count: UIntNative) := {
 
 -- Validate the entire destination before writing any byte. The scalar's private
 -- representation guarantees that arithmetic yields the shortest valid encoding.
-utf8_encode(.scalar: UnicodeScalar, .buffer: ArrayView#(.t: UInt8), .offset: UIntNative = 0) -> (
-    .result : Errable#(UIntNative, (..out_of_bounds))
-) := {
+utf8_encode(
+    .scalar: UnicodeScalar, .buffer: MutableArrayView#(.t: UInt8), .offset: UIntNative = 0
+) -> (.result: Errable#(UIntNative, (..out_of_bounds))) := {
     width ::= utf8_encoded_length(.scalar = scalar).count
     size ::= length(&buffer).count
 
@@ -218,7 +218,7 @@ utf8_encode(.scalar: UnicodeScalar, .buffer: ArrayView#(.t: UInt8), .offset: UIn
     result = ..ok width
 }
 
-Utf8Decoder: Type = (._bytes: ArrayViewRO#(UInt8), ._offset: UIntNative)
+Utf8Decoder: Type = (._bytes: ArrayView#(UInt8), ._offset: UIntNative)
 
 implement Init#(Utf8Decoder, (.text: StringView)) (
     .Result : Type = Utf8Decoder
@@ -247,9 +247,9 @@ next_codepoint(.self: $&Utf8Decoder) -> (.result: Errable#(?UnicodeScalar, (..in
     }
 }
 
-implement Init#(Utf8Decoder, (.bytes: ArrayViewRO#(UInt8))) (
+implement Init#(Utf8Decoder, (.bytes: ArrayView#(UInt8))) (
     .Result : Type = Utf8Decoder
-    .init   = (.args: (.bytes: ArrayViewRO#(UInt8))) -> (.result: Result) {
+    .init   = (.args: (.bytes: ArrayView#(UInt8))) -> (.result: Result) {
         result = (._bytes = args.bytes, ._offset = 0)
     }
 )
@@ -309,7 +309,7 @@ implement Iterator#(Utf8Iterator) (
     }
 )
 
-utf8_decode_bytes(.bytes: ArrayViewRO#(UInt8), .offset: UIntNative = 0) -> (
+utf8_decode_bytes(.bytes: ArrayView#(UInt8), .offset: UIntNative = 0) -> (
     .result : Errable#(Utf8Decoded, (..invalid_utf8, ..out_of_bounds))
 ) := {
     match _utf8_decode_bytes(.bytes = bytes, .offset = offset).result {

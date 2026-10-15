@@ -1,21 +1,21 @@
 -- Cursors borrow initialized storage and advance only after successful access.
-ByteReader: Type = (._bytes: ArrayViewRO#(.t: UInt8), ._position: UIntNative)
+ByteReader: Type = (._bytes: ArrayView#(.t: UInt8), ._position: UIntNative)
 
-ByteWriter: Type = (._bytes: ArrayView#(.t: UInt8), ._position: UIntNative)
+ByteWriter: Type = (._bytes: MutableArrayView#(.t: UInt8), ._position: UIntNative)
 
-implement Init#(ByteReader, (.bytes: ArrayViewRO#(.t: UInt8))) (
+implement Init#(ByteReader, (.bytes: ArrayView#(.t: UInt8))) (
     .Result : Type = ByteReader
 
-    .init = (.args: (.bytes: ArrayViewRO#(.t: UInt8))) -> (.result: Result) {
+    .init = (.args: (.bytes: ArrayView#(.t: UInt8))) -> (.result: Result) {
         bytes ::= args.bytes
         result = (._bytes = bytes, ._position = 0)
     }
 )
 
-implement Init#(ByteWriter, (.bytes: ArrayView#(.t: UInt8))) (
+implement Init#(ByteWriter, (.bytes: MutableArrayView#(.t: UInt8))) (
     .Result : Type = ByteWriter
 
-    .init = (.args: (.bytes: ArrayView#(.t: UInt8))) -> (.result: Result) {
+    .init = (.args: (.bytes: MutableArrayView#(.t: UInt8))) -> (.result: Result) {
         bytes ::= args.bytes
         result = (._bytes = bytes, ._position = 0)
     }

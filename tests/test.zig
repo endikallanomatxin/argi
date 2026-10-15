@@ -2502,7 +2502,7 @@ test "feature_tests/collections/48_array_view_fixed_storage" {
 test "feature_tests/collections/49X_array_view_unproven_length" {
     try buildExpectFail(
         "tests/feature_tests/collections/49X_array_view_unproven_length",
-        "no generic function named 'single_array_view' accepts arguments",
+        "no generic function named 'single_mutable_array_view' accepts arguments",
     );
 }
 
@@ -2530,7 +2530,7 @@ test "feature_tests/collections/52X_dynamic_array_vacant_storage_reference" {
 test "feature_tests/collections/53X_array_view_trusted_helper_private" {
     try buildExpectFail(
         "tests/feature_tests/collections/53X_array_view_trusted_helper_private",
-        "no function named '_trusted_array_view' exists",
+        "no function named '_trusted_mutable_array_view' exists",
     );
 }
 

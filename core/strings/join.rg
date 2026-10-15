@@ -12,7 +12,7 @@ _string_copy_view_into(.output: $&String, .offset: UIntNative, .source: StringVi
 }
 
 join#(.AllocatorType: Type: Allocator#(AllocatorType))(
-    .parts: ArrayViewRO#(.t: StringView), .separator: StringView, .allocator: $&AllocatorType
+    .parts: ArrayView#(.t: StringView), .separator: StringView, .allocator: $&AllocatorType
 ) -> (.result: Errable#(String, (..out_of_memory, ..size_overflow))) := {
     limit ::= _string_max_result_length().length
     count ::= length(&parts).count

@@ -1,10 +1,12 @@
 -- A bounded bit set borrows initialized bytes. Bit zero is the low bit of
 -- byte zero. Construction clears only the bytes needed for the requested bits.
-BitSetView: Type = (._bytes: ArrayView#(.t: UInt8), ._count: UIntNative)
+BitSetView: Type = (._bytes: MutableArrayView#(.t: UInt8), ._count: UIntNative)
 
-implement Init#(BitSetView, (.bytes: ArrayView#(.t: UInt8), .count: UIntNative)) (
+implement Init#(BitSetView, (.bytes: MutableArrayView#(.t: UInt8), .count: UIntNative)) (
     .Result : Type = Errable#(BitSetView, (..out_of_bounds))
-    .init   = (.args: (.bytes: ArrayView#(.t: UInt8), .count: UIntNative)) -> (.result: Result) {
+    .init   = (.args: (.bytes: MutableArrayView#(.t: UInt8), .count: UIntNative)) -> (
+        .result : Result
+    ) {
         bytes ::= args.bytes
         count ::= args.count
 
@@ -71,7 +73,7 @@ _bit_write_BitSetView(.self: $&BitSetView, .index: UIntNative, .value: Bool = tr
     if value { byte&= byte&+ mask } else { byte&= byte&- mask }
 }
 
-_bit_set_count(.bytes: ArrayViewRO#(.t: UInt8), .extent: UIntNative) -> (.count: UIntNative = 0) := {
+_bit_set_count(.bytes: ArrayView#(.t: UInt8), .extent: UIntNative) -> (.count: UIntNative = 0) := {
     full ::= extent / 8
     index :: UIntNative = 0
 

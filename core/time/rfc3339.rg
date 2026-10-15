@@ -78,7 +78,10 @@ parse_utc(.text: StringView) -> (.result: Errable#(UtcDateTime, (..invalid_datet
 }
 
 _write_date_digits(
-    .buffer: ArrayView#(.t: UInt8), .start: UIntNative, .count: UIntNative, .value: UInt32
+    .buffer : MutableArrayView#(.t: UInt8),
+    .start  : UIntNative,
+    .count  : UIntNative,
+    .value  : UInt32
 ) -> () := {
     index ::= count
     remaining ::= value
@@ -95,7 +98,7 @@ _write_date_digits(
 
 -- Validate date and complete capacity before writing. Nonzero fractions use
 -- nine digits, preserving every nanosecond without allocation or truncation.
-format_utc_into(.date: UtcDateTime, .buffer: ArrayView#(.t: UInt8)) -> (
+format_utc_into(.date: UtcDateTime, .buffer: MutableArrayView#(.t: UInt8)) -> (
     .result : Errable#(UIntNative, (..invalid_datetime, ..out_of_bounds))
 ) := {
     if valid_utc_date(.date = date).ok == false {

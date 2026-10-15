@@ -1,4 +1,4 @@
-Source: Type = (.bytes: ArrayViewRO#(.t: UInt8), .position: UIntNative, .calls: UIntNative)
+Source: Type = (.bytes: ArrayView#(.t: UInt8), .position: UIntNative, .calls: UIntNative)
 
 implement Reader#(Source) (
     .read_byte = (.self: $&Source) -> (
@@ -17,7 +17,7 @@ implement Reader#(Source) (
 )
 
 implement BlockReader#(Source) (
-    .read_block = (.self: $&Source, .buffer: ArrayView#(.t: UInt8)) -> (
+    .read_block = (.self: $&Source, .buffer: MutableArrayView#(.t: UInt8)) -> (
         .result : Errable#(.t: UIntNative, .reasons: (..stream_read_failed))
     ) {
         self&.calls = self&.calls + 1
@@ -38,10 +38,10 @@ implement BlockReader#(Source) (
     }
 )
 
-Sink: Type = (.bytes: ArrayView#(.t: UInt8), .position: UIntNative, .stalled: Bool)
+Sink: Type = (.bytes: MutableArrayView#(.t: UInt8), .position: UIntNative, .stalled: Bool)
 
 implement BlockWriter#(Sink) (
-    .write_block = (.self: $&Sink, .buffer: ArrayViewRO#(.t: UInt8)) -> (
+    .write_block = (.self: $&Sink, .buffer: ArrayView#(.t: UInt8)) -> (
         .result : Errable#(
             .t: UIntNative, .reasons: (..stream_write_failed, ..stream_flush_failed)
         )

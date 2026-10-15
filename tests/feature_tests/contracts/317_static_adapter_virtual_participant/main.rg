@@ -7,7 +7,7 @@ implement Reader#(Input) (
         } else { result = ..ok ..end }
     }
 )
-read_erased#(.Stream: Type: Reader#(Stream)) := (.self: $&Stream, .buffer: ArrayView#(.t: UInt8)) -> (.result: BufferReading#(Stream).Result) {
+read_erased#(.Stream: Type: Reader#(Stream)) := (.self: $&Stream, .buffer: MutableArrayView#(.t: UInt8)) -> (.result: BufferReading#(Stream).Result) {
     result = read(.self = self, .buffer = buffer)
 }
 main := () -> () {

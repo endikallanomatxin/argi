@@ -36,7 +36,7 @@ set_attribute(.self: &Object, .name: StringView, .value: &Object) -> (
     result = ..ok Void()
 }
 
-tuple(.self: &Python, .values: ArrayViewRO#(.t: &Object) = _no_arguments()) -> (
+tuple(.self: &Python, .values: ArrayView#(.t: &Object) = _no_arguments()) -> (
     .result : Errable#(Object, (..python_error))
 ) := {
     result = positional_arguments(.self = self, .values = values)

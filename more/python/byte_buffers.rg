@@ -12,7 +12,7 @@ _native_byte_buffer#(.Provider: Type: Allocator)(.count: UIntNative, .allocator:
     result = ..ok ~bytes
 }
 
-_native_buffer_address(.bytes: ArrayView#(UInt8)) -> (.address: RawPointer#(UInt8)) := {
+_native_buffer_address(.bytes: MutableArrayView#(UInt8)) -> (.address: RawPointer#(UInt8)) := {
     value :: UIntNative = 0
     if length(&bytes).count != 0 {
         value = data(&bytes).pointer | convert#(.to: UIntNative)(_)
@@ -22,7 +22,7 @@ _native_buffer_address(.bytes: ArrayView#(UInt8)) -> (.address: RawPointer#(UInt
 
 -- The native text-copy protocol promises strict UTF-8; invalid output is a
 -- violated native invariant, while allocation failure remains recoverable.
-_native_text#(.Provider: Type: Allocator)(.bytes: ArrayViewRO#(UInt8), .allocator: $&Provider) -> (
+_native_text#(.Provider: Type: Allocator)(.bytes: ArrayView#(UInt8), .allocator: $&Provider) -> (
     .result : Errable#(String, (..out_of_memory))
 ) := {
     assume allocator

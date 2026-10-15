@@ -38,7 +38,7 @@ _array_storage#(.t: Type, .view_type: Type)(.self: &Python, .values: view_type) 
     )
 }
 
-_copy_numeric#(.t: Type)(.self: &Object, .destination: ArrayView#(.t: t), .kind: Int32) -> (
+_copy_numeric#(.t: Type)(.self: &Object, .destination: MutableArrayView#(.t: t), .kind: Int32) -> (
     .result : Errable#(UIntNative, (..python_error))
 ) := {
     assume ffi := self&._python&._ffi
@@ -100,11 +100,11 @@ _PythonNumericView#(.View: Type): Contract = (
     .Element : Type
 )
 
-implement#(.t: Type: _PythonNumericScalar#(t)) _PythonNumericView#(ArrayView#(.t: t)) (
+implement#(.t: Type: _PythonNumericScalar#(t)) _PythonNumericView#(MutableArrayView#(.t: t)) (
     .Element : Type = t
 )
 
-implement#(.t: Type: _PythonNumericScalar#(t)) _PythonNumericView#(ArrayViewRO#(.t: t)) (
+implement#(.t: Type: _PythonNumericScalar#(t)) _PythonNumericView#(ArrayView#(.t: t)) (
     .Element : Type = t
 )
 
@@ -128,7 +128,7 @@ numeric_array#(.View: Type: _PythonNumericView#(View)) := (.self: &Python, .valu
 }
 
 copy_numeric#(.t: Type: _PythonNumericScalar#(t)) := (
-    .self: &Object, .destination: ArrayView#(.t: t)
+    .self: &Object, .destination: MutableArrayView#(.t: t)
 ) -> (.result: Errable#(UIntNative, (..python_error))) {
     result = _copy_numeric(
         .self = self, .destination = destination, .kind = _PythonNumericScalar#(t).native_kind()

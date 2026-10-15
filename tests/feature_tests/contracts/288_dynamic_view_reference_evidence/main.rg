@@ -16,6 +16,6 @@ main := (.system: System) -> (.status_code: Int32 = 0) {
         status_code = 2
     }
     scalar :: Int32 = 9
-    single ::= single_array_view_ro(.data = &scalar)
+    single ::= single_array_view(.data = &scalar)
     if length(&single) != 1 { status_code = 3 }
 }

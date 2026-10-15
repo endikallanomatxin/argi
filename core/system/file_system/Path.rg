@@ -231,7 +231,7 @@ join_views#(.AllocatorType: Type: Allocator#(AllocatorType))(
     match created {
         ..ok ~created_text {
             text ::= ~created_text
-            left_bytes ::= _trusted_array_view_ro#(.t: UInt8)(
+            left_bytes ::= _trusted_array_view#(.t: UInt8)(
                 .data = left&._data, .length = left&._length
             )
             _string_append_bytes($&text, .source = left_bytes)
@@ -245,7 +245,7 @@ join_views#(.AllocatorType: Type: Allocator#(AllocatorType))(
                 }
             }
 
-            right_bytes ::= _trusted_array_view_ro#(.t: UInt8)(
+            right_bytes ::= _trusted_array_view#(.t: UInt8)(
                 .data = right&._data, .length = right&._length
             )
             _string_append_bytes($&text, .source = right_bytes)

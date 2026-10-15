@@ -17,7 +17,7 @@ implement Reader#(ByteReader) (
 )
 
 implement BlockReader#(ByteReader) (
-    .read_block = (.self: $&ByteReader, .buffer: ArrayView#(.t: UInt8)) -> (
+    .read_block = (.self: $&ByteReader, .buffer: MutableArrayView#(.t: UInt8)) -> (
         .result : Errable#(UIntNative, (..stream_read_failed))
     ) {
         count ::= remaining(self).count
@@ -42,7 +42,7 @@ implement BlockReader#(ByteReader) (
 )
 
 implement BlockWriter#(ByteWriter) (
-    .write_block = (.self: $&ByteWriter, .buffer: ArrayViewRO#(.t: UInt8)) -> (
+    .write_block = (.self: $&ByteWriter, .buffer: ArrayView#(.t: UInt8)) -> (
         .result : Errable#(UIntNative, (..stream_write_failed, ..stream_flush_failed))
     ) {
         count ::= remaining(self).count

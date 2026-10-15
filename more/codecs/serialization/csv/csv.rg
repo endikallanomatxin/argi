@@ -146,7 +146,7 @@ next#(.AllocatorType: Type: Allocator#(AllocatorType))(
 
 -- Quote every field for unambiguous output. Writes may make partial progress.
 write_record#(.WriterType: Type: Writer#(WriterType))(
-    .writer: $&WriterType, .fields: ArrayViewRO#(.t: StringView)
+    .writer: $&WriterType, .fields: ArrayView#(.t: StringView)
 ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()) := {
     index :: UIntNative = 0
 

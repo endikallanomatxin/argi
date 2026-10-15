@@ -10,9 +10,9 @@ _NumpyReasons: Type = (python ..python_error, ..numpy_shape_mismatch)
 -- represents a one-dimensional native-endian Float64 array of this length.
 Vector64: Type = (._object: python.Object, ._length: UIntNative)
 
-implement Init#(Vector64, (.interpreter: &python.Python, .values: ArrayViewRO#(.t: Float64))) (
+implement Init#(Vector64, (.interpreter: &python.Python, .values: ArrayView#(.t: Float64))) (
     .Result : Type = Errable#(Vector64, _PythonReasons)
-    .init   = (.args: (.interpreter: &python.Python, .values: ArrayViewRO#(.t: Float64))) -> (
+    .init   = (.args: (.interpreter: &python.Python, .values: ArrayView#(.t: Float64))) -> (
         .result : Result
     ) {
         interpreter ::= args.interpreter
@@ -82,7 +82,7 @@ sum(.self: &Vector64) -> (.result: Errable#(Float64, _NumpyReasons)) := {
     result = ..ok value
 }
 
-copy_values(.self: &Vector64, .destination: ArrayView#(.t: Float64)) -> (
+copy_values(.self: &Vector64, .destination: MutableArrayView#(.t: Float64)) -> (
     .result : Errable#(UIntNative, _NumpyReasons)
 ) := {
     if length(&destination).count < self&._length {

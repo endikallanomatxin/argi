@@ -9,7 +9,9 @@ _invalidate_dynamic_array_shape#(.t: Type)(.array: $&DynamicArray#(.t: t)) -> ()
 -- The collection owns a private allocation receipt and an initialized prefix.
 -- Only that prefix is exposed; spare capacity never becomes readable storage.
 -- Borrowed element facts retain the backing allocation's temporal generation.
-_dynamic_array_view#(.t: Type)(.array: $&DynamicArray#(.t: t)) -> (.view: ArrayView#(.t: t)) := {
+_dynamic_array_mutable_view#(.t: Type)(.array: $&DynamicArray#(.t: t)) -> (
+    .view : MutableArrayView#(.t: t)
+) := {
     if array&._length == 0 {
         view = (._data = ..none, ._length = 0)
         return
@@ -22,10 +24,10 @@ _dynamic_array_view#(.t: Type)(.array: $&DynamicArray#(.t: t)) -> (.view: ArrayV
         .value = first
         .on    = erase_reference#(.t: _DynamicArrayShape)(.base = &array&._shape).reference
     ).result
-    view = _trusted_array_view#(.t: t)(.data = borrowed, .length = array&._length).array
+    view = _trusted_mutable_array_view#(.t: t)(.data = borrowed, .length = array&._length).array
 }
 
-_dynamic_array_view_ro#(.t: Type)(.array: &DynamicArray#(.t: t)) -> (.view: ArrayViewRO#(.t: t)) := {
+_dynamic_array_view#(.t: Type)(.array: &DynamicArray#(.t: t)) -> (.view: ArrayView#(.t: t)) := {
     if array&._length == 0 {
         view = (._data = ..none, ._length = 0)
         return
@@ -38,7 +40,7 @@ _dynamic_array_view_ro#(.t: Type)(.array: &DynamicArray#(.t: t)) -> (.view: Arra
         .value = first
         .on    = erase_reference#(.t: _DynamicArrayShape)(.base = &array&._shape).reference
     ).result
-    view = _trusted_array_view_ro#(.t: t)(.data = borrowed, .length = array&._length).array
+    view = _trusted_array_view#(.t: t)(.data = borrowed, .length = array&._length).array
 }
 
 -- Public element loans share the collection's structural invalidation rule.

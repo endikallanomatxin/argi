@@ -1,5 +1,5 @@
 read_count#(.T: Type: BlockReader#(T)) := (
-    .reader: $&T, .buffer: ArrayView#(.t: UInt8)
+    .reader: $&T, .buffer: MutableArrayView#(.t: UInt8)
 ) -> (.count: UIntNative) {
     count = unwrap_or_abort(.value = BlockReader#().read_block(reader, .buffer = buffer))
 }

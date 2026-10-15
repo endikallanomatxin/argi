@@ -60,7 +60,7 @@ operating-system entropy is an independent capability operation.
 
 ## System entropy
 
-`fill_random_bytes(.self: $&RandomNumberGenerator, .destination: ArrayView<UInt8>)`
+`fill_random_bytes(.self: $&RandomNumberGenerator, .destination: MutableArrayView<UInt8>)`
 uses `system.rand_gen` to fill initialized writable storage. It returns
 `Errable<Void, entropy_unavailable>`, performs no allocation, and never falls
 back to a deterministic generator. An empty view succeeds without an OS call.

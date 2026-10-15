@@ -21,7 +21,7 @@ test equality_helpers(.system: System) -> !() := {
     testing.expect_equal_bytes(
         .expected = view(.array = &bytes), .actual = view(.array = &bytes)
     )!
-    empty ::= empty_array_view_ro#(.t: UInt8)()
+    empty ::= empty_array_view#(.t: UInt8)()
     testing.expect_equal_bytes(.expected = empty, .actual = empty)!
     assume allocator := system.page_allocator
     owner ::= format(.value = "abc", .allocator = allocator)!

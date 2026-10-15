@@ -87,7 +87,7 @@ implement#(.base_type: Type: Reader#(base_type)) Reader#(BufferedReader#(.base_t
         storage ::= _trusted_allocation_byte_rw(
             .allocation = $&self&.buffer, .offset = 0
         ).reference
-        buffer_view ::= _trusted_array_view#(.t: UInt8)(
+        buffer_view ::= _trusted_mutable_array_view#(.t: UInt8)(
             .data = storage, .length = self&.capacity
         ).array
 

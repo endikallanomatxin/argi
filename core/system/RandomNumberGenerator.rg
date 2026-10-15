@@ -34,7 +34,7 @@ implement Init#(RandomNumberGenerator, (.ffi: $&ForeignFunctionInterface = reach
 -- callers must discard all bytes after an error. Empty requests need no FFI.
 fill_random_bytes(
     .self        : $&RandomNumberGenerator,
-    .destination : ArrayView#(.t: UInt8),
+    .destination : MutableArrayView#(.t: UInt8),
 ) -> (.result: Errable#(Void, (..entropy_unavailable))) := {
     extent ::= length(&destination).count
 

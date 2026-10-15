@@ -1,5 +1,5 @@
 BlockReader#(.Stream: Type): Contract = (
-    .read_block : (.self: $&Stream, .buffer: ArrayView#(.t: UInt8)) -> (
+    .read_block : (.self: $&Stream, .buffer: MutableArrayView#(.t: UInt8)) -> (
         .result : Errable#(UIntNative, (..stream_read_failed))
     ) where {
         on result ..ok {}

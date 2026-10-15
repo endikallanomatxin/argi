@@ -11,7 +11,7 @@ _crc32_z(.previous: CULong, .bytes: RawPointer#(.t: UInt8), .count: CSize) -> (
 -- The result is a 32-bit CRC carried in C's unsigned-long representation.
 update_crc32(
     .previous : CULong,
-    .source   : &ArrayViewRO#(.t: UInt8),
+    .source   : &ArrayView#(.t: UInt8),
     .ffi      : $&ForeignFunctionInterface = reach ffi,
 ) -> (.checksum: CULong) := {
     assume ffi
@@ -27,7 +27,7 @@ update_crc32(
     checksum = _crc32_z(previous, raw, count)
 }
 
-crc32(.source: &ArrayViewRO#(.t: UInt8), .ffi: $&ForeignFunctionInterface = reach ffi) -> (
+crc32(.source: &ArrayView#(.t: UInt8), .ffi: $&ForeignFunctionInterface = reach ffi) -> (
     .checksum : CULong
 ) := {
     assume ffi

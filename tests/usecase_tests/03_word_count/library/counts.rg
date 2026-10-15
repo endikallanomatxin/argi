@@ -24,7 +24,7 @@ count_directory(
     .self        : $&OwnedHashMap#(.key: String, .value: UIntNative, .policy: StringHashPolicy),
     .path        : StringView,
     .limit       : UIntNative,
-    .buffer      : ArrayView#(.t: UInt8),
+    .buffer      : MutableArrayView#(.t: UInt8),
     .file_system : $&FileSystem,
     .allocator   : $&PageAllocator
 ) -> !Void = ..ok Void() := {

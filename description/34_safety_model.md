@@ -239,7 +239,7 @@ Uses on mutually exclusive branches are alternatives, even when the caller
 supplies aliases for their inputs. Loops and recursive forwarding must not allow
 one authorization to be consumed repeatedly.
 
-An `ArrayView<T>` length must describe initialized elements inside its
+An `ArrayView<T>` or `MutableArrayView<T>` length must describe initialized elements inside its
 physical region. Checking an index against length is necessary but cannot
 validate a forged region. A zero-length region contains no readable element,
 and constructing a view must not require dereferencing a nonexistent first

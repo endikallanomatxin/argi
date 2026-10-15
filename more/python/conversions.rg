@@ -113,7 +113,7 @@ _object_from_string(.self: &Python, .value: &String) -> (
 
 implement PythonValue#(&String) (.convert_value = _object_from_string)
 
-_object_from_readonly_view#(.t: Type)(.self: &Python, .value: ArrayViewRO#(.t: t)) -> (
+_object_from_readonly_view#(.t: Type)(.self: &Python, .value: ArrayView#(.t: t)) -> (
     .result : Errable#(Object, (..python_error))
 ) := {
     converted ::= list(.self = self)!
@@ -131,7 +131,7 @@ _object_from_readonly_view#(.t: Type)(.self: &Python, .value: ArrayViewRO#(.t: t
     result = ..ok ~converted
 }
 
-implement#(.t: Type) PythonValue#(ArrayViewRO#(.t: t)) (
+implement#(.t: Type) PythonValue#(ArrayView#(.t: t)) (
     .convert_value = _object_from_readonly_view
 )
 
@@ -155,7 +155,7 @@ implement#(.t: Type) PythonValue#(&DynamicArray#(.t: t)) (
     .convert_value = _object_from_dynamic_array
 )
 
-_keywords_from_objects(.self: &Python, .values: ArrayViewRO#(.t: Keyword)) -> (
+_keywords_from_objects(.self: &Python, .values: ArrayView#(.t: Keyword)) -> (
     .result : Errable#(Object, (..python_error))
 ) := {
     converted ::= dictionary(.self = self)!
@@ -173,7 +173,7 @@ _keywords_from_objects(.self: &Python, .values: ArrayViewRO#(.t: Keyword)) -> (
     result = ..ok ~converted
 }
 
-implement _PythonKeywords#(ArrayViewRO#(.t: Keyword)) (.make_keywords = _keywords_from_objects)
+implement _PythonKeywords#(ArrayView#(.t: Keyword)) (.make_keywords = _keywords_from_objects)
 
 _object_from_copyable_reference#(.t: Type: ImplicitlyCopyable)(.self: &Python, .value: &t) -> (
     .result : Errable#(Object, (..python_error))
@@ -233,7 +233,7 @@ _object_from_argument(.self: &Python, .value: Argument) -> (
 
 implement PythonValue#(Argument) (.convert_value = _object_from_argument)
 
-_keywords_from_values(.self: &Python, .values: ArrayViewRO#(.t: NamedArgument)) -> (
+_keywords_from_values(.self: &Python, .values: ArrayView#(.t: NamedArgument)) -> (
     .result : Errable#(Object, (..python_error))
 ) := {
     converted ::= dictionary(.self = self)!
@@ -252,7 +252,7 @@ _keywords_from_values(.self: &Python, .values: ArrayViewRO#(.t: NamedArgument)) 
     result = ..ok ~converted
 }
 
-implement _PythonKeywords#(ArrayViewRO#(.t: NamedArgument)) (
+implement _PythonKeywords#(ArrayView#(.t: NamedArgument)) (
     .make_keywords = _keywords_from_values
 )
 
@@ -260,7 +260,7 @@ _as_tuple(.context: UIntNative, .value: RawPointer#(.t: _PyObject)) -> (
     .handle : RawPointer#(.t: _PyObject)
 ): CFunction(.symbol = "_argi_python_as_tuple")
 
-positional_arguments#(.t: Type)(.self: &Python, .values: ArrayViewRO#(.t: t)) -> (
+positional_arguments#(.t: Type)(.self: &Python, .values: ArrayView#(.t: t)) -> (
     .result : Errable#(Object, (..python_error))
 ) := {
     assume ffi := self&._ffi
@@ -291,7 +291,7 @@ _call_from_tuple(.self: &Object, .arguments: &Object, .keywords: ?&Object = _no_
 
 implement _PythonCall#(&Object) (.invoke = _call_from_tuple)
 
-_object_from_mutable_view#(.t: Type)(.self: &Python, .value: ArrayView#(.t: t)) -> (
+_object_from_mutable_view#(.t: Type)(.self: &Python, .value: MutableArrayView#(.t: t)) -> (
     .result : Errable#(Object, (..python_error))
 ) := {
     converted ::= list(.self = self)!
@@ -309,7 +309,7 @@ _object_from_mutable_view#(.t: Type)(.self: &Python, .value: ArrayView#(.t: t)) 
     result = ..ok ~converted
 }
 
-implement#(.t: Type) PythonValue#(ArrayView#(.t: t)) (
+implement#(.t: Type) PythonValue#(MutableArrayView#(.t: t)) (
     .convert_value = _object_from_mutable_view
 )
 

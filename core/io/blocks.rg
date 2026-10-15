@@ -4,7 +4,7 @@
 ..invalid_stream_buffer
 
 read_exact#(.SelfType: Type: BlockReader#(SelfType))(
-    .self: $&SelfType, .buffer: ArrayView#(.t: UInt8)
+    .self: $&SelfType, .buffer: MutableArrayView#(.t: UInt8)
 ) -> (.result: Errable#(Void, (..stream_read_failed, ..unexpected_eof))) := {
     total ::= length(&buffer).count
     count :: UIntNative = 0
@@ -26,7 +26,7 @@ read_exact#(.SelfType: Type: BlockReader#(SelfType))(
 }
 
 write_all#(.SelfType: Type: BlockWriter#(SelfType))(
-    .self: $&SelfType, .buffer: ArrayViewRO#(.t: UInt8)
+    .self: $&SelfType, .buffer: ArrayView#(.t: UInt8)
 ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) := {
     total ::= length(&buffer).count
     count :: UIntNative = 0
@@ -49,7 +49,7 @@ write_all#(.SelfType: Type: BlockWriter#(SelfType))(
 
 copy_stream#(
     .ReaderType: Type: BlockReader#(ReaderType), .WriterType: Type: BlockWriter#(WriterType)
-)(.reader: $&ReaderType, .writer: $&WriterType, .buffer: ArrayView#(.t: UInt8)) -> (
+)(.reader: $&ReaderType, .writer: $&WriterType, .buffer: MutableArrayView#(.t: UInt8)) -> (
     .result : Errable#(
         UIntNative,
         (
@@ -98,7 +98,7 @@ ReadUntil: Type = (.count: UIntNative, .termination: ReadUntilEnd)
 implement ImplicitlyCopyable#(ReadUntil) ()
 
 read_until#(.SelfType: Type: Reader#(SelfType))(
-    .self: $&SelfType, .buffer: ArrayView#(.t: UInt8), .delimiter: UInt8
+    .self: $&SelfType, .buffer: MutableArrayView#(.t: UInt8), .delimiter: UInt8
 ) -> (.result: Errable#(ReadUntil, (..stream_read_failed))) := {
     count :: UIntNative = 0
 

@@ -48,7 +48,7 @@ _aligned_free(.address: UIntNative) -> (): ExternFunction
 
 memcpy(.dst: $&Any, .src: &Any, .n: UIntNative) -> (): ExternFunction
 
-fread_into(.buffer: ArrayView#(.t: UInt8), .stream: &Any) -> (.count: UIntNative) := {
+fread_into(.buffer: MutableArrayView#(.t: UInt8), .stream: &Any) -> (.count: UIntNative) := {
     if length(&buffer).count == 0 {
         count = 0
         return
@@ -66,19 +66,19 @@ _FileWriteBuffer#(.Buffer: Type): Contract = (
     .bytes : (.self: &Buffer) -> (.pointer: &UInt8)
 )
 
-_write_buffer_mutable(.self: &ArrayView#(.t: UInt8)) -> (.pointer: &UInt8) := {
+_write_buffer_mutable(.self: &MutableArrayView#(.t: UInt8)) -> (.pointer: &UInt8) := {
     pointer = read_reference#(.t: UInt8)(.base = data(.self = self).pointer).reference
 }
 
-_write_buffer_readonly(.self: &ArrayViewRO#(.t: UInt8)) -> (.pointer: &UInt8) := {
+_write_buffer_readonly(.self: &ArrayView#(.t: UInt8)) -> (.pointer: &UInt8) := {
     pointer = data(.self = self).pointer
 }
 
-implement _FileWriteBuffer#(ArrayView#(.t: UInt8)) (
+implement _FileWriteBuffer#(MutableArrayView#(.t: UInt8)) (
     .bytes = _write_buffer_mutable
 )
 
-implement _FileWriteBuffer#(ArrayViewRO#(.t: UInt8)) (
+implement _FileWriteBuffer#(ArrayView#(.t: UInt8)) (
     .bytes = _write_buffer_readonly
 )
 
