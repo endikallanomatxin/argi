@@ -22,7 +22,9 @@ Setup profiling separates external types, conformance registration, associated
 projections, materialization and signature validation. Registration separately
 reports template checks and concrete tuples. Template comparisons are grouped by
 contract identity and participant arity; closed builtin and concrete patterns do
-not allocate module-wide substitution bindings.
+not allocate module-wide substitution bindings. Mixed concrete/symbolic comparisons
+reuse the conservative shape filter before materialization, rejecting incompatible
+nominal identities without constructing irrelevant generic instances.
 
 Reprofile per-module substitution maps and full-pool materialization sweeps
 before replacing them with function-local storage or unresolved-item worklists.

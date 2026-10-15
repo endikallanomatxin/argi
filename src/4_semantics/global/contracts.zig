@@ -1039,6 +1039,11 @@ pub const Resolver = struct {
         }
         if (left == .resolved and right == .resolved and left.resolved == .generic and right.resolved == .generic)
             return self.nominalPatternsCover(a, b, null);
+        // A concrete type cannot equal an incompatible symbolic shape. Use the
+        // same conservative filter as selection before allocating substitutions
+        // or instantiating a losing nominal pattern.
+        if (left == .concrete and !try self.typePatternMayMatch(b.module, b.ty, globalizer.globalType(self.offsets[a.module], left.concrete))) return false;
+        if (right == .concrete and !try self.typePatternMayMatch(a.module, a.ty, globalizer.globalType(self.offsets[b.module], right.concrete))) return false;
         var left_bindings = try generic_mod.Resolver.Bindings.init(self.allocator, self.modules[a.module].semantic.parameterized_storage.comptime_parameters.items.len);
         defer left_bindings.deinit(self.allocator);
         var right_bindings = try generic_mod.Resolver.Bindings.init(self.allocator, self.modules[b.module].semantic.parameterized_storage.comptime_parameters.items.len);
@@ -2616,6 +2621,7 @@ test "closed symbolic patterns compare without substitutions or graph mutation" 
         .{ .resolved = .{ .builtin = .UInt8 } },
         .{ .concrete = @enumFromInt(0) },
         .{ .concrete = @enumFromInt(1) },
+        .{ .resolved = .{ .generic = .{ .base = @enumFromInt(0), .arguments = .{ .start = 0, .len = 0 } } } },
     });
     try module.semantic.parameterized_storage.comptime_parameters.append(allocator, .{ .name = .{ .start = 0, .len = 0 }, .kind = .type });
     var graph: global_sg.GlobalSemanticGraph = .{};
@@ -2631,6 +2637,9 @@ test "closed symbolic patterns compare without substitutions or graph mutation" 
     try std.testing.expect(try resolver.symbolicTypesEqual(int, int));
     try std.testing.expect(!try resolver.symbolicTypesEqual(int, byte));
     try std.testing.expect(try resolver.symbolicTypesEqual(concrete, equivalent));
+    const nominal = Resolver.SymbolicPattern{ .module = 0, .ty = @enumFromInt(4) };
+    try std.testing.expect(!try resolver.symbolicTypesEqual(concrete, nominal));
+    try std.testing.expect(!try resolver.symbolicTypesEqual(nominal, concrete));
     try graph.markTypeUnresolved(allocator, @enumFromInt(1));
     try std.testing.expect(!try resolver.symbolicTypesEqual(concrete, equivalent));
     try std.testing.expectEqual(@as(usize, 2), graph.types.items.len);
