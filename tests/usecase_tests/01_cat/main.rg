@@ -40,7 +40,11 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
             if path == "-" {
                 transfer_stream(stdin, output)!!! { status_code = 1 }
             } else {
-                file_reader ::= File(.file_system = system.file_system, .path = path, .mode = ..read) handle error, value {
+                file_reader ::= File(
+                    .file_system = system.file_system
+                    .path        = path
+                    .mode        = ..read
+                ) handle error, value {
                     add_context(.context = path, .error_tracer = error.tracer)
                     report_trace(.tracer = error.tracer, .writer = writer) handle ignored {}
                     status_code = 1

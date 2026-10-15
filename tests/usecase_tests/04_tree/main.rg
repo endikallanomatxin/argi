@@ -49,7 +49,9 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
             ..none {}
             ..some entry {
                 if option.name == "root" { root = entry.value }
-                if option.name == "depth" { maximum_depth = parse_uintnative(entry.value)!!! { status_code = 1 } }
+                if option.name == "depth" {
+                    maximum_depth = parse_uintnative(entry.value)!!! { status_code = 1 }
+                }
             }
         }
     }

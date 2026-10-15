@@ -13117,3 +13117,8 @@ test "feature_tests/polymorphism/332X_generic_array_element" {
 test "feature_tests/polymorphism/333X_generic_choice_unknown_tag" {
     try buildExpectFailWithoutNoise("tests/feature_tests/polymorphism/333X_generic_choice_unknown_tag", "no generic function named 'invalid'", "failed without a diagnostic");
 }
+
+test "usecase_tests/06_weighted_regression" {
+    try expectSuccessfulBuild("tests/usecase_tests/06_weighted_regression");
+    try runExpect("tests/usecase_tests/06_weighted_regression", 0);
+}

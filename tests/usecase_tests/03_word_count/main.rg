@@ -17,7 +17,9 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
 
     argc ::= length(system.args).count
     if argc < 2 or argc > 3 {
-        print("Usage: word-count <directory> [maximum-file-bytes]", .writer = output)!!! { status_code = 1 }
+        print("Usage: word-count <directory> [maximum-file-bytes]", .writer = output)!!! {
+            status_code = 1
+        }
         return
     }
 

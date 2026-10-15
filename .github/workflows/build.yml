@@ -104,18 +104,18 @@ jobs:
               with tarfile.open(archive) as source:
                   source.extractall(directory, filter='data')
               package, = Path(directory).iterdir()
-              subprocess.run(['python', '.github/scripts/smoke_release.py', str(package)], check=True)
+              subprocess.run(['python', '.github/scripts/smoke_release.py', str(package), '--usecases', 'tests/usecase_tests'], check=True)
           PY
 
       - name: Exercise Linux distribution without installed LLVM
         if: inputs.package && runner.os == 'Linux'
         run: |
-          docker run --rm -v "$PWD/dist:/packages:ro" -v "$PWD/.github/scripts:/scripts:ro" ubuntu:24.04 sh -ec '
+          docker run --rm -v "$PWD/dist:/packages:ro" -v "$PWD/.github/scripts:/scripts:ro" -v "$PWD/tests/usecase_tests:/usecases:ro" ubuntu:24.04 sh -ec '
             apt-get update -qq
             apt-get install -y --no-install-recommends gcc libc6-dev python3
             mkdir /consumer
             tar -xzf /packages/*.tar.gz -C /consumer
-            python3 /scripts/smoke_release.py /consumer/argi-*
+            python3 /scripts/smoke_release.py /consumer/argi-* --usecases /usecases
           '
 
       - uses: actions/upload-artifact@v4
