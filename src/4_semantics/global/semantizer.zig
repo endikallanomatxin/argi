@@ -33,6 +33,9 @@ pub const Options = struct {
     profile_io: ?std.Io = null,
 };
 
+pub const SetupStage = enum { external_types, conformance_registration, associated_types, known_types, sugar_types, worklists, conformance_validation, roots };
+const setup_stage_count = @typeInfo(SetupStage).@"enum".fields.len;
+
 pub const Stats = struct {
     pub const PendingResolution = struct {
         initial_operations: u64 = 0,
@@ -49,6 +52,7 @@ pub const Stats = struct {
     pub const Timings = struct {
         relocation_ns: u64 = 0,
         setup_ns: u64 = 0,
+        setup_stages_ns: [setup_stage_count]u64 = @splat(0),
         fixed_point_ns: u64 = 0,
         pending_ns: u64 = 0,
         string_literal_types_ns: u64 = 0,
@@ -405,25 +409,37 @@ pub fn semantizeWithOptions(
     generic_functions.ownership_checkpoint = ownership_mod.Resolver.parameterizedCheckpoint;
     generic_functions.rollback_ownership = ownership_mod.Resolver.rollbackParameterizedCheckpoint;
 
+    var setup_stages: [setup_stage_count]i96 = @splat(0);
+    var setup_start = profileTimestamp(options.profile_io);
     try core.resolveExternalTypes();
     try generics.resolveExternalTypes();
+    profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.external_types)]);
+    setup_start = profileTimestamp(options.profile_io);
     // Generic record fields can contain associated projections. Publish tuple
     // associations before materializing either their records or operation types.
     try contracts.prepareParticipantConformances();
     try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
+    profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.conformance_registration)]);
+    setup_start = profileTimestamp(options.profile_io);
     contracts.resolveAssociatedTypes() catch |err| {
         try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, &generics);
         try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
         return err;
     };
+    profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.associated_types)]);
+    setup_start = profileTimestamp(options.profile_io);
     _ = generics.materializeKnownTypes() catch |err| {
         try reportGenericArgumentFailure(&relocation.graph, options.diagnostics, &generics);
         try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, &generics);
         try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
         return err;
     };
+    profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.known_types)]);
+    setup_start = profileTimestamp(options.profile_io);
     _ = try control.materializeSugarTypes();
 
+    profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.sugar_types)]);
+    setup_start = profileTimestamp(options.profile_io);
     if (options.diagnostics) |diagnostics| {
         for (relocation.graph.functions.items) |function| {
             for (relocation.graph.fields.items[function.output.start..][0..function.output.len]) |field| {
@@ -457,6 +473,8 @@ pub fn semantizeWithOptions(
             pending_resolution_stats.initial(operation);
         };
     }
+    profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.worklists)]);
+    setup_start = profileTimestamp(options.profile_io);
     // Validate declarations independently of executable use. Body proofs follow
     // selected operations, or all materialized bodies in exhaustive mode.
     contracts.validateParticipantConformances() catch |err| {
@@ -465,6 +483,8 @@ pub fn semantizeWithOptions(
         return err;
     };
     try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
+    profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.conformance_validation)]);
+    setup_start = profileTimestamp(options.profile_io);
     var reachable_storage: reachability_mod.FunctionSet = undefined;
     var reachable: ?*reachability_mod.FunctionSet = null;
     if (!options.exhaustive_function_bodies) {
@@ -472,6 +492,7 @@ pub fn semantizeWithOptions(
         reachable = &reachable_storage;
     }
     defer if (reachable) |set| set.deinit();
+    profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.roots)]);
     var pending_attempts: u64 = 0;
     const profile_preloop = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
     var profile_rounds: usize = 0;
@@ -840,9 +861,12 @@ pub fn semantizeWithOptions(
     try global_verify.verifyGlobal(&relocation.graph);
     const profile_end = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
     stats.remaining = 0;
+    var setup_stage_times: [setup_stage_count]u64 = undefined;
+    for (setup_stages, &setup_stage_times) |elapsed, *time| time.* = @intCast(elapsed);
     if (options.profile_io != null) stats.timings = .{
         .relocation_ns = @intCast(profile_relocated - profile_start),
         .setup_ns = @intCast(profile_preloop - profile_relocated),
+        .setup_stages_ns = setup_stage_times,
         .fixed_point_ns = @intCast(profile_postloop - profile_preloop),
         .pending_ns = @intCast(profile_pending_ns),
         .string_literal_types_ns = @intCast(profile_string_literal_types_ns),

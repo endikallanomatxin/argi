@@ -110,6 +110,9 @@ fn printStats(
     std.debug.print("Global semantizing\n", .{});
     std.debug.print("  relocate and link:           {d:.3} ms\n", .{milliseconds(semantic_timings.relocation_ns)});
     std.debug.print("  setup:                       {d:.3} ms\n", .{milliseconds(semantic_timings.setup_ns)});
+    inline for (std.meta.fields(global_semantizer.SetupStage), 0..) |stage, index|
+        std.debug.print("    {s}: {d:.3} ms\n", .{ stage.name, milliseconds(semantic_timings.setup_stages_ns[index]) });
+    std.debug.print("    registration templates: {d:.3} ms; concrete tuples: {d:.3} ms\n", .{ milliseconds(pipeline.global_stats.contracts.registration_templates_ns), milliseconds(pipeline.global_stats.contracts.registration_tuples_ns) });
     std.debug.print("  fixed point:                 {d:.3} ms ({d} rounds, {d} pending attempts)\n", .{
         milliseconds(semantic_timings.fixed_point_ns), semantic.rounds, semantic.pending_attempts,
     });

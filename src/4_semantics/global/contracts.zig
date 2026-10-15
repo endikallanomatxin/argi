@@ -23,6 +23,8 @@ pub const Stats = struct {
     implementation_scans: u64 = 0,
     implementation_candidates: u64 = 0,
     implementation_scan_ns: u64 = 0,
+    registration_templates_ns: u64 = 0,
+    registration_tuples_ns: u64 = 0,
 };
 
 pub const ContractUse = struct {
@@ -1013,6 +1015,10 @@ pub const Resolver = struct {
         const right = self.modules[b.module].semantic.parameterized_storage.ir.types.items[@intFromEnum(b.ty)];
         if (left == .parameter or right == .parameter)
             return left == .parameter and right == .parameter and a.module == b.module and left.parameter == right.parameter;
+        if (left == .resolved and right == .resolved and left.resolved == .builtin and right.resolved == .builtin)
+            return left.resolved.builtin == right.resolved.builtin;
+        if (left == .concrete and right == .concrete)
+            return global_types.equal(self.graph, globalizer.globalType(self.offsets[a.module], left.concrete), globalizer.globalType(self.offsets[b.module], right.concrete));
         if (left == .array and right == .array) {
             if (!self.symbolicIntsEqual(.{ .module = a.module, .expression = left.array.length }, .{ .module = b.module, .expression = right.array.length })) return false;
             return self.symbolicTypesEqual(.{ .module = a.module, .ty = left.array.element }, .{ .module = b.module, .ty = right.array.element });
@@ -1574,9 +1580,13 @@ pub const Resolver = struct {
     // Dormant templates still extend an operation identity. Reject foreign
     // ownership and equivalent patterns before any concrete call selects them.
     fn validateConformanceTemplates(self: *Resolver) !void {
-        const Template = struct { module: usize, conformance: parameterized_storage.ContractConformance, declaration: global_sg.GlobalDeclId };
-        var previous: std.ArrayList(Template) = .empty;
-        defer previous.deinit(self.allocator);
+        const Template = struct { module: usize, conformance: parameterized_storage.ContractConformance };
+        var groups: std.AutoHashMapUnmanaged(TemplateGroup, std.ArrayList(Template)) = .empty;
+        defer {
+            var lists = groups.valueIterator();
+            while (lists.next()) |list| list.deinit(self.allocator);
+            groups.deinit(self.allocator);
+        }
         for (self.modules, 0..) |module, module_index| {
             for (module.semantic.parameterized_storage.contract_conformances.items) |conformance| {
                 const declaration = self.resolveDeclarationRef(module_index, conformance.contract_ref, .contract_type) catch |err| switch (err) {
@@ -1598,9 +1608,10 @@ pub const Resolver = struct {
                     self.participant_conformance_failure = failure;
                     return;
                 }
-                for (previous.items) |other| {
+                const group = try groups.getOrPut(self.allocator, .{ .declaration = declaration, .arity = conformance.participants.len });
+                if (!group.found_existing) group.value_ptr.* = .empty;
+                for (group.value_ptr.items) |other| {
                     if (conformance.parameters.len == 0 and other.conformance.parameters.len == 0) continue;
-                    if (other.declaration != declaration or other.conformance.participants.len != conformance.participants.len) continue;
                     if (try self.patternTupleCovers(module_index, conformance, other.module, other.conformance) and
                         try self.patternTupleCovers(other.module, other.conformance, module_index, conformance))
                     {
@@ -1609,13 +1620,19 @@ pub const Resolver = struct {
                         return;
                     }
                 }
-                try previous.append(self.allocator, .{ .module = module_index, .conformance = conformance, .declaration = declaration });
+                try group.value_ptr.append(self.allocator, .{ .module = module_index, .conformance = conformance });
             }
         }
     }
 
     pub fn prepareParticipantConformances(self: *Resolver) !void {
+        const start = if (self.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
         try self.validateConformanceTemplates();
+        const tuples_start = if (self.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
+        if (self.profile_io != null) self.stats.registration_templates_ns += @intCast(tuples_start - start);
+        defer if (self.profile_io) |io| {
+            self.stats.registration_tuples_ns += @intCast(std.Io.Timestamp.now(io, .boot).nanoseconds - tuples_start);
+        };
         if (self.participant_conformance_failure != null) return;
         for (self.modules, 0..) |*module, module_index| {
             for (module.semantic.parameterized_storage.contract_conformances.items) |conformance| {
@@ -2586,6 +2603,35 @@ pub const Resolver = struct {
 };
 
 test "contract resolver keeps compile-time relation metadata outside GlobalSG" {
-    try std.testing.expect(@sizeOf(Stats) <= 40);
+    try std.testing.expect(@sizeOf(Stats) <= 56);
     try std.testing.expect(@sizeOf(global_sg.GlobalDeclId) == 4);
+}
+
+test "closed symbolic patterns compare without substitutions or graph mutation" {
+    const allocator = std.testing.allocator;
+    var module: module_sg.ModuleSemanticGraph = .{};
+    defer module.deinit(allocator);
+    try module.semantic.parameterized_storage.ir.types.appendSlice(allocator, &.{
+        .{ .resolved = .{ .builtin = .Int32 } },
+        .{ .resolved = .{ .builtin = .UInt8 } },
+        .{ .concrete = @enumFromInt(0) },
+        .{ .concrete = @enumFromInt(1) },
+    });
+    try module.semantic.parameterized_storage.comptime_parameters.append(allocator, .{ .name = .{ .start = 0, .len = 0 }, .kind = .type });
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    try graph.types.appendSlice(allocator, &.{ .{ .builtin = .Int32 }, .{ .builtin = .Int32 } });
+    const modules = [_]module_sg.ModuleSemanticGraph{module};
+    var failing = std.testing.FailingAllocator.init(allocator, .{ .fail_index = 0 });
+    var resolver: Resolver = .{ .allocator = failing.allocator(), .graph = &graph, .modules = &modules, .offsets = &.{std.mem.zeroes(globalizer.Offsets)}, .core = undefined, .generics = undefined };
+    const int = Resolver.SymbolicPattern{ .module = 0, .ty = @enumFromInt(0) };
+    const byte = Resolver.SymbolicPattern{ .module = 0, .ty = @enumFromInt(1) };
+    const concrete = Resolver.SymbolicPattern{ .module = 0, .ty = @enumFromInt(2) };
+    const equivalent = Resolver.SymbolicPattern{ .module = 0, .ty = @enumFromInt(3) };
+    try std.testing.expect(try resolver.symbolicTypesEqual(int, int));
+    try std.testing.expect(!try resolver.symbolicTypesEqual(int, byte));
+    try std.testing.expect(try resolver.symbolicTypesEqual(concrete, equivalent));
+    try graph.markTypeUnresolved(allocator, @enumFromInt(1));
+    try std.testing.expect(!try resolver.symbolicTypesEqual(concrete, equivalent));
+    try std.testing.expectEqual(@as(usize, 2), graph.types.items.len);
 }

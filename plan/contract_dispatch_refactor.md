@@ -18,6 +18,12 @@ registries or implicit participant/representation adapters.
 Profile conformance verification independently from executable reachability.
 Executable builds prove selected operation bodies and reached virtual evidence.
 Exhaustive checks and editor diagnostics also prove unused concrete operations.
+Setup profiling separates external types, conformance registration, associated
+projections, materialization and signature validation. Registration separately
+reports template checks and concrete tuples. Template comparisons are grouped by
+contract identity and participant arity; closed builtin and concrete patterns do
+not allocate module-wide substitution bindings.
+
 Reprofile per-module substitution maps and full-pool materialization sweeps
 before replacing them with function-local storage or unresolved-item worklists.
 Preserve signature binding/default identities and speculative rollback when
