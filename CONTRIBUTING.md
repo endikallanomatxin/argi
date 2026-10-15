@@ -67,8 +67,9 @@ If Zig selects an unwritable cache, set `ZIG_LOCAL_CACHE_DIR` and
 - `tests/feature_tests/`: focused language and library fixtures.
 - `tests/usecase_tests/`: application examples and integration tests.
 - `description/`: language design and supported behavior.
-- `plan/`: active implementation plans and open work.
+- `plan/`: remaining work and release priorities.
 
 See [AGENTS.md](AGENTS.md) for repository conventions and the release workflow.
-Language-level tests written in Argi are covered in the
-[testing documentation](description/72_testing.md).
+Frontend measurement and worker controls are documented in the
+[performance guide](docs/compiler-performance.md). Language-level tests written
+in Argi are covered in the [testing documentation](description/72_testing.md).

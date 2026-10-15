@@ -274,8 +274,6 @@ explicit virtual handles; conformance never changes a field's representation.
 Virtual and to_virtual use `.contract` or positional arguments; the former
 `.abstract` label is rejected. Unknown argument names are checked before
 contextual inference.
-Final validation and remaining cleanup are tracked in
-`plan/contract_dispatch_refactor.md`.
 
 BufferReading scopes complete input-buffer reads. Its generic Reader fallback
 copies bytes through read_byte, while File and TcpConnection select native block
