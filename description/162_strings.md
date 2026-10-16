@@ -2,16 +2,17 @@
 
 Two literals:
 
-- `'c'` for characters
-- `"string"` for strings
+- `'c'` for a `UnicodeScalar` value
+- `"string"` for a valid UTF-8 `StringView` literal
 
-A string should be explicitly viewable in several forms:
+Text exposes distinct units explicitly:
 
-- `bytes`: raw bytes, without an implicit UTF-8 guarantee.
-- `codepoints`: Unicode scalar values decoded from those bytes.
-- `graphemes`: visual units perceived by the user.
+- `string_bytes`: a read-only byte view; the byte-view type itself carries no
+  UTF-8 guarantee.
+- `codepoints`: Unicode scalar values from already-valid text.
+- Grapheme iteration remains unimplemented.
 
-`String` should not be directly indexable by default. This mixes two
+`String` is not directly indexable. Indexing would mix two
 distinct questions:
 
 - byte access,
@@ -30,7 +31,7 @@ my_str := "this is a string declaration"
 
 my_str := """
 	this is a multi-line string declaration
-	Openning line is ignored
+	Opening line is ignored
 	The closing quotes serve as the reference for indentation.
 	"""
 
@@ -46,7 +47,7 @@ Several escape sequences are supported:
 - `\n` - newline
 - `\r` - carriage return
 - `\t` - tab
-- `\u{xxxxxx}` - unicode codepoint
+- `\u{xxxxxx}` - Unicode scalar value
 
 
 ## Implementation
@@ -64,7 +65,7 @@ do not affect the resulting text. There is no public unchecked byte-to-text view
 `string_bytes(.text)` exposes a read-only byte view. Text mutation invalidates
 borrowed views; it cannot grant mutable access to the representation.
 
-Copying a string view should copy only the descriptor. It should never imply
+Copying a string view copies only the descriptor. It does not imply
 ownership of the underlying bytes.
 
 API convention for borrowed text:
@@ -187,8 +188,8 @@ The text model uses these conventions:
   language-level type of `"..."`.
 - `String(.length = n)` returns the result of allocating `n` zero bytes plus a trailing NUL.
 - `deinit(.self = $&string)` releases the backing allocation.
-- `copy(.self = string)` allocates a second backing buffer and copies the
-  bytes, so value semantics stay independent.
+- `copy(.self = &string, .allocator = allocator)` allocates a second backing
+  buffer and copies the bytes, so value semantics stay independent.
 - `String` itself is not directly indexable.
 - byte-level access is explicit:
   - `bytes_get(.view = &string, .index = i)` returns
@@ -200,9 +201,9 @@ The text model uses these conventions:
   - `set_ascii(.self = $&string, .index = i, .byte = b)` checks the index and
     requires both the old and new byte to be ASCII.
   - `push_ascii`, `push_scalar`, and `push_view` append ASCII, a Unicode scalar,
-    or validated text. `push_ascii` rejects a non-ASCII byte with `invalid_codepoint` before allocation
-    or mutation; arbitrary
-    byte input must use checked decoding instead.
+    or validated text. `push_ascii` rejects a non-ASCII byte with
+    `invalid_codepoint` before allocation or mutation. Arbitrary byte input must
+    use checked decoding instead.
 - `slice(.self = view(&string), .start = start, .count = count)` returns a
   checked borrowed text range; both ends must be UTF-8 scalar boundaries.
 - `codepoints(.text = view(&string))` returns a borrowed `CodepointView`

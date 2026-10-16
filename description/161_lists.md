@@ -13,8 +13,8 @@ from its length and homogeneous element types. Integer and floating-point litera
 use their normal defaults, `Int32` and `Float32`:
 
 ```rg
-values := (1, 2, 3)           // [3]Int32
-matrix := ((1, 2), (3, 4))   // [2][2]Int32
+values := (1, 2, 3)           -- [3]Int32
+matrix := ((1, 2), (3, 4))   -- [2][2]Int32
 ```
 
 An explicit type or a function parameter supplies the expected type before
@@ -86,7 +86,7 @@ capacity growth invalidate existing views, including their derived subranges
 and element references. The same rule applies to direct element loans from
 `get_reference`, `get_mutable_reference`, and the public operations returning element references, and to
 elements borrowed through collection iterators. This conservative contract applies even when an append
-does not reallocate. Replacing an element through `DynamicArray.replace` also invalidates existing
+does not reallocate. Replacing an element through `replace` also invalidates existing
 content loans, views, and iterators, even though the length does not change. Owner cleanup and backing-arena reset invalidate its storage.
 A fresh view, element reference, or iterator can be borrowed after a structural
 change. Empty views contain no
@@ -118,12 +118,12 @@ The view remains non-owning regardless of how its backing region is stored.
 
 ### `Allocation`
 
-`Allocation` should be the low-level owning heap base used by dynamic list-like
+`Allocation` is the low-level owning heap base used by dynamic list-like
 types.
 
 It owns raw bytes, not typed list semantics by itself.
 
-List structures such as dynamic arrays should layer their own length, capacity,
+List structures such as dynamic arrays layer their own length, capacity,
 element type, and indexing rules on top of an `Allocation`.
 
 ### `DynamicArray#(.t: Type)`
@@ -131,12 +131,11 @@ element type, and indexing rules on top of an `Allocation`.
 It uses `Allocation` internally, together with metadata such as length,
 capacity, and element type.
 Only slots below `length` contain initialized `T` values. Capacity-only slots
-are addressed through `MaybeUninit<T>` handles inside trusted core operations;
+are addressed through `MaybeUninit#(T)` handles inside trusted core operations;
 the named safe access functions check `index < length` at runtime.
-`l ::= DynamicArray#(.t: Int32)(.capacity = 3)`
+`l ::= DynamicArray#(.t: Int32)(.capacity = 3)!` with an assumed allocator.
 
-The `_allocation`, `_length`, and `_capacity` fields are private to the lists
-module. Code in other modules reads the logical length and capacity through
+The `_allocation`, `_length`, and `_capacity` fields are module-private. Code in other modules reads the logical length and capacity through
 `length(.self = &l).count` and `capacity(.self = &l).count`. It cannot assign
 those fields or fill them with a struct literal; `init` maintains their shared
 invariant.
@@ -161,18 +160,10 @@ only when its type implements `ImplicitlyCopyable`; other duplication uses
 
 ## Other core list families
 
-The core collection library includes these families alongside `DynamicArray`:
-
-- `PackedArray`: elements packed at widths such as 10 or 12 bits.
-- Singly and doubly linked lists.
-- `Rope`: a sequence assembled from smaller segments.
-
-> [!IMPLEMENTATION]
-> These core list families are not implemented yet.
-
-> [!QUESTION]
-> Define their constructors, allocator requirements, and which list contracts
-> each family implements.
+Core also provides `Deque`, `RingBuffer`, `PriorityQueue`, `BitSet`, and
+`BitSetView`; see [other collections](169_other_collections.md).
+Packed arrays, linked lists, and ropes remain design ideas, not implemented core
+types.
 
 ## Iteration
 
@@ -205,31 +196,50 @@ Deque preserve element order without allocating or copying elements.
 
 ## List contracts
 
-- `Indexable<T>` requires `length` and fallible `get_reference`.
-- `MutableIndexable<T>` also requires fallible `get_mutable_reference`.
-- `IndexableValue<T>` adds fallible `get` for implicitly copyable elements.
-- `Resizable<T>` specifies fallible `push`, `pop`, `insert`, and `remove`.
+- `Indexable#(Collection)` supplies `length` and fallible `get_reference`.
+- `MutableIndexable#(Collection)` requires `Indexable` and adds
+  `get_mutable_reference`.
+- `IndexableValue#(Collection)` requires `Indexable` and adds `get` when its
+  associated `Item` is implicitly copyable.
+- `Removable#(Collection)` requires mutable indexing and supplies `pop` and
+  `remove` without an allocator.
+- `Resizable#(Collection, Provider)` requires `Removable` and adds `push` and
+  `insert` using an allocator provider.
+
+These contracts associate the element type as `Item`; the participant is the
+collection type, not its element type. Public positions use `.index`:
+
+```rg
+insert($&items, .index = position, .value = ~item)!
+removed ::= remove($&items, .index = position)!
+```
+
+Insertion accepts `index <= length`; removal and indexed reads require
+`index < length`. Invalid positions report `out_of_bounds`. Insertion consumes
+its supplied item on success or failure; removal transfers the removed item to
+the caller. `pop` reports `empty` when the collection has no items.
 
 These named contracts are defined in `core/lists/List.rg`. Native `[N]T` uses
 built-in `[]`; pass an initialized array view to capability-based algorithms.
 
 ## Collection capabilities
 
-Collection algorithms can accept the named capabilities `Indexable<T>`,
-`MutableIndexable<T>`, `IndexableValue<T>`, and `Resizable<T>`. Public indexed
+Collection algorithms can accept the named capabilities `Indexable#(Collection)`,
+`MutableIndexable#(Collection)`, `IndexableValue#(Collection)`, and
+`Resizable#(Collection, Provider)`. Public indexed
 operations return an `Errable` with `out_of_bounds`; value reads require
 implicitly copyable elements. Borrowed reads support owning elements without
 copying them.
 
-`DynamicArray<T>` supplies read-only and mutable indexed borrowing and
-resizing. `MutableArrayView<T>` supplies read-only and mutable indexed borrowing;
-`ArrayView<T>` supplies read-only borrowing. All three supply value reads
+`DynamicArray#(T)` supplies read-only and mutable indexed borrowing and
+resizing. `MutableArrayView#(T)` supplies read-only and mutable indexed borrowing;
+`ArrayView#(T)` supplies read-only borrowing. All three supply value reads
 when `T` is implicitly copyable. Views are non-owning and do not resize.
 
 ## Equality search
 
 `find(.self, .value)` and `contains(.self, .value)` accept a borrowed
-`Indexable<T>`. Elements must be implicitly copyable and provide compatible
+`Indexable#(.Collection: Collection, .Item: T)`. Elements must be implicitly copyable and provide compatible
 `==` comparison. Search allocates nothing and does not mutate the collection.
 `find` returns the first matching logical index as `?UIntNative`, or `none`;
 `contains` returns a `Bool`. Empty collections never access an element.
@@ -239,7 +249,7 @@ contract; these helpers do not copy ownership or introduce predicate callbacks.
 
 ## Reversing collections
 
-`reverse(.self)` accepts a mutable `MutableIndexable<T>` with implicitly
+`reverse(.self)` accepts a mutable `MutableIndexable#(.Collection: Collection, .Item: T)` with implicitly
 copyable elements. It reverses logical element order in place, using linear
 time, constant auxiliary space, and no allocation. Empty and singleton
 collections are unchanged. Native arrays participate through mutable views;
@@ -254,14 +264,15 @@ logical positions must be independently replaceable: writing through an
 indexed reference replaces only that position, rather than changing other
 logical elements through overlapping storage.
 
-Owning elements need a separate exchange contract; copying their values to
-implement reversal would duplicate ownership.
+`reverse_owned($&array)` supports noncopyable elements in a `DynamicArray` by
+moving occupied slots through temporary owners. It does not allocate or copy
+elements, and its structural exchanges invalidate existing element loans.
 
 ## Ordering policies
 
 `OrderPolicy#(Policy, T)` provides the static operation
-`OrderPolicy#(Policy, T).less(.self, .left, .right) -> (.ok: Bool)` for implicitly
-copyable elements. It defines a strict weak order: no value is less than
+`OrderPolicy#(Policy, T).less(.self: &Policy, .left: &T, .right: &T) -> (.ok: Bool)`.
+Comparisons borrow elements and support noncopyable types. It defines a strict weak order: no value is less than
 itself, less-than is transitive, and equivalence is transitive. Two elements
 are equivalent when neither is less than the other; this need not coincide
 with their `==` operator or complete record equality.
@@ -282,7 +293,7 @@ floating-point ordering policy.
 
 ## Binary search
 
-`binary_search(.self, .value, .order)` reads an `Indexable<T>` of implicitly
+`binary_search(.self, .value, .order)` reads an `Indexable#(.Collection: Collection, .Item: T)` of implicitly
 copyable elements that is already sorted by the supplied policy. It returns
 the first policy-equivalent element's index as `?UIntNative`, or `none`.
 Equivalence means that neither element is less than the other. Empty
@@ -296,7 +307,7 @@ index has no storage lifetime and can become stale after mutation.
 
 ## Sorting collections
 
-`sort(.self, .order)` accepts a mutable `MutableIndexable<T>` of implicitly
+`sort(.self, .order)` accepts a mutable `MutableIndexable#(.Collection: Collection, .Item: T)` of implicitly
 copyable elements. It orders values in place according to the explicit policy,
 using iterative heapsort. Worst-case indexed operations and comparisons are
 O(n log n), auxiliary space is constant, and the algorithm does not allocate
@@ -312,7 +323,10 @@ Like `reverse`, sorting exchanges copied values through mutable references and
 does not replace or resize backing storage. Existing references and views
 remain live and designate their original positions, whose values can change.
 A native array or a subrange participates through its mutable view. Read-only
-views cannot be sorted. Owning elements require a separate exchange contract.
+views cannot be sorted. `sort_owned($&array, .order = &policy)` supports
+noncopyable elements in a `DynamicArray`, using the same `OrderPolicy` contract
+and moving slots without allocation or element copies. Its exchanges invalidate
+existing element loans.
 
 ## Growable deque
 
@@ -349,8 +363,8 @@ invalidate them. Returned references retain the same shape dependency. Calling
 
 The unique ordinary `view(.self)` function selects `Viewable#(Source)` evidence.
 Source is the complete reference type, including mutability. For `$&[N]T`,
-Result is MutableArrayView(T); for `&[N]T`, Result is ArrayView(T). Result does not
-participate in selection. Generic callers can require Viewable(Source) and retain
+Result is `MutableArrayView#(T)`; for `&[N]T`, Result is `ArrayView#(T)`. Result does not
+participate in selection. Generic callers can require `Viewable#(Source)` and retain
 the associated result projection until specialization.
 
 Both conformances reuse the checked fixed-array view algorithms, preserve backing
