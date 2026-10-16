@@ -200,7 +200,8 @@ The text model uses these conventions:
   - `set_ascii(.self = $&string, .index = i, .byte = b)` checks the index and
     requires both the old and new byte to be ASCII.
   - `push_ascii`, `push_scalar`, and `push_view` append ASCII, a Unicode scalar,
-    or validated text. `push_ascii` aborts for a non-ASCII byte; arbitrary
+    or validated text. `push_ascii` rejects a non-ASCII byte with `invalid_codepoint` before allocation
+    or mutation; arbitrary
     byte input must use checked decoding instead.
 - `slice(.self = view(&string), .start = start, .count = count)` returns a
   checked borrowed text range; both ends must be UTF-8 scalar boundaries.
@@ -410,3 +411,11 @@ forming a one-past reference. Oversized counts and offsets cannot wrap.
 Whitespace iterators also support `for token in split_whitespace(.self = text)`.
 Iteration copies the remaining cursor state; it does not advance the original
 iterator. The copy retains the same source lifetime.
+
+`capacity(&string).count` reports the usable byte capacity, excluding the trailing
+NUL. ASCII edits report `invalid_codepoint` without changing the text when the
+input byte is not ASCII. `set_ascii` also rejects replacing any byte of a
+multibyte scalar. `append_ascii_assume_capacity` performs the same ASCII check
+but requires sufficient capacity; its name makes that storage precondition
+explicit. `append_text_assume_capacity` accepts already-valid text and likewise
+requires sufficient capacity.

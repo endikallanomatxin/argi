@@ -13311,3 +13311,8 @@ test "feature_tests/collections/169_canonical_map_queries" {
 test "feature_tests/collections/170X_map_query_requires_explicit_view" {
     try buildExpectFail("tests/feature_tests/collections/170X_map_query_requires_explicit_view", "no function named 'get_reference'");
 }
+
+test "feature_tests/text/88_ascii_edits_are_checked" {
+    try expectSuccessfulBuild("tests/feature_tests/text/88_ascii_edits_are_checked");
+    try runExpect("tests/feature_tests/text/88_ascii_edits_are_checked", 0);
+}

@@ -49,7 +49,7 @@ main(.system: System) -> (.status_code: Int32) := {
                         return
                     }
 
-                    if capacity(.self = &line).value < 20 {
+                    if capacity(.self = &line).count < 20 {
                         status_code = 3
                         return
                     }

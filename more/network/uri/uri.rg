@@ -461,7 +461,7 @@ build#(.AllocatorType: Type: Allocator#(AllocatorType))(
                 return
             }
             push_view(.self = $&output, .view = item.value, .allocator = allocator)!
-            push_ascii(.self = $&output, .byte = 58, .allocator = allocator)!
+            push_view(.self = $&output, .view = ":", .allocator = allocator)!
         }
     }
 
@@ -513,7 +513,7 @@ build#(.AllocatorType: Type: Allocator#(AllocatorType))(
                 result = ..error(.reason = ..invalid_input)
                 return
             }
-            push_ascii(.self = $&output, .byte = 63, .allocator = allocator)!
+            push_view(.self = $&output, .view = "?", .allocator = allocator)!
             push_view(.self = $&output, .view = item.value, .allocator = allocator)!
         }
     }
@@ -525,7 +525,7 @@ build#(.AllocatorType: Type: Allocator#(AllocatorType))(
                 result = ..error(.reason = ..invalid_input)
                 return
             }
-            push_ascii(.self = $&output, .byte = 35, .allocator = allocator)!
+            push_view(.self = $&output, .view = "#", .allocator = allocator)!
             push_view(.self = $&output, .view = item.value, .allocator = allocator)!
         }
     }
@@ -543,23 +543,27 @@ encode_component#(.AllocatorType: Type: Allocator#(AllocatorType))(
     while i < byte_length(&text).count {
         byte ::= unwrap_or_abort(.value = bytes_get(.view = &text, .index = i))
         if _unreserved(.byte = byte).ok {
-            push_ascii(.self = $&output, .byte = byte, .allocator = allocator)!
+            push_view(
+                .self      = $&output
+                .view      = unwrap_or_abort(.value = slice(text, .start = i, .count = 1))
+                .allocator = allocator
+            )!
         } else {
-            push_ascii(.self = $&output, .byte = 37, .allocator = allocator)!
-            push_ascii(
+            push_view(.self = $&output, .view = "%", .allocator = allocator)!
+            push_view(
                 .self = $&output
-                .byte = unwrap_or_abort(
-                    .value = bytes_get(
-                        .view = &hex, .index = [[byte / 16] | convert#(.to: UIntNative)(_)]
+                .view = unwrap_or_abort(
+                    .value = slice(
+                        hex, .start = [[byte / 16] | convert#(.to: UIntNative)(_)], .count = 1
                     )
                 )
                 .allocator = allocator
             )!
-            push_ascii(
+            push_view(
                 .self = $&output
-                .byte = unwrap_or_abort(
-                    .value = bytes_get(
-                        .view = &hex, .index = [[byte % 16] | convert#(.to: UIntNative)(_)]
+                .view = unwrap_or_abort(
+                    .value = slice(
+                        hex, .start = [[byte % 16] | convert#(.to: UIntNative)(_)], .count = 1
                     )
                 )
                 .allocator = allocator

@@ -53,7 +53,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     if view(.self = &text).view != "abc" { abort }
     if is(.value = bytes_get(.view = &text, .index = 3), .variant = ..error) == false { abort }
     clear(.self = $&text)
-    append_ascii_assume_capacity(.self = $&text, .byte = 120)
+    unwrap_or_abort(.value = append_ascii_assume_capacity(.self = $&text, .byte = 120))
     tail: [2]UInt8 = (121, 122)
     append_text_assume_capacity(.self = $&text, .text = "yz")
     empty: [0]UInt8 = ()

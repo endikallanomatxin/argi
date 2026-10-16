@@ -172,13 +172,13 @@ _string_text_view(.self: &String) -> (.view: StringView) := {
     view = (._data = borrowed, ._length = self&._length)
 }
 
-capacity(.self: &String) -> (.value: UIntNative) := {
+capacity(.self: &String) -> (.count: UIntNative) := {
     if self&._allocation.size == 0 {
-        value = 0
+        count = 0
         return
     }
 
-    value = self&._allocation.size - 1
+    count = self&._allocation.size - 1
 }
 
 _invalidate_string(.self: $&String) -> () := {
@@ -197,14 +197,14 @@ clear(.self: $&String) -> () := {
 }
 
 has_space(.self: &String) -> (.ok: Bool) := {
-    ok = self&._length < capacity(self).value
+    ok = self&._length < capacity(self).count
 }
 
-string_growth_capacity(.self: &String, .min_capacity: UIntNative) -> (.value: UIntNative) := {
+_string_growth_capacity(.self: &String, .min_capacity: UIntNative) -> (.value: UIntNative) := {
     limit ::= _string_max_result_length().length
 
     if min_capacity > limit { abort }
-    current_capacity ::= capacity(self).value
+    current_capacity ::= capacity(self).count
 
     if current_capacity == 0 {
         value = min_capacity
@@ -241,7 +241,7 @@ ensure_capacity_growing#(.AllocatorType: Type: Allocator#(AllocatorType))(
         return
     }
 
-    current_capacity ::= capacity(self).value
+    current_capacity ::= capacity(self).count
 
     if current_capacity >= target_capacity {
         result = ..ok Void()
@@ -298,7 +298,7 @@ _string_append_byte(.self: $&String, .byte: UInt8) -> () := {
 }
 
 _string_append_bytes(.self: $&String, .source: ArrayView#(.t: UInt8)) -> () := {
-    current_capacity ::= capacity(self).value
+    current_capacity ::= capacity(self).count
 
     if self&._length > current_capacity { abort }
     count ::= length(&source).count
@@ -330,7 +330,7 @@ _string_push_byte#(.AllocatorType: Type: Allocator#(AllocatorType))(
 
     if has_space(self).ok {
     } else {
-        next_capacity ::= string_growth_capacity(self, .min_capacity = self&._length + 1).value
+        next_capacity ::= _string_growth_capacity(self, .min_capacity = self&._length + 1).value
         growth_result ::= ensure_capacity_growing(
             self, .target_capacity = next_capacity, .allocator = allocator
         )
@@ -662,9 +662,12 @@ string_from_bytes#(.Provider: Type: Allocator)(
 
 push_ascii#(.Provider: Type: Allocator)(
     .self: $&String, .byte: UInt8, .allocator: $&Provider = reach allocator
-) -> (.result: Errable#(Void, (..out_of_memory))) := {
+) -> (.result: Errable#(Void, (..invalid_codepoint, ..out_of_memory))) := {
     assume allocator
-    if byte >= 128 { abort }
+    if byte >= 128 {
+        result = ..error(.reason = ..invalid_codepoint)
+        return
+    }
     _string_push_byte(self, .byte = byte, .allocator = allocator)!
     result = ..ok Void()
 }
@@ -720,9 +723,15 @@ set_ascii(.self: $&String, .index: UIntNative, .byte: UInt8) -> (
     result = ..ok Void()
 }
 
-append_ascii_assume_capacity(.self: $&String, .byte: UInt8) -> () := {
-    if byte >= 128 { abort }
+append_ascii_assume_capacity(.self: $&String, .byte: UInt8) -> (
+    .result : Errable#(Void, (..invalid_codepoint))
+) := {
+    if byte >= 128 {
+        result = ..error(.reason = ..invalid_codepoint)
+        return
+    }
     _string_append_byte(self, .byte = byte)
+    result = ..ok Void()
 }
 
 append_text_assume_capacity(.self: $&String, .text: StringView) -> () := {

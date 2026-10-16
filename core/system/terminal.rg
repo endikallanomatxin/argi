@@ -45,7 +45,7 @@ read_line_into_buffer#(
 
     -- Keep caller-visible text valid between reader callbacks. Incomplete
     -- encodings stay in local byte storage until the complete scalar is checked.
-    while byte_length(buffer).count + count < capacity(buffer).value {
+    while byte_length(buffer).count + count < capacity(buffer).count {
         match Reader#().read_byte(reader) {
             ..error _ {
                 clear(buffer)
