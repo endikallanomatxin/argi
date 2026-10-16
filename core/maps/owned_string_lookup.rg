@@ -49,7 +49,7 @@ _map_get_reference_owned_string_lookup#(.value: Type) := (
     }
 }
 
-get_ref#(.value: Type)(
+_map_get_mutable_reference_owned_string_lookup#(.value: Type)(
     .self : $&OwnedHashMap#(.key: String, .value: value, .policy: StringHashPolicy),
     .key  : StringView
 ) -> (.result: ?$&value = ..none) := {

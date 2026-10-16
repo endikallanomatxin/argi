@@ -191,8 +191,10 @@ Ownership transfer supplies no new native allocation receipt or reference
 validity beyond the original values' checked storage contracts.
 
 For `OwnedHashMap<String, V, StringHashPolicy>`, `contains` and `get_reference`
-also accept `.key: StringView`. `get_ref(.self: $&map, .key: StringView)`
-returns an optional mutable value reference. These probes allocate nothing,
+also accept `.key: StringView`. `get_mutable_reference(.self: $&map, .key: StringView)`
+returns an optional mutable value reference through
+`MutableTextMapBorrowedLookup#(Map)`. This contract reuses the read capability
+`TextMapBorrowedLookup#(Map)`. These probes allocate nothing,
 retain the map shape dependency and never expose mutable keys. Editing a value
 preserves table shape; insertion, removal, growth and cleanup invalidate its
 borrowed references. The query text is used only for the lookup and is not

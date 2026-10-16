@@ -1,3 +1,9 @@
+lookup_mutable#(.Map: Type: MutableTextMapBorrowedLookup#(.Value: UIntNative))(
+    .self: $&Map, .key: StringView
+) -> (.result: ?$&UIntNative) := {
+    result = MutableTextMapBorrowedLookup#(Map).get_mutable_reference(.self = self, .key = key)
+}
+
 run_main(.system: System) -> !Void = ..ok Void() := {
     assume allocator := system.page_allocator
     map ::= OwnedHashMap#(.key: String, .value: UIntNative, .policy: StringHashPolicy)(
@@ -7,7 +13,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     put(.self = $&map, .key = ~key, .value = 1, .allocator = allocator)!
     if contains(.self = &map, .key = "café").ok == false { abort }
     if contains(.self = &map, .key = "missing").ok { abort }
-    match get_ref(.self = $&map, .key = "café").result {
+    match get_mutable_reference(.self = $&map, .key = "café").result {
         ..none { abort }
         ..some borrowed { borrowed.value&= 42 }
     }
@@ -15,7 +21,13 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         ..none { abort }
         ..some borrowed { if borrowed.value&!= 42 { abort } }
     }
-    match get_ref(.self = $&map, .key = "missing").result { ..none {} ..some _ { abort } }
+    match lookup_mutable(.self = $&map, .key = "missing").result {
+        ..none {} ..some _ { abort }
+    }
+    match lookup_mutable(.self = $&map, .key = "café").result {
+        ..none { abort }
+        ..some borrowed { if borrowed.value&!= 42 { abort } }
+    }
     empty ::= format(.value = "", .allocator = allocator)!
     put(.self = $&map, .key = ~empty, .value = 0, .allocator = allocator)!
     if contains(.self = &map, .key = "").ok == false { abort }

@@ -2,7 +2,7 @@
 _sift_down#(
     .t : Type: ImplicitlyCopyable,
     .policy     : Type: OrderPolicy#(policy, t),
-    .Collection : Type: IndexableMutable#(.Item: t)
+    .Collection : Type: MutableIndexable#(.Item: t)
 ) := (.self: $&Collection, .order: &policy, .start: UIntNative, .count: UIntNative) -> () {
     root ::= start
     -- This guard proves that 2 * root + 1 is an existing child and that
@@ -31,7 +31,7 @@ _sift_down#(
 sort#(
     .t : Type: ImplicitlyCopyable,
     .policy     : Type: OrderPolicy#(policy, t),
-    .Collection : Type: IndexableMutable#(.Item: t)
+    .Collection : Type: MutableIndexable#(.Item: t)
 ) := (.self: $&Collection, .order: &policy) -> () {
     count ::= length(self).count
 

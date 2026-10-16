@@ -30,7 +30,7 @@ types and constants are resolved afterwards; they never infer missing participan
 from an expected output. Composition preserves dependency operation identities.
 See [Contract dispatch](131_multiple_dispatch.md) for selection and coherence.
 
-The bundled collection contracts include Indexable, IndexableMutable,
+The bundled collection contracts include Indexable, MutableIndexable,
 IndexableValue, Resizable and Removable. Their implementations select collection
 and provider types explicitly. MatrixShape associates element types and dimensions;
 MatrixProduct relates two operands and specializes its result representation.

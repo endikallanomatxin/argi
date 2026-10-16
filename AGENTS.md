@@ -349,8 +349,11 @@ feature first.
   a direct table shape anchor in addition to their owner loan; return references
   must preserve that anchor explicitly. Value edits through borrowed references
   preserve iteration, while successful put/remove and table growth invalidate it.
-  UTF-8 views validate borrowed bytes without freezing them; callers must preserve
-  the validated contents. Checked decoding cursors advance only on success.
+  CodepointView borrows an already-valid StringView without a preliminary scan;
+  scalar length is computed on demand. Both it and CodepointIterator retain the
+  source's storage dependencies. Arbitrary bytes use checked Utf8Decoder or
+  utf8_decode_bytes; decoding neither certifies nor freezes their source.
+  Checked decoding cursors advance only on success.
   Test entry wrappers report bounded traces before cleanup, then replace their
   trace handle with the program-lifetime noop tracer while preserving the reason
   used by the C wrapper for failure/skip status.

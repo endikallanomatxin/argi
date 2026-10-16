@@ -19,7 +19,7 @@ distinct questions:
 
 ```
 my_string | bytes_get(.view = &_, .index = 3)  -- Errable containing the fourth byte
-codepoints(.text = as_view(&my_string))  -- Checked Unicode scalar iteration
+codepoints(.text = as_view(&my_string))  -- Unicode scalar iteration
 ```
 
 
@@ -196,8 +196,9 @@ The text model uses these conventions:
     byte input must use checked decoding instead.
 - `slice(.self = as_view(&string), .start = start, .count = count)` returns a
   checked borrowed text range; both ends must be UTF-8 scalar boundaries.
-- `codepoints(.text = as_view(&string))` validates bytes and returns a borrowed
-  `Utf8View` for scalar iteration. `utf8_decode` supports checked byte offsets.
+- `codepoints(.text = as_view(&string))` returns a borrowed `CodepointView`
+  for scalar iteration without validation or allocation. `utf8_decode` supports
+  checked byte offsets.
 
 > [!IMPLEMENTATION]
 > Codepoint-range slicing and grapheme views are not implemented. Byte slicing,
@@ -335,13 +336,15 @@ The scalar representation is private and implicitly copyable.
 
 `utf8_decode(.text, .offset = 0)` returns `Utf8Decoded` with `.scalar` and the
 consumed `.width` in bytes. An offset at or beyond the end reports
-`out_of_bounds`. Invalid leading or continuation bytes, truncated sequences,
-overlong encodings, surrogate encodings, and values above U+10FFFF report
-`invalid_utf8`. Decoding does not replace invalid bytes or skip them.
+`out_of_bounds`. An offset inside a multibyte scalar reports `invalid_utf8`,
+even though the complete text is valid.
 
 `validate_utf8_bytes(.bytes)` checks arbitrary bytes and returns their scalar
-count. `utf8_decode_bytes(.bytes, .offset)` decodes one scalar.
-`validate_utf8(.text)` returns a text view's scalar count.
+count. `utf8_decode_bytes(.bytes, .offset)` decodes one scalar. Invalid leading
+or continuation bytes, truncated sequences, overlong encodings, surrogate
+encodings, and values above U+10FFFF report `invalid_utf8`. Decoding does not
+replace invalid bytes or skip them.
+For valid text, `length(&codepoints(.text = text))` counts its scalars.
 Empty text is valid and has count zero. `utf8_encoded_length(.scalar)` returns
 one through four. `utf8_encode(.scalar, .buffer, .offset = 0)` writes the shortest
 UTF-8 encoding to initialized mutable byte storage and returns its width. It
@@ -355,12 +358,15 @@ success. `position(.self)` reports that byte position. Failure preserves the
 position; end remains stable. This checked cursor can handle unvalidated input
 without pretending that fallible decoding is an infallible iterator operation.
 
-`Utf8View(.text)` or `codepoints(.text)` validates all bytes once and returns a
-borrowed, implicitly copyable text view. `length(.self)` counts scalars, and
-`utf8_bytes(.self)` retrieves the original byte view. `for scalar in view`
-iterates `UnicodeScalar` values without allocation. Iterators retain backing
+`CodepointView(.text)` or `codepoints(.text)` returns a borrowed, implicitly
+copyable scalar view of an already-valid `StringView`. Construction is
+infallible, constant-time, and allocates no storage. `length(.self)` scans the
+text to count scalars; it does not cache a count. `as_view(&view)` retrieves the
+original `StringView`. `for scalar in view` decodes `UnicodeScalar` values as
+it advances, without a preliminary scan. `CodepointIterator` retains backing
 storage lifetimes; copied scalars are independent values. `next` requires a
-successful `has_next` and aborts at end.
+successful `has_next` and aborts at end. Arbitrary byte input uses the fallible
+`Utf8Decoder` or `utf8_decode_bytes` APIs instead.
 
 Text views preserve their validity through storage dependencies: mutating the
 owning string invalidates existing views. Checked byte decoders do not certify

@@ -1,4 +1,4 @@
-JsonReasons: Type = (..invalid_json, ..json_depth_exceeded, ..invalid_utf8)
+JsonReasons: Type = (..invalid_json, ..json_depth_exceeded)
 
 _byte(.text: StringView, .position: UIntNative) -> (.value: UInt8) := {
     value = unwrap_or_abort(.value = bytes_get(.view = &text, .index = position))
@@ -327,7 +327,6 @@ _value_end(.text: StringView, .position: UIntNative, .depth: UIntNative, .maximu
 validate(.text: StringView, .maximum_depth: UIntNative = 64) -> (
     .result : Errable#(Void, JsonReasons) = ..ok Void()
 ) := {
-    validate_utf8(.text = text)!
 
     if maximum_depth > 256 {
         result = ..error(.reason = ..json_depth_exceeded)
@@ -494,12 +493,10 @@ _hex_ascii(.value: UInt8) -> (.byte: UInt8) := {
     if value >= 10 { byte = value + 87 }
 }
 
--- Validate input before writing; native writer failures can leave a prefix.
+-- Input is already valid text; native writer failures can leave a prefix.
 write_string#(.WriterType: Type: Writer#(WriterType))(.writer: $&WriterType, .text: StringView) -> (
-    .result : Errable#(Void, (..invalid_utf8, ..stream_write_failed, ..stream_flush_failed)) = ..ok Void(
-    )
+    .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed)) = ..ok Void()
 ) := {
-    validate_utf8(.text = text)!
     Writer#().write_byte(.self = writer, .byte = 34)!
     cursor :: UIntNative = 0
 

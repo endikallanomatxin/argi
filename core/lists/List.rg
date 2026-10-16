@@ -8,7 +8,7 @@ Indexable#(.Collection: Type): Contract = (
 )
 
 -- Writable indexing reuses the readonly capability without duplicating it.
-IndexableMutable#(.Collection: Type): Contract = (
+MutableIndexable#(.Collection: Type): Contract = (
     .Item : Type
     Indexable#(.Collection: Collection, .Item: Item)
     .get_mutable_reference : (.self: $&Collection, .index: UIntNative) -> (
@@ -27,7 +27,7 @@ IndexableValue#(.Collection: Type): Contract = (
 -- Removal needs no allocation capability; its identity has one participant.
 Removable#(.Collection: Type): Contract = (
     .Item : Type
-    IndexableMutable#(.Collection: Collection, .Item: Item)
+    MutableIndexable#(.Collection: Collection, .Item: Item)
     .pop    : (.self: $&Collection) -> (.result: Errable#(Item, (..empty)))
     .remove : (.self: $&Collection, .i: UIntNative) -> (
         .result : Errable#(Item, (..out_of_bounds))

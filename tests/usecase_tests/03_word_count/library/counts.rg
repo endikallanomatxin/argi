@@ -5,10 +5,8 @@ count_text(
 ) -> !Void = ..ok Void() := {
     assume allocator
 
-    validate_utf8(text)!
-
     for token in split_whitespace(text) {
-        match get_ref(self, token).result {
+        match get_mutable_reference(self, token).result {
             ..none {
                 word ::= format(token)!
                 put(self, ~word, 1)!

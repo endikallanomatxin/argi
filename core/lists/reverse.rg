@@ -1,6 +1,6 @@
 -- Exchange copied values through indexed references without resizing storage.
 _swap_indexed_values#(
-    .t: Type: ImplicitlyCopyable, .Collection: Type: IndexableMutable#(.Item: t)
+    .t: Type: ImplicitlyCopyable, .Collection: Type: MutableIndexable#(.Item: t)
 )(.self: $&Collection, .left: UIntNative, .right: UIntNative) -> () := {
     if left == right { return }
     left_ref ::= unwrap_or_abort(.value = get_mutable_reference(self, .index = left))
@@ -10,7 +10,7 @@ _swap_indexed_values#(
     right_ref&= saved
 }
 
-reverse#(.t: Type: ImplicitlyCopyable, .Collection: Type: IndexableMutable#(.Item: t))(
+reverse#(.t: Type: ImplicitlyCopyable, .Collection: Type: MutableIndexable#(.Item: t))(
     .self : $&Collection
 ) -> () := {
     left :: UIntNative = 0

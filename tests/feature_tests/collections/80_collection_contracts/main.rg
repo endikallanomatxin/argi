@@ -9,7 +9,7 @@ borrow#(.Collection: Type: Indexable#(.Item: Int32))(.items: &Collection) -> (.v
     value = pointer&
 }
 
-write#(.Collection: Type: IndexableMutable#(.Item: Int32))(.items: $&Collection) -> () := {
+write#(.Collection: Type: MutableIndexable#(.Item: Int32))(.items: $&Collection) -> () := {
     pointer ::= unwrap_or_abort(.value = get_mutable_reference(.self = items, .index = 0))
     pointer&= 9
 }

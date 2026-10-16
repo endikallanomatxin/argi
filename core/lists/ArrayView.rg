@@ -165,7 +165,7 @@ implement#(.t: Type) Indexable#(ArrayView#(.t: t)) (
     }
 )
 
-implement#(.t: Type) IndexableMutable#(MutableArrayView#(.t: t)) (
+implement#(.t: Type) MutableIndexable#(MutableArrayView#(.t: t)) (
     .Item : Type = t
 
     .get_mutable_reference = (.self: $&MutableArrayView#(.t: t), .index: UIntNative) -> (

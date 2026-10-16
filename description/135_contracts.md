@@ -336,7 +336,7 @@ not redefine inherited operations. Named associated constraints infer generic
 leaves only after participants select the evidence, without using a desired
 result to select an implementation.
 
-Collection indexing now follows this model: IndexableMutable requires Indexable
+Collection indexing now follows this model: MutableIndexable requires Indexable
 and supplies only writable indexing. Resizable uses collection and allocation
 provider participants for growth, while its Removable dependency supplies
 allocation-free removal under its own unary identity. Generic collection

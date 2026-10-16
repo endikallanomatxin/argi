@@ -30,6 +30,13 @@ TextMapBorrowedLookup#(.Map: Type): Contract = (
     .get_reference : (.self: &Map, .key: StringView) -> (.result: ?&Value)
 )
 
+-- Mutable value access retains the readonly lookup capability and never keys.
+MutableTextMapBorrowedLookup#(.Map: Type): Contract = (
+    .Value : Type
+    TextMapBorrowedLookup#(.Map: Map, .Value: Value)
+    .get_mutable_reference : (.self: $&Map, .key: StringView) -> (.result: ?$&Value)
+)
+
 MapInsertion#(.Map: Type, .Provider: Type: Allocator#(Provider)): Contract = (
     .Key   : Type
     .Value : Type
@@ -93,6 +100,13 @@ implement#(.value: Type) TextMapBorrowedLookup#(
 ) (
     .Value         : Type = value
     .get_reference = _map_get_reference_owned_string_lookup
+)
+
+implement#(.value: Type) MutableTextMapBorrowedLookup#(
+    OwnedHashMap#(.key: String, .value: value, .policy: StringHashPolicy)
+) (
+    .Value : Type = value
+    .get_mutable_reference = _map_get_mutable_reference_owned_string_lookup
 )
 
 implement#(.value: Type) TextMapMembership#(

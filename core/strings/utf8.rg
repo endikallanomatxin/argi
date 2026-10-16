@@ -132,25 +132,6 @@ utf8_decode(.text: StringView, .offset: UIntNative = 0) -> (
     }
 }
 
-validate_utf8(.text: StringView) -> (.result: Errable#(UIntNative, (..invalid_utf8))) := {
-    offset :: UIntNative = 0
-    count :: UIntNative = 0
-
-    while offset < text._length {
-        match _utf8_decode(.text = text, .offset = offset).result {
-            ..valid payload { offset = offset + payload.decoded.width }
-            ..invalid {
-                result = ..error(.reason = ..invalid_utf8)
-                return
-            }
-            ..outside { abort }
-        }
-        count = count + 1
-    }
-
-    result = ..ok count
-}
-
 utf8_encoded_length(.scalar: UnicodeScalar) -> (.count: UIntNative) := {
     code ::= scalar._value
 
@@ -254,50 +235,62 @@ implement Init#(Utf8Decoder, (.bytes: ArrayView#(UInt8))) (
     }
 )
 
--- Validation borrows bytes rather than freezing or owning them. Callers must
--- keep their contents unchanged while using the validated view and its iterator.
-Utf8View: Type = (._text: StringView, ._count: UIntNative)
+-- A scalar view borrows already-valid text without decoding it up front.
+-- String storage dependencies invalidate it when the underlying text changes.
+CodepointView: Type = (._text: StringView)
 
-implement ImplicitlyCopyable#(Utf8View) ()
+implement ImplicitlyCopyable#(CodepointView) ()
 
-implement Init#(Utf8View, (.text: StringView)) (
-    .Result : Type = Errable#(Utf8View, (..invalid_utf8))
+implement Init#(CodepointView, (.text: StringView)) (
+    .Result : Type = CodepointView
     .init   = (.args: (.text: StringView)) -> (.result: Result) {
-        text ::= args.text
-
-        count ::= validate_utf8(.text = text)!
-
-        result = ..ok(._text = text, ._count = count)
+        result = (._text = args.text)
     }
 )
 
-codepoints(.text: StringView) -> (.result: Errable#(Utf8View, (..invalid_utf8))) := {
-    result = Utf8View(.text = text)
+codepoints(.text: StringView) -> (.view: CodepointView) := {
+    view = CodepointView(.text = text)
 }
 
-length(.self: &Utf8View) -> (.count: UIntNative) := { count = self&._count }
+-- Scalar count requires a scan; constructing or iterating a view does not.
+length(.self: &CodepointView) -> (.count: UIntNative) := {
+    count = 0
+    offset :: UIntNative = 0
+    while offset < self&._text._length {
+        match _utf8_decode(.text = self&._text, .offset = offset).result {
+            ..valid payload { offset = offset + payload.decoded.width }
+            ..invalid { abort }
+            ..outside { abort }
+        }
+        count = count + 1
+    }
+}
 
-utf8_bytes(.self: &Utf8View) -> (.text: StringView) := { text = self&._text }
+implement TextViewOf#(&CodepointView) (
+    .text_view = (.self: &CodepointView) -> (.view: StringView) {
+        view = self&._text
+    }
+)
 
-Utf8Iterator: Type = (._text: StringView, ._offset: UIntNative)
+CodepointIterator: Type = (._text: StringView, ._offset: UIntNative)
 
-implement Iterable#(Utf8View) (
+implement Iterable#(CodepointView) (
     .Item         : Type = UnicodeScalar
-    .IteratorType : Type = Utf8Iterator
+    .IteratorType : Type = CodepointIterator
 
-    .to_iterator = (.value: &Utf8View) -> (.iterator: Utf8Iterator) {
+    .to_iterator = (.value: &CodepointView) -> (.iterator: CodepointIterator) {
         iterator = (._text = value&._text, ._offset = 0)
     }
 )
 
-implement Iterator#(Utf8Iterator) (
+implement Iterator#(CodepointIterator) (
     .Item : Type = UnicodeScalar
 
-    .has_next = (.self: &Utf8Iterator) -> (.ok: Bool) {
+    .has_next = (.self: &CodepointIterator) -> (.ok: Bool) {
         ok = self&._offset < self&._text._length
     }
 
-    .next = (.self: $&Utf8Iterator) -> (.value: UnicodeScalar) {
+    .next = (.self: $&CodepointIterator) -> (.value: UnicodeScalar) {
         match _utf8_decode(.text = self&._text, .offset = self&._offset).result {
             ..valid payload {
                 value = payload.decoded.scalar

@@ -52,9 +52,9 @@ run_main() -> !Void = ..ok Void() := {
         if validate_utf8_bytes(.bytes = text)! != 1 { abort }
     }
     text :: StringView = "Aé€🙂"
-    validated ::= codepoints(.text = text)!
+    validated :: CodepointView = codepoints(.text = text)
     if length(.self = &validated).count != 4 or byte_length(&text).count != 10 { abort }
-    if equals(.left = utf8_bytes(.self = &validated).text, .right = text).ok == false { abort }
+    if equals(.left = as_view(.self = &validated).view, .right = text).ok == false { abort }
     expected :: [4]UInt32 = (65, 233, 8364, 128578)
     index :: UIntNative = 0
     for scalar in validated {
@@ -62,6 +62,10 @@ run_main() -> !Void = ..ok Void() := {
         index = index + 1
     }
     if index != 4 { abort }
+    -- Reusing the view starts a new independent decoder.
+    again :: UIntNative = 0
+    for scalar in validated { again = again + 1 }
+    if again != 4 { abort }
     decoder ::= Utf8Decoder(.text = text)
     index = 0
     while index < 4 {
@@ -76,7 +80,7 @@ run_main() -> !Void = ..ok Void() := {
     if position(.self = &decoder).count != 10 { abort }
     match next_codepoint(.self = $&decoder)! { ..none {} ..some _ { abort } }
     match next_codepoint(.self = $&decoder)! { ..none {} ..some _ { abort } }
-    empty ::= Utf8View(.text = "")!
+    empty ::= CodepointView(.text = "")
     if length(.self = &empty).count != 0 { abort }
     for scalar in empty { abort }
 }

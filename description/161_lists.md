@@ -171,7 +171,7 @@ The core collection library includes these families alongside `DynamicArray`:
 > These core list families are not implemented yet.
 
 > [!QUESTION]
-> Define their constructors, allocator requirements, and which list abstracts
+> Define their constructors, allocator requirements, and which list contracts
 > each family implements.
 
 ## Iteration
@@ -182,6 +182,7 @@ than the iterator layer:
 - `Iterable#(Collection)` for `for item in arr`
 - `ReferenceIterable#(Collection)` for `for & item in arr`
 - `MutableReferenceIterable#(Collection)` for `for $& item in arr`
+- `MovingIterable#(Collection)` for `for ~ item in arr`
 
 The iterator contract itself stays unified:
 
@@ -197,14 +198,15 @@ iteration. Exhausted `next` aborts before constructing an element reference.
 Length/cursor metadata alone does not read an element. User modules cannot
 forge the private iterator state or use internal transfer-only pointer helpers.
 
-> [!QUESTION]
-> Define transfer-style iteration and the ownership of consumed iterators
-> before specifying `for ~ item in arr`.
+Moving iteration consumes the collection once. Its iterator owns undelivered
+items and yields each item by move. Ordinary lexical cleanup destroys the
+remaining items and releases backing storage on early exit. DynamicArray and
+Deque preserve element order without allocating or copying elements.
 
-## List abstracts
+## List contracts
 
 - `Indexable<T>` requires `length` and fallible `get_reference`.
-- `IndexableMutable<T>` also requires fallible `get_mutable_reference`.
+- `MutableIndexable<T>` also requires fallible `get_mutable_reference`.
 - `IndexableValue<T>` adds fallible `get` for implicitly copyable elements.
 - `Resizable<T>` specifies fallible `push`, `pop`, `insert`, and `remove`.
 
@@ -214,7 +216,7 @@ built-in `[]`; pass an initialized array view to capability-based algorithms.
 ## Collection capabilities
 
 Collection algorithms can accept the named capabilities `Indexable<T>`,
-`IndexableMutable<T>`, `IndexableValue<T>`, and `Resizable<T>`. Public indexed
+`MutableIndexable<T>`, `IndexableValue<T>`, and `Resizable<T>`. Public indexed
 operations return an `Errable` with `out_of_bounds`; value reads require
 implicitly copyable elements. Borrowed reads support owning elements without
 copying them.
@@ -237,7 +239,7 @@ contract; these helpers do not copy ownership or introduce predicate callbacks.
 
 ## Reversing collections
 
-`reverse(.self)` accepts a mutable `IndexableMutable<T>` with implicitly
+`reverse(.self)` accepts a mutable `MutableIndexable<T>` with implicitly
 copyable elements. It reverses logical element order in place, using linear
 time, constant auxiliary space, and no allocation. Empty and singleton
 collections are unchanged. Native arrays participate through mutable views;
@@ -294,7 +296,7 @@ index has no storage lifetime and can become stale after mutation.
 
 ## Sorting collections
 
-`sort(.self, .order)` accepts a mutable `IndexableMutable<T>` of implicitly
+`sort(.self, .order)` accepts a mutable `MutableIndexable<T>` of implicitly
 copyable elements. It orders values in place according to the explicit policy,
 using iterative heapsort. Worst-case indexed operations and comparisons are
 O(n log n), auxiliary space is constant, and the algorithm does not allocate

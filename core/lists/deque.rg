@@ -199,7 +199,7 @@ implement#(.t: Type) Indexable#(Deque#(.t: t)) (
     }
 )
 
-implement#(.t: Type) IndexableMutable#(Deque#(.t: t)) (
+implement#(.t: Type) MutableIndexable#(Deque#(.t: t)) (
     .Item : Type = t
 
     .get_mutable_reference = (.self: $&Deque#(.t: t), .index: UIntNative) -> (

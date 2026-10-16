@@ -7232,7 +7232,7 @@ test "feature_tests/collections/80_collection_contracts" {
 }
 
 test "feature_tests/collections/81X_readonly_collection_mutation" {
-    try buildExpectFailWithoutParseNoise("tests/feature_tests/collections/81X_readonly_collection_mutation", "does not satisfy contract constraint 'IndexableMutable'");
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/collections/81X_readonly_collection_mutation", "does not satisfy contract constraint 'MutableIndexable'");
 }
 
 test "feature_tests/collections/82X_owning_collection_value_read" {
@@ -13188,4 +13188,8 @@ test "feature_tests/text/82_checked_text_byte_access" {
 test "feature_tests/collections/144_iterator_reached_capability" {
     try expectSuccessfulBuild("tests/feature_tests/collections/144_iterator_reached_capability");
     try run("tests/feature_tests/collections/144_iterator_reached_capability");
+}
+
+test "feature_tests/text/83X_codepoints_after_text_edit" {
+    try buildExpectFail("tests/feature_tests/text/83X_codepoints_after_text_edit", "ended");
 }

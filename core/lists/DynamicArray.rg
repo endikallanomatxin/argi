@@ -569,7 +569,7 @@ implement#(.t: Type: ImplicitlyCopyable) IndexableValue#(DynamicArray#(.t: t)) (
     }
 )
 
-implement#(.t: Type) IndexableMutable#(DynamicArray#(.t: t)) (
+implement#(.t: Type) MutableIndexable#(DynamicArray#(.t: t)) (
     .Item : Type = t
 
     .get_mutable_reference = (.self: $&DynamicArray#(.t: t), .index: UIntNative) -> (
