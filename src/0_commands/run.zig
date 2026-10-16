@@ -25,6 +25,7 @@ pub fn run(
     environ_map: ?*const std.process.Environ.Map,
     args: []const []const u8,
 ) !u8 {
+    for (args) |arg| if (std.mem.eql(u8, arg, "--vm")) return @import("run_vm.zig").run(io, environ_map, args);
     try rejectUnsupportedRunFlags(args);
 
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);

@@ -13316,3 +13316,37 @@ test "feature_tests/text/88_ascii_edits_are_checked" {
     try expectSuccessfulBuild("tests/feature_tests/text/88_ascii_edits_are_checked");
     try runExpect("tests/feature_tests/text/88_ascii_edits_are_checked", 0);
 }
+
+fn vmExpect(path: []const u8, status: u8, diagnostic: ?[]const u8) !void {
+    const result = try runArgiCommand(&.{ "run", "--vm", path });
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+    if (result.term != .exited or result.term.exited != status) std.debug.print("VM stderr: {s}\n", .{result.stderr});
+    try expectEqual(std.process.Child.Term{ .exited = status }, result.term);
+    if (diagnostic) |text| {
+        try expect(std.mem.indexOf(u8, result.stderr, text) != null);
+        try expect(std.mem.indexOf(u8, result.stderr, "main.rg:") != null);
+    }
+}
+
+test "feature_tests/execution/01_scalar_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/01_scalar_vm");
+    try runExpect("tests/feature_tests/execution/01_scalar_vm", 42);
+    try vmExpect("tests/feature_tests/execution/01_scalar_vm", 42, null);
+}
+
+test "feature_tests/execution/02X_vm_unsupported_type" {
+    try vmExpect("tests/feature_tests/execution/02X_vm_unsupported_type", 1, "type outside the scalar/record subset");
+}
+
+test "feature_tests/execution/03X_vm_instruction_limit" {
+    try vmExpect("tests/feature_tests/execution/03X_vm_instruction_limit", 1, "ExecutionInstructionLimit");
+}
+
+test "feature_tests/execution/04X_vm_overflow" {
+    try vmExpect("tests/feature_tests/execution/04X_vm_overflow", 1, "ExecutionIntegerOverflow");
+}
+
+test "feature_tests/execution/05X_vm_reference" {
+    try vmExpect("tests/feature_tests/execution/05X_vm_reference", 1, "type outside the scalar/record subset");
+}

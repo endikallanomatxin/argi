@@ -36,6 +36,7 @@ fn printHelp() void {
     std.debug.print("  build [path] [flags]                   Build the current package, package path, or module path\n", .{});
     std.debug.print("  check [path] [flags]                   Exhaustively validate every function body\n", .{});
     std.debug.print("  run [executable] [build flags]         Build and run the default or selected executable\n", .{});
+    std.debug.print("  run --vm <directory>                  Execute the experimental scalar/record bytecode subset\n", .{});
     std.debug.print("  test <directory> [flags]               Build and run native Argi tests\n", .{});
     std.debug.print("  init [name]                            Create an executable package\n", .{});
     std.debug.print("  init --lib [name]                      Create a library package\n", .{});

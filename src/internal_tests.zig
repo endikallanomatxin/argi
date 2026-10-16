@@ -61,6 +61,7 @@ const codegen = @import("5_codegen/codegen.zig");
 const c_abi = @import("4_semantics/global/c_abi.zig");
 
 test {
+    _ = @import("6_execution/tests.zig");
     _ = c_abi;
     _ = semantic_literals;
     _ = source_files;

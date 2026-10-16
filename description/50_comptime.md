@@ -29,6 +29,10 @@ branch is compiled. This differs from running an ordinary `if` inside
 > `#if` currently accepts the target predicates described below, combined
 > with `not`, `and`, `or`, and parentheses.
 
+The experimental `argi run --vm <directory>` command exercises the initial
+checked bytecode executor; it does not enable compile-time execution. Its
+supported subset and limits are documented in [usage](../docs/usage.md#experimental-bytecode-execution).
+
 ## Compilation target
 
 `target_os("windows")`, `target_arch("aarch64")`, and `target_abi("gnu")`

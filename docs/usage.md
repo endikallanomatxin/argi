@@ -35,6 +35,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
 | --- | --- |
 | `argi build [dir]` | Compile the current package or a selected module. |
 | `argi run` | Compile and run the default executable. |
+| `argi run --vm <directory>` | Run the experimental scalar/record bytecode subset. |
 | `argi check [dir]` | Check all function bodies, including unreachable ones. |
 | `argi test [dir]` | Run language-level tests. |
 | `argi lsp` | Start the language server. |
@@ -80,3 +81,31 @@ this is separate from the C toolchain's `--c-sysroot`.
 
 For installation, see the [binary guide](../.github/scripts/binary_installation.md)
 or [building from source](../CONTRIBUTING.md#building-from-source).
+
+## Experimental bytecode execution
+
+`argi run --vm <directory>` uses the ordinary frontend, contract selection, and
+safety checker, then lowers reachable checked functions to verified bytecode.
+It does not emit LLVM, link a binary, or execute unsupported calls natively.
+The directory is a folder module; package executable selection and ordinary
+build flags are not supported in this mode. `--frontend-jobs N` is accepted.
+
+The initial subset supports fixed-width integers through 64 bits, host-width
+`UIntNative`, booleans, records by value, direct specialized function calls,
+local assignments, `if`, `while`, `break`, `continue`, and bare `return`.
+Boolean operators short-circuit. A program entry has no inputs and either no
+result or `status_code: Int32`; its status follows native process truncation.
+
+References, arrays, floating point, choices/errors, virtual calls, resources,
+cleanup, globals, closures, foreign calls, and System capabilities are not yet
+supported. Unsupported constructs in reachable function bodies are rejected
+before execution, including constructs on untaken branches. Integer overflow,
+division by zero, and `abort` produce source diagnostics. Overflow is currently
+a checked VM failure; wrapping arithmetic and its equivalence across build modes
+remain outside this subset.
+
+Execution is limited to one million instructions, 128 nested calls, and one
+million cumulative value cells. These are initial fixed limits, not a general
+sandbox or a stable resource policy. No host I/O or native handles are exposed.
+This command is an executor test surface; it does not implement `#run`, a REPL,
+JIT compilation, frozen compile-time results, or execution caching.
