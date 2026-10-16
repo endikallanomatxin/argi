@@ -13386,3 +13386,9 @@ test "feature_tests/execution/11_choices_vm" {
     try runExpect("tests/feature_tests/execution/11_choices_vm", 42);
     try vmExpect("tests/feature_tests/execution/11_choices_vm", 42, null);
 }
+
+test "feature_tests/execution/12_iterator_loops_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/12_iterator_loops_vm");
+    try runExpect("tests/feature_tests/execution/12_iterator_loops_vm", 42);
+    try vmExpect("tests/feature_tests/execution/12_iterator_loops_vm", 42, null);
+}

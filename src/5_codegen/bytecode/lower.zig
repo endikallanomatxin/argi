@@ -37,7 +37,7 @@ pub const Lower = struct {
     }
 };
 
-const Loop = struct { start: u32, breaks: std.ArrayList(u32) = .empty };
+const Loop = struct { breaks: std.ArrayList(u32) = .empty, continues: std.ArrayList(u32) = .empty };
 const FunctionLower = struct {
     parent: *Lower,
     slots: std.ArrayList(b.Type) = .empty,
@@ -144,17 +144,10 @@ const FunctionLower = struct {
                 self.code.items[end].op.jump = self.position();
             },
             .switch_statement => |switch_id| try self.matchStatement(switch_id, node.source),
-            .while_statement => |x| {
-                const start = self.position();
-                const condition = try self.expression(x.condition);
-                const branch = try self.emit(node.source, .{ .branch = .{ .condition = condition, .yes = self.position() + 1, .no = 0 } });
-                try self.loops.append(self.parent.allocator, .{ .start = start });
-                try self.block(x.body);
-                _ = try self.emit(node.source, .{ .jump = start });
-                var loop = self.loops.pop().?;
-                defer loop.breaks.deinit(self.parent.allocator);
-                for (loop.breaks.items) |jump| self.code.items[jump].op.jump = self.position();
-                self.code.items[branch].op.branch.no = self.position();
+            .while_statement => |x| try self.loop(x.condition, x.body, null, node.source),
+            .for_statement => |x| {
+                if (x.init) |init| try self.statement(init);
+                try self.loop(x.condition, x.body, x.increment, node.source);
             },
             .break_statement => {
                 if (self.loops.items.len == 0) return error.InvalidBytecode;
@@ -163,7 +156,8 @@ const FunctionLower = struct {
             },
             .continue_statement => {
                 if (self.loops.items.len == 0) return error.InvalidBytecode;
-                _ = try self.emit(node.source, .{ .jump = self.loops.items[self.loops.items.len - 1].start });
+                const jump = try self.emit(node.source, .{ .jump = 0 });
+                try self.loops.items[self.loops.items.len - 1].continues.append(self.parent.allocator, jump);
             },
             .abort_statement => {
                 _ = try self.emit(node.source, .abort_);
@@ -175,6 +169,27 @@ const FunctionLower = struct {
                 _ = try self.expression(id);
             },
         }
+    }
+    fn loop(self: *FunctionLower, condition_node: g.GlobalNodeId, body: g.GlobalBlockId, increment: ?g.GlobalNodeId, source: p.SourceRef) anyerror!void {
+        const start = self.position();
+        const condition = try self.expression(condition_node);
+        const branch = try self.emit(source, .{ .branch = .{ .condition = condition, .yes = self.position() + 1, .no = 0 } });
+        try self.loops.append(self.parent.allocator, .{});
+        // Retain loop patch lists even if nested lowering fails.
+        defer {
+            var current = self.loops.pop().?;
+            current.breaks.deinit(self.parent.allocator);
+            current.continues.deinit(self.parent.allocator);
+        }
+        try self.block(body);
+        const next = self.position();
+        if (increment) |node| try self.statement(node);
+        _ = try self.emit(source, .{ .jump = start });
+        const end = self.position();
+        const current = self.loops.items[self.loops.items.len - 1];
+        for (current.breaks.items) |jump| self.code.items[jump].op.jump = end;
+        for (current.continues.items) |jump| self.code.items[jump].op.jump = if (increment != null) next else start;
+        self.code.items[branch].op.branch.no = end;
     }
     fn matchStatement(self: *FunctionLower, id: g.GlobalSwitchId, source: p.SourceRef) anyerror!void {
         const sw = self.parent.graph.switches.items[@intFromEnum(id)];

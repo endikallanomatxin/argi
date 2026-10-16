@@ -92,7 +92,8 @@ build flags are not supported in this mode. `--frontend-jobs N` is accepted.
 
 The initial subset supports fixed-width integers through 64 bits, host-width
 `UIntNative`, booleans, records and fixed-size arrays by value, direct specialized
-function calls, local assignments, `if`, `while`, `break`, `continue`, and bare `return`.
+function calls, local assignments, `if`, `while`, `for`, `break`, `continue`, and
+bare `return`.
 Boolean operators short-circuit. A program entry has no inputs and either no
 result or `status_code: Int32`; its status follows native process truncation.
 
@@ -108,8 +109,11 @@ and aliasing rules remain the responsibility of the ordinary safety checker.
 Choices support construction, tag tests, active-payload access and `match`,
 including borrowed payloads. The verifier checks variant membership and payload
 types; execution checks that a payload is active before reading or writing it.
+`for` invokes the ordinary selected iterator operations, including borrowed array
+iteration and scalar ranges when their checked bodies fit the VM subset.
 
-Raw pointers, C enums, floating point, error propagation/tracing, virtual calls, resources,
+Raw pointers, C enums, floating point, error propagation/tracing, virtual calls,
+resources,
 cleanup, globals, closures, foreign calls, and System capabilities are not yet
 supported. Unsupported constructs in reachable function bodies are rejected
 before execution, including constructs on untaken branches. Integer overflow,
