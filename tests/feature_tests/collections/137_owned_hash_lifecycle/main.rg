@@ -76,9 +76,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         }
     }
     if key_drops != 31 or value_drops != 31 { abort }
-    set ::= OwnedHashSet#(.key: Key, .policy: Policy)(
-        .policy = Policy(), .allocator = allocator
-    )!
+    set ::= HashSet#(.key: Key, .policy: Policy)(.policy = Policy(), .allocator = allocator)!
     if insert(.self = $&set, .key = Key(.id = 5), .allocator = allocator)! == false { abort }
     if insert(.self = $&set, .key = Key(.id = 5), .allocator = allocator)! { abort }
     if key_drops != 32 { abort }

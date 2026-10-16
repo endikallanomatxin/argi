@@ -44,7 +44,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     insert(.self = $&set, .key = 2, .allocator = allocator)!
     insert(.self = $&set, .key = 4, .allocator = allocator)!
     insert(.self = $&set, .key = 6, .allocator = allocator)!
-    remove(.self = $&set, .key = 4, .allocator = allocator)
+    remove(.self = $&set, .key = &4, .allocator = allocator)
     sum = 0
     for key in set { sum = sum + key }
     if sum != 8 { abort }

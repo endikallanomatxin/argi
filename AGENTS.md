@@ -365,6 +365,12 @@ feature first.
   grouped backing storage as a whole when growing to update sibling lifetime
   roots together. Keys exposed for lookup and iteration remain readonly.
 
+- HashSet and PriorityQueue each support copyable and noncopyable elements
+  through one representation. Set queries borrow keys; insertion consumes them.
+  Only copied set iteration and queue peek require ImplicitlyCopyable.
+  OrderPolicy always borrows comparison operands, including sorting and search.
+  Collection allocators come from assume, not reach defaults.
+
 - Hash map iteration never exposes mutable keys. Borrowed entry iterators retain
   a direct table shape anchor in addition to their owner loan; return references
   must preserve that anchor explicitly. Value edits through borrowed references

@@ -324,7 +324,7 @@ BlockReader and BlockWriter use explicit stream participants and selected virtua
 evidence. Their static/virtual algorithm copies have been consolidated.
 StreamTransfer scopes the general and buffered endpoint implementations to one
 two-participant identity; specialization never chooses between unrelated contracts.
-BorrowedOrderPolicy supplies owning collection comparisons without consuming
+OrderPolicy supplies owning collection comparisons without consuming
 elements. Bound unary virtual types retain their fixed interface evidence when
 passed through ordinary generic functions or static contract implementations.
 

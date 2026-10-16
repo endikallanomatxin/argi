@@ -5,16 +5,16 @@ implement ImplicitlyCopyable#(Record) ()
 ByKey: Type = ()
 
 implement OrderPolicy#(ByKey, Record) (
-    .less = (.self: &ByKey, .left: Record, .right: Record) -> (.ok: Bool) {
-        ok = [left.key < right.key]
+    .less = (.self: &ByKey, .left: &Record, .right: &Record) -> (.ok: Bool) {
+        ok = [left&.key < right&.key]
     }
 )
 
 Descending: Type = ()
 
 implement OrderPolicy#(Descending, Int32) (
-    .less = (.self: &Descending, .left: Int32, .right: Int32) -> (.ok: Bool) {
-        ok = left > right
+    .less = (.self: &Descending, .left: &Int32, .right: &Int32) -> (.ok: Bool) {
+        ok = left&> right&
     }
 )
 

@@ -1855,20 +1855,24 @@ pub const SafetyChecker = struct {
                 if (seen) break;
                 try visited.append(place);
                 storage = place;
-                value = self.valueAtPlace(state, place) orelse break;
+                const stored = self.valueAtPlace(state, place) orelse break;
+                value = try self.reconstructPlaceValue(state, place, stored);
+                // Aggregate provenance can retain a field's referent. It does
+                // not make the enclosing record another pointer to follow.
+                if (value.fields.len != 0 or value.variants.len != 0) break;
             }
         }
         for (path.projections) |projection| {
             if (projection == .dereference) {
                 if (value.referenced_place) |place| {
                     storage = place;
-                    value = self.valueAtPlace(state, place) orelse .{};
+                    value = try self.reconstructPlaceValue(state, place, self.valueAtPlace(state, place) orelse .{});
                 }
             } else {
                 const fallback = try self.projectValueFacts(value, &.{projection});
                 if (storage) |place| {
                     storage = try self.project(place, projection);
-                    value = self.valueAtPlace(state, storage.?) orelse fallback;
+                    value = try self.reconstructPlaceValue(state, storage.?, self.valueAtPlace(state, storage.?) orelse fallback);
                 } else value = fallback;
             }
         }
@@ -7631,6 +7635,35 @@ test "stored anchor lifetime agrees between dependency primitives and summaries"
     try std.testing.expectEqual(@as(?facts.Place, null), symbolic.referenced_place);
     state.tracker.end(root);
     try std.testing.expect(valueDependsOnDeadRoot(symbolic, &state));
+}
+
+test "stored anchor loading stops at aggregate field provenance" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(allocator, undefined, undefined);
+    defer checker.deinit();
+    inline for (.{ false, true }) |projected| {
+        var state = SafetyChecker.FunctionState.init(allocator);
+        defer state.deinit();
+        const root = try state.tracker.establish(.fresh);
+        const holder = facts.Place{ .root = @enumFromInt(0) };
+        const referent = facts.Place{ .root = @enumFromInt(1) };
+        const anchor = facts.ValueFacts{ .dependencies = &.{.{ .root = root }}, .referenced_place = referent };
+        try checker.setPlace(&state, referent, .initialized, .{});
+        try checker.setPlace(&state, holder, .initialized, .{
+            .referenced_place = referent,
+            .fields = if (projected) &.{} else &.{.{ .index = 0, .value = &anchor }},
+        });
+        if (projected) try checker.setPlace(&state, try checker.project(holder, .{ .field = 0 }), .initialized, anchor);
+        const value = try checker.instantiateOutput(.{
+            .explicit_dependency = true,
+            .input_dependencies = &.{.{ .path = .{ .input_index = 0, .projections = &.{.{ .field = 0 }} }, .validity_only = true }},
+        }, &.{.{ .referenced_place = holder }}, &state);
+        try std.testing.expectEqualSlices(facts.ValidityDependency, anchor.dependencies, value.dependencies);
+        state.tracker.end(root);
+        try std.testing.expect(valueDependsOnDeadRoot(value, &state));
+    }
 }
 
 test "activating choice payloads never revives consumed storage capabilities" {

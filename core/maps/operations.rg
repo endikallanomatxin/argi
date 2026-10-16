@@ -167,59 +167,34 @@ implement#(
 
 implement#(
     .key: Type, .policy: Type: HashPolicy#(policy, key), .Provider: Type: Allocator#(Provider)
-) MapReservation#(OwnedHashSet#(.key: key, .policy: policy), Provider) (
-    .reserve = _map_reserve_owned_hash_set
+) MapReservation#(HashSet#(.key: key, .policy: policy), Provider) (
+    .reserve = _map_reserve_hash_set
 )
 
 implement#(.key: Type, .policy: Type: HashPolicy#(policy, key)) MapExtraction#(
-    OwnedHashSet#(.key: key, .policy: policy)
+    HashSet#(.key: key, .policy: policy)
 ) (
     .Key     : Type = &key
     .Result  : Type = ?key
-    .extract = _map_extract_owned_hash_set
+    .extract = _map_extract_hash_set
 )
 
 implement#(
     .key: Type, .policy: Type: HashPolicy#(policy, key), .Provider: Type: Allocator#(Provider)
-) MapRemoval#(OwnedHashSet#(.key: key, .policy: policy), Provider) (
-    .Key    : Type = &key
-    .remove = _map_remove_owned_hash_set
-)
-
-implement#(.key: Type, .policy: Type: HashPolicy#(policy, key)) MapMembership#(
-    OwnedHashSet#(.key: key, .policy: policy)
-) (
-    .Key      : Type = &key
-    .contains = _map_contains_owned_hash_set
-)
-
-implement#(
-    .key: Type, .policy: Type: HashPolicy#(policy, key), .Provider: Type: Allocator#(Provider)
-) SetInsertion#(OwnedHashSet#(.key: key, .policy: policy), Provider) (
-    .Key    : Type = key
-    .insert = _map_insert_owned_hash_set
-)
-
-implement#(
-    .key      : Type: ImplicitlyCopyable,
-    .policy   : Type: HashPolicy#(policy, key),
-    .Provider : Type: Allocator#(Provider)
 ) MapRemoval#(HashSet#(.key: key, .policy: policy), Provider) (
-    .Key    : Type = key
+    .Key    : Type = &key
     .remove = _map_remove_hash_set
 )
 
-implement#(.key: Type: ImplicitlyCopyable, .policy: Type: HashPolicy#(policy, key)) MapMembership#(
+implement#(.key: Type, .policy: Type: HashPolicy#(policy, key)) MapMembership#(
     HashSet#(.key: key, .policy: policy)
 ) (
-    .Key      : Type = key
+    .Key      : Type = &key
     .contains = _map_contains_hash_set
 )
 
 implement#(
-    .key      : Type: ImplicitlyCopyable,
-    .policy   : Type: HashPolicy#(policy, key),
-    .Provider : Type: Allocator#(Provider)
+    .key: Type, .policy: Type: HashPolicy#(policy, key), .Provider: Type: Allocator#(Provider)
 ) SetInsertion#(HashSet#(.key: key, .policy: policy), Provider) (
     .Key    : Type = key
     .insert = _map_insert_hash_set

@@ -13284,3 +13284,21 @@ test "feature_tests/collections/163X_custom_hash_policy_required" {
 test "feature_tests/contracts/338X_partial_constructor_unknown_parameter" {
     try buildExpectFail("tests/feature_tests/contracts/338X_partial_constructor_unknown_parameter", "unknown compile-time parameter in constructor");
 }
+
+test "feature_tests/collections/165_unified_hash_set" {
+    try expectSuccessfulBuild("tests/feature_tests/collections/165_unified_hash_set");
+    try runExpect("tests/feature_tests/collections/165_unified_hash_set", 0);
+}
+
+test "feature_tests/collections/166_unified_priority_queue" {
+    try expectSuccessfulBuild("tests/feature_tests/collections/166_unified_priority_queue");
+    try runExpect("tests/feature_tests/collections/166_unified_priority_queue", 0);
+}
+
+test "feature_tests/collections/167X_priority_queue_noncopyable_peek" {
+    try buildExpectFail("tests/feature_tests/collections/167X_priority_queue_noncopyable_peek", "ImplicitlyCopyable");
+}
+
+test "feature_tests/collections/168X_hash_set_reference_after_remove" {
+    try buildExpectFail("tests/feature_tests/collections/168X_hash_set_reference_after_remove", "root that has ended");
+}

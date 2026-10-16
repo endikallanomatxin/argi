@@ -5,7 +5,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     )!
     insert(.self = $&set, .key = 1, .allocator = allocator)!
     iterator ::= to_iterator(.value = &set).iterator
-    remove(.self = $&set, .key = 1, .allocator = allocator)
+    remove(.self = $&set, .key = &1, .allocator = allocator)
     if has_next(.self = &iterator).ok { abort }
 }
 

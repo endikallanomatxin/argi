@@ -12,7 +12,7 @@ Pair: Type = (.a: Tracked, .b: Tracked)
 
 PairOrder: Type = ()
 
-implement BorrowedOrderPolicy#(PairOrder, Pair) (
+implement OrderPolicy#(PairOrder, Pair) (
     .less = (.self: &PairOrder, .left: &Pair, .right: &Pair) -> (.ok: Bool) {
         ok = [left&.a.id < right&.a.id]
     }
@@ -40,7 +40,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     if drops != 0 { abort }
     for ~item in items { if item.b.id != item.a.id * 10 { abort } }
     if drops != 6 { abort }
-    queue ::= OwnedPriorityQueue#(.t: Pair, .order: PairOrder)(
+    queue ::= PriorityQueue#(.t: Pair, .order: PairOrder)(
         .order = &order, .allocator = allocator, .capacity = 1
     )!
     push(
@@ -58,7 +58,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         .value     = Pair(.a = Tracked(.id = 2), .b = Tracked(.id = 20))
         .allocator = allocator
     )!
-    match peek_ref(.self = &queue).value {
+    match peek_reference(.self = &queue).value {
         ..none { abort } ..some entry { if entry.value&.a.id != 1 { abort } }
     }
     match pop(.self = $&queue).result {
@@ -68,7 +68,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     deinit(.self = $&queue)
     if drops != 12 { abort }
     refusal ::= RefusingAllocator()
-    bounded ::= OwnedPriorityQueue#(.t: Pair, .order: PairOrder)(
+    bounded ::= PriorityQueue#(.t: Pair, .order: PairOrder)(
         .order = &order, .allocator = allocator, .capacity = 1
     )!
     push(
@@ -85,7 +85,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         ..error error { if error.reason != ..out_of_memory { abort } }
     }
     if drops != 14 or length(.self = &bounded).count != 1 { abort }
-    match peek_ref(.self = &bounded).value {
+    match peek_reference(.self = &bounded).value {
         ..none { abort } ..some entry { if [entry.value&.a.id != 4] { abort } }
     }
     deinit(.self = $&bounded)

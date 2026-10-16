@@ -33,14 +33,14 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     if length(.self = &set).count != 40 { abort }
     index = 0
     while index < 40 {
-        if contains(.self = &set, .key = index).ok == false { abort }
-        if remove(.self = $&set, .key = index, .allocator = allocator).removed == false {
+        if contains(.self = &set, .key = &index).ok == false { abort }
+        if remove(.self = $&set, .key = &index, .allocator = allocator).removed == false {
             abort
         }
-        if contains(.self = &set, .key = index).ok { abort }
+        if contains(.self = &set, .key = &index).ok { abort }
         index = index + 1
     }
-    if remove(.self = $&set, .key = 0, .allocator = allocator).removed { abort }
+    if remove(.self = $&set, .key = &0, .allocator = allocator).removed { abort }
     if length(.self = &set).count != 0 { abort }
     deinit(.self = $&set)
     text ::= unwrap_or_abort(
@@ -71,7 +71,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     if unwrap_or_abort(.value = insert(.self = $&text, .key = right, .allocator = allocator)) {
         abort
     }
-    if contains(.self = &text, .key = right).ok == false { abort }
+    if contains(.self = &text, .key = &right).ok == false { abort }
     if length(.self = &text).count != 1 { abort }
     deinit(.self = $&text)
 }

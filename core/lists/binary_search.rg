@@ -12,8 +12,8 @@ binary_search#(
     while start < end {
         remaining ::= end - start
         middle ::= start + remaining / 2
-        element ::= unwrap_or_abort(.value = get_reference(self, .index = middle))&
-        if OrderPolicy#(policy, t).less(order, .left = element, .right = value).ok {
+        element ::= unwrap_or_abort(.value = get_reference(self, .index = middle))
+        if OrderPolicy#(policy, t).less(order, .left = element, .right = &value).ok {
             start = middle + 1
         } else {
             end = middle
@@ -21,8 +21,8 @@ binary_search#(
     }
 
     if start < count {
-        element ::= unwrap_or_abort(.value = get_reference(self, .index = start))&
-        if OrderPolicy#(policy, t).less(order, .left = value, .right = element).ok == false {
+        element ::= unwrap_or_abort(.value = get_reference(self, .index = start))
+        if OrderPolicy#(policy, t).less(order, .left = &value, .right = element).ok == false {
             index = ..some(.value = start)
             return
         }

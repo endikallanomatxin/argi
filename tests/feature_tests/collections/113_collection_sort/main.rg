@@ -1,8 +1,8 @@
 Descending: Type = ()
 
 implement OrderPolicy#(Descending, Int32) (
-    .less = (.self: &Descending, .left: Int32, .right: Int32) -> (.ok: Bool) {
-        ok = left > right
+    .less = (.self: &Descending, .left: &Int32, .right: &Int32) -> (.ok: Bool) {
+        ok = left&> right&
     }
 )
 
@@ -14,7 +14,9 @@ check_sorted#(
     while index < count {
         before ::= unwrap_or_abort(.value = get_reference(.self = self, .index = index - 1))&
         current ::= unwrap_or_abort(.value = get_reference(.self = self, .index = index))&
-        if OrderPolicy#(policy, Int32).less(.self = order, .left = current, .right = before).ok {
+        if OrderPolicy#(
+            policy, Int32
+        ).less(.self = order, .left = &current, .right = &before).ok {
             abort
         }
         index = index + 1

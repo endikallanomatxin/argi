@@ -93,21 +93,24 @@ mutable keys.
 
 ## Sets
 
-`HashSet<K, P>` uses the same key policy and storage implementation as
-`HashMap`. Keys are implicitly copyable; borrowed keys keep their backing
-lifetimes and must remain unchanged while stored. Construction accepts
-`.policy`, `.allocator`, and optional `.capacity` with the map's slot-count
-meaning and allocation errors.
+`HashSet#(K, P)` owns keys using the common `HashMap` table, including keys
+that cannot be copied. `HashSet#(.key: K)()` uses `StandardHashPolicy` and an
+assumed allocator. A supplied `.policy` can infer a custom policy type, just as
+for maps. Capacity and allocation errors follow map construction.
 
-`insert(.self, .key, .allocator)` returns an errable Boolean: true for a new key,
-false when an equivalent key is already present. Duplicate insertion retains
-the existing key, leaves length unchanged, and does not allocate. Failed growth
-preserves membership. `contains`, `remove`, `length`, `capacity`, and `deinit`
-have the corresponding map contracts. The set does not expose stored-key
-references or acquire ownership of borrowed backing storage. It implements
-`Iterable<K>` and visits copied keys through `for key in set`. Order, allocation,
-exhaustion, and structural invalidation follow map iteration. Duplicate insertion
-and unsuccessful removal do not change the table or invalidate an iterator.
+`insert(.self, .key, .allocator)` consumes a key and returns an errable Boolean:
+true for new membership, false for an equivalent existing key. Duplicate
+insertion destroys the supplied key, retains the stored key, and allocates
+nothing. Failed growth destroys the supplied key and preserves membership.
+`contains` and `remove` borrow their query as `&K`; `extract` transfers a removed
+key to the caller. `reserve`, `length`, `capacity`, and `deinit` correspond to map
+operations.
+
+`for &key in set` visits readonly references for any key type. `for key in set`
+copies keys and requires `ImplicitlyCopyable`. Keys cannot be mutated through
+the set. Iterators and returned references follow map structural invalidation;
+duplicate insertion and unsuccessful removal preserve them. Borrowed key
+contents must remain live and unchanged while stored.
 
 ## Graphs
 
@@ -158,16 +161,6 @@ for its operations, borrowing rules, and consumed-argument behavior.
 > Beyond the basic [iterator contract](44_control_flow.md), library adapters
 > could provide zipping, enumeration, and sliding-window iteration.
 
-## Owning hash sets
-
-`OwnedHashSet#(K, P)` owns keys using the common `HashMap` table. `insert(.self,
-.key, .allocator)` consumes its argument and returns true only for new membership.
-Duplicate insertion retains the stored key and destroys the supplied equivalent
-key. Failed growth destroys the supplied key and preserves membership.
-`contains`, `remove`, `reserve`, `length`, `capacity`, and `deinit` correspond to
-map operations. `extract(.self, .key: &K)` returns the removed key.
-`to_reference_iterator` visits readonly key references without copying.
-
 ## Borrowed bit sets
 
 `BitSetView(.bytes, .count)` borrows initialized mutable byte storage for
@@ -184,16 +177,23 @@ view allocates nothing and retains the backing storage's lifetime.
 
 ## Priority queues
 
-`PriorityQueue#(.t, .order)(.order, .allocator, .capacity = 8)` owns a minimum
-heap of implicitly copyable values and borrows a strict-weak `OrderPolicy`.
-`push` grows storage as needed; allocation failure preserves existing values.
-`peek` and `pop` return optional copied values, with none for an empty queue.
-`length` reports the number of elements. Peek is constant time; push and pop
-perform logarithmic comparisons. Equal-priority removal order is unspecified.
-The policy must remain live and its comparisons stable while values are queued.
-`deinit` releases the backing dynamic array. `OwnedPriorityQueue` supports owning
-elements through BorrowedOrderPolicy, retaining borrowed comparisons and
-relocation without copying queued owners.
+`PriorityQueue#(.t: T)(.order = &policy, .capacity = 8)` owns a minimum heap
+and infers the policy type. Its allocator can come from `assume`. The same heap
+supports copyable and noncopyable elements; all `OrderPolicy` comparisons borrow
+operands and must form a stable strict weak order. The policy is borrowed and
+must remain live while the queue is used.
+
+`push` consumes its input and grows storage as needed. Allocation failure
+destroys that input and preserves existing entries. `peek_reference` returns
+`?&T` for any element type; `peek` returns a copy and requires
+`ImplicitlyCopyable`. `pop` transfers the minimum element to the caller. All
+three return none for an empty heap. Element references follow backing-array
+invalidation and refer to heap positions, whose contents can change on push or
+pop. `length` reports the number of elements; `deinit` destroys remaining
+elements and releases storage.
+
+Peek is constant time; push and pop perform logarithmic comparisons.
+Equal-priority removal order is unspecified.
 
 `BitSet(.count, .allocator)` owns initialized storage for a fixed bit count.
 It shares the checked `length`, `contains_bit`, `set_bit` and `count_set` operations

@@ -27,8 +27,8 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         ..ok _ { abort }
         ..error ~err { if err.reason != ..out_of_memory { abort } }
     }
-    if length(.self = &set).count != 4 or contains(.self = &set, .key = missing).ok { abort }
-    if contains(.self = &set, .key = zero).ok == false { abort }
+    if length(.self = &set).count != 4 or contains(.self = &set, .key = &missing).ok { abort }
+    if contains(.self = &set, .key = &zero).ok == false { abort }
     allocator.fail = false
     unwrap_or_abort(.value = insert(.self = $&set, .key = missing, .allocator = $&allocator))
     deinit(.self = $&set)

@@ -5,8 +5,8 @@ implement ImplicitlyCopyable#(Record) ()
 ByKey: Type = ()
 
 implement OrderPolicy#(ByKey, Record) (
-    .less = (.self: &ByKey, .left: Record, .right: Record) -> (.ok: Bool) {
-        ok = [left.key < right.key]
+    .less = (.self: &ByKey, .left: &Record, .right: &Record) -> (.ok: Bool) {
+        ok = [left&.key < right&.key]
     }
 )
 

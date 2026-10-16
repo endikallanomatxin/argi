@@ -1,18 +1,18 @@
 check_order#(.t: Type: ImplicitlyCopyable, .policy: Type: OrderPolicy#(policy, t))(
     .order: &policy, .left: t, .right: t
 ) -> () := {
-    if OrderPolicy#(policy, t).less(.self = order, .left = left, .right = right).ok == false {
+    if OrderPolicy#(policy, t).less(.self = order, .left = &left, .right = &right).ok == false {
         abort
     }
-    if OrderPolicy#(policy, t).less(.self = order, .left = right, .right = left).ok { abort }
-    if OrderPolicy#(policy, t).less(.self = order, .left = left, .right = left).ok { abort }
+    if OrderPolicy#(policy, t).less(.self = order, .left = &right, .right = &left).ok { abort }
+    if OrderPolicy#(policy, t).less(.self = order, .left = &left, .right = &left).ok { abort }
 }
 
 Descending: Type = ()
 
 implement OrderPolicy#(Descending, Int32) (
-    .less = (.self: &Descending, .left: Int32, .right: Int32) -> (.ok: Bool) {
-        ok = left > right
+    .less = (.self: &Descending, .left: &Int32, .right: &Int32) -> (.ok: Bool) {
+        ok = left&> right&
     }
 )
 
@@ -47,9 +47,9 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     right ::= view(&right_storage)
     if OrderPolicy#(
         StringViewOrderPolicy, StringView
-    ).less(.self = &text, .left = left, .right = right).ok { abort }
+    ).less(.self = &text, .left = &left, .right = &right).ok { abort }
     if OrderPolicy#(
         StringViewOrderPolicy, StringView
-    ).less(.self = &text, .left = right, .right = left).ok { abort }
+    ).less(.self = &text, .left = &right, .right = &left).ok { abort }
     check_order(.order = &text, .left = left, .right = "ab")
 }
