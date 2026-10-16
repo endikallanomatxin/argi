@@ -17,7 +17,7 @@ const Frame = struct {
     function: *const b.Function,
     storage: runtime_value.FrameId,
     pc: usize = 0,
-    return_slot: ?b.Slot,
+    return_slots: []const b.Slot,
 };
 
 pub const Vm = struct {
@@ -73,11 +73,11 @@ pub const Vm = struct {
         for (args, function.inputs) |value, slot| if (!b.valueFits(self.program.graph, function.slots[slot], value)) return error.InvalidArguments;
         return function;
     }
-    fn frame(self: *Vm, function: *const b.Function, args: []const b.Value, return_slot: ?b.Slot) !Frame {
+    fn frame(self: *Vm, function: *const b.Function, args: []const b.Value, return_slots: []const b.Slot) !Frame {
         const id = try self.storage.enter(function.slots.len);
         const slots = try self.storage.slots(id);
         for (args, function.inputs) |value, slot| slots[slot] = value;
-        return .{ .function = function, .storage = id, .return_slot = return_slot };
+        return .{ .function = function, .storage = id, .return_slots = return_slots };
     }
     fn execute(self: *Vm, function: *const b.Function, args: []const b.Value) ![]const b.Value {
         var frames: std.ArrayList(Frame) = .empty;
@@ -86,7 +86,7 @@ pub const Vm = struct {
         // still unsupported; no destructor can be skipped by this path.
         defer for (frames.items) |active| self.storage.leave(active.storage);
         if (self.limits.call_depth == 0) return error.ExecutionCallDepthLimit;
-        try frames.append(self.allocator, try self.frame(function, args, null));
+        try frames.append(self.allocator, try self.frame(function, args, &.{}));
         while (true) {
             // Never retain this pointer across a push: the frame array may move.
             const current = &frames.items[frames.items.len - 1];
@@ -213,7 +213,7 @@ pub const Vm = struct {
                     const values = try self.allocate(x.args.len);
                     for (values, x.args) |*value, slot| value.* = slots[slot];
                     const callee = &self.program.functions[@intFromEnum(x.function)].?;
-                    try frames.append(self.allocator, try self.frame(callee, values, x.dst));
+                    try frames.append(self.allocator, try self.frame(callee, values, x.outputs));
                 },
                 .branch => |x| current.pc = if (slots[x.condition].boolean) x.yes else x.no,
                 .jump => |target| current.pc = target,
@@ -224,10 +224,8 @@ pub const Vm = struct {
                     self.storage.leave(completed.storage);
                     try self.storage.validateLive(result);
                     if (frames.items.len == 0) return result;
-                    if (completed.return_slot) |dst| {
-                        const caller = try self.storage.slots(frames.items[frames.items.len - 1].storage);
-                        caller[dst] = result[0];
-                    }
+                    const caller = try self.storage.slots(frames.items[frames.items.len - 1].storage);
+                    for (completed.return_slots, result) |dst, value| caller[dst] = value;
                 },
                 .abort_ => return error.ExecutionAborted,
             }

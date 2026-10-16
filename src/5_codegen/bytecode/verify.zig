@@ -28,8 +28,8 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
         for (f.code) |inst| {
             var reads: std.ArrayList(Slot) = .empty;
             defer reads.deinit(allocator);
-            const dst = destination(inst);
-            if (dst) |d| if (d >= f.slots.len) return error.InvalidBytecode;
+            var single: [1]Slot = undefined;
+            for (destinations(inst, &single)) |dst| if (dst >= f.slots.len) return error.InvalidBytecode;
             try readSlots(allocator, inst, &reads);
             for (reads.items) |slot| if (slot >= f.slots.len) return error.InvalidBytecode;
             switch (inst.op) {
@@ -108,9 +108,12 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                 .call => |x| {
                     if (@intFromEnum(x.function) >= program.functions.len) return error.InvalidBytecode;
                     const callee = program.functions[@intFromEnum(x.function)] orelse return error.InvalidBytecode;
-                    if (x.args.len != callee.inputs.len or callee.outputs.len > 1 or ((x.dst != null) != (callee.outputs.len == 1))) return error.InvalidBytecode;
+                    if (x.args.len != callee.inputs.len or x.outputs.len != callee.outputs.len) return error.InvalidBytecode;
                     for (x.args, callee.inputs) |slot, input| if (!types.equal(program.graph, f.slots[slot], callee.slots[input])) return error.InvalidBytecode;
-                    if (x.dst) |slot| if (!types.equal(program.graph, f.slots[slot], callee.slots[callee.outputs[0]])) return error.InvalidBytecode;
+                    for (x.outputs, callee.outputs, 0..) |slot, output, index| {
+                        if (!types.equal(program.graph, f.slots[slot], callee.slots[output])) return error.InvalidBytecode;
+                        for (x.outputs[0..index]) |previous| if (previous == slot) return error.InvalidBytecode;
+                    }
                 },
                 .abort_ => {},
             }
@@ -136,7 +139,8 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
             const inst = f.code[pc];
             try readSlots(allocator, inst, &reads);
             for (reads.items) |slot| if (!initialized[slot]) return error.UninitializedBytecodeSlot;
-            if (destination(inst)) |slot| initialized[slot] = true;
+            var single: [1]Slot = undefined;
+            for (destinations(inst, &single)) |slot| initialized[slot] = true;
             var successors: [2]u32 = undefined;
             const count: usize = switch (inst.op) {
                 .ret, .abort_ => 0,
@@ -175,8 +179,9 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
     }
 }
 
-fn destination(i: Instruction) ?Slot {
-    return switch (i.op) {
+fn destinations(i: Instruction, single: *[1]Slot) []const Slot {
+    if (i.op == .call) return i.op.call.outputs;
+    const slot: ?Slot = switch (i.op) {
         .constant => |x| x.dst,
         .copy => |x| x.dst,
         .readonly => |x| x.dst,
@@ -191,9 +196,13 @@ fn destination(i: Instruction) ?Slot {
         .is_variant => |x| x.dst,
         .borrow => |x| x.dst,
         .load => |x| x.dst,
-        .call => |x| x.dst,
         else => null,
     };
+    if (slot) |value| {
+        single[0] = value;
+        return single;
+    }
+    return &.{};
 }
 fn readSlots(a: std.mem.Allocator, i: Instruction, out: *std.ArrayList(Slot)) !void {
     switch (i.op) {

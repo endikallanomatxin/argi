@@ -30,7 +30,7 @@ pub const Instruction = struct {
         load: struct { dst: Slot, place: Place },
         check_place: Place,
         store: struct { place: Place, value: Slot },
-        call: struct { dst: ?Slot, function: g.GlobalFunctionId, args: []const Slot },
+        call: struct { outputs: []const Slot, function: g.GlobalFunctionId, args: []const Slot },
         branch: struct { condition: Slot, yes: u32, no: u32 },
         jump: u32,
         ret: []const Slot,

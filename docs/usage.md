@@ -93,8 +93,8 @@ build flags are not supported in this mode. `--frontend-jobs N` is accepted.
 The initial subset supports fixed-width integers through 64 bits, host-width
 `UIntNative`, booleans, records and fixed-size arrays by value, direct specialized
 function calls, local assignments, `if`, `while`, `for`, `break`, `continue`, and
-bare `return`.
-Boolean operators short-circuit. A program entry has no inputs and either no
+bare `return`. Calls support multiple named outputs through their checked record
+result. Boolean operators short-circuit. A program entry has no inputs and either no
 result or `status_code: Int32`; its status follows native process truncation.
 
 Array reads support nested values and returned temporaries. Writes follow local

@@ -54,7 +54,6 @@ const FunctionLower = struct {
         const source = self.parent.graph.declaration(f.declaration).source;
         self.parent.source = source;
         if (f.body == null or f.flags.is_c_abi or f.flags.is_deinit or f.flags.is_once) return self.parent.reject(source, "foreign, lifecycle or once function");
-        if (f.output.len > 1) return self.parent.reject(source, "multiple function outputs");
         const inputs = try a.alloc(b.Slot, f.input_bindings.len);
         for (inputs, self.parent.graph.binding_refs.items[f.input_bindings.start..][0..f.input_bindings.len]) |*slot, binding| slot.* = try self.bindingSlot(binding);
         const outputs = try a.alloc(b.Slot, f.output_bindings.len);
@@ -294,11 +293,15 @@ const FunctionLower = struct {
         const args = try self.parent.allocator.alloc(b.Slot, fields.len);
         const f = self.parent.graph.function(x.callee);
         for (args, self.parent.graph.value_fields.items[fields.start..][0..fields.len], 0..) |*arg, field, index| arg.* = try self.coerce(node.source, try self.expression(field.value), self.parent.graph.fields.items[f.input.start + index].ty);
-        if (f.output.len > 1) return self.parent.reject(node.source, "multiple function outputs");
-        const dst = if (f.output.len == 1) try self.newSlot(self.parent.graph.fields.items[f.output.start].ty) else null;
+        const outputs = try self.parent.allocator.alloc(b.Slot, f.output.len);
+        for (outputs, self.parent.graph.fields.items[f.output.start..][0..f.output.len]) |*slot, field| slot.* = try self.newSlot(field.ty);
         try self.parent.pending.append(self.parent.allocator, x.callee);
-        _ = try self.emit(node.source, .{ .call = .{ .dst = dst, .function = x.callee, .args = args } });
-        return dst;
+        _ = try self.emit(node.source, .{ .call = .{ .outputs = outputs, .function = x.callee, .args = args } });
+        if (outputs.len == 0) return null;
+        if (outputs.len == 1) return outputs[0];
+        const result = try self.newSlot(node.ty orelse return self.parent.reject(node.source, "untyped call result"));
+        _ = try self.emit(node.source, .{ .record = .{ .dst = result, .fields = outputs } });
+        return result;
     }
     fn expression(self: *FunctionLower, id: g.GlobalNodeId) anyerror!b.Slot {
         const node = self.parent.graph.node(id);

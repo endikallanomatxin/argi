@@ -464,3 +464,57 @@ test "bytecode choice verifier rejects foreign variants and incorrect payload ty
     defer executor.deinit();
     try std.testing.expectError(error.ExecutionInactiveVariant, executor.run(@enumFromInt(0), &.{}));
 }
+
+test "bytecode calls return several typed outputs" {
+    try std.testing.expectEqual(@as(i128, 42), try execute(
+        \\split_number(.value: Int32) -> (.first: Int32, .second: Int32) := {
+        \\    first = value * 10
+        \\    second = value - 2
+        \\}
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    result ::= split_number(.value = 4)
+        \\    status_code = result.first + result.second
+        \\}
+    , .{}));
+}
+
+test "bytecode multiple outputs retain caller reference lifetimes" {
+    try std.testing.expectEqual(@as(i128, 42), try execute(
+        \\inspect(.value: &Int32) -> (.reference: &Int32, .present: Bool = true) := {
+        \\    reference = value
+        \\}
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    value :: Int32 = 42
+        \\    result ::= inspect(.value = &value)
+        \\    if result.present { status_code = result.reference& }
+        \\}
+    , .{}));
+}
+
+test "bytecode verifier checks every call output destination" {
+    const g = @import("../4_semantics/global/graph.zig");
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(std.testing.allocator);
+    const a = std.testing.allocator;
+    const source = @import("../4_semantics/primitives/schema.zig").SourceRef{ .file_index = 0, .offset = 0 };
+    try graph.types.append(a, .{ .builtin = .Int32 });
+    try graph.types.append(a, .{ .builtin = .Bool });
+    for (0..2) |_| try graph.fields.append(a, .{ .name = .{ .start = 0, .len = 0 }, .ty = @enumFromInt(0), .source = source });
+    try graph.functions.append(a, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 2 } });
+    var code = [_]b.Instruction{
+        .{ .source = source, .op = .{ .call = .{ .function = @enumFromInt(0), .args = &.{}, .outputs = &.{ 0, 2 } } } },
+        .{ .source = source, .op = .{ .ret = &.{ 0, 2 } } },
+    };
+    const functions = [_]?b.Function{.{ .slots = &.{ @enumFromInt(0), @enumFromInt(1), @enumFromInt(0) }, .inputs = &.{}, .outputs = &.{ 0, 2 }, .code = &code }};
+    const program = b.Program{ .graph = &graph, .functions = &functions };
+    // Both output slots become initialized on the returning call edge.
+    try b.verify(a, program);
+    code[0].op.call.outputs = &.{0};
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+    code[0].op.call.outputs = &.{ 0, 0 };
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+    code[0].op.call.outputs = &.{ 0, 1 };
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+    code[0].op.call.outputs = &.{ 0, 99 };
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+}
