@@ -2,6 +2,8 @@ const std = @import("std");
 const graph_mod = @import("graph.zig");
 const payload = @import("../semantic_payload_verify.zig");
 const verify = @import("../semantic_verify.zig");
+const lexical_storage = @import("lexical_storage.zig");
+const types = @import("types.zig");
 
 pub fn verifyGlobal(graph: *const graph_mod.GlobalSemanticGraph) !void {
     try require(graph.constructionStateEmpty());
@@ -137,6 +139,7 @@ pub fn verifyGlobal(graph: *const graph_mod.GlobalSemanticGraph) !void {
     for (graph.error_propagations.items) |value| try payload.errorPropagation(graph_mod.Ids, value, bounds);
     for (graph.error_contexts.items) |value| try payload.errorContext(graph_mod.Ids, value, bounds);
     for (graph.nodes.items) |value| try payload.node(graph_mod.Ids, value, bounds);
+    try verifyWriteCleanupTargets(graph);
 
     for (graph.node_refs.items) |id| try require(verify.idFits(id, graph.nodes.items.len));
     for (graph.type_refs.items) |id| try require(verify.idFits(id, graph.types.items.len));
@@ -144,6 +147,31 @@ pub fn verifyGlobal(graph: *const graph_mod.GlobalSemanticGraph) !void {
     for (graph.function_refs.items) |id| try require(verify.idFits(id, graph.functions.items.len));
     for (graph.virtual_registry_refs.items) |id| try require(verify.idFits(id, graph.virtual_registries.items.len));
     for (graph.roots.items) |id| try require(verify.idFits(id, graph.nodes.items.len));
+}
+
+fn verifyWriteCleanupTargets(graph: *const graph_mod.GlobalSemanticGraph) !void {
+    // Cleanup metadata must prove the actual destination without evaluating a
+    // second address expression or following a retargetable reference slot.
+    for (graph.nodes.items) |node| switch (node.content) {
+        .pointer_assignment => |write| if (write.cleanup_target) |target| {
+            const actual = lexical_storage.addressedTarget(graph, write.pointer) orelse return error.InvalidGlobalSemanticGraph;
+            try require(lexical_storage.root(graph, target) != null);
+            try require(lexical_storage.equal(graph, actual, target));
+            const pointer_type = graph.semanticType(graph.node(write.pointer).ty orelse return error.InvalidGlobalSemanticGraph);
+            try require(pointer_type == .pointer);
+            try require(types.equal(graph, pointer_type.pointer.child, graph.node(target).ty orelse return error.InvalidGlobalSemanticGraph));
+        },
+        .struct_field_store => |write| if (write.cleanup_target) |target| {
+            const actual = lexical_storage.addressedTarget(graph, write.struct_ptr) orelse return error.InvalidGlobalSemanticGraph;
+            const field = graph.node(target).content;
+            try require(lexical_storage.root(graph, target) != null);
+            try require(field == .struct_field_access);
+            try require(field.struct_field_access.field_index == write.field_index);
+            try require(lexical_storage.equal(graph, actual, field.struct_field_access.value));
+            try require(types.equal(graph, write.field_type, graph.node(target).ty orelse return error.InvalidGlobalSemanticGraph));
+        },
+        else => {},
+    };
 }
 
 fn verifySymbols(graph: *const graph_mod.GlobalSemanticGraph) !void {
@@ -344,4 +372,52 @@ test "global verifier rejects unmaterialized compact sugar types" {
     try graph.types.append(allocator, .{ .builtin = .Int32 });
     try graph.types.append(allocator, .{ .inferred_errable = @enumFromInt(0) });
     try std.testing.expectError(error.InvalidGlobalSemanticGraph, verifyGlobal(&graph));
+}
+
+test "global verifier requires cleanup targets to prove the written storage" {
+    const allocator = std.testing.allocator;
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    const value_type: graph_mod.GlobalTypeId = @enumFromInt(0);
+    const pointer_type: graph_mod.GlobalTypeId = @enumFromInt(1);
+    try graph.types.appendSlice(allocator, &.{
+        .{ .builtin = .Int32 },
+        .{ .pointer = .{ .child = value_type, .mutability = .read_write } },
+        .{ .builtin = .Bool },
+    });
+    const source = @import("../primitives/schema.zig").SourceRef{ .file_index = 0, .offset = 0 };
+    try graph.bindings.appendSlice(allocator, &.{
+        .{ .name = .{ .start = 0, .len = 0 }, .source = source, .ty = value_type, .mutability = .variable },
+        .{ .name = .{ .start = 0, .len = 0 }, .source = source, .ty = value_type, .mutability = .variable },
+        .{ .name = .{ .start = 0, .len = 0 }, .source = source, .ty = pointer_type, .mutability = .constant, .initialization = @enumFromInt(1) },
+    });
+    try graph.nodes.appendSlice(allocator, &.{
+        .{ .source = source, .ty = value_type, .content = .{ .binding_use = @enumFromInt(0) } },
+        .{ .source = source, .ty = pointer_type, .content = .{ .address_of = @enumFromInt(0) } },
+        .{ .source = source, .ty = pointer_type, .content = .{ .binding_use = @enumFromInt(2) } },
+        .{ .source = source, .ty = value_type, .content = .{ .binding_use = @enumFromInt(1) } },
+        .{ .source = source, .ty = value_type, .content = .{ .int_literal = 42 } },
+        .{ .source = source, .ty = null, .content = .{ .pointer_assignment = .{ .pointer = @enumFromInt(2), .value = @enumFromInt(4), .cleanup_target = @enumFromInt(0) } } },
+    });
+    try verifyWriteCleanupTargets(&graph);
+    graph.nodes.items[5].content.pointer_assignment.cleanup_target = @enumFromInt(3);
+    try std.testing.expectError(error.InvalidGlobalSemanticGraph, verifyWriteCleanupTargets(&graph));
+    graph.nodes.items[5].content.pointer_assignment.cleanup_target = @enumFromInt(0);
+    graph.bindings.items[2].mutability = .variable;
+    try std.testing.expectError(error.InvalidGlobalSemanticGraph, verifyWriteCleanupTargets(&graph));
+    graph.bindings.items[2].mutability = .constant;
+    graph.bindings.items[2].initialization = @enumFromInt(2);
+    try std.testing.expectError(error.InvalidGlobalSemanticGraph, verifyWriteCleanupTargets(&graph));
+    graph.bindings.items[2].initialization = @enumFromInt(1);
+    graph.nodes.items[0].ty = @enumFromInt(2);
+    try std.testing.expectError(error.InvalidGlobalSemanticGraph, verifyWriteCleanupTargets(&graph));
+    graph.nodes.items[0].ty = value_type;
+    try graph.binding_refs.append(allocator, @enumFromInt(2));
+    try graph.functions.append(allocator, .{
+        .declaration = @enumFromInt(0),
+        .input = .{ .start = 0, .len = 0 },
+        .output = .{ .start = 0, .len = 0 },
+        .input_bindings = .{ .start = 0, .len = 1 },
+    });
+    try std.testing.expectError(error.InvalidGlobalSemanticGraph, verifyWriteCleanupTargets(&graph));
 }

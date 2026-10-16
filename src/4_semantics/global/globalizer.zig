@@ -580,6 +580,7 @@ fn relocateNode(allocator: std.mem.Allocator, module: *const module_sg.ModuleSem
                 .array_type = globalType(o, value.array_type),
             } },
             .struct_field_store => |value| .{ .struct_field_store = .{
+                .cleanup_target = if (value.cleanup_target) |id| globalNode(o, id) else null,
                 .struct_ptr = globalNode(o, value.struct_ptr),
                 .struct_type = globalType(o, value.struct_type),
                 .field_index = value.field_index,
@@ -621,7 +622,7 @@ fn relocateNode(allocator: std.mem.Allocator, module: *const module_sg.ModuleSem
                 .ty = globalType(o, value.ty),
                 .pointer_type = globalType(o, value.pointer_type),
             } },
-            .pointer_assignment => |value| .{ .pointer_assignment = .{ .pointer = globalNode(o, value.pointer), .value = globalNode(o, value.value) } },
+            .pointer_assignment => |value| .{ .pointer_assignment = .{ .pointer = globalNode(o, value.pointer), .value = globalNode(o, value.value), .cleanup_target = if (value.cleanup_target) |id| globalNode(o, id) else null } },
 
             .type_literal => |id| .{ .type_literal = globalType(o, id) },
             .explicit_cast => |value| .{ .explicit_cast = .{ .value = globalNode(o, value.value), .target_type = globalType(o, value.target_type) } },

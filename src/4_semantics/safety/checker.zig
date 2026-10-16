@@ -740,6 +740,8 @@ pub const SafetyChecker = struct {
                             const old_generation = try self.storageGeneration(state, target);
                             try self.refreshStorageGenerationChecked(node.source, state, target);
                             pointer = try self.replaceValueRoots(pointer, &.{old_generation}, try self.storageGeneration(state, target));
+                            if (pointer_node.content == .binding_use and self.graph.binding(pointer_node.content.binding_use).mutability == .constant)
+                                try self.setPlace(state, .{ .root = pointer_node.content.binding_use }, .initialized, pointer);
                         }
                     }
                     try self.recordOpaqueWrite(node.source, state, pointer, value);

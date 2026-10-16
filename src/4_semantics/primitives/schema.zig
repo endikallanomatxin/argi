@@ -680,6 +680,8 @@ pub fn Node(comptime Ids: type) type {
                 array_type: Ids.TypeId,
             },
             struct_field_store: struct {
+                // Proven lexical destination; metadata, never evaluated.
+                cleanup_target: ?Ids.NodeId = null,
                 struct_ptr: Ids.NodeId,
                 struct_type: Ids.TypeId,
                 field_index: u32,
@@ -708,7 +710,7 @@ pub fn Node(comptime Ids: type) type {
                 ty: Ids.TypeId,
                 pointer_type: Ids.TypeId,
             },
-            pointer_assignment: struct { pointer: Ids.NodeId, value: Ids.NodeId },
+            pointer_assignment: struct { pointer: Ids.NodeId, value: Ids.NodeId, cleanup_target: ?Ids.NodeId = null },
             type_literal: Ids.TypeId,
             explicit_cast: struct { value: Ids.NodeId, target_type: Ids.TypeId },
         };

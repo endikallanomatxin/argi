@@ -1296,7 +1296,9 @@ pub const CodeGenerator = struct {
         } else c.LLVMBuildStructGEP2(self.builder, try self.toLLVMType(store.struct_type), pointer.value_ref, store.field_index, "field.ptr");
         const value = (try self.visitNode(store.value)) orelse return CodegenError.ValueNotFound;
         _ = c.LLVMBuildStore(self.builder, value.value_ref, field_ptr);
-        if (self.dropStateForNode(store.struct_ptr)) |parent| if (store.field_index < parent.fields.len) self.storeDropState(&parent.fields[store.field_index], true);
+        if (store.cleanup_target) |destination| {
+            if (self.dropStateForNode(destination)) |drop| self.storeDropState(drop, true);
+        } else if (self.dropStateForNode(store.struct_ptr)) |parent| if (store.field_index < parent.fields.len) self.storeDropState(&parent.fields[store.field_index], true);
     }
 
     fn binary(self: *CodeGenerator, operation: anytype) !TypedValue {
@@ -1669,7 +1671,7 @@ pub const CodeGenerator = struct {
 
         const value = (try self.visitNode(assignment.value)) orelse return CodegenError.ValueNotFound;
         _ = c.LLVMBuildStore(self.builder, value.value_ref, pointer.value_ref);
-        if (self.dropStateForNode(assignment.pointer)) |drop| self.storeDropState(drop, true);
+        if (self.dropStateForNode(assignment.cleanup_target orelse assignment.pointer)) |drop| self.storeDropState(drop, true);
     }
 
     fn explicitCast(self: *CodeGenerator, cast: anytype) !TypedValue {

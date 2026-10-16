@@ -429,8 +429,13 @@ const Scanner = struct {
             .struct_field_store => |value| {
                 try self.node(value.struct_ptr, flow);
                 try self.node(value.value, flow);
-                if (try self.resolvePlace(value.struct_ptr)) |parent| {
-                    const target = try self.project(parent, .{ .field = value.field_index });
+                const destination = if (value.cleanup_target) |target|
+                    try self.resolvePlace(target)
+                else if (try self.resolvePlace(value.struct_ptr)) |parent|
+                    try self.project(parent, .{ .field = value.field_index })
+                else
+                    null;
+                if (destination) |target| {
                     if (!flow.skips(target)) try self.activation.replacements.put(id, {});
                     try self.initialize(flow, target, value.value);
                 }
@@ -447,16 +452,23 @@ const Scanner = struct {
             .pointer_assignment => |value| {
                 try self.node(value.pointer, flow);
                 try self.node(value.value, flow);
-                if (try self.resolvePlace(value.pointer)) |target| {
-                    if (!flow.skips(target)) try self.activation.replacements.put(id, {});
-                }
-                // An indirect write can reinitialize escaped storage, but cannot
-                // initialize a local/output whose address has never been formed.
-                var index: usize = 0;
-                while (index < flow.disabled.items.len) {
-                    if (self.addressed_bindings.contains(flow.disabled.items[index].root)) {
-                        _ = flow.disabled.swapRemove(index);
-                    } else index += 1;
+                if (value.cleanup_target) |destination| {
+                    if (try self.resolvePlace(destination)) |target| {
+                        if (!flow.skips(target)) try self.activation.replacements.put(id, {});
+                        try self.initialize(flow, target, value.value);
+                    }
+                } else {
+                    if (try self.resolvePlace(value.pointer)) |target| {
+                        if (!flow.skips(target)) try self.activation.replacements.put(id, {});
+                    }
+                    // An unresolved write can reinitialize escaped storage, but
+                    // cannot initialize a local whose address was never formed.
+                    var index: usize = 0;
+                    while (index < flow.disabled.items.len) {
+                        if (self.addressed_bindings.contains(flow.disabled.items[index].root)) {
+                            _ = flow.disabled.swapRemove(index);
+                        } else index += 1;
+                    }
                 }
             },
             .explicit_cast => |value| try self.node(value.value, flow),

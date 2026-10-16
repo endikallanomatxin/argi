@@ -11,6 +11,7 @@ const global_types = @import("types.zig");
 const standard_contracts = @import("standard_contracts.zig");
 const primitives = @import("../primitives/schema.zig");
 const cleanup_activation = @import("../safety/cleanup_activation.zig");
+const lexical_storage = @import("lexical_storage.zig");
 
 pub const Stats = struct {
     copies: u32 = 0,
@@ -467,7 +468,7 @@ pub const Resolver = struct {
             },
             .struct_field_store => |store| {
                 try self.finalizeExpressionCleanup(store.struct_ptr, active, defers, visible, owner_function, module_index);
-                const parent = if (self.replacement_candidates.contains(node_id)) self.staticAddressTarget(store.struct_ptr) else null;
+                const parent = try self.lexicalAddressTarget(store.struct_ptr, visible);
                 if (parent) |base| {
                     const fields = global_types.fields(self.graph, store.struct_type) orelse return error.InvalidCleanupTarget;
                     const field = self.graph.fields.items[fields.start + store.field_index];
@@ -476,6 +477,7 @@ pub const Resolver = struct {
                         .field_name = field.name,
                         .field_index = store.field_index,
                     } });
+                    self.graph.nodes.items[@intFromEnum(node_id)].content.struct_field_store.cleanup_target = target;
                     const value = try self.projectedReplacement(node_id, target, store.value, visible, owner_function, module_index);
                     self.graph.nodes.items[@intFromEnum(node_id)].content.struct_field_store.value = value;
                     try self.finalizeExpressionCleanup(value, active, defers, visible, owner_function, module_index);
@@ -495,8 +497,10 @@ pub const Resolver = struct {
             },
             .pointer_assignment => |assignment| {
                 try self.finalizeExpressionCleanup(assignment.pointer, active, defers, visible, owner_function, module_index);
-                const value = if (self.staticAddressTarget(assignment.pointer)) |target|
-                    try self.projectedReplacement(node_id, target, assignment.value, visible, owner_function, module_index)
+                const target = try self.lexicalAddressTarget(assignment.pointer, visible);
+                self.graph.nodes.items[@intFromEnum(node_id)].content.pointer_assignment.cleanup_target = target;
+                const value = if (target) |destination|
+                    try self.projectedReplacement(node_id, destination, assignment.value, visible, owner_function, module_index)
                 else
                     assignment.value;
                 self.graph.nodes.items[@intFromEnum(node_id)].content.pointer_assignment.value = value;
@@ -540,21 +544,28 @@ pub const Resolver = struct {
         return self.replacementValue(value, self.graph.binding(binding).ty, cleanup);
     }
 
-    /// Only pure local storage projections can be reconstructed after the RHS.
-    /// Runtime aliases and effectful address computations require a captured
-    /// destination and a cleanup identity that follows that address.
-    fn staticLocalRoot(self: *Resolver, target: global_sg.GlobalNodeId) ?global_sg.GlobalBindingId {
-        return switch (self.graph.node(target).content) {
-            .binding_use => |binding| binding,
-            .struct_field_access => |access| self.staticLocalRoot(access.value),
-            else => null,
-        };
+    fn lexicalAddressTarget(self: *Resolver, pointer: global_sg.GlobalNodeId, visible: []const global_sg.GlobalBindingId) !?global_sg.GlobalNodeId {
+        const raw = lexical_storage.addressedTarget(self.graph, pointer) orelse return null;
+        const target = try self.lexicalTarget(raw);
+        const root = lexical_storage.root(self.graph, target) orelse return null;
+        return if (std.mem.indexOfScalar(global_sg.GlobalBindingId, visible, root) != null) target else null;
     }
 
-    fn staticAddressTarget(self: *Resolver, pointer: global_sg.GlobalNodeId) ?global_sg.GlobalNodeId {
-        return switch (self.graph.node(pointer).content) {
-            .address_of => |target| if (self.staticLocalRoot(target) != null) target else null,
-            else => null,
+    // Materialize only a pure projection for cleanup metadata. The write keeps
+    // its original pointer operand, preserving validity and evaluation order.
+    fn lexicalTarget(self: *Resolver, target: global_sg.GlobalNodeId) anyerror!global_sg.GlobalNodeId {
+        const node = self.graph.node(target);
+        return switch (node.content) {
+            .binding_use => target,
+            .struct_field_access => |field| blk: {
+                const parent = try self.lexicalTarget(field.value);
+                if (parent == field.value) break :blk target;
+                var projected = field;
+                projected.value = parent;
+                break :blk try self.appendNode(node.source, node.ty, .{ .struct_field_access = projected });
+            },
+            .dereference => |value| try self.lexicalTarget(lexical_storage.addressedTarget(self.graph, value.pointer) orelse return error.InvalidCleanupTarget),
+            else => error.InvalidCleanupTarget,
         };
     }
 
@@ -568,7 +579,7 @@ pub const Resolver = struct {
         module_index: usize,
     ) !global_sg.GlobalNodeId {
         if (!self.replacement_candidates.contains(node_id)) return value;
-        const binding = self.staticLocalRoot(target) orelse return value;
+        const binding = lexical_storage.root(self.graph, target) orelse return value;
         // Module-level storage has no lexical cleanup activation.
         if (std.mem.indexOfScalar(global_sg.GlobalBindingId, visible, binding) == null) return value;
         const context = reach_context.Context.fromGlobal(visible, owner_function);

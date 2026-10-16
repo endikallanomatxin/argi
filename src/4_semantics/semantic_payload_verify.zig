@@ -304,6 +304,7 @@ pub fn node(comptime Ids: type, value: primitives.Node(Ids), bounds: Bounds) !vo
             try require(verify.idFits(item.array_type, bounds.types));
         },
         .struct_field_store => |item| {
+            try require(verify.optionalIdFits(item.cleanup_target, bounds.nodes));
             try require(verify.idFits(item.struct_ptr, bounds.nodes));
             try require(verify.idFits(item.struct_type, bounds.types));
             try require(verify.idFits(item.field_type, bounds.types));
@@ -352,6 +353,7 @@ pub fn node(comptime Ids: type, value: primitives.Node(Ids), bounds: Bounds) !vo
             try require(verify.idFits(item.pointer_type, bounds.types));
         },
         .pointer_assignment => |item| {
+            try require(verify.optionalIdFits(item.cleanup_target, bounds.nodes));
             try require(verify.idFits(item.pointer, bounds.nodes));
             try require(verify.idFits(item.value, bounds.nodes));
         },

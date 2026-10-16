@@ -330,9 +330,12 @@ feature first.
   once, retaining its value across following cleanup. Statically rooted local
   record fields use the same checked replacement sequence
   and a projected cleanup target; only that field changes generation and cleanup
-  activation. Runtime aliases and indexed replacement still require an evaluated
+  activation. Constant local reference aliases retain a proven lexical
+  cleanup_target on writes; evaluate the original pointer, and update the target's
+  cleanup flags, never the reference slot's. The global verifier checks this proof.
+  Retargetable/unknown aliases and indexed replacement still require an evaluated
   destination and shared cleanup identity. VM lowering rejects owning writes
-  through runtime aliases and indexed storage until those identities are modeled.
+  through unresolved aliases and indexed storage until those identities are modeled.
   A reference field's cleanup flag describes its slot, never its referent.
 
 - Structural automatic cleanup follows record fields and active choice payloads.

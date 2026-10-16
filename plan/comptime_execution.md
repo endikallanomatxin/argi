@@ -89,6 +89,9 @@ public way to manufacture references to vacant slots.
 Preserve the existing rule: the access used for reinitialization can follow its
 new generation; sibling aliases stay stale. Ordinary writes without destruction
 preserve existing aliases. Field replacement must preserve unrelated siblings.
+Constant local aliases now carry their proven lexical cleanup target on writes;
+both backends preserve the original pointer evaluation and use the target's flags.
+Retargetable aliases and unknown input referents still need shared cleanup identity.
 Do not infer cleanup from the slot containing a reference. Occupancy in opaque
 collections remains owner-controlled, possibly through a length invariant,
 rather than requiring a universal per-element flag table.

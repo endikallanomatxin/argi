@@ -194,17 +194,14 @@ const FunctionLower = struct {
     // A reference field's drop flag belongs to its slot, not its referent.
     // Only the direct local destinations finalized by ownership lowering have
     // both a replacement cleanup plan and the matching runtime flags.
-    fn trackedDestination(self: *FunctionLower, pointer: g.GlobalNodeId) bool {
+    fn trackedDestination(self: *FunctionLower, pointer: g.GlobalNodeId, cleanup_target: ?g.GlobalNodeId) bool {
+        if (cleanup_target) |target| return self.directStorage(target) and self.nodeDrop(target) != null;
         const node = self.parent.graph.node(pointer);
         if (node.content != .address_of) return false;
         return self.directStorage(node.content.address_of) and self.nodeDrop(node.content.address_of) != null;
     }
     fn directStorage(self: *FunctionLower, id: g.GlobalNodeId) bool {
-        return switch (self.parent.graph.node(id).content) {
-            .binding_use => true,
-            .struct_field_access => |field| self.directStorage(field.value),
-            else => false,
-        };
+        return @import("../../4_semantics/global/lexical_storage.zig").root(self.parent.graph, id) != null;
     }
     fn autoDeinit(self: *FunctionLower, id: g.GlobalAutoDeinitId) anyerror!void {
         const auto = self.parent.graph.auto_deinits.items[@intFromEnum(id)];
@@ -315,21 +312,23 @@ const FunctionLower = struct {
             },
             .pointer_assignment => |x| {
                 const child = self.parent.graph.semanticType(self.parent.graph.node(x.pointer).ty.?).pointer.child;
-                if (self.parent.cleanup_types[@intFromEnum(child)] and !self.trackedDestination(x.pointer))
+                if (self.parent.cleanup_types[@intFromEnum(child)] and !self.trackedDestination(x.pointer, x.cleanup_target))
                     return self.parent.reject(node.source, "owning replacement through a runtime reference");
                 const target = try self.addressedPlace(x.pointer);
                 const value = try self.coerce(node.source, try self.expression(x.value), self.parent.graph.semanticType(self.parent.graph.node(x.pointer).ty.?).pointer.child);
                 _ = try self.emit(node.source, .{ .store = .{ .place = target, .value = value } });
-                if (self.nodeDrop(x.pointer)) |drop| try self.setDrop(drop, true);
+                if (self.nodeDrop(x.cleanup_target orelse x.pointer)) |drop| try self.setDrop(drop, true);
             },
             .struct_field_store => |x| {
-                if (self.parent.cleanup_types[@intFromEnum(x.field_type)] and !self.trackedDestination(x.struct_ptr))
+                if (self.parent.cleanup_types[@intFromEnum(x.field_type)] and !self.trackedDestination(x.struct_ptr, x.cleanup_target))
                     return self.parent.reject(node.source, "owning replacement through a runtime reference");
                 const base = try self.addressedPlace(x.struct_ptr);
                 const target = try self.project(base, .{ .field = x.field_index });
                 const value = try self.coerce(node.source, try self.expression(x.value), x.field_type);
                 _ = try self.emit(node.source, .{ .store = .{ .place = target, .value = value } });
-                if (self.nodeDrop(x.struct_ptr)) |drop| if (x.field_index < drop.fields.len) try self.setDrop(drop.fields[x.field_index], true);
+                if (x.cleanup_target) |destination| {
+                    if (self.nodeDrop(destination)) |drop| try self.setDrop(drop, true);
+                } else if (self.nodeDrop(x.struct_ptr)) |drop| if (x.field_index < drop.fields.len) try self.setDrop(drop.fields[x.field_index], true);
             },
             .auto_deinit_binding => |auto| try self.autoDeinit(auto),
             .code_block => |block_id| try self.block(block_id),

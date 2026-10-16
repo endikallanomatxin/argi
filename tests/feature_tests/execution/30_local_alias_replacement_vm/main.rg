@@ -1,0 +1,59 @@
+Counter: Type = (.count: Int32 = 0, .order: Int32 = 0)
+
+Resource: Type = (.counter: $&Counter, .id: Int32)
+
+Pair: Type = (.first: Resource, .second: Resource)
+
+implement Deinit#(Resource) (
+    .deinit = (.self: $&Resource) -> () {
+        self&.counter&.count = self&.counter&.count + 1
+        self&.counter&.order = self&.counter&.order * 10 + self&.id
+    }
+)
+
+make(.counter: $&Counter, .id: Int32) -> (.result: Resource) := {
+    counter&.order = counter&.order * 10 + id
+    result = Resource(.counter = counter, .id = id)
+}
+
+main() -> (.status_code: Int32 = 0) := {
+    counter :: Counter = Counter()
+    {
+        owner :: Resource = Resource(.counter = $&counter, .id = 1)
+        alias := $&owner
+        chain := alias
+        chain&= make(.counter = $&counter, .id = 2)
+        if counter.count != 1 or counter.order != 21 { abort }
+        if chain&.id != 2 { abort }
+    }
+    if counter.count != 2 or counter.order != 212 { abort }
+    {
+        pair :: Pair = Pair(
+            .first  = Resource(.counter = $&counter, .id = 3)
+            .second = Resource(.counter = $&counter, .id = 4)
+        )
+        alias := $&pair
+        sibling := &pair.second.id
+        alias&.first = Resource(.counter = $&counter, .id = 5)
+        if sibling&!= 4 or counter.count != 3 { abort }
+    }
+    if counter.count != 5 { abort }
+    {
+        owner :: Resource = Resource(.counter = $&counter, .id = 6)
+        alias := $&owner
+        deinit(.self = alias)
+        alias&= Resource(.counter = $&counter, .id = 7)
+        if alias&.id != 7 or counter.count != 6 { abort }
+    }
+    if counter.count != 7 { abort }
+    {
+        first :: Resource = Resource(.counter = $&counter, .id = 8)
+        second :: Resource = Resource(.counter = $&counter, .id = 9)
+        alias := $&first
+        deinit(.self = $&second)
+        alias&= Resource(.counter = $&counter, .id = 0)
+        if counter.count != 9 { abort }
+    }
+    if counter.count != 10 { abort }
+    status_code = 42
+}

@@ -118,10 +118,12 @@ Whole and partial moves cancel the corresponding source cleanup. Explicit destru
 and outcome-dependent consumption update the same cleanup flags, even for discarded
 call results. Destructors must themselves fit the supported execution subset.
 Replacing a whole local binding or a statically identified local record field
-evaluates the new value before cleaning up the old one. The first initialization
-does not run a destructor; neighboring fields retain their cleanup. Owning writes
-through runtime references and indexed storage are rejected until their cleanup identities
-are preserved across aliases. Scalar and borrowed-only writes through references remain supported.
+evaluates the new value before cleaning up the old one. Constant local aliases
+of those destinations use the same cleanup, including chains of aliases. The first
+initialization does not run a destructor; neighboring fields retain their cleanup.
+Owning writes through unresolved or retargetable references and indexed storage
+are rejected until their cleanup identities are preserved across aliases. Scalar
+and borrowed-only writes through references remain supported.
 
 Raw pointers, C enums, floating point, error propagation/tracing, virtual calls,
 partial initialization through output references, globals, closures, foreign calls,

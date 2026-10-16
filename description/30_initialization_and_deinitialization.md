@@ -113,6 +113,11 @@ Cleanup follows initializedness: an already deinitialized place is not
 destroyed twice. Replacing a live value first cleans the old one, then
 initializes the same storage with the replacement.
 
+> [!IMPLEMENTATION]
+> Replacement cleanup currently follows lexical bindings, record fields, and
+> constant local reference aliases. Runtime-selected and indexed owner destinations
+> still need shared cleanup identities; bytecode execution rejects these forms.
+
 `#defer` schedules a statement to run when the current scope exits, including
 on a return or error propagation. Deferred statements run in reverse order,
 before automatic cleanup of the scope's locals. Use it for an exit action
