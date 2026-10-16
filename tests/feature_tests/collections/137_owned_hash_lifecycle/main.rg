@@ -21,9 +21,12 @@ implement Deinit#(Key) (
 Policy: Type = ()
 
 implement HashPolicy#(Policy, Key) (
+    .Query : Type = &Key
+    .query = (.self: &Policy, .key: &Key) -> (.query: Query) { query = key }
+
     .hash = (.self: &Policy, .key: &Key) -> (.hash: UIntNative) { hash = 7 }
 
-    .eql = (.self: &Policy, .left: &Key, .right: &Key) -> (.ok: Bool) {
+    .equal = (.self: &Policy, .left: &Key, .right: &Key) -> (.ok: Bool) {
         ok = left&.id == right&.id
     }
 )

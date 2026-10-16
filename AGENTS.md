@@ -345,7 +345,11 @@ feature first.
   cleanup. Keep unchecked replacement helpers limited to copyable metadata.
 
 - HashMap supports copyable and noncopyable keys and values through one table.
-  HashPolicy always borrows keys; lookup and removal use explicit key references.
+  HashPolicy associates one implicitly copyable Query, projects stored keys into
+  it, and hashes/compares that representation for insertion and every query.
+  Standard text queries use StringView; callers explicitly project owning strings.
+  MapQuery shares Query across membership, lookup, removal and extraction;
+  readonly/mutable lookup contracts differ by returned access, never key spelling.
   Hashable feeds canonical bytes to a generic block Hasher independently of
   equality. StandardHashPolicy composes Hashable with borrowed Equal evidence.
   It uses FNV-1a-64 with explicit offset basis and no hidden randomness. Integers
@@ -366,7 +370,7 @@ feature first.
   roots together. Keys exposed for lookup and iteration remain readonly.
 
 - HashSet and PriorityQueue each support copyable and noncopyable elements
-  through one representation. Set queries borrow keys; insertion consumes them.
+  through one representation. Set queries use the policy Query; insertion consumes keys.
   Only copied set iteration and queue peek require ImplicitlyCopyable.
   OrderPolicy always borrows comparison operands, including sorting and search.
   Collection allocators come from assume, not reach defaults.

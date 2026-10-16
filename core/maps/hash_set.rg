@@ -60,7 +60,8 @@ _map_insert_hash_set#(
 ) := (.self: $&HashSet#(.key: key, .policy: policy), .key: key, .allocator: $&Provider) -> (
     .result : Errable#(Bool, (..out_of_memory))
 ) {
-    if contains(&self&._map, .key = &key).ok {
+    query ::= HashPolicy#(policy, key).query(&self&._map._policy, .key = &key)
+    if contains(&self&._map, .key = query).ok {
         _hash_discard(.value = ~key, .allocator = allocator)
         result = ..ok false
         return
@@ -72,17 +73,21 @@ _map_insert_hash_set#(
 }
 
 _map_contains_hash_set#(.key: Type, .policy: Type: HashPolicy#(policy, key)) := (
-    .self: &HashSet#(.key: key, .policy: policy), .key: &key
+    .self: &HashSet#(.key: key, .policy: policy), .key: HashPolicy#(policy, key).Query
 ) -> (.ok: Bool) { ok = contains(&self&._map, .key = key).ok }
 
 _map_remove_hash_set#(
     .key: Type, .policy: Type: HashPolicy#(policy, key), .Provider: Type: Allocator#(Provider)
-) := (.self: $&HashSet#(.key: key, .policy: policy), .key: &key, .allocator: $&Provider) -> (
-    .removed : Bool
-) { removed = remove(.self = $&self&._map, .key = key, .allocator = allocator).removed }
+) := (
+    .self      : $&HashSet#(.key: key, .policy: policy),
+    .key       : HashPolicy#(policy, key).Query,
+    .allocator : $&Provider
+) -> (.removed: Bool) {
+    removed = remove(.self = $&self&._map, .key = key, .allocator = allocator).removed
+}
 
 _map_extract_hash_set#(.key: Type, .policy: Type: HashPolicy#(policy, key)) := (
-    .self: $&HashSet#(.key: key, .policy: policy), .key: &key
+    .self: $&HashSet#(.key: key, .policy: policy), .key: HashPolicy#(policy, key).Query
 ) -> (.result: ?key) {
     match extract($&self&._map, .key = key).result {
         ..none { result = ..none }

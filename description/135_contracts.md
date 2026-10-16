@@ -252,7 +252,7 @@ Bundled OrderPolicy uses explicit policy and element participants, scoped inline
 implementations and qualified calls throughout sort, binary search and priority
 queues. Its former global less functions and unary conformance declarations have
 been removed. Sort, binary_search and _sift_down use unique ordinary declarations.
-Bundled HashPolicy uses explicit policy/key participants and scoped hash/eql
+Bundled HashPolicy uses explicit policy/key participants and scoped query/hash/equal
 operations that borrow keys throughout maps and sets. A single HashMap
 implementation supports copyable and noncopyable elements.
 Generic function instance validation shares the same tuple-aware contract check
@@ -485,8 +485,9 @@ execute only when the default is actually used, with ordinary safety and cleanup
 TestEquality scopes assertion diagnostics. The ordinary expect_equal entry is
 unique; closed numeric/text conformances specialize the generic equality-based
 implementation. External nominal values can provide their own checked assertion
-operation. StringMapKey normalizes borrowed textual keys without retaining them
-in lookup results; StringHashMap has/delete reuse one canonical view-key algorithm.
+operation. HashPolicy associates one canonical query representation for stored keys;
+map lookup contracts share that representation without retaining query inputs
+in lookup results.
 
 Closeable selects resource closing through close_resource, with an associated
 Result preserving each error protocol. Its unique ordinary close entry forwards

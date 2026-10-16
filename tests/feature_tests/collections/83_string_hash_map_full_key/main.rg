@@ -1,19 +1,5 @@
 main(.system: System) -> (.status_code: Int32 = 0) := {
-    storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
-    assume allocator ::= $&storage
-    empty :: StringView = ""
-    alpha :: StringView = "alpha"
-    if string_hash_map_hash(.key = &empty).hash != 7 { abort }
-    if string_hash_map_hash(.key = &alpha).hash != 9186341 { abort }
-    bytes: [4]UInt8 = (0, 127, 194, 128)
-    binary_storage ::= unwrap_or_abort(
-        .value = string_from_bytes(
-            .bytes     = unwrap_or_abort(.value = slice(&view(&bytes), .start = 0, .count = 4))
-            .allocator = system.page_allocator
-        )
-    )
-    binary ::= view(&binary_storage)
-    if string_hash_map_hash(.key = &binary).hash != 8867228 { abort }
+    assume allocator := system.page_allocator
     keys: [32]StringView = (
         "entry_00000_end",
         "entry_00001_end",
@@ -48,111 +34,45 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         "entry_00030_end",
         "entry_00031_end"
     )
-    buckets: [64]UIntNative = (
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0
-    )
+    bytes: [4]UInt8 = (0, 127, 194, 128)
+    text ::= unwrap_or_abort(.value = string_from_bytes(.bytes = view(&bytes)))
+    map ::= unwrap_or_abort(.value = HashMap#(.key: StringView, .value: Int32)(.capacity = 1))
     index :: UIntNative = 0
     while index < 32 {
-        bucket ::= string_hash_map_bucket_index(.bucket_count = 64, .key = &keys[index]).index
-        buckets[bucket] = buckets[bucket] + 1
-        if buckets[bucket] > 4 { abort }
-        index = index + 1
-    }
-    map ::= StringHashMap#(.value: Int32)(.capacity = 1)
-    index = 0
-    while index < 32 {
-        put(.self = $&map, .key = &keys[index], .value = 7)
+        unwrap_or_abort(.value = put($&map, .key = keys[index], .value = 7))
         index = index + 1
     }
     index = 0
     while index < 32 {
-        match get(.self = &map, .key = &keys[index]).result {
+        match get(&map, .key = keys[index]).result {
             ..none { abort }
-            ..some payload { if payload.value != 7 { abort } }
+            ..some found { if found.value != 7 { abort } }
         }
         index = index + 1
     }
-    put(.self = $&map, .key = &keys[15], .value = 9)
-    match get(.self = &map, .key = &keys[15]).result {
-        ..none { abort }
-        ..some payload { if payload.value != 9 { abort } }
-    }
+    unwrap_or_abort(.value = put($&map, .key = keys[15], .value = 9))
     index = 0
     while index < 32 {
-        match delete#(.value: Int32)(.self = $&map, .key = &keys[index]).value {
+        match extract($&map, .key = keys[index]).result {
             ..none { abort }
-            ..some payload {
+            ..some ~found {
+                entry ::= ~found.value
+                if equals(.left = entry.key, .right = keys[index]).ok == false { abort }
                 if index == 15 {
-                    if payload.value != 9 { abort }
+                    if entry.value != 9 { abort }
                 } else {
-                    if payload.value != 7 { abort }
+                    if entry.value != 7 { abort }
                 }
             }
         }
-        if has#(.value: Int32)(.self = &map, .key = &keys[index]).ok { abort }
+        if contains(&map, .key = keys[index]).ok { abort }
         index = index + 1
     }
+    unwrap_or_abort(.value = put($&map, .key = view(&text), .value = 11))
+    match get(&map, .key = view(&text)).result {
+        ..none { abort }
+        ..some found { if found.value != 11 { abort } }
+    }
+    if contains(&map, .key = "").ok { abort }
+    if remove($&map, .key = view(&text)).removed == false { abort }
 }

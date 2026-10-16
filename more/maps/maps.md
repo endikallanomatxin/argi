@@ -1,37 +1,11 @@
-Maps (array_hash_map, hash_map, static_string_map)
-	ArrayHashMap
-	ArrayHashMapUnmanaged
-	AutoArrayHashMap
-	AutoArrayHashMapUnmanaged
-	AutoHashMap
-	AutoHashMapUnmanaged
-	BufMap
-	EnumMap
-	HashMap
-	HashMapUnmanaged
-	StaticStringMap
-	StaticStringMapWithEql
-	StringArrayHashMap
-	StringArrayHashMapUnmanaged
-	StringHashMap
-	StringHashMapUnmanaged
+# Maps
 
-##### Maps
+Core provides `HashMap#(.key: Key, .value: Value)` and `HashSet#(.key: Key)`.
+Both use `StandardHashPolicy` by default and accept custom policies.
 
-The value may be heterogeneous (`Any`); the key must always be homogeneous.
-_(This is an intentional limitation to discourage poor code. Go also disallows it, and it is unclear when heterogeneous keys would be useful.)_
-If an abstract with a default is provided, that default becomes the key type.
+Use `String` for owning text keys and `StringView` for borrowed text keys.
+Both accept `StringView` queries. Borrowed key storage must remain live and
+unchanged while stored.
 
-```
--- A typical dictionary
-notas : Map<String, Int> = [
-	"Mikel"=8
-	"Jon"=9
-]
-```
-
-By default, this:
-```
-notas := ["Mikel"=8, "Jon"=9]
-```
-infers the types.
+See [collection contracts](../../description/169_other_collections.md) for
+construction, lookup, iteration, and allocation-error handling.

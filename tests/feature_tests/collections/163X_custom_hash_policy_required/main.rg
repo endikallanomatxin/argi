@@ -1,8 +1,11 @@
 Policy: Type = ()
 
 implement HashPolicy#(Policy, Int32) (
-    .hash = (.self: &Policy, .key: &Int32) -> (.hash: UIntNative) { hash = 0 }
-    .eql  = (.self: &Policy, .left: &Int32, .right: &Int32) -> (.ok: Bool) {
+    .Query : Type = &Int32
+    .query = (.self: &Policy, .key: &Int32) -> (.query: Query) { query = key }
+
+    .hash  = (.self: &Policy, .key: &Int32) -> (.hash: UIntNative) { hash = 0 }
+    .equal = (.self: &Policy, .left: &Int32, .right: &Int32) -> (.ok: Bool) {
         ok = left&== right&
     }
 )

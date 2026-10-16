@@ -12170,8 +12170,8 @@ test "feature_tests/contracts/143_order_policy_unqualified_operation" {
     try expectSuccessfulBuild("tests/feature_tests/contracts/143_order_policy_unqualified_operation");
 }
 
-test "feature_tests/contracts/144_hash_policy_unqualified_operation" {
-    try expectSuccessfulBuild("tests/feature_tests/contracts/144_hash_policy_unqualified_operation");
+test "feature_tests/contracts/144_hash_policy_qualified_operation" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/144_hash_policy_qualified_operation");
 }
 
 test "feature_tests/contracts/145_nominal_reader_implementations" {
@@ -13301,4 +13301,13 @@ test "feature_tests/collections/167X_priority_queue_noncopyable_peek" {
 
 test "feature_tests/collections/168X_hash_set_reference_after_remove" {
     try buildExpectFail("tests/feature_tests/collections/168X_hash_set_reference_after_remove", "root that has ended");
+}
+
+test "feature_tests/collections/169_canonical_map_queries" {
+    try expectSuccessfulBuild("tests/feature_tests/collections/169_canonical_map_queries");
+    try runExpect("tests/feature_tests/collections/169_canonical_map_queries", 0);
+}
+
+test "feature_tests/collections/170X_map_query_requires_explicit_view" {
+    try buildExpectFail("tests/feature_tests/collections/170X_map_query_requires_explicit_view", "no function named 'get_reference'");
 }

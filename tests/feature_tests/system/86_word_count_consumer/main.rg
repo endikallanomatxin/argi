@@ -8,7 +8,7 @@ expect_count(
 ) -> !Void = ..ok Void() := {
     assume allocator
     key ::= format(.value = word)!
-    match get_reference(.self = self, .key = &key).result {
+    match get_reference(.self = self, .key = view(&key)).result {
         ..none { abort }
         ..some borrowed { if borrowed.value&!= expected { abort } }
     }

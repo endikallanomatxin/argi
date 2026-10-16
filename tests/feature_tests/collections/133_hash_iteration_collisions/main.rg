@@ -3,10 +3,12 @@ CollisionPolicy: Type = ()
 implement ImplicitlyCopyable#(CollisionPolicy) ()
 
 implement HashPolicy#(CollisionPolicy, Int32) (
+    .Query : Type = &Int32
+    .query = (.self: &CollisionPolicy, .key: &Int32) -> (.query: Query) { query = key }
 
     .hash = (.self: &CollisionPolicy, .key: &Int32) -> (.hash: UIntNative) { hash = 7 }
 
-    .eql = (.self: &CollisionPolicy, .left: &Int32, .right: &Int32) -> (.ok: Bool) {
+    .equal = (.self: &CollisionPolicy, .left: &Int32, .right: &Int32) -> (.ok: Bool) {
         ok = [left&== right&]
     }
 )

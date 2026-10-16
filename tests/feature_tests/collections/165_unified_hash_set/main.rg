@@ -11,8 +11,11 @@ Key: Type = (.first: Tracked, .second: Tracked)
 Policy: Type = ()
 
 implement HashPolicy#(Policy, Key) (
-    .hash = (.self: &Policy, .key: &Key) -> (.hash: UIntNative) { hash = 1 }
-    .eql  = (.self: &Policy, .left: &Key, .right: &Key) -> (.ok: Bool) {
+    .Query : Type = &Key
+    .query = (.self: &Policy, .key: &Key) -> (.query: Query) { query = key }
+
+    .hash  = (.self: &Policy, .key: &Key) -> (.hash: UIntNative) { hash = 1 }
+    .equal = (.self: &Policy, .left: &Key, .right: &Key) -> (.ok: Bool) {
         ok = left&.first.id == right&.first.id
     }
 )

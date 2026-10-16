@@ -26,8 +26,11 @@ implement Hasher#(CountingHasher) (
 CollisionPolicy: Type = ()
 
 implement HashPolicy#(CollisionPolicy, Key) (
-    .hash = (.self: &CollisionPolicy, .key: &Key) -> (.hash: UIntNative) { hash = 0 }
-    .eql  = (.self: &CollisionPolicy, .left: &Key, .right: &Key) -> (.ok: Bool) {
+    .Query : Type = &Key
+    .query = (.self: &CollisionPolicy, .key: &Key) -> (.query: Query) { query = key }
+
+    .hash  = (.self: &CollisionPolicy, .key: &Key) -> (.hash: UIntNative) { hash = 0 }
+    .equal = (.self: &CollisionPolicy, .left: &Key, .right: &Key) -> (.ok: Bool) {
         ok = left&.id == right&.id
     }
 )

@@ -6,12 +6,17 @@ below; exploratory collections are marked as ideas.
 
 ## Hash and equality policies
 
-`HashPolicy#(P, K)` supplies scoped operations
-`HashPolicy#(P, K).hash(.self, .key) -> UIntNative` and
-`HashPolicy#(P, K).eql(.self, .left, .right) -> Bool`. Equality must be an equivalence relation;
-equal keys must hash equally. Policy results must remain stable while keys are
-stored. Hash collisions are supported, but unstable equality or key mutation
-cannot be repaired by the container.
+`HashPolicy#(P, K)` associates one implicitly copyable `Query` type with a
+policy and stored key. Its operations are:
+
+- `query(.self, .key: &K) -> Query` projects a stored key without consuming it.
+- `hash(.self, .key: Query) -> UIntNative` hashes the canonical representation.
+- `equal(.self, .left: Query, .right: Query) -> Bool` compares representations.
+
+Insertion and lookup use these same operations. Equality must be an equivalence
+relation; equal queries must hash equally. Projection, hashing, and equality
+must remain stable while keys are stored. Hash collisions are supported, but
+unstable equality or key mutation cannot be repaired by the container.
 
 `Hasher#(State)` consumes bytes and finishes a digest. `Hashable#(Key, State)`
 feeds a key's canonical representation to that state. Hashing alone does not
@@ -32,9 +37,11 @@ Applications define Hashable once for their key, typically generically over any
 Hasher. They need a custom HashPolicy only to change hashing/equality semantics
 for a particular map. Borrowed key storage must remain live and unchanged.
 
-Both policy operations borrow keys through readonly references. Keys need not
-be implicitly copyable. Implementations preserve key values and never expose
-mutable keys.
+The standard policy uses `&K` queries for general keys and `StringView` queries
+for both `String` and `StringView`. Text callers explicitly use `view(&key)`
+when starting with an owning string. A custom policy may choose another canonical
+representation, such as an integer identifier for a larger stored key. Stored
+keys need not be implicitly copyable; projection preserves their contents.
 
 ## Maps
 
@@ -53,10 +60,10 @@ lifetime obligations; stored key contents must remain unchanged.
   outcome. Pass noncopyable values with `~`. Replacement destroys the previous
   key and value and installs the supplied pair without allocating table storage.
   Failed growth destroys the supplied inputs and preserves existing entries.
-- `contains(.self, .key: &K)` queries membership. `get_reference` returns `?&V`.
+- `contains(.self, .key: Query)` queries membership. `get_reference` returns `?&V`.
   `get` returns `?V` only when V is implicitly copyable.
-- `extract(.self, .key: &K)` returns `?HashMapEntry#(K, V)`, transferring the
-  removed entry. `remove(.self, .key: &K, .allocator)` destroys it instead.
+- `extract(.self, .key: Query)` returns `?HashMapEntry#(K, V)`, transferring the
+  removed entry. `remove(.self, .key: Query, .allocator)` destroys it instead.
 - `reserve` grows slot capacity. All allocations complete before relocation;
   allocation failure preserves entries and capacity. Relocation neither copies
   nor destroys element contents.
@@ -80,12 +87,17 @@ Metadata and entries use separate allocations. Only occupied entry slots hold
 initialized values; cleanup visits them exactly once. This common representation
 supports both copyable and noncopyable elements without a second map family.
 
-For `HashMap#(String, V, StandardHashPolicy)`, `contains` and `get_reference` also
-accept `StringView` queries, without allocating or retaining the query.
-`get_mutable_reference(.self: $&map, .key: StringView)` borrows a mutable value
-through `MutableTextMapBorrowedLookup`, which requires `TextMapBorrowedLookup`.
-These operations preserve the same table shape dependencies and never expose
-mutable keys.
+`MapQuery#(Map)` supplies the common `Query` for membership, lookup, removal,
+and extraction. `MapLookup` returns copies, `MapReferenceLookup` returns readonly
+references, and `MutableMapReferenceLookup` returns mutable references while
+requiring the readonly lookup capability. None needs a separate text variant.
+Map insertion keeps the stored `Key` type and reports allocation failures.
+
+For `HashMap#(String, V, StandardHashPolicy)`, every query operation receives
+`StringView`. Looking up a literal or an explicit view neither allocates nor
+retains the query. Returned references depend on the table, not the query, and
+never expose mutable keys. Borrowed text keys use `HashMap#(.key: StringView, .value: V)` with the same
+algorithms and allocation-error handling as other keys.
 
 > [!IDEA]
 > A map literal could use a form such as `("a" = 1, "b" = 2)`. Its relationship
@@ -102,7 +114,7 @@ for maps. Capacity and allocation errors follow map construction.
 true for new membership, false for an equivalent existing key. Duplicate
 insertion destroys the supplied key, retains the stored key, and allocates
 nothing. Failed growth destroys the supplied key and preserves membership.
-`contains` and `remove` borrow their query as `&K`; `extract` transfers a removed
+`contains` and `remove` receive the policy's `Query`; `extract` transfers a removed
 key to the caller. `reserve`, `length`, `capacity`, and `deinit` correspond to map
 operations.
 

@@ -7,7 +7,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     value ::= format(.value = "first", .allocator = allocator)!
     put(.self = $&map, .key = ~key, .value = ~value, .allocator = allocator)!
     query ::= format(.value = "key", .allocator = allocator)!
-    match get_reference(.self = &map, .key = &query).result {
+    match get_reference(.self = &map, .key = view(&query)).result {
         ..none { abort }
         ..some borrowed {
             if [equals(.left = view(.self = borrowed.value), .right = "first").ok == false] {
@@ -24,7 +24,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         .allocator = allocator
     )!
     if length(.self = &map).count != 1 { abort }
-    extracted ::= extract(.self = $&map, .key = &query).result
+    extracted ::= extract(.self = $&map, .key = view(&query)).result
     if length(.self = &map).count != 0 { abort }
     deinit(.self = $&map)
     match extracted {

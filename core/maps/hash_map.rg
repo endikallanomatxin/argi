@@ -103,7 +103,7 @@ implement#(
     }
 )
 
-implement#(.key: Type, .value: Type, .Provider: Type: Allocator) Init#(
+implement#(.key: Type: _StandardHashKey#(key), .value: Type, .Provider: Type: Allocator) Init#(
     HashMap#(.key: key, .value: value, .policy: StandardHashPolicy),
     (
         .policy    : StandardHashPolicy = StandardHashPolicy(),
@@ -178,7 +178,9 @@ _hash_entry#(.key: Type, .value: Type, .policy: Type: HashPolicy#(policy, key))(
 }
 
 _hash_find#(.key: Type, .value: Type, .policy: Type: HashPolicy#(policy, key))(
-    .self: &HashMap#(.key: key, .value: value, .policy: policy), .key: &key, .hash: UIntNative
+    .self : &HashMap#(.key: key, .value: value, .policy: policy),
+    .key  : HashPolicy#(policy, key).Query,
+    .hash : UIntNative
 ) -> (.index: ?UIntNative) := {
     count ::= capacity(self).count
     position ::= hash % count
@@ -194,7 +196,11 @@ _hash_find#(.key: Type, .value: Type, .policy: Type: HashPolicy#(policy, key))(
             entry ::= _hash_entry(self, .index = position).entry
             if HashPolicy#(
                 policy, key
-            ).eql(&self&._policy, .left = &entry&.key, .right = key).ok {
+            ).equal(
+                &self&._policy
+                .left  = HashPolicy#(policy, key).query(&self&._policy, .key = &entry&.key)
+                .right = key
+            ).ok {
                 index = ..some(.value = position)
                 return
             }
@@ -295,9 +301,10 @@ _map_put_hash_map#(
     .allocator : $&Provider
 ) -> (.result: Errable#(Void, (..out_of_memory))) {
     assume allocator
-    digest ::= HashPolicy#(policy, key).hash(&self&._policy, .key = &key).hash
+    query ::= HashPolicy#(policy, key).query(&self&._policy, .key = &key)
+    digest ::= HashPolicy#(policy, key).hash(&self&._policy, .key = query).hash
 
-    match _hash_find(self, .key = &key, .hash = digest).index {
+    match _hash_find(self, .key = query, .hash = digest).index {
         ..some found {
             slot ::= _trusted_uninit_slot#(.t: HashMapEntry#(.key: key, .value: value))(
                 .allocation = &self&._table._entries, .index = found.value
@@ -359,14 +366,16 @@ _map_put_hash_map#(
 }
 
 _map_contains_hash_map#(.key: Type, .value: Type, .policy: Type: HashPolicy#(policy, key)) := (
-    .self: &HashMap#(.key: key, .value: value, .policy: policy), .key: &key
+    .self : &HashMap#(.key: key, .value: value, .policy: policy),
+    .key  : HashPolicy#(policy, key).Query
 ) -> (.ok: Bool) {
     digest ::= HashPolicy#(policy, key).hash(&self&._policy, .key = key).hash
     ok = is(.value = _hash_find(self, .key = key, .hash = digest).index, .variant = ..some)
 }
 
 _map_get_reference_hash_map#(.key: Type, .value: Type, .policy: Type: HashPolicy#(policy, key)) := (
-    .self: &HashMap#(.key: key, .value: value, .policy: policy), .key: &key
+    .self : &HashMap#(.key: key, .value: value, .policy: policy),
+    .key  : HashPolicy#(policy, key).Query
 ) -> (.result: ?&value) {
     digest ::= HashPolicy#(policy, key).hash(&self&._policy, .key = key).hash
 
@@ -383,8 +392,30 @@ _map_get_reference_hash_map#(.key: Type, .value: Type, .policy: Type: HashPolicy
     }
 }
 
+_map_get_mutable_reference_hash_map#(
+    .key: Type, .value: Type, .policy: Type: HashPolicy#(policy, key)
+) := (
+    .self : $&HashMap#(.key: key, .value: value, .policy: policy),
+    .key  : HashPolicy#(policy, key).Query
+) -> (.result: ?$&value) {
+    digest ::= HashPolicy#(policy, key).hash(&self&._policy, .key = key).hash
+
+    match _hash_find(self, .key = key, .hash = digest).index {
+        ..none { result = ..none }
+        ..some found {
+            entry ::= _hash_entry(self, .index = found.value).entry
+            borrowed ::= depend_on#(.t: $&value)(
+                .value = $&entry&.value
+                .on    = erase_reference#(.t: _HashShape)(.base = &self&._shape).reference
+            ).result
+            result = ..some(.value = borrowed)
+        }
+    }
+}
+
 _map_extract_hash_map#(.key: Type, .value: Type, .policy: Type: HashPolicy#(policy, key)) := (
-    .self: $&HashMap#(.key: key, .value: value, .policy: policy), .key: &key
+    .self : $&HashMap#(.key: key, .value: value, .policy: policy),
+    .key  : HashPolicy#(policy, key).Query
 ) -> (.result: ?HashMapEntry#(.key: key, .value: value)) {
     digest ::= HashPolicy#(policy, key).hash(&self&._policy, .key = key).hash
 
@@ -414,7 +445,7 @@ _map_remove_hash_map#(
     .Provider : Type: Allocator#(Provider)
 ) := (
     .self      : $&HashMap#(.key: key, .value: value, .policy: policy),
-    .key       : &key,
+    .key       : HashPolicy#(policy, key).Query,
     .allocator : $&Provider
 ) -> (.removed: Bool) {
     assume allocator
@@ -458,9 +489,10 @@ implement#(.key: Type, .value: Type, .policy: Type: HashPolicy#(policy, key)) De
 
 _map_get_hash_map#(
     .key: Type, .value: Type: ImplicitlyCopyable, .policy: Type: HashPolicy#(policy, key)
-) := (.self: &HashMap#(.key: key, .value: value, .policy: policy), .key: &key) -> (
-    .result : ?value
-) {
+) := (
+    .self : &HashMap#(.key: key, .value: value, .policy: policy),
+    .key  : HashPolicy#(policy, key).Query
+) -> (.result: ?value) {
     match _map_get_reference_hash_map(self, .key = key).result {
         ..none { result = ..none }
         ..some borrowed { result = ..some(.value = borrowed.value&) }

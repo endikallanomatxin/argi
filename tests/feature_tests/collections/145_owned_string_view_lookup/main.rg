@@ -1,7 +1,7 @@
-lookup_mutable#(.Map: Type: MutableTextMapBorrowedLookup#(.Value: UIntNative))(
+lookup_mutable#(.Map: Type: MutableMapReferenceLookup#(.Query: StringView, .Value: UIntNative))(
     .self: $&Map, .key: StringView
 ) -> (.result: ?$&UIntNative) := {
-    result = MutableTextMapBorrowedLookup#(Map).get_mutable_reference(.self = self, .key = key)
+    result = MutableMapReferenceLookup#(Map).get_mutable_reference(.self = self, .key = key)
 }
 
 run_main(.system: System) -> !Void = ..ok Void() := {

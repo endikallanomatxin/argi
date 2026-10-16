@@ -2,25 +2,25 @@ main(.system: System) -> (.status_code: Int32) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 
-    map ::= StringHashMap#(.value: Int32)(.capacity = 1)
+    map ::= unwrap_or_abort(.value = HashMap#(.key: StringView, .value: Int32)(.capacity = 1))
 
-    put(.self = $&map, .key = "alpha", .value = 1)
-    put(.self = $&map, .key = "beta", .value = 2)
-    put(.self = $&map, .key = "alpha", .value = 7)
+    unwrap_or_abort(.value = put(.self = $&map, .key = "alpha", .value = 1))
+    unwrap_or_abort(.value = put(.self = $&map, .key = "beta", .value = 2))
+    unwrap_or_abort(.value = put(.self = $&map, .key = "alpha", .value = 7))
 
-    if has#(.value: Int32)(.self = &map, .key = "alpha").ok {
+    if contains(.self = &map, .key = "alpha").ok {
     } else {
         status_code = 1
         return
     }
 
-    if has#(.value: Int32)(.self = &map, .key = "beta").ok {
+    if contains(.self = &map, .key = "beta").ok {
     } else {
         status_code = 2
         return
     }
 
-    if has#(.value: Int32)(.self = &map, .key = "missing").ok {
+    if contains(.self = &map, .key = "missing").ok {
         status_code = 3
         return
     }
@@ -54,15 +54,15 @@ main(.system: System) -> (.status_code: Int32) := {
     }
 
     missing ::= get(.self = &map, .key = "missing").result
-    if missing? {
+    if missing ?{
         status_code = 8
         return
     }
 
-    removed_beta ::= delete#(.value: Int32)(.self = $&map, .key = "beta").value
+    removed_beta ::= extract(.self = $&map, .key = "beta").result
     match removed_beta {
         ..some payload {
-            if payload.value != 2 {
+            if payload.value.value != 2 {
                 status_code = 9
                 return
             }
@@ -73,7 +73,7 @@ main(.system: System) -> (.status_code: Int32) := {
         }
     }
 
-    if has#(.value: Int32)(.self = &map, .key = "beta").ok {
+    if contains(.self = &map, .key = "beta").ok {
         status_code = 11
         return
     }
@@ -92,11 +92,11 @@ main(.system: System) -> (.status_code: Int32) := {
         }
     }
 
-    put(.self = $&map, .key = "gamma", .value = 9)
-    removed_gamma ::= delete#(.value: Int32)(.self = $&map, .key = "gamma").value
+    unwrap_or_abort(.value = put(.self = $&map, .key = "gamma", .value = 9))
+    removed_gamma ::= extract(.self = $&map, .key = "gamma").result
     match removed_gamma {
         ..some payload {
-            if payload.value != 9 {
+            if payload.value.value != 9 {
                 status_code = 14
                 return
             }
@@ -107,8 +107,8 @@ main(.system: System) -> (.status_code: Int32) := {
         }
     }
 
-    removed_missing ::= delete#(.value: Int32)(.self = $&map, .key = "missing").value
-    if removed_missing? {
+    removed_missing ::= extract(.self = $&map, .key = "missing").result
+    if removed_missing ?{
         status_code = 16
         return
     }

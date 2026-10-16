@@ -3,9 +3,11 @@ CollisionPolicy: Type = (.marker: Int32 = 0)
 implement ImplicitlyCopyable#(CollisionPolicy) ()
 
 implement HashPolicy#(CollisionPolicy, Int32) (
+    .Query : Type = &Int32
+    .query = (.self: &CollisionPolicy, .key: &Int32) -> (.query: Query) { query = key }
 
-    .hash = (.self: &CollisionPolicy, .key: &Int32) -> (.hash: UIntNative) { hash = 7 }
-    .eql  = (.self: &CollisionPolicy, .left: &Int32, .right: &Int32) -> (.ok: Bool) {
+    .hash  = (.self: &CollisionPolicy, .key: &Int32) -> (.hash: UIntNative) { hash = 7 }
+    .equal = (.self: &CollisionPolicy, .left: &Int32, .right: &Int32) -> (.ok: Bool) {
         ok = [left&== right&]
     }
 )
@@ -71,7 +73,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     if unwrap_or_abort(.value = insert(.self = $&text, .key = right, .allocator = allocator)) {
         abort
     }
-    if contains(.self = &text, .key = &right).ok == false { abort }
+    if contains(.self = &text, .key = right).ok == false { abort }
     if length(.self = &text).count != 1 { abort }
     deinit(.self = $&text)
 }

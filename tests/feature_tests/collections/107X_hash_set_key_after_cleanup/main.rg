@@ -13,6 +13,6 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         )
     )
     deinit(.self = $&source)
-    if contains(.self = &map, .key = &"a").ok == false { abort }
+    if contains(.self = &map, .key = "a").ok == false { abort }
     deinit(.self = $&map)
 }

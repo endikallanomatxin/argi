@@ -6,7 +6,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     key ::= format(.value = "key")!
     put($&map, .key = ~key, .value = 41)!
     query ::= format(.value = "key")!
-    match get(&map, .key = &query).result {
+    match get(&map, .key = view(&query)).result {
         ..none { abort }
         ..some item { if item.value != 41 { abort } }
     }
@@ -17,7 +17,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     entry ::= next($&mutable).value
     entry.value&= 42
     if contains(&map, .key = "key").ok == false { abort }
-    extracted ::= extract($&map, .key = &query).result
+    extracted ::= extract($&map, .key = view(&query)).result
     deinit($&map)
     match extracted {
         ..none { abort }

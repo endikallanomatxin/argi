@@ -1,40 +1,34 @@
--- Key and value context comes from the selected nominal container, not literals.
-MapLookup#(.Map: Type): Contract = (
-    .Key   : Type
-    .Value : Type
-    .get   : (.self: &Map, .key: Key) -> (.result: ?Value)
+-- A collection has one query type shared by all its lookup operations.
+MapQuery#(.Map: Type): Contract = (
+    .Query : Type
+    ImplicitlyCopyable#(Query)
 )
 
-StringMapLookup#(.Map: Type, .Query: Type: StringMapKey#(Query)): Contract = (
+MapLookup#(.Map: Type): Contract = (
+    .Query : Type
     .Value : Type
-    .get   : (.self: &Map, .key: Query) -> (.result: ?Value)
+    MapQuery#(.Map: Map, .Query: Query)
+    .get : (.self: &Map, .key: Query) -> (.result: ?Value)
 )
 
 MapMembership#(.Map: Type): Contract = (
-    .Key      : Type
-    .contains : (.self: &Map, .key: Key) -> (.ok: Bool)
+    .Query : Type
+    MapQuery#(.Map: Map, .Query: Query)
+    .contains : (.self: &Map, .key: Query) -> (.ok: Bool)
 )
 
-TextMapMembership#(.Map: Type): Contract = (
-    .contains : (.self: &Map, .key: StringView) -> (.ok: Bool)
-)
-
-MapBorrowedLookup#(.Map: Type): Contract = (
-    .Key : Type
-    .Value         : Type
-    .get_reference : (.self: &Map, .key: Key) -> (.result: ?&Value)
-)
-
-TextMapBorrowedLookup#(.Map: Type): Contract = (
-    .Value         : Type
-    .get_reference : (.self: &Map, .key: StringView) -> (.result: ?&Value)
-)
-
--- Mutable value access retains the readonly lookup capability and never keys.
-MutableTextMapBorrowedLookup#(.Map: Type): Contract = (
+MapReferenceLookup#(.Map: Type): Contract = (
+    .Query : Type
     .Value : Type
-    TextMapBorrowedLookup#(.Map: Map, .Value: Value)
-    .get_mutable_reference : (.self: $&Map, .key: StringView) -> (.result: ?$&Value)
+    MapQuery#(.Map: Map, .Query: Query)
+    .get_reference : (.self: &Map, .key: Query) -> (.result: ?&Value)
+)
+
+MutableMapReferenceLookup#(.Map: Type): Contract = (
+    .Query : Type
+    .Value : Type
+    MapReferenceLookup#(.Map: Map, .Query: Query, .Value: Value)
+    .get_mutable_reference : (.self: $&Map, .key: Query) -> (.result: ?$&Value)
 )
 
 MapInsertion#(.Map: Type, .Provider: Type: Allocator#(Provider)): Contract = (
@@ -45,18 +39,10 @@ MapInsertion#(.Map: Type, .Provider: Type: Allocator#(Provider)): Contract = (
     )
 )
 
-StringMapInsertion#(
-    .Map      : Type,
-    .Query    : Type: StringMapKey#(Query),
-    .Provider : Type: Allocator#(Provider)
-): Contract = (
-    .Value : Type
-    .put   : (.allocator: $&Provider, .self: $&Map, .key: Query, .value: Value) -> ()
-)
-
 MapRemoval#(.Map: Type, .Provider: Type: Allocator#(Provider)): Contract = (
-    .Key    : Type
-    .remove : (.self: $&Map, .key: Key, .allocator: $&Provider) -> (.removed: Bool)
+    .Query : Type
+    MapQuery#(.Map: Map, .Query: Query)
+    .remove : (.self: $&Map, .key: Query, .allocator: $&Provider) -> (.removed: Bool)
 )
 
 SetInsertion#(.Map: Type, .Provider: Type: Allocator#(Provider)): Contract = (
@@ -73,43 +59,22 @@ MapReservation#(.Map: Type, .Provider: Type: Allocator#(Provider)): Contract = (
 )
 
 MapExtraction#(.Map: Type): Contract = (
-    .Key     : Type
-    .Result  : Type
-    .extract : (.self: $&Map, .key: Key) -> (.result: Result)
+    .Query  : Type
+    .Result : Type
+    MapQuery#(.Map: Map, .Query: Query)
+    .extract : (.self: $&Map, .key: Query) -> (.result: Result)
 )
 
-implement#(.value: Type, .Query: Type: StringMapKey#(Query)) StringMapLookup#(
-    StringHashMap#(.value: value), Query
+implement#(.key: Type, .value: Type, .policy: Type: HashPolicy#(policy, key)) MapQuery#(
+    HashMap#(.key: key, .value: value, .policy: policy)
 ) (
-    .Value : Type = value
-    .get   = _map_get_StringHashMap
+    .Query : Type = HashPolicy#(policy, key).Query
 )
 
-implement#(
-    .value: Type, .Provider: Type: Allocator#(Provider), .Query: Type: StringMapKey#(Query)
-) StringMapInsertion#(StringHashMap#(.value: value), Query, Provider) (
-    .Value : Type = value
-    .put   = _map_put_StringHashMap
-)
-
-implement#(.value: Type) TextMapBorrowedLookup#(
-    HashMap#(.key: String, .value: value, .policy: StandardHashPolicy)
+implement#(.key: Type, .policy: Type: HashPolicy#(policy, key)) MapQuery#(
+    HashSet#(.key: key, .policy: policy)
 ) (
-    .Value         : Type = value
-    .get_reference = _map_get_reference_hash_string_lookup
-)
-
-implement#(.value: Type) MutableTextMapBorrowedLookup#(
-    HashMap#(.key: String, .value: value, .policy: StandardHashPolicy)
-) (
-    .Value : Type = value
-    .get_mutable_reference = _map_get_mutable_reference_hash_string_lookup
-)
-
-implement#(.value: Type) TextMapMembership#(
-    HashMap#(.key: String, .value: value, .policy: StandardHashPolicy)
-) (
-    .contains = _map_contains_hash_string_lookup
+    .Query : Type = HashPolicy#(policy, key).Query
 )
 
 implement#(
@@ -118,30 +83,38 @@ implement#(
     .policy   : Type: HashPolicy#(policy, key),
     .Provider : Type: Allocator#(Provider)
 ) MapRemoval#(HashMap#(.key: key, .value: value, .policy: policy), Provider) (
-    .Key    : Type = &key
+    .Query  : Type = HashPolicy#(policy, key).Query
     .remove = _map_remove_hash_map
 )
 
 implement#(.key: Type, .value: Type, .policy: Type: HashPolicy#(policy, key)) MapExtraction#(
     HashMap#(.key: key, .value: value, .policy: policy)
 ) (
-    .Key     : Type = &key
+    .Query   : Type = HashPolicy#(policy, key).Query
     .Result  : Type = ?HashMapEntry#(.key: key, .value: value)
     .extract = _map_extract_hash_map
 )
 
-implement#(.key: Type, .value: Type, .policy: Type: HashPolicy#(policy, key)) MapBorrowedLookup#(
+implement#(.key: Type, .value: Type, .policy: Type: HashPolicy#(policy, key)) MapReferenceLookup#(
     HashMap#(.key: key, .value: value, .policy: policy)
 ) (
-    .Key : Type = &key
+    .Query         : Type = HashPolicy#(policy, key).Query
     .Value         : Type = value
     .get_reference = _map_get_reference_hash_map
+)
+
+implement#(.key: Type, .value: Type, .policy: Type: HashPolicy#(policy, key)) MutableMapReferenceLookup#(
+    HashMap#(.key: key, .value: value, .policy: policy)
+) (
+    .Query : Type = HashPolicy#(policy, key).Query
+    .Value : Type = value
+    .get_mutable_reference = _map_get_mutable_reference_hash_map
 )
 
 implement#(.key: Type, .value: Type, .policy: Type: HashPolicy#(policy, key)) MapMembership#(
     HashMap#(.key: key, .value: value, .policy: policy)
 ) (
-    .Key      : Type = &key
+    .Query    : Type = HashPolicy#(policy, key).Query
     .contains = _map_contains_hash_map
 )
 
@@ -174,7 +147,7 @@ implement#(
 implement#(.key: Type, .policy: Type: HashPolicy#(policy, key)) MapExtraction#(
     HashSet#(.key: key, .policy: policy)
 ) (
-    .Key     : Type = &key
+    .Query   : Type = HashPolicy#(policy, key).Query
     .Result  : Type = ?key
     .extract = _map_extract_hash_set
 )
@@ -182,14 +155,14 @@ implement#(.key: Type, .policy: Type: HashPolicy#(policy, key)) MapExtraction#(
 implement#(
     .key: Type, .policy: Type: HashPolicy#(policy, key), .Provider: Type: Allocator#(Provider)
 ) MapRemoval#(HashSet#(.key: key, .policy: policy), Provider) (
-    .Key    : Type = &key
+    .Query  : Type = HashPolicy#(policy, key).Query
     .remove = _map_remove_hash_set
 )
 
 implement#(.key: Type, .policy: Type: HashPolicy#(policy, key)) MapMembership#(
     HashSet#(.key: key, .policy: policy)
 ) (
-    .Key      : Type = &key
+    .Query    : Type = HashPolicy#(policy, key).Query
     .contains = _map_contains_hash_set
 )
 
@@ -203,7 +176,7 @@ implement#(
 implement#(
     .key: Type, .value: Type: ImplicitlyCopyable, .policy: Type: HashPolicy#(policy, key)
 ) MapLookup#(HashMap#(.key: key, .value: value, .policy: policy)) (
-    .Key   : Type = &key
+    .Query : Type = HashPolicy#(policy, key).Query
     .Value : Type = value
     .get   = _map_get_hash_map
 )
