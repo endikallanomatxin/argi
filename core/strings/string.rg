@@ -662,10 +662,10 @@ string_from_bytes#(.Provider: Type: Allocator)(
 
 push_ascii#(.Provider: Type: Allocator)(
     .self: $&String, .byte: UInt8, .allocator: $&Provider = reach allocator
-) -> (.result: Errable#(Void, (..invalid_codepoint, ..out_of_memory))) := {
+) -> (.result: Errable#(Void, (..invalid_ascii, ..out_of_memory))) := {
     assume allocator
     if byte >= 128 {
-        result = ..error(.reason = ..invalid_codepoint)
+        result = ..error(.reason = ..invalid_ascii)
         return
     }
     _string_push_byte(self, .byte = byte, .allocator = allocator)!
@@ -706,7 +706,7 @@ _validate_string(.self: &String) -> (.result: Errable#(Void, (..invalid_utf8))) 
 }
 
 set_ascii(.self: $&String, .index: UIntNative, .byte: UInt8) -> (
-    .result : Errable#(Void, (..invalid_codepoint, ..out_of_bounds))
+    .result : Errable#(Void, (..invalid_ascii, ..out_of_bounds))
 ) := {
     if index >= self&._length {
         result = ..error(.reason = ..out_of_bounds)
@@ -716,7 +716,7 @@ set_ascii(.self: $&String, .index: UIntNative, .byte: UInt8) -> (
         byte >= 128
         or unwrap_or_abort(.value = _string_get_byte(.view = self, .index = index)) >= 128
     ] {
-        result = ..error(.reason = ..invalid_codepoint)
+        result = ..error(.reason = ..invalid_ascii)
         return
     }
     _string_set_byte(.string = self, .index = index, .value = byte)
@@ -724,10 +724,10 @@ set_ascii(.self: $&String, .index: UIntNative, .byte: UInt8) -> (
 }
 
 append_ascii_assume_capacity(.self: $&String, .byte: UInt8) -> (
-    .result : Errable#(Void, (..invalid_codepoint))
+    .result : Errable#(Void, (..invalid_ascii))
 ) := {
     if byte >= 128 {
-        result = ..error(.reason = ..invalid_codepoint)
+        result = ..error(.reason = ..invalid_ascii)
         return
     }
     _string_append_byte(self, .byte = byte)

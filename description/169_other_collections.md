@@ -88,9 +88,11 @@ initialized values; cleanup visits them exactly once. This common representation
 supports both copyable and noncopyable elements without a second map family.
 
 `MapQuery#(Map)` supplies the common `Query` for membership, lookup, removal,
-and extraction. `MapLookup` returns copies, `MapReferenceLookup` returns readonly
-references, and `MutableMapReferenceLookup` returns mutable references while
-requiring the readonly lookup capability. None needs a separate text variant.
+and extraction. `MapLookup` returns readonly references; `MutableMapLookup`
+adds mutable references. `MapLookupValue` adds copied reads and requires both
+`MapLookup` and an implicitly copyable value type, following the same access
+split as `Indexable`, `MutableIndexable`, and `IndexableValue`.
+None needs a separate text variant.
 Map insertion keeps the stored `Key` type and reports allocation failures.
 
 For `HashMap#(String, V, StandardHashPolicy)`, every query operation receives

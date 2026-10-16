@@ -19,10 +19,10 @@ implement HashPolicy#(Policy, Key) (
     }
 )
 
-lookup#(.Map: Type: MapReferenceLookup#(.Query: Int32, .Value: Int32))(.self: &Map, .key: Int32) -> (
+lookup#(.Map: Type: MapLookup#(.Query: Int32, .Value: Int32))(.self: &Map, .key: Int32) -> (
     .result : ?&Int32
 ) := {
-    result = MapReferenceLookup#(Map).get_reference(self, .key = key)
+    result = MapLookup#(Map).get_reference(self, .key = key)
 }
 
 run_main(.system: System) -> !Void = ..ok Void() := {

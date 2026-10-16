@@ -14,11 +14,11 @@ implement HashPolicy#(BytePolicy, UInt8) (
     }
 )
 
-lookup_byte#(.Map: Type: MapLookup#(.Map: Map, .Query: &UInt8, .Value: UInt8)) := (.self: &Map) -> (
-    .result : ?UInt8
-) {
+lookup_byte#(.Map: Type: MapLookupValue#(.Map: Map, .Query: &UInt8, .Value: UInt8)) := (
+    .self : &Map
+) -> (.result: ?UInt8) {
     query: UInt8 = 250
-    result = ~MapLookup#(Map).get(.self = self, .key = &query)
+    result = ~MapLookupValue#(Map).get(.self = self, .key = &query)
 }
 
 main := (.system: System) -> (.status_code: Int32 = 0) {

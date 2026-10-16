@@ -19,15 +19,15 @@ main(.system: System) -> () := {
         invalid ::= unwrap_or_abort(.value = byte | convert#(.to: UInt8)(_))
         match push_ascii($&text, .byte = invalid, .allocator = $&refusing) {
             ..ok _ { abort }
-            ..error error { if error.reason != ..invalid_codepoint { abort } }
+            ..error error { if error.reason != ..invalid_ascii { abort } }
         }
         match append_ascii_assume_capacity($&text, .byte = invalid) {
             ..ok _ { abort }
-            ..error error { if error.reason != ..invalid_codepoint { abort } }
+            ..error error { if error.reason != ..invalid_ascii { abort } }
         }
         match set_ascii($&text, .index = 0, .byte = invalid) {
             ..ok _ { abort }
-            ..error error { if error.reason != ..invalid_codepoint { abort } }
+            ..error error { if error.reason != ..invalid_ascii { abort } }
         }
         if view(&text) != "Aé" or capacity(&text).count != before { abort }
         byte = byte + 1
@@ -35,11 +35,11 @@ main(.system: System) -> () := {
     if refusing.attempts != 0 { abort }
     match set_ascii($&text, .index = 1, .byte = 65) {
         ..ok _ { abort }
-        ..error error { if error.reason != ..invalid_codepoint { abort } }
+        ..error error { if error.reason != ..invalid_ascii { abort } }
     }
     match set_ascii($&text, .index = 2, .byte = 65) {
         ..ok _ { abort }
-        ..error error { if error.reason != ..invalid_codepoint { abort } }
+        ..error error { if error.reason != ..invalid_ascii { abort } }
     }
     match set_ascii($&text, .index = 3, .byte = 65) {
         ..ok _ { abort }

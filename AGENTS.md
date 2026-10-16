@@ -350,6 +350,8 @@ feature first.
   Standard text queries use StringView; callers explicitly project owning strings.
   MapQuery shares Query across membership, lookup, removal and extraction;
   readonly/mutable lookup contracts differ by returned access, never key spelling.
+  MapLookup borrows values, MutableMapLookup adds mutable access, and
+  MapLookupValue requires MapLookup and implicit copying, matching IndexableValue.
   Hashable feeds canonical bytes to a generic block Hasher independently of
   equality. StandardHashPolicy composes Hashable with borrowed Equal evidence.
   It uses FNV-1a-64 with explicit offset basis and no hidden randomness. Integers

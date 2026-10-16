@@ -4,31 +4,31 @@ MapQuery#(.Map: Type): Contract = (
     ImplicitlyCopyable#(Query)
 )
 
-MapLookup#(.Map: Type): Contract = (
-    .Query : Type
-    .Value : Type
-    MapQuery#(.Map: Map, .Query: Query)
-    .get : (.self: &Map, .key: Query) -> (.result: ?Value)
-)
-
 MapMembership#(.Map: Type): Contract = (
     .Query : Type
     MapQuery#(.Map: Map, .Query: Query)
     .contains : (.self: &Map, .key: Query) -> (.ok: Bool)
 )
 
-MapReferenceLookup#(.Map: Type): Contract = (
+MapLookup#(.Map: Type): Contract = (
     .Query : Type
     .Value : Type
     MapQuery#(.Map: Map, .Query: Query)
     .get_reference : (.self: &Map, .key: Query) -> (.result: ?&Value)
 )
 
-MutableMapReferenceLookup#(.Map: Type): Contract = (
+MutableMapLookup#(.Map: Type): Contract = (
     .Query : Type
     .Value : Type
-    MapReferenceLookup#(.Map: Map, .Query: Query, .Value: Value)
+    MapLookup#(.Map: Map, .Query: Query, .Value: Value)
     .get_mutable_reference : (.self: $&Map, .key: Query) -> (.result: ?$&Value)
+)
+
+MapLookupValue#(.Map: Type): Contract = (
+    .Query : Type
+    .Value : Type: ImplicitlyCopyable
+    MapLookup#(.Map: Map, .Query: Query, .Value: Value)
+    .get : (.self: &Map, .key: Query) -> (.result: ?Value)
 )
 
 MapInsertion#(.Map: Type, .Provider: Type: Allocator#(Provider)): Contract = (
@@ -95,7 +95,7 @@ implement#(.key: Type, .value: Type, .policy: Type: HashPolicy#(policy, key)) Ma
     .extract = _map_extract_hash_map
 )
 
-implement#(.key: Type, .value: Type, .policy: Type: HashPolicy#(policy, key)) MapReferenceLookup#(
+implement#(.key: Type, .value: Type, .policy: Type: HashPolicy#(policy, key)) MapLookup#(
     HashMap#(.key: key, .value: value, .policy: policy)
 ) (
     .Query         : Type = HashPolicy#(policy, key).Query
@@ -103,7 +103,7 @@ implement#(.key: Type, .value: Type, .policy: Type: HashPolicy#(policy, key)) Ma
     .get_reference = _map_get_reference_hash_map
 )
 
-implement#(.key: Type, .value: Type, .policy: Type: HashPolicy#(policy, key)) MutableMapReferenceLookup#(
+implement#(.key: Type, .value: Type, .policy: Type: HashPolicy#(policy, key)) MutableMapLookup#(
     HashMap#(.key: key, .value: value, .policy: policy)
 ) (
     .Query : Type = HashPolicy#(policy, key).Query
@@ -175,7 +175,7 @@ implement#(
 
 implement#(
     .key: Type, .value: Type: ImplicitlyCopyable, .policy: Type: HashPolicy#(policy, key)
-) MapLookup#(HashMap#(.key: key, .value: value, .policy: policy)) (
+) MapLookupValue#(HashMap#(.key: key, .value: value, .policy: policy)) (
     .Query : Type = HashPolicy#(policy, key).Query
     .Value : Type = value
     .get   = _map_get_hash_map
