@@ -60,8 +60,8 @@ test "bytecode refuses unsupported code before execution" {
     , .{}));
 }
 
-test "bytecode reports arithmetic overflow" {
-    try std.testing.expectError(error.ExecutionIntegerOverflow, execute(
+test "bytecode wraps integer arithmetic at its declared width" {
+    try std.testing.expectEqual(@as(i128, -2147483648), try execute(
         \\main() -> (.status_code: Int32 = 0) := {
         \\    value :: Int32 = 2147483647
         \\    status_code = value + 1

@@ -46,6 +46,10 @@ pub fn integerRange(kind: BuiltinType, target: std.Target) ?IntegerRange {
         .Int8, .Int16, .Int32, .Int64 => true,
         else => false,
     };
+    return integerRangeForWidth(bits, signed);
+}
+
+pub fn integerRangeForWidth(bits: u7, signed: bool) IntegerRange {
     const bound = @as(i128, 1) << (if (signed) bits - 1 else bits);
     return .{ .minimum = if (signed) -bound else 0, .maximum = bound - 1 };
 }

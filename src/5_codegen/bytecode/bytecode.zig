@@ -51,23 +51,10 @@ pub const Program = struct {
     functions: []const ?Function,
 };
 
-pub fn integerBounds(graph: *const g.GlobalSemanticGraph, ty: Type) ?struct { min: i128, max: i128 } {
+pub fn integerBounds(graph: *const g.GlobalSemanticGraph, ty: Type) ?p.IntegerRange {
     const semantic = graph.semanticType(ty);
     if (semantic != .builtin) return null;
-    const bits: u7, const signed = switch (semantic.builtin) {
-        .Int8 => .{ 8, true },
-        .Int16 => .{ 16, true },
-        .Int32 => .{ 32, true },
-        .Int64 => .{ 64, true },
-        .UInt8 => .{ 8, false },
-        .UInt16 => .{ 16, false },
-        .UInt32 => .{ 32, false },
-        .UInt64 => .{ 64, false },
-        // A first host-only executor; cross-target execution is rejected by its caller.
-        .UIntNative => .{ @bitSizeOf(usize), false },
-        else => return null,
-    };
-    return if (signed) .{ .min = -(@as(i128, 1) << (bits - 1)), .max = (@as(i128, 1) << (bits - 1)) - 1 } else .{ .min = 0, .max = (@as(i128, 1) << bits) - 1 };
+    return p.integerRange(semantic.builtin, graph.target.stdTarget());
 }
 
 pub fn supportedType(graph: *const g.GlobalSemanticGraph, ty: Type, depth: usize) bool {
@@ -106,7 +93,7 @@ fn regularChoice(graph: *const g.GlobalSemanticGraph, ty: Type, depth: usize) bo
 
 pub fn valueFits(graph: *const g.GlobalSemanticGraph, ty: Type, value: Value) bool {
     return switch (value) {
-        .integer => |n| if (integerBounds(graph, ty)) |b| n >= b.min and n <= b.max else false,
+        .integer => |n| if (integerBounds(graph, ty)) |b| n >= b.minimum and n <= b.maximum else false,
         .boolean => graph.semanticType(ty) == .builtin and graph.semanticType(ty).builtin == .Bool,
         .unit => graph.semanticType(ty) == .builtin and graph.semanticType(ty).builtin == .Void,
         .array => |values| blk: {

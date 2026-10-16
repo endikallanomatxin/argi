@@ -116,10 +116,11 @@ Raw pointers, C enums, floating point, error propagation/tracing, virtual calls,
 resources,
 cleanup, globals, closures, foreign calls, and System capabilities are not yet
 supported. Unsupported constructs in reachable function bodies are rejected
-before execution, including constructs on untaken branches. Integer overflow,
-division by zero, and `abort` produce source diagnostics. Overflow is currently
-a checked VM failure; wrapping arithmetic and its equivalence across build modes
-remain outside this subset.
+before execution, including constructs on untaken branches. Integer arithmetic
+wraps at the declared width, matching native execution and constant evaluation.
+Division rounds towards zero; `%` is the signed remainder. The signed minimum
+divided by -1 wraps to itself, with remainder zero. Division by zero and `abort`
+produce source diagnostics.
 
 Execution is limited to one million instructions, 128 nested calls, and one
 million cumulative value cells. These are initial fixed limits, not a general

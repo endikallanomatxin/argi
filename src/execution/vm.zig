@@ -1,6 +1,7 @@
 const std = @import("std");
 const b = @import("../5_codegen/bytecode/bytecode.zig");
 const g = @import("../4_semantics/global/graph.zig");
+const integer = @import("../5_codegen/integer_arithmetic.zig");
 const Storage = @import("storage.zig").Storage;
 const runtime_value = @import("../5_codegen/bytecode/value.zig");
 const p = @import("../4_semantics/primitives/schema.zig");
@@ -159,32 +160,8 @@ pub const Vm = struct {
                 .binary => |x| {
                     const left = slots[x.left].integer;
                     const right = slots[x.right].integer;
-                    const n: i128 = switch (x.operator) {
-                        .addition => blk: {
-                            const v = @addWithOverflow(left, right);
-                            if (v[1] != 0) return error.ExecutionIntegerOverflow;
-                            break :blk v[0];
-                        },
-                        .subtraction => blk: {
-                            const v = @subWithOverflow(left, right);
-                            if (v[1] != 0) return error.ExecutionIntegerOverflow;
-                            break :blk v[0];
-                        },
-                        .multiplication => blk: {
-                            const v = @mulWithOverflow(left, right);
-                            if (v[1] != 0) return error.ExecutionIntegerOverflow;
-                            break :blk v[0];
-                        },
-                        .division => blk: {
-                            if (right == 0) return error.ExecutionDivisionByZero;
-                            break :blk @divTrunc(left, right);
-                        },
-                        .modulo => blk: {
-                            if (right == 0) return error.ExecutionDivisionByZero;
-                            break :blk @rem(left, right);
-                        },
-                    };
-                    if (!b.valueFits(self.program.graph, f.slots[x.dst], .{ .integer = n })) return error.ExecutionIntegerOverflow;
+                    const range = b.integerBounds(self.program.graph, f.slots[x.dst]).?;
+                    const n = integer.evaluate(x.operator, left, right, range) catch return error.ExecutionDivisionByZero;
                     slots[x.dst] = .{ .integer = n };
                 },
                 .compare => |x| {

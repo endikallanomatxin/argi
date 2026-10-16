@@ -32,6 +32,18 @@ parameter, including fields and array elements. Without that context they
 default to `Float32`. This does not permit implicit conversions between typed
 floating-point values.
 
+## Integer arithmetic
+
+The standard scalar integer arithmetic contracts wrap results to the operand
+width, for both signed and unsigned integers. This behavior is the same in native
+and VM execution and does not depend on the build mode. It does not change the
+semantics of explicit checked conversions or custom arithmetic contracts.
+
+Integer division rounds towards zero. `%` returns the remainder with the sign
+of the dividend. The signed minimum divided by -1 wraps to the signed minimum;
+the corresponding remainder is zero. Integer division or remainder by zero
+aborts instead of invoking undefined behavior.
+
 ## Conversion
 
 Conversions are explicit. [Contract dispatch](131_multiple_dispatch.md) selects

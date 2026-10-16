@@ -13343,8 +13343,10 @@ test "feature_tests/execution/03X_vm_instruction_limit" {
     try vmExpect("tests/feature_tests/execution/03X_vm_instruction_limit", 1, "ExecutionInstructionLimit");
 }
 
-test "feature_tests/execution/04X_vm_overflow" {
-    try vmExpect("tests/feature_tests/execution/04X_vm_overflow", 1, "ExecutionIntegerOverflow");
+test "feature_tests/execution/04_integer_wrapping_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/04_integer_wrapping_vm");
+    try runExpect("tests/feature_tests/execution/04_integer_wrapping_vm", 42);
+    try vmExpect("tests/feature_tests/execution/04_integer_wrapping_vm", 42, null);
 }
 
 test "feature_tests/execution/05_local_reference_vm" {
@@ -13397,4 +13399,35 @@ test "feature_tests/execution/13_multiple_outputs_vm" {
     try expectSuccessfulBuild("tests/feature_tests/execution/13_multiple_outputs_vm");
     try runExpect("tests/feature_tests/execution/13_multiple_outputs_vm", 42);
     try vmExpect("tests/feature_tests/execution/13_multiple_outputs_vm", 42, null);
+}
+
+test "feature_tests/execution/14_integer_boundaries_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/14_integer_boundaries_vm");
+    try runExpect("tests/feature_tests/execution/14_integer_boundaries_vm", 42);
+    try expectArgiBuildSuccess(&.{ "build", "tests/feature_tests/execution/14_integer_boundaries_vm", "--release" });
+    try runExpect("tests/feature_tests/execution/14_integer_boundaries_vm", 42);
+    try vmExpect("tests/feature_tests/execution/14_integer_boundaries_vm", 42, null);
+}
+
+test "feature_tests/execution/15_native_constant_wrapping" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/15_native_constant_wrapping");
+    try runExpect("tests/feature_tests/execution/15_native_constant_wrapping", 42);
+    try expectArgiBuildSuccess(&.{ "build", "tests/feature_tests/execution/15_native_constant_wrapping", "--release" });
+    try runExpect("tests/feature_tests/execution/15_native_constant_wrapping", 42);
+}
+
+test "feature_tests/execution/16X_integer_division_zero" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/16X_integer_division_zero");
+    try runExpectFailure("tests/feature_tests/execution/16X_integer_division_zero");
+    try expectArgiBuildSuccess(&.{ "build", "tests/feature_tests/execution/16X_integer_division_zero", "--release" });
+    try runExpectFailure("tests/feature_tests/execution/16X_integer_division_zero");
+    try vmExpect("tests/feature_tests/execution/16X_integer_division_zero", 1, "ExecutionDivisionByZero");
+}
+
+test "feature_tests/execution/17X_integer_remainder_zero" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/17X_integer_remainder_zero");
+    try runExpectFailure("tests/feature_tests/execution/17X_integer_remainder_zero");
+    try expectArgiBuildSuccess(&.{ "build", "tests/feature_tests/execution/17X_integer_remainder_zero", "--release" });
+    try runExpectFailure("tests/feature_tests/execution/17X_integer_remainder_zero");
+    try vmExpect("tests/feature_tests/execution/17X_integer_remainder_zero", 1, "ExecutionDivisionByZero");
 }

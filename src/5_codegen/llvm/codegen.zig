@@ -1,4 +1,5 @@
 const std = @import("std");
+const integer = @import("../integer_arithmetic.zig");
 const llvm = @import("llvm.zig");
 const c = llvm.c;
 const graph_mod = @import("../../4_semantics/global/graph.zig");
@@ -747,27 +748,12 @@ pub const CodeGenerator = struct {
         if (c.LLVMGetTypeKind(left.type_ref) != c.LLVMIntegerTypeKind or c.LLVMGetIntTypeWidth(left.type_ref) > 64)
             return CodegenError.InvalidType;
         const unsigned = self.isUnsigned(ty);
-        const a = c.LLVMConstIntGetZExtValue(left.value_ref);
-        const b = c.LLVMConstIntGetZExtValue(right.value_ref);
-        const result: u64 = if (unsigned) switch (operation.operator) {
-            .addition => a +% b,
-            .subtraction => a -% b,
-            .multiplication => a *% b,
-            .division => if (b != 0) a / b else return CodegenError.InvalidType,
-            .modulo => if (b != 0) a % b else return CodegenError.InvalidType,
-        } else blk: {
-            const signed_a = c.LLVMConstIntGetSExtValue(left.value_ref);
-            const signed_b = c.LLVMConstIntGetSExtValue(right.value_ref);
-            const signed_result: i64 = switch (operation.operator) {
-                .addition => signed_a +% signed_b,
-                .subtraction => signed_a -% signed_b,
-                .multiplication => signed_a *% signed_b,
-                .division => if (signed_b != 0 and !(signed_a == std.math.minInt(i64) and signed_b == -1)) @divTrunc(signed_a, signed_b) else return CodegenError.InvalidType,
-                .modulo => if (signed_b != 0 and !(signed_a == std.math.minInt(i64) and signed_b == -1)) @rem(signed_a, signed_b) else return CodegenError.InvalidType,
-            };
-            break :blk @bitCast(signed_result);
-        };
-        return .{ .value_ref = c.LLVMConstInt(left.type_ref, result, 0), .type_ref = left.type_ref, .ty = ty };
+        const left_value: i128 = if (unsigned) c.LLVMConstIntGetZExtValue(left.value_ref) else c.LLVMConstIntGetSExtValue(left.value_ref);
+        const right_value: i128 = if (unsigned) c.LLVMConstIntGetZExtValue(right.value_ref) else c.LLVMConstIntGetSExtValue(right.value_ref);
+        const range = integer.bounds(@intCast(c.LLVMGetIntTypeWidth(left.type_ref)), !unsigned);
+        const result = integer.evaluate(operation.operator, left_value, right_value, range) catch return CodegenError.InvalidType;
+        const bits: u64 = @truncate(@as(u128, @bitCast(result)));
+        return .{ .value_ref = c.LLVMConstInt(left.type_ref, bits, 0), .type_ref = left.type_ref, .ty = ty };
     }
 
     fn generateFunctionBody(self: *CodeGenerator, id: graph_mod.GlobalFunctionId) !void {
@@ -1322,10 +1308,40 @@ pub const CodeGenerator = struct {
             .addition => if (float) c.LLVMBuildFAdd(self.builder, left.value_ref, right.value_ref, "fadd") else c.LLVMBuildAdd(self.builder, left.value_ref, right.value_ref, "add"),
             .subtraction => if (float) c.LLVMBuildFSub(self.builder, left.value_ref, right.value_ref, "fsub") else c.LLVMBuildSub(self.builder, left.value_ref, right.value_ref, "sub"),
             .multiplication => if (float) c.LLVMBuildFMul(self.builder, left.value_ref, right.value_ref, "fmul") else c.LLVMBuildMul(self.builder, left.value_ref, right.value_ref, "mul"),
-            .division => if (float) c.LLVMBuildFDiv(self.builder, left.value_ref, right.value_ref, "fdiv") else if (left.ty != null and self.isUnsigned(left.ty.?)) c.LLVMBuildUDiv(self.builder, left.value_ref, right.value_ref, "udiv") else c.LLVMBuildSDiv(self.builder, left.value_ref, right.value_ref, "sdiv"),
-            .modulo => if (float) c.LLVMBuildFRem(self.builder, left.value_ref, right.value_ref, "frem") else if (left.ty != null and self.isUnsigned(left.ty.?)) c.LLVMBuildURem(self.builder, left.value_ref, right.value_ref, "urem") else c.LLVMBuildSRem(self.builder, left.value_ref, right.value_ref, "srem"),
+            .division => if (float) c.LLVMBuildFDiv(self.builder, left.value_ref, right.value_ref, "fdiv") else try self.integerDivision(left, right, false),
+            .modulo => if (float) c.LLVMBuildFRem(self.builder, left.value_ref, right.value_ref, "frem") else try self.integerDivision(left, right, true),
         };
         return .{ .value_ref = result, .type_ref = left.type_ref, .ty = left.ty };
+    }
+
+    fn integerDivision(self: *CodeGenerator, left: TypedValue, right: TypedValue, remainder: bool) !c.LLVMValueRef {
+        const zero = c.LLVMConstNull(right.type_ref);
+        const valid = c.LLVMBuildICmp(self.builder, c.LLVMIntNE, right.value_ref, zero, "divisor.nonzero");
+        const function = c.LLVMGetBasicBlockParent(c.LLVMGetInsertBlock(self.builder));
+        const proceed = c.LLVMAppendBasicBlock(function, "division.valid");
+        const fail = c.LLVMAppendBasicBlock(function, "division.zero");
+        _ = c.LLVMBuildCondBr(self.builder, valid, proceed, fail);
+        c.LLVMPositionBuilderAtEnd(self.builder, fail);
+        try self.runtimeFailure("integer division by zero");
+        c.LLVMPositionBuilderAtEnd(self.builder, proceed);
+        if (left.ty != null and self.isUnsigned(left.ty.?)) return if (remainder)
+            c.LLVMBuildURem(self.builder, left.value_ref, right.value_ref, "urem")
+        else
+            c.LLVMBuildUDiv(self.builder, left.value_ref, right.value_ref, "udiv");
+
+        const range = integer.bounds(@intCast(c.LLVMGetIntTypeWidth(left.type_ref)), true);
+        const minimum = c.LLVMConstInt(left.type_ref, @truncate(@as(u128, @bitCast(range.minimum))), 1);
+        const min_left = c.LLVMBuildICmp(self.builder, c.LLVMIntEQ, left.value_ref, minimum, "division.minimum");
+        const negative_one = c.LLVMBuildICmp(self.builder, c.LLVMIntEQ, right.value_ref, c.LLVMConstAllOnes(right.type_ref), "division.negative.one");
+        const overflow = c.LLVMBuildAnd(self.builder, min_left, negative_one, "division.wraps");
+        // LLVM's signed division/remainder are undefined for min / -1. Using
+        // divisor 1 for that pair yields the wrapped quotient min and remainder
+        // zero without ever evaluating an undefined LLVM operation.
+        const divisor = c.LLVMBuildSelect(self.builder, overflow, c.LLVMConstInt(right.type_ref, 1, 0), right.value_ref, "division.divisor");
+        return if (remainder)
+            c.LLVMBuildSRem(self.builder, left.value_ref, divisor, "srem")
+        else
+            c.LLVMBuildSDiv(self.builder, left.value_ref, divisor, "sdiv");
     }
 
     fn emitComparison(self: *CodeGenerator, comparison: anytype) !TypedValue {
