@@ -2013,9 +2013,9 @@ test "feature_tests/types/03_choice_payloads" {
 
 test "feature_tests/types/04X_choice_missing_payload" {
     try buildExpectFailExact("tests/feature_tests/types/04X_choice_missing_payload",
-        \\tests/feature_tests/types/04X_choice_missing_payload/main.rg:7:22: error: choice variant '..ok' requires a payload
-        \\      value : Result = ..ok
-        \\                       ^
+        \\tests/feature_tests/types/04X_choice_missing_payload/main.rg:7:21: error: choice variant '..ok' requires a payload
+        \\      value: Result = ..ok
+        \\                      ^
         \\
     );
 }
@@ -3335,7 +3335,7 @@ test "feature_tests/ownership/61X_borrowed_foreign_pointer_fresh_root" {
 test "feature_tests/ownership/62X_borrowed_foreign_pointer_roundtrip" {
     try buildExpectFailExact("tests/feature_tests/ownership/62X_borrowed_foreign_pointer_roundtrip",
         \\tests/feature_tests/ownership/62X_borrowed_foreign_pointer_roundtrip/main.rg:5:24: error: no function named 'cast' exists
-        \\      fabricated ::= cast#(.to: &Char)(.value = address)
+        \\      fabricated ::= cast#(.to: &CChar)(.value = address)
         \\                         ^
         \\
     );
@@ -13192,4 +13192,21 @@ test "feature_tests/collections/144_iterator_reached_capability" {
 
 test "feature_tests/text/83X_codepoints_after_text_edit" {
     try buildExpectFail("tests/feature_tests/text/83X_codepoints_after_text_edit", "ended");
+}
+
+test "feature_tests/text/84_unicode_scalar_literals" {
+    try expectSuccessfulBuild("tests/feature_tests/text/84_unicode_scalar_literals");
+    try run("tests/feature_tests/text/84_unicode_scalar_literals");
+}
+
+test "feature_tests/text/85X_unicode_literal_multiple_scalars" {
+    try buildExpectFail("tests/feature_tests/text/85X_unicode_literal_multiple_scalars", "exactly one Unicode scalar");
+}
+
+test "feature_tests/text/86X_unicode_literal_not_byte" {
+    try buildExpectFail("tests/feature_tests/text/86X_unicode_literal_not_byte", "Unicode scalars and bytes require explicit conversion");
+}
+
+test "feature_tests/text/87X_unicode_literal_not_choice_byte" {
+    try buildExpectFail("tests/feature_tests/text/87X_unicode_literal_not_choice_byte", "Unicode scalars and bytes require explicit conversion");
 }

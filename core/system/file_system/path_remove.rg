@@ -11,7 +11,7 @@ AllocatingPathRemoval#(.PathValue: Type, .Provider: Type: Allocator#(Provider)):
     )
 )
 
-_path_remove_c := (.self: &FileSystem, .path: &Char) -> (
+_path_remove_c := (.self: &FileSystem, .path: &CChar) -> (
     .result : Errable#(Bool, (..path_remove_failed))
 ) {
     assume ffi := self&._ffi
@@ -60,7 +60,7 @@ _path_remove_owned := (.self: &FileSystem, .path: &Path) -> (
     result = remove(.self = self, .path = &path&.text)
 }
 
-implement PathRemoval#(&Char) (
+implement PathRemoval#(&CChar) (
     .Result : Type = Errable#(Bool, (..path_remove_failed))
     .remove = _path_remove_c
 )

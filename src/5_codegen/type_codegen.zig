@@ -38,7 +38,7 @@ pub const Lowerer = struct {
     fn builtinType(self: *Lowerer, builtin: primitives.BuiltinType) Error!llvm.c.LLVMTypeRef {
         return switch (builtin) {
             .Void => c.LLVMStructType(null, 0, 0),
-            .Int8, .UInt8, .Char => c.LLVMInt8Type(),
+            .Int8, .UInt8 => c.LLVMInt8Type(),
             .Int16, .UInt16 => c.LLVMInt16Type(),
             .Int32, .UInt32 => c.LLVMInt32Type(),
             .Int64, .UInt64 => c.LLVMInt64Type(),
@@ -163,7 +163,6 @@ pub const Lowerer = struct {
                 .Float16 => "f16",
                 .Float32 => "f32",
                 .Float64 => "f64",
-                .Char => "char",
                 .Bool => "bool",
                 .Type => "type",
                 .Any => "any",

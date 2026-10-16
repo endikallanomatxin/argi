@@ -48,5 +48,5 @@ main(.system: System) -> () := {
     expect_bounds(.text = &literal)
     -- The C representation remains terminated even though byte access is empty.
     c_text ::= as_c_string(&text).text
-    if c_text&!= '\0' { abort }
+    if c_text&!= 0 { abort }
 }

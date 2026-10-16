@@ -1,6 +1,6 @@
 -- Canonical file opening selects path representation and allocation evidence
 -- through Init Args. Borrowed terminated paths do not allocate temporary text.
-_open_c_file := (.file_system: &FileSystem, .path: &Char, .mode: FileOpenMode) -> (
+_open_c_file := (.file_system: &FileSystem, .path: &CChar, .mode: FileOpenMode) -> (
     .result : Errable#(File, (..path_open_failed))
 ) {
     assume ffi := file_system&._ffi
@@ -13,9 +13,9 @@ _open_c_file := (.file_system: &FileSystem, .path: &Char, .mode: FileOpenMode) -
     result = ..error(.reason = ..path_open_failed)
 }
 
-implement Init#(File, (.file_system: &FileSystem, .path: &Char, .mode: FileOpenMode = ..read)) (
+implement Init#(File, (.file_system: &FileSystem, .path: &CChar, .mode: FileOpenMode = ..read)) (
     .Result : Type = Errable#(File, (..path_open_failed))
-    .init   = (.args: (.file_system: &FileSystem, .path: &Char, .mode: FileOpenMode = ..read)) -> (
+    .init   = (.args: (.file_system: &FileSystem, .path: &CChar, .mode: FileOpenMode = ..read)) -> (
         .result : Result
     ) {
         result = _open_c_file(

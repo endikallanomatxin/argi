@@ -542,7 +542,7 @@ pub const Tokenizer = struct {
                 _ = self.advance();
 
                 // 1. Escape (`\\`) or literal character?
-                var char_val: u8 = undefined;
+                var char_val: u21 = undefined;
                 if (self.peek() == null) {
                     try self.diagnostics.add(loc, .syntax, "unterminated char literal", .{});
                     return TokenizerError.UnknownCharacter;
@@ -572,13 +572,25 @@ pub const Tokenizer = struct {
                         try self.diagnostics.add(loc, .syntax, "empty char literal", .{});
                         return TokenizerError.UnknownCharacter;
                     }
-                    char_val = self.peek().?;
-                    _ = self.advance();
+                    const start: usize = self.location.offset;
+                    const width = std.unicode.utf8ByteSequenceLength(self.source[start]) catch {
+                        try self.diagnostics.add(loc, .syntax, "invalid UTF-8 in character literal", .{});
+                        return TokenizerError.UnknownCharacter;
+                    };
+                    if (width > self.source.len - start) {
+                        try self.diagnostics.add(loc, .syntax, "truncated UTF-8 in character literal", .{});
+                        return TokenizerError.UnknownCharacter;
+                    }
+                    char_val = std.unicode.utf8Decode(self.source[start..][0..width]) catch {
+                        try self.diagnostics.add(loc, .syntax, "invalid Unicode scalar in character literal", .{});
+                        return TokenizerError.UnknownCharacter;
+                    };
+                    for (0..width) |_| _ = self.advance();
                 }
 
                 // 2. The closing quote must follow.
                 if (self.peek() != '\'') {
-                    try self.diagnostics.add(loc, .syntax, "unterminated char literal", .{});
+                    try self.diagnostics.add(loc, .syntax, "character literal must contain exactly one Unicode scalar", .{});
                     return TokenizerError.UnknownCharacter;
                 }
                 _ = self.advance(); // Skip the closing quote.
@@ -757,4 +769,25 @@ test "tokenizer requires valid UTF-8 in string literals" {
     try expectTokenizerDiagnostics("\"\xed\xa0\x80\"", true);
     try expectTokenizerDiagnostics("\"\xf4\x90\x80\x80\"", true);
     try expectTokenizerDiagnostics("\"\xe2\x82\"", true);
+}
+
+test "character literals contain exactly one Unicode scalar" {
+    const cases = .{ .{ "'A'", @as(u32, 65) }, .{ "'ñ'", @as(u32, 241) }, .{ "'€'", @as(u32, 8364) }, .{ "'🙂'", @as(u32, 128578) }, .{ "'\\0'", @as(u32, 0) } };
+    inline for (cases) |case| {
+        const files = [_]sf.SourceFile{.{ .path = "unicode_literal.rg", .code = case[0] }};
+        const allocator = std.testing.allocator;
+        var diagnostics = diag.Diagnostics.init(&allocator, &files);
+        defer diagnostics.deinit();
+        var tokenizer = Tokenizer.init(allocator, &diagnostics, case[0], diagnostics.source_db.fileId(0));
+        defer tokenizer.deinit();
+        const tokens = try tokenizer.tokenize();
+        try std.testing.expectEqual(case[1], tokens.contents[0].literal.char_literal);
+    }
+    try expectTokenizerDiagnostics("''", true);
+    try expectTokenizerDiagnostics("'ab'", true);
+    try expectTokenizerDiagnostics("'e\xcc\x81'", true);
+    try expectTokenizerDiagnostics("'\xc0\x80'", true);
+    try expectTokenizerDiagnostics("'\xed\xa0\x80'", true);
+    try expectTokenizerDiagnostics("'\xf4\x90\x80\x80'", true);
+    try expectTokenizerDiagnostics("'\xe2\x82'", true);
 }

@@ -14,7 +14,7 @@ AllocatingPathRenaming#(.PathValue: Type, .Provider: Type: Allocator#(Provider))
     ) -> (.result: Result)
 )
 
-_path_rename_c := (.self: &FileSystem, .from: &Char, .to: &Char) -> (
+_path_rename_c := (.self: &FileSystem, .from: &CChar, .to: &CChar) -> (
     .result : Errable#(Bool, (..path_rename_failed))
 ) {
     assume ffi := self&._ffi
@@ -70,7 +70,7 @@ _path_rename_owned := (.self: &FileSystem, .from: &Path, .to: &Path) -> (
     result = rename(.self = self, .from = &from&.text, .to = &to&.text)
 }
 
-implement PathRenaming#(&Char) (
+implement PathRenaming#(&CChar) (
     .Result : Type = Errable#(Bool, (..path_rename_failed))
     .rename = _path_rename_c
 )

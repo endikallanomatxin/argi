@@ -311,3 +311,23 @@ utf8_decode_bytes(.bytes: ArrayView#(UInt8), .offset: UIntNative = 0) -> (
         ..outside { result = ..error(.reason = ..out_of_bounds) }
     }
 }
+
+implement Equal#(UnicodeScalar, UnicodeScalar, (.left: UnicodeScalar, .right: UnicodeScalar)) (
+    .equal = (.args: (.left: UnicodeScalar, .right: UnicodeScalar)) -> (.ok: Bool) {
+        ok = args.left._value == args.right._value
+    }
+)
+
+implement Compare#(UnicodeScalar, UnicodeScalar) (
+    .compare = (.left: UnicodeScalar, .right: UnicodeScalar) -> (.order: Ordering) {
+        if left._value < right._value {
+            order = ..less
+        } else if left._value > right._value {
+            order = ..greater
+        } else {
+            order = ..equal
+        }
+    }
+)
+
+implement TotalOrder#(UnicodeScalar, UnicodeScalar) ()

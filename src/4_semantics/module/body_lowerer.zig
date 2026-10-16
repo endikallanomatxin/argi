@@ -435,7 +435,7 @@ const Context = struct {
                 break :blk try self.resolved(node, try self.builtin(.Float32), .{ .float_literal = parsed });
             },
             .bool_literal => |item| self.resolved(node, try self.builtin(.Bool), .{ .bool_literal = item }),
-            .char_literal => |item| self.resolved(node, try self.builtin(.Char), .{ .char_literal = item }),
+            .char_literal => |item| self.resolved(node, null, .{ .char_literal = item }),
             .string_literal => blk: {
                 const raw = self.tree.tokenTextFromSource(self.source, literal.token);
                 const decoded = try tok.decodeStringLiteral(self.allocator, raw);

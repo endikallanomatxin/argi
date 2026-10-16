@@ -3,15 +3,15 @@ putchar(.character: UInt8) -> (): ExternFunction
 
 getchar() -> (.character: Int32): ExternFunction
 
-puts(.string: &Char) -> (): ExternFunction
+puts(.string: &CChar) -> (): ExternFunction
 
-strlen(.string: &Char) -> (.length: UIntNative): ExternFunction
+strlen(.string: &CChar) -> (.length: UIntNative): ExternFunction
 
-getenv(.name: &Char) -> (.value: &Char): ExternFunction
+getenv(.name: &CChar) -> (.value: &CChar): ExternFunction
 
-fdopen(.fd: Int32, .mode: &Char) -> (.stream: &Any): ExternFunction
+fdopen(.fd: Int32, .mode: &CChar) -> (.stream: &Any): ExternFunction
 
-fopen(.path: &Char, .mode: &Char) -> (.stream: &Any): ExternFunction
+fopen(.path: &CChar, .mode: &CChar) -> (.stream: &Any): ExternFunction
 
 fclose(.stream: &Any) -> (.status: Int32): ExternFunction
 
@@ -29,11 +29,11 @@ feof(.stream: &Any) -> (.status: Int32): ExternFunction
 
 ferror(.stream: &Any) -> (.status: Int32): ExternFunction
 
-remove(.path: &Char) -> (.status: Int32): ExternFunction
+remove(.path: &CChar) -> (.status: Int32): ExternFunction
 
-rename(.old_path: &Char, .new_path: &Char) -> (.status: Int32): ExternFunction
+rename(.old_path: &CChar, .new_path: &CChar) -> (.status: Int32): ExternFunction
 
-access(.path: &Char, .mode: Int32) -> (.status: Int32): ExternFunction
+access(.path: &CChar, .mode: Int32) -> (.status: Int32): ExternFunction
 
 -- Memory management
 alloca(.size: UIntNative) -> (.pointer: $&Any): ExternFunction

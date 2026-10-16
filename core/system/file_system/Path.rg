@@ -84,7 +84,7 @@ as_view(.self: &Path) -> (.view: StringView) := {
     view = as_view(&self&.text)
 }
 
-as_c_string(.self: &Path) -> (.text: &Char) := {
+as_c_string(.self: &Path) -> (.text: &CChar) := {
     text = as_c_string(&self&.text)
 }
 

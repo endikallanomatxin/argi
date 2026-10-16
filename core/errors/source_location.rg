@@ -5,8 +5,8 @@ SourceLocationId: Type = (.value: UInt32)
 implement ImplicitlyCopyable#(SourceLocationId) ()
 
 SourceLocation: Type = (
-    .source_file : &Char
-    .source_line : &Char
+    .source_file : &CChar
+    .source_line : &CChar
     .line        : UIntNative
     .column      : UIntNative
 )

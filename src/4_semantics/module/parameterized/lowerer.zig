@@ -1325,7 +1325,7 @@ pub const Context = struct {
                     break :blk self.addResolvedNode(node, try self.parameterizedBuiltin(.Float32), .{ .float_literal = value });
                 },
                 .bool_literal => |value| self.addResolvedNode(node, try self.parameterizedBuiltin(.Bool), .{ .bool_literal = value }),
-                .char_literal => |value| self.addResolvedNode(node, try self.parameterizedBuiltin(.Char), .{ .char_literal = value }),
+                .char_literal => |value| self.addResolvedNode(node, null, .{ .char_literal = value }),
                 .string_literal => blk: {
                     const raw = self.tree.tokenTextFromSource(self.source, literal.token);
                     const decoded = try tok.decodeStringLiteral(self.allocator, raw);

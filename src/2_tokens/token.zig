@@ -141,7 +141,7 @@ pub const TokenLiteral = union(enum(u8)) {
     scientific_float_literal: TextRange,
     // TODO: Use `r` as a separator for repeating decimals.
 
-    char_literal: u8,
+    char_literal: u32,
     string_literal: TextRange,
 };
 
@@ -156,7 +156,7 @@ pub const Literal = union(enum) {
     binary_int_literal: []const u8,
     regular_float_literal: []const u8,
     scientific_float_literal: []const u8,
-    char_literal: u8,
+    char_literal: u32,
     string_literal: []const u8,
 };
 

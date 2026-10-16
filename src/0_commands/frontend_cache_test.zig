@@ -201,7 +201,7 @@ test "frontend module cache reuses explicit qualified contract bounds without de
     defer warm.deinit();
     try std.testing.expectEqual(@as(usize, 2), warm.hits);
     var changed = files;
-    changed[1].code = "Contract#(.Participant: Type): Contract = ()\nimplement Contract#(Char) ()\n";
+    changed[1].code = "Contract#(.Participant: Type): Contract = ()\nimplement Contract#(UInt8) ()\n";
     const invalid = try expectCleanEquivalent(&changed, &session);
     defer invalid.deinit();
     try std.testing.expect(invalid.failure != null);

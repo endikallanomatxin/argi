@@ -23,7 +23,7 @@ main(.system: System) -> () := {
         .value = string_with_capacity(.capacity = 1, .allocator = system.page_allocator)
     )
     unwrap_or_abort(.value = push_ascii($&text, .byte = 88, .allocator = system.page_allocator))
-    c_source ::= trusted_reinterpret_reference#(.from: UInt8, .to: Char)(
+    c_source ::= trusted_reinterpret_reference#(.from: UInt8, .to: CChar)(
         .base = &bytes[0]
     ).reference
     match push_c_string($&text, .text = c_source, .allocator = $&allocator) {

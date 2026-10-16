@@ -1,4 +1,4 @@
-atoi(.string: &Char) -> (.value: Int32) : CFunction
+atoi(.string: &CChar) -> (.value: Int32): CFunction
 
 main(.system: System) -> (.status_code: Int32) := {
     assume ffi := system.ffi

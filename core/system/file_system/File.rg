@@ -53,7 +53,7 @@ _is_open_File(.self: &File) -> (.ok: Bool) := {
     ok = self&.stream_address != 0
 }
 
-file_open_mode_c_string(.mode: FileOpenMode) -> (.text: &Char) := {
+file_open_mode_c_string(.mode: FileOpenMode) -> (.text: &CChar) := {
     if is(.value = mode, .variant = ..read) {
         text = "rb"
         return
@@ -76,7 +76,7 @@ file_stream_pointer(.self: &File) -> (.stream: &Any) := {
 }
 
 open := (
-    .p: $&File, .ffi: $&ForeignFunctionInterface = reach ffi, .path: &Char, .mode: FileOpenMode
+    .p: $&File, .ffi: $&ForeignFunctionInterface = reach ffi, .path: &CChar, .mode: FileOpenMode
 ) -> (.result: Errable#(Bool, (..file_open_failed))) {
     mode_text ::= file_open_mode_c_string(.mode = mode)
     opened: &Any = fopen(.path = path, .mode = mode_text)

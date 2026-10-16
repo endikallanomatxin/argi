@@ -170,7 +170,7 @@ operations outside these standard contracts.
 `TotalOrder#(Left, Right)` requires Compare and promises a total ordering, including
 that compare never returns unordered. Mathematical consistency, transitivity and
 coherence with any corresponding Equal implementation remain implementer obligations.
-Integers, Bool and Char provide this evidence; floating-point types do not.
+Integers, Bool and UnicodeScalar provide this evidence; floating-point types do not.
 
 C enum and C function-pointer equality also select Equal evidence. Their private
 representation classification is compiler-provided; it does not provide ordering

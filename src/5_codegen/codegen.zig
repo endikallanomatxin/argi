@@ -1088,7 +1088,12 @@ pub const CodeGenerator = struct {
                 const type_ref = if (node.ty) |ty| try self.toLLVMType(ty) else c.LLVMFloatType();
                 break :blk .{ .value_ref = c.LLVMConstReal(type_ref, value), .type_ref = type_ref, .ty = node.ty };
             },
-            .char_literal => |value| .{ .value_ref = c.LLVMConstInt(c.LLVMInt8Type(), value, 0), .type_ref = c.LLVMInt8Type(), .ty = node.ty },
+            .char_literal => |value| blk: {
+                const ty = node.ty orelse return CodegenError.InvalidType;
+                const type_ref = try self.toLLVMType(ty);
+                var fields = [_]llvm.c.LLVMValueRef{c.LLVMConstInt(c.LLVMInt32Type(), value, 0)};
+                break :blk .{ .value_ref = c.LLVMConstNamedStruct(type_ref, &fields, fields.len), .type_ref = type_ref, .ty = ty };
+            },
             .string_literal => |range| blk: {
                 const text = self.graph.text(range);
                 const data = try self.emitStringLiteralPointer(text);

@@ -13,7 +13,7 @@ implement Init#(EnvironmentVariables, (.ffi: $&ForeignFunctionInterface = reach 
     .init   = _acquire_environment_variables
 )
 
-environment_variables_get_c_string(.key: &Char) -> (
+environment_variables_get_c_string(.key: &CChar) -> (
     .result : Errable#(?StringView, (..invalid_utf8))
 ) := {
     raw_ptr ::= getenv(.name = key).value

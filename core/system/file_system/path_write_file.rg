@@ -14,7 +14,7 @@ AllocatingFileWriting#(.PathValue: Type, .Provider: Type: Allocator#(Provider)):
     ) -> (.result: Result)
 )
 
-_path_write_file_c := (.self: &FileSystem, .path: &Char, .text: &String) -> (
+_path_write_file_c := (.self: &FileSystem, .path: &CChar, .text: &String) -> (
     .result : Errable#(
         Void,
         (
@@ -140,7 +140,7 @@ _path_write_file_owned := (.self: &FileSystem, .path: &Path, .text: &String) -> 
     result = write_file(self, .path = &path&.text, .text = text)
 }
 
-implement FileWriting#(&Char) (
+implement FileWriting#(&CChar) (
     .Result : Type = Errable#(
         Void,
         (

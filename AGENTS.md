@@ -774,3 +774,9 @@ faster.
   their work is integrated. Before deleting an old branch, verify that it does
   not contain unique work; preserve and rebase unique work onto the appropriate
   current base when necessary.
+
+- Character literals contain exactly one Unicode scalar and materialize as the
+  bundled core nominal UnicodeScalar type, including generic bodies. Their
+  validated numeric payload is not a byte or an implicit CChar conversion.
+  C-string interfaces use target-resolved CChar; preserve signedness in literal
+  contextualization and error-context checks. No builtin Char type remains.

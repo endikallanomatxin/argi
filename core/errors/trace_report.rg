@@ -1,4 +1,4 @@
-write_trace_text(.text: &Char, .writer: $&Virtual#(.contract: Writer)) -> (
+write_trace_text(.text: &CChar, .writer: $&Virtual#(.contract: Writer)) -> (
     .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
 ) := {
     assume error_tracer ::= $&noop_error_tracer
@@ -97,7 +97,7 @@ report_error#(.reasons: Type, .WriterType: Type: Writer#(WriterType))(
 }
 
 report_error_message#(.reasons: Type, .WriterType: Type: Writer#(WriterType))(
-    .message: &Char, .err: &Error#(.reasons: reasons), .writer: $&WriterType
+    .message: &CChar, .err: &Error#(.reasons: reasons), .writer: $&WriterType
 ) -> (.result: Errable#(Void, (..stream_write_failed, ..stream_flush_failed))) := {
     assume error_tracer ::= $&noop_error_tracer
     virtual_writer ::= to_virtual#(.contract: Writer)(.value = writer)

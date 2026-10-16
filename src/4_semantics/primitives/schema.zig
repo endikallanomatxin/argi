@@ -23,7 +23,6 @@ pub const BuiltinType = enum {
     Float16,
     Float32,
     Float64,
-    Char,
     Bool,
     Void,
     Type,
@@ -621,7 +620,7 @@ pub fn Node(comptime Ids: type) type {
             value_sequence: Ids.BlockId,
             int_literal: i128,
             float_literal: f64,
-            char_literal: u8,
+            char_literal: u32,
             string_literal: StringRange,
             bool_literal: bool,
             list_literal: struct {

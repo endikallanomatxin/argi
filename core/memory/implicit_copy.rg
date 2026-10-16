@@ -24,8 +24,6 @@ implement ImplicitlyCopyable#(Float32) ()
 
 implement ImplicitlyCopyable#(Float64) ()
 
-implement ImplicitlyCopyable#(Char) ()
-
 implement ImplicitlyCopyable#(Bool) ()
 
 implement ImplicitlyCopyable#(Void) ()

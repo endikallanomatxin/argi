@@ -11,7 +11,7 @@ AllocatingPathExistence#(.PathValue: Type, .Provider: Type: Allocator#(Provider)
     )
 )
 
-_path_exists_c := (.self: &FileSystem, .path: &Char) -> (.ok: Bool) {
+_path_exists_c := (.self: &FileSystem, .path: &CChar) -> (.ok: Bool) {
     assume ffi := self&._ffi
     ok = access(.path = path, .mode = 0).status == 0
 }
@@ -41,7 +41,7 @@ _path_exists_owned := (.self: &FileSystem, .path: &Path) -> (.ok: Bool) {
     ok = exists(self, .path = &path&.text).ok
 }
 
-implement PathExistence#(&Char) (
+implement PathExistence#(&CChar) (
     .Result : Type = Bool
     .exists = _path_exists_c
 )

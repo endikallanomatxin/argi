@@ -14,7 +14,7 @@ FileReading#(.PathValue: Type, .Provider: Type: Allocator#(Provider)): Contract 
     )
 )
 
-implement#(.Provider: Type: Allocator#(Provider)) FileReading#(&Char, Provider) (
+implement#(.Provider: Type: Allocator#(Provider)) FileReading#(&CChar, Provider) (
     .read_file = _read_c_file
 )
 

@@ -566,7 +566,7 @@ pub fn semantizeWithOptions(
 
             var sweep_start = profileTimestamp(options.profile_io);
             sweep_start = profileTimestamp(options.profile_io);
-            if (core.materializeStringLiteralTypes()) changed = true;
+            if (core.materializeTextLiteralTypes()) changed = true;
             profileAccumulate(options.profile_io, sweep_start, &profile_string_literal_types_ns);
             sweep_start = profileTimestamp(options.profile_io);
             if (try core.materializeBindingTypes()) changed = true;
@@ -1199,7 +1199,8 @@ fn diagnoseInvalidNumericAssignments(
                 }
             }
         }
-        if (!isNumericType(graph, actual) or !isNumericType(graph, expected)) continue;
+        const unicode_mismatch = isUnicodeScalarType(graph, actual) or isUnicodeScalarType(graph, expected);
+        if (!unicode_mismatch and (!isNumericType(graph, actual) or !isNumericType(graph, expected))) continue;
         if (global_types.equal(graph, actual, expected)) continue;
         if (diagnostics) |sink| {
             var actual_name = std.array_list.Managed(u8).init(allocator);
@@ -1208,12 +1209,21 @@ fn diagnoseInvalidNumericAssignments(
             defer expected_name.deinit();
             try appendTypeName(&actual_name, graph, actual);
             try appendTypeName(&expected_name, graph, expected);
-            try sink.add(
-                diagnosticLocation(graph, sink, node.source),
-                .semantic,
-                "cannot assign numeric value of type '{s}' to destination of type '{s}'; implicit numeric conversion is not supported",
-                .{ actual_name.items, expected_name.items },
-            );
+            if (unicode_mismatch) {
+                try sink.add(
+                    diagnosticLocation(graph, sink, node.source),
+                    .semantic,
+                    "cannot assign value of type '{s}' to destination of type '{s}'; Unicode scalars and bytes require explicit conversion",
+                    .{ actual_name.items, expected_name.items },
+                );
+            } else {
+                try sink.add(
+                    diagnosticLocation(graph, sink, node.source),
+                    .semantic,
+                    "cannot assign numeric value of type '{s}' to destination of type '{s}'; implicit numeric conversion is not supported",
+                    .{ actual_name.items, expected_name.items },
+                );
+            }
         }
         return true;
     }
@@ -1254,10 +1264,22 @@ fn findAggregateNumericMismatch(graph: *const global_sg.GlobalSemanticGraph, id:
 fn numericChildMismatch(graph: *const global_sg.GlobalSemanticGraph, child: global_sg.GlobalNodeId, expected: global_sg.GlobalTypeId) bool {
     const node = graph.node(child);
     const actual = node.ty orelse return false;
+    if (isUnicodeScalarType(graph, actual) or isUnicodeScalarType(graph, expected))
+        return !global_types.equal(graph, actual, expected);
     // Integer range errors retain the dedicated safety diagnostics_mod.
     if (node.content == .int_literal and !global_types.isBuiltin(graph, expected, .Float16) and
         !global_types.isBuiltin(graph, expected, .Float32) and !global_types.isBuiltin(graph, expected, .Float64)) return false;
     return isNumericType(graph, actual) and isNumericType(graph, expected) and !global_types.equal(graph, actual, expected);
+}
+
+fn isUnicodeScalarType(graph: *const global_sg.GlobalSemanticGraph, ty: global_sg.GlobalTypeId) bool {
+    const declaration = switch (graph.semanticType(ty)) {
+        .declared => |id| id,
+        else => return false,
+    };
+    const owner = graph.moduleForDeclaration(declaration) orelse return false;
+    return graph.modules.items[@intFromEnum(owner)].is_bundled_core and
+        std.mem.eql(u8, graph.text(graph.declaration(declaration).name), "UnicodeScalar");
 }
 
 fn isNumericType(graph: *const global_sg.GlobalSemanticGraph, ty: global_sg.GlobalTypeId) bool {

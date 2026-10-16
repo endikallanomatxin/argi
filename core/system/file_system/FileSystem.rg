@@ -18,7 +18,7 @@ implement Init#(FileSystem, (.ffi: $&ForeignFunctionInterface = reach ffi)) (
 )
 
 _read_c_file#(.Provider: Type: Allocator#(Provider)) := (
-    .self: &FileSystem, .path: &Char, .allocator: $&Provider
+    .self: &FileSystem, .path: &CChar, .allocator: $&Provider
 ) -> (
     .result : Errable#(
         String,

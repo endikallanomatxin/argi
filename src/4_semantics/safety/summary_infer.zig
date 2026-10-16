@@ -602,7 +602,7 @@ pub const Infer = struct {
             // opaque-access markers are not additional storage permissions.
             const numeric_contents = switch (self.graph.semanticType(ty)) {
                 .builtin => |builtin| switch (builtin) {
-                    .Int8, .Int16, .Int32, .Int64, .UIntNative, .UInt8, .UInt16, .UInt32, .UInt64, .Float16, .Float32, .Float64, .Char, .Bool => true,
+                    .Int8, .Int16, .Int32, .Int64, .UIntNative, .UInt8, .UInt16, .UInt32, .UInt64, .Float16, .Float32, .Float64, .Bool => true,
                     else => false,
                 },
                 else => false,
@@ -644,7 +644,7 @@ pub const Infer = struct {
             // Virtual method; the input's validity dependency remains.
             const cannot_own = switch (self.graph.semanticType(input.ty)) {
                 .builtin => |builtin| switch (builtin) {
-                    .Int8, .Int16, .Int32, .Int64, .UIntNative, .UInt8, .UInt16, .UInt32, .UInt64, .Float16, .Float32, .Float64, .Char, .Bool, .Void, .Type => true,
+                    .Int8, .Int16, .Int32, .Int64, .UIntNative, .UInt8, .UInt16, .UInt32, .UInt64, .Float16, .Float32, .Float64, .Bool, .Void, .Type => true,
                     else => false,
                 },
                 .pointer => true,

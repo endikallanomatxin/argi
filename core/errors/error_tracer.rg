@@ -18,7 +18,7 @@ add_context := (
 }
 
 add_context_text := (
-    .context      : &Char,
+    .context      : &CChar,
     .location     : SourceLocationId = error_location_id(),
     .error_tracer : $&Virtual#(.contract: ErrorTracer) = reach error_tracer,
 ) -> () {
@@ -49,7 +49,7 @@ _add_error_context(
 }
 
 _add_error_context_text(
-    .tracer: $&Virtual#(.contract: ErrorTracer), .location: SourceLocationId, .context: &Char
+    .tracer: $&Virtual#(.contract: ErrorTracer), .location: SourceLocationId, .context: &CChar
 ) -> () := {
     add_context_text(.context = context, .location = location, .error_tracer = tracer)
 }

@@ -523,9 +523,9 @@ test "explicit contract bounds specialize one body per concrete participant" {
     const source =
         "Capability#(.Value: Type): Contract = ()\n" ++
         "implement Capability#(Int32) ()\n" ++
-        "implement Capability#(Char) ()\n" ++
+        "implement Capability#(UInt8) ()\n" ++
         "use#(.Value: Type: Capability)(.value: Value) -> (.result: Int32) := { result = 1 }\n" ++
-        "main() -> (.result: Int32) := { result = use(.value = 7).result + use(.value = 'A').result }\n";
+        "main() -> (.result: Int32) := { byte :: UInt8 = 65\n result = use(.value = 7).result + use(.value = byte).result }\n";
     var tree = try parseSource(allocator, source, @enumFromInt(0));
     defer tree.deinit(allocator);
     const inputs = [_]module_graph.FileInput{.{ .path = "contract/main.rg", .tree = &tree, .source = source }};

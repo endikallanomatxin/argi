@@ -1,4 +1,4 @@
-main () -> (.status_code: Int32) := {
+main() -> (.status_code: Int32) := {
     -- Int literals in different formats
     a :: Int32
     a = 12
@@ -10,7 +10,7 @@ main () -> (.status_code: Int32) := {
     b ::= 32.0
     b = 1e10
 
-    -- Char literals
+    -- UnicodeScalar literals
     c := 'a'
 
     -- String literals
@@ -18,4 +18,3 @@ main () -> (.status_code: Int32) := {
 
     status_code = 0
 }
-

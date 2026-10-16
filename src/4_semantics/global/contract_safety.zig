@@ -280,7 +280,7 @@ pub fn methodSafetyContractFailure(self: *Resolver, inputs: global_sg.FieldRange
             break;
         }
         switch (child.builtin) {
-            .Int8, .Int16, .Int32, .Int64, .UIntNative, .UInt8, .UInt16, .UInt32, .UInt64, .Float16, .Float32, .Float64, .Char, .Bool => {},
+            .Int8, .Int16, .Int32, .Int64, .UIntNative, .UInt8, .UInt16, .UInt32, .UInt64, .Float16, .Float32, .Float64, .Bool => {},
             else => {
                 reason = "invalidates currently requires scalar referent storage; aggregate domains need explicit mappings";
                 break;

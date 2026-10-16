@@ -56,7 +56,7 @@ Bundled scalar implementations then lower to representation primitives, preservi
 constant expressions without an ordinary-function fallback. Custom implementations
 retain ordinary selected calls and can provide different associated results.
 
-Scalar equality, including Bool, Char and RawPointer, selects Equal evidence.
+Scalar equality, including Bool, UnicodeScalar and RawPointer, selects Equal evidence.
 C enum and C function-pointer equality also select Equal evidence. Ordered
 comparisons use CompareRelations#(Left, Right), with four Bool predicates. Its
 generic implementation derives the predicates from Compare#(Left, Right).

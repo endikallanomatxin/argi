@@ -593,7 +593,7 @@ pub const Resolver = struct {
     pub fn validContextType(self: *const Resolver, ty: global_sg.GlobalTypeId) bool {
         const semantic = self.graph.resolvedSemanticType(ty) orelse return false;
         return switch (semantic) {
-            .pointer => |pointer| pointer.mutability == .read_only and global_types.isBuiltin(self.graph, pointer.child, .Char),
+            .pointer => |pointer| pointer.mutability == .read_only and global_types.isBuiltin(self.graph, pointer.child, primitives.builtinTypeNamedForTarget("CChar", self.graph.target.stdTarget()).?),
             .declared => |declaration| std.mem.eql(u8, self.graph.text(self.graph.declarations.items[@intFromEnum(declaration)].name), "StringView"),
             else => false,
         };
@@ -802,12 +802,12 @@ test "error payload propagation requires a superset of reasons" {
     try std.testing.expect(global_types.findVariant(&graph, open_reasons, "second") != null);
 }
 
-test "error context accepts only read-only character pointers" {
+test "error context accepts only read-only C character pointers" {
     const allocator = std.testing.allocator;
     var graph: global_sg.GlobalSemanticGraph = .{};
     defer graph.deinit(allocator);
-    try graph.types.append(allocator, .{ .builtin = .Char });
-    try graph.types.append(allocator, .{ .builtin = .UInt8 });
+    try graph.types.append(allocator, .{ .builtin = primitives.builtinTypeNamedForTarget("CChar", graph.target.stdTarget()).? });
+    try graph.types.append(allocator, .{ .builtin = .UInt32 });
     try graph.types.append(allocator, .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } });
     try graph.types.append(allocator, .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_write } });
     try graph.types.append(allocator, .{ .pointer = .{ .child = @enumFromInt(1), .mutability = .read_only } });

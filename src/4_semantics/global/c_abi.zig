@@ -19,7 +19,7 @@ fn supportsScalarValue(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mo
     if (isRawPointer(graph, ty) or isFunctionPointer(graph, ty)) return true;
     return switch (graph.types.items[@intFromEnum(ty)]) {
         .builtin => |builtin| switch (builtin) {
-            .Int8, .Int16, .Int32, .Int64, .UInt8, .UInt16, .UInt32, .UInt64, .UIntNative, .Float32, .Float64, .Char, .Bool => true,
+            .Int8, .Int16, .Int32, .Int64, .UInt8, .UInt16, .UInt32, .UInt64, .UIntNative, .Float32, .Float64, .Bool => true,
             else => false,
         },
         // Legacy bindings use references as pointer parameters. Their pointee
@@ -284,7 +284,7 @@ fn recordStorage(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.Glob
     const semantic = graph.resolvedSemanticType(ty) orelse return false;
     return switch (semantic) {
         .builtin => |value| switch (value) {
-            .Int8, .Int16, .Int32, .Int64, .UInt8, .UInt16, .UInt32, .UInt64, .UIntNative, .Char, .Bool, .Float32, .Float64 => true,
+            .Int8, .Int16, .Int32, .Int64, .UInt8, .UInt16, .UInt32, .UInt64, .UIntNative, .Bool, .Float32, .Float64 => true,
             else => false,
         },
         .declared => |id| blk: {

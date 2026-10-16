@@ -76,7 +76,17 @@ next ::= checked_add(.left = bytes, .right = 1)!
 
 ## Characters
 
-`Char` holds a character value.
+`UnicodeScalar` represents a Unicode scalar value: U+0000 through U+10FFFF,
+excluding U+D800 through U+DFFF (surrogates). It is a nominal core type,
+independent of its UTF-8 encoding. Literals such as `'A'`, `'ñ'`, `'€'`, and
+`'🙂'` each produce one `UnicodeScalar`. A literal must contain exactly one
+scalar; a visible grapheme made from multiple scalars belongs in a string.
+Equality compares scalar values; ordering follows their numeric Unicode values,
+without locale collation or normalization.
+
+`UInt8` represents arbitrary bytes. `CChar` represents C's target-dependent
+`char` and is used at C-string boundaries. Neither accepts character literals
+implicitly; use explicit conversion or numeric byte values.
 
 String types and views are described in [Strings](162_strings.md).
 

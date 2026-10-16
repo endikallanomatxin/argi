@@ -350,7 +350,7 @@ _string_push_byte#(.AllocatorType: Type: Allocator#(AllocatorType))(
 }
 
 push_c_string#(.AllocatorType: Type: Allocator#(AllocatorType))(
-    .self: $&String, .text: &Char, .allocator: $&AllocatorType
+    .self: $&String, .text: &CChar, .allocator: $&AllocatorType
 ) -> (.result: Errable#(Void, (..out_of_memory, ..invalid_utf8))) := {
     assume allocator
 
@@ -382,7 +382,7 @@ push_c_string#(.AllocatorType: Type: Allocator#(AllocatorType))(
     }
 
     source_view ::= _trusted_array_view#(.t: UInt8)(
-        .data = trusted_reinterpret_reference#(.from: Char, .to: UInt8)(
+        .data = trusted_reinterpret_reference#(.from: CChar, .to: UInt8)(
             .base = text
         ).reference
         .length = append_length
@@ -431,12 +431,12 @@ push_view#(.AllocatorType: Type: Allocator#(AllocatorType))(
     result = ..ok Void()
 }
 
-c_string_length(.text: &Char) -> (.length: UIntNative) := {
+c_string_length(.text: &CChar) -> (.length: UIntNative) := {
     length = 0
     c_length :: UIntNative = 0
 
     while 1 == 1 {
-        bytes ::= trusted_reinterpret_reference#(.from: Char, .to: UInt8)(
+        bytes ::= trusted_reinterpret_reference#(.from: CChar, .to: UInt8)(
             .base = text
         ).reference
         ptr ::= trusted_reference_offset#(.t: UInt8)(
@@ -451,7 +451,7 @@ c_string_length(.text: &Char) -> (.length: UIntNative) := {
     length = c_length
 }
 
-_trusted_c_string_view(.text: &Char) -> (.view: StringView) := {
+_trusted_c_string_view(.text: &CChar) -> (.view: StringView) := {
     bytes ::= _c_string_bytes(.text = text)
     _ ::= unwrap_or_abort(.value = validate_utf8_bytes(.bytes = bytes))
     if length(&bytes).count == 0 {
@@ -500,12 +500,12 @@ concat_views#(.AllocatorType: Type: Allocator#(AllocatorType))(
 }
 
 implement#(.Provider: Type: Allocator) Add#(
-    String, Char, (.left: &String, .right: &Char, .allocator: $&Provider = reach allocator)
+    String, CChar, (.left: &String, .right: &CChar, .allocator: $&Provider = reach allocator)
 ) (
     .Result : Type = Errable#(String, (..out_of_memory, ..invalid_utf8))
-    .add    = (.args: (.left: &String, .right: &Char, .allocator: $&Provider = reach allocator)) -> (
-        .result : Result
-    ) {
+    .add    = (
+        .args : (.left: &String, .right: &CChar, .allocator: $&Provider = reach allocator)
+    ) -> (.result: Result) {
         assume allocator ::= args.allocator
 
         left_view ::= as_view(args.left)
@@ -552,12 +552,12 @@ implement#(.Provider: Type: Allocator) Add#(
 
 implement#(.Provider: Type: Allocator) Add#(
     StringView,
-    Char,
-    (.left: &StringView, .right: &Char, .allocator: $&Provider = reach allocator)
+    CChar,
+    (.left: &StringView, .right: &CChar, .allocator: $&Provider = reach allocator)
 ) (
     .Result : Type = Errable#(String, (..out_of_memory, ..invalid_utf8))
     .add    = (
-        .args : (.left: &StringView, .right: &Char, .allocator: $&Provider = reach allocator)
+        .args : (.left: &StringView, .right: &CChar, .allocator: $&Provider = reach allocator)
     ) -> (.result: Result) {
         assume allocator ::= args.allocator
 

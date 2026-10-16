@@ -2269,6 +2269,8 @@ pub const Resolver = struct {
                 try self.resolver.generics.instantiateParameterizedType(self.module_index, value, self.substitutions)
             else if (node.content == .string_literal)
                 self.resolver.core.defaultStringLiteralType()
+            else if (node.content == .char_literal)
+                self.resolver.core.defaultScalarLiteralType()
             else
                 null;
             return .{
@@ -3032,7 +3034,6 @@ pub const Resolver = struct {
                     .Int8, .Int16, .Int32, .Int64, .UInt8, .UInt16, .UInt32, .UInt64, .UIntNative => .{ .int_literal = 0 },
                     .Float16, .Float32, .Float64 => .{ .float_literal = 0 },
                     .Bool => .{ .bool_literal = false },
-                    .Char => .{ .char_literal = 0 },
                     .Void => return self.emptyValue(ty, source),
                     else => return null,
                 };

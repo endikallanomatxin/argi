@@ -352,7 +352,7 @@ pub fn alignmentOf(graph: *const graph_mod.GlobalSemanticGraph, ty: graph_mod.Gl
 fn builtinLayout(graph: *const graph_mod.GlobalSemanticGraph, builtin: primitives.BuiltinType) Layout {
     return switch (builtin) {
         .Void => .{ .size = 0, .alignment = 1 },
-        .Int8, .UInt8, .Char, .Bool, .Any => .{ .size = 1, .alignment = 1 },
+        .Int8, .UInt8, .Bool, .Any => .{ .size = 1, .alignment = 1 },
         .Int16, .UInt16, .Float16 => .{ .size = 2, .alignment = 2 },
         .Int32, .UInt32, .Float32 => .{ .size = 4, .alignment = 4 },
         .Int64, .UInt64, .Float64 => .{ .size = 8, .alignment = 8 },

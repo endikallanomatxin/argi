@@ -1,7 +1,8 @@
-unsafe_allocation := import("../../_support/unsafe_allocation")
-main (.system: System) -> (.status_code: Int32) := {
+unsafe_allocation := import ("../../_support/unsafe_allocation")
+
+main(.system: System) -> (.status_code: Int32) := {
     assume ffi := system.ffi
-    puts(.string="Hello world!")
+    puts(.string = "Hello world!")
 
     size :: UIntNative = 14
     allocator_storage :: CAllocator = CAllocator(.ffi = system.ffi)
@@ -12,15 +13,19 @@ main (.system: System) -> (.status_code: Int32) := {
             status_code = 1
             return
         }
-        ..ok ~ payload {
+        ..ok ~payload {
             allocation ::= ~payload
-            p ::= trusted_mutable_reinterpret_reference#(.from: UInt8, .to: Char)(.base = unsafe_allocation.trusted_allocation_byte_rw(.allocation = $&allocation, .offset = 0).reference).reference
-            p& = '0'
+            p ::= trusted_mutable_reinterpret_reference#(.from: UInt8, .to: CChar)(
+                .base = unsafe_allocation.trusted_allocation_byte_rw(
+                    .allocation = $&allocation, .offset = 0
+                ).reference
+            ).reference
+            p&= 0
             puts(.string = p)
             deinit(.self = $&allocation)
         }
     }
 
-    putchar(.character=10)
+    putchar(.character = 10)
     status_code = 0
 }

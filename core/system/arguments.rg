@@ -39,18 +39,18 @@ argument_pointer_address(.self: &Arguments, .index: UIntNative) -> (.address: UI
     address = self&.address + index * stride
 }
 
-argument_at(.self: &Arguments, .index: UIntNative) -> (.text: &Char) := {
+argument_at(.self: &Arguments, .index: UIntNative) -> (.text: &CChar) := {
     addr ::= argument_pointer_address(self, .index = index).address
     raw ::= raw_pointer#(.t: UIntNative)(.address = addr)
     ptr ::= trusted_establish_inherited_reference#(.t: UIntNative)(
         .raw = raw, .root = erase_reference#(.t: Arguments)(.base = self).reference
     ).reference
     text_address ::= ptr&
-    text_raw ::= raw_pointer#(.t: Char)(.address = text_address)
-    inherited ::= trusted_establish_inherited_reference#(.t: Char)(
+    text_raw ::= raw_pointer#(.t: CChar)(.address = text_address)
+    inherited ::= trusted_establish_inherited_reference#(.t: CChar)(
         .raw = text_raw, .root = erase_reference#(.t: Arguments)(.base = self).reference
     ).reference
-    text = read_reference#(.t: Char)(.base = inherited).reference
+    text = read_reference#(.t: CChar)(.base = inherited).reference
 }
 
 argument_view_at(.self: &Arguments, .index: UIntNative) -> (

@@ -97,8 +97,6 @@ implement _BuiltinEquality#(Float64) ()
 
 implement _BuiltinEquality#(Bool) ()
 
-implement _BuiltinEquality#(Char) ()
-
 implement _BuiltinEquality#(RawPointer) ()
 
 implement#(.Value: Type: _BuiltinEquality) Equal#(Value, Value, (.left: Value, .right: Value)) (
@@ -164,8 +162,6 @@ implement _BuiltinOrdering#(Float64) ()
 
 implement _BuiltinOrdering#(Bool) ()
 
-implement _BuiltinOrdering#(Char) ()
-
 implement _BuiltinOrdering#(RawPointer) ()
 
 implement TotalOrder#(Int8, Int8) ()
@@ -187,5 +183,3 @@ implement TotalOrder#(UInt64, UInt64) ()
 implement TotalOrder#(UIntNative, UIntNative) ()
 
 implement TotalOrder#(Bool, Bool) ()
-
-implement TotalOrder#(Char, Char) ()

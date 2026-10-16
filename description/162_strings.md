@@ -75,16 +75,16 @@ API convention for borrowed text:
   ownership information.
 - `&String` should be reserved for APIs that need the owning string object, not
   merely some readable text.
-- raw `&Char` is the C-string / low-level interop boundary, not the general
+- raw `&CChar` is the C-string / low-level interop boundary, not the general
   string-like input type for high-level APIs.
 
 Avoid adding operation implementations only to accept every adjacent representation
-(`StringView`, `&StringView`, `&String`, `&Char`) unless those representations
+(`StringView`, `&StringView`, `&String`, `&CChar`) unless those representations
 carry genuinely different semantics. Too many convenience implementations make
 multiple dispatch encode API adapter noise instead of domain meaning.
 
 Text algorithms and formatting helpers such as `format` / `format_into`
-accept `StringView` for borrowed text. Raw `&Char` values cross through the
+accept `StringView` for borrowed text. Raw `&CChar` values cross through the
 C-string conversion helpers before reaching high-level text APIs.
 
 The display and concatenation entrypoints also accept explicit borrows of
@@ -102,7 +102,7 @@ exact text output without a terminator, and explicit `flush` when needed.
 
 Text equality follows the same rule: the byte-wise comparison primitive and
 `==` / `!=` select Equal evidence on `StringView` values. Callers with owning `String`
-or raw `&Char` values should convert them explicitly instead of relying on
+or raw `&CChar` values should convert them explicitly instead of relying on
 implicit high-level adapters.
 
 Borrowed byte utilities preserve the backing storage lifetime:
@@ -174,7 +174,7 @@ The text model uses these conventions:
 - `read_line()` returns an owning `String`, so the resulting text outlives the
   temporary buffering used while reading.
 - string literals materialize as borrowed read-only `StringView`.
-- raw `&Char` stays as the explicit C-string boundary, reached through helpers
+- raw `&CChar` stays as the explicit C-string boundary, reached through helpers
   such as `as_c_string(...)` / `string_from_c_string(...)` instead of being the default
   language-level type of `"..."`.
 - `String(.length = n)` returns the result of allocating `n` zero bytes plus a trailing NUL.

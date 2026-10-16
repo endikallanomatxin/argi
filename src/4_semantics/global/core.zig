@@ -293,21 +293,27 @@ pub const Resolver = struct {
     }
 
     pub fn defaultStringLiteralType(self: *const Resolver) ?global_sg.GlobalTypeId {
-        if (self.graph.indexedDeclarationsNamed("StringView")) |declarations| {
-            for (declarations) |id| if (self.stringLiteralDeclarationType(id)) |ty| return ty;
+        return self.coreLiteralType("StringView");
+    }
+
+    pub fn defaultScalarLiteralType(self: *const Resolver) ?global_sg.GlobalTypeId {
+        return self.coreLiteralType("UnicodeScalar");
+    }
+
+    fn coreLiteralType(self: *const Resolver, name: []const u8) ?global_sg.GlobalTypeId {
+        if (self.graph.indexedDeclarationsNamed(name)) |declarations| {
+            for (declarations) |id| if (self.literalDeclarationType(id, name)) |ty| return ty;
             return null;
         }
-        // Partial indexes cannot prove absence. Keep the ordinary traversal
-        // until relocation or speculative publication completes the index.
         for (0..self.graph.declarations.items.len) |raw| {
-            if (self.stringLiteralDeclarationType(@enumFromInt(raw))) |ty| return ty;
+            if (self.literalDeclarationType(@enumFromInt(raw), name)) |ty| return ty;
         }
         return null;
     }
 
-    fn stringLiteralDeclarationType(self: *const Resolver, id: global_sg.GlobalDeclId) ?global_sg.GlobalTypeId {
+    fn literalDeclarationType(self: *const Resolver, id: global_sg.GlobalDeclId, name: []const u8) ?global_sg.GlobalTypeId {
         const declaration = self.graph.declaration(id);
-        if (declaration.kind != .type or !std.mem.eql(u8, self.graph.text(declaration.name), "StringView")) return null;
+        if (declaration.kind != .type or !std.mem.eql(u8, self.graph.text(declaration.name), name)) return null;
         const owner = self.graph.moduleForDeclaration(id) orelse return null;
         if (!self.graph.modules.items[@intFromEnum(owner)].is_bundled_core) return null;
         const ty = declaration.type_id orelse return null;
@@ -315,12 +321,18 @@ pub const Resolver = struct {
         return ty;
     }
 
-    pub fn materializeStringLiteralTypes(self: *Resolver) bool {
-        const default_ty = self.defaultStringLiteralType() orelse return false;
+    pub fn materializeTextLiteralTypes(self: *Resolver) bool {
+        const string_ty = self.defaultStringLiteralType();
+        const scalar_ty = self.defaultScalarLiteralType();
         var changed = false;
         for (self.graph.nodes.items) |*node| {
-            if (node.ty != null or node.content != .string_literal) continue;
-            node.ty = default_ty;
+            if (node.ty != null) continue;
+            const ty = switch (node.content) {
+                .string_literal => string_ty,
+                .char_literal => scalar_ty,
+                else => continue,
+            } orelse continue;
+            node.ty = ty;
             changed = true;
         }
         return changed;
@@ -1757,7 +1769,7 @@ pub const Resolver = struct {
         if (self.pendingChoiceLiteralFits(node, target)) return true;
         switch (self.graph.nodes.items[@intFromEnum(node)].content) {
             .string_literal => return switch (self.graph.types.items[@intFromEnum(target)]) {
-                .pointer => |pointer| pointer.mutability == .read_only and types.isBuiltin(self.graph, pointer.child, .Char),
+                .pointer => |pointer| pointer.mutability == .read_only and types.isBuiltin(self.graph, pointer.child, primitives.builtinTypeNamedForTarget("CChar", self.graph.target.stdTarget()).?),
                 else => false,
             },
             .struct_value_literal => |literal| return self.contextualStructLiteralFits(literal, target),
@@ -1846,6 +1858,9 @@ pub const Resolver = struct {
     }
 
     pub fn coerceContextualValue(self: *Resolver, node: global_sg.GlobalNodeId, target: global_sg.GlobalTypeId) bool {
+        // Scalar literals have one nominal identity. Wait for bundled core to
+        // resolve it rather than adopting an arbitrary early expected type.
+        if (self.graph.node(node).content == .char_literal) return false;
         if (self.graph.node(node).content == .list_literal) {
             // A contextual type does not establish a literal's shape. Keep
             // incompatible lists untyped so diagnostics can inspect their elements.

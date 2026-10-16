@@ -1,10 +1,10 @@
-Result : Type = (
+Result: Type = (
     ..ok(.value: Int32),
-    ..error(.code: Char),
+    ..error(.code: UnicodeScalar),
 )
 
-main () -> (.status_code: Int32) := {
-    value : Result = ..error(.code = 'x')
+main() -> (.status_code: Int32) := {
+    value: Result = ..error(.code = 'x')
 
     if value | is(_, ..error) {
         if is(value, ..error) {

@@ -7,7 +7,7 @@ main(.system: System) -> (.status_code: Int32) := {
     }
 
     arg0_text ::= argument_at(.self = system.args, .index = 0)
-    arg0_ptr: &Char = arg0_text
+    arg0_ptr: &CChar = arg0_text
     arg0_len ::= strlen(.string = arg0_ptr).length
 
     arg0_view ::= unwrap_or_abort(.value = argument_view_at(.self = system.args, .index = 0))
@@ -21,7 +21,7 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
-    first_ptr ::= trusted_reinterpret_reference#(.from: Char, .to: UInt8)(
+    first_ptr ::= trusted_reinterpret_reference#(.from: CChar, .to: UInt8)(
         .base = arg0_ptr
     ).reference
     if unwrap_or_abort(.value = bytes_get(.view = &arg0_view, .index = 0)) != first_ptr&{

@@ -9,13 +9,13 @@ test_skip_impl() -> (.result: Errable#(Void, (..test_skipped))) := {
     result = ..error(.reason = ..test_skipped)
 }
 
-fail_c_string(.message: &Char) -> (.result: Errable#(Void, (..test_failed))) := {
+fail_c_string(.message: &CChar) -> (.result: Errable#(Void, (..test_failed))) := {
     test_fail_impl()!! message
 
     result = ..ok Void()
 }
 
-skip(.message: &Char) -> (.result: Errable#(Void, (..test_skipped))) := {
+skip(.message: &CChar) -> (.result: Errable#(Void, (..test_skipped))) := {
     test_skip_impl()!! message
 
     result = ..ok Void()
