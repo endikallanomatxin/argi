@@ -25,11 +25,15 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         ..ok _ { abort } ..error error { if error.reason != ..out_of_memory { abort } }
     }
     if drops != 2 { abort }
-    match insert(.self = $&array, .i = 0, .value = _pair(.id = 3).value, .allocator = $&refusal) {
+    match insert(
+        .self = $&array, .index = 0, .value = _pair(.id = 3).value, .allocator = $&refusal
+    ) {
         ..ok _ { abort } ..error error { if error.reason != ..out_of_memory { abort } }
     }
     if drops != 4 { abort }
-    match insert(.self = $&array, .i = 9, .value = _pair(.id = 4).value, .allocator = allocator) {
+    match insert(
+        .self = $&array, .index = 9, .value = _pair(.id = 4).value, .allocator = allocator
+    ) {
         ..ok _ { abort } ..error error { if error.reason != ..out_of_bounds { abort } }
     }
     if drops != 6 { abort }

@@ -29,7 +29,7 @@ Removable#(.Collection: Type): Contract = (
     .Item : Type
     MutableIndexable#(.Collection: Collection, .Item: Item)
     .pop    : (.self: $&Collection) -> (.result: Errable#(Item, (..empty)))
-    .remove : (.self: $&Collection, .i: UIntNative) -> (
+    .remove : (.self: $&Collection, .index: UIntNative) -> (
         .result : Errable#(Item, (..out_of_bounds))
     )
 )
@@ -44,7 +44,7 @@ Resizable#(.Collection: Type, .Provider: Type: Allocator#(Provider)): Contract =
     )
     .insert : (
         .self      : $&Collection,
-        .i         : UIntNative,
+        .index     : UIntNative,
         .value     : Item,
         .allocator : $&Provider    = reach allocator
     ) -> (.result: Errable#(Void, (..out_of_memory, ..out_of_bounds)))

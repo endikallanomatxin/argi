@@ -14,7 +14,9 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     -- The receipt list uses a separate allocator so backing counts describe
     -- only the size class under test: one chunk holds 512 eight-byte slots.
     receipts ::= unwrap_or_abort(
-        .value = DynamicArray#(.t: Allocation)(.allocator = system.page_allocator, .capacity = 512)
+        .value = DynamicArray#(.t: Allocation)(
+            .allocator = system.page_allocator, .capacity = 512
+        )
     )
     i :: UIntNative = 0
     first_address :: UIntNative = 0
@@ -49,14 +51,14 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     }
     last ::= ~last_result ..ok
     deinit(.self = $&last)
-    middle_result ::= remove(.self = $&receipts, .i = 64).result
+    middle_result ::= remove(.self = $&receipts, .index = 64).result
     if is(.value = middle_result, .variant = ..error) {
         status_code = 9
         return
     }
     middle ::= ~middle_result ..ok
     deinit(.self = $&middle)
-    first_result ::= remove(.self = $&receipts, .i = 0).result
+    first_result ::= remove(.self = $&receipts, .index = 0).result
     if is(.value = first_result, .variant = ..error) {
         status_code = 9
         return
@@ -122,15 +124,13 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     }
 }
 
-implement Allocator#(TrackingAllocator)(
-    .allocate = (
-            .self      : $&TrackingAllocator,
-            .size      : UIntNative,
-            .alignment : UIntNative
-        ) -> (
-            .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
-        ) {
-        allocated ::= allocate_bytes(.self = self&.backing, .size = size, .alignment = alignment)
+implement Allocator#(TrackingAllocator) (
+    .allocate = (.self: $&TrackingAllocator, .size: UIntNative, .alignment: UIntNative) -> (
+        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+    ) {
+        allocated ::= allocate_bytes(
+            .self = self&.backing, .size = size, .alignment = alignment
+        )
         match allocated {
             ..error _ { result = ..error(.reason = ..out_of_memory) }
             ..ok ~payload {
@@ -144,19 +144,17 @@ implement Allocator#(TrackingAllocator)(
     }
 )
 
-implement Deallocator#(TrackingAllocator)(
+implement Deallocator#(TrackingAllocator) (
     .deallocate = (
-            .self      : $&TrackingAllocator,
-            .data      : RawPointer#(.t: UInt8),
-            .size      : UIntNative,
-            .alignment : UIntNative
-        ) -> () {
+        .self      : $&TrackingAllocator,
+        .data      : RawPointer#(.t: UInt8),
+        .size      : UIntNative,
+        .alignment : UIntNative
+    ) -> () {
         self&.deallocations = self&.deallocations + 1
-        Deallocator#().deallocate(
-            .self      = self&.backing&.memory
-            .data      = data
-            .size      = size
-            .alignment = alignment
+        Deallocator#(
+        ).deallocate(
+            .self = self&.backing&.memory, .data = data, .size = size, .alignment = alignment
         )
     }
 )

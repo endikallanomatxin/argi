@@ -7,12 +7,14 @@ main(.system: System) -> (.status_code: Int32) := {
     third_offset :: UIntNative = 2
     insert_offset :: UIntNative = 1
 
-    arr :: DynamicArray#(.t: Int32) = unwrap_or_abort(.value = DynamicArray#(.t: Int32)(.capacity = initial_capacity))
+    arr :: DynamicArray#(.t: Int32) = unwrap_or_abort(
+        .value = DynamicArray#(.t: Int32)(.capacity = initial_capacity)
+    )
     #defer deinit(.self = $&arr)
 
     push(.self = $&arr, .value = 10)
     push(.self = $&arr, .value = 20)
-    insert(.self = $&arr, .i = insert_offset, .value = 15)
+    insert(.self = $&arr, .index = insert_offset, .value = 15)
     push(.self = $&arr, .value = 30)
 
     if length(.self = &arr).count != 4 {
@@ -30,7 +32,7 @@ main(.system: System) -> (.status_code: Int32) := {
         status_code = 3
         return
     }
-    first ::= first_result..ok
+    first ::= first_result ..ok
     if first != 10 {
         status_code = 3
         return
@@ -41,13 +43,15 @@ main(.system: System) -> (.status_code: Int32) := {
         status_code = 4
         return
     }
-    second_before ::= second_before_result..ok
+    second_before ::= second_before_result ..ok
     if second_before != 15 {
         status_code = 4
         return
     }
 
-    set_result ::= replace(.self = $&arr, .index = second_offset, .value = 99, .allocator = allocator).result
+    set_result ::= replace(
+        .self = $&arr, .index = second_offset, .value = 99, .allocator = allocator
+    ).result
     if is(.value = set_result, .variant = ..error) {
         status_code = 5
         return
@@ -58,7 +62,7 @@ main(.system: System) -> (.status_code: Int32) := {
         status_code = 5
         return
     }
-    second ::= second_result..ok
+    second ::= second_result ..ok
     if second != 99 {
         status_code = 5
         return
@@ -69,7 +73,7 @@ main(.system: System) -> (.status_code: Int32) := {
         status_code = 6
         return
     }
-    third ::= third_result..ok
+    third ::= third_result ..ok
     if third != 20 {
         status_code = 6
         return
@@ -81,7 +85,7 @@ main(.system: System) -> (.status_code: Int32) := {
         status_code = 7
         return
     }
-    fourth ::= fourth_result..ok
+    fourth ::= fourth_result ..ok
     if fourth != 30 {
         status_code = 7
         return
@@ -92,7 +96,7 @@ main(.system: System) -> (.status_code: Int32) := {
         status_code = 8
         return
     }
-    last ::= last_result..ok
+    last ::= last_result ..ok
     if last != 30 {
         status_code = 8
         return

@@ -21,7 +21,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     borrowed_view ::= window(.array = $&array).borrowed_view
     unwrap_or_abort(
         .value = insert(
-            .allocator = system.page_allocator, .self = $&array, .i = 0, .value = 9
+            .allocator = system.page_allocator, .self = $&array, .index = 0, .value = 9
         ).result
     )
     observed ::= read_window(.borrowed_view = &borrowed_view).value

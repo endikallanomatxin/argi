@@ -268,12 +268,12 @@ push_assume_capacity#(.t: Type)(.self: $&DynamicArray#(.t: t), .value: t) -> () 
 }
 
 insert_growing#(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType))(
-    .allocator: $&AllocatorType, .self: $&DynamicArray#(.t: t), .i: UIntNative, .value: t
+    .allocator: $&AllocatorType, .self: $&DynamicArray#(.t: t), .index: UIntNative, .value: t
 ) -> (.result: Errable#(Void, (..out_of_memory, ..out_of_bounds))) := {
     assume allocator
     owned ::= ~value
 
-    if i > self&._length {
+    if index > self&._length {
         result = ..error(.reason = ..out_of_bounds)
         return
     }
@@ -303,7 +303,7 @@ insert_growing#(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType))(
 
     cursor ::= current_length
 
-    while cursor > i {
+    while cursor > index {
         source_index ::= cursor - one
         source_slot ::= _trusted_uninit_slot#(.t: t)(
             .allocation = &self&._allocation, .index = source_index
@@ -320,7 +320,7 @@ insert_growing#(.t: Type, .AllocatorType: Type: Allocator#(AllocatorType))(
         cursor = source_index
     }
 
-    slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &self&._allocation, .index = i)
+    slot ::= _trusted_uninit_slot#(.t: t)(.allocation = &self&._allocation, .index = index)
     _trusted_uninit_write#(.t: t)(
         .allocation = $&self&._allocation, .slot = slot, .value = ~owned
     )
@@ -468,19 +468,19 @@ implement#(.t: Type, .Provider: Type: Allocator#(Provider)) Resizable#(
         result = ..ok Void()
     }
 
-    .insert = (.self: $&DynamicArray#(.t: t), .i: UIntNative, .value: t, .allocator: $&Provider) -> (
-        .result : Errable#(Void, (..out_of_memory, ..out_of_bounds))
-    ) {
+    .insert = (
+        .self: $&DynamicArray#(.t: t), .index: UIntNative, .value: t, .allocator: $&Provider
+    ) -> (.result: Errable#(Void, (..out_of_memory, ..out_of_bounds))) {
         assume allocator
         owned ::= ~value
 
-        if i > self&._length {
+        if index > self&._length {
             result = ..error(.reason = ..out_of_bounds)
             return
         }
 
         result = insert_growing#(.t: t)(
-            .allocator = allocator, .self = self, .i = i, .value = ~owned
+            .allocator = allocator, .self = self, .index = index, .value = ~owned
         )
     }
 )
@@ -508,10 +508,10 @@ implement#(.t: Type) Removable#(DynamicArray#(.t: t)) (
         result = ..ok ~moved_out
     }
 
-    .remove = (.self: $&DynamicArray#(.t: t), .i: UIntNative) -> (
+    .remove = (.self: $&DynamicArray#(.t: t), .index: UIntNative) -> (
         .result : Errable#(t, (..out_of_bounds))
     ) {
-        if i >= self&._length {
+        if index >= self&._length {
             result = ..error(.reason = ..out_of_bounds)
             return
         }
@@ -519,13 +519,13 @@ implement#(.t: Type) Removable#(DynamicArray#(.t: t)) (
         one :: UIntNative = 1
         new_length ::= self&._length - one
         removed_slot ::= _trusted_uninit_slot#(.t: t)(
-            .allocation = &self&._allocation, .index = i
+            .allocation = &self&._allocation, .index = index
         )
         moved_out ::= _trusted_uninit_take#(.t: t)(
             .allocation = $&self&._allocation, .slot = removed_slot
         )
 
-        cursor ::= i
+        cursor ::= index
 
         while cursor < new_length {
             source_slot ::= _trusted_uninit_slot#(.t: t)(

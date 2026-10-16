@@ -18,10 +18,10 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     push_assume_capacity#(.t: Tracked)(.self = $&array, .value = ~second)
     inserted ::= unwrap_or_abort(
         .value = insert(
-            .allocator = allocator, .self = $&array, .i = 1, .value = ~middle
+            .allocator = allocator, .self = $&array, .index = 1, .value = ~middle
         ).result
     )
-    removed ::= unwrap_or_abort(.value = remove(.self = $&array, .i = 1).result)
+    removed ::= unwrap_or_abort(.value = remove(.self = $&array, .index = 1).result)
     if removed.id != 3 or drops != 0 { status_code = 1 }
     deinit(.self = $&removed)
     replacement ::= Tracked(.id = 4)

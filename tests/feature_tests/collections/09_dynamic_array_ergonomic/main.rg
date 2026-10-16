@@ -1,4 +1,4 @@
-sum_pair (.a: Int32, .b: Int32) -> (.sum: Int32) := {
+sum_pair(.a: Int32, .b: Int32) -> (.sum: Int32) := {
     sum = a + b
 }
 
@@ -15,7 +15,7 @@ main(.system: System) -> (.status_code: Int32) := {
         status_code = 3
         return
     }
-    inserted ::= arr | insert(.self = $&_, .i = 1, .value = first_result..ok)
+    inserted ::= arr | insert(.self = $&_, .index = 1, .value = first_result ..ok)
     if is(.value = inserted, .variant = ..error) {
         status_code = 4
         return
@@ -26,7 +26,7 @@ main(.system: System) -> (.status_code: Int32) := {
         status_code = 5
         return
     }
-    popped ::= popped_result..ok
+    popped ::= popped_result ..ok
 
     if popped != 2 {
         status_code = 1
@@ -48,5 +48,5 @@ main(.system: System) -> (.status_code: Int32) := {
         status_code = 6
         return
     }
-    status_code = first_after_pop..ok | sum_pair(.a = _, .b = second_after_pop..ok)
+    status_code = first_after_pop ..ok | sum_pair(.a = _, .b = second_after_pop ..ok)
 }

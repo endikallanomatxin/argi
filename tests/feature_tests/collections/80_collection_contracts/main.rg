@@ -19,8 +19,10 @@ resize#(
     .Collection : Type: Resizable#(.Collection: Collection, .Provider: Provider, .Item: Int32)
 )(.items: $&Collection, .allocator: $&Provider) -> (.value: Int32) := {
     unwrap_or_abort(.value = push(.self = items, .value = 3, .allocator = allocator))
-    unwrap_or_abort(.value = insert(.self = items, .i = 0, .value = 4, .allocator = allocator))
-    removed ::= unwrap_or_abort(.value = remove(.self = items, .i = 0))
+    unwrap_or_abort(
+        .value = insert(.self = items, .index = 0, .value = 4, .allocator = allocator)
+    )
+    removed ::= unwrap_or_abort(.value = remove(.self = items, .index = 0))
     popped ::= unwrap_or_abort(.value = pop(.self = items))
     value = removed + popped
 }

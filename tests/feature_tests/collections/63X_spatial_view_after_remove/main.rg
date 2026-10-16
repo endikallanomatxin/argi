@@ -20,7 +20,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     )
     push_assume_capacity#(.t: UIntNative)(.self = $&array, .value = 7)
     borrowed_view ::= window(.array = $&array).borrowed_view
-    removed ::= unwrap_or_abort(.value = remove(.self = $&array, .i = 0).result)
+    removed ::= unwrap_or_abort(.value = remove(.self = $&array, .index = 0).result)
     observed ::= read_window(.borrowed_view = &borrowed_view).value
     deinit(.self = $&array)
 }

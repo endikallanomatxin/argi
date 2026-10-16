@@ -62,7 +62,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
                                         .self = $&array, .value = ~third
                                     )
                                     inserted ::= insert(
-                                        .self = $&array, .i = 1, .value = ~second
+                                        .self = $&array, .index = 1, .value = ~second
                                     )
                                     if is(.value = inserted, .variant = ..error) {
                                         status_code = 5
@@ -86,7 +86,9 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
                                     }
 
                                     zero :: UIntNative = 0
-                                    removed_result ::= remove(.self = $&array, .i = zero).result
+                                    removed_result ::= remove(
+                                        .self = $&array, .index = zero
+                                    ).result
                                     if is(.value = removed_result, .variant = ..error) {
                                         status_code = 7
                                         return

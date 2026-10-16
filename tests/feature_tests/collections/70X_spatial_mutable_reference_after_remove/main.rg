@@ -8,7 +8,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     element ::= unwrap_or_abort(
         .value = get_mutable_reference(.self = $&array, .index = 0).result
     )
-    removed ::= unwrap_or_abort(.value = remove(.self = $&array, .i = 0).result)
+    removed ::= unwrap_or_abort(.value = remove(.self = $&array, .index = 0).result)
     element&= 3
     deinit(.self = $&array)
 }
