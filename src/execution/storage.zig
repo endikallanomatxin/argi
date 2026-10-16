@@ -3,15 +3,56 @@ const b = @import("../5_codegen/bytecode/bytecode.zig");
 const v = @import("../5_codegen/bytecode/value.zig");
 const p = @import("../4_semantics/primitives/schema.zig");
 
-const Frame = struct { values: []b.Value, alive: bool = true };
+const Frame = struct { values: []?b.Value, alive: bool = true };
+
+// Slots contain either a complete value (including Void) or no value. This is
+// concrete occupancy, not the checker's abstract maybe-initialized state, and
+// does not grant access to uninitialized fields or owner-controlled raw storage.
+pub const Slots = struct {
+    storage: *Storage,
+    context: v.ContextId,
+    frame: v.FrameId,
+
+    pub fn get(self: Slots, index: b.Slot) !b.Value {
+        const values = try self.cells();
+        if (index >= values.len) return error.ExecutionInvalidReference;
+        return values[index] orelse error.ExecutionUninitializedStorage;
+    }
+
+    // Verified instructions define complete slot values. Reference writes use
+    // Storage.store instead, which requires an already initialized destination.
+    pub fn put(self: Slots, index: b.Slot, value: b.Value) !void {
+        const values = try self.cells();
+        if (index >= values.len) return error.ExecutionInvalidReference;
+        values[index] = value;
+    }
+
+    fn cells(self: Slots) ![]?b.Value {
+        if (self.context != self.storage.context) return error.ExecutionForeignReference;
+        return self.storage.frameValues(self.frame);
+    }
+};
+
+var next_context = std.atomic.Value(u64).init(0);
 
 // Run-local storage. Its allocator is an execution arena; references can neither
 // name another execution nor expose a native address. Dead frame IDs stay dead.
 pub const Storage = struct {
+    context: v.ContextId,
     allocator: std.mem.Allocator,
     limit: usize,
     cells: usize = 0,
     frames: std.ArrayList(Frame) = .empty,
+
+    pub fn init(allocator: std.mem.Allocator, limit: usize) !Storage {
+        var next = next_context.load(.monotonic);
+        while (true) {
+            // Exhaustion must fail rather than let an old handle name new storage.
+            if (next == std.math.maxInt(u64)) return error.ExecutionContextLimit;
+            next = next_context.cmpxchgWeak(next, next + 1, .monotonic, .monotonic) orelse
+                return .{ .context = @enumFromInt(next), .allocator = allocator, .limit = limit };
+        }
+    }
 
     pub fn charge(self: *Storage, count: usize) !void {
         if (count > self.limit -| self.cells) return error.ExecutionMemoryLimit;
@@ -25,8 +66,9 @@ pub const Storage = struct {
         // Also bound zero-slot frames and the frame identity table.
         try self.charge(1);
         if (self.frames.items.len >= std.math.maxInt(u32)) return error.ExecutionMemoryLimit;
-        const values = try self.allocate(count);
-        @memset(values, .unit);
+        try self.charge(count);
+        const values = try self.allocator.alloc(?b.Value, count);
+        @memset(values, null);
         const id: v.FrameId = @enumFromInt(self.frames.items.len);
         try self.frames.append(self.allocator, .{ .values = values });
         return id;
@@ -34,7 +76,11 @@ pub const Storage = struct {
     pub fn leave(self: *Storage, id: v.FrameId) void {
         self.frames.items[@intFromEnum(id)].alive = false;
     }
-    pub fn slots(self: *Storage, id: v.FrameId) ![]b.Value {
+    pub fn slots(self: *Storage, id: v.FrameId) !Slots {
+        _ = try self.frameValues(id);
+        return .{ .storage = self, .context = self.context, .frame = id };
+    }
+    fn frameValues(self: *Storage, id: v.FrameId) ![]?b.Value {
         const index = @intFromEnum(id);
         if (index >= self.frames.items.len or !self.frames.items[index].alive) return error.ExecutionDeadReference;
         return self.frames.items[index].values;
@@ -44,9 +90,9 @@ pub const Storage = struct {
         return @intCast(index);
     }
     pub fn read(self: *Storage, reference: v.Reference) !b.Value {
+        try self.validateContext(reference);
         const values = try self.slots(reference.frame);
-        if (reference.root >= values.len) return error.ExecutionInvalidReference;
-        var value = values[reference.root];
+        var value = try values.get(reference.root);
         for (reference.path) |projection| value = try child(value, projection);
         return value;
     }
@@ -59,7 +105,7 @@ pub const Storage = struct {
     }
     pub fn resolve(self: *Storage, frame: v.FrameId, place: b.Place, path: *[64]v.Projection) !v.Reference {
         const locals = try self.slots(frame);
-        var reference = v.Reference{ .frame = frame, .root = place.root, .path = &.{}, .mutability = .read_write };
+        var reference = v.Reference{ .context = self.context, .frame = frame, .root = place.root, .path = &.{}, .mutability = .read_write };
         var value = try self.read(reference);
         var length: usize = 0;
         for (place.path) |projection| switch (projection) {
@@ -76,7 +122,7 @@ pub const Storage = struct {
                 const concrete: v.Projection = switch (projection) {
                     .field => |index| .{ .field = index },
                     .variant => |variant| .{ .variant = @intFromEnum(variant) },
-                    .element => |index| .{ .element = try elementIndex(locals[index].integer, if (value == .array) value.array.len else return error.ExecutionInvalidReference) },
+                    .element => |index| .{ .element = try elementIndex((try locals.get(index)).integer, if (value == .array) value.array.len else return error.ExecutionInvalidReference) },
                     .dereference => unreachable,
                 };
                 value = try child(value, concrete);
@@ -88,6 +134,7 @@ pub const Storage = struct {
         return reference;
     }
     pub fn borrow(self: *Storage, reference: v.Reference, mutability: p.PointerMutability) !b.Value {
+        _ = try self.read(reference);
         if (mutability == .read_write and reference.mutability != .read_write) return error.ExecutionReadonlyReference;
         try self.charge(reference.path.len);
         var result = reference;
@@ -96,10 +143,15 @@ pub const Storage = struct {
         return .{ .reference = result };
     }
     pub fn store(self: *Storage, reference: v.Reference, value: b.Value) !void {
+        try self.validateContext(reference);
         if (reference.mutability != .read_write) return error.ExecutionReadonlyReference;
         const values = try self.slots(reference.frame);
-        if (reference.root >= values.len) return error.ExecutionInvalidReference;
-        values[reference.root] = try self.update(values[reference.root], reference.path, value);
+        const previous = try values.get(reference.root);
+        try values.put(reference.root, try self.update(previous, reference.path, value));
+    }
+
+    fn validateContext(self: *const Storage, reference: v.Reference) !void {
+        if (reference.context != self.context) return error.ExecutionForeignReference;
     }
     // Rebuild only the modified aggregate path; all untouched subtrees remain
     // immutable shared values. References retain storage identity across updates.

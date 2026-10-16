@@ -1,11 +1,13 @@
 const p = @import("../../4_semantics/primitives/schema.zig");
 
 pub const FrameId = enum(u32) { _ };
+pub const ContextId = enum(u64) { _ };
 pub const Projection = union(enum) { field: u32, element: usize, variant: u32 };
 
 // An interpreter address contains no host pointer. Indices are captured when
-// borrowing, and frame identities are never reused within an execution.
+// borrowing. Context identities are never reused, including across VM resets.
 pub const Reference = struct {
+    context: ContextId,
     frame: FrameId,
     root: u32,
     path: []const Projection,

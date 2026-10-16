@@ -316,11 +316,12 @@ test "bytecode storage rejects dead frames and readonly writes" {
     const Storage = @import("storage.zig").Storage;
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
-    var storage = Storage{ .allocator = arena.allocator(), .limit = 100 };
+    var storage = try Storage.init(arena.allocator(), 100);
     const first = try storage.enter(1);
     const slots = try storage.slots(first);
-    slots[0] = .{ .integer = 42 };
+    try slots.put(0, .{ .integer = 42 });
     const reference = @import("../5_codegen/bytecode/value.zig").Reference{
+        .context = storage.context,
         .frame = first,
         .root = 0,
         .path = &.{},
@@ -331,10 +332,60 @@ test "bytecode storage rejects dead frames and readonly writes" {
     try std.testing.expectError(error.ExecutionReadonlyReference, storage.borrow(readonly.reference, .read_write));
     try std.testing.expectEqual(@as(i128, 42), (try storage.read(reference)).integer);
     storage.leave(first);
+    try std.testing.expectError(error.ExecutionDeadReference, slots.get(0));
+    try std.testing.expectError(error.ExecutionDeadReference, slots.put(0, .unit));
     const second = try storage.enter(1);
     try std.testing.expect(first != second);
     try std.testing.expectError(error.ExecutionDeadReference, storage.read(reference));
     try std.testing.expectError(error.ExecutionDeadReference, storage.validateLive(&.{.{ .record = &.{readonly} }}));
+}
+
+test "bytecode storage separates vacant slots from initialized Void" {
+    const Storage = @import("storage.zig").Storage;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 100);
+    const frame = try storage.enter(2);
+    const slots = try storage.slots(frame);
+    const Reference = @import("../5_codegen/bytecode/value.zig").Reference;
+    const vacant = Reference{ .context = storage.context, .frame = frame, .root = 0, .path = &.{}, .mutability = .read_write };
+    try std.testing.expectError(error.ExecutionUninitializedStorage, slots.get(0));
+    try std.testing.expectError(error.ExecutionUninitializedStorage, storage.read(vacant));
+    try std.testing.expectError(error.ExecutionUninitializedStorage, storage.borrow(vacant, .read_only));
+    try std.testing.expectError(error.ExecutionUninitializedStorage, storage.store(vacant, .unit));
+    try slots.put(0, .unit);
+    try std.testing.expectEqual(.unit, try storage.read(vacant));
+    _ = try storage.borrow(vacant, .read_only);
+    try std.testing.expectError(error.ExecutionUninitializedStorage, slots.get(1));
+}
+
+test "bytecode references cannot name another execution context" {
+    const Storage = @import("storage.zig").Storage;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var first = try Storage.init(arena.allocator(), 100);
+    var second = try Storage.init(arena.allocator(), 100);
+    const frame = try first.enter(1);
+    const old_slots = try first.slots(frame);
+    const other_frame = try second.enter(1);
+    try std.testing.expectEqual(frame, other_frame);
+    try (try first.slots(frame)).put(0, .{ .integer = 42 });
+    try (try second.slots(other_frame)).put(0, .{ .integer = 99 });
+    var path: [64]@import("../5_codegen/bytecode/value.zig").Projection = undefined;
+    const reference = try first.borrow(try first.resolve(frame, .{ .root = 0, .path = &.{} }, &path), .read_write);
+    try std.testing.expectError(error.ExecutionForeignReference, second.read(reference.reference));
+    try std.testing.expectError(error.ExecutionForeignReference, second.store(reference.reference, .unit));
+    try std.testing.expectError(error.ExecutionForeignReference, second.borrow(reference.reference, .read_only));
+    try std.testing.expectError(error.ExecutionForeignReference, second.validateLive(&.{.{ .record = &.{reference} }}));
+    try std.testing.expectEqual(@as(i128, 99), (try (try second.slots(other_frame)).get(0)).integer);
+    first.leave(frame);
+    first = try Storage.init(arena.allocator(), 100);
+    const reset_frame = try first.enter(1);
+    try (try first.slots(reset_frame)).put(0, .{ .integer = 17 });
+    try std.testing.expectEqual(frame, reset_frame);
+    try std.testing.expectError(error.ExecutionForeignReference, first.read(reference.reference));
+    try std.testing.expectError(error.ExecutionForeignReference, old_slots.get(0));
+    try std.testing.expectError(error.ExecutionForeignReference, old_slots.put(0, .unit));
 }
 
 test "bytecode accepts mutable reference arguments for readonly inputs" {

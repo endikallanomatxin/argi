@@ -44,7 +44,7 @@ pub const Vm = struct {
         self.arena = std.heap.ArenaAllocator.init(self.allocator);
         defer previous.deinit();
         self.steps = 0;
-        self.storage = .{ .allocator = self.arena.allocator(), .limit = self.limits.value_cells };
+        self.storage = try Storage.init(self.arena.allocator(), self.limits.value_cells);
         const function = try self.entryFunction(entry, args);
         const inputs = try self.cloneValues(args);
         return self.execute(function, inputs);
@@ -77,14 +77,15 @@ pub const Vm = struct {
     fn frame(self: *Vm, function: *const b.Function, args: []const b.Value, return_slots: []const b.Slot) !Frame {
         const id = try self.storage.enter(function.slots.len);
         const slots = try self.storage.slots(id);
-        for (args, function.inputs) |value, slot| slots[slot] = value;
+        for (args, function.inputs) |value, slot| try slots.put(slot, value);
         return .{ .function = function, .storage = id, .return_slots = return_slots };
     }
     fn execute(self: *Vm, function: *const b.Function, args: []const b.Value) ![]const b.Value {
         var frames: std.ArrayList(Frame) = .empty;
         defer frames.deinit(self.allocator);
-        // Runtime failures unwind frame liveness as well. Resource cleanup is
-        // still unsupported; no destructor can be skipped by this path.
+        // Runtime failures end frame liveness without running user cleanup,
+        // matching the current abort policy. Persistent sessions must not
+        // treat this path as a recoverable cleanup/unwind protocol.
         defer for (frames.items) |active| self.storage.leave(active.storage);
         if (self.limits.call_depth == 0) return error.ExecutionCallDepthLimit;
         try frames.append(self.allocator, try self.frame(function, args, &.{}));
@@ -99,53 +100,53 @@ pub const Vm = struct {
             self.steps += 1;
             current.pc += 1;
             switch (inst.op) {
-                .constant => |x| slots[x.dst] = x.value,
-                .copy => |x| slots[x.dst] = slots[x.src],
+                .constant => |x| try slots.put(x.dst, x.value),
+                .copy => |x| try slots.put(x.dst, try slots.get(x.src)),
                 .readonly => |x| {
-                    var reference = slots[x.src].reference;
+                    var reference = (try slots.get(x.src)).reference;
                     reference.mutability = .read_only;
-                    slots[x.dst] = .{ .reference = reference };
+                    try slots.put(x.dst, .{ .reference = reference });
                 },
                 .record => |x| {
                     const fields = try self.allocate(x.fields.len);
-                    for (fields, x.fields) |*value, slot| value.* = slots[slot];
-                    slots[x.dst] = .{ .record = fields };
+                    for (fields, x.fields) |*value, slot| value.* = try slots.get(slot);
+                    try slots.put(x.dst, .{ .record = fields });
                 },
                 .array => |x| {
                     const elements = try self.allocate(x.elements.len);
-                    for (elements, x.elements) |*value, slot| value.* = slots[slot];
-                    slots[x.dst] = .{ .array = elements };
+                    for (elements, x.elements) |*value, slot| value.* = try slots.get(slot);
+                    try slots.put(x.dst, .{ .array = elements });
                 },
                 .index => |x| {
-                    const elements = slots[x.base].array;
-                    const index = try Storage.elementIndex(slots[x.index].integer, elements.len);
-                    slots[x.dst] = elements[index];
+                    const elements = (try slots.get(x.base)).array;
+                    const index = try Storage.elementIndex((try slots.get(x.index)).integer, elements.len);
+                    try slots.put(x.dst, elements[index]);
                 },
                 .choice => |x| {
                     var payload: ?*const b.Value = null;
                     if (x.payload) |slot| {
                         const cell = try self.allocate(1);
-                        cell[0] = slots[slot];
+                        cell[0] = try slots.get(slot);
                         payload = &cell[0];
                     }
-                    slots[x.dst] = .{ .choice = .{ .variant = @intFromEnum(x.variant), .payload = payload } };
+                    try slots.put(x.dst, .{ .choice = .{ .variant = @intFromEnum(x.variant), .payload = payload } });
                 },
                 .payload => |x| {
-                    const choice = slots[x.src].choice;
+                    const choice = (try slots.get(x.src)).choice;
                     if (choice.variant != @intFromEnum(x.variant) or choice.payload == null) return error.ExecutionInactiveVariant;
-                    slots[x.dst] = choice.payload.?.*;
+                    try slots.put(x.dst, choice.payload.?.*);
                 },
-                .is_variant => |x| slots[x.dst] = .{ .boolean = (slots[x.src].choice.variant == @intFromEnum(x.variant)) != x.invert },
-                .branch_variant => |x| current.pc = if (slots[x.src].choice.variant == @intFromEnum(x.variant)) x.yes else x.no,
+                .is_variant => |x| try slots.put(x.dst, .{ .boolean = ((try slots.get(x.src)).choice.variant == @intFromEnum(x.variant)) != x.invert }),
+                .branch_variant => |x| current.pc = if ((try slots.get(x.src)).choice.variant == @intFromEnum(x.variant)) x.yes else x.no,
                 .borrow => |x| {
                     var path: [64]runtime_value.Projection = undefined;
                     const reference = try self.storage.resolve(current.storage, x.place, &path);
                     const permission = self.program.graph.semanticType(f.slots[x.dst]).pointer.mutability;
-                    slots[x.dst] = try self.storage.borrow(reference, permission);
+                    try slots.put(x.dst, try self.storage.borrow(reference, permission));
                 },
                 .load => |x| {
                     var path: [64]runtime_value.Projection = undefined;
-                    slots[x.dst] = try self.storage.read(try self.storage.resolve(current.storage, x.place, &path));
+                    try slots.put(x.dst, try self.storage.read(try self.storage.resolve(current.storage, x.place, &path)));
                 },
                 .check_place => |place| {
                     var path: [64]runtime_value.Projection = undefined;
@@ -154,19 +155,19 @@ pub const Vm = struct {
                 .store => |x| {
                     var path: [64]runtime_value.Projection = undefined;
                     const reference = try self.storage.resolve(current.storage, x.place, &path);
-                    try self.storage.store(reference, slots[x.value]);
+                    try self.storage.store(reference, try slots.get(x.value));
                 },
-                .field => |x| slots[x.dst] = slots[x.base].record[x.index],
+                .field => |x| try slots.put(x.dst, (try slots.get(x.base)).record[x.index]),
                 .binary => |x| {
-                    const left = slots[x.left].integer;
-                    const right = slots[x.right].integer;
+                    const left = (try slots.get(x.left)).integer;
+                    const right = (try slots.get(x.right)).integer;
                     const range = b.integerBounds(self.program.graph, f.slots[x.dst]).?;
                     const n = integer.evaluate(x.operator, left, right, range) catch return error.ExecutionDivisionByZero;
-                    slots[x.dst] = .{ .integer = n };
+                    try slots.put(x.dst, .{ .integer = n });
                 },
                 .compare => |x| {
-                    const left = slots[x.left];
-                    const right = slots[x.right];
+                    const left = try slots.get(x.left);
+                    const right = try slots.get(x.right);
                     const yes = if (left == .choice) switch (x.operator) {
                         .equal => left.choice.variant == right.choice.variant,
                         .not_equal => left.choice.variant != right.choice.variant,
@@ -183,26 +184,26 @@ pub const Vm = struct {
                         .greater_than => left.integer > right.integer,
                         .greater_than_or_equal => left.integer >= right.integer,
                     };
-                    slots[x.dst] = .{ .boolean = yes };
+                    try slots.put(x.dst, .{ .boolean = yes });
                 },
                 .call => |x| {
                     if (frames.items.len >= self.limits.call_depth) return error.ExecutionCallDepthLimit;
                     const values = try self.allocate(x.args.len);
-                    for (values, x.args) |*value, slot| value.* = slots[slot];
+                    for (values, x.args) |*value, slot| value.* = try slots.get(slot);
                     const callee = &self.program.functions[@intFromEnum(x.function)].?;
                     try frames.append(self.allocator, try self.frame(callee, values, x.outputs));
                 },
-                .branch => |x| current.pc = if (slots[x.condition].boolean) x.yes else x.no,
+                .branch => |x| current.pc = if ((try slots.get(x.condition)).boolean) x.yes else x.no,
                 .jump => |target| current.pc = target,
                 .ret => |outputs| {
                     const result = try self.allocate(outputs.len);
-                    for (result, outputs) |*value, slot| value.* = slots[slot];
+                    for (result, outputs) |*value, slot| value.* = try slots.get(slot);
                     const completed = frames.pop().?;
                     self.storage.leave(completed.storage);
                     try self.storage.validateLive(result);
                     if (frames.items.len == 0) return result;
                     const caller = try self.storage.slots(frames.items[frames.items.len - 1].storage);
-                    for (completed.return_slots, result) |dst, value| caller[dst] = value;
+                    for (completed.return_slots, result) |dst, value| try caller.put(dst, value);
                 },
                 .abort_ => return error.ExecutionAborted,
             }
