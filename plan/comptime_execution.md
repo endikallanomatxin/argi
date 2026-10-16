@@ -24,13 +24,16 @@ execution state; returned aggregate values may be passed into the next run.
 Local writes use a root slot plus typed field/index projections. Index operands
 are evaluated once, and intermediate bounds checks retain native evaluation order.
 The interpreter rebuilds only the modified aggregate path; immutable snapshots
-preserve value-copy semantics. This representation does not yet model borrowed
-references or independently initialized fields. Those require explicit storage
-identity and lifetime rules before extending the supported subset.
+preserve value-copy semantics. Safe references name run-local frame storage plus
+captured projections. The
+storage engine rejects dead frames and readonly writes; the ordinary frontend
+continues to prove lexical lifetimes, aliasing, and storage-generation rules.
+References cannot enter from external values or escape completed frames. Partial
+initialization, resources, and cleanup remain outside the executor subset.
 
 ## Remaining decisions
 
-- Extend frames and aggregates to references, choices, and cleanup.
+- Extend storage to partial initialization, choices, and ordinary cleanup.
 - Shared VM/native calling convention, output storage, errors, and cleanup.
 - LLVM JIT integration, symbol resolution, and supported host/C signatures.
 - Session persistence, redefinition, failed submissions, reset, and exit.

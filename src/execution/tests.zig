@@ -274,9 +274,123 @@ test "bytecode VM reuses returned aggregates and recovers after failure" {
     try std.testing.expectError(error.InvalidEntry, executor.run(@enumFromInt(99), &.{}));
     executor.limits.instructions = 0;
     try std.testing.expectError(error.ExecutionInstructionLimit, executor.run(@enumFromInt(0), &.{.{ .array = &.{.{ .integer = 42 }} }}));
+    for (executor.storage.frames.items) |frame_| try std.testing.expect(!frame_.alive);
     executor.limits.instructions = 100;
     result = try executor.run(@enumFromInt(0), &.{.{ .array = &.{.{ .integer = 42 }} }});
     try std.testing.expectEqual(@as(i128, 42), result[0].array[0].integer);
     executor.limits.call_depth = 0;
     try std.testing.expectError(error.ExecutionCallDepthLimit, executor.run(@enumFromInt(0), result));
+}
+
+test "bytecode references preserve caller storage across calls" {
+    try std.testing.expectEqual(@as(i128, 42), try execute(
+        \\update(.value: $&Int32) -> () := { value& = value& + 1 }
+        \\borrow(.value: &Int32) -> (.result: &Int32) := { result = value }
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    value :: Int32 = 41
+        \\    update(.value = $&value)
+        \\    reference ::= borrow(.value = &value)
+        \\    status_code = reference&
+        \\}
+    , .{}));
+}
+
+test "bytecode reference projections capture indices and preserve aggregate copies" {
+    try std.testing.expectEqual(@as(i128, 42), try execute(
+        \\Pair: Type = (.left: Int32, .right: Int32)
+        \\update(.value: $&Pair) -> () := { value&.left = 40 }
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    pairs :: [2]Pair = ((.left = 1, .right = 2), (.left = 3, .right = 4))
+        \\    saved ::= pairs
+        \\    index :: UIntNative = 0
+        \\    reference ::= $&pairs[index]
+        \\    index = 1
+        \\    update(.value = reference)
+        \\    if saved[0].left != 1 or pairs[1].left != 3 { abort }
+        \\    status_code = pairs[0].left + pairs[0].right
+        \\}
+    , .{}));
+}
+
+test "bytecode storage rejects dead frames and readonly writes" {
+    const Storage = @import("storage.zig").Storage;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = Storage{ .allocator = arena.allocator(), .limit = 100 };
+    const first = try storage.enter(1);
+    const slots = try storage.slots(first);
+    slots[0] = .{ .integer = 42 };
+    const reference = @import("../5_codegen/bytecode/value.zig").Reference{
+        .frame = first,
+        .root = 0,
+        .path = &.{},
+        .mutability = .read_write,
+    };
+    const readonly = try storage.borrow(reference, .read_only);
+    try std.testing.expectError(error.ExecutionReadonlyReference, storage.store(readonly.reference, .{ .integer = 99 }));
+    try std.testing.expectError(error.ExecutionReadonlyReference, storage.borrow(readonly.reference, .read_write));
+    try std.testing.expectEqual(@as(i128, 42), (try storage.read(reference)).integer);
+    storage.leave(first);
+    const second = try storage.enter(1);
+    try std.testing.expect(first != second);
+    try std.testing.expectError(error.ExecutionDeadReference, storage.read(reference));
+    try std.testing.expectError(error.ExecutionDeadReference, storage.validateLive(&.{.{ .record = &.{readonly} }}));
+}
+
+test "bytecode accepts mutable reference arguments for readonly inputs" {
+    try std.testing.expectEqual(@as(i128, 42), try execute(
+        \\read(.value: &Int32) -> (.result: Int32) := { result = value& }
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    value :: Int32 = 42
+        \\    status_code = read(.value = $&value)
+        \\}
+    , .{}));
+}
+
+test "bytecode verifies reference access and traps escaped frame storage" {
+    const g = @import("../4_semantics/global/graph.zig");
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(std.testing.allocator);
+    const a = std.testing.allocator;
+    try graph.types.append(a, .{ .builtin = .Int32 });
+    try graph.types.append(a, .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } });
+    try graph.types.append(a, .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_write } });
+    const source = @import("../4_semantics/primitives/schema.zig").SourceRef{ .file_index = 0, .offset = 0 };
+    try graph.fields.append(a, .{ .name = .{ .start = 0, .len = 0 }, .ty = @enumFromInt(1), .source = source });
+    try graph.functions.append(a, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 1 } });
+    var code = [_]b.Instruction{
+        .{ .source = source, .op = .{ .constant = .{ .dst = 0, .value = .{ .integer = 42 } } } },
+        .{ .source = source, .op = .{ .borrow = .{ .dst = 1, .place = .{ .root = 0, .path = &.{} } } } },
+        .{ .source = source, .op = .{ .load = .{ .dst = 0, .place = .{ .root = 1, .path = &.{.dereference} } } } },
+        .{ .source = source, .op = .{ .ret = &.{1} } },
+    };
+    const functions = [_]?b.Function{.{ .slots = &.{ @enumFromInt(0), @enumFromInt(1), @enumFromInt(2) }, .inputs = &.{}, .outputs = &.{1}, .code = &code }};
+    const program = b.Program{ .graph = &graph, .functions = &functions };
+    var executor = try vm.Vm.init(a, program, .{});
+    defer executor.deinit();
+    try std.testing.expectError(error.ExecutionDeadReference, executor.run(@enumFromInt(0), &.{}));
+    code[2].op = .{ .store = .{ .place = .{ .root = 1, .path = &.{.dereference} }, .value = 0 } };
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+    code[2].op = .{ .borrow = .{ .dst = 2, .place = .{ .root = 1, .path = &.{.dereference} } } };
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+    code[2].op = .{ .readonly = .{ .dst = 2, .src = 1 } };
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+    code[1].op.borrow.place.root = 2;
+    code[2].op = .{ .load = .{ .dst = 0, .place = .{ .root = 1, .path = &.{.dereference} } } };
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+}
+
+test "bytecode reference fields keep pointees separate from copied records" {
+    try std.testing.expectEqual(@as(i128, 42), try execute(
+        \\Args: Type = (.target: $&Int32)
+        \\View: Type = (.target: &Int32)
+        \\update(.args: Args) -> () := { args.target& = 42 }
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    value :: Int32 = 1
+        \\    args: Args = (.target = $&value)
+        \\    update(.args = args)
+        \\    view: View = (.target = $&value)
+        \\    status_code = view.target&
+        \\}
+    , .{}));
 }

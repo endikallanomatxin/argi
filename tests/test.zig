@@ -13347,8 +13347,10 @@ test "feature_tests/execution/04X_vm_overflow" {
     try vmExpect("tests/feature_tests/execution/04X_vm_overflow", 1, "ExecutionIntegerOverflow");
 }
 
-test "feature_tests/execution/05X_vm_reference" {
-    try vmExpect("tests/feature_tests/execution/05X_vm_reference", 1, "type outside the supported VM subset");
+test "feature_tests/execution/05_local_reference_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/05_local_reference_vm");
+    try runExpect("tests/feature_tests/execution/05_local_reference_vm", 42);
+    try vmExpect("tests/feature_tests/execution/05_local_reference_vm", 42, null);
 }
 
 test "feature_tests/execution/06_array_vm" {
@@ -13371,4 +13373,10 @@ test "feature_tests/execution/09_recursive_frames_vm" {
     try expectSuccessfulBuild("tests/feature_tests/execution/09_recursive_frames_vm");
     try runExpect("tests/feature_tests/execution/09_recursive_frames_vm", 42);
     try vmExpect("tests/feature_tests/execution/09_recursive_frames_vm", 42, null);
+}
+
+test "feature_tests/execution/10_reference_calls_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/10_reference_calls_vm");
+    try runExpect("tests/feature_tests/execution/10_reference_calls_vm", 42);
+    try vmExpect("tests/feature_tests/execution/10_reference_calls_vm", 42, null);
 }

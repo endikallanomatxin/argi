@@ -5,10 +5,10 @@ const p = @import("../../4_semantics/primitives/schema.zig");
 
 pub const Slot = u32;
 pub const Type = g.GlobalTypeId;
-pub const Value = union(enum) { integer: i128, boolean: bool, unit, record: []const Value, array: []const Value };
-// A place names local storage, never a borrowed reference or a host address.
+pub const Value = @import("value.zig").Value;
+// A place starts in local storage and can follow checked safe references.
 // Index operands are snapshots evaluated by lowering in source order.
-pub const Projection = union(enum) { field: u32, element: Slot };
+pub const Projection = union(enum) { field: u32, element: Slot, dereference };
 pub const Place = struct { root: Slot, path: []const Projection };
 
 pub const Instruction = struct {
@@ -16,12 +16,15 @@ pub const Instruction = struct {
     op: union(enum) {
         constant: struct { dst: Slot, value: Value },
         copy: struct { dst: Slot, src: Slot },
+        readonly: struct { dst: Slot, src: Slot },
         binary: struct { dst: Slot, left: Slot, right: Slot, operator: p.BinaryOperator },
         compare: struct { dst: Slot, left: Slot, right: Slot, operator: p.ComparisonOperator },
         record: struct { dst: Slot, fields: []const Slot },
         field: struct { dst: Slot, base: Slot, index: u32 },
         array: struct { dst: Slot, elements: []const Slot },
         index: struct { dst: Slot, base: Slot, index: Slot },
+        borrow: struct { dst: Slot, place: Place },
+        load: struct { dst: Slot, place: Place },
         check_place: Place,
         store: struct { place: Place, value: Slot },
         call: struct { dst: ?Slot, function: g.GlobalFunctionId, args: []const Slot },
@@ -69,6 +72,7 @@ pub fn supportedType(graph: *const g.GlobalSemanticGraph, ty: Type, depth: usize
     if (integerBounds(graph, ty) != null) return true;
     const semantic = graph.semanticType(ty);
     if (semantic == .builtin) return semantic.builtin == .Bool or semantic.builtin == .Void;
+    if (semantic == .pointer) return supportedType(graph, semantic.pointer.child, depth + 1);
     if (types.arrayElement(graph, ty)) |element| return supportedType(graph, element, depth + 1);
     const fields = types.fields(graph, ty) orelse return false;
     for (graph.fields.items[fields.start..][0..fields.len]) |field| if (!supportedType(graph, field.ty, depth + 1)) return false;
@@ -86,6 +90,9 @@ pub fn valueFits(graph: *const g.GlobalSemanticGraph, ty: Type, value: Value) bo
             for (values) |v| if (!valueFits(graph, element, v)) break :blk false;
             break :blk true;
         },
+        // Reference values are created by borrow instructions, never constants
+        // or external inputs. Their shape and access are checked separately.
+        .reference => false,
         .record => |values| blk: {
             const fields = types.fields(graph, ty) orelse break :blk false;
             if (fields.len != values.len) break :blk false;
@@ -118,6 +125,11 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
             switch (inst.op) {
                 .constant => |x| if (!valueFits(program.graph, f.slots[x.dst], x.value)) return error.InvalidBytecode,
                 .copy => |x| if (!types.equal(program.graph, f.slots[x.dst], f.slots[x.src])) return error.InvalidBytecode,
+                .readonly => |x| {
+                    const from = program.graph.semanticType(f.slots[x.src]);
+                    const to = program.graph.semanticType(f.slots[x.dst]);
+                    if (from != .pointer or to != .pointer or from.pointer.mutability != .read_write or to.pointer.mutability != .read_only or !types.equal(program.graph, from.pointer.child, to.pointer.child)) return error.InvalidBytecode;
+                },
                 .binary => |x| if (integerBounds(program.graph, f.slots[x.dst]) == null or !types.equal(program.graph, f.slots[x.dst], f.slots[x.left]) or !types.equal(program.graph, f.slots[x.left], f.slots[x.right])) return error.InvalidBytecode,
                 .compare => |x| {
                     if (!valueFits(program.graph, f.slots[x.dst], .{ .boolean = false }) or !types.equal(program.graph, f.slots[x.left], f.slots[x.right])) return error.InvalidBytecode;
@@ -141,10 +153,19 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                     const element = types.arrayElement(program.graph, f.slots[x.base]) orelse return error.InvalidBytecode;
                     if (!types.equal(program.graph, f.slots[x.dst], element) or integerBounds(program.graph, f.slots[x.index]) == null) return error.InvalidBytecode;
                 },
-                .check_place => |place| _ = try placeType(program.graph, f.slots, place),
+                .borrow => |x| {
+                    const target = try placeInfo(program.graph, f.slots, x.place);
+                    const pointer = program.graph.semanticType(f.slots[x.dst]);
+                    if (pointer != .pointer or !types.equal(program.graph, pointer.pointer.child, target.ty) or (pointer.pointer.mutability == .read_write and !target.writable)) return error.InvalidBytecode;
+                },
+                .load => |x| {
+                    const target = try placeInfo(program.graph, f.slots, x.place);
+                    if (!types.equal(program.graph, f.slots[x.dst], target.ty)) return error.InvalidBytecode;
+                },
+                .check_place => |place| _ = try placeInfo(program.graph, f.slots, place),
                 .store => |x| {
-                    const target = try placeType(program.graph, f.slots, x.place);
-                    if (!types.equal(program.graph, f.slots[x.value], target)) return error.InvalidBytecode;
+                    const target = try placeInfo(program.graph, f.slots, x.place);
+                    if (!target.writable or !types.equal(program.graph, f.slots[x.value], target.ty)) return error.InvalidBytecode;
                 },
                 .branch => |x| if (x.yes >= f.code.len or x.no >= f.code.len or !valueFits(program.graph, f.slots[x.condition], .{ .boolean = false })) return error.InvalidBytecode,
                 .jump => |target| if (target >= f.code.len) return error.InvalidBytecode,
@@ -222,13 +243,15 @@ pub fn destination(i: Instruction) ?Slot {
     return switch (i.op) {
         .constant => |x| x.dst,
         .copy => |x| x.dst,
+        .readonly => |x| x.dst,
         .binary => |x| x.dst,
         .compare => |x| x.dst,
         .record => |x| x.dst,
         .field => |x| x.dst,
         .array => |x| x.dst,
         .index => |x| x.dst,
-        .store => |x| x.place.root,
+        .borrow => |x| x.dst,
+        .load => |x| x.dst,
         .call => |x| x.dst,
         else => null,
     };
@@ -236,12 +259,15 @@ pub fn destination(i: Instruction) ?Slot {
 fn readSlots(a: std.mem.Allocator, i: Instruction, out: *std.ArrayList(Slot)) !void {
     switch (i.op) {
         .copy => |x| try out.append(a, x.src),
+        .readonly => |x| try out.append(a, x.src),
         .binary => |x| try out.appendSlice(a, &.{ x.left, x.right }),
         .compare => |x| try out.appendSlice(a, &.{ x.left, x.right }),
         .record => |x| try out.appendSlice(a, x.fields),
         .field => |x| try out.append(a, x.base),
         .array => |x| try out.appendSlice(a, x.elements),
         .index => |x| try out.appendSlice(a, &.{ x.base, x.index }),
+        .borrow => |x| try readPlace(a, x.place, out),
+        .load => |x| try readPlace(a, x.place, out),
         .check_place => |place| try readPlace(a, place, out),
         .store => |x| {
             try readPlace(a, x.place, out);
@@ -254,9 +280,10 @@ fn readSlots(a: std.mem.Allocator, i: Instruction, out: *std.ArrayList(Slot)) !v
     }
 }
 
-fn placeType(graph: *const g.GlobalSemanticGraph, slots: []const Type, place: Place) !Type {
+fn placeInfo(graph: *const g.GlobalSemanticGraph, slots: []const Type, place: Place) !struct { ty: Type, writable: bool } {
     if (place.root >= slots.len or place.path.len > 64) return error.InvalidBytecode;
     var ty = slots[place.root];
+    var writable = true;
     for (place.path) |projection| switch (projection) {
         .field => |index| {
             const fields = types.fields(graph, ty) orelse return error.InvalidBytecode;
@@ -267,14 +294,20 @@ fn placeType(graph: *const g.GlobalSemanticGraph, slots: []const Type, place: Pl
             if (index >= slots.len or integerBounds(graph, slots[index]) == null) return error.InvalidBytecode;
             ty = types.arrayElement(graph, ty) orelse return error.InvalidBytecode;
         },
+        .dereference => {
+            const pointer = graph.semanticType(ty);
+            if (pointer != .pointer) return error.InvalidBytecode;
+            writable = pointer.pointer.mutability == .read_write;
+            ty = pointer.pointer.child;
+        },
     };
-    return ty;
+    return .{ .ty = ty, .writable = writable };
 }
 
 fn readPlace(a: std.mem.Allocator, place: Place, out: *std.ArrayList(Slot)) !void {
     try out.append(a, place.root);
     for (place.path) |projection| switch (projection) {
         .element => |index| try out.append(a, index),
-        .field => {},
+        .field, .dereference => {},
     };
 }

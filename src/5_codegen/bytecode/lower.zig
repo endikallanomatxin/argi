@@ -2,6 +2,7 @@ const std = @import("std");
 const g = @import("../../4_semantics/global/graph.zig");
 const p = @import("../../4_semantics/primitives/schema.zig");
 const b = @import("bytecode.zig");
+const types = @import("../../4_semantics/global/types.zig");
 
 pub const Lower = struct {
     allocator: std.mem.Allocator,
@@ -61,7 +62,7 @@ const FunctionLower = struct {
         for (outputs, self.parent.graph.binding_refs.items[f.output_bindings.start..][0..f.output_bindings.len]) |*slot, binding| {
             slot.* = try self.bindingSlot(binding);
             const record = self.parent.graph.binding(binding);
-            if (record.initialization) |node| _ = try self.emit(source, .{ .copy = .{ .dst = slot.*, .src = try self.expression(node) } });
+            if (record.initialization) |node| try self.copyTo(source, slot.*, try self.expression(node));
         }
         try self.block(f.body.?);
         _ = try self.emit(source, .{ .ret = outputs });
@@ -99,29 +100,29 @@ const FunctionLower = struct {
                 const binding_ = self.parent.graph.binding(binding_id);
                 const dst = try self.bindingSlot(binding_id);
                 if (!binding_.deferred_initialization) {
-                    if (binding_.initialization) |value| _ = try self.emit(node.source, .{ .copy = .{ .dst = dst, .src = try self.expression(value) } });
+                    if (binding_.initialization) |value| try self.copyTo(node.source, dst, try self.expression(value));
                 }
             },
             .assignment => |x| {
                 const dst = self.bindings.get(x.binding) orelse return self.parent.reject(node.source, "global or captured storage");
-                _ = try self.emit(node.source, .{ .copy = .{ .dst = dst, .src = try self.expression(x.value) } });
+                try self.copyTo(node.source, dst, try self.expression(x.value));
             },
             .array_store => |x| {
                 const base = try self.place(x.array_ptr);
                 const index = try self.expression(x.index);
                 const target = try self.project(base, .{ .element = index });
-                const value = try self.expression(x.value);
+                const value = try self.coerce(node.source, try self.expression(x.value), x.element_type);
                 _ = try self.emit(node.source, .{ .store = .{ .place = target, .value = value } });
             },
             .pointer_assignment => |x| {
-                const target = try self.place(x.pointer);
-                const value = try self.expression(x.value);
+                const target = try self.addressedPlace(x.pointer);
+                const value = try self.coerce(node.source, try self.expression(x.value), self.parent.graph.semanticType(self.parent.graph.node(x.pointer).ty.?).pointer.child);
                 _ = try self.emit(node.source, .{ .store = .{ .place = target, .value = value } });
             },
             .struct_field_store => |x| {
-                const base = try self.place(x.struct_ptr);
+                const base = try self.addressedPlace(x.struct_ptr);
                 const target = try self.project(base, .{ .field = x.field_index });
-                const value = try self.expression(x.value);
+                const value = try self.coerce(node.source, try self.expression(x.value), x.field_type);
                 _ = try self.emit(node.source, .{ .store = .{ .place = target, .value = value } });
             },
             .code_block => |block_id| try self.block(block_id),
@@ -175,6 +176,26 @@ const FunctionLower = struct {
             },
         }
     }
+    fn coerce(self: *FunctionLower, source: p.SourceRef, slot: b.Slot, target: b.Type) !b.Slot {
+        if (types.equal(self.parent.graph, self.slots.items[slot], target)) return slot;
+        const from = self.parent.graph.semanticType(self.slots.items[slot]);
+        const to = self.parent.graph.semanticType(target);
+        if (from == .pointer and to == .pointer and from.pointer.mutability == .read_write and to.pointer.mutability == .read_only and types.equal(self.parent.graph, from.pointer.child, to.pointer.child)) {
+            const dst = try self.newSlot(target);
+            _ = try self.emit(source, .{ .readonly = .{ .dst = dst, .src = slot } });
+            return dst;
+        }
+        return self.parent.reject(source, "conversion outside the supported VM subset");
+    }
+    fn copyTo(self: *FunctionLower, source: p.SourceRef, dst: b.Slot, value: b.Slot) !void {
+        const src = try self.coerce(source, value, self.slots.items[dst]);
+        _ = try self.emit(source, .{ .copy = .{ .dst = dst, .src = src } });
+    }
+    fn addressedPlace(self: *FunctionLower, id: g.GlobalNodeId) anyerror!b.Place {
+        const node = self.parent.graph.node(id);
+        if (node.content == .address_of) return self.place(node.content.address_of);
+        return self.project(.{ .root = try self.expression(id), .path = &.{} }, .dereference);
+    }
     fn project(self: *FunctionLower, base: b.Place, projection: b.Projection) !b.Place {
         if (base.path.len >= 64) return self.parent.reject(self.parent.source, "storage projection depth");
         const path = try self.parent.allocator.alloc(b.Projection, base.path.len + 1);
@@ -183,8 +204,7 @@ const FunctionLower = struct {
         return .{ .root = base.root, .path = path };
     }
     // Resolve storage syntactically, without evaluating it into a copied value.
-    // Real references remain unsupported; address_of here only marks the checked
-    // graph's direct local destination. Intermediate array bounds are checked
+    // Address operations retain storage identity. Intermediate array bounds are checked
     // before later indices or the RHS, matching native address evaluation.
     fn place(self: *FunctionLower, id: g.GlobalNodeId) anyerror!b.Place {
         const node = self.parent.graph.node(id);
@@ -195,6 +215,7 @@ const FunctionLower = struct {
                 .path = &.{},
             },
             .address_of => |value| self.place(value),
+            .dereference => |x| self.project(.{ .root = try self.expression(x.pointer), .path = &.{} }, .dereference),
             .struct_field_access => |x| self.project(try self.place(x.value), .{ .field = x.field_index }),
             .array_index => |x| blk: {
                 const base = try self.place(x.array_ptr);
@@ -214,8 +235,8 @@ const FunctionLower = struct {
         if (input != .struct_value_literal) return self.parent.reject(node.source, "non-record call arguments");
         const fields = input.struct_value_literal.fields;
         const args = try self.parent.allocator.alloc(b.Slot, fields.len);
-        for (args, self.parent.graph.value_fields.items[fields.start..][0..fields.len]) |*arg, field| arg.* = try self.expression(field.value);
         const f = self.parent.graph.function(x.callee);
+        for (args, self.parent.graph.value_fields.items[fields.start..][0..fields.len], 0..) |*arg, field, index| arg.* = try self.coerce(node.source, try self.expression(field.value), self.parent.graph.fields.items[f.input.start + index].ty);
         if (f.output.len > 1) return self.parent.reject(node.source, "multiple function outputs");
         const dst = if (f.output.len == 1) try self.newSlot(self.parent.graph.fields.items[f.output.start].ty) else null;
         try self.parent.pending.append(self.parent.allocator, x.callee);
@@ -240,6 +261,15 @@ const FunctionLower = struct {
         }
         const dst = try self.newSlot(node.ty orelse return self.parent.reject(node.source, "untyped expression"));
         switch (node.content) {
+            .address_of => |value| {
+                const target = try self.place(value);
+                _ = try self.emit(node.source, .{ .borrow = .{ .dst = dst, .place = target } });
+            },
+            .dereference => |x| {
+                const pointer = try self.expression(x.pointer);
+                const target = try self.project(.{ .root = pointer, .path = &.{} }, .dereference);
+                _ = try self.emit(node.source, .{ .load = .{ .dst = dst, .place = target } });
+            },
             .int_literal => |value| {
                 _ = try self.emit(node.source, .{ .constant = .{ .dst = dst, .value = .{ .integer = value } } });
             },
@@ -253,12 +283,13 @@ const FunctionLower = struct {
                     return dst;
                 }
                 const fields = try self.parent.allocator.alloc(b.Slot, x.fields.len);
-                for (fields, self.parent.graph.value_fields.items[x.fields.start..][0..x.fields.len]) |*field, v| field.* = try self.expression(v.value);
+                const expected = types.fields(self.parent.graph, self.slots.items[dst]).?;
+                for (fields, self.parent.graph.value_fields.items[x.fields.start..][0..x.fields.len], 0..) |*field, value, index| field.* = try self.coerce(node.source, try self.expression(value.value), self.parent.graph.fields.items[expected.start + index].ty);
                 _ = try self.emit(node.source, .{ .record = .{ .dst = dst, .fields = fields } });
             },
             .array_literal => |x| {
                 const elements = try self.parent.allocator.alloc(b.Slot, x.elements.len);
-                for (elements, self.parent.graph.node_refs.items[x.elements.start..][0..x.elements.len]) |*element, value| element.* = try self.expression(value);
+                for (elements, self.parent.graph.node_refs.items[x.elements.start..][0..x.elements.len]) |*element, value| element.* = try self.coerce(node.source, try self.expression(value), x.element_type);
                 _ = try self.emit(node.source, .{ .array = .{ .dst = dst, .elements = elements } });
             },
             .array_index => |x| {

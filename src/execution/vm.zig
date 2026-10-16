@@ -1,6 +1,8 @@
 const std = @import("std");
 const b = @import("../5_codegen/bytecode/bytecode.zig");
 const g = @import("../4_semantics/global/graph.zig");
+const Storage = @import("storage.zig").Storage;
+const runtime_value = @import("../5_codegen/bytecode/value.zig");
 const p = @import("../4_semantics/primitives/schema.zig");
 
 pub const Limits = struct {
@@ -13,7 +15,7 @@ pub const Limits = struct {
 
 const Frame = struct {
     function: *const b.Function,
-    slots: []b.Value,
+    storage: runtime_value.FrameId,
     pc: usize = 0,
     return_slot: ?b.Slot,
 };
@@ -24,7 +26,7 @@ pub const Vm = struct {
     program: b.Program,
     limits: Limits,
     steps: usize = 0,
-    cells: usize = 0,
+    storage: Storage = undefined,
     source: p.SourceRef = .{ .file_index = 0, .offset = 0 },
 
     // Verify before executing anything, including before checking the entry.
@@ -41,7 +43,7 @@ pub const Vm = struct {
         self.arena = std.heap.ArenaAllocator.init(self.allocator);
         defer previous.deinit();
         self.steps = 0;
-        self.cells = 0;
+        self.storage = .{ .allocator = self.arena.allocator(), .limit = self.limits.value_cells };
         const function = try self.entryFunction(entry, args);
         const inputs = try self.cloneValues(args);
         return self.execute(function, inputs);
@@ -56,40 +58,7 @@ pub const Vm = struct {
         return result;
     }
     fn allocate(self: *Vm, count: usize) ![]b.Value {
-        if (count > self.limits.value_cells -| self.cells) return error.ExecutionMemoryLimit;
-        self.cells += count;
-        return self.arena.allocator().alloc(b.Value, count);
-    }
-    fn elementIndex(slots: []const b.Value, index_slot: b.Slot, length: usize) !usize {
-        const index = slots[index_slot].integer;
-        if (index < 0 or index >= length) return error.ExecutionIndexOutOfBounds;
-        return @intCast(index);
-    }
-    fn readPlace(slots: []const b.Value, place: b.Place) !b.Value {
-        var value = slots[place.root];
-        for (place.path) |projection| value = switch (projection) {
-            .field => |index| value.record[index],
-            .element => |index| value.array[try elementIndex(slots, index, value.array.len)],
-        };
-        return value;
-    }
-    // Values are immutable snapshots. Rebuild only the path to the destination,
-    // sharing every untouched subtree. The verifier bounds its depth and types;
-    // all new aggregate cells count against the execution memory budget.
-    fn update(self: *Vm, slots: []const b.Value, base: b.Value, path: []const b.Projection, value: b.Value) anyerror!b.Value {
-        if (path.len == 0) return value;
-        const elements, const index = switch (path[0]) {
-            .field => |index| .{ base.record, @as(usize, index) },
-            .element => |index| .{ base.array, try elementIndex(slots, index, base.array.len) },
-        };
-        const changed = try self.update(slots, elements[index], path[1..], value);
-        const result = try self.allocate(elements.len);
-        @memcpy(result, elements);
-        result[index] = changed;
-        return switch (path[0]) {
-            .field => .{ .record = result },
-            .element => .{ .array = result },
-        };
+        return self.storage.allocate(count);
     }
     fn entryFunction(self: *Vm, id: g.GlobalFunctionId, args: []const b.Value) !*const b.Function {
         if (@intFromEnum(id) >= self.program.functions.len) return error.InvalidEntry;
@@ -101,21 +70,24 @@ pub const Vm = struct {
         return function;
     }
     fn frame(self: *Vm, function: *const b.Function, args: []const b.Value, return_slot: ?b.Slot) !Frame {
-        const slots = try self.allocate(function.slots.len);
-        @memset(slots, .unit);
+        const id = try self.storage.enter(function.slots.len);
+        const slots = try self.storage.slots(id);
         for (args, function.inputs) |value, slot| slots[slot] = value;
-        return .{ .function = function, .slots = slots, .return_slot = return_slot };
+        return .{ .function = function, .storage = id, .return_slot = return_slot };
     }
     fn execute(self: *Vm, function: *const b.Function, args: []const b.Value) ![]const b.Value {
         var frames: std.ArrayList(Frame) = .empty;
         defer frames.deinit(self.allocator);
+        // Runtime failures unwind frame liveness as well. Resource cleanup is
+        // still unsupported; no destructor can be skipped by this path.
+        defer for (frames.items) |active| self.storage.leave(active.storage);
         if (self.limits.call_depth == 0) return error.ExecutionCallDepthLimit;
         try frames.append(self.allocator, try self.frame(function, args, null));
         while (true) {
             // Never retain this pointer across a push: the frame array may move.
             const current = &frames.items[frames.items.len - 1];
             const f = current.function;
-            const slots = current.slots;
+            const slots = try self.storage.slots(current.storage);
             const inst = f.code[current.pc];
             self.source = inst.source;
             if (self.steps >= self.limits.instructions) return error.ExecutionInstructionLimit;
@@ -124,6 +96,11 @@ pub const Vm = struct {
             switch (inst.op) {
                 .constant => |x| slots[x.dst] = x.value,
                 .copy => |x| slots[x.dst] = slots[x.src],
+                .readonly => |x| {
+                    var reference = slots[x.src].reference;
+                    reference.mutability = .read_only;
+                    slots[x.dst] = .{ .reference = reference };
+                },
                 .record => |x| {
                     const fields = try self.allocate(x.fields.len);
                     for (fields, x.fields) |*value, slot| value.* = slots[slot];
@@ -136,12 +113,28 @@ pub const Vm = struct {
                 },
                 .index => |x| {
                     const elements = slots[x.base].array;
-                    const index = slots[x.index].integer;
-                    if (index < 0 or index >= elements.len) return error.ExecutionIndexOutOfBounds;
-                    slots[x.dst] = elements[@intCast(index)];
+                    const index = try Storage.elementIndex(slots[x.index].integer, elements.len);
+                    slots[x.dst] = elements[index];
                 },
-                .check_place => |place| _ = try readPlace(slots, place),
-                .store => |x| slots[x.place.root] = try self.update(slots, slots[x.place.root], x.place.path, slots[x.value]),
+                .borrow => |x| {
+                    var path: [64]runtime_value.Projection = undefined;
+                    const reference = try self.storage.resolve(current.storage, x.place, &path);
+                    const permission = self.program.graph.semanticType(f.slots[x.dst]).pointer.mutability;
+                    slots[x.dst] = try self.storage.borrow(reference, permission);
+                },
+                .load => |x| {
+                    var path: [64]runtime_value.Projection = undefined;
+                    slots[x.dst] = try self.storage.read(try self.storage.resolve(current.storage, x.place, &path));
+                },
+                .check_place => |place| {
+                    var path: [64]runtime_value.Projection = undefined;
+                    _ = try self.storage.resolve(current.storage, place, &path);
+                },
+                .store => |x| {
+                    var path: [64]runtime_value.Projection = undefined;
+                    const reference = try self.storage.resolve(current.storage, x.place, &path);
+                    try self.storage.store(reference, slots[x.value]);
+                },
                 .field => |x| slots[x.dst] = slots[x.base].record[x.index],
                 .binary => |x| {
                     const left = slots[x.left].integer;
@@ -204,8 +197,13 @@ pub const Vm = struct {
                     const result = try self.allocate(outputs.len);
                     for (result, outputs) |*value, slot| value.* = slots[slot];
                     const completed = frames.pop().?;
+                    self.storage.leave(completed.storage);
+                    try self.storage.validateLive(result);
                     if (frames.items.len == 0) return result;
-                    if (completed.return_slot) |dst| frames.items[frames.items.len - 1].slots[dst] = result[0];
+                    if (completed.return_slot) |dst| {
+                        const caller = try self.storage.slots(frames.items[frames.items.len - 1].storage);
+                        caller[dst] = result[0];
+                    }
                 },
                 .abort_ => return error.ExecutionAborted,
             }

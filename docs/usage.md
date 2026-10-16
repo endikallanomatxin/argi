@@ -99,8 +99,13 @@ result or `status_code: Int32`; its status follows native process truncation.
 Array reads support nested values and returned temporaries. Writes follow local
 storage through record fields and array indices, including nested combinations.
 Copies are independent values, and all indexing checks bounds at runtime.
+Local safe references can be passed to and returned from checked calls. They retain
+storage identity through record/array projections and can reduce mutable access
+to read access. Ended call frames cannot be accessed. References cannot be supplied
+as external VM inputs, and results cannot borrow a completed frame. Lexical lifetime
+and aliasing rules remain the responsibility of the ordinary safety checker.
 
-References, floating point, choices/errors, virtual calls, resources,
+Raw pointers, floating point, choices/errors, virtual calls, resources,
 cleanup, globals, closures, foreign calls, and System capabilities are not yet
 supported. Unsupported constructs in reachable function bodies are rejected
 before execution, including constructs on untaken branches. Integer overflow,
