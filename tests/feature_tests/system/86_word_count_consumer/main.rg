@@ -1,7 +1,7 @@
 words ::= import ("../../../usecase_tests/03_word_count/library")
 
 expect_count(
-    .self      : &OwnedHashMap#(.key: String, .value: UIntNative, .policy: StringHashPolicy),
+    .self      : &HashMap#(.key: String, .value: UIntNative, .policy: StandardHashPolicy),
     .word      : StringView,
     .expected  : UIntNative,
     .allocator : $&PageAllocator
@@ -16,8 +16,8 @@ expect_count(
 
 run_main(.system: System) -> !Void = ..ok Void() := {
     assume allocator := system.page_allocator
-    counts ::= OwnedHashMap#(.key: String, .value: UIntNative, .policy: StringHashPolicy)(
-        .policy = StringHashPolicy(), .allocator = allocator
+    counts ::= HashMap#(.key: String, .value: UIntNative, .policy: StandardHashPolicy)(
+        .policy = StandardHashPolicy(), .allocator = allocator
     )!
     scratch :: [4]UInt8 = (0, 0, 0, 0)
     words.count_directory(

@@ -65,3 +65,9 @@ string_bytes(.text: StringView) -> (.bytes: ArrayView#(UInt8)) := {
 byte_data(.text: StringView) -> (.reference: &UInt8) := {
     reference = text._data
 }
+
+implement Equal#(StringView, StringView, (.left: &StringView, .right: &StringView)) (
+    .equal = (.args: (.left: &StringView, .right: &StringView)) -> (.ok: Bool) {
+        ok = args.left&== args.right&
+    }
+)

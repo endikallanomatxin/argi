@@ -1,5 +1,5 @@
 count_text(
-    .self      : $&OwnedHashMap#(.key: String, .value: UIntNative, .policy: StringHashPolicy),
+    .self      : $&HashMap#(.key: String, .value: UIntNative, .policy: StandardHashPolicy),
     .text      : StringView,
     .allocator : $&PageAllocator
 ) -> !Void = ..ok Void() := {
@@ -19,7 +19,7 @@ count_text(
 }
 
 count_directory(
-    .self        : $&OwnedHashMap#(.key: String, .value: UIntNative, .policy: StringHashPolicy),
+    .self        : $&HashMap#(.key: String, .value: UIntNative, .policy: StandardHashPolicy),
     .path        : StringView,
     .limit       : UIntNative,
     .buffer      : MutableArrayView#(.t: UInt8),

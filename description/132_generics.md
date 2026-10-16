@@ -195,6 +195,16 @@ Implementation constraints validate those bindings. A bare `Box(.value = value)`
 can infer its target parameters from Args, while Result never supplies missing
 parameters or selects an implementation.
 
+## Omitted compile-time parameters
+
+Compile-time type and integer parameters may declare defaults, including references
+to earlier parameters: `Pair#(.Left: Type, .Right: Type = Left)`.
+Explicit arguments take precedence. In calls, input types infer omitted bindings
+before defaults fill the remaining parameters; associated results never infer them.
+Partial constructor arguments use the same Init evidence selection as complete
+and fully inferred calls. Type annotations apply defaults directly. Completed
+arguments retain declaration order and share identity with an explicit spelling.
+
 ## Interaction with Virtual types
 
 * **Generics do not go in the vtable.** Vtable methods must be **monomorphic** after type erasure.

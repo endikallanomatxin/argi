@@ -1310,42 +1310,45 @@ pub const Resolver = struct {
         var unresolved_actual = false;
         for (storage.ir.fields.items[fields.start..][0..fields.len], 0..) |field, position| {
             var explicit = false;
-            for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len], 0..) |actual, index| {
-                const name = self.graph.text(actual.name);
-                if (!((name.len == 0 and position == index) or std.mem.eql(u8, name, module.text(field.name)))) continue;
-                explicit = true;
-                const actual_ty = self.graph.node(actual.value).ty orelse {
-                    // An associated input can be a contextual record/choice
-                    // literal. Other inputs select participants first; the
-                    // selected signature supplies its type below.
-                    unresolved_actual = true;
-                    continue;
-                };
-                if (!contract_projections.typeSelectionReady(self, actual_ty, 0)) {
-                    unresolved_actual = true;
-                    continue;
-                }
-                const ty = self.graph.semanticType(actual_ty);
-                const pattern = storage.ir.types.items[@intFromEnum(field.ty)];
-                if (located.definition.participants.len == 1 and pattern == .resolved and pattern.resolved == .pointer and
-                    self.isUnaryReceiverParticipantType(located, pattern.resolved.pointer.child) and ty == .pointer)
-                {
-                    const child = self.graph.semanticType(ty.pointer.child);
-                    if (child == .virtual) {
-                        const use = self.contractUse(child.virtual) orelse return null;
-                        if (use.declaration == declaration) {
-                            if (!self.bindContractUseArguments(use, located, &bindings)) return null;
-                            bindings.types[located.definition.participants.start] = child.virtual;
-                            virtual = true;
-                            continue;
-                        }
-                        // A different virtual interface is a known wrapper type,
-                        // and may participate in a static adapter conformance.
+            for ([_]@TypeOf(literal.fields){ literal.fields, literal.assumed_fields }, 0..) |actual_fields, pool_index| {
+                if (pool_index == 1 and explicit) break;
+                for (self.graph.value_fields.items[actual_fields.start..][0..actual_fields.len], 0..) |actual, index| {
+                    const name = self.graph.text(actual.name);
+                    if (!((pool_index == 0 and name.len == 0 and position == index) or std.mem.eql(u8, name, module.text(field.name)))) continue;
+                    explicit = true;
+                    const actual_ty = self.graph.node(actual.value).ty orelse {
+                        // An associated input can be a contextual record/choice
+                        // literal. Other inputs select participants first; the
+                        // selected signature supplies its type below.
+                        unresolved_actual = true;
+                        continue;
+                    };
+                    if (!contract_projections.typeSelectionReady(self, actual_ty, 0)) {
+                        unresolved_actual = true;
+                        continue;
                     }
+                    const ty = self.graph.semanticType(actual_ty);
+                    const pattern = storage.ir.types.items[@intFromEnum(field.ty)];
+                    if (located.definition.participants.len == 1 and pattern == .resolved and pattern.resolved == .pointer and
+                        self.isUnaryReceiverParticipantType(located, pattern.resolved.pointer.child) and ty == .pointer)
+                    {
+                        const child = self.graph.semanticType(ty.pointer.child);
+                        if (child == .virtual) {
+                            const use = self.contractUse(child.virtual) orelse return null;
+                            if (use.declaration == declaration) {
+                                if (!self.bindContractUseArguments(use, located, &bindings)) return null;
+                                bindings.types[located.definition.participants.start] = child.virtual;
+                                virtual = true;
+                                continue;
+                            }
+                            // A different virtual interface is a known wrapper type,
+                            // and may participate in a static adapter conformance.
+                        }
+                    }
+                    // Input patterns can mention associated elements. Infer what is
+                    // available now, then check the entire selected signature below.
+                    _ = try self.inferOperationInputPattern(located.module_index, field.ty, actual_ty, &bindings);
                 }
-                // Input patterns can mention associated elements. Infer what is
-                // available now, then check the entire selected signature below.
-                _ = try self.inferOperationInputPattern(located.module_index, field.ty, actual_ty, &bindings);
             }
             if (!explicit) if (field.default_value) |value| {
                 const reach = try self.generics.instantiateReachDefault(located.module_index, value) orelse continue;
@@ -2306,7 +2309,7 @@ pub const Resolver = struct {
         return global_types.equal(self.graph, expected, actual);
     }
 
-    fn inferConstraintIntPattern(
+    pub fn inferConstraintIntPattern(
         self: *Resolver,
         module_index: usize,
         pattern: ir.ParameterizedIntExprId,

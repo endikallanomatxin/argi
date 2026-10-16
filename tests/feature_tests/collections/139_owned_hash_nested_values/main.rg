@@ -12,9 +12,8 @@ Wrapper: Type = (.tracked: Tracked, .text: String)
 
 run_main(.system: System) -> !Void = ..ok Void() := {
     assume allocator := system.page_allocator
-    map ::= OwnedHashMap#(.key: Int32, .value: Wrapper, .policy: Int32HashPolicy)(
-        .policy    = Int32HashPolicy()
-        .allocator = allocator
+    map ::= HashMap#(.key: Int32, .value: Wrapper, .policy: StandardHashPolicy)(
+        .policy = StandardHashPolicy(), .allocator = allocator
     )!
     index :: Int32 = 0
     while index < 20 {
@@ -43,7 +42,9 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     if drops != 21 { abort }
 }
 
-main#(.WriterType: Type: Writer#(WriterType))(.system: System, .writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
+main#(.WriterType: Type: Writer#(WriterType))(
+    .system: System, .writer: $&WriterType = reach writer
+) -> (.status_code: Int32 = 1) := {
     run_main(.system = system)!!!
     status_code = 0
 }

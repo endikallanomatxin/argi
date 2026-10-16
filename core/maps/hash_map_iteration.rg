@@ -1,61 +1,95 @@
--- Iteration scans initialized slots, skips tombstones, and never invokes policy code.
--- Table order is unspecified. The owner loan retains the table shape generation.
-HashMapEntry#(.key: Type: ImplicitlyCopyable, .value: Type: ImplicitlyCopyable): Type = (
-    .key   : key,
-    .value : value
-)
+HashMapROEntry#(.key: Type, .value: Type): Type = (.key: &key, .value: &value)
 
-implement#(.key: Type: ImplicitlyCopyable, .value: Type: ImplicitlyCopyable) ImplicitlyCopyable#(
-    HashMapEntry#(.key: key, .value: value)
-) ()
-
-HashMapROEntry#(.key: Type: ImplicitlyCopyable, .value: Type: ImplicitlyCopyable): Type = (
-    .key   : &key,
-    .value : &value
-)
-
-implement#(.key: Type: ImplicitlyCopyable, .value: Type: ImplicitlyCopyable) ImplicitlyCopyable#(
+implement#(.key: Type, .value: Type) ImplicitlyCopyable#(
     HashMapROEntry#(.key: key, .value: value)
 ) ()
 
-HashMapRWEntry#(.key: Type: ImplicitlyCopyable, .value: Type: ImplicitlyCopyable): Type = (
-    .key   : &key,
-    .value : $&value
+HashMapBorrowIterator#(
+    .key    : Type,
+    .value  : Type,
+    .policy : Type: HashPolicy#(policy, key)
+): Type = (
+    ._owner      : &HashMap#(.key: key, .value: value, .policy: policy),
+    ._generation : &Any,
+    ._index      : UIntNative
 )
 
-implement#(.key: Type: ImplicitlyCopyable, .value: Type: ImplicitlyCopyable) ImplicitlyCopyable#(
-    HashMapRWEntry#(.key: key, .value: value)
-) ()
-
-_hash_map_next_index#(
-    .key    : Type: ImplicitlyCopyable,
-    .value  : Type: ImplicitlyCopyable,
-    .policy : Type: HashPolicy#(policy, key)
-)(.self: &HashMap#(.key: key, .value: value, .policy: policy), .start: UIntNative) -> (
-    .index : UIntNative
-) := {
+_hash_next#(.key: Type, .value: Type, .policy: Type: HashPolicy#(policy, key))(
+    .self: &HashMap#(.key: key, .value: value, .policy: policy), .start: UIntNative
+) -> (.index: UIntNative) := {
     index = start
-    count ::= capacity(self).count
 
-    while index < count {
-        slot ::= _trusted_dynamic_array_get(.array = &self&._slots, .index = index)
-        if is(.value = slot, .variant = ..occupied) { return }
+    while index < capacity(self).count {
+        if _trusted_dynamic_array_get(.array = &self&._table._slots, .index = index).state == 1 {
+            return
+        }
         index = index + 1
     }
 }
 
-HashMapIterator#(
-    .key    : Type: ImplicitlyCopyable,
-    .value  : Type: ImplicitlyCopyable,
-    .policy : Type: HashPolicy#(policy, key)
-): Type = (
-    ._owner : &HashMap#(.key: key, .value: value, .policy: policy),
-    ._index : UIntNative
+implement#(.key: Type, .value: Type, .policy: Type: HashPolicy#(policy, key)) Iterable#(
+    HashMap#(.key: key, .value: value, .policy: policy)
+) (
+    .Item         : Type = HashMapROEntry#(.key: key, .value: value)
+    .IteratorType : Type = HashMapBorrowIterator#(.key: key, .value: value, .policy: policy)
+
+    .to_iterator = (.value: &HashMap#(.key: key, .value: value, .policy: policy)) -> (
+        .iterator : HashMapBorrowIterator#(.key: key, .value: value, .policy: policy)
+    ) {
+        generation ::= erase_reference#(.t: _HashShape)(.base = &value&._shape).reference
+        owner ::= depend_on#(.t: &HashMap#(.key: key, .value: value, .policy: policy))(
+            .value = value, .on = generation
+        ).result
+        iterator = (._owner = owner, ._generation = generation, ._index = 0)
+    }
 )
+
+implement#(.key: Type, .value: Type, .policy: Type: HashPolicy#(policy, key)) Iterator#(
+    HashMapBorrowIterator#(.key: key, .value: value, .policy: policy)
+) (
+    .Item : Type = HashMapROEntry#(.key: key, .value: value)
+
+    .has_next = (.self: &HashMapBorrowIterator#(.key: key, .value: value, .policy: policy)) -> (
+        .ok : Bool
+    ) {
+        ok = [
+            _hash_next(self&._owner, .start = self&._index).index
+            < capacity(self&._owner).count
+        ]
+    }
+
+    .next = (.self: $&HashMapBorrowIterator#(.key: key, .value: value, .policy: policy)) -> (
+        .value : HashMapROEntry#(.key: key, .value: value)
+    ) {
+        index ::= _hash_next(self&._owner, .start = self&._index).index
+
+        if index >= capacity(self&._owner).count { abort }
+        entry ::= _hash_entry(self&._owner, .index = index).entry
+        borrowed_key ::= depend_on#(.t: &key)(
+            .value = &entry&.key, .on = self&._generation
+        ).result
+        borrowed_value ::= depend_on#(.t: &value)(
+            .value = &entry&.value, .on = self&._generation
+        ).result
+        value = (.key = borrowed_key, .value = borrowed_value)
+        self&._index = index + 1
+    }
+)
+
+-- Iteration scans initialized slots, skips tombstones, and never invokes policy code.
+-- Table order is unspecified. The owner loan retains the table shape generation.
+HashMapRWEntry#(.key: Type, .value: Type): Type = (
+    .key   : &key,
+    .value : $&value
+)
+
+implement#(.key: Type, .value: Type) ImplicitlyCopyable#(
+    HashMapRWEntry#(.key: key, .value: value)
+) ()
 
 HashMapKeyIterator#(
     .key    : Type: ImplicitlyCopyable,
-    .value  : Type: ImplicitlyCopyable,
+    .value  : Type,
     .policy : Type: HashPolicy#(policy, key)
 ): Type = (
     ._owner : &HashMap#(.key: key, .value: value, .policy: policy),
@@ -63,17 +97,12 @@ HashMapKeyIterator#(
 )
 
 to_key_iterator#(
-    .key    : Type: ImplicitlyCopyable,
-    .value  : Type: ImplicitlyCopyable,
-    .policy : Type: HashPolicy#(policy, key)
+    .key: Type: ImplicitlyCopyable, .value: Type, .policy: Type: HashPolicy#(policy, key)
 )(.value: &HashMap#(.key: key, .value: value, .policy: policy)) -> (
     .iterator : HashMapKeyIterator#(.key: key, .value: value, .policy: policy)
 ) := {
     owner ::= depend_on#(.t: &HashMap#(.key: key, .value: value, .policy: policy))(
-        .value = value
-        .on    = erase_reference#(.t: _DynamicArrayShape)(
-            .base = &value&._slots._shape
-        ).reference
+        .value = value, .on = erase_reference#(.t: _HashShape)(.base = &value&._shape).reference
     ).result
     iterator = (
         ._owner = owner
@@ -82,7 +111,7 @@ to_key_iterator#(
 }
 
 HashMapValueIterator#(
-    .key    : Type: ImplicitlyCopyable,
+    .key    : Type,
     .value  : Type: ImplicitlyCopyable,
     .policy : Type: HashPolicy#(policy, key)
 ): Type = (
@@ -91,17 +120,12 @@ HashMapValueIterator#(
 )
 
 to_value_iterator#(
-    .key    : Type: ImplicitlyCopyable,
-    .value  : Type: ImplicitlyCopyable,
-    .policy : Type: HashPolicy#(policy, key)
+    .key: Type, .value: Type: ImplicitlyCopyable, .policy: Type: HashPolicy#(policy, key)
 )(.value: &HashMap#(.key: key, .value: value, .policy: policy)) -> (
     .iterator : HashMapValueIterator#(.key: key, .value: value, .policy: policy)
 ) := {
     owner ::= depend_on#(.t: &HashMap#(.key: key, .value: value, .policy: policy))(
-        .value = value
-        .on    = erase_reference#(.t: _DynamicArrayShape)(
-            .base = &value&._slots._shape
-        ).reference
+        .value = value, .on = erase_reference#(.t: _HashShape)(.base = &value&._shape).reference
     ).result
     iterator = (
         ._owner = owner
@@ -109,42 +133,15 @@ to_value_iterator#(
     )
 }
 
--- Borrowed results retain a direct shape anchor independently of owner storage.
-HashMapROEntryIterator#(
-    .key    : Type: ImplicitlyCopyable,
-    .value  : Type: ImplicitlyCopyable,
-    .policy : Type: HashPolicy#(policy, key)
-): Type = (
-    ._owner      : &HashMap#(.key: key, .value: value, .policy: policy),
-    ._generation : &Any,
-    ._index      : UIntNative
-)
-
-to_ro_entry_iterator#(
-    .key    : Type: ImplicitlyCopyable,
-    .value  : Type: ImplicitlyCopyable,
-    .policy : Type: HashPolicy#(policy, key)
-)(.value: &HashMap#(.key: key, .value: value, .policy: policy)) -> (
-    .iterator : HashMapROEntryIterator#(.key: key, .value: value, .policy: policy)
-) := {
-    owner ::= depend_on#(.t: &HashMap#(.key: key, .value: value, .policy: policy))(
-        .value = value
-        .on    = erase_reference#(.t: _DynamicArrayShape)(
-            .base = &value&._slots._shape
-        ).reference
-    ).result
-    iterator = (
-        ._owner      = owner
-        ._generation = erase_reference#(.t: _DynamicArrayShape)(
-            .base = &value&._slots._shape
-        ).reference
-        ._index = 0
-    )
+to_ro_entry_iterator#(.key: Type, .value: Type, .policy: Type: HashPolicy#(policy, key))(
+    .value : &HashMap#(.key: key, .value: value, .policy: policy)
+) -> (.iterator: HashMapBorrowIterator#(.key: key, .value: value, .policy: policy)) := {
+    iterator = to_iterator(.value = value).iterator
 }
 
 HashMapRWEntryIterator#(
-    .key    : Type: ImplicitlyCopyable,
-    .value  : Type: ImplicitlyCopyable,
+    .key    : Type,
+    .value  : Type,
     .policy : Type: HashPolicy#(policy, key)
 ): Type = (
     ._owner      : $&HashMap#(.key: key, .value: value, .policy: policy),
@@ -152,86 +149,21 @@ HashMapRWEntryIterator#(
     ._index      : UIntNative
 )
 
-to_rw_entry_iterator#(
-    .key    : Type: ImplicitlyCopyable,
-    .value  : Type: ImplicitlyCopyable,
-    .policy : Type: HashPolicy#(policy, key)
-)(.value: $&HashMap#(.key: key, .value: value, .policy: policy)) -> (
-    .iterator : HashMapRWEntryIterator#(.key: key, .value: value, .policy: policy)
-) := {
+to_rw_entry_iterator#(.key: Type, .value: Type, .policy: Type: HashPolicy#(policy, key))(
+    .value : $&HashMap#(.key: key, .value: value, .policy: policy)
+) -> (.iterator: HashMapRWEntryIterator#(.key: key, .value: value, .policy: policy)) := {
     owner ::= depend_on#(.t: $&HashMap#(.key: key, .value: value, .policy: policy))(
-        .value = value
-        .on    = erase_reference#(.t: _DynamicArrayShape)(
-            .base = &value&._slots._shape
-        ).reference
+        .value = value, .on = erase_reference#(.t: _HashShape)(.base = &value&._shape).reference
     ).result
     iterator = (
         ._owner      = owner
-        ._generation = erase_reference#(.t: _DynamicArrayShape)(
-            .base = &value&._slots._shape
-        ).reference
-        ._index = 0
+        ._generation = erase_reference#(.t: _HashShape)(.base = &value&._shape).reference
+        ._index      = 0
     )
 }
 
 implement#(
-    .key    : Type: ImplicitlyCopyable,
-    .value  : Type: ImplicitlyCopyable,
-    .policy : Type: HashPolicy#(policy, key)
-) Iterable#(HashMap#(.key: key, .value: value, .policy: policy)) (
-    .Item         : Type = HashMapEntry#(.key: key, .value: value)
-    .IteratorType : Type = HashMapIterator#(.key: key, .value: value, .policy: policy)
-
-    .to_iterator = (.value: &HashMap#(.key: key, .value: value, .policy: policy)) -> (
-        .iterator : HashMapIterator#(.key: key, .value: value, .policy: policy)
-    ) {
-        owner ::= depend_on#(.t: &HashMap#(.key: key, .value: value, .policy: policy))(
-            .value = value
-            .on    = erase_reference#(.t: _DynamicArrayShape)(
-                .base = &value&._slots._shape
-            ).reference
-        ).result
-        iterator = (._owner = owner, ._index = 0)
-    }
-)
-
-implement#(
-    .key    : Type: ImplicitlyCopyable,
-    .value  : Type: ImplicitlyCopyable,
-    .policy : Type: HashPolicy#(policy, key)
-) Iterator#(HashMapIterator#(.key: key, .value: value, .policy: policy)) (
-    .Item : Type = HashMapEntry#(.key: key, .value: value)
-
-    .has_next = (.self: &HashMapIterator#(.key: key, .value: value, .policy: policy)) -> (
-        .ok : Bool
-    ) {
-        ok = [
-            _hash_map_next_index(self&._owner, .start = self&._index).index
-            < capacity(self&._owner).count
-        ]
-    }
-
-    .next = (.self: $&HashMapIterator#(.key: key, .value: value, .policy: policy)) -> (
-        .value : HashMapEntry#(.key: key, .value: value)
-    ) {
-        index ::= _hash_map_next_index(self&._owner, .start = self&._index).index
-
-        if index >= capacity(self&._owner).count { abort }
-        slot ::= _trusted_dynamic_array_get(.array = &self&._owner&._slots, .index = index)
-        self&._index = index + 1
-
-        match slot {
-            ..occupied entry { value = (.key = entry.key, .value = entry.value) }
-            ..empty { abort }
-            ..deleted { abort }
-        }
-    }
-)
-
-implement#(
-    .key    : Type: ImplicitlyCopyable,
-    .value  : Type: ImplicitlyCopyable,
-    .policy : Type: HashPolicy#(policy, key)
+    .key: Type: ImplicitlyCopyable, .value: Type, .policy: Type: HashPolicy#(policy, key)
 ) Iterator#(HashMapKeyIterator#(.key: key, .value: value, .policy: policy)) (
     .Item : Type = key
 
@@ -239,7 +171,7 @@ implement#(
         .ok : Bool
     ) {
         ok = [
-            _hash_map_next_index(self&._owner, .start = self&._index).index
+            _hash_next(self&._owner, .start = self&._index).index
             < capacity(self&._owner).count
         ]
     }
@@ -247,24 +179,17 @@ implement#(
     .next = (.self: $&HashMapKeyIterator#(.key: key, .value: value, .policy: policy)) -> (
         .value : key
     ) {
-        index ::= _hash_map_next_index(self&._owner, .start = self&._index).index
+        index ::= _hash_next(self&._owner, .start = self&._index).index
 
         if index >= capacity(self&._owner).count { abort }
-        slot ::= _trusted_dynamic_array_get(.array = &self&._owner&._slots, .index = index)
+        entry ::= _hash_entry(self&._owner, .index = index).entry
         self&._index = index + 1
-
-        match slot {
-            ..occupied entry { value = entry.key }
-            ..empty { abort }
-            ..deleted { abort }
-        }
+        value = entry&.key
     }
 )
 
 implement#(
-    .key    : Type: ImplicitlyCopyable,
-    .value  : Type: ImplicitlyCopyable,
-    .policy : Type: HashPolicy#(policy, key)
+    .key: Type, .value: Type: ImplicitlyCopyable, .policy: Type: HashPolicy#(policy, key)
 ) Iterator#(HashMapValueIterator#(.key: key, .value: value, .policy: policy)) (
     .Item : Type = value
 
@@ -272,7 +197,7 @@ implement#(
         .ok : Bool
     ) {
         ok = [
-            _hash_map_next_index(self&._owner, .start = self&._index).index
+            _hash_next(self&._owner, .start = self&._index).index
             < capacity(self&._owner).count
         ]
     }
@@ -280,78 +205,25 @@ implement#(
     .next = (.self: $&HashMapValueIterator#(.key: key, .value: value, .policy: policy)) -> (
         .value : value
     ) {
-        index ::= _hash_map_next_index(self&._owner, .start = self&._index).index
+        index ::= _hash_next(self&._owner, .start = self&._index).index
 
         if index >= capacity(self&._owner).count { abort }
-        slot ::= _trusted_dynamic_array_get(.array = &self&._owner&._slots, .index = index)
+        entry ::= _hash_entry(self&._owner, .index = index).entry
         self&._index = index + 1
-
-        match slot {
-            ..occupied entry { value = entry.value }
-            ..empty { abort }
-            ..deleted { abort }
-        }
+        value = entry&.value
     }
 )
 
-implement#(
-    .key    : Type: ImplicitlyCopyable,
-    .value  : Type: ImplicitlyCopyable,
-    .policy : Type: HashPolicy#(policy, key)
-) Iterator#(HashMapROEntryIterator#(.key: key, .value: value, .policy: policy)) (
-    .Item : Type = HashMapROEntry#(.key: key, .value: value)
-
-    .has_next = (.self: &HashMapROEntryIterator#(.key: key, .value: value, .policy: policy)) -> (
-        .ok : Bool
-    ) {
-        ok = [
-            _hash_map_next_index(self&._owner, .start = self&._index).index
-            < capacity(self&._owner).count
-        ]
-    }
-
-    .next = (.self: $&HashMapROEntryIterator#(.key: key, .value: value, .policy: policy)) -> (
-        .value : HashMapROEntry#(.key: key, .value: value)
-    ) {
-        index ::= _hash_map_next_index(self&._owner, .start = self&._index).index
-
-        if index >= capacity(self&._owner).count { abort }
-        slot ::= dynamic_array_element_reference(
-            .array = &self&._owner&._slots, .offset = index
-        ).pointer
-        self&._index = index + 1
-
-        match slot&{
-            ..occupied&entry {
-                borrowed_key ::= depend_on#(.t: &key)(
-                    .value = &entry&.key, .on = self&._generation
-                ).result
-                borrowed_value ::= depend_on#(.t: &value)(
-                    .value = &entry&.value, .on = self&._generation
-                ).result
-                value = depend_on#(.t: HashMapROEntry#(.key: key, .value: value))(
-                    .value = (.key = borrowed_key, .value = borrowed_value)
-                    .on    = self&._generation
-                ).result
-            }
-            ..empty { abort }
-            ..deleted { abort }
-        }
-    }
-)
-
-implement#(
-    .key    : Type: ImplicitlyCopyable,
-    .value  : Type: ImplicitlyCopyable,
-    .policy : Type: HashPolicy#(policy, key)
-) Iterator#(HashMapRWEntryIterator#(.key: key, .value: value, .policy: policy)) (
+implement#(.key: Type, .value: Type, .policy: Type: HashPolicy#(policy, key)) Iterator#(
+    HashMapRWEntryIterator#(.key: key, .value: value, .policy: policy)
+) (
     .Item : Type = HashMapRWEntry#(.key: key, .value: value)
 
     .has_next = (.self: &HashMapRWEntryIterator#(.key: key, .value: value, .policy: policy)) -> (
         .ok : Bool
     ) {
         ok = [
-            _hash_map_next_index(self&._owner, .start = self&._index).index
+            _hash_next(self&._owner, .start = self&._index).index
             < capacity(self&._owner).count
         ]
     }
@@ -359,29 +231,17 @@ implement#(
     .next = (.self: $&HashMapRWEntryIterator#(.key: key, .value: value, .policy: policy)) -> (
         .value : HashMapRWEntry#(.key: key, .value: value)
     ) {
-        index ::= _hash_map_next_index(self&._owner, .start = self&._index).index
+        index ::= _hash_next(self&._owner, .start = self&._index).index
 
         if index >= capacity(self&._owner).count { abort }
-        slot ::= dynamic_array_element_mutable_reference(
-            .array = $&self&._owner&._slots, .offset = index
-        ).pointer
+        entry ::= _hash_entry(self&._owner, .index = index).entry
         self&._index = index + 1
-
-        match slot&{
-            ..occupied&entry {
-                borrowed_key ::= depend_on#(.t: &key)(
-                    .value = &entry&.key, .on = self&._generation
-                ).result
-                borrowed_value ::= depend_on#(.t: $&value)(
-                    .value = $&entry&.value, .on = self&._generation
-                ).result
-                value = depend_on#(.t: HashMapRWEntry#(.key: key, .value: value))(
-                    .value = (.key = borrowed_key, .value = borrowed_value)
-                    .on    = self&._generation
-                ).result
-            }
-            ..empty { abort }
-            ..deleted { abort }
-        }
+        borrowed_key ::= depend_on#(.t: &key)(
+            .value = &entry&.key, .on = self&._generation
+        ).result
+        borrowed_value ::= depend_on#(.t: $&value)(
+            .value = $&entry&.value, .on = self&._generation
+        ).result
+        value = (.key = borrowed_key, .value = borrowed_value)
     }
 )

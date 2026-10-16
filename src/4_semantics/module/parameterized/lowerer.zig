@@ -669,6 +669,15 @@ pub const Context = struct {
                         parameter_record.constraint = try self.lowerContractConstraint(value_type_node);
                 },
             }
+            // Lower defaults after registering all parameters, keeping their
+            // expressions symbolic until explicit/input bindings are known.
+            if (field.default_value) |value| switch (parameter_record.kind) {
+                .type => parameter_record.default_type = switch (try self.lowerGenericValue(value, false)) {
+                    .type => |ty| ty,
+                    else => return error.InvalidGenericArgumentKind,
+                },
+                .comptime_int => parameter_record.default_integer = try self.lowerIntExpression(value),
+            };
         }
     }
 

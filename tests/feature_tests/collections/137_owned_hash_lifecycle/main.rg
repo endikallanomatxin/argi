@@ -20,7 +20,7 @@ implement Deinit#(Key) (
 
 Policy: Type = ()
 
-implement BorrowedHashPolicy#(Policy, Key) (
+implement HashPolicy#(Policy, Key) (
     .hash = (.self: &Policy, .key: &Key) -> (.hash: UIntNative) { hash = 7 }
 
     .eql = (.self: &Policy, .left: &Key, .right: &Key) -> (.ok: Bool) {
@@ -36,7 +36,7 @@ implement Deinit#(Policy) (
 
 run_main(.system: System) -> !Void = ..ok Void() := {
     assume allocator := system.page_allocator
-    map ::= OwnedHashMap#(.key: Key, .value: Tracked, .policy: Policy)(
+    map ::= HashMap#(.key: Key, .value: Tracked, .policy: Policy)(
         .policy = Policy(), .allocator = allocator
     )!
     index :: Int32 = 0

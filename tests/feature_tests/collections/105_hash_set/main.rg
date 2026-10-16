@@ -4,9 +4,9 @@ implement ImplicitlyCopyable#(CollisionPolicy) ()
 
 implement HashPolicy#(CollisionPolicy, Int32) (
 
-    .hash = (.self: &CollisionPolicy, .key: Int32) -> (.hash: UIntNative) { hash = 7 }
-    .eql  = (.self: &CollisionPolicy, .left: Int32, .right: Int32) -> (.ok: Bool) {
-        ok = [left == right]
+    .hash = (.self: &CollisionPolicy, .key: &Int32) -> (.hash: UIntNative) { hash = 7 }
+    .eql  = (.self: &CollisionPolicy, .left: &Int32, .right: &Int32) -> (.ok: Bool) {
+        ok = [left&== right&]
     }
 )
 
@@ -44,8 +44,8 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     if length(.self = &set).count != 0 { abort }
     deinit(.self = $&set)
     text ::= unwrap_or_abort(
-        .value = HashSet#(.key: StringView, .policy: StringViewHashPolicy)(
-            .policy = StringViewHashPolicy(), .allocator = allocator
+        .value = HashSet#(.key: StringView, .policy: StandardHashPolicy)(
+            .policy = StandardHashPolicy(), .allocator = allocator
         )
     )
     bytes: [3]UInt8 = (97, 0, 98)

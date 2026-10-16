@@ -18,6 +18,8 @@ pub const ComptimeParameter = struct {
     name: primitives.StringRange,
     kind: ComptimeParameterKind,
     value_type: ?ir.ParameterizedTypeId = null,
+    default_type: ?ir.ParameterizedTypeId = null,
+    default_integer: ?ir.ParameterizedIntExprId = null,
     constraint: ?ContractConstraintId = null,
 };
 

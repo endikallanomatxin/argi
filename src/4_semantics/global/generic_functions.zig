@@ -814,6 +814,10 @@ pub const Resolver = struct {
         parameters: primitives.Range(ir.ComptimeParameterId),
         bindings: *generic_mod.Resolver.Bindings,
     ) !bool {
+        self.generics.applyParameterDefaults(module_index, parameters, bindings) catch |err| switch (err) {
+            error.UnboundGenericTypeParameter, error.UnboundComptimeParameter => return false,
+            else => return err,
+        };
         self.failed_constraint = null;
         const contracts = self.nested_call_context orelse return true;
         const storage = &self.modules[module_index].semantic.parameterized_storage;

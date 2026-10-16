@@ -13,58 +13,79 @@ equal keys must hash equally. Policy results must remain stable while keys are
 stored. Hash collisions are supported, but unstable equality or key mutation
 cannot be repaired by the container.
 
-Core supplies `UIntNativeHashPolicy`, `Int32HashPolicy`, and
-`StringViewHashPolicy`. Integer policies encode the integer value without raw
-memory access or native byte-order dependence. String hashing visits every byte
-and equality compares complete recorded byte extents, including embedded NULs.
-These are deterministic, non-keyed policies, not collision-attack defenses.
-Applications can implement the same small contract for their own key types.
-Borrowed string keys retain their backing lifetimes and must not be modified
-while stored. Hashing does not transfer or acquire ownership of that storage.
+`Hasher#(State)` consumes bytes and finishes a digest. `Hashable#(Key, State)`
+feeds a key's canonical representation to that state. Hashing alone does not
+require equality. Equal keys must feed identical byte streams; composite keys
+must delimit variable-length fields. Integers feed their own width in canonical
+little-endian order, including two's-complement signed values; String and StringView feed identical representations, including NULs.
 
-Ownership-bearing maps and sets use `BorrowedHashPolicy#(P, K)`, whose scoped
-`hash` and `eql` operations borrow keys through readonly references. Their
-implementations preserve key ownership and never expose mutable keys.
+`StandardHashPolicy` implements HashPolicy generically for any key satisfying
+Hashable with StandardHasher and borrowed Equal evidence. A private composed
+contract collects these requirements; Hashable remains independent. The hasher
+uses [FNV-1a-64](https://www.ietf.org/archive/id/draft-eastlake-fnv-25.html) with an
+explicit offset basis (default 14695981039346656037). Narrow native digests fold
+all state bits. It is not cryptographic or collision-attack-resistant;
+there is no implicit randomness or capability acquisition. Hashes are table
+implementation details, not persistent identifiers.
+
+Applications define Hashable once for their key, typically generically over any
+Hasher. They need a custom HashPolicy only to change hashing/equality semantics
+for a particular map. Borrowed key storage must remain live and unchanged.
+
+Both policy operations borrow keys through readonly references. Keys need not
+be implicitly copyable. Implementations preserve key values and never expose
+mutable keys.
 
 ## Maps
 
-`HashMap<K, V, P>` stores implicitly copyable keys and values with an explicit
-`P: HashPolicy#(P, K)` instance. Construction takes `.policy`, `.allocator`, and an
-optional `.capacity`. Capacity is the number of table slots, at least eight;
-occupied load stays at most one half. The map owns its table and policy, but
-copying a borrowed key or value does not acquire its backing storage.
+`HashMap#(.key: K, .value: V)()` uses StandardHashPolicy without a policy argument.
+A custom `.policy` argument infers the omitted static policy type. Only the
+standard-policy Init permits omitting the policy value; custom policies are
+required inputs. Both conformances delegate storage initialization to one helper. Explicit
+`.policy: P` remains available for annotations and fully specified construction.
+The map stores keys and values using `HashPolicy#(P, K)`.
+Neither element type must be implicitly copyable. Construction takes `.policy`,
+`.allocator` (explicitly or through `assume allocator`), and optional `.capacity` (at least eight slots). The map owns its
+entries, policy, and storage. Borrowed state inside elements retains its original
+lifetime obligations; stored key contents must remain unchanged.
 
-- `put(.self, .key, .value, .allocator)` inserts or replaces a value. Replacement
-  retains the existing key and does not allocate. Construction and growth
-  report `out_of_memory`; failed growth preserves all existing entries.
-- `get(.self, .key)` returns an optional copied value. `contains` tests membership.
-- `get_reference(.self, .key)` returns an optional borrowed value. Mutation and
-  cleanup invalidate element borrows; acquire a new reference after mutation.
-- `remove(.self, .key, .allocator)` reports whether an entry was removed.
-- `length` reports entries, `capacity` reports slots, and
-  `deinit(.self)` releases the table and owned policy.
+- `put(.self, .key, .value, .allocator)` consumes its input values on every
+  outcome. Pass noncopyable values with `~`. Replacement destroys the previous
+  key and value and installs the supplied pair without allocating table storage.
+  Failed growth destroys the supplied inputs and preserves existing entries.
+- `contains(.self, .key: &K)` queries membership. `get_reference` returns `?&V`.
+  `get` returns `?V` only when V is implicitly copyable.
+- `extract(.self, .key: &K)` returns `?HashMapEntry#(K, V)`, transferring the
+  removed entry. `remove(.self, .key: &K, .allocator)` destroys it instead.
+- `reserve` grows slot capacity. All allocations complete before relocation;
+  allocation failure preserves entries and capacity. Relocation neither copies
+  nor destroys element contents.
+- `length`, `capacity`, and `deinit` report entry count, report slot count, and
+  destroy remaining entries and release storage, respectively.
 
-`HashMap` implements `Iterable<HashMapEntry<K, V>>`: `for entry in map`
-visits copied `.key`/`.value` pairs. `to_key_iterator` and `to_value_iterator`
-visit copied keys and values. Iteration scans table slots, skips deleted entries,
-and does not call hashing or equality policies. Order is unspecified; iterators
-allocate no storage and are not snapshots.
+`for entry in map` borrows `.key: &K` and `.value: &V` for every element type.
+`to_ro_entry_iterator` uses that same iterator. `to_rw_entry_iterator` returns
+`.key: &K` and `.value: $&V`. Keys remain readonly. `to_key_iterator` and
+`to_value_iterator` copy only their selected element, requiring that element to
+be implicitly copyable independently of the other type.
 
-`to_ro_entry_iterator` returns borrowed entries with `.key: &K` and `.value: &V`.
-`to_rw_entry_iterator` accepts a mutable map and returns `.key: &K` and
-`.value: $&V`. Keys remain readonly so value edits cannot corrupt lookup policy
-invariants. Direct edits through borrowed value references preserve iteration.
-Every successful `put`, removal of an existing key, growth, and cleanup
-invalidates existing iterators and entry references; reacquire them afterward.
-Copied entries remain independent of table storage, while any borrowed state
-inside their keys or values still needs its original backing storage.
-`next` requires a preceding successful `has_next`; calling it at end aborts.
+Iteration skips deleted slots, invokes no policy operations, allocates nothing,
+and has unspecified order. Value edits through references preserve iteration.
+Successful insertion, replacement, removal, extraction, growth, and cleanup
+invalidate iterators and borrowed entries. Reacquire loans after fallible
+mutating calls because safety conservatively joins their possible outcomes.
+`next` requires a preceding successful `has_next` and aborts at exhaustion.
 
-Keys and values with borrowed state require their backing storage to remain
-live. Key contents must stay unchanged until removal or cleanup. Collisions and
-deletions preserve lookup paths, and every probe is bounded by table capacity.
-Owning keys and values use the separate owning families described below.
+Metadata and entries use separate allocations. Only occupied entry slots hold
+initialized values; cleanup visits them exactly once. This common representation
+supports both copyable and noncopyable elements without a second map family.
 
+For `HashMap#(String, V, StandardHashPolicy)`, `contains` and `get_reference` also
+accept `StringView` queries, without allocating or retaining the query.
+`get_mutable_reference(.self: $&map, .key: StringView)` borrows a mutable value
+through `MutableTextMapBorrowedLookup`, which requires `TextMapBorrowedLookup`.
+These operations preserve the same table shape dependencies and never expose
+mutable keys.
 
 > [!IDEA]
 > A map literal could use a form such as `("a" = 1, "b" = 2)`. Its relationship
@@ -137,68 +158,15 @@ for its operations, borrowing rules, and consumed-argument behavior.
 > Beyond the basic [iterator contract](44_control_flow.md), library adapters
 > could provide zipping, enumeration, and sliding-window iteration.
 
-## Owning hash maps and sets
+## Owning hash sets
 
-`OwnedHashMap<K, V, P>` moves keys and values into owned table storage. Neither
-needs to be implicitly copyable. `BorrowedHashPolicy<K>` hashes `.key: &K` and
-compares `.left: &K`/`.right: &K`; policy methods never consume lookup keys.
-The same stable equivalence and equal-hash obligations apply. Core provides
-`StringHashPolicy` for owning Strings, and the integer policies implement both
-copyable and borrowed contracts. The map owns its policy as well as its entries.
-
-Construction takes `.policy`, `.allocator`, and optional `.capacity` (at least
-eight slots). Occupied load remains at most one half. `reserve` requests a larger
-slot capacity. Growth allocates all new storage before relocating any entry;
-`out_of_memory` preserves the old entries and capacity. Entry relocation does
-not copy or destroy their owning contents. Destructors may require the supplied
-allocator; other reached cleanup capabilities retain their ordinary contracts.
-
-`put(.self, .key, .value, .allocator)` consumes both input values on every
-outcome. New insertion moves them into the table. Replacement destroys both the
-previous key and value and installs the supplied equivalent key and new value,
-without allocating table storage. Failed growth destroys consumed inputs and
-preserves existing entries. This replacement rule differs from copyable
-`HashMap`, which retains the existing key.
-
-`contains(.self, .key: &K)` queries membership; `get_reference` returns an optional
-borrowed `&V`. `extract(.self, .key: &K)` removes an entry and returns an optional
-owning `OwnedHashMapEntry<K, V>` containing `.key` and `.value`. The extracted
-entry has independent ownership and can outlive the table. `remove` destroys
-the matching entry and reports whether it existed. `length`, `capacity`, and
-`deinit` follow the copyable map meanings. Cleanup destroys every remaining key,
-value, and policy once and releases table storage. No owning key is exposed
-through a mutable reference.
-
-`for entry in map` visits borrowed `.key: &K`/`.value: &V` entries rather than
-copies of the owners. Iteration allocates no storage, skips deleted slots, and
-has unspecified table order. Iterators and returned references retain the table
-shape dependency. Reacquire loans after mutating calls, including fallible ones:
-safety summaries conservatively join their possible outcomes. Successful put,
-removal, extraction, capacity-changing reserve, and cleanup invalidate loans.
-`next` requires a successful `has_next` and aborts at exhaustion.
-
-`OwnedHashSet<K, P>` owns keys using the same table. `insert(.self, .key,
-.allocator)` consumes its argument and returns true only for new membership.
+`OwnedHashSet#(K, P)` owns keys using the common `HashMap` table. `insert(.self,
+.key, .allocator)` consumes its argument and returns true only for new membership.
 Duplicate insertion retains the stored key and destroys the supplied equivalent
 key. Failed growth destroys the supplied key and preserves membership.
 `contains`, `remove`, `reserve`, `length`, `capacity`, and `deinit` correspond to
-map operations. `extract(.self, .key: &K)` returns the removed owning key.
-`to_reference_iterator` visits readonly key references; it never copies owners.
-
-Owning a key or value does not freeze borrowed state inside it. External backing
-storage must remain live and key contents must remain unchanged while stored.
-Ownership transfer supplies no new native allocation receipt or reference
-validity beyond the original values' checked storage contracts.
-
-For `OwnedHashMap<String, V, StringHashPolicy>`, `contains` and `get_reference`
-also accept `.key: StringView`. `get_mutable_reference(.self: $&map, .key: StringView)`
-returns an optional mutable value reference through
-`MutableTextMapBorrowedLookup#(Map)`. This contract reuses the read capability
-`TextMapBorrowedLookup#(Map)`. These probes allocate nothing,
-retain the map shape dependency and never expose mutable keys. Editing a value
-preserves table shape; insertion, removal, growth and cleanup invalidate its
-borrowed references. The query text is used only for the lookup and is not
-retained by the returned value reference.
+map operations. `extract(.self, .key: &K)` returns the removed key.
+`to_reference_iterator` visits readonly key references without copying.
 
 ## Borrowed bit sets
 

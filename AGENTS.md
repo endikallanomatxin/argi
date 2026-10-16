@@ -344,7 +344,22 @@ feature first.
   Nominal-only opaque drop hooks on generic input slots do not provide that
   cleanup. Keep unchecked replacement helpers limited to copyable metadata.
 
-- Owning hash tables keep occupied entries separate from slot metadata. Move
+- HashMap supports copyable and noncopyable keys and values through one table.
+  HashPolicy always borrows keys; lookup and removal use explicit key references.
+  Hashable feeds canonical bytes to a generic block Hasher independently of
+  equality. StandardHashPolicy composes Hashable with borrowed Equal evidence.
+  It uses FNV-1a-64 with explicit offset basis and no hidden randomness. Integers
+  feed their actual widths; text prefixes bytes with its length. Only standard
+  Init supplies a default policy value; custom Init requires its policy, and both
+  share one initialization helper. Preserve Errable outcome provenance when
+  forwarding helper results, so failure does not retain successful-owner loans.
+  Compile-time parameter defaults follow explicit bindings and input inference.
+  Partial Init targets retain supplied type/integer parameters; never infer from
+  Result or reuse a previously instantiated target. Maps receive allocators through
+  ordinary explicit or assumed inputs, without reach allocator defaults.
+  Copied lookup and key/value iteration require only the copied element capability.
+  Default map iteration borrows both fields; mutable entry iteration never exposes
+  mutable keys. Hash tables keep occupied entries separate from slot metadata. Move
   extracted structural entries into lexical owners for recursive field cleanup;
   nominal-only opaque drop hooks do not replace aggregate cleanup. Replace
   grouped backing storage as a whole when growing to update sibling lifetime

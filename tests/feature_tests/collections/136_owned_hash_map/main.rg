@@ -1,7 +1,7 @@
 run_main(.system: System) -> !Void = ..ok Void() := {
     assume allocator := system.page_allocator
-    map ::= OwnedHashMap#(.key: String, .value: String, .policy: StringHashPolicy)(
-        .policy = StringHashPolicy(), .allocator = allocator
+    map ::= HashMap#(.key: String, .value: String, .policy: StandardHashPolicy)(
+        .policy = StandardHashPolicy(), .allocator = allocator
     )!
     key ::= format(.value = "key", .allocator = allocator)!
     value ::= format(.value = "first", .allocator = allocator)!

@@ -1,4 +1,4 @@
 main := () -> () {
-    policy ::= Int32HashPolicy()
-    hash(.self = &policy, .key = 1)
+    policy ::= StandardHashPolicy()
+    hash(.self = &policy, .key = &1)
 }

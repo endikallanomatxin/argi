@@ -27,8 +27,8 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         }
     }
 
-    counts ::= OwnedHashMap#(.key: String, .value: UIntNative, .policy: StringHashPolicy)(
-        StringHashPolicy()
+    counts ::= HashMap#(.key: String, .value: UIntNative, .policy: StandardHashPolicy)(
+        StandardHashPolicy()
     )!!! { status_code = 1 }
     words.count_directory(
         $&counts

@@ -13238,3 +13238,49 @@ test "feature_tests/contracts/336_unified_viewable" {
     try expectSuccessfulBuild("tests/feature_tests/contracts/336_unified_viewable");
     try run("tests/feature_tests/contracts/336_unified_viewable");
 }
+
+test "feature_tests/collections/157_unified_hash_map" {
+    try expectSuccessfulBuild("tests/feature_tests/collections/157_unified_hash_map");
+    try run("tests/feature_tests/collections/157_unified_hash_map");
+}
+
+test "feature_tests/collections/158X_hash_map_noncopyable_get" {
+    try buildExpectFail("tests/feature_tests/collections/158X_hash_map_noncopyable_get", "no generic function named 'get' accepts arguments");
+}
+
+test "feature_tests/contracts/337_compile_time_defaults" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/337_compile_time_defaults");
+    try run("tests/feature_tests/contracts/337_compile_time_defaults");
+}
+
+test "feature_tests/collections/159_default_hash_policy" {
+    try expectSuccessfulBuild("tests/feature_tests/collections/159_default_hash_policy");
+    try run("tests/feature_tests/collections/159_default_hash_policy");
+}
+
+test "feature_tests/collections/160_custom_hashable" {
+    try expectSuccessfulBuild("tests/feature_tests/collections/160_custom_hashable");
+    try run("tests/feature_tests/collections/160_custom_hashable");
+}
+
+test "feature_tests/collections/161X_standard_hash_requires_equality" {
+    try buildExpectFail("tests/feature_tests/collections/161X_standard_hash_requires_equality", "a required contract dependency is not satisfied");
+}
+
+test "feature_tests/collections/162_hashing_without_equality" {
+    try expectSuccessfulBuild("tests/feature_tests/collections/162_hashing_without_equality");
+    try run("tests/feature_tests/collections/162_hashing_without_equality");
+}
+
+test "feature_tests/collections/164_standard_hasher_vectors" {
+    try expectSuccessfulBuild("tests/feature_tests/collections/164_standard_hasher_vectors");
+    try run("tests/feature_tests/collections/164_standard_hasher_vectors");
+}
+
+test "feature_tests/collections/163X_custom_hash_policy_required" {
+    try buildExpectFail("tests/feature_tests/collections/163X_custom_hash_policy_required", "construction arguments do not match the selected Init.Args");
+}
+
+test "feature_tests/contracts/338X_partial_constructor_unknown_parameter" {
+    try buildExpectFail("tests/feature_tests/contracts/338X_partial_constructor_unknown_parameter", "unknown compile-time parameter in constructor");
+}

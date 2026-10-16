@@ -1,8 +1,7 @@
 run_main(.system: System) -> !Void = ..ok Void() := {
     assume allocator := system.page_allocator
-    map ::= HashMap#(.key: Int32, .value: Int32, .policy: Int32HashPolicy)(
-        .policy    = Int32HashPolicy()
-        .allocator = allocator
+    map ::= HashMap#(.key: Int32, .value: Int32, .policy: StandardHashPolicy)(
+        .policy = StandardHashPolicy(), .allocator = allocator
     )!
     put(.self = $&map, .key = 1, .value = 10, .allocator = allocator)!
     iterator ::= to_ro_entry_iterator(.value = &map).iterator
@@ -15,7 +14,9 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     if entry.key&!= 1 { abort }
 }
 
-main#(.WriterType: Type: Writer#(WriterType))(.system: System, .writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
+main#(.WriterType: Type: Writer#(WriterType))(
+    .system: System, .writer: $&WriterType = reach writer
+) -> (.status_code: Int32 = 1) := {
     run_main(.system = system)!!!
     status_code = 0
 }

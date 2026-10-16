@@ -252,10 +252,9 @@ Bundled OrderPolicy uses explicit policy and element participants, scoped inline
 implementations and qualified calls throughout sort, binary search and priority
 queues. Its former global less functions and unary conformance declarations have
 been removed. Sort, binary_search and _sift_down use unique ordinary declarations.
-Bundled HashPolicy and BorrowedHashPolicy also use explicit policy/key
-participants and scoped hash/eql implementations throughout maps, sets and
-iteration. Their global operation families have been removed. Borrowed integer
-hashing reuses the corresponding value-key implementation.
+Bundled HashPolicy uses explicit policy/key participants and scoped hash/eql
+operations that borrow keys throughout maps and sets. A single HashMap
+implementation supports copyable and noncopyable elements.
 Generic function instance validation shares the same tuple-aware contract check
 used during selection.
 

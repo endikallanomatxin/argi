@@ -1,8 +1,7 @@
 run_main(.system: System) -> !Void = ..ok Void() := {
     assume allocator := system.page_allocator
-    map ::= OwnedHashMap#(.key: Int32, .value: String, .policy: Int32HashPolicy)(
-        .policy    = Int32HashPolicy()
-        .allocator = allocator
+    map ::= HashMap#(.key: Int32, .value: String, .policy: StandardHashPolicy)(
+        .policy = StandardHashPolicy(), .allocator = allocator
     )!
     text ::= format(.value = "owned", .allocator = allocator)!
     put(.self = $&map, .key = 1, .value = ~text, .allocator = allocator)!
@@ -10,7 +9,9 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     copy ::= map
 }
 
-main#(.WriterType: Type: Writer#(WriterType))(.system: System, .writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
+main#(.WriterType: Type: Writer#(WriterType))(
+    .system: System, .writer: $&WriterType = reach writer
+) -> (.status_code: Int32 = 1) := {
     run_main(.system = system)!!!
     status_code = 0
 }

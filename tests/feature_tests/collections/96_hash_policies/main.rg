@@ -1,55 +1,33 @@
 main(.system: System) -> (.status_code: Int32 = 0) := {
-    native ::= UIntNativeHashPolicy()
-    integer ::= Int32HashPolicy()
-    text ::= StringViewHashPolicy()
-    if [
-        HashPolicy#(Int32HashPolicy, Int32).hash(.self = &integer, .key = -2147483648).hash
-        != 2147483648
-    ] { abort }
-    if HashPolicy#(Int32HashPolicy, Int32).hash(.self = &integer, .key = -1).hash != 4294967295 {
+    policy ::= StandardHashPolicy()
+    minimum: Int64 = -9223372036854775808
+    same: Int64 = -9223372036854775808
+    digest ::= HashPolicy#(StandardHashPolicy, Int64).hash(&policy, .key = &minimum).hash
+    if digest != HashPolicy#(StandardHashPolicy, Int64).hash(&policy, .key = &same).hash {
         abort
     }
-    if HashPolicy#(Int32HashPolicy, Int32).hash(.self = &integer, .key = 0).hash != 0 { abort }
     if [
-        HashPolicy#(Int32HashPolicy, Int32).hash(.self = &integer, .key = 2147483647).hash
-        != 2147483647
-    ] { abort }
-    value :: UIntNative = 12345
-    if [
-        HashPolicy#(UIntNativeHashPolicy, UIntNative).hash(.self = &native, .key = value).hash
-        != value
-    ] { abort }
-    bytes: [3]UInt8 = (97, 0, 98)
-    same: [3]UInt8 = (97, 0, 98)
-    left_storage ::= unwrap_or_abort(
-        .value = string_from_bytes(
-            .bytes     = unwrap_or_abort(.value = slice(&view(&bytes), .start = 0, .count = 3))
-            .allocator = system.page_allocator
-        )
-    )
-    left ::= view(&left_storage)
-    right_storage ::= unwrap_or_abort(
-        .value = string_from_bytes(
-            .bytes     = unwrap_or_abort(.value = slice(&view(&same), .start = 0, .count = 3))
-            .allocator = system.page_allocator
-        )
-    )
-    right ::= view(&right_storage)
-    if [
-        HashPolicy#(
-            StringViewHashPolicy, StringView
-        ).eql(.self = &text, .left = left, .right = right).ok
+        HashPolicy#(StandardHashPolicy, Int64).eql(&policy, .left = &minimum, .right = &same).ok
         == false
     ] { abort }
-    if [
-        HashPolicy#(StringViewHashPolicy, StringView).hash(.self = &text, .key = left).hash
-        != HashPolicy#(StringViewHashPolicy, StringView).hash(.self = &text, .key = right).hash
-    ] { abort }
-    if [
-        HashPolicy#(StringViewHashPolicy, StringView).hash(.self = &text, .key = left).hash
-        != string_hash_map_hash(.key = &left).hash
-    ] { abort }
+    maximum: UInt64 = 18446744073709551615
+    _ ::= HashPolicy#(StandardHashPolicy, UInt64).hash(&policy, .key = &maximum)
+    bytes: [3]UInt8 = (97, 0, 98)
+    storage ::= unwrap_or_abort(
+        .value = string_from_bytes(.bytes = view(&bytes), .allocator = system.page_allocator)
+    )
+    text ::= view(&storage)
+    owned_hash ::= HashPolicy#(StandardHashPolicy, String).hash(&policy, .key = &storage).hash
+    borrowed_hash ::= HashPolicy#(
+        StandardHashPolicy, StringView
+    ).hash(&policy, .key = &text).hash
+    if owned_hash != borrowed_hash { abort }
     if HashPolicy#(
-        StringViewHashPolicy, StringView
-    ).eql(.self = &text, .left = left, .right = "ab").ok { abort }
+        StandardHashPolicy, StringView
+    ).eql(&policy, .left = &text, .right = &"ab").ok { abort }
+    seeded: StandardHashPolicy = (.seed = 99)
+    if [
+        HashPolicy#(StandardHashPolicy, StringView).hash(&seeded, .key = &text).hash
+        == borrowed_hash
+    ] { abort }
 }

@@ -1,8 +1,7 @@
 run_main(.system: System) -> !Void = ..ok Void() := {
     assume allocator := system.page_allocator
-    set ::= HashSet#(.key: Int32, .policy: Int32HashPolicy)(
-        .policy    = Int32HashPolicy()
-        .allocator = allocator
+    set ::= HashSet#(.key: Int32, .policy: StandardHashPolicy)(
+        .policy = StandardHashPolicy(), .allocator = allocator
     )!
     insert(.self = $&set, .key = 1, .allocator = allocator)!
     iterator ::= to_iterator(.value = &set).iterator
@@ -10,7 +9,9 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     if has_next(.self = &iterator).ok { abort }
 }
 
-main#(.WriterType: Type: Writer#(WriterType))(.system: System, .writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
+main#(.WriterType: Type: Writer#(WriterType))(
+    .system: System, .writer: $&WriterType = reach writer
+) -> (.status_code: Int32 = 1) := {
     run_main(.system = system)!!!
     status_code = 0
 }

@@ -6,8 +6,8 @@ lookup_mutable#(.Map: Type: MutableTextMapBorrowedLookup#(.Value: UIntNative))(
 
 run_main(.system: System) -> !Void = ..ok Void() := {
     assume allocator := system.page_allocator
-    map ::= OwnedHashMap#(.key: String, .value: UIntNative, .policy: StringHashPolicy)(
-        .policy = StringHashPolicy(), .allocator = allocator
+    map ::= HashMap#(.key: String, .value: UIntNative, .policy: StandardHashPolicy)(
+        .policy = StandardHashPolicy(), .allocator = allocator
     )!
     key ::= format(.value = "café", .allocator = allocator)!
     put(.self = $&map, .key = ~key, .value = 1, .allocator = allocator)!

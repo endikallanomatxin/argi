@@ -1,10 +1,11 @@
 -- StringView probes use the same digest and equality as owning String keys.
 -- They never create a temporary owner or expose mutable keys.
-_owned_string_find#(.value: Type)(
-    .self : &OwnedHashMap#(.key: String, .value: value, .policy: StringHashPolicy),
-    .key  : StringView
+_hash_string_find#(.value: Type)(
+    .self: &HashMap#(.key: String, .value: value, .policy: StandardHashPolicy), .key: StringView
 ) -> (.index: ?UIntNative = ..none) := {
-    digest ::= string_hash_map_hash(.key = &key).hash
+    digest ::= HashPolicy#(
+        StandardHashPolicy, StringView
+    ).hash(&self&._policy, .key = &key).hash
     count ::= capacity(self).count
     position ::= digest % count
     visited :: UIntNative = 0
@@ -13,7 +14,7 @@ _owned_string_find#(.value: Type)(
         slot ::= _trusted_dynamic_array_get(.array = &self&._table._slots, .index = position)
         if slot.state == 0 { return }
         if slot.state == 1 and slot.hash == digest {
-            entry ::= _owned_hash_entry(self, .index = position).entry
+            entry ::= _hash_entry(self, .index = position).entry
             if equals(.left = view(&entry&.key), .right = key).ok {
                 index = ..some(.value = position)
                 return
@@ -25,41 +26,39 @@ _owned_string_find#(.value: Type)(
     }
 }
 
-_map_contains_owned_string_lookup#(.value: Type) := (
-    .self : &OwnedHashMap#(.key: String, .value: value, .policy: StringHashPolicy),
-    .key  : StringView
+_map_contains_hash_string_lookup#(.value: Type) := (
+    .self: &HashMap#(.key: String, .value: value, .policy: StandardHashPolicy), .key: StringView
 ) -> (.ok: Bool) {
-    ok = _owned_string_find(self, .key = key).index ?
+    ok = _hash_string_find(self, .key = key).index ?
 }
 
-_map_get_reference_owned_string_lookup#(.value: Type) := (
-    .self : &OwnedHashMap#(.key: String, .value: value, .policy: StringHashPolicy),
-    .key  : StringView
+_map_get_reference_hash_string_lookup#(.value: Type) := (
+    .self: &HashMap#(.key: String, .value: value, .policy: StandardHashPolicy), .key: StringView
 ) -> (.result: ?&value = ..none) {
-    match _owned_string_find(self, .key = key).index {
+    match _hash_string_find(self, .key = key).index {
         ..none {}
         ..some found {
-            entry ::= _owned_hash_entry(self, .index = found.value).entry
+            entry ::= _hash_entry(self, .index = found.value).entry
             borrowed ::= depend_on#(.t: &value)(
                 .value = &entry&.value
-                .on    = erase_reference#(.t: _OwnedHashShape)(.base = &self&._shape).reference
+                .on    = erase_reference#(.t: _HashShape)(.base = &self&._shape).reference
             ).result
             result = ..some(.value = borrowed)
         }
     }
 }
 
-_map_get_mutable_reference_owned_string_lookup#(.value: Type)(
-    .self : $&OwnedHashMap#(.key: String, .value: value, .policy: StringHashPolicy),
+_map_get_mutable_reference_hash_string_lookup#(.value: Type)(
+    .self : $&HashMap#(.key: String, .value: value, .policy: StandardHashPolicy),
     .key  : StringView
 ) -> (.result: ?$&value = ..none) := {
-    match _owned_string_find(self, .key = key).index {
+    match _hash_string_find(self, .key = key).index {
         ..none {}
         ..some found {
-            entry ::= _owned_hash_entry(self, .index = found.value).entry
+            entry ::= _hash_entry(self, .index = found.value).entry
             borrowed ::= depend_on#(.t: $&value)(
                 .value = $&entry&.value
-                .on    = erase_reference#(.t: _OwnedHashShape)(.base = &self&._shape).reference
+                .on    = erase_reference#(.t: _HashShape)(.base = &self&._shape).reference
             ).result
             result = ..some(.value = borrowed)
         }

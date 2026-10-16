@@ -13,14 +13,12 @@ implement#(
     .Provider : Type: Allocator
 ) Init#(
     HashSet#(.key: key, .policy: policy),
-    (.policy: policy, .allocator: $&Provider = reach allocator, .capacity: UIntNative = 8)
+    (.policy: policy, .allocator: $&Provider, .capacity: UIntNative = 8)
 ) (
     .Result : Type = Errable#(HashSet#(.key: key, .policy: policy), (..out_of_memory))
-    .init   = (
-        .args : (
-            .policy: policy, .allocator: $&Provider = reach allocator, .capacity: UIntNative = 8
-        )
-    ) -> (.result: Result) {
+    .init   = (.args: (.policy: policy, .allocator: $&Provider, .capacity: UIntNative = 8)) -> (
+        .result : Result
+    ) {
         policy ::= ~args.policy
         allocator ::= args.allocator
         capacity ::= args.capacity
@@ -43,7 +41,7 @@ _map_insert_hash_set#(
 ) := (.self: $&HashSet#(.key: key, .policy: policy), .key: key, .allocator: $&Provider) -> (
     .result : Errable#(Bool, (..out_of_memory))
 ) {
-    if contains(&self&._map, .key = key).ok {
+    if contains(&self&._map, .key = &key).ok {
         result = ..ok false
         return
     }
@@ -56,7 +54,7 @@ _map_insert_hash_set#(
 _map_contains_hash_set#(.key: Type: ImplicitlyCopyable, .policy: Type: HashPolicy#(policy, key)) := (
     .self: &HashSet#(.key: key, .policy: policy), .key: key
 ) -> (.ok: Bool) {
-    ok = contains(&self&._map, .key = key).ok
+    ok = contains(&self&._map, .key = &key).ok
 }
 
 _map_remove_hash_set#(
@@ -66,7 +64,7 @@ _map_remove_hash_set#(
 ) := (.self: $&HashSet#(.key: key, .policy: policy), .key: key, .allocator: $&Provider) -> (
     .removed : Bool
 ) {
-    removed = remove(.self = $&self&._map, .key = key, .allocator = allocator).removed
+    removed = remove(.self = $&self&._map, .key = &key, .allocator = allocator).removed
 }
 
 _collection_length_hash_set#(

@@ -104,13 +104,10 @@ string_hash_map_prepare_buckets#(.AllocatorType: Type: Allocator#(AllocatorType)
 }
 
 implement#(.value: Type, .Provider: Type: Allocator) Init#(
-    StringHashMap#(.value: value),
-    (.allocator: $&Provider = reach allocator, .capacity: UIntNative = 8)
+    StringHashMap#(.value: value), (.allocator: $&Provider, .capacity: UIntNative = 8)
 ) (
     .Result : Type = StringHashMap#(.value: value)
-    .init   = (.args: (.allocator: $&Provider = reach allocator, .capacity: UIntNative = 8)) -> (
-        .result : Result
-    ) {
+    .init   = (.args: (.allocator: $&Provider, .capacity: UIntNative = 8)) -> (.result: Result) {
         allocator ::= args.allocator
         capacity ::= args.capacity
 

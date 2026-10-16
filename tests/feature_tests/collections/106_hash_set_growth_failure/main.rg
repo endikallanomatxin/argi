@@ -1,16 +1,15 @@
 RecordingAllocator: Type = (
-    .ffi           : $&ForeignFunctionInterface
-    .fail          : Bool                       = false
-    .allocations   : UIntNative                 = 0
-    .deallocations : UIntNative                 = 0
+    .ffi : $&ForeignFunctionInterface
+    .fail : Bool = false
+    .allocations   : UIntNative = 0
+    .deallocations : UIntNative = 0
 )
 
 main(.system: System) -> (.status_code: Int32 = 0) := {
     allocator :: RecordingAllocator = (.ffi = system.ffi)
     set ::= unwrap_or_abort(
-        .value = HashSet#(.key: UIntNative, .policy: UIntNativeHashPolicy)(
-            .policy    = UIntNativeHashPolicy()
-            .allocator = $&allocator
+        .value = HashSet#(.key: UIntNative, .policy: StandardHashPolicy)(
+            .policy = StandardHashPolicy(), .allocator = $&allocator
         )
     )
     missing :: UIntNative = 4
@@ -33,17 +32,13 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     allocator.fail = false
     unwrap_or_abort(.value = insert(.self = $&set, .key = missing, .allocator = $&allocator))
     deinit(.self = $&set)
-    if allocator.allocations != 2 or allocator.deallocations != 2 { abort }
+    if allocator.allocations != 4 or allocator.deallocations != 4 { abort }
 }
 
-implement Allocator#(RecordingAllocator)(
-    .allocate = (
-            .self      : $&RecordingAllocator,
-            .size      : UIntNative,
-            .alignment : UIntNative            = 1
-        ) -> (
-            .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
-        ) {
+implement Allocator#(RecordingAllocator) (
+    .allocate = (.self: $&RecordingAllocator, .size: UIntNative, .alignment: UIntNative = 1) -> (
+        .result : Errable#(.t: Allocation, .reasons: (..out_of_memory))
+    ) {
         if self&.fail {
             result = ..error(.reason = ..out_of_memory)
             return
@@ -58,22 +53,19 @@ implement Allocator#(RecordingAllocator)(
             .value = self
         )
         allocation ::= trusted_establish_allocation(
-            .storage     = storage
-            .size        = size
-            .alignment   = alignment
-            .deallocator = deallocator
+            .storage = storage, .size = size, .alignment = alignment, .deallocator = deallocator
         )
         result = ..ok ~allocation
     }
 )
 
-implement Deallocator#(RecordingAllocator)(
+implement Deallocator#(RecordingAllocator) (
     .deallocate = (
-            .self      : $&RecordingAllocator,
-            .data      : RawPointer#(.t: UInt8),
-            .size      : UIntNative,
-            .alignment : UIntNative
-        ) -> () {
+        .self      : $&RecordingAllocator,
+        .data      : RawPointer#(.t: UInt8),
+        .size      : UIntNative,
+        .alignment : UIntNative
+    ) -> () {
         self&.deallocations = self&.deallocations + 1
         free(.address = data.address, .ffi = self&.ffi)
     }

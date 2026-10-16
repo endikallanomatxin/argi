@@ -168,8 +168,9 @@ pub const Resolver = struct {
         };
         const module = &self.modules[located.module_index];
         const parameters = module.semantic.parameterized_storage.comptime_parameters.items[located.parameterized.parameters.start..][0..located.parameterized.parameters.len];
-        var canonical = true;
+        var canonical = identity.arguments.len == parameters.len;
         for (parameters, 0..) |parameter, position| {
+            if (!canonical) break;
             const argument = self.graph.generic_arguments.items[identity.arguments.start + position];
             if (!std.mem.eql(u8, module.text(parameter.name), self.graph.text(argument.name))) {
                 canonical = false;
@@ -266,10 +267,25 @@ pub const Resolver = struct {
         bindings: *Bindings,
     ) !void {
         try self.bindGlobalArgumentsPartial(module_index, parameters, arguments, bindings);
+        try self.applyParameterDefaults(module_index, parameters, bindings);
         for (parameters.start..parameters.start + parameters.len) |param_raw| {
             const parameter = self.modules[module_index].semantic.parameterized_storage.comptime_parameters.items[param_raw];
             if (parameter.kind == .type and bindings.types[param_raw] == null) return error.MissingGenericArgument;
             if (parameter.kind == .comptime_int and bindings.ints[param_raw] == null) return error.MissingGenericArgument;
+        }
+    }
+
+    pub fn applyParameterDefaults(self: *Resolver, module_index: usize, parameters: primitives.Range(ir.ComptimeParameterId), bindings: *Bindings) !void {
+        for (parameters.start..parameters.start + parameters.len) |raw| {
+            const parameter = self.modules[module_index].semantic.parameterized_storage.comptime_parameters.items[raw];
+            if (parameter.kind == .type and bindings.types[raw] == null) {
+                if (parameter.default_type) |expression|
+                    bindings.types[raw] = try self.instantiateParameterizedType(module_index, expression, bindings);
+            }
+            if (parameter.kind == .comptime_int and bindings.ints[raw] == null) {
+                if (parameter.default_integer) |expression|
+                    bindings.ints[raw] = try self.evalInt(module_index, expression, bindings);
+            }
         }
     }
 

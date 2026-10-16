@@ -1,8 +1,8 @@
 main(.system: System) -> (.status_code: Int32 = 0) := {
     assume allocator ::= system.page_allocator
     map ::= unwrap_or_abort(
-        .value = HashMap#(.key: StringView, .value: Int32, .policy: StringViewHashPolicy)(
-            .policy = StringViewHashPolicy(), .allocator = allocator
+        .value = HashMap#(.key: StringView, .value: Int32, .policy: StandardHashPolicy)(
+            .policy = StandardHashPolicy(), .allocator = allocator
         )
     )
     source ::= unwrap_or_abort(.value = String(.allocator = allocator, .length = 1))
@@ -13,6 +13,6 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         )
     )
     deinit(.self = $&source)
-    if contains(.self = &map, .key = "a").ok == false { abort }
+    if contains(.self = &map, .key = &"a").ok == false { abort }
     deinit(.self = $&map)
 }

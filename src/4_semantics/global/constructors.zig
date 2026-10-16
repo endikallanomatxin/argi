@@ -57,6 +57,13 @@ pub const Resolver = struct {
                 _ = try generics.ensureGenericInstance(selection.target);
                 return self.contractInitializer(module_index, selection.target, input, reach, source);
             }
+            if (generics.findTypeParameterized(declaration_id)) |located| {
+                if (arguments.len < located.parameterized.parameters.len) {
+                    const identity = standard_contracts.standardDeclaration(self.graph, "Init") orelse return null;
+                    const selection = try self.inferConstructorArguments(identity, .{ .partial = .{ .family = declaration_id, .arguments = arguments } }, input, reach, source);
+                    if (selection) |selected| return self.contractInitializer(module_index, selected.target, input, reach, source);
+                }
+            }
             const generic_ty = try generics.internType(.{ .generic = .{
                 .base = declaration_id,
                 .arguments = arguments,
@@ -185,6 +192,29 @@ pub const Resolver = struct {
     const ContractArguments = struct { target: global_sg.GlobalTypeId, args: global_sg.GlobalTypeId };
 
     fn inferContractArguments(self: *Resolver, declaration: global_sg.GlobalDeclId, target: ?global_sg.GlobalTypeId, family: ?global_sg.GlobalDeclId, input: global_sg.GlobalNodeId, reach: reach_context.Context, source: primitives.SourceRef) anyerror!?ContractArguments {
+        const participant: implementation_arguments.Participant = if (target) |known| .{ .known = known } else .{ .partial = .{ .family = family.?, .arguments = .{ .start = 0, .len = 0 } } };
+        return self.inferConstructorArguments(declaration, participant, input, reach, source);
+    }
+
+    fn inferConstructorArguments(self: *Resolver, declaration: global_sg.GlobalDeclId, participant: implementation_arguments.Participant, input: global_sg.GlobalNodeId, reach: reach_context.Context, source: primitives.SourceRef) anyerror!?ContractArguments {
+        if (participant == .partial) {
+            const partial = participant.partial;
+            const generics = self.generics.?;
+            const located = generics.findTypeParameterized(partial.family) orelse return null;
+            var supplied = try generic_mod.Resolver.Bindings.init(self.core.allocator, self.modules[located.module_index].semantic.parameterized_storage.comptime_parameters.items.len);
+            defer supplied.deinit(self.core.allocator);
+            generics.bindGlobalArgumentsPartial(located.module_index, located.parameterized.parameters, partial.arguments, &supplied) catch |err| {
+                const reason = switch (err) {
+                    error.TooManyGenericArguments => "too many compile-time arguments in constructor",
+                    error.UnknownGenericArgument => "unknown compile-time parameter in constructor",
+                    error.DuplicateGenericArgument => "duplicate compile-time argument in constructor",
+                    error.GenericArgumentKindMismatch => "compile-time constructor argument has the wrong kind (type or integer)",
+                    else => return err,
+                };
+                try self.reportConstructorError(source, reason);
+                return error.InvalidInitializerArguments;
+            };
+        }
         var resolver: implementation_arguments.Resolver = .{
             .graph = self.graph,
             .modules = self.modules,
@@ -193,7 +223,6 @@ pub const Resolver = struct {
             .functions = self.generic_functions.?,
             .contracts = self.contracts.?,
         };
-        const participant: implementation_arguments.Participant = if (target) |known| .{ .known = known } else .{ .family = family.? };
         switch (try resolver.infer(declaration, &.{participant}, input, reach)) {
             .selected => |selection| {
                 defer self.core.allocator.free(selection.participants);
@@ -402,6 +431,26 @@ pub const Resolver = struct {
         };
         const generics = self.generics.?;
         const arguments = (try generics.resolveCallArguments(module_index, reference)).?;
+        if (generics.findTypeParameterized(declaration_id)) |located| {
+            if (arguments.len < located.parameterized.parameters.len) {
+                if (standard_contracts.standardDeclaration(self.graph, "Init")) |identity| {
+                    const input = globalizer.globalNode(o, value.input);
+                    const reach = reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function);
+                    const selection = self.inferConstructorArguments(identity, .{ .partial = .{ .family = declaration_id, .arguments = arguments } }, input, reach, self.graph.node(input).source) catch |err| {
+                        if (err == error.DeferredContractInitializer) return .deferred;
+                        return err;
+                    };
+                    if (selection) |selected| {
+                        if (try self.contractInitializer(module_index, selected.target, input, reach, self.graph.node(input).source)) |call| {
+                            self.graph.nodes.items[@intFromEnum(globalizer.globalNode(o, value.node))] = call;
+                            committed = true;
+                            self.core.stats.calls += 1;
+                            return .resolved;
+                        }
+                    }
+                }
+            }
+        }
         const ty = try generics.internType(.{ .generic = .{
             .base = declaration_id,
             .arguments = arguments,

@@ -26,7 +26,7 @@ implement Deinit#(Policy) (
     }
 )
 
-implement BorrowedHashPolicy#(Policy, Int32) (
+implement HashPolicy#(Policy, Int32) (
     .hash = (.self: &Policy, .key: &Int32) -> (.hash: UIntNative) { hash = 0 }
 
     .eql = (.self: &Policy, .left: &Int32, .right: &Int32) -> (.ok: Bool) {
@@ -36,8 +36,8 @@ implement BorrowedHashPolicy#(Policy, Int32) (
 
 run_main(.system: System) -> !Void = ..ok Void() := {
     allocator :: RecordingAllocator = (.ffi = system.ffi)
-    map ::= OwnedHashMap#(.key: Int32, .value: Tracked, .policy: Int32HashPolicy)(
-        .policy = Int32HashPolicy(), .allocator = $&allocator
+    map ::= HashMap#(.key: Int32, .value: Tracked, .policy: StandardHashPolicy)(
+        .policy = StandardHashPolicy(), .allocator = $&allocator
     )!
     index :: Int32 = 0
     while index < 4 {
@@ -70,15 +70,15 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     deinit(.self = $&map)
     if drops != 7 or allocator.allocations != allocator.deallocations { abort }
     allocator.fail_at = allocator.attempts + 2
-    match OwnedHashMap#(.key: Int32, .value: Tracked, .policy: Int32HashPolicy)(
-        .policy = Int32HashPolicy(), .allocator = $&allocator
+    match HashMap#(.key: Int32, .value: Tracked, .policy: StandardHashPolicy)(
+        .policy = StandardHashPolicy(), .allocator = $&allocator
     ) { ..ok ~owner {
             deinit(.self = $&owner)
             abort
         } ..error _ {} }
     if allocator.allocations != allocator.deallocations { abort }
     allocator.fail_at = allocator.attempts + 1
-    match OwnedHashMap#(.key: Int32, .value: Tracked, .policy: Policy)(
+    match HashMap#(.key: Int32, .value: Tracked, .policy: Policy)(
         .policy = Policy(), .allocator = $&allocator
     ) { ..ok ~owner {
             deinit(.self = $&owner)
@@ -86,7 +86,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         } ..error _ {} }
     if policy_drops != 1 { abort }
     allocator.fail_at = allocator.attempts + 2
-    match OwnedHashMap#(.key: Int32, .value: Tracked, .policy: Policy)(
+    match HashMap#(.key: Int32, .value: Tracked, .policy: Policy)(
         .policy = Policy(), .allocator = $&allocator
     ) { ..ok ~owner {
             deinit(.self = $&owner)

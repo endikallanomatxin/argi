@@ -8,10 +8,13 @@ const functions_mod = @import("generic_functions.zig");
 const contracts_mod = @import("contracts.zig");
 const reach_context = @import("reach_context.zig");
 const types = @import("types.zig");
+const primitives = @import("../primitives/schema.zig");
+const ir = @import("../module/parameterized/ir.zig");
 
 pub const Participant = union(enum) {
     known: graph_mod.GlobalTypeId,
     family: graph_mod.GlobalDeclId,
+    partial: struct { family: graph_mod.GlobalDeclId, arguments: primitives.Range(graph_mod.GlobalGenericArgId) },
     inferred,
 };
 
@@ -69,6 +72,96 @@ pub const Resolver = struct {
         return .completed;
     }
 
+    fn bindPartialTargetExplicit(self: *Resolver, module_index: usize, pattern_id: ir.ParameterizedTypeId, family: graph_mod.GlobalDeclId, arguments: primitives.Range(graph_mod.GlobalGenericArgId), bindings: *generic_mod.Resolver.Bindings) !bool {
+        const located = self.generics.findTypeParameterized(family) orelse return false;
+        const family_module = &self.modules[located.module_index];
+        const parameters = located.parameterized.parameters;
+        var supplied = try generic_mod.Resolver.Bindings.init(self.core.allocator, family_module.semantic.parameterized_storage.comptime_parameters.items.len);
+        defer supplied.deinit(self.core.allocator);
+        // The constructor validates names, duplicates and kinds before probing
+        // candidates. Do not disguise malformed arguments as a losing pattern.
+        try self.generics.bindGlobalArgumentsPartial(located.module_index, parameters, arguments, &supplied);
+        const pattern = self.modules[module_index].semantic.parameterized_storage.ir.types.items[@intFromEnum(pattern_id)];
+        if (pattern == .resolved and pattern.resolved == .generic) {
+            const generic = pattern.resolved.generic;
+            if (try self.generics.resolveParameterizedDeclaration(module_index, generic.base) != family) return false;
+            return self.matchPartialBindings(module_index, generic.arguments, located, &supplied, bindings);
+        }
+        const closed = self.generics.instantiateParameterizedType(module_index, pattern_id, bindings) catch |err| switch (err) {
+            error.UnboundGenericTypeParameter, error.UnboundComptimeParameter => return false,
+            else => return err,
+        };
+        const identity = switch (self.graph.resolvedSemanticType(closed) orelse return false) {
+            .generic => |value| value,
+            else => return false,
+        };
+        if (identity.base != family) return false;
+        for (0..parameters.len) |index| {
+            const raw = parameters.start + index;
+            const parameter = family_module.semantic.parameterized_storage.comptime_parameters.items[raw];
+            const actual = self.generics.findGlobalArgument(family_module.text(parameter.name), identity.arguments, index) orelse return false;
+            if (supplied.types[raw]) |ty| {
+                if (actual.value != .type or !types.equal(self.graph, ty, actual.value.type)) return false;
+            }
+            if (supplied.ints[raw]) |integer| {
+                if (actual.value != .comptime_int or integer != actual.value.comptime_int) return false;
+            }
+        }
+        return true;
+    }
+
+    fn completePartialTargetDefaults(self: *Resolver, module_index: usize, pattern_id: ir.ParameterizedTypeId, family: graph_mod.GlobalDeclId, bindings: *generic_mod.Resolver.Bindings) !bool {
+        const pattern = self.modules[module_index].semantic.parameterized_storage.ir.types.items[@intFromEnum(pattern_id)];
+        if (pattern != .resolved or pattern.resolved != .generic) return true;
+        const generic = pattern.resolved.generic;
+        const located = self.generics.findTypeParameterized(family) orelse return false;
+        const family_module = &self.modules[located.module_index];
+        const parameters = located.parameterized.parameters;
+        var inferred = try generic_mod.Resolver.Bindings.init(self.core.allocator, family_module.semantic.parameterized_storage.comptime_parameters.items.len);
+        defer inferred.deinit(self.core.allocator);
+        // Recover the current bindings after input inference; explicit arguments
+        // have already constrained the pattern and are not parsed a second time.
+        for (0..parameters.len) |index| {
+            const raw = parameters.start + index;
+            const parameter = family_module.semantic.parameterized_storage.comptime_parameters.items[raw];
+            const argument = self.generics.findPatternArgument(module_index, generic.arguments, index, family_module.text(parameter.name)) orelse continue;
+            switch (argument.value) {
+                .type => |ty| inferred.types[raw] = self.generics.instantiateParameterizedType(module_index, ty, bindings) catch |err| switch (err) {
+                    error.UnboundGenericTypeParameter, error.UnboundComptimeParameter => null,
+                    else => return err,
+                },
+                .comptime_int => |expression| inferred.ints[raw] = self.generics.evalInt(module_index, expression, bindings) catch |err| switch (err) {
+                    error.UnboundComptimeParameter => null,
+                    else => return err,
+                },
+            }
+        }
+        self.generics.applyParameterDefaults(located.module_index, parameters, &inferred) catch |err| switch (err) {
+            error.UnboundGenericTypeParameter, error.UnboundComptimeParameter => return false,
+            else => return err,
+        };
+        return self.matchPartialBindings(module_index, generic.arguments, located, &inferred, bindings);
+    }
+
+    fn matchPartialBindings(self: *Resolver, module_index: usize, patterns: primitives.Range(ir.ParameterizedGenericArgId), located: generic_mod.Resolver.LocatedTypeParameterized, actual: *const generic_mod.Resolver.Bindings, bindings: *generic_mod.Resolver.Bindings) !bool {
+        const module = &self.modules[located.module_index];
+        const parameters = located.parameterized.parameters;
+        for (0..parameters.len) |index| {
+            const raw = parameters.start + index;
+            const parameter = module.semantic.parameterized_storage.comptime_parameters.items[raw];
+            const argument = self.generics.findPatternArgument(module_index, patterns, index, module.text(parameter.name)) orelse continue;
+            switch (argument.value) {
+                .type => |ty| if (actual.types[raw]) |value| {
+                    if (!try self.contracts.inferConstraintTypePattern(module_index, ty, value, bindings)) return false;
+                },
+                .comptime_int => |expression| if (actual.ints[raw]) |value| {
+                    if (!try self.contracts.inferConstraintIntPattern(module_index, expression, value, bindings)) return false;
+                },
+            }
+        }
+        return true;
+    }
+
     pub fn infer(self: *Resolver, declaration: graph_mod.GlobalDeclId, prefix: []const Participant, input: graph_mod.GlobalNodeId, reach: reach_context.Context) !Result {
         const allocator = self.core.allocator;
         const Candidate = struct { module: usize, template: storage_mod.ContractConformance, participants: []const graph_mod.GlobalTypeId };
@@ -118,6 +211,7 @@ pub const Resolver = struct {
                             if (identity != family) continue :templates;
                         } else continue :templates;
                     },
+                    .partial => |partial| if (!try self.bindPartialTargetExplicit(module_index, patterns[index].value.type, partial.family, partial.arguments, &bindings)) continue :templates,
                     .inferred => {},
                 };
                 has_prefix = true;
@@ -130,6 +224,12 @@ pub const Resolver = struct {
                         else => return err,
                     };
                     if (!matches) continue;
+                }
+                for (prefix, 0..) |participant, index| {
+                    if (participant == .partial) {
+                        const partial = participant.partial;
+                        if (!try self.completePartialTargetDefaults(module_index, patterns[index].value.type, partial.family, &bindings)) continue :templates;
+                    }
                 }
                 if (!try self.contracts.validateParameterizedImplementationConstraints(module_index, template.parameters, &bindings)) continue;
                 const participants = try allocator.alloc(graph_mod.GlobalTypeId, patterns.len);

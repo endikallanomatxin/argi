@@ -40,7 +40,7 @@ MutableTextMapBorrowedLookup#(.Map: Type): Contract = (
 MapInsertion#(.Map: Type, .Provider: Type: Allocator#(Provider)): Contract = (
     .Key   : Type
     .Value : Type
-    .put   : (.self: $&Map, .key: Key, .value: Value, .allocator: $&Provider = reach allocator) -> (
+    .put   : (.self: $&Map, .key: Key, .value: Value, .allocator: $&Provider) -> (
         .result : Errable#(Void, (..out_of_memory))
     )
 )
@@ -51,26 +51,23 @@ StringMapInsertion#(
     .Provider : Type: Allocator#(Provider)
 ): Contract = (
     .Value : Type
-    .put   : (.allocator: $&Provider = reach allocator, .self: $&Map, .key: Query, .value: Value) -> (
-    )
+    .put   : (.allocator: $&Provider, .self: $&Map, .key: Query, .value: Value) -> ()
 )
 
 MapRemoval#(.Map: Type, .Provider: Type: Allocator#(Provider)): Contract = (
     .Key    : Type
-    .remove : (.self: $&Map, .key: Key, .allocator: $&Provider = reach allocator) -> (
-        .removed : Bool
-    )
+    .remove : (.self: $&Map, .key: Key, .allocator: $&Provider) -> (.removed: Bool)
 )
 
 SetInsertion#(.Map: Type, .Provider: Type: Allocator#(Provider)): Contract = (
     .Key    : Type
-    .insert : (.self: $&Map, .key: Key, .allocator: $&Provider = reach allocator) -> (
+    .insert : (.self: $&Map, .key: Key, .allocator: $&Provider) -> (
         .result : Errable#(Bool, (..out_of_memory))
     )
 )
 
 MapReservation#(.Map: Type, .Provider: Type: Allocator#(Provider)): Contract = (
-    .reserve : (.self: $&Map, .capacity: UIntNative, .allocator: $&Provider = reach allocator) -> (
+    .reserve : (.self: $&Map, .capacity: UIntNative, .allocator: $&Provider) -> (
         .result : Errable#(Void, (..out_of_memory))
     )
 )
@@ -96,87 +93,85 @@ implement#(
 )
 
 implement#(.value: Type) TextMapBorrowedLookup#(
-    OwnedHashMap#(.key: String, .value: value, .policy: StringHashPolicy)
+    HashMap#(.key: String, .value: value, .policy: StandardHashPolicy)
 ) (
     .Value         : Type = value
-    .get_reference = _map_get_reference_owned_string_lookup
+    .get_reference = _map_get_reference_hash_string_lookup
 )
 
 implement#(.value: Type) MutableTextMapBorrowedLookup#(
-    OwnedHashMap#(.key: String, .value: value, .policy: StringHashPolicy)
+    HashMap#(.key: String, .value: value, .policy: StandardHashPolicy)
 ) (
     .Value : Type = value
-    .get_mutable_reference = _map_get_mutable_reference_owned_string_lookup
+    .get_mutable_reference = _map_get_mutable_reference_hash_string_lookup
 )
 
 implement#(.value: Type) TextMapMembership#(
-    OwnedHashMap#(.key: String, .value: value, .policy: StringHashPolicy)
+    HashMap#(.key: String, .value: value, .policy: StandardHashPolicy)
 ) (
-    .contains = _map_contains_owned_string_lookup
+    .contains = _map_contains_hash_string_lookup
 )
 
 implement#(
     .key      : Type,
     .value    : Type,
-    .policy   : Type: BorrowedHashPolicy#(policy, key),
+    .policy   : Type: HashPolicy#(policy, key),
     .Provider : Type: Allocator#(Provider)
-) MapRemoval#(OwnedHashMap#(.key: key, .value: value, .policy: policy), Provider) (
+) MapRemoval#(HashMap#(.key: key, .value: value, .policy: policy), Provider) (
     .Key    : Type = &key
-    .remove = _map_remove_owned_hash_map
+    .remove = _map_remove_hash_map
 )
 
-implement#(.key: Type, .value: Type, .policy: Type: BorrowedHashPolicy#(policy, key)) MapExtraction#(
-    OwnedHashMap#(.key: key, .value: value, .policy: policy)
+implement#(.key: Type, .value: Type, .policy: Type: HashPolicy#(policy, key)) MapExtraction#(
+    HashMap#(.key: key, .value: value, .policy: policy)
 ) (
     .Key     : Type = &key
-    .Result  : Type = ?OwnedHashMapEntry#(.key: key, .value: value)
-    .extract = _map_extract_owned_hash_map
+    .Result  : Type = ?HashMapEntry#(.key: key, .value: value)
+    .extract = _map_extract_hash_map
 )
 
-implement#(.key: Type, .value: Type, .policy: Type: BorrowedHashPolicy#(policy, key)) MapBorrowedLookup#(
-    OwnedHashMap#(.key: key, .value: value, .policy: policy)
+implement#(.key: Type, .value: Type, .policy: Type: HashPolicy#(policy, key)) MapBorrowedLookup#(
+    HashMap#(.key: key, .value: value, .policy: policy)
 ) (
     .Key : Type = &key
     .Value         : Type = value
-    .get_reference = _map_get_reference_owned_hash_map
+    .get_reference = _map_get_reference_hash_map
 )
 
-implement#(.key: Type, .value: Type, .policy: Type: BorrowedHashPolicy#(policy, key)) MapMembership#(
-    OwnedHashMap#(.key: key, .value: value, .policy: policy)
+implement#(.key: Type, .value: Type, .policy: Type: HashPolicy#(policy, key)) MapMembership#(
+    HashMap#(.key: key, .value: value, .policy: policy)
 ) (
     .Key      : Type = &key
-    .contains = _map_contains_owned_hash_map
+    .contains = _map_contains_hash_map
 )
 
 implement#(
     .key      : Type,
     .value    : Type,
-    .policy   : Type: BorrowedHashPolicy#(policy, key),
+    .policy   : Type: HashPolicy#(policy, key),
     .Provider : Type: Allocator#(Provider)
-) MapInsertion#(OwnedHashMap#(.key: key, .value: value, .policy: policy), Provider) (
+) MapInsertion#(HashMap#(.key: key, .value: value, .policy: policy), Provider) (
     .Key   : Type = key
     .Value : Type = value
-    .put   = _map_put_owned_hash_map
+    .put   = _map_put_hash_map
 )
 
 implement#(
     .key      : Type,
     .value    : Type,
-    .policy   : Type: BorrowedHashPolicy#(policy, key),
+    .policy   : Type: HashPolicy#(policy, key),
     .Provider : Type: Allocator#(Provider)
-) MapReservation#(OwnedHashMap#(.key: key, .value: value, .policy: policy), Provider) (
-    .reserve = _map_reserve_owned_hash_map
+) MapReservation#(HashMap#(.key: key, .value: value, .policy: policy), Provider) (
+    .reserve = _map_reserve_hash_map
 )
 
 implement#(
-    .key      : Type,
-    .policy   : Type: BorrowedHashPolicy#(policy, key),
-    .Provider : Type: Allocator#(Provider)
+    .key: Type, .policy: Type: HashPolicy#(policy, key), .Provider: Type: Allocator#(Provider)
 ) MapReservation#(OwnedHashSet#(.key: key, .policy: policy), Provider) (
     .reserve = _map_reserve_owned_hash_set
 )
 
-implement#(.key: Type, .policy: Type: BorrowedHashPolicy#(policy, key)) MapExtraction#(
+implement#(.key: Type, .policy: Type: HashPolicy#(policy, key)) MapExtraction#(
     OwnedHashSet#(.key: key, .policy: policy)
 ) (
     .Key     : Type = &key
@@ -185,15 +180,13 @@ implement#(.key: Type, .policy: Type: BorrowedHashPolicy#(policy, key)) MapExtra
 )
 
 implement#(
-    .key      : Type,
-    .policy   : Type: BorrowedHashPolicy#(policy, key),
-    .Provider : Type: Allocator#(Provider)
+    .key: Type, .policy: Type: HashPolicy#(policy, key), .Provider: Type: Allocator#(Provider)
 ) MapRemoval#(OwnedHashSet#(.key: key, .policy: policy), Provider) (
     .Key    : Type = &key
     .remove = _map_remove_owned_hash_set
 )
 
-implement#(.key: Type, .policy: Type: BorrowedHashPolicy#(policy, key)) MapMembership#(
+implement#(.key: Type, .policy: Type: HashPolicy#(policy, key)) MapMembership#(
     OwnedHashSet#(.key: key, .policy: policy)
 ) (
     .Key      : Type = &key
@@ -201,9 +194,7 @@ implement#(.key: Type, .policy: Type: BorrowedHashPolicy#(policy, key)) MapMembe
 )
 
 implement#(
-    .key      : Type,
-    .policy   : Type: BorrowedHashPolicy#(policy, key),
-    .Provider : Type: Allocator#(Provider)
+    .key: Type, .policy: Type: HashPolicy#(policy, key), .Provider: Type: Allocator#(Provider)
 ) SetInsertion#(OwnedHashSet#(.key: key, .policy: policy), Provider) (
     .Key    : Type = key
     .insert = _map_insert_owned_hash_set
@@ -235,51 +226,9 @@ implement#(
 )
 
 implement#(
-    .key      : Type: ImplicitlyCopyable,
-    .value    : Type: ImplicitlyCopyable,
-    .policy   : Type: HashPolicy#(policy, key),
-    .Provider : Type: Allocator#(Provider)
-) MapRemoval#(HashMap#(.key: key, .value: value, .policy: policy), Provider) (
-    .Key    : Type = key
-    .remove = _map_remove_hash_map
-)
-
-implement#(
-    .key    : Type: ImplicitlyCopyable,
-    .value  : Type: ImplicitlyCopyable,
-    .policy : Type: HashPolicy#(policy, key)
-) MapBorrowedLookup#(HashMap#(.key: key, .value: value, .policy: policy)) (
-    .Key : Type = key
-    .Value         : Type = value
-    .get_reference = _map_get_reference_hash_map
-)
-
-implement#(
-    .key    : Type: ImplicitlyCopyable,
-    .value  : Type: ImplicitlyCopyable,
-    .policy : Type: HashPolicy#(policy, key)
-) MapMembership#(HashMap#(.key: key, .value: value, .policy: policy)) (
-    .Key      : Type = key
-    .contains = _map_contains_hash_map
-)
-
-implement#(
-    .key    : Type: ImplicitlyCopyable,
-    .value  : Type: ImplicitlyCopyable,
-    .policy : Type: HashPolicy#(policy, key)
+    .key: Type, .value: Type: ImplicitlyCopyable, .policy: Type: HashPolicy#(policy, key)
 ) MapLookup#(HashMap#(.key: key, .value: value, .policy: policy)) (
-    .Key   : Type = key
+    .Key   : Type = &key
     .Value : Type = value
     .get   = _map_get_hash_map
-)
-
-implement#(
-    .key      : Type: ImplicitlyCopyable,
-    .value    : Type: ImplicitlyCopyable,
-    .policy   : Type: HashPolicy#(policy, key),
-    .Provider : Type: Allocator#(Provider)
-) MapInsertion#(HashMap#(.key: key, .value: value, .policy: policy), Provider) (
-    .Key   : Type = key
-    .Value : Type = value
-    .put   = _map_put_hash_map
 )

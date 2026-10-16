@@ -56,6 +56,10 @@ pub fn verifyParameterizedForms(graph: *const graph_mod.ModuleSemanticGraph) !vo
     for (storage.comptime_parameters.items) |parameter| {
         try require(verify.stringFits(parameter.name, graph.strings.items));
         try require(verify.optionalIdFits(parameter.value_type, storage.ir.types.items.len));
+        try require(verify.optionalIdFits(parameter.default_type, storage.ir.types.items.len));
+        try require(verify.optionalIdFits(parameter.default_integer, storage.ir.int_expressions.items.len));
+        try require(parameter.default_type == null or parameter.kind == .type);
+        try require(parameter.default_integer == null or parameter.kind == .comptime_int);
         try require(verify.optionalIdFits(parameter.constraint, storage.contract_constraints.items.len));
     }
 

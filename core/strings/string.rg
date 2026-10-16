@@ -728,3 +728,9 @@ append_ascii_assume_capacity(.self: $&String, .byte: UInt8) -> () := {
 append_text_assume_capacity(.self: $&String, .text: StringView) -> () := {
     _string_append_bytes(self, .source = string_bytes(.text = text))
 }
+
+implement Equal#(String, String, (.left: &String, .right: &String)) (
+    .equal = (.args: (.left: &String, .right: &String)) -> (.ok: Bool) {
+        ok = view(args.left) == view(args.right)
+    }
+)
