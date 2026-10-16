@@ -41,6 +41,7 @@ pub const Vm = struct {
     fn cloneValues(self: *Vm, values: []const b.Value) anyerror![]const b.Value {
         const result = try self.allocate(values.len);
         for (result, values) |*out, value| out.* = switch (value) {
+            .array => |elements| .{ .array = try self.cloneValues(elements) },
             .record => |fields| .{ .record = try self.cloneValues(fields) },
             else => value,
         };
@@ -50,6 +51,37 @@ pub const Vm = struct {
         if (count > self.limits.value_cells -| self.cells) return error.ExecutionMemoryLimit;
         self.cells += count;
         return self.arena.allocator().alloc(b.Value, count);
+    }
+    fn elementIndex(slots: []const b.Value, index_slot: b.Slot, length: usize) !usize {
+        const index = slots[index_slot].integer;
+        if (index < 0 or index >= length) return error.ExecutionIndexOutOfBounds;
+        return @intCast(index);
+    }
+    fn readPlace(slots: []const b.Value, place: b.Place) !b.Value {
+        var value = slots[place.root];
+        for (place.path) |projection| value = switch (projection) {
+            .field => |index| value.record[index],
+            .element => |index| value.array[try elementIndex(slots, index, value.array.len)],
+        };
+        return value;
+    }
+    // Values are immutable snapshots. Rebuild only the path to the destination,
+    // sharing every untouched subtree. The verifier bounds its depth and types;
+    // all new aggregate cells count against the execution memory budget.
+    fn update(self: *Vm, slots: []const b.Value, base: b.Value, path: []const b.Projection, value: b.Value) anyerror!b.Value {
+        if (path.len == 0) return value;
+        const elements, const index = switch (path[0]) {
+            .field => |index| .{ base.record, @as(usize, index) },
+            .element => |index| .{ base.array, try elementIndex(slots, index, base.array.len) },
+        };
+        const changed = try self.update(slots, elements[index], path[1..], value);
+        const result = try self.allocate(elements.len);
+        @memcpy(result, elements);
+        result[index] = changed;
+        return switch (path[0]) {
+            .field => .{ .record = result },
+            .element => .{ .array = result },
+        };
     }
     fn invoke(self: *Vm, id: g.GlobalFunctionId, args: []const b.Value, depth: usize) anyerror![]const b.Value {
         if (depth >= self.limits.call_depth or depth >= 256) return error.ExecutionCallDepthLimit;
@@ -75,6 +107,19 @@ pub const Vm = struct {
                     for (fields, x.fields) |*value, slot| value.* = slots[slot];
                     slots[x.dst] = .{ .record = fields };
                 },
+                .array => |x| {
+                    const elements = try self.allocate(x.elements.len);
+                    for (elements, x.elements) |*value, slot| value.* = slots[slot];
+                    slots[x.dst] = .{ .array = elements };
+                },
+                .index => |x| {
+                    const elements = slots[x.base].array;
+                    const index = slots[x.index].integer;
+                    if (index < 0 or index >= elements.len) return error.ExecutionIndexOutOfBounds;
+                    slots[x.dst] = elements[@intCast(index)];
+                },
+                .check_place => |place| _ = try readPlace(slots, place),
+                .store => |x| slots[x.place.root] = try self.update(slots, slots[x.place.root], x.place.path, slots[x.value]),
                 .field => |x| slots[x.dst] = slots[x.base].record[x.index],
                 .binary => |x| {
                     const left = slots[x.left].integer;

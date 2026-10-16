@@ -68,7 +68,7 @@ const FunctionLower = struct {
         return .{ .slots = try self.slots.toOwnedSlice(a), .inputs = inputs, .outputs = outputs, .code = try self.code.toOwnedSlice(a) };
     }
     fn newSlot(self: *FunctionLower, ty: b.Type) !b.Slot {
-        if (!b.supportedType(self.parent.graph, ty, 0)) return self.parent.reject(self.parent.source, "type outside the scalar/record subset");
+        if (!b.supportedType(self.parent.graph, ty, 0)) return self.parent.reject(self.parent.source, "type outside the supported VM subset");
         const id: b.Slot = @intCast(self.slots.items.len);
         try self.slots.append(self.parent.allocator, ty);
         return id;
@@ -105,6 +105,24 @@ const FunctionLower = struct {
             .assignment => |x| {
                 const dst = self.bindings.get(x.binding) orelse return self.parent.reject(node.source, "global or captured storage");
                 _ = try self.emit(node.source, .{ .copy = .{ .dst = dst, .src = try self.expression(x.value) } });
+            },
+            .array_store => |x| {
+                const base = try self.place(x.array_ptr);
+                const index = try self.expression(x.index);
+                const target = try self.project(base, .{ .element = index });
+                const value = try self.expression(x.value);
+                _ = try self.emit(node.source, .{ .store = .{ .place = target, .value = value } });
+            },
+            .pointer_assignment => |x| {
+                const target = try self.place(x.pointer);
+                const value = try self.expression(x.value);
+                _ = try self.emit(node.source, .{ .store = .{ .place = target, .value = value } });
+            },
+            .struct_field_store => |x| {
+                const base = try self.place(x.struct_ptr);
+                const target = try self.project(base, .{ .field = x.field_index });
+                const value = try self.expression(x.value);
+                _ = try self.emit(node.source, .{ .store = .{ .place = target, .value = value } });
             },
             .code_block => |block_id| try self.block(block_id),
             .return_statement => |x| {
@@ -157,6 +175,37 @@ const FunctionLower = struct {
             },
         }
     }
+    fn project(self: *FunctionLower, base: b.Place, projection: b.Projection) !b.Place {
+        if (base.path.len >= 64) return self.parent.reject(self.parent.source, "storage projection depth");
+        const path = try self.parent.allocator.alloc(b.Projection, base.path.len + 1);
+        @memcpy(path[0..base.path.len], base.path);
+        path[base.path.len] = projection;
+        return .{ .root = base.root, .path = path };
+    }
+    // Resolve storage syntactically, without evaluating it into a copied value.
+    // Real references remain unsupported; address_of here only marks the checked
+    // graph's direct local destination. Intermediate array bounds are checked
+    // before later indices or the RHS, matching native address evaluation.
+    fn place(self: *FunctionLower, id: g.GlobalNodeId) anyerror!b.Place {
+        const node = self.parent.graph.node(id);
+        self.parent.source = node.source;
+        return switch (node.content) {
+            .binding_use => |binding| .{
+                .root = self.bindings.get(binding) orelse return self.parent.reject(node.source, "global or captured storage"),
+                .path = &.{},
+            },
+            .address_of => |value| self.place(value),
+            .struct_field_access => |x| self.project(try self.place(x.value), .{ .field = x.field_index }),
+            .array_index => |x| blk: {
+                const base = try self.place(x.array_ptr);
+                const index = try self.expression(x.index);
+                const target = try self.project(base, .{ .element = index });
+                _ = try self.emit(node.source, .{ .check_place = target });
+                break :blk target;
+            },
+            else => self.parent.reject(node.source, "write through unsupported storage"),
+        };
+    }
     fn call(self: *FunctionLower, id: g.GlobalNodeId) anyerror!?b.Slot {
         const node = self.parent.graph.node(id);
         const x = node.content.function_call;
@@ -206,6 +255,17 @@ const FunctionLower = struct {
                 const fields = try self.parent.allocator.alloc(b.Slot, x.fields.len);
                 for (fields, self.parent.graph.value_fields.items[x.fields.start..][0..x.fields.len]) |*field, v| field.* = try self.expression(v.value);
                 _ = try self.emit(node.source, .{ .record = .{ .dst = dst, .fields = fields } });
+            },
+            .array_literal => |x| {
+                const elements = try self.parent.allocator.alloc(b.Slot, x.elements.len);
+                for (elements, self.parent.graph.node_refs.items[x.elements.start..][0..x.elements.len]) |*element, value| element.* = try self.expression(value);
+                _ = try self.emit(node.source, .{ .array = .{ .dst = dst, .elements = elements } });
+            },
+            .array_index => |x| {
+                const target = self.parent.graph.node(x.array_ptr);
+                const base = try self.expression(if (target.content == .address_of) target.content.address_of else x.array_ptr);
+                const index = try self.expression(x.index);
+                _ = try self.emit(node.source, .{ .index = .{ .dst = dst, .base = base, .index = index } });
             },
             .struct_field_access => |x| {
                 _ = try self.emit(node.source, .{ .field = .{ .dst = dst, .base = try self.expression(x.value), .index = x.field_index } });

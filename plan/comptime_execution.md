@@ -7,15 +7,22 @@ Release order: [0.4](0.4.md). Language semantics:
 
 `argi run --vm <directory>` lowers the checked global graph to typed bytecode
 with source locations, verifies signatures/control flow/definite initialization,
-and executes a bounded scalar/record subset. Function and type identities remain
+and executes a bounded scalar/aggregate subset. Function and type identities remain
 those of the retained global graph. See [usage](../docs/usage.md#experimental-bytecode-execution).
 
 Next: extend values/storage and ordinary cleanup, then define persistent sessions
 and native calls before JIT or `#run`. Do not bypass safety to execute a larger subset.
 
+Local writes use a root slot plus typed field/index projections. Index operands
+are evaluated once, and intermediate bounds checks retain native evaluation order.
+The interpreter rebuilds only the modified aggregate path; immutable snapshots
+preserve value-copy semantics. This representation does not yet model borrowed
+references or independently initialized fields. Those require explicit storage
+identity and lifetime rules before extending the supported subset.
+
 ## Remaining decisions
 
-- Extend frames and aggregates to references, arrays, choices, and cleanup.
+- Extend frames and aggregates to references, choices, and cleanup.
 - Shared VM/native calling convention, output storage, errors, and cleanup.
 - LLVM JIT integration, symbol resolution, and supported host/C signatures.
 - Session persistence, redefinition, failed submissions, reset, and exit.

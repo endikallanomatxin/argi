@@ -147,3 +147,97 @@ test "bytecode returns immutable records across frames" {
         \\}
     , .{}));
 }
+
+test "bytecode arrays preserve value copies and frame isolation" {
+    try std.testing.expectEqual(@as(i128, 42), try execute(
+        \\change(.values: [2]Int32) -> (.result: [2]Int32) := {
+        \\    result = values
+        \\    result[0] = 20
+        \\}
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    original :: [2]Int32 = (1, 22)
+        \\    changed ::= change(.values = original)
+        \\    original[1] = 99
+        \\    status_code = changed[0] + changed[1]
+        \\}
+    , .{}));
+}
+
+test "bytecode array indexing is checked at runtime" {
+    try std.testing.expectError(error.ExecutionIndexOutOfBounds, execute(
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    values :: [2]Int32 = (10, 20)
+        \\    index :: UIntNative = 2
+        \\    status_code = values[index]
+        \\}
+    , .{}));
+    try std.testing.expectError(error.ExecutionIndexOutOfBounds, execute(
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    values :: [0]Int32 = ()
+        \\    index :: UIntNative = 0
+        \\    values[index] = 1
+        \\}
+    , .{}));
+}
+
+test "bytecode array verifier rejects malformed elements and indices" {
+    const g = @import("../4_semantics/global/graph.zig");
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(std.testing.allocator);
+    const a = std.testing.allocator;
+    try graph.types.append(a, .{ .builtin = .Int32 });
+    try graph.types.append(a, .{ .builtin = .Bool });
+    try graph.types.append(a, .{ .array = .{ .length = 1, .element = @enumFromInt(0) } });
+    try graph.fields.append(a, .{ .name = .{ .start = 0, .len = 0 }, .ty = @enumFromInt(0), .source = .{ .file_index = 0, .offset = 0 } });
+    try graph.functions.append(a, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 1 } });
+    const source = @import("../4_semantics/primitives/schema.zig").SourceRef{ .file_index = 0, .offset = 0 };
+    var code = [_]b.Instruction{
+        .{ .source = source, .op = .{ .constant = .{ .dst = 0, .value = .{ .integer = 0 } } } },
+        .{ .source = source, .op = .{ .constant = .{ .dst = 1, .value = .{ .boolean = false } } } },
+        .{ .source = source, .op = .{ .array = .{ .dst = 2, .elements = &.{0} } } },
+        .{ .source = source, .op = .{ .index = .{ .dst = 3, .base = 2, .index = 0 } } },
+        .{ .source = source, .op = .{ .ret = &.{3} } },
+    };
+    const functions = [_]?b.Function{.{ .slots = &.{ @enumFromInt(0), @enumFromInt(1), @enumFromInt(2), @enumFromInt(0) }, .inputs = &.{}, .outputs = &.{3}, .code = &code }};
+    const program = b.Program{ .graph = &graph, .functions = &functions };
+    try b.verify(a, program);
+    code[2].op.array.elements = &.{};
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+    code[2].op.array.elements = &.{1};
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+    code[2].op.array.elements = &.{0};
+    code[3].op.index.index = 1;
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+    code[3].op = .{ .store = .{ .place = .{ .root = 2, .path = &.{.{ .element = 0 }} }, .value = 1 } };
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+    code[3].op = .{ .check_place = .{ .root = 2, .path = &.{.{ .field = 0 }} } };
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+    code[3].op = .{ .check_place = .{ .root = 2, .path = &.{.{ .element = 99 }} } };
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+}
+
+test "bytecode places update nested aggregates without changing copies" {
+    try std.testing.expectEqual(@as(i128, 42), try execute(
+        \\Pair: Type = (.left: Int32, .right: Int32)
+        \\Box: Type = (.pairs: [2]Pair)
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    box :: Box = (.pairs = ((.left = 1, .right = 2), (.left = 3, .right = 4)))
+        \\    saved ::= box
+        \\    box.pairs[1].left = 40
+        \\    box.pairs[0].right = 2
+        \\    if saved.pairs[1].left != 3 { abort }
+        \\    status_code = box.pairs[1].left + box.pairs[0].right
+        \\}
+    , .{}));
+}
+
+test "bytecode validates intermediate destinations before later operands" {
+    try std.testing.expectError(error.ExecutionIndexOutOfBounds, execute(
+        \\fail() -> (.result: UIntNative = 0) := { abort }
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    values :: [2][2]Int32 = ((1, 2), (3, 4))
+        \\    index :: UIntNative = 2
+        \\    values[index][fail()] = 9
+        \\}
+    , .{}));
+}

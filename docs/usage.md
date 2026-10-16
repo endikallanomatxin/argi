@@ -35,7 +35,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
 | --- | --- |
 | `argi build [dir]` | Compile the current package or a selected module. |
 | `argi run` | Compile and run the default executable. |
-| `argi run --vm <directory>` | Run the experimental scalar/record bytecode subset. |
+| `argi run --vm <directory>` | Run the experimental scalar/aggregate bytecode subset. |
 | `argi check [dir]` | Check all function bodies, including unreachable ones. |
 | `argi test [dir]` | Run language-level tests. |
 | `argi lsp` | Start the language server. |
@@ -91,12 +91,16 @@ The directory is a folder module; package executable selection and ordinary
 build flags are not supported in this mode. `--frontend-jobs N` is accepted.
 
 The initial subset supports fixed-width integers through 64 bits, host-width
-`UIntNative`, booleans, records by value, direct specialized function calls,
-local assignments, `if`, `while`, `break`, `continue`, and bare `return`.
+`UIntNative`, booleans, records and fixed-size arrays by value, direct specialized
+function calls, local assignments, `if`, `while`, `break`, `continue`, and bare `return`.
 Boolean operators short-circuit. A program entry has no inputs and either no
 result or `status_code: Int32`; its status follows native process truncation.
 
-References, arrays, floating point, choices/errors, virtual calls, resources,
+Array reads support nested values and returned temporaries. Writes follow local
+storage through record fields and array indices, including nested combinations.
+Copies are independent values, and all indexing checks bounds at runtime.
+
+References, floating point, choices/errors, virtual calls, resources,
 cleanup, globals, closures, foreign calls, and System capabilities are not yet
 supported. Unsupported constructs in reachable function bodies are rejected
 before execution, including constructs on untaken branches. Integer overflow,
