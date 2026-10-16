@@ -229,7 +229,7 @@ relocation without copying queued owners.
 
 `BitSet(.count, .allocator)` owns initialized storage for a fixed bit count.
 It shares the checked `length`, `contains_bit`, `set_bit` and `count_set` operations
-with borrowed bit sets. `as_view(.self: $&BitSet)` borrows a mutable `BitSetView`
+with borrowed bit sets. `view(.self: $&BitSet)` borrows a mutable `BitSetView`
 without clearing any bits. Cleanup releases the underlying dynamic array and
 invalidates its borrowed views; owners cannot be implicitly copied.
 

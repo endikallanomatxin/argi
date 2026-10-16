@@ -44,7 +44,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     survivor ::= unwrap_or_abort(.value = pop(.self = $&strings))
     deinit(.self = $&strings)
     if allocator.deallocations != 3 { abort }
-    if as_view(.self = &survivor).view != "a" { abort }
+    if view(.self = &survivor).view != "a" { abort }
     deinit(.self = $&survivor)
     if allocator.deallocations != 4 { abort }
 }

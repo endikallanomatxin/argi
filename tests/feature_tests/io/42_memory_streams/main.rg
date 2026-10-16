@@ -1,14 +1,14 @@
 main() -> (.status_code: Int32 = 0) := {
     source :: [4]UInt8 = (1, 0, 255, 7)
-    reader ::= ByteReader(.bytes = view(.array = &source))
+    reader ::= ByteReader(.bytes = view(.self = &source))
     destination :: [3]UInt8 = (9, 9, 9)
-    writer ::= ByteWriter(.bytes = view(.array = $&destination))
+    writer ::= ByteWriter(.bytes = view(.self = $&destination))
     scratch :: [2]UInt8 = (0, 0)
     copied ::= unwrap_or_abort(
         .value = copy_stream_limited(
             .reader = $&reader
             .writer = $&writer
-            .buffer = view(.array = $&scratch)
+            .buffer = view(.self = $&scratch)
             .limit  = 3
         )
     )
@@ -26,15 +26,21 @@ main() -> (.status_code: Int32 = 0) := {
     }
     unwrap_or_abort(.value = Writer#().flush(.self = $&writer))
     another :: [2]UInt8 = (0, 0)
-    partial ::= ByteWriter(.bytes = view(.array = $&another))
+    partial ::= ByteWriter(.bytes = view(.self = $&another))
     if [
-        unwrap_or_abort(.value = BlockWriter#().write_block(.self = $&partial, .buffer = view(.array = &source)))
+        unwrap_or_abort(
+            .value = BlockWriter#(
+            ).write_block(.self = $&partial, .buffer = view(.self = &source))
+        )
         != 2
     ] { abort }
     if position(.self = &partial).count != 2 { abort }
     empty ::= empty_array_view#(.t: UInt8)()
-    if unwrap_or_abort(.value = BlockWriter#().write_block(.self = $&partial, .buffer = empty)) != 0 { abort }
-    match BlockWriter#().write_block(.self = $&partial, .buffer = view(.array = &source)) {
+    if [
+        unwrap_or_abort(.value = BlockWriter#().write_block(.self = $&partial, .buffer = empty))
+        != 0
+    ] { abort }
+    match BlockWriter#().write_block(.self = $&partial, .buffer = view(.self = &source)) {
         ..ok _ { abort } ..error _ {}
     }
 

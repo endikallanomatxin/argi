@@ -12,7 +12,7 @@ main(.system: System) -> (.status_code: Int32) := {
     _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = 2, .byte = 103))
     _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = 3, .byte = 105))
 
-    first_view ::= as_view(.self = &text)
+    first_view ::= view(.self = &text)
     second_view: StringView = first_view
 
     if measure(.view = second_view).count != 4 {

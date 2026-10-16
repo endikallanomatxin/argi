@@ -266,8 +266,9 @@ length(.self: &CodepointView) -> (.count: UIntNative) := {
     }
 }
 
-implement TextViewOf#(&CodepointView) (
-    .text_view = (.self: &CodepointView) -> (.view: StringView) {
+implement Viewable#(&CodepointView) (
+    .Result    : Type = StringView
+    .make_view = (.self: &CodepointView) -> (.view: StringView) {
         view = self&._text
     }
 )

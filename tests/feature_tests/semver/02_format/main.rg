@@ -22,7 +22,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     output ::= unwrap_or_abort(
         .value = format(.value = &version, .allocator = $&allocator)
     ).result
-    if as_view(.self = &output).view != "1.2.3-alpha+001" { abort }
+    if view(.self = &output).view != "1.2.3-alpha+001" { abort }
     if allocator.allocations != 1 or allocator.last_size != 16 { abort }
     deinit(.self = $&output)
     buffer ::= unwrap_or_abort(
@@ -33,7 +33,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     unwrap_or_abort(
         .value = format_into(.out = $&buffer, .value = &version, .allocator = $&allocator)
     )
-    if as_view(.self = &buffer).view != "v1.2.3-alpha+001" { abort }
+    if view(.self = &buffer).view != "v1.2.3-alpha+001" { abort }
     if allocator.allocations != 2 { abort }
     match format(.value = &version, .allocator = $&allocator) {
         ..error _ {} ..ok ~text {

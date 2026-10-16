@@ -12,8 +12,19 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     if added.values[2] != expected_sum { abort }
     scaled ::= math.scale(.self = &a, .factor = 2.0)
     if scaled.values[0] != factor { abort }
-    left: math.Matrix#(.rows = 2, .cols = 3, .t: Int32) = (.values = ((1, 2, 3), (4, 5, 6)))
-    right: math.Matrix#(.rows = 3, .cols = 2, .t: Int32) = (.values = ((7, 8), (9, 10), (11, 12)))
+    left: math.Matrix#(.rows = 2, .cols = 3, .t: Int32) = (
+        .values = (
+            (1, 2, 3),
+            (4, 5, 6)
+        )
+    )
+    right: math.Matrix#(.rows = 3, .cols = 2, .t: Int32) = (
+        .values = (
+            (7, 8),
+            (9, 10),
+            (11, 12)
+        )
+    )
     product ::= &left * &right
     if product.values[0][0] != 58 or product.values[1][1] != 154 { abort }
     transposed ::= math.transpose(.self = &left)
@@ -23,16 +34,13 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         .value = math.DynamicMatrix(
             .rows      = 2
             .cols      = 3
-            .values    = view(.array = &values)
+            .values    = view(.self = &values)
             .allocator = system.page_allocator
         )
     ).result
     assume allocator ::= system.page_allocator
     other ::= unwrap_or_abort(
-        .value = math.transpose(
-            .self      = &dynamic
-            .allocator = system.page_allocator
-        )
+        .value = math.transpose(.self = &dynamic, .allocator = system.page_allocator)
     ).result
     result ::= unwrap_or_abort(.value = [&dynamic * &other]).result
     if [
@@ -47,7 +55,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     match math.DynamicMatrix(
         .rows      = 2
         .cols      = 2
-        .values    = view(.array = &values)
+        .values    = view(.self = &values)
         .allocator = system.page_allocator
     ) { ..error _ {} ..ok _ { abort } }
     empty: [0]Float64 = ()
@@ -55,24 +63,23 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         .value = math.DynamicMatrix(
             .rows      = 2
             .cols      = 0
-            .values    = view(.array = &empty)
+            .values    = view(.self = &empty)
             .allocator = system.page_allocator
         )
     ).result
     zero_transpose ::= unwrap_or_abort(
-        .value = math.transpose(
-            .self      = &zeros
-            .allocator = system.page_allocator
-        )
+        .value = math.transpose(.self = &zeros, .allocator = system.page_allocator)
     ).result
     zero_product ::= unwrap_or_abort(.value = [&zeros * &zero_transpose]).result
-    if unwrap_or_abort(.value = math.get(.self = &zero_product, .row = 1, .col = 1)).result != 0.0 {
+    if [
+        unwrap_or_abort(.value = math.get(.self = &zero_product, .row = 1, .col = 1)).result
+        != 0.0
+    ] {
         abort
     }
     vector ::= unwrap_or_abort(
         .value = math.DynamicVector(
-            .values    = view(.array = &values)
-            .allocator = system.page_allocator
+            .values = view(.self = &values), .allocator = system.page_allocator
         )
     ).result
     if unwrap_or_abort(.value = math.dot(.left = &vector, .right = &vector)).result != 91.0 {
@@ -81,11 +88,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     grown ::= unwrap_or_abort(.value = [&vector + &vector]).result
     if unwrap_or_abort(.value = math.get(.self = &grown, .index = 5)).result != 12.0 { abort }
     scaled_vector ::= unwrap_or_abort(
-        .value = math.scale(
-            .self      = &vector
-            .factor    = 2.0
-            .allocator = system.page_allocator
-        )
+        .value = math.scale(.self = &vector, .factor = 2.0, .allocator = system.page_allocator)
     ).result
     unwrap_or_abort(.value = math.set(.self = $&scaled_vector, .index = 0, .value = factor))
     match math.get(.self = &dynamic, .row = 2, .col = 0) { ..error _ {} ..ok _ { abort } }
@@ -97,15 +100,14 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     match math.DynamicMatrix(
         .rows      = 18446744073709551615
         .cols      = 2
-        .values    = view(.array = &empty)
+        .values    = view(.self = &empty)
         .allocator = system.page_allocator
     ) {
         ..error _ {} ..ok _ { abort }
     }
     empty_vector ::= unwrap_or_abort(
         .value = math.DynamicVector(
-            .values    = view(.array = &empty)
-            .allocator = system.page_allocator
+            .values = view(.self = &empty), .allocator = system.page_allocator
         )
     ).result
     match math.dot(.left = &vector, .right = &empty_vector) { ..error _ {} ..ok _ { abort } }
@@ -120,10 +122,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
 
     refusing :: RefusingAllocator = (.attempts = 0)
     match math.DynamicMatrix(
-        .rows      = 3
-        .cols      = 3
-        .values    = view(.array = &values)
-        .allocator = $&refusing
+        .rows = 3, .cols = 3, .values = view(.self = &values), .allocator = $&refusing
     ) { ..error _ {} ..ok _ { abort } }
     if refusing.attempts != 0 { abort }
     assume allocator ::= $&refusing

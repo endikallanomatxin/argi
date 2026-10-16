@@ -30,6 +30,6 @@ main(.system: System) -> () := {
         ..ok _ { abort }
         ..error failure { if failure.reason != ..invalid_utf8 { abort } }
     }
-    if as_view(&text) != "X" { abort }
+    if view(&text) != "X" { abort }
 
 }

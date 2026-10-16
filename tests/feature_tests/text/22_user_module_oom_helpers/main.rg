@@ -29,7 +29,7 @@ main(.system: System) -> (.status_code: Int32) := {
     match made {
         ..ok ~payload {
             text ::= ~payload
-            view ::= as_view(.self = &text)
+            view ::= view(.self = &text)
             if view == "A" {
                 deinit(.self = $&text)
                 status_code = 0

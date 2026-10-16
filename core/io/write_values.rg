@@ -16,7 +16,7 @@ implement#(.Stream: Type: Writer#(Stream)) WriteValue#(Stream, StringView) (
 implement#(.Stream: Type: Writer#(Stream)) WriteValue#(Stream, &String) (
     .Result      : Type = Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
     .write_value = (.self: $&Stream, .value: &String) -> (.result: Result) {
-        result = write(.self = self, .value = as_view(value))
+        result = write(.self = self, .value = view(value))
     }
 )
 

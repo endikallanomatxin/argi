@@ -86,7 +86,7 @@ normalize_path#(.AllocatorType: Type: Allocator#(AllocatorType))(
         if index > 0 or root > 0 {
             if text._length > 0 {
                 if unwrap_or_abort(
-                    .value = bytes_get(.view = &as_view(&text), .index = text._length - 1)
+                    .value = bytes_get(.view = &view(&text), .index = text._length - 1)
                 ) != 47 {
                     _string_push_byte($&text, .byte = 47, .allocator = allocator)!
                 }

@@ -13233,3 +13233,8 @@ test "feature_tests/io/53_runtime_argument_defaults" {
     try expectSuccessfulBuild("tests/feature_tests/io/53_runtime_argument_defaults");
     try run("tests/feature_tests/io/53_runtime_argument_defaults");
 }
+
+test "feature_tests/contracts/336_unified_viewable" {
+    try expectSuccessfulBuild("tests/feature_tests/contracts/336_unified_viewable");
+    try run("tests/feature_tests/contracts/336_unified_viewable");
+}

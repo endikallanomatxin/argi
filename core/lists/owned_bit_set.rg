@@ -42,12 +42,12 @@ implement CollectionLength#(BitSet) (
     .measure_length = _collection_length_owned_bit_set
 )
 
-as_view(.self: $&BitSet) -> (.view: BitSetView) := {
-    view = (
-        ._bytes = ViewOf#($&DynamicArray#(.t: UInt8)).make_view(.array = $&self&._storage)
-        ._count = self&._count
-    )
-}
+implement Viewable#($&BitSet) (
+    .Result    : Type = BitSetView
+    .make_view = (.self: $&BitSet) -> (.view: BitSetView) {
+        view = (._bytes = view($&self&._storage), ._count = self&._count)
+    }
+)
 
 _bit_query_BitSet(.self: &BitSet, .index: UIntNative) -> (
     .result : Errable#(Bool, (..out_of_bounds))
@@ -66,15 +66,13 @@ _bit_query_BitSet(.self: &BitSet, .index: UIntNative) -> (
 _bit_write_BitSet(.self: $&BitSet, .index: UIntNative, .value: Bool = true) -> (
     .result : Errable#(Void, (..out_of_bounds))
 ) := {
-    borrowed_view ::= as_view(self).view
+    borrowed_view ::= view(self).view
 
     result = set_bit($&borrowed_view, .index = index, .value = value)
 }
 
 _bit_count_BitSet(.self: &BitSet) -> (.count: UIntNative) := {
-    count = _bit_set_count(
-        .bytes = view(.array = &self&._storage), .extent = self&._count
-    ).count
+    count = _bit_set_count(.bytes = view(.self = &self&._storage), .extent = self&._count).count
 }
 
 implement BitSetAccess#(BitSet) (

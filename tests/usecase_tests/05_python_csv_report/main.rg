@@ -60,7 +60,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     statistics ::= p.import_module(&interpreter, "statistics")!!! { status_code = 1 }
 
     decoded ::= string_from_bytes(.bytes = view(&text))!!! { status_code = 1 }
-    source ::= p.string(&interpreter, as_view(&decoded))!!! { status_code = 1 }
+    source ::= p.string(&interpreter, view(&decoded))!!! { status_code = 1 }
     stream ::= p.call_method(&io, "StringIO", .arguments = view(&(&source)))!!! {
         status_code = 1
     }
@@ -77,7 +77,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
             ..some ~entry {
                 cell ::= p.get_item(&entry.value, &column_key)!!! { status_code = 1 }
                 cell_text ::= p.to_string(&cell)!!! { status_code = 1 }
-                duration ::= parse_float64(as_view(&cell_text))!!! { status_code = 1 }
+                duration ::= parse_float64(view(&cell_text))!!! { status_code = 1 }
                 sample ::= p.floating(&interpreter, duration)!!! { status_code = 1 }
                 if is_finite(.value = duration).ok == false or duration < 0.0 {
                     invalid_duration()!!! { status_code = 1 }
@@ -110,9 +110,9 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     print("requests", .terminator = "\t", .writer = output)!!! { status_code = 1 }
     print(count, .writer = output)!!! { status_code = 1 }
     print("mean_ms", .terminator = "\t", .writer = output)!!! { status_code = 1 }
-    print(as_view(&mean_result), .writer = output)!!! { status_code = 1 }
+    print(view(&mean_result), .writer = output)!!! { status_code = 1 }
     print("median_ms", .terminator = "\t", .writer = output)!!! { status_code = 1 }
-    print(as_view(&median_result), .writer = output)!!! { status_code = 1 }
+    print(view(&median_result), .writer = output)!!! { status_code = 1 }
 }
 
 print_python_error(.interpreter: &p.Python, .writer: $&File, .allocator: $&PageAllocator) -> !Void = ..ok Void(
@@ -121,7 +121,7 @@ print_python_error(.interpreter: &p.Python, .writer: $&File, .allocator: $&PageA
     assume writer
 
     message ::= p.error_text(interpreter)!
-    message_view ::= as_view(&message)
+    message_view ::= view(&message)
     if message_view != "" { print(message_view)! }
 }
 

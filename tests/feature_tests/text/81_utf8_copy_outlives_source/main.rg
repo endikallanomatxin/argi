@@ -7,5 +7,5 @@ copy_local(.allocator: $&PageAllocator) -> (
 
 main(.system: System) -> () := {
     text ::= unwrap_or_abort(.value = copy_local(.allocator = system.page_allocator))
-    if as_view(&text) != "é" { abort }
+    if view(&text) != "é" { abort }
 }

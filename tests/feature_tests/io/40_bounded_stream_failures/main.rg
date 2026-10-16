@@ -57,7 +57,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     source :: FaultReader = FaultReader(.fail_at = 3)
     sink :: FaultWriter = FaultWriter()
     match copy_stream_limited(
-        .reader = $&source, .writer = $&sink, .buffer = view(.array = $&scratch), .limit = 8
+        .reader = $&source, .writer = $&sink, .buffer = view(.self = $&scratch), .limit = 8
     ) {
         ..ok _ { abort }
         ..error error { if error.reason != ..stream_read_failed { abort } }
@@ -70,7 +70,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     sink.count = 0
     sink.fail_at = 3
     match copy_stream_limited(
-        .reader = $&source, .writer = $&sink, .buffer = view(.array = $&scratch), .limit = 8
+        .reader = $&source, .writer = $&sink, .buffer = view(.self = $&scratch), .limit = 8
     ) {
         ..ok _ { abort }
         ..error error { if error.reason != ..stream_flush_failed { abort } }
@@ -79,7 +79,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     sink.stalled = true
     sink.fail_at = 0
     match copy_stream_limited(
-        .reader = $&source, .writer = $&sink, .buffer = view(.array = $&scratch), .limit = 8
+        .reader = $&source, .writer = $&sink, .buffer = view(.self = $&scratch), .limit = 8
     ) {
         ..ok _ { abort }
         ..error error { if error.reason != ..stream_write_failed { abort } }
@@ -89,7 +89,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     source.calls = 0
     source.fail_at = 3
     match read_all_limited(
-        .self = $&source, .buffer = view(.array = $&scratch), .limit = 8, .allocator = allocator
+        .self = $&source, .buffer = view(.self = $&scratch), .limit = 8, .allocator = allocator
     ) {
         ..ok ~owner {
             deinit(.self = $&owner)
@@ -101,7 +101,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     empty :: [0]UInt8 = ()
     calls ::= source.calls
     match copy_stream_limited(
-        .reader = $&source, .writer = $&sink, .buffer = view(.array = $&empty), .limit = 1
+        .reader = $&source, .writer = $&sink, .buffer = view(.self = $&empty), .limit = 1
     ) {
         ..ok _ { abort }
         ..error error { if error.reason != ..invalid_stream_buffer { abort } }

@@ -14,7 +14,7 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
-    view ::= as_view(.self = &text)
+    view ::= view(.self = &text)
     if unwrap_or_abort(.value = bytes_get(.view = &view, .index = 0)) != 65 {
         status_code = 2
         return

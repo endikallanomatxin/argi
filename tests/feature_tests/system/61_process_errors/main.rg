@@ -25,7 +25,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     bytes: [3]UInt8 = (97, 0, 98)
     invalid: StringView = "a\0b"
     args: [1]StringView = (invalid)
-    match spawn(.executable = executable, .arguments = view(.array = &args)) {
+    match spawn(.executable = executable, .arguments = view(.self = &args)) {
         ..error error {
             if is(.value = error.reason, .variant = ..invalid_process_argument) {
             } else {

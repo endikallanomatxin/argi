@@ -9,10 +9,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     _ ::= unwrap_or_abort(.value = set_ascii(.self = $&source, .index = 0, .byte = 97))
     unwrap_or_abort(
         .value = put(
-            .self      = $&map
-            .key       = as_view(.self = &source).view
-            .value     = 1
-            .allocator = allocator
+            .self = $&map, .key = view(.self = &source).view, .value = 1, .allocator = allocator
         )
     )
     unwrap_or_abort(.value = put(.self = $&map, .key = "b", .value = 2, .allocator = allocator))

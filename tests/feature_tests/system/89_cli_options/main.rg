@@ -5,7 +5,7 @@ run_main() -> (
     ) = ..ok Void()
 ) := {
     args :: [7]StringView = ("-ab", "--size=12", "--offset", "-3", "file", "--", "--literal")
-    source ::= CliArgumentViews(.values = view(.array = &args))
+    source ::= CliArgumentViews(.values = view(.self = &args))
     parser ::= CliParser#(.t: CliArgumentViews)(.source = &source)
     index :: Int32 = 0
     while true {
@@ -38,7 +38,7 @@ run_main() -> (
     }
     if index != 6 { abort }
     bad :: [1]StringView = ("--=bad")
-    bad_view ::= CliArgumentViews(.values = view(.array = &bad))
+    bad_view ::= CliArgumentViews(.values = view(.self = &bad))
     invalid ::= CliParser#(.t: CliArgumentViews)(.source = &bad_view)
     match next(.self = $&invalid) {
         ..ok _ { abort } ..error&err { if [err&.reason != ..invalid_option] { abort } }

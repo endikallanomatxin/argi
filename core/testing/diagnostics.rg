@@ -180,7 +180,7 @@ _assert_owned_strings(.expected: &String, .actual: &String, .message: StringView
     .result : Errable#(Void, (..test_failed))
 ) := {
     result = expect_equal_strings(
-        .expected = as_view(expected), .actual = as_view(actual), .message = message
+        .expected = view(expected), .actual = view(actual), .message = message
     )
 }
 

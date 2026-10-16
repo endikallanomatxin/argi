@@ -1,14 +1,19 @@
 main() -> (.status_code: Int32) := {
-    src_bytes : Array#(.n = 4, .t: UInt8) = (0, 0, 0, 0)
-    dst_bytes : Array#(.n = 4, .t: UInt8) = (0, 0, 0, 0)
-    src ::= view(.array = $&src_bytes)
-    dst ::= view(.array = $&dst_bytes)
+    src_bytes: Array#(.n = 4, .t: UInt8) = (0, 0, 0, 0)
+    dst_bytes: Array#(.n = 4, .t: UInt8) = (0, 0, 0, 0)
+    src ::= view(.self = $&src_bytes)
+    dst ::= view(.self = $&dst_bytes)
 
     src_set0 ::= set#(.t: UInt8)(.self = $&src, .index = 0, .value = 3).result
     src_set1 ::= set#(.t: UInt8)(.self = $&src, .index = 1, .value = 5).result
     src_set2 ::= set#(.t: UInt8)(.self = $&src, .index = 2, .value = 7).result
     src_set3 ::= set#(.t: UInt8)(.self = $&src, .index = 3, .value = 11).result
-    if is(.value = src_set0, .variant = ..error) or is(.value = src_set1, .variant = ..error) or is(.value = src_set2, .variant = ..error) or is(.value = src_set3, .variant = ..error) {
+    if [
+        is(.value = src_set0, .variant = ..error)
+        or is(.value = src_set1, .variant = ..error)
+        or is(.value = src_set2, .variant = ..error)
+        or is(.value = src_set3, .variant = ..error)
+    ] {
         status_code = 12
         return
     }
@@ -20,7 +25,7 @@ main() -> (.status_code: Int32) := {
         status_code = 13
         return
     }
-    if dst0..ok != 3 {
+    if dst0 ..ok != 3 {
         status_code = 12
         return
     }
@@ -30,7 +35,7 @@ main() -> (.status_code: Int32) := {
         status_code = 14
         return
     }
-    if dst1..ok != 5 {
+    if dst1 ..ok != 5 {
         status_code = 13
         return
     }
@@ -40,7 +45,7 @@ main() -> (.status_code: Int32) := {
         status_code = 15
         return
     }
-    if dst2..ok != 7 {
+    if dst2 ..ok != 7 {
         status_code = 14
         return
     }
@@ -50,7 +55,7 @@ main() -> (.status_code: Int32) := {
         status_code = 16
         return
     }
-    if dst3..ok != 11 {
+    if dst3 ..ok != 11 {
         status_code = 15
         return
     }

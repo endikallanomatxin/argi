@@ -13,7 +13,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         .file_system = file_system, .path = file_path, .allocator = allocator, .mode = ..write
     )!
     input: [4]UInt8 = (65, 0, 66, 67)
-    write_all(.self = $&file, .buffer = view(.array = &input))!
+    write_all(.self = $&file, .buffer = view(.self = &input))!
     if position(.self = $&file)! != 4 { abort }
     if seek(.self = $&file, .offset = 1, .origin = ..start)! != 1 { abort }
     truncate(.self = $&file, .size = 2)!
@@ -25,7 +25,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     match entry {
         ..none { abort }
         ..some ~payload {
-            if as_view(.self = &payload.value.name).view != "bytes.bin" { abort }
+            if view(.self = &payload.value.name).view != "bytes.bin" { abort }
         }
     }
     match next(.self = $&directory)! { ..some ~payload { abort } ..none {} }
@@ -45,7 +45,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
             .allocator = system.page_allocator
         )
     )
-    invalid_path ::= as_view(&invalid_path_storage)
+    invalid_path ::= view(&invalid_path_storage)
     match create_directory(.path = invalid_path) {
         ..ok _ { abort } ..error error { if [error.reason != ..invalid_path] { abort } }
     }

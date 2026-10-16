@@ -9,9 +9,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     allocator :: RecordingAllocator = (.ffi = system.ffi)
     parts: [3]StringView = ("ab", "", "c")
     output ::= unwrap_or_abort(
-        .value = join(
-            .parts = view(.array = &parts), .separator = "-", .allocator = $&allocator
-        )
+        .value = join(.parts = view(.self = &parts), .separator = "-", .allocator = $&allocator)
     )
     if allocator.allocations != 1 or allocator.last_size != 6 { abort }
     if [
@@ -25,9 +23,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     if allocator.deallocations != 1 { abort }
     empty: [0]StringView = ()
     output_empty ::= unwrap_or_abort(
-        .value = join(
-            .parts = view(.array = &empty), .separator = ",", .allocator = $&allocator
-        )
+        .value = join(.parts = view(.self = &empty), .separator = ",", .allocator = $&allocator)
     )
     if allocator.allocations != 2 or allocator.last_size != 1 { abort }
     deinit(.self = $&output_empty)

@@ -1,12 +1,7 @@
-TextViewOf#(.Source: Type): Contract = (
-    .text_view : (.self: Source) -> (.view: StringView)
+implement Viewable#(&String) (
+    .Result    : Type = StringView
+    .make_view = _string_text_view
 )
-
-as_view#(.Source: Type: TextViewOf#(Source)) := (.self: Source) -> (.view: StringView) {
-    view = TextViewOf#(Source).text_view(.self = self)
-}
-
-implement TextViewOf#(&String) (.text_view = _string_text_view)
 
 TextBytes#(.Text: Type): Contract = (
     .measure_bytes : (.self: &Text) -> (.count: UIntNative)

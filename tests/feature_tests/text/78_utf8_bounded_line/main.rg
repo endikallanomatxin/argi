@@ -8,7 +8,7 @@ main(.system: System) -> () := {
             .buffer = $&text, .allocator = allocator, .reader = $&reader
         )
     )
-    if as_view(&text) != "😀" { abort }
+    if view(&text) != "😀" { abort }
     malformed: [3]UInt8 = (192, 128, 10)
     invalid ::= ByteReader(.bytes = view(&malformed))
     match read_line_into_buffer(.buffer = $&text, .allocator = allocator, .reader = $&invalid) {

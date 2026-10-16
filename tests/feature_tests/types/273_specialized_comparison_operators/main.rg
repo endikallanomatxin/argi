@@ -22,7 +22,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
             .allocator = system.page_allocator
         )
     )
-    independent ::= as_view(&independent_storage)
+    independent ::= view(&independent_storage)
     if same#(.t: StringView)(.left = independent, .right = "abc").ok == false { abort }
     if different#(.t: StringView)(.left = independent, .right = "abc").ok { abort }
     if different#(.t: StringView)(.left = independent, .right = "abd").ok == false { abort }

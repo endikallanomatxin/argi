@@ -45,6 +45,6 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     unwrap_or_abort(.value = push(.self = $&strings, .value = ~second, .allocator = allocator))
     survivor ::= unwrap_or_abort(.value = pop(.self = $&strings))
     deinit(.self = $&strings)
-    if as_view(.self = &survivor).view != "a" { abort }
+    if view(.self = &survivor).view != "a" { abort }
     deinit(.self = $&survivor)
 }

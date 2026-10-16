@@ -50,8 +50,8 @@ may change the values observed through an `ArrayView`.
 
 A safe constructor derives the extent from its source; pointer-and-length
 construction belongs to trusted code. The reference and length fields are private.
-`view(.array = &array)` derives an `ArrayView` from a fixed `[N]T`, while
-`view(.array = $&array)` derives a `MutableArrayView`.
+`view(.self = &array)` derives an `ArrayView` from a fixed `[N]T`, while
+`view(.self = $&array)` derives a `MutableArrayView`.
 `single_array_view(.data = &element)` and
 `single_mutable_array_view(.data = $&element)` create one-element views.
 `as_readonly(&mutable_view)` returns an `ArrayView` over the same storage,
@@ -73,7 +73,7 @@ subrange, preserving its access mode and backing lifetime. It rejects
 indices. An empty subrange at the end is valid and carries no element
 reference. A nested slice cannot enlarge its source's extent.
 
-`view(.array = $&collection)` and its read-only counterpart
+`view(.self = $&collection)` and its read-only counterpart
 borrow the initialized prefix of a `DynamicArray`. Spare capacity is excluded.
 The private allocation receipt is maintained by the collection using the
 allocator contract; the backing allocator must provide live storage of the
@@ -347,10 +347,10 @@ invalidate them. Returned references retain the same shape dependency. Calling
 
 ## Fixed-array view evidence
 
-The unique ordinary `view(.array)` function selects `ViewOf#(Source)` evidence.
+The unique ordinary `view(.self)` function selects `Viewable#(Source)` evidence.
 Source is the complete reference type, including mutability. For `$&[N]T`,
 Result is MutableArrayView(T); for `&[N]T`, Result is ArrayView(T). Result does not
-participate in selection. Generic callers can require ViewOf(Source) and retain
+participate in selection. Generic callers can require Viewable(Source) and retain
 the associated result projection until specialization.
 
 Both conformances reuse the checked fixed-array view algorithms, preserve backing
@@ -359,3 +359,10 @@ A returned nonempty view cannot outlive its backing array. DynamicArray uses the
 same evidence model, preserving its shape dependencies.
 `empty_array_view`, `single_array_view`, and `single_mutable_array_view` are
 uniquely named factories.
+
+`Viewable` also covers borrowed text: `&String`, `&Path`, `&CodepointView`,
+and semver's `&VersionView` associate `StringView`. A mutable `BitSet` reference
+associates `BitSetView`. The public `view(.self)` entry returns `.view` for all
+these sources. Creating a view preserves the source's storage dependencies;
+it neither copies the contents nor transfers their storage. `slice` selects a
+subrange, while `as_readonly` reduces the permissions of a mutable array view.

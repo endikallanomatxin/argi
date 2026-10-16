@@ -1,10 +1,7 @@
 run_main(.system: System) -> !Void = ..ok Void() := {
     assume network := system.network
     addresses ::= resolve_addresses(
-        .host    = "127.0.0.1"
-        .port    = 0
-        .family  = ..ipv4
-        .passive = true
+        .host = "127.0.0.1", .port = 0, .family = ..ipv4, .passive = true
     )!
     if length(.self = &addresses).count == 0 { abort }
     address ::= address_at(.self = &addresses, .index = 0)!
@@ -16,7 +13,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     set_timeout(.self = $&client, .milliseconds = 5000)!
     set_timeout(.self = $&server, .milliseconds = 5000)!
     bytes: [4]UInt8 = (65, 0, 66, 67)
-    input ::= view(.array = &bytes)
+    input ::= view(.self = &bytes)
     sent :: UIntNative = 0
     while sent < 4 {
         remaining ::= slice(.self = &input, .start = sent, .count = 4 - sent)!
@@ -26,7 +23,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     }
     shutdown_write(.self = $&client)!
     output :: [4]UInt8 = (0, 0, 0, 0)
-    destination ::= view(.array = $&output)
+    destination ::= view(.self = $&output)
     received :: UIntNative = 0
     while received < 4 {
         remaining ::= slice(.self = &destination, .start = received, .count = 4 - received)!
@@ -41,10 +38,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     if is_open(.self = &server).ok { abort }
 
     udp_addresses ::= resolve_addresses(
-        .host      = "127.0.0.1"
-        .port      = 0
-        .transport = ..udp
-        .family    = ..ipv4
+        .host = "127.0.0.1", .port = 0, .transport = ..udp, .family = ..ipv4
     )!
     udp_address ::= address_at(.self = &udp_addresses, .index = 0)!
     receiver ::= UdpSocket(.address = udp_address)!
@@ -67,7 +61,9 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     }
 }
 
-main#(.WriterType: Type: Writer#(WriterType))(.system: System, .writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
+main#(.WriterType: Type: Writer#(WriterType))(
+    .system: System, .writer: $&WriterType = reach writer
+) -> (.status_code: Int32 = 1) := {
     run_main(.system = system)!!!
     status_code = 0
 }

@@ -1,9 +1,13 @@
-check#(.AllocatorType: Type: Allocator#(AllocatorType))(.input: StringView, .expected: StringView, .allocator: $&AllocatorType) -> (
+check#(.AllocatorType: Type: Allocator#(AllocatorType))(
+    .input     : StringView,
+    .expected  : StringView,
+    .allocator : $&AllocatorType
+) -> (
     .result : Errable#(.t: Void, .reasons: (..invalid_path, ..out_of_memory, ..test_failed)) = ..ok Void()
 ) := {
     assume allocator
     path ::= normalize_path(.view = input, .allocator = allocator)!
-    expect(.condition = as_view(.self = &path) == expected)!
+    expect(.condition = view(.self = &path) == expected)!
 }
 run_main(.system: System) -> (
     .result : Errable#(.t: Void, .reasons: (..invalid_path, ..out_of_memory, ..test_failed)) = ..ok Void()
@@ -26,7 +30,10 @@ run_main(.system: System) -> (
     }
 }
 
-main#(.WriterType: Type: Writer#(WriterType))(.system: System, .writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
+main#(.WriterType: Type: Writer#(WriterType))(
+    .system : System,
+    .writer : $&WriterType = reach writer
+) -> (.status_code: Int32 = 1) := {
     run_main(.system = system)!!!
     status_code = 0
 }

@@ -11,8 +11,8 @@ main(.system: System) -> (.status_code: Int32) := {
     _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = 3, .byte = 108))
     _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = 4, .byte = 111))
 
-    text_view ::= as_view(.self = &text)
-    text_view_again ::= as_view(.self = &text)
+    text_view ::= view(.self = &text)
+    text_view_again ::= view(.self = &text)
     if text_view == text_view_again {
         status_code = 0
     } else {

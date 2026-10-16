@@ -59,7 +59,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
             text ::= unwrap_or_abort(
                 .value = string_from_bytes(.bytes = bytes, .allocator = allocator)
             )
-            view ::= as_view(&text)
+            view ::= view(&text)
             parsed ::= unwrap_or_abort(.value = parse_float16(.text = view)).result
             parsed_bits ::= trusted_reinterpret_reference#(.from: Float16, .to: UInt16)(
                 .base = &parsed

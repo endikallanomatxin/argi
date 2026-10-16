@@ -1,5 +1,7 @@
-borrow#(.Source: Type: ViewOf#(Source)) := (.array: Source) -> (.result: ViewOf#(Source).Result) {
-    result = view(.array = array)
+borrow#(.Source: Type: Viewable#(Source)) := (.array: Source) -> (
+    .result : Viewable#(Source).Result
+) {
+    result = view(.self = array)
 }
 
 main := (.system: System) -> (.status_code: Int32 = 0) {

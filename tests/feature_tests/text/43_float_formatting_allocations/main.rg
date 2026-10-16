@@ -12,7 +12,7 @@ expect_formatted#(.t: Type: Float)(
     before ::= allocator&.allocations
     freed ::= allocator&.deallocations
     output ::= unwrap_or_abort(.value = format(.value = value, .allocator = allocator))
-    if as_view(.self = &output).view != expected { abort }
+    if view(.self = &output).view != expected { abort }
     if [
         allocator&.allocations != before + 1
         or allocator&.last_size != byte_length(&expected).count + 1
@@ -66,7 +66,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     unwrap_or_abort(
         .value = format_into(.out = $&output, .value = value64, .allocator = $&allocator)
     )
-    if as_view(.self = &output).view != "1.7976931348623157e308-5e-324" { abort }
+    if view(.self = &output).view != "1.7976931348623157e308-5e-324" { abort }
     if allocator.allocations != before { abort }
     deinit(.self = $&output)
     value64 = 0.1

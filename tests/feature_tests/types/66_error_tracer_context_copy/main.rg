@@ -9,7 +9,7 @@ context_failure(.allocator: $&PageAllocator) -> (
     _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = 0, .byte = 65))
     _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = 1, .byte = 66))
     _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = 2, .byte = 90))
-    all ::= as_view(.self = &text)
+    all ::= view(.self = &text)
     view ::= unwrap_or_abort(.value = slice(.self = all, .start = 0, .count = 2))
     fail()!! view
     result = ..ok Void()

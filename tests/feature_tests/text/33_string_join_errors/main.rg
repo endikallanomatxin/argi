@@ -3,7 +3,7 @@ FailingAllocator: Type = (.attempts: UIntNative = 0)
 main() -> (.status_code: Int32 = 0) := {
     allocator :: FailingAllocator = (.attempts = 0)
     parts: [2]StringView = ("a", "b")
-    match join(.parts = view(.array = &parts), .separator = ",", .allocator = $&allocator) {
+    match join(.parts = view(.self = &parts), .separator = ",", .allocator = $&allocator) {
         ..ok _ { abort }
         ..error ~err { if err.reason != ..out_of_memory { abort } }
     }

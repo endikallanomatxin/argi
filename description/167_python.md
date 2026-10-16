@@ -13,7 +13,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     loads ::= unwrap_or_abort(.value = python.attribute(.self = &json, .name = "loads")).result
     text ::= unwrap_or_abort(.value = python.string(.self = &interpreter, .value = "42")).result
     arguments: [1]&python.Object = (&text)
-    number ::= unwrap_or_abort(.value = python.call(.self = &loads, .arguments = view(.array = &arguments))).result
+    number ::= unwrap_or_abort(.value = python.call(.self = &loads, .arguments = view(.self = &arguments))).result
     if unwrap_or_abort(.value = python.to_int64(.self = &number)).result != 42 { abort }
 }
 ```

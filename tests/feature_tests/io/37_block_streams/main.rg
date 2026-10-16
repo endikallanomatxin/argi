@@ -63,32 +63,32 @@ implement BlockWriter#(Sink) (
 run_main() -> !Void = ..ok Void() := {
     input: [4]UInt8 = (65, 0, 66, 10)
     output :: [4]UInt8 = (9, 9, 9, 9)
-    source :: Source = (.bytes = view(.array = &input), .position = 0, .calls = 0)
-    sink :: Sink = (.bytes = view(.array = $&output), .position = 0, .stalled = false)
+    source :: Source = (.bytes = view(.self = &input), .position = 0, .calls = 0)
+    sink :: Sink = (.bytes = view(.self = $&output), .position = 0, .stalled = false)
     scratch :: [2]UInt8 = (0, 0)
     if [
-        copy_stream(.reader = $&source, .writer = $&sink, .buffer = view(.array = $&scratch))!
+        copy_stream(.reader = $&source, .writer = $&sink, .buffer = view(.self = $&scratch))!
         != 4
     ] {
         abort
     }
     if output[0] != 65 or output[1] != 0 or output[2] != 66 or output[3] != 10 { abort }
     source.position = 0
-    read_exact(.self = $&source, .buffer = view(.array = $&output))!
-    match read_exact(.self = $&source, .buffer = view(.array = $&scratch)) {
+    read_exact(.self = $&source, .buffer = view(.self = $&output))!
+    match read_exact(.self = $&source, .buffer = view(.self = $&scratch)) {
         ..ok _ { abort } ..error error { if error.reason != ..unexpected_eof { abort } }
     }
     source.position = 0
-    first ::= read_until(.self = $&source, .buffer = view(.array = $&scratch), .delimiter = 10)!
+    first ::= read_until(.self = $&source, .buffer = view(.self = $&scratch), .delimiter = 10)!
     if first.count != 2 or first.termination != ..limit or source.position != 2 { abort }
-    last ::= read_until(.self = $&source, .buffer = view(.array = $&scratch), .delimiter = 10)!
+    last ::= read_until(.self = $&source, .buffer = view(.self = $&scratch), .delimiter = 10)!
     if last.count != 1 or last.termination != ..delimiter { abort }
     sink.stalled = true
-    match write_all(.self = $&sink, .buffer = view(.array = &input)) {
+    match write_all(.self = $&sink, .buffer = view(.self = &input)) {
         ..ok _ { abort } ..error _ {}
     }
     virtual ::= to_virtual#(.contract: BlockReader)(.value = $&source)
-    match read_exact(.self = $&virtual, .buffer = view(.array = $&scratch)) {
+    match read_exact(.self = $&virtual, .buffer = view(.self = $&scratch)) {
         ..ok _ { abort } ..error _ {}
     }
 }

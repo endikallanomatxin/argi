@@ -41,7 +41,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         .variant = ..ok
     ) { abort }
     if failing.attempts != 1 { abort }
-    if as_view(.self = &text).view != "abc" { abort }
+    if view(.self = &text).view != "abc" { abort }
     -- Ordinary growth failures preserve the original text too.
     if is(
         .value   = push_ascii(.self = $&text, .byte = 100, .allocator = $&failing)
@@ -50,7 +50,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         abort
     }
     if failing.attempts != 2 { abort }
-    if as_view(.self = &text).view != "abc" { abort }
+    if view(.self = &text).view != "abc" { abort }
     if is(.value = bytes_get(.view = &text, .index = 3), .variant = ..error) == false { abort }
     clear(.self = $&text)
     append_ascii_assume_capacity(.self = $&text, .byte = 120)
@@ -58,7 +58,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     append_text_assume_capacity(.self = $&text, .text = "yz")
     empty: [0]UInt8 = ()
     append_text_assume_capacity(.self = $&text, .text = "")
-    if as_view(.self = &text).view != "xyz" { abort }
+    if view(.self = &text).view != "xyz" { abort }
     if is(.value = bytes_get(.view = &text, .index = 3), .variant = ..error) == false { abort }
     deinit(.self = $&text)
 }

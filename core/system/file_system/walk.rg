@@ -92,10 +92,10 @@ _next_directory_walker#(.Provider: Type: Allocator#(Provider)) := (
         match next($&frame&.directory)! {
             ..none { discarded ::= ~unwrap_or_abort(.value = pop($&self&._frames)) }
             ..some ~entry {
-                parent ::= as_view(&frame&.path)
-                name ::= as_view(&entry.value.name)
+                parent ::= view(&frame&.path)
+                name ::= view(&entry.value.name)
                 path ::= join_views(.left = &parent, .right = &name)!
-                text ::= as_view(&path)
+                text ::= view(&path)
                 info ::= metadata(self&._filesystem, .path = text, .follow_links = false)!
                 depth ::= frame&.depth + 1
                 directory_kind :: FileKind = ..directory

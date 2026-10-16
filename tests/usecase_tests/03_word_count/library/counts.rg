@@ -35,9 +35,9 @@ count_directory(
         match next($&directory)!! path {
             ..none { return }
             ..some ~entry {
-                name ::= as_view(&entry.value.name)
+                name ::= view(&entry.value.name)
                 joined ::= join_views(&path, &name)!
-                full_path ::= as_view(&joined)
+                full_path ::= view(&joined)
                 info ::= metadata(file_system, full_path)!! full_path
 
                 if info.kind == ..file {
@@ -48,7 +48,7 @@ count_directory(
                     close($&file_reader)!! full_path
 
                     decoded ::= string_from_bytes(.bytes = view(&text))!! full_path
-                    count_text(self, as_view(&decoded))!! full_path
+                    count_text(self, view(&decoded))!! full_path
                 }
             }
         }

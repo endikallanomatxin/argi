@@ -6,7 +6,7 @@ main(.system: System) -> (.status_code: Int32) := {
     _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = 0, .byte = 79))
     _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = 1, .byte = 75))
 
-    view ::= as_view(.self = &text)
+    view ::= view(.self = &text)
     if byte_length(&view).count != 2 {
         status_code = 1
         return

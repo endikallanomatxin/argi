@@ -12,7 +12,7 @@ main(.system: System) -> (.status_code: Int32) := {
     output_file ::= File(.stream_address = 0, .should_close = 0 == 1)
     init_stdout(.p = $&output_file)
     output_writer ::= BufferedWriter#(.base_type: File)(
-        .base = $&output_file, .buffer = view(.array = $&zeroed#(.t: [4]UInt8)())
+        .base = $&output_file, .buffer = view(.self = $&zeroed#(.t: [4]UInt8)())
     )
 
     if is_open(.self = &input_file).ok {

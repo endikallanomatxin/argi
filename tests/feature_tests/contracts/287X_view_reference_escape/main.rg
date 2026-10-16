@@ -1,6 +1,6 @@
 escape := () -> (.result: ArrayView#(.t: Int32)) {
     values :: [2]Int32 = (1, 2)
-    result = view(.array = &values)
+    result = view(.self = &values)
 }
 
 main := () -> () {

@@ -16,13 +16,13 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
                 .allocator = system.page_allocator
             )
         )
-        argument ::= as_view(&argument_storage)
+        argument ::= view(&argument_storage)
         args: [1]StringView = (argument)
         child = unwrap_or_abort(
             .value = spawn(
                 .self       = system.proc_man
                 .executable = executable
-                .arguments  = view(.array = &args)
+                .arguments  = view(.self = &args)
             )
         ).result
     }

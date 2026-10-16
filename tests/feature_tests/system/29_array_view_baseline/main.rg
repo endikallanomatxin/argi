@@ -1,12 +1,17 @@
 main() -> (.status_code: Int32) := {
-    data : Array#(.n = 4, .t: Int32) = (0, 0, 0, 0)
-    values ::= view(.array = $&data)
+    data: Array#(.n = 4, .t: Int32) = (0, 0, 0, 0)
+    values ::= view(.self = $&data)
 
     set0 ::= set#(.t: Int32)(.self = $&values, .index = 0, .value = 3).result
     set1 ::= set#(.t: Int32)(.self = $&values, .index = 1, .value = 5).result
     set2 ::= set#(.t: Int32)(.self = $&values, .index = 2, .value = 7).result
     set3 ::= set#(.t: Int32)(.self = $&values, .index = 3, .value = 11).result
-    if is(.value = set0, .variant = ..error) or is(.value = set1, .variant = ..error) or is(.value = set2, .variant = ..error) or is(.value = set3, .variant = ..error) {
+    if [
+        is(.value = set0, .variant = ..error)
+        or is(.value = set1, .variant = ..error)
+        or is(.value = set2, .variant = ..error)
+        or is(.value = set3, .variant = ..error)
+    ] {
         status_code = 11
         return
     }
@@ -22,12 +27,12 @@ main() -> (.status_code: Int32) := {
         return
     }
 
-    if first_result..ok != 3 {
+    if first_result ..ok != 3 {
         status_code = 11
         return
     }
 
-    if last_result..ok != 11 {
+    if last_result ..ok != 11 {
         status_code = 12
         return
     }
@@ -42,5 +47,5 @@ main() -> (.status_code: Int32) := {
         status_code = 13
         return
     }
-    status_code = second_result..ok + third_result..ok
+    status_code = second_result ..ok + third_result ..ok
 }

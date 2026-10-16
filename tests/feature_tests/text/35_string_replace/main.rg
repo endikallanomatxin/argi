@@ -10,7 +10,7 @@ expect_replacement#(.AllocatorType: Type: Allocator#(AllocatorType))(
             .self = text, .pattern = pattern, .replacement = replacement, .allocator = allocator
         )
     )
-    if equals(.left = as_view(.self = &output).view, .right = expected).ok == false { abort }
+    if equals(.left = view(.self = &output).view, .right = expected).ok == false { abort }
     if [
         is(
             .value   = bytes_get(.view = &output, .index = byte_length(&output).count)
@@ -82,7 +82,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     _ ::= unwrap_or_abort(.value = set_ascii(.self = $&source, .index = 0, .byte = 97))
     _ ::= unwrap_or_abort(.value = set_ascii(.self = $&source, .index = 1, .byte = 0))
     _ ::= unwrap_or_abort(.value = set_ascii(.self = $&source, .index = 2, .byte = 98))
-    view ::= as_view(.self = &source).view
+    view ::= view(.self = &source).view
     -- All three descriptors borrow the same storage. The replacement bytes
     -- are copied once per original match, never searched recursively.
     independent ::= unwrap_or_abort(

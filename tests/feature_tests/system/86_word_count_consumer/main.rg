@@ -24,7 +24,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         .self        = $&counts
         .path        = "tests/feature_tests/system/86_word_count_consumer/data"
         .limit       = 64
-        .buffer      = view(.array = $&scratch)
+        .buffer      = view(.self = $&scratch)
         .file_system = system.file_system
         .allocator   = allocator
     )!
@@ -42,7 +42,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         .self        = $&counts
         .path        = "tests/feature_tests/system/86_word_count_consumer/data"
         .limit       = 1
-        .buffer      = view(.array = $&scratch)
+        .buffer      = view(.self = $&scratch)
         .file_system = system.file_system
         .allocator   = allocator
     ) {

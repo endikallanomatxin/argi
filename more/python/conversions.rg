@@ -108,7 +108,7 @@ implement PythonValue#(&Object) (.convert_value = _object_from_object)
 _object_from_string(.self: &Python, .value: &String) -> (
     .result : Errable#(Object, (..python_error))
 ) := {
-    result = string(.self = self, .value = as_view(value).view)
+    result = string(.self = self, .value = view(value).view)
 }
 
 implement PythonValue#(&String) (.convert_value = _object_from_string)
@@ -148,7 +148,7 @@ implement#(.n: UIntNative, .t: Type) PythonValue#(&Array#(.n = n, .t: t)) (
 _object_from_dynamic_array#(.t: Type)(.self: &Python, .value: &DynamicArray#(.t: t)) -> (
     .result : Errable#(Object, (..python_error))
 ) := {
-    result = to_object(.self = self, .value = view(.array = value))
+    result = to_object(.self = self, .value = view(.self = value))
 }
 
 implement#(.t: Type) PythonValue#(&DynamicArray#(.t: t)) (

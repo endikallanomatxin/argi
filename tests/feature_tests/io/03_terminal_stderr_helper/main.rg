@@ -13,7 +13,7 @@ main(.system: System) -> (.status_code: Int32) := {
     assume writer ::= $&stderr_storage
     text ::= unwrap_or_abort(.value = String(.length = 1))
     _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = 0, .byte = 69))
-    view ::= as_view(.self = &text)
+    view ::= view(.self = &text)
 
     print_error(.writer = $&stderr_storage, .value = view)
     flush_error(.writer = $&stderr_storage)

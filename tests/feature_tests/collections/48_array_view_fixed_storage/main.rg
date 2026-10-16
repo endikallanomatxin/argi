@@ -1,7 +1,7 @@
 main() -> (.status_code: Int32) := {
     values :: [3]Int32 = (4, 5, 6)
-    borrowed_view :: MutableArrayView#(Int32) = view(.array = $&values)
-    read_view :: ArrayView#(Int32) = view(.array = &values)
+    borrowed_view :: MutableArrayView#(Int32) = view(.self = $&values)
+    read_view :: ArrayView#(Int32) = view(.self = &values)
 
     if length(.self = &borrowed_view).count != 3 or length(.self = &read_view).count != 3 {
         status_code = 1

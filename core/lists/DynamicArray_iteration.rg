@@ -20,7 +20,7 @@ implement#(.t: Type: ImplicitlyCopyable) Iterable#(DynamicArray#(.t: t)) (
     .IteratorType : Type = DynamicArrayIterator#(.t: t)
 
     .to_iterator = (.value: &DynamicArray#(.t: t)) -> (.iterator: DynamicArrayIterator#(.t: t)) {
-        iterator = (._view = view(.array = value), ._index = 0)
+        iterator = (._view = view(.self = value), ._index = 0)
     }
 )
 
@@ -31,7 +31,7 @@ implement#(.t: Type) ReferenceIterable#(DynamicArray#(.t: t)) (
     .to_reference_iterator = (.value: &DynamicArray#(.t: t)) -> (
         .iterator : DynamicArrayReferenceIterator#(.t: t)
     ) {
-        iterator = (._view = view(.array = value), ._index = 0)
+        iterator = (._view = view(.self = value), ._index = 0)
     }
 )
 
@@ -42,7 +42,7 @@ implement#(.t: Type) MutableReferenceIterable#(DynamicArray#(.t: t)) (
     .to_mutable_reference_iterator = (.value: $&DynamicArray#(.t: t)) -> (
         .iterator : DynamicArrayMutableReferenceIterator#(.t: t)
     ) {
-        iterator = (._view = view(.array = value), ._index = 0)
+        iterator = (._view = view(.self = value), ._index = 0)
     }
 )
 

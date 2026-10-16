@@ -30,7 +30,7 @@ run_main() -> !Void = ..ok Void() := {
     for code in boundaries {
         scalar ::= UnicodeScalar(.value = code)!
         bytes :: [6]UInt8 = (99, 88, 88, 88, 88, 99)
-        width ::= utf8_encode(.scalar = scalar, .buffer = view(.array = $&bytes), .offset = 1)!
+        width ::= utf8_encode(.scalar = scalar, .buffer = view(.self = $&bytes), .offset = 1)!
         if width != widths[boundary_index] { abort }
         byte_index :: UIntNative = 0
         while byte_index < width {
@@ -54,7 +54,7 @@ run_main() -> !Void = ..ok Void() := {
     text :: StringView = "Aé€🙂"
     validated :: CodepointView = codepoints(.text = text)
     if length(.self = &validated).count != 4 or byte_length(&text).count != 10 { abort }
-    if equals(.left = as_view(.self = &validated).view, .right = text).ok == false { abort }
+    if equals(.left = view(.self = &validated).view, .right = text).ok == false { abort }
     expected :: [4]UInt32 = (65, 233, 8364, 128578)
     index :: UIntNative = 0
     for scalar in validated {

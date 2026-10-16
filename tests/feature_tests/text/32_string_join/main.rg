@@ -2,24 +2,22 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     parts: [3]StringView = ("a", "", "b")
     joined ::= unwrap_or_abort(
         .value = join(
-            .parts     = view(.array = &parts)
-            .separator = "--"
-            .allocator = system.page_allocator
+            .parts = view(.self = &parts), .separator = "--", .allocator = system.page_allocator
         )
     )
-    if as_view(.self = &joined).view != "a----b" { abort }
+    if view(.self = &joined).view != "a----b" { abort }
     deinit(.self = $&joined)
     joined_empty_separator ::= unwrap_or_abort(
         .value = join(
-            .parts = view(.array = &parts), .separator = "", .allocator = system.page_allocator
+            .parts = view(.self = &parts), .separator = "", .allocator = system.page_allocator
         )
     )
-    if as_view(.self = &joined_empty_separator).view != "ab" { abort }
+    if view(.self = &joined_empty_separator).view != "ab" { abort }
     deinit(.self = $&joined_empty_separator)
     empty_parts: [0]StringView = ()
     empty ::= unwrap_or_abort(
         .value = join(
-            .parts     = view(.array = &empty_parts)
+            .parts     = view(.self = &empty_parts)
             .separator = ","
             .allocator = system.page_allocator
         )
@@ -30,11 +28,11 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     _ ::= unwrap_or_abort(.value = set_ascii(.self = $&source, .index = 0, .byte = 97))
     _ ::= unwrap_or_abort(.value = set_ascii(.self = $&source, .index = 1, .byte = 0))
     _ ::= unwrap_or_abort(.value = set_ascii(.self = $&source, .index = 2, .byte = 98))
-    borrowed_view ::= as_view(.self = &source).view
+    borrowed_view ::= view(.self = &source).view
     aliased: [2]StringView = (borrowed_view, borrowed_view)
     independent ::= unwrap_or_abort(
         .value = join(
-            .parts     = view(.array = &aliased)
+            .parts     = view(.self = &aliased)
             .separator = borrowed_view
             .allocator = system.page_allocator
         )

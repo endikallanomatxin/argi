@@ -1,8 +1,8 @@
 main() -> (.status_code: Int32 = 0) := {
     bytes :: [6]UInt8 = (0, 255, 1, 0, 255, 1)
     pattern :: [3]UInt8 = (0, 255, 1)
-    a ::= view(.array = &bytes)
-    b ::= view(.array = &pattern)
+    a ::= view(.self = &bytes)
+    b ::= view(.self = &pattern)
     empty ::= empty_array_view#(.t: UInt8)()
     if compare(.left = a, .right = b).order != 1 { abort }
     if compare(.left = b, .right = a).order != -1 { abort }
@@ -38,16 +38,16 @@ main() -> (.status_code: Int32 = 0) := {
     if equals(.left = tail, .right = b).ok == false { abort }
     high :: [1]UInt8 = (255)
     low :: [1]UInt8 = (127)
-    if compare(.left = view(.array = &high), .right = view(.array = &low)).order != 1 { abort }
+    if compare(.left = view(.self = &high), .right = view(.self = &low)).order != 1 { abort }
     match find(.self = b, .pattern = a).index { ..none {} ..some _ { abort } }
     match find_last(.self = b, .pattern = a).index { ..none {} ..some _ { abort } }
     missing :: [2]UInt8 = (255, 255)
-    match find_last(.self = a, .pattern = view(.array = &missing)).index {
+    match find_last(.self = a, .pattern = view(.self = &missing)).index {
         ..none {} ..some _ { abort }
     }
     overlap :: [3]UInt8 = (7, 7, 7)
     pair :: [2]UInt8 = (7, 7)
-    match find_last(.self = view(.array = &overlap), .pattern = view(.array = &pair)).index {
+    match find_last(.self = view(.self = &overlap), .pattern = view(.self = &pair)).index {
         ..none { abort }
         ..some hit { if hit.value != 1 { abort } }
     }

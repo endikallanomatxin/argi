@@ -35,7 +35,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     found :: ?&UIntNative = ..none
     {
         query ::= format(.value = "café", .allocator = allocator)!
-        found = get_reference(.self = &map, .key = as_view(.self = &query).view).result
+        found = get_reference(.self = &map, .key = view(.self = &query).view).result
     }
     match found {
         ..none { abort }

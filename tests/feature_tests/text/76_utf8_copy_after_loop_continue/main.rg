@@ -14,7 +14,7 @@ main(.system: System) -> () := {
             i = i + 1
         }
         text ::= unwrap_or_abort(.value = string_from_bytes(.bytes = view(&field)))
-        if as_view(&text) != "AAA" { abort }
+        if view(&text) != "AAA" { abort }
         j = j + 1
     }
 }

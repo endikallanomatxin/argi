@@ -14,7 +14,7 @@ _owned_string_find#(.value: Type)(
         if slot.state == 0 { return }
         if slot.state == 1 and slot.hash == digest {
             entry ::= _owned_hash_entry(self, .index = position).entry
-            if equals(.left = as_view(&entry&.key), .right = key).ok {
+            if equals(.left = view(&entry&.key), .right = key).ok {
                 index = ..some(.value = position)
                 return
             }

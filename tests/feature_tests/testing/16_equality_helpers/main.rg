@@ -12,15 +12,13 @@ test equality_helpers(.system: System) -> !() := {
             .allocator = system.page_allocator
         )
     )
-    text ::= as_view(&text_storage)
+    text ::= view(&text_storage)
     testing.expect_equal_strings(.expected = text, .actual = text)!
     values :: [3]Int32 = (1, 2, 3)
     testing.expect_equal_views(
-        .expected = view(.array = &values), .actual = view(.array = &values)
+        .expected = view(.self = &values), .actual = view(.self = &values)
     )!
-    testing.expect_equal_bytes(
-        .expected = view(.array = &bytes), .actual = view(.array = &bytes)
-    )!
+    testing.expect_equal_bytes(.expected = view(.self = &bytes), .actual = view(.self = &bytes))!
     empty ::= empty_array_view#(.t: UInt8)()
     testing.expect_equal_bytes(.expected = empty, .actual = empty)!
     assume allocator := system.page_allocator

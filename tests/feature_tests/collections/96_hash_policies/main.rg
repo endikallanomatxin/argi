@@ -27,14 +27,14 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
             .allocator = system.page_allocator
         )
     )
-    left ::= as_view(&left_storage)
+    left ::= view(&left_storage)
     right_storage ::= unwrap_or_abort(
         .value = string_from_bytes(
             .bytes     = unwrap_or_abort(.value = slice(&view(&same), .start = 0, .count = 3))
             .allocator = system.page_allocator
         )
     )
-    right ::= as_view(&right_storage)
+    right ::= view(&right_storage)
     if [
         HashPolicy#(
             StringViewHashPolicy, StringView

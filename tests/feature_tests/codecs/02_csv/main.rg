@@ -10,7 +10,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
             field ::= unwrap_or_abort(
                 .value = get_reference(.self = &entry.value.fields, .index = 2)
             )
-            if as_view(.self = field) != "say \"hi\"" { abort }
+            if view(.self = field) != "say \"hi\"" { abort }
         }
     }
     second ::= ~csv.next(.self = $&reader, .allocator = allocator)!
@@ -20,7 +20,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
             field ::= unwrap_or_abort(
                 .value = get_reference(.self = &entry.value.fields, .index = 0)
             )
-            if as_view(.self = field) != "two\nlines" { abort }
+            if view(.self = field) != "two\nlines" { abort }
         }
     }
     match csv.next(.self = $&reader, .allocator = allocator)! { ..none {} ..some ~_ { abort } }
@@ -37,8 +37,8 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     }
     fields :: [2]StringView = ("a,b", "\"quoted\"")
     storage ::= zeroed#(.t: [64]UInt8)()
-    writer ::= ByteWriter(.bytes = view(.array = $&storage))
-    csv.write_record(.writer = $&writer, .fields = view(.array = &fields))!
+    writer ::= ByteWriter(.bytes = view(.self = $&storage))
+    csv.write_record(.writer = $&writer, .fields = view(.self = &fields))!
     text_storage ::= unwrap_or_abort(
         .value = string_from_bytes(
             .bytes = unwrap_or_abort(
@@ -47,7 +47,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
             .allocator = system.page_allocator
         )
     )
-    text ::= as_view(&text_storage)
+    text ::= view(&text_storage)
     if text != "\"a,b\",\"\"\"quoted\"\"\"\r\n" { abort }
 }
 

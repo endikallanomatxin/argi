@@ -10,7 +10,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     args: [1]StringView = ("--version")
     child ::= unwrap_or_abort(.value = spawn(
         .executable = "argi",
-        .arguments = view(.array = &args),
+        .arguments = view(.self = &args),
     )).result
     status ::= unwrap_or_abort(.value = wait(.self = $&child)).result
     match status {

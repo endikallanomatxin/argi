@@ -42,10 +42,10 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     decoded ::= json.decode_string(
         .text = "\"caf\\u00e9 \\uD83D\\uDE42\\n\"", .allocator = allocator
     )!
-    if as_view(.self = &decoded) != "café 🙂\n" { abort }
+    if view(.self = &decoded) != "café 🙂\n" { abort }
     storage ::= zeroed#(.t: [64]UInt8)()
-    writer ::= ByteWriter(.bytes = view(.array = $&storage))
-    json.write_string(.writer = $&writer, .text = as_view(.self = &decoded))!
+    writer ::= ByteWriter(.bytes = view(.self = $&storage))
+    json.write_string(.writer = $&writer, .text = view(.self = &decoded))!
     text_storage ::= unwrap_or_abort(
         .value = string_from_bytes(
             .bytes = unwrap_or_abort(
@@ -54,7 +54,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
             .allocator = system.page_allocator
         )
     )
-    text ::= as_view(&text_storage)
+    text ::= view(&text_storage)
     json.validate(.text = text)!
 }
 

@@ -1,7 +1,7 @@
 window(.array: $&DynamicArray#(.t: UIntNative), .start: UIntNative, .count: UIntNative) -> (
     .result : Errable#(.t: MutableArrayView#(.t: UIntNative), .reasons: (..out_of_bounds))
 ) := {
-    borrowed_view ::= view(.array = array)
+    borrowed_view ::= view(.self = array)
     result = slice(.self = &borrowed_view, .start = start, .count = count).result
 }
 
@@ -11,7 +11,7 @@ exercise#(.AllocatorType: Type: Allocator#(AllocatorType))(.allocator: $&Allocat
     array ::= unwrap_or_abort(
         .value = DynamicArray#(.t: UIntNative)(.allocator = allocator, .capacity = 8)
     )
-    empty ::= view(.array = $&array)
+    empty ::= view(.self = $&array)
     if length(.self = &empty).count != 0 { status = 1 }
     absent ::= get_reference(.self = &empty, .index = 0).result
     if is(.value = absent, .variant = ..error) == false { status = 2 }
@@ -30,7 +30,7 @@ exercise#(.AllocatorType: Type: Allocator#(AllocatorType))(.allocator: $&Allocat
     )
     observed ::= unwrap_or_abort(.value = get(.self = &nested, .index = 0).result)
     if observed != 99 { status = 4 }
-    readonly ::= view(.array = &array)
+    readonly ::= view(.self = &array)
     ro_window ::= unwrap_or_abort(
         .value = slice(.self = &readonly, .start = 2, .count = 1).result
     )
@@ -51,7 +51,7 @@ exercise#(.AllocatorType: Type: Allocator#(AllocatorType))(.allocator: $&Allocat
     invalid_huge_start ::= slice(.self = &borrowed_view, .start = huge, .count = 1).result
     if is(.value = invalid_huge_start, .variant = ..error) == false { status = 10 }
     removed ::= unwrap_or_abort(.value = pop(.self = $&array).result)
-    fresh ::= view(.array = $&array)
+    fresh ::= view(.self = $&array)
     if length(.self = &fresh).count != 3 { status = 11 }
     if unwrap_or_abort(.value = get(.self = &fresh, .index = 2).result) != 99 { status = 12 }
     deinit(.self = $&array)

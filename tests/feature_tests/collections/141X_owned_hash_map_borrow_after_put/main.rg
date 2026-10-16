@@ -11,7 +11,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         ..some borrowed {
             text ::= format(.value = "new", .allocator = allocator)!
             put(.self = $&map, .key = 1, .value = ~text, .allocator = allocator)!
-            as_view(.self = borrowed.value)
+            view(.self = borrowed.value)
         }
     }
 }

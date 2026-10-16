@@ -508,9 +508,9 @@ implement#(.Provider: Type: Allocator) Add#(
     ) -> (.result: Result) {
         assume allocator ::= args.allocator
 
-        left_view ::= as_view(args.left)
+        left_view ::= view(args.left)
         right_text ::= string_from_c_string(.text = args.right)!
-        right_view ::= as_view(&right_text)
+        right_view ::= view(&right_text)
 
         combined ::= concat_views(.left = &left_view, .right = &right_view)!
         result = ..ok ~combined
@@ -528,7 +528,7 @@ implement#(.Provider: Type: Allocator) Add#(
     ) -> (.result: Result) {
         assume allocator ::= args.allocator
 
-        left_view ::= as_view(args.left)
+        left_view ::= view(args.left)
 
         result = concat_views(.left = &left_view, .right = args.right)
     }
@@ -543,8 +543,8 @@ implement#(.Provider: Type: Allocator) Add#(
     ) -> (.result: Result) {
         assume allocator ::= args.allocator
 
-        left_view ::= as_view(args.left)
-        right_view ::= as_view(args.right)
+        left_view ::= view(args.left)
+        right_view ::= view(args.right)
 
         result = concat_views(.left = &left_view, .right = &right_view)
     }
@@ -562,7 +562,7 @@ implement#(.Provider: Type: Allocator) Add#(
         assume allocator ::= args.allocator
 
         right_text ::= string_from_c_string(.text = args.right)!
-        right_view ::= as_view(&right_text)
+        right_view ::= view(&right_text)
 
         combined ::= concat_views(.left = args.left, .right = &right_view)!
         result = ..ok ~combined
@@ -597,7 +597,7 @@ implement#(.Provider: Type: Allocator) Add#(
     ) -> (.result: Result) {
         assume allocator ::= args.allocator
 
-        right_view ::= as_view(args.right)
+        right_view ::= view(args.right)
 
         result = concat_views(.left = args.left, .right = &right_view)
     }
@@ -608,7 +608,7 @@ implement#(.Provider: Type: Allocator) Concatenation#(StringView, &String, Provi
         .result : Errable#(String, (..out_of_memory))
     ) {
         assume allocator
-        right_view := as_view(right)
+        right_view := view(right)
 
         result = concat_views(&left, &right_view)
     }
@@ -629,7 +629,7 @@ implement#(.Provider: Type: Allocator) Concatenation#(&String, StringView, Provi
         .result : Errable#(String, (..out_of_memory))
     ) {
         assume allocator
-        left_view := as_view(left)
+        left_view := view(left)
 
         result = concat_views(&left_view, &right)
     }
@@ -640,8 +640,8 @@ implement#(.Provider: Type: Allocator) Concatenation#(&String, &String, Provider
         .result : Errable#(String, (..out_of_memory))
     ) {
         assume allocator
-        left_view := as_view(left)
-        right_view := as_view(right)
+        left_view := view(left)
+        right_view := view(right)
 
         result = concat_views(&left_view, &right_view)
     }

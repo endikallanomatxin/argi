@@ -19,7 +19,7 @@ distinct questions:
 
 ```
 my_string | bytes_get(.view = &_, .index = 3)  -- Errable containing the fourth byte
-codepoints(.text = as_view(&my_string))  -- Unicode scalar iteration
+codepoints(.text = view(&my_string))  -- Unicode scalar iteration
 ```
 
 
@@ -202,9 +202,9 @@ The text model uses these conventions:
   - `push_ascii`, `push_scalar`, and `push_view` append ASCII, a Unicode scalar,
     or validated text. `push_ascii` aborts for a non-ASCII byte; arbitrary
     byte input must use checked decoding instead.
-- `slice(.self = as_view(&string), .start = start, .count = count)` returns a
+- `slice(.self = view(&string), .start = start, .count = count)` returns a
   checked borrowed text range; both ends must be UTF-8 scalar boundaries.
-- `codepoints(.text = as_view(&string))` returns a borrowed `CodepointView`
+- `codepoints(.text = view(&string))` returns a borrowed `CodepointView`
   for scalar iteration without validation or allocation. `utf8_decode` supports
   checked byte offsets.
 
@@ -369,7 +369,7 @@ without pretending that fallible decoding is an infallible iterator operation.
 `CodepointView(.text)` or `codepoints(.text)` returns a borrowed, implicitly
 copyable scalar view of an already-valid `StringView`. Construction is
 infallible, constant-time, and allocates no storage. `length(.self)` scans the
-text to count scalars; it does not cache a count. `as_view(&view)` retrieves the
+text to count scalars; it does not cache a count. `view(&view)` retrieves the
 original `StringView`. `for scalar in view` decodes `UnicodeScalar` values as
 it advances, without a preliminary scan. `CodepointIterator` retains backing
 storage lifetimes; copied scalars are independent values. `next` requires a

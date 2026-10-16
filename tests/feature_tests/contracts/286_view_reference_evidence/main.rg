@@ -1,5 +1,7 @@
-borrow#(.Source: Type: ViewOf#(Source)) := (.array: Source) -> (.result: ViewOf#(Source).Result) {
-    result = view(.array = array)
+borrow#(.Source: Type: Viewable#(Source)) := (.array: Source) -> (
+    .result : Viewable#(Source).Result
+) {
+    result = view(.self = array)
 }
 
 main := () -> (.status_code: Int32 = 0) {
@@ -12,6 +14,6 @@ main := () -> (.status_code: Int32 = 0) {
         status_code = 1
     }
     empty :: [0]Int32 = ()
-    empty_view ::= view(.array = &empty)
+    empty_view ::= view(.self = &empty)
     if length(&empty_view) != 0 { status_code = 2 }
 }

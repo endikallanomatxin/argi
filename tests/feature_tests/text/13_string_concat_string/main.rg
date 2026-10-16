@@ -26,7 +26,7 @@ main(.system: System) -> (.status_code: Int32) := {
         ..error _ { status_code = 2 }
         ..ok ~combined {
 
-            combined_view ::= as_view(.self = &combined)
+            combined_view ::= view(.self = &combined)
 
             if combined_view == "hello world" {
                 status_code = 0

@@ -13,10 +13,10 @@ test collections_text_format_slice(.system: System) -> !() := {
 
     text_result ::= format(.value = 7, .allocator = $&allocator_storage)
     match text_result {
-        ..ok ~ format_payload {
+        ..ok ~format_payload {
             text ::= ~format_payload
             #defer deinit(.self = $&text)
-            view ::= as_view(.self = &text)
+            view ::= view(.self = &text)
             testing.expect(.condition = view == "7")!
         }
         ..error _ {

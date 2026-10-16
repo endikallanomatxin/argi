@@ -60,7 +60,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     child ::= unwrap_or_abort(
         .value = spawn(
             .executable = executable
-            .arguments  = view(.array = &args)
+            .arguments  = view(.self = &args)
             .stdin      = ..pipe
             .stdout     = ..pipe
             .stderr     = ..pipe
@@ -79,7 +79,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     quick: [1]StringView = ("quick")
     inherited ::= unwrap_or_abort(
         .value = spawn(
-            .executable = executable, .arguments = view(.array = &quick), .stdin = ..discard
+            .executable = executable, .arguments = view(.self = &quick), .stdin = ..discard
         )
     ).result
     if is_open(.self = &inherited.stdin).ok or is_open(.self = &inherited.stdout).ok { abort }

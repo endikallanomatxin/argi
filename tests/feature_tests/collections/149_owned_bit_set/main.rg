@@ -6,7 +6,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     set_bit(.self = $&bits, .index = 16)!
     if count_set(.self = &bits).count != 2 { abort }
     {
-        borrowed ::= as_view(.self = $&bits).view
+        borrowed ::= view(.self = $&bits).view
         set_bit(.self = $&borrowed, .index = 8)!
     }
     if count_set(.self = &bits).count != 3 { abort }
@@ -17,7 +17,9 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     if count_set(.self = &empty).count != 0 { abort }
 }
 
-main#(.WriterType: Type: Writer#(WriterType))(.system: System, .writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
+main#(.WriterType: Type: Writer#(WriterType))(
+    .system: System, .writer: $&WriterType = reach writer
+) -> (.status_code: Int32 = 1) := {
     run_main(.system = system)!!!
     status_code = 0
 }

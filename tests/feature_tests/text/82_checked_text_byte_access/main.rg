@@ -16,7 +16,7 @@ main(.system: System) -> () := {
     text ::= unwrap_or_abort(.value = String(.length = 3))
     _ ::= unwrap_or_abort(.value = set_ascii($&text, .index = 0, .byte = 65))
     _ ::= unwrap_or_abort(.value = set_ascii($&text, .index = 2, .byte = 90))
-    borrowed ::= as_view(&text)
+    borrowed ::= view(&text)
     expect_bounds(.text = &text)
     expect_bounds(.text = &borrowed)
     if unwrap_or_abort(.value = bytes_get(.view = &text, .index = 1)) != 0 { abort }
@@ -33,7 +33,7 @@ main(.system: System) -> () := {
         ..error _ {}
     }
     clear($&text)
-    empty ::= as_view(&text)
+    empty ::= view(&text)
     expect_bounds(.text = &text)
     expect_bounds(.text = &empty)
     match string_byte_reference(.string = &text, .index = 0) {

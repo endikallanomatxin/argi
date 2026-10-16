@@ -24,7 +24,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     match Reader#().read_byte(.self = $&reader)! { ..end { abort } ..ok byte {} }
     if source.count != 3 { abort }
     bytes :: [2]UInt8 = (0, 0)
-    read_exact(.self = $&reader, .buffer = view(.array = $&bytes))!
+    read_exact(.self = $&reader, .buffer = view(.self = $&bytes))!
     if source.count != 4 or bytes[0] != 65 or bytes[1] != 65 { abort }
     match Reader#().read_byte(.self = $&reader)! { ..end {} ..ok byte { abort } }
 }

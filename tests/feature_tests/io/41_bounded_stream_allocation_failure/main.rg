@@ -38,7 +38,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     scratch :: [2]UInt8 = (0, 0)
     match read_all_limited(
         .self      = $&source
-        .buffer    = view(.array = $&scratch)
+        .buffer    = view(.self = $&scratch)
         .limit     = 8
         .allocator = $&allocator
     ) {
@@ -52,7 +52,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     allocator.fail_at = allocator.attempts + 2
     match read_all_limited(
         .self      = $&source
-        .buffer    = view(.array = $&scratch)
+        .buffer    = view(.self = $&scratch)
         .limit     = 8
         .allocator = $&allocator
     ) {
@@ -76,7 +76,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     allocator.fail_at = 0
     match read_all_limited(
         .self      = $&source
-        .buffer    = view(.array = $&scratch)
+        .buffer    = view(.self = $&scratch)
         .limit     = 8
         .allocator = $&allocator
     ) {
@@ -92,7 +92,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     source.fail_at = 0
     match read_all_limited(
         .self      = $&source
-        .buffer    = view(.array = $&scratch)
+        .buffer    = view(.self = $&scratch)
         .limit     = 2
         .allocator = $&allocator
     ) {
@@ -119,7 +119,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     source.position = 0
     owned ::= read_all_limited(
         .self      = $&source
-        .buffer    = view(.array = $&scratch)
+        .buffer    = view(.self = $&scratch)
         .limit     = 8
         .allocator = $&allocator
     )!

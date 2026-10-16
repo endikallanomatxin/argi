@@ -1,6 +1,6 @@
 main() -> (.status_code: Int32 = 0) := {
-    values : [7]Int32 = (-99, -99, -99, -99, -99, -99, -99)
-    borrowed_view ::= view(.array = $&values)
+    values: [7]Int32 = (-99, -99, -99, -99, -99, -99, -99)
+    borrowed_view ::= view(.self = $&values)
     order ::= Int32OrderPolicy()
     size :: UIntNative = 0
     cases :: UIntNative = 1
@@ -35,12 +35,16 @@ main() -> (.status_code: Int32 = 0) := {
                 }
                 index = index + 1
             }
-            prefix ::= unwrap_or_abort(.value = slice(.self = &borrowed_view, .start = 0, .count = size))
+            prefix ::= unwrap_or_abort(
+                .value = slice(.self = &borrowed_view, .start = 0, .count = size)
+            )
             sort(.self = $&prefix, .order = &order)
             index = 0
             while index < size {
                 expected :: Int32 = 2
-                if index < zeros { expected = 0 } else {
+                if index < zeros {
+                    expected = 0
+                } else {
                     if index < zeros + ones { expected = 1 }
                 }
                 if values[index] != expected { abort }

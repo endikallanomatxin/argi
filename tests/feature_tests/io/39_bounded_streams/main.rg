@@ -65,10 +65,10 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     input :: [4]UInt8 = (65, 0, 66, 10)
     output :: [4]UInt8 = (9, 9, 9, 9)
     scratch :: [3]UInt8 = (7, 7, 7)
-    source :: Source = (.bytes = view(.array = &input), .position = 0, .calls = 0)
-    sink :: Sink = (.bytes = view(.array = $&output), .position = 0, .stalled = false)
+    source :: Source = (.bytes = view(.self = &input), .position = 0, .calls = 0)
+    sink :: Sink = (.bytes = view(.self = $&output), .position = 0, .stalled = false)
     first ::= copy_stream_limited(
-        .reader = $&source, .writer = $&sink, .buffer = view(.array = $&scratch), .limit = 2
+        .reader = $&source, .writer = $&sink, .buffer = view(.self = $&scratch), .limit = 2
     )!
     if [
         first.count != 2
@@ -78,7 +78,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     ] { abort }
     if output[0] != 65 or output[1] != 0 or output[2] != 9 { abort }
     last ::= copy_stream_limited(
-        .reader = $&source, .writer = $&sink, .buffer = view(.array = $&scratch), .limit = 9
+        .reader = $&source, .writer = $&sink, .buffer = view(.self = $&scratch), .limit = 9
     )!
     if last.count != 2 or last.termination != ..end { abort }
     source.position = 0
@@ -88,12 +88,12 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     copied ::= copy_stream_limited(
         .reader = $&source_virtual
         .writer = $&sink_virtual
-        .buffer = view(.array = $&scratch)
+        .buffer = view(.self = $&scratch)
         .limit  = 4
     )!
     if copied.count != 4 or copied.termination != ..limit or source.calls != 9 { abort }
     vacant :: [0]UInt8 = ()
-    empty ::= view(.array = $&vacant)
+    empty ::= view(.self = $&vacant)
     calls ::= source.calls
     zero ::= copy_stream_limited(
         .reader = $&source, .writer = $&sink, .buffer = empty, .limit = 0
@@ -101,7 +101,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     if zero.count != 0 or zero.termination != ..limit or source.calls != calls { abort }
     source.position = 0
     owned ::= read_all_limited(
-        .self = $&source, .buffer = view(.array = $&scratch), .limit = 4, .allocator = allocator
+        .self = $&source, .buffer = view(.self = $&scratch), .limit = 4, .allocator = allocator
     )!
     if length(&owned).count != 4 or capacity(.self = &owned).count > 4 { abort }
     if [
@@ -111,14 +111,14 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     source.position = 0
     other ::= read_all_limited(
         .self      = $&source_virtual
-        .buffer    = view(.array = $&scratch)
+        .buffer    = view(.self = $&scratch)
         .limit     = 8
         .allocator = allocator
     )!
     if length(&other).count != 4 or capacity(.self = &other).count > 8 { abort }
     source.position = 0
     match read_all_limited(
-        .self = $&source, .buffer = view(.array = $&scratch), .limit = 2, .allocator = allocator
+        .self = $&source, .buffer = view(.self = $&scratch), .limit = 2, .allocator = allocator
     ) {
         ..ok ~owner {
             deinit(.self = $&owner)
@@ -129,7 +129,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     if source.position != 3 { abort }
     source.position = 0
     match read_all_limited(
-        .self = $&source, .buffer = view(.array = $&scratch), .limit = 0, .allocator = allocator
+        .self = $&source, .buffer = view(.self = $&scratch), .limit = 0, .allocator = allocator
     ) {
         ..ok ~owner {
             deinit(.self = $&owner)
@@ -140,7 +140,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     if source.position != 1 { abort }
     source.position = 4
     nothing ::= read_all_limited(
-        .self = $&source, .buffer = view(.array = $&scratch), .limit = 0, .allocator = allocator
+        .self = $&source, .buffer = view(.self = $&scratch), .limit = 0, .allocator = allocator
     )!
     if length(&nothing).count != 0 { abort }
     calls = source.calls

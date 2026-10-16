@@ -10,7 +10,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     match get_reference(.self = &map, .key = &query).result {
         ..none { abort }
         ..some borrowed {
-            if [equals(.left = as_view(.self = borrowed.value), .right = "first").ok == false] {
+            if [equals(.left = view(.self = borrowed.value), .right = "first").ok == false] {
                 abort
             }
         }
@@ -31,10 +31,10 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         ..none { abort }
         ..some ~payload {
             entry ::= ~payload.value
-            if equals(.left = as_view(.self = &entry.key), .right = "key").ok == false {
+            if equals(.left = view(.self = &entry.key), .right = "key").ok == false {
                 abort
             }
-            if equals(.left = as_view(.self = &entry.value), .right = "second").ok == false {
+            if equals(.left = view(.self = &entry.value), .right = "second").ok == false {
                 abort
             }
         }

@@ -21,14 +21,14 @@ main(.system: System) -> (.status_code: Int32) := {
     _ ::= unwrap_or_abort(.value = set_ascii(.self = $&right, .index = 4, .byte = 108))
     _ ::= unwrap_or_abort(.value = set_ascii(.self = $&right, .index = 5, .byte = 100))
 
-    left_view ::= as_view(.self = &left)
-    right_view ::= as_view(.self = &right)
+    left_view ::= view(.self = &left)
+    right_view ::= view(.self = &right)
     combined_result ::= &left_view + &right_view
     match combined_result {
         ..error _ { status_code = 2 }
         ..ok ~combined {
 
-            combined_view ::= as_view(.self = &combined)
+            combined_view ::= view(.self = &combined)
 
             if combined_view == "hello world" {
                 status_code = 0

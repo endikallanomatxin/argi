@@ -33,7 +33,7 @@ main(.system: System) -> (.status_code: Int32) := {
                 return
             }
 
-            out_view ::= as_view(.self = &out)
+            out_view ::= view(.self = &out)
             if out_view == "answer=42, ok=true" {
             } else {
                 deinit(.self = $&out)
@@ -53,7 +53,7 @@ main(.system: System) -> (.status_code: Int32) := {
         }
         ..ok ~number_payload {
             text ::= ~number_payload
-            text_view ::= as_view(.self = &text)
+            text_view ::= view(.self = &text)
             if text_view == "-105" {
             } else {
                 deinit(.self = $&text)
@@ -64,8 +64,8 @@ main(.system: System) -> (.status_code: Int32) := {
         }
     }
 
-    view ::= "demo"
-    view_result ::= format(.value = view, .allocator = $&allocator_storage)
+    demo ::= "demo"
+    view_result ::= format(.value = demo, .allocator = $&allocator_storage)
     match view_result {
         ..error _ {
             status_code = 5
@@ -73,7 +73,7 @@ main(.system: System) -> (.status_code: Int32) := {
         }
         ..ok ~bool_payload {
             text ::= ~bool_payload
-            text_view ::= as_view(.self = &text)
+            text_view ::= view(.self = &text)
             if text_view == "demo" {
             } else {
                 deinit(.self = $&text)

@@ -385,7 +385,7 @@ implement#(.Provider: Type: Allocator) Init#(
 )
 
 path(.self: &TemporaryDirectory) -> (.view: StringView) := {
-    view = as_view(&self&._path).view
+    view = Viewable#(&String).make_view(.self = &self&._path)
 }
 
 _close_TemporaryDirectory(.self: $&TemporaryDirectory) -> (

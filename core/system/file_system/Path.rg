@@ -80,16 +80,19 @@ implement#(.Provider: Type: Allocator) FalliblyCopyable#(Path, Provider) (
 
 )
 
-as_view(.self: &Path) -> (.view: StringView) := {
-    view = as_view(&self&.text)
-}
+implement Viewable#(&Path) (
+    .Result    : Type = StringView
+    .make_view = (.self: &Path) -> (.view: StringView) {
+        view = Viewable#(&String).make_view(.self = &self&.text)
+    }
+)
 
 as_c_string(.self: &Path) -> (.text: &CChar) := {
     text = as_c_string(&self&.text)
 }
 
 is_absolute(.self: &Path) -> (.ok: Bool) := {
-    view ::= as_view(self)
+    view ::= view(self)
 
     if view._length == 0 {
         ok = false
@@ -100,7 +103,7 @@ is_absolute(.self: &Path) -> (.ok: Bool) := {
 }
 
 file_name(.self: &Path) -> (.value: ?StringView) := {
-    view ::= as_view(self)
+    view ::= view(self)
 
     if view._length == 0 {
         value = ..none
@@ -134,7 +137,7 @@ file_name(.self: &Path) -> (.value: ?StringView) := {
 }
 
 parent(.self: &Path) -> (.value: ?StringView) := {
-    view ::= as_view(self)
+    view ::= view(self)
     sep_index ::= path_last_separator_index(.view = &view).value
 
     match sep_index {
@@ -269,8 +272,8 @@ join#(.AllocatorType: Type: Allocator#(AllocatorType))(
 ) -> (.result: Errable#(Path, (..out_of_memory))) := {
     assume allocator
 
-    left_view ::= as_view(left)
-    right_view ::= as_view(right)
+    left_view ::= view(left)
+    right_view ::= view(right)
 
     result = join_views(.left = &left_view, .right = &right_view, .allocator = allocator)
 }
@@ -282,7 +285,7 @@ implement Equal#(Path, Path, (.left: &Path, .right: &Path)) (
 )
 
 path_equals(.left: &Path, .right: &Path) -> (.ok: Bool) := {
-    left_view ::= as_view(left)
-    right_view ::= as_view(right)
+    left_view ::= view(left)
+    right_view ::= view(right)
     ok = left_view == right_view
 }

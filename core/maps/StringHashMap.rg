@@ -30,7 +30,7 @@ _string_key_from_view(.key: &StringView) -> (.view: StringView) := {
 implement StringMapKey#(&StringView) (.key_view = _string_key_from_view)
 
 _string_key_from_string(.key: &String) -> (.view: StringView) := {
-    key_view ::= as_view(key)
+    key_view ::= Viewable#(&String).make_view(.self = key)
     view = key_view
 }
 

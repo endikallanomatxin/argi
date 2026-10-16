@@ -467,7 +467,7 @@ provides the unique concat entry for borrowed strings and string views.
 ContiguousView associates the base pointer type and shares checked subranges
 without erasing mutability. CollectionLength/CollectionCapacity select nominal
 collection queries. ByteCursor scopes stateful cursor queries, while *_uint*_at
-operations name independent indexed byte access. TextViewOf and TextBytes retain
+operations name independent indexed byte access. Viewable and TextBytes retain
 borrowed text projections. TimeCompare, NanosecondCount and ReadLimit replace
 ordinary query overload families without selecting by result type.
 
@@ -501,9 +501,9 @@ participants and generic reference patterns. It does not grant extension rights
 through structural fields or arbitrary generic type arguments, and references to
 foreign types alone grant no extension rights.
 
-The semver library supplies TextViewOf for borrowed VersionView, StringFormatting
+The semver library supplies Viewable for borrowed VersionView, StringFormatting
 with the selected allocator Provider, and WriteValue by delegating to the stream's
-StringView evidence. It exposes no separate format/as_view overloads. Writing a
+StringView evidence. It exposes no separate format/view overloads. Writing a
 version preserves the stream's selected Result, including counts or fallible writes.
 
 Queue and QueueInsertion scope removal and insertion without ordinary overloads.

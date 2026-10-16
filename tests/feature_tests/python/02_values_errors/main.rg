@@ -10,7 +10,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     error ::= unwrap_or_abort(
         .value = python.error_text(.self = &interpreter, .allocator = system.page_allocator)
     ).result
-    if contains(.self = as_view(.self = &error).view, .pattern = "TypeError").ok == false {
+    if contains(.self = view(.self = &error).view, .pattern = "TypeError").ok == false {
         abort
     }
     signed_value: Int64 = -42
@@ -59,7 +59,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     text ::= unwrap_or_abort(
         .value = python.to_string(.self = &key, .allocator = system.page_allocator)
     ).result
-    if contains(.self = as_view(.self = &text).view, .pattern = "value").ok == false { abort }
+    if contains(.self = view(.self = &text).view, .pattern = "value").ok == false { abort }
     unicode ::= unwrap_or_abort(
         .value = python.string(.self = &interpreter, .value = "á🙂")
     ).result
@@ -67,7 +67,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         .value = python.to_string(.self = &unicode, .allocator = system.page_allocator)
     ).result
     if byte_length(&unicode_copy).count != 6 { abort }
-    if contains(.self = as_view(.self = &unicode_copy).view, .pattern = "á🙂").ok == false {
+    if contains(.self = view(.self = &unicode_copy).view, .pattern = "á🙂").ok == false {
         abort
     }
     raw_bytes: [3]UInt8 = (97, 0, 255)
@@ -83,7 +83,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     rendered ::= unwrap_or_abort(
         .value = python.to_string(.self = &representation, .allocator = system.page_allocator)
     ).result
-    if contains(.self = as_view(.self = &rendered).view, .pattern = "-42").ok == false {
+    if contains(.self = view(.self = &rendered).view, .pattern = "-42").ok == false {
         abort
     }
     match python.import_module(.self = &interpreter, .name = "argi_module_that_does_not_exist") {
@@ -93,7 +93,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         .value = python.error_text(.self = &interpreter, .allocator = system.page_allocator)
     ).result
     if [
-        contains(.self = as_view(.self = &captured).view, .pattern = "ModuleNotFoundError").ok
+        contains(.self = view(.self = &captured).view, .pattern = "ModuleNotFoundError").ok
         == false
     ] {
         abort
@@ -106,17 +106,17 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         .value = python.string(.self = &interpreter, .value = "{")
     ).result
     arguments: [1]&python.Object = (&invalid)
-    match python.call(.self = &loads, .arguments = view(.array = &arguments)) {
+    match python.call(.self = &loads, .arguments = view(.self = &arguments)) {
         ..error _ {} ..ok _ { abort }
     }
     traceback ::= unwrap_or_abort(
         .value = python.error_text(.self = &interpreter, .allocator = system.page_allocator)
     ).result
-    if contains(.self = as_view(.self = &traceback).view, .pattern = "Traceback").ok == false {
+    if contains(.self = view(.self = &traceback).view, .pattern = "Traceback").ok == false {
         abort
     }
     if [
-        contains(.self = as_view(.self = &traceback).view, .pattern = "JSONDecodeError").ok
+        contains(.self = view(.self = &traceback).view, .pattern = "JSONDecodeError").ok
         == false
     ] {
         abort
@@ -130,7 +130,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     ).result
     sqrt_arguments: [1]&python.Object = (&square)
     root ::= unwrap_or_abort(
-        .value = python.call(.self = &sqrt, .arguments = view(.array = &sqrt_arguments))
+        .value = python.call(.self = &sqrt, .arguments = view(.self = &sqrt_arguments))
     ).result
     if unwrap_or_abort(.value = python.to_float64(.self = &root)).result != root_value {
         abort

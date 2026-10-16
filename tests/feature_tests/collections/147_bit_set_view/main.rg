@@ -1,6 +1,6 @@
 main() -> (.status_code: Int32 = 0) := {
     bytes :: [3]UInt8 = (255, 255, 99)
-    storage ::= view(.array = $&bytes)
+    storage ::= view(.self = $&bytes)
     bits ::= unwrap_or_abort(.value = BitSetView(.bytes = storage, .count = 10))
     if count_set(.self = &bits).count != 0 { abort }
     unwrap_or_abort(.value = set_bit(.self = $&bits, .index = 0))
@@ -14,7 +14,7 @@ main() -> (.status_code: Int32 = 0) := {
     if count_set(.self = &bits).count != 2 { abort }
     if length(.self = &bits).count != 10 { abort }
     other :: [1]UInt8 = (77)
-    narrow ::= view(.array = $&other)
+    narrow ::= view(.self = $&other)
     match BitSetView(.bytes = narrow, .count = 9) { ..ok _ { abort } ..error _ {} }
     if other[0] != 77 { abort }
     native :: UIntNative = 0

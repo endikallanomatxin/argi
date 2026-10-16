@@ -29,12 +29,12 @@ run_main() -> !Void = ..ok Void() := {
     match UnicodeScalar(.value = 4294967295) { ..ok _ { abort } ..error _ {} }
     bytes :: [4]UInt8 = (17, 18, 19, 20)
     scalar ::= UnicodeScalar(.value = 128578)!
-    match utf8_encode(.scalar = scalar, .buffer = view(.array = $&bytes), .offset = 1) {
+    match utf8_encode(.scalar = scalar, .buffer = view(.self = $&bytes), .offset = 1) {
         ..ok _ { abort } ..error _ {}
     }
     if bytes[0] != 17 or bytes[1] != 18 or bytes[2] != 19 or bytes[3] != 20 { abort }
     match utf8_encode(
-        .scalar = scalar, .buffer = view(.array = $&bytes), .offset = 18446744073709551615
+        .scalar = scalar, .buffer = view(.self = $&bytes), .offset = 18446744073709551615
     ) { ..ok _ { abort } ..error _ {} }
     match utf8_decode(.text = "", .offset = 0) { ..ok _ { abort } ..error _ {} }
     match utf8_decode(.text = "A", .offset = 18446744073709551615) {

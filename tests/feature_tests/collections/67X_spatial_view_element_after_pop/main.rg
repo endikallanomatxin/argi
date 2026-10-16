@@ -5,7 +5,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         )
     )
     push_assume_capacity#(.t: UIntNative)(.self = $&array, .value = 7)
-    borrowed_view ::= view(.array = $&array)
+    borrowed_view ::= view(.self = $&array)
     element ::= unwrap_or_abort(
         .value = get_reference(.self = &borrowed_view, .index = 0).result
     )

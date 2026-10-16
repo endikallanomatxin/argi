@@ -4,7 +4,7 @@ DummyOutput: Type = (
 
 main() -> (.status_code: Int32) := {
     bytes: Array#(.n = 3, .t: UInt8) = (0, 0, 0)
-    buffer ::= view(.array = $&bytes)
+    buffer ::= view(.self = $&bytes)
     first_set ::= set#(.t: UInt8)(.self = $&buffer, .index = 0, .value = 2).result
     second_set ::= set#(.t: UInt8)(.self = $&buffer, .index = 1, .value = 3).result
     third_set ::= set#(.t: UInt8)(.self = $&buffer, .index = 2, .value = 5).result
@@ -44,22 +44,17 @@ main() -> (.status_code: Int32) := {
     status_code = 0
 }
 
-implement Writer#(DummyOutput)(
-    .write_byte = (
-            .self : $&DummyOutput,
-            .byte : UInt8,
-        ) -> (
-            .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
-        ) {
+implement Writer#(DummyOutput) (
+    .write_byte = (.self: $&DummyOutput, .byte: UInt8) -> (
+        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+    ) {
         self&.write_count = self&.write_count + 1
         result = ..ok Void()
     }
 
-    .flush = (
-            .self : $&DummyOutput,
-        ) -> (
-            .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
-        ) {
+    .flush = (.self: $&DummyOutput) -> (
+        .result : Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))
+    ) {
         result = ..ok Void()
     }
 )

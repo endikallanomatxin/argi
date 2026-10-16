@@ -39,6 +39,6 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
 
     for entry in counts {
         print(entry.value&, .terminator = "\t", .writer = output)!!! { status_code = 1 }
-        print(as_view(entry.key), .writer = output)!!! { status_code = 1 }
+        print(view(entry.key), .writer = output)!!! { status_code = 1 }
     }
 }

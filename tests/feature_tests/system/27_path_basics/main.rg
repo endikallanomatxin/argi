@@ -63,7 +63,7 @@ main(.system: System) -> (.status_code: Int32) := {
     match joined_result {
         ..ok ~payload {
             joined ::= ~payload
-            joined_view ::= as_view(.self = &joined)
+            joined_view ::= view(.self = &joined)
             if joined_view == "/tmp/demo/child.txt" {
             } else {
                 status_code = 8

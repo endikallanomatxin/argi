@@ -4,7 +4,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     bytes: [4]UInt8 = (240, 159, 152, 128)
     source ::= view(&bytes)
     text ::= string_from_bytes(.bytes = source)!
-    borrowed ::= as_view(&text)
+    borrowed ::= view(&text)
     if byte_length(&borrowed) != 4 { abort }
     if utf8_decode(.text = borrowed)!.width != 4 { abort }
     match slice(.self = borrowed, .start = 1, .count = 1) {

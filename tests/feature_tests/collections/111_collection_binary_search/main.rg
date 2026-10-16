@@ -65,7 +65,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     expect_index(.result = found, .expected = 5)
     descending ::= Descending()
     fixed: [5]Int32 = (9, 5, 5, 3, 1)
-    borrowed_view ::= view(.array = &fixed)
+    borrowed_view ::= view(.self = &fixed)
     expect_index(
         .result = binary_search(
             .self = &borrowed_view, .value = 5, .order = &descending
@@ -73,7 +73,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         .expected = 1
     )
     records: [3]Record = ((.key = 1, .tag = 10), (.key = 1, .tag = 20), (.key = 2, .tag = 30))
-    records_view ::= view(.array = &records)
+    records_view ::= view(.self = &records)
     by_key ::= ByKey()
     target :: Record = (.key = 1, .tag = 999)
     expect_index(
@@ -83,7 +83,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         .expected = 0
     )
     text: [3]StringView = ("", "a", "ab")
-    text_view ::= view(.array = &text)
+    text_view ::= view(.self = &text)
     text_order ::= StringViewOrderPolicy()
     bytes: [1]UInt8 = (97)
     needle_storage ::= unwrap_or_abort(
@@ -92,7 +92,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
             .allocator = system.page_allocator
         )
     )
-    needle ::= as_view(&needle_storage)
+    needle ::= view(&needle_storage)
     expect_index(
         .result = binary_search(
             .self = &text_view, .value = needle, .order = &text_order

@@ -28,7 +28,7 @@ ASCII digits. Only the source view's native length bounds their size. Private
 validated state prevents external modules from forging component boundaries.
 The source bytes must stay alive and unchanged while the version is used.
 
-`as_view(.self: &VersionView)` returns the full `.view: StringView` through TextViewOf.
+`view(.self: &VersionView)` returns the full `.view: StringView` through Viewable.
 `major`, `minor`, `patch`, `pre_release`, and `build_metadata` return component
 text without separators. Missing prerelease or build metadata is an empty view.
 These accessors preserve borrowing; they do not allocate or parse again.

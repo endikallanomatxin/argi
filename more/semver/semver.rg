@@ -161,8 +161,9 @@ implement Init#(VersionView, (.text: StringView)) (
     }
 )
 
-implement TextViewOf#(&VersionView) (
-    .text_view = (.self: &VersionView) -> (.view: StringView) { view = self&._text }
+implement Viewable#(&VersionView) (
+    .Result    : Type = StringView
+    .make_view = (.self: &VersionView) -> (.view: StringView) { view = self&._text }
 )
 
 major(.self: &VersionView) -> (.text: StringView) := {
@@ -346,13 +347,13 @@ implement#(.Provider: Type: Allocator) StringFormatting#(&VersionView, Provider)
     .render = (.value: &VersionView, .allocator: $&Provider) -> (
         .result : Errable#(String, (..out_of_memory))
     ) {
-        result = ~format(.value = as_view(.self = value).view, .allocator = allocator)
+        result = ~format(.value = view(.self = value).view, .allocator = allocator)
     }
     .append = (.out: $&String, .value: &VersionView, .allocator: $&Provider) -> (
         .result : Errable#(Void, (..out_of_memory))
     ) {
         result = format_into(
-            .out = out, .value = as_view(.self = value).view, .allocator = allocator
+            .out = out, .value = view(.self = value).view, .allocator = allocator
         )
     }
 )
@@ -360,6 +361,6 @@ implement#(.Provider: Type: Allocator) StringFormatting#(&VersionView, Provider)
 implement#(.Stream: Type: WriteValue#(Stream, StringView)) WriteValue#(Stream, &VersionView) (
     .Result      : Type = WriteValue#(Stream, StringView).Result
     .write_value = (.self: $&Stream, .value: &VersionView) -> (.result: Result) {
-        result = ~write(.self = self, .value = as_view(.self = value).view)
+        result = ~write(.self = self, .value = view(.self = value).view)
     }
 )

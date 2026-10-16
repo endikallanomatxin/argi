@@ -1,7 +1,7 @@
 run_main(.system: System) -> !Void = ..ok Void() := {
     assume allocator := system.page_allocator
     text ::= format(.value = "hello", .allocator = allocator)!
-    validated ::= CodepointView(.text = as_view(.self = &text))
+    validated ::= CodepointView(.text = view(.self = &text))
     iterator ::= to_iterator(.value = &validated).iterator
     deinit(.self = $&text)
     next(.self = $&iterator)

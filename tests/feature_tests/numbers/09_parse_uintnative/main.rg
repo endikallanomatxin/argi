@@ -8,7 +8,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
         index = index + 1
     }
     text ::= format(.value = maximum)!
-    parsed ::= parse_uintnative(.text = as_view(.self = &text))!
+    parsed ::= parse_uintnative(.text = view(.self = &text))!
     if parsed != maximum { abort }
     if parse_uintnative(.text = "+00042")! != 42 { abort }
     if parse_uintnative(.text = "ff", .base = 16)! != 255 { abort }
@@ -26,7 +26,9 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     }
 }
 
-main#(.WriterType: Type: Writer#(WriterType))(.system: System, .writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
+main#(.WriterType: Type: Writer#(WriterType))(
+    .system: System, .writer: $&WriterType = reach writer
+) -> (.status_code: Int32 = 1) := {
     run_main(.system = system)!!!
     status_code = 0
 }

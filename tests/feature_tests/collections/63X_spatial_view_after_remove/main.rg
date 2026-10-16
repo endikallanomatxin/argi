@@ -1,7 +1,5 @@
-window(.array: $&DynamicArray#(.t: UIntNative)) -> (
-    .borrowed_view : ArrayView#(.t: UIntNative)
-) := {
-    full ::= view(.array = array)
+window(.array: $&DynamicArray#(.t: UIntNative)) -> (.borrowed_view: ArrayView#(.t: UIntNative)) := {
+    full ::= view(.self = array)
     borrowed_view = unwrap_or_abort(
         .value = slice(.self = &full, .start = 0, .count = 1).result
     )

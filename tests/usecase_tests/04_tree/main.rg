@@ -56,7 +56,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         match [next($&walker)!!! { status_code = 1 }] {
             ..none { break }
             ..some ~entry {
-                print(as_view(&entry.value.path), .writer = output)!!! { status_code = 1 }
+                print(view(&entry.value.path), .writer = output)!!! { status_code = 1 }
             }
         }
     }

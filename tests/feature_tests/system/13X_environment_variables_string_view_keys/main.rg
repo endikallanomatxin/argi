@@ -8,10 +8,10 @@ main(.system: System) -> (.status_code: Int32) := {
     _ ::= unwrap_or_abort(.value = set_ascii(.self = $&home_string, .index = 2, .byte = 77))
     _ ::= unwrap_or_abort(.value = set_ascii(.self = $&home_string, .index = 3, .byte = 69))
 
-    home_view ::= as_view(.self = &home_string)
+    home_view ::= view(.self = &home_string)
 
     has_result ::= has(.self = system.env_vars, .key = home_view)
-    if is(.value = has_result, .variant = ..ok) and has_result..ok {
+    if is(.value = has_result, .variant = ..ok) and has_result ..ok {
     } else {
         status_code = 1
         return
@@ -22,7 +22,7 @@ main(.system: System) -> (.status_code: Int32) := {
         status_code = 3
         return
     }
-    from_view ::= from_view_result..ok
+    from_view ::= from_view_result ..ok
     if is(.value = from_view, .variant = ..some) {
     } else {
         status_code = 2

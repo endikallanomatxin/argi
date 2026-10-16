@@ -15,7 +15,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
         match [read_line()!!! { status_code = 1 }] {
             ..end { break }
             ..ok ~line {
-                text ::= as_view(&line)
+                text ::= view(&line)
                 if text == "" { break }
 
                 print(text, .writer = output)!!! { status_code = 1 }

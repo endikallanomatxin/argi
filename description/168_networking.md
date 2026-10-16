@@ -13,7 +13,7 @@ main(.system: System) -> () := {
     address ::= get(.self = &addresses, .index = 0)!!!
     connection ::= TcpConnection(.address = address)!!!
     bytes: [4]UInt8 = (112, 105, 110, 103)
-    write_all(.self = $&connection, .buffer = view(.array = &bytes))!!!
+    write_all(.self = $&connection, .buffer = view(.self = &bytes))!!!
     shutdown_write(.self = $&connection)!!!
 }
 ```

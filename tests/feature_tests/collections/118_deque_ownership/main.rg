@@ -31,7 +31,7 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     reserve(.self = $&strings, .capacity = 8)!
     extracted ::= pop_back(.self = $&strings)!
     deinit(.self = $&strings)
-    if as_view(.self = &extracted).view != "A" { abort }
+    if view(.self = &extracted).view != "A" { abort }
 }
 
 main#(.WriterType: Type: Writer#(WriterType))(

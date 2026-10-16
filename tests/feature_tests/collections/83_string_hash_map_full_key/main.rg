@@ -12,7 +12,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
             .allocator = system.page_allocator
         )
     )
-    binary ::= as_view(&binary_storage)
+    binary ::= view(&binary_storage)
     if string_hash_map_hash(.key = &binary).hash != 8867228 { abort }
     keys: [32]StringView = (
         "entry_00000_end",

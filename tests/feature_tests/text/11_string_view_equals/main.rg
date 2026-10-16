@@ -23,7 +23,7 @@ main(.system: System) -> (.status_code: Int32) := {
     _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = four, .byte = o))
     _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = five, .byte = bang))
 
-    view ::= as_view(.self = &text)
+    view ::= view(.self = &text)
     hello ::= unwrap_or_abort(.value = slice(.self = view, .start = 0, .count = 5))
     hello_again ::= unwrap_or_abort(.value = slice(.self = view, .start = 0, .count = 5))
 

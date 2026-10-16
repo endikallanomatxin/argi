@@ -19,12 +19,12 @@ implement ImplicitlyCopyable#(StringHashPolicy) ()
 
 implement BorrowedHashPolicy#(StringHashPolicy, String) (
     .hash = (.self: &StringHashPolicy, .key: &String) -> (.hash: UIntNative) {
-        text ::= as_view(key)
+        text ::= view(key)
         hash = string_hash_map_hash(.key = &text).hash
     }
 
     .eql = (.self: &StringHashPolicy, .left: &String, .right: &String) -> (.ok: Bool) {
-        ok = equals(.left = as_view(left), .right = as_view(right)).ok
+        ok = equals(.left = view(left), .right = view(right)).ok
     }
 )
 
