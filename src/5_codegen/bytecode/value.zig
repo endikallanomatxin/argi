@@ -1,7 +1,7 @@
 const p = @import("../../4_semantics/primitives/schema.zig");
 
 pub const FrameId = enum(u32) { _ };
-pub const Projection = union(enum) { field: u32, element: usize };
+pub const Projection = union(enum) { field: u32, element: usize, variant: u32 };
 
 // An interpreter address contains no host pointer. Indices are captured when
 // borrowing, and frame identities are never reused within an execution.
@@ -19,4 +19,5 @@ pub const Value = union(enum) {
     record: []const Value,
     array: []const Value,
     reference: Reference,
+    choice: struct { variant: u32, payload: ?*const Value },
 };

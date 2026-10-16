@@ -394,3 +394,73 @@ test "bytecode reference fields keep pointees separate from copied records" {
         \\}
     , .{}));
 }
+
+test "bytecode matches choice payloads and borrows their storage" {
+    try std.testing.expectEqual(@as(i128, 42), try execute(
+        \\Result: Type = (..ok(.value: Int32), ..empty)
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    value :: Result = ..ok(.value = 1)
+        \\    saved ::= value
+        \\    match value {
+        \\        ..ok $& payload { payload&.value = 42 }
+        \\        ..empty { abort }
+        \\    }
+        \\    match saved {
+        \\        ..ok payload { if payload.value != 1 { abort } }
+        \\        ..empty { abort }
+        \\    }
+        \\    match value {
+        \\        ..ok payload { status_code = payload.value }
+        \\        ..empty { abort }
+        \\    }
+        \\}
+    , .{}));
+}
+
+test "bytecode accesses proven active payloads across calls" {
+    try std.testing.expectEqual(@as(i128, 42), try execute(
+        \\Result: Type = (..ok Int32, ..empty)
+        \\make(.value: Int32) -> (.result: Result) := { result = ..ok value }
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    result ::= make(.value = 42)
+        \\    if result == ..ok { status_code = result..ok } else { abort }
+        \\}
+    , .{}));
+}
+
+test "bytecode choice verifier rejects foreign variants and incorrect payload types" {
+    const g = @import("../4_semantics/global/graph.zig");
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(std.testing.allocator);
+    const a = std.testing.allocator;
+    const source = @import("../4_semantics/primitives/schema.zig").SourceRef{ .file_index = 0, .offset = 0 };
+    try graph.types.append(a, .{ .builtin = .Int32 });
+    try graph.types.append(a, .{ .builtin = .Bool });
+    try graph.types.append(a, .{ .structural_choice = .{ .variants = .{ .start = 0, .len = 2 } } });
+    try graph.variants.append(a, .{ .name = .{ .start = 0, .len = 0 }, .payload_type = @enumFromInt(0), .source = source, .value = 0 });
+    try graph.variants.append(a, .{ .name = .{ .start = 0, .len = 0 }, .source = source, .value = 1 });
+    try graph.fields.append(a, .{ .name = .{ .start = 0, .len = 0 }, .ty = @enumFromInt(0), .source = source });
+    try graph.functions.append(a, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 1 } });
+    var code = [_]b.Instruction{
+        .{ .source = source, .op = .{ .constant = .{ .dst = 0, .value = .{ .integer = 42 } } } },
+        .{ .source = source, .op = .{ .constant = .{ .dst = 1, .value = .{ .boolean = true } } } },
+        .{ .source = source, .op = .{ .choice = .{ .dst = 2, .variant = @enumFromInt(0), .payload = 0 } } },
+        .{ .source = source, .op = .{ .payload = .{ .dst = 0, .src = 2, .variant = @enumFromInt(0) } } },
+        .{ .source = source, .op = .{ .ret = &.{0} } },
+    };
+    const functions = [_]?b.Function{.{ .slots = &.{ @enumFromInt(0), @enumFromInt(1), @enumFromInt(2) }, .inputs = &.{}, .outputs = &.{0}, .code = &code }};
+    const program = b.Program{ .graph = &graph, .functions = &functions };
+    try b.verify(a, program);
+    code[2].op.choice.payload = 1;
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+    code[2].op.choice.payload = null;
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+    code[2].op.choice.variant = @enumFromInt(99);
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+    code[2].op.choice.variant = @enumFromInt(1);
+    // The payload instruction is well typed but names an inactive alternative.
+    // Runtime checks backstop the frontend's proof of the active variant.
+    var executor = try vm.Vm.init(a, program, .{});
+    defer executor.deinit();
+    try std.testing.expectError(error.ExecutionInactiveVariant, executor.run(@enumFromInt(0), &.{}));
+}

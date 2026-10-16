@@ -33,7 +33,7 @@ initialization, resources, and cleanup remain outside the executor subset.
 
 ## Remaining decisions
 
-- Extend storage to partial initialization, choices, and ordinary cleanup.
+- Extend storage to partial initialization, error propagation, and ordinary cleanup.
 - Shared VM/native calling convention, output storage, errors, and cleanup.
 - LLVM JIT integration, symbol resolution, and supported host/C signatures.
 - Session persistence, redefinition, failed submissions, reset, and exit.

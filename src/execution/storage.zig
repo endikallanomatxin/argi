@@ -52,6 +52,7 @@ pub const Storage = struct {
     }
     fn child(value: b.Value, projection: v.Projection) !b.Value {
         return switch (projection) {
+            .variant => |variant| if (value == .choice and value.choice.variant == variant and value.choice.payload != null) value.choice.payload.?.* else error.ExecutionInactiveVariant,
             .field => |index| if (value == .record and index < value.record.len) value.record[index] else error.ExecutionInvalidReference,
             .element => |index| if (value == .array and index < value.array.len) value.array[index] else error.ExecutionIndexOutOfBounds,
         };
@@ -74,6 +75,7 @@ pub const Storage = struct {
                 if (length == path.len) return error.ExecutionInvalidReference;
                 const concrete: v.Projection = switch (projection) {
                     .field => |index| .{ .field = index },
+                    .variant => |variant| .{ .variant = @intFromEnum(variant) },
                     .element => |index| .{ .element = try elementIndex(locals[index].integer, if (value == .array) value.array.len else return error.ExecutionInvalidReference) },
                     .dereference => unreachable,
                 };
@@ -105,9 +107,15 @@ pub const Storage = struct {
         if (path.len == 0) return value;
         const old = try child(base, path[0]);
         const changed = try self.update(old, path[1..], value);
+        if (path[0] == .variant) {
+            const payload = try self.allocate(1);
+            payload[0] = changed;
+            return .{ .choice = .{ .variant = base.choice.variant, .payload = &payload[0] } };
+        }
         const elements, const index = switch (path[0]) {
             .field => |index| .{ base.record, @as(usize, index) },
             .element => |index| .{ base.array, index },
+            .variant => unreachable,
         };
         const result = try self.allocate(elements.len);
         @memcpy(result, elements);
@@ -115,6 +123,7 @@ pub const Storage = struct {
         return switch (path[0]) {
             .field => .{ .record = result },
             .element => .{ .array = result },
+            .variant => unreachable,
         };
     }
     // Returning a borrow of a caller's storage is valid; returning one into the
@@ -122,6 +131,7 @@ pub const Storage = struct {
     pub fn validateLive(self: *Storage, values: []const b.Value) anyerror!void {
         for (values) |value| switch (value) {
             .reference => |reference| _ = try self.read(reference),
+            .choice => |choice| if (choice.payload) |payload| try self.validateLive(payload[0..1]),
             .record => |fields| try self.validateLive(fields),
             .array => |elements| try self.validateLive(elements),
             else => {},

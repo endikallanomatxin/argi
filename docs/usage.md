@@ -105,7 +105,11 @@ to read access. Ended call frames cannot be accessed. References cannot be suppl
 as external VM inputs, and results cannot borrow a completed frame. Lexical lifetime
 and aliasing rules remain the responsibility of the ordinary safety checker.
 
-Raw pointers, floating point, choices/errors, virtual calls, resources,
+Choices support construction, tag tests, active-payload access and `match`,
+including borrowed payloads. The verifier checks variant membership and payload
+types; execution checks that a payload is active before reading or writing it.
+
+Raw pointers, C enums, floating point, error propagation/tracing, virtual calls, resources,
 cleanup, globals, closures, foreign calls, and System capabilities are not yet
 supported. Unsupported constructs in reachable function bodies are rejected
 before execution, including constructs on untaken branches. Integer overflow,

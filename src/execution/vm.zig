@@ -53,6 +53,10 @@ pub const Vm = struct {
         for (result, values) |*out, value| out.* = switch (value) {
             .array => |elements| .{ .array = try self.cloneValues(elements) },
             .record => |fields| .{ .record = try self.cloneValues(fields) },
+            .choice => |choice| .{ .choice = .{
+                .variant = choice.variant,
+                .payload = if (choice.payload) |payload| &(try self.cloneValues(payload[0..1]))[0] else null,
+            } },
             else => value,
         };
         return result;
@@ -116,6 +120,22 @@ pub const Vm = struct {
                     const index = try Storage.elementIndex(slots[x.index].integer, elements.len);
                     slots[x.dst] = elements[index];
                 },
+                .choice => |x| {
+                    var payload: ?*const b.Value = null;
+                    if (x.payload) |slot| {
+                        const cell = try self.allocate(1);
+                        cell[0] = slots[slot];
+                        payload = &cell[0];
+                    }
+                    slots[x.dst] = .{ .choice = .{ .variant = @intFromEnum(x.variant), .payload = payload } };
+                },
+                .payload => |x| {
+                    const choice = slots[x.src].choice;
+                    if (choice.variant != @intFromEnum(x.variant) or choice.payload == null) return error.ExecutionInactiveVariant;
+                    slots[x.dst] = choice.payload.?.*;
+                },
+                .is_variant => |x| slots[x.dst] = .{ .boolean = (slots[x.src].choice.variant == @intFromEnum(x.variant)) != x.invert },
+                .branch_variant => |x| current.pc = if (slots[x.src].choice.variant == @intFromEnum(x.variant)) x.yes else x.no,
                 .borrow => |x| {
                     var path: [64]runtime_value.Projection = undefined;
                     const reference = try self.storage.resolve(current.storage, x.place, &path);
@@ -170,7 +190,11 @@ pub const Vm = struct {
                 .compare => |x| {
                     const left = slots[x.left];
                     const right = slots[x.right];
-                    const yes = if (left == .boolean) switch (x.operator) {
+                    const yes = if (left == .choice) switch (x.operator) {
+                        .equal => left.choice.variant == right.choice.variant,
+                        .not_equal => left.choice.variant != right.choice.variant,
+                        else => unreachable,
+                    } else if (left == .boolean) switch (x.operator) {
                         .equal => left.boolean == right.boolean,
                         .not_equal => left.boolean != right.boolean,
                         else => unreachable,

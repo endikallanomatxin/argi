@@ -132,7 +132,6 @@ const FunctionLower = struct {
                 _ = try self.emit(node.source, .{ .ret = self.outputs });
             },
             .if_statement => |x| {
-                if (x.choice_test != null) return self.parent.reject(node.source, "choice test");
                 const condition = try self.expression(x.condition);
                 const branch = try self.emit(node.source, .{ .branch = .{ .condition = condition, .yes = 0, .no = 0 } });
                 const yes = self.position();
@@ -144,6 +143,7 @@ const FunctionLower = struct {
                 self.code.items[branch].op.branch.no = no;
                 self.code.items[end].op.jump = self.position();
             },
+            .switch_statement => |switch_id| try self.matchStatement(switch_id, node.source),
             .while_statement => |x| {
                 const start = self.position();
                 const condition = try self.expression(x.condition);
@@ -175,6 +175,47 @@ const FunctionLower = struct {
                 _ = try self.expression(id);
             },
         }
+    }
+    fn matchStatement(self: *FunctionLower, id: g.GlobalSwitchId, source: p.SourceRef) anyerror!void {
+        const sw = self.parent.graph.switches.items[@intFromEnum(id)];
+        const cases = self.parent.graph.switch_cases.items[sw.cases.start..][0..sw.cases.len];
+        var borrowed = false;
+        for (cases) |case| if (case.payload_mode == .borrow or case.payload_mode == .mut_borrow) {
+            borrowed = true;
+        };
+        const target: ?b.Place = if (borrowed) try self.place(sw.expression) else null;
+        const value = if (target) |place_| blk: {
+            const slot = try self.newSlot(self.parent.graph.node(sw.expression).ty.?);
+            _ = try self.emit(source, .{ .load = .{ .dst = slot, .place = place_ } });
+            break :blk slot;
+        } else try self.expression(sw.expression);
+        var ends: std.ArrayList(u32) = .empty;
+        defer ends.deinit(self.parent.allocator);
+        for (cases) |case| {
+            const branch = try self.emit(source, .{ .branch_variant = .{ .src = value, .variant = case.variant, .yes = self.position() + 1, .no = 0 } });
+            if (case.payload_binding) |binding| {
+                const dst = try self.bindingSlot(binding);
+                switch (case.payload_mode) {
+                    .borrow, .mut_borrow => {
+                        const place_ = try self.project(target.?, .{ .variant = case.variant });
+                        _ = try self.emit(source, .{ .borrow = .{ .dst = dst, .place = place_ } });
+                    },
+                    .value, .move => _ = try self.emit(source, .{ .payload = .{ .dst = dst, .src = value, .variant = case.variant } }),
+                }
+            }
+            try self.block(case.body);
+            try ends.append(self.parent.allocator, try self.emit(source, .{ .jump = 0 }));
+            self.code.items[branch].op.branch_variant.no = self.position();
+        }
+        if (sw.default_block) |other| {
+            try self.block(other);
+        } else if (sw.exhaustive) {
+            // Checked exhaustive switches cannot reach this path. An explicit
+            // trap preserves definite-initialization facts without inventing a
+            // fallthrough edge, and protects malformed runtime values.
+            _ = try self.emit(source, .abort_);
+        }
+        for (ends.items) |jump| self.code.items[jump].op.jump = self.position();
     }
     fn coerce(self: *FunctionLower, source: p.SourceRef, slot: b.Slot, target: b.Type) !b.Slot {
         if (types.equal(self.parent.graph, self.slots.items[slot], target)) return slot;
@@ -217,6 +258,7 @@ const FunctionLower = struct {
             .address_of => |value| self.place(value),
             .dereference => |x| self.project(.{ .root = try self.expression(x.pointer), .path = &.{} }, .dereference),
             .struct_field_access => |x| self.project(try self.place(x.value), .{ .field = x.field_index }),
+            .choice_payload_access => |x| self.project(try self.place(x.value), .{ .variant = x.variant }),
             .array_index => |x| blk: {
                 const base = try self.place(x.array_ptr);
                 const index = try self.expression(x.index);
@@ -270,6 +312,13 @@ const FunctionLower = struct {
                 const target = try self.project(.{ .root = pointer, .path = &.{} }, .dereference);
                 _ = try self.emit(node.source, .{ .load = .{ .dst = dst, .place = target } });
             },
+            .choice_literal => |x| {
+                const payload = if (x.payload) |value| try self.coerce(node.source, try self.expression(value), self.parent.graph.variants.items[@intFromEnum(x.variant)].payload_type.?) else null;
+                _ = try self.emit(node.source, .{ .choice = .{ .dst = dst, .variant = x.variant, .payload = payload } });
+            },
+            .choice_payload_access => |x| {
+                _ = try self.emit(node.source, .{ .payload = .{ .dst = dst, .src = try self.expression(x.value), .variant = x.variant } });
+            },
             .int_literal => |value| {
                 _ = try self.emit(node.source, .{ .constant = .{ .dst = dst, .value = .{ .integer = value } } });
             },
@@ -305,7 +354,17 @@ const FunctionLower = struct {
                 _ = try self.emit(node.source, .{ .binary = .{ .dst = dst, .left = try self.expression(x.left), .right = try self.expression(x.right), .operator = x.operator } });
             },
             .comparison => |x| {
-                _ = try self.emit(node.source, .{ .compare = .{ .dst = dst, .left = try self.expression(x.left), .right = try self.expression(x.right), .operator = x.operator } });
+                const left = try self.expression(x.left);
+                const right = self.parent.graph.node(x.right);
+                if (types.variants(self.parent.graph, self.slots.items[left])) |variants| {
+                    if (right.content == .int_literal and (x.operator == .equal or x.operator == .not_equal)) {
+                        const tag = right.content.int_literal;
+                        if (tag < 0 or tag >= variants.len) return self.parent.reject(node.source, "choice comparison tag");
+                        _ = try self.emit(node.source, .{ .is_variant = .{ .dst = dst, .src = left, .variant = @enumFromInt(variants.start + @as(u32, @intCast(tag))), .invert = x.operator == .not_equal } });
+                        return dst;
+                    }
+                }
+                _ = try self.emit(node.source, .{ .compare = .{ .dst = dst, .left = left, .right = try self.expression(x.right), .operator = x.operator } });
             },
             .logical_operation => |x| {
                 const left = try self.expression(x.left);

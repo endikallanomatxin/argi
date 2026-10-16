@@ -13380,3 +13380,9 @@ test "feature_tests/execution/10_reference_calls_vm" {
     try runExpect("tests/feature_tests/execution/10_reference_calls_vm", 42);
     try vmExpect("tests/feature_tests/execution/10_reference_calls_vm", 42, null);
 }
+
+test "feature_tests/execution/11_choices_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/11_choices_vm");
+    try runExpect("tests/feature_tests/execution/11_choices_vm", 42);
+    try vmExpect("tests/feature_tests/execution/11_choices_vm", 42, null);
+}

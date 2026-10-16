@@ -8,7 +8,7 @@ pub const Type = g.GlobalTypeId;
 pub const Value = @import("value.zig").Value;
 // A place starts in local storage and can follow checked safe references.
 // Index operands are snapshots evaluated by lowering in source order.
-pub const Projection = union(enum) { field: u32, element: Slot, dereference };
+pub const Projection = union(enum) { field: u32, element: Slot, variant: g.GlobalVariantId, dereference };
 pub const Place = struct { root: Slot, path: []const Projection };
 
 pub const Instruction = struct {
@@ -23,6 +23,10 @@ pub const Instruction = struct {
         field: struct { dst: Slot, base: Slot, index: u32 },
         array: struct { dst: Slot, elements: []const Slot },
         index: struct { dst: Slot, base: Slot, index: Slot },
+        choice: struct { dst: Slot, variant: g.GlobalVariantId, payload: ?Slot },
+        payload: struct { dst: Slot, src: Slot, variant: g.GlobalVariantId },
+        is_variant: struct { dst: Slot, src: Slot, variant: g.GlobalVariantId, invert: bool },
+        branch_variant: struct { src: Slot, variant: g.GlobalVariantId, yes: u32, no: u32 },
         borrow: struct { dst: Slot, place: Place },
         load: struct { dst: Slot, place: Place },
         check_place: Place,
@@ -74,9 +78,31 @@ pub fn supportedType(graph: *const g.GlobalSemanticGraph, ty: Type, depth: usize
     if (semantic == .builtin) return semantic.builtin == .Bool or semantic.builtin == .Void;
     if (semantic == .pointer) return supportedType(graph, semantic.pointer.child, depth + 1);
     if (types.arrayElement(graph, ty)) |element| return supportedType(graph, element, depth + 1);
+    if (types.variants(graph, ty)) |variants| {
+        if (!regularChoice(graph, ty, depth)) return false;
+        for (graph.variants.items[variants.start..][0..variants.len]) |variant| if (variant.payload_type) |payload| {
+            if (!supportedType(graph, payload, depth + 1)) return false;
+        };
+        return true;
+    }
     const fields = types.fields(graph, ty) orelse return false;
     for (graph.fields.items[fields.start..][0..fields.len]) |field| if (!supportedType(graph, field.ty, depth + 1)) return false;
     return true;
+}
+
+fn regularChoice(graph: *const g.GlobalSemanticGraph, ty: Type, depth: usize) bool {
+    if (depth > 64) return false;
+    return switch (graph.semanticType(ty)) {
+        .structural_choice => |shape| shape.layout == .regular,
+        .inferred_choice => true,
+        .declared => |id| graph.declaration(id).choice_layout == .regular,
+        .generic => if (types.genericInstance(graph, ty)) |instance| switch (instance.shape) {
+            .choice => |shape| shape.layout == .regular,
+            .alias => |child| regularChoice(graph, child, depth + 1),
+            else => false,
+        } else false,
+        else => false,
+    };
 }
 
 pub fn valueFits(graph: *const g.GlobalSemanticGraph, ty: Type, value: Value) bool {
@@ -93,6 +119,14 @@ pub fn valueFits(graph: *const g.GlobalSemanticGraph, ty: Type, value: Value) bo
         // Reference values are created by borrow instructions, never constants
         // or external inputs. Their shape and access are checked separately.
         .reference => false,
+        .choice => |choice| blk: {
+            const variant = choiceVariant(graph, ty, @enumFromInt(choice.variant)) catch break :blk false;
+            if (variant.payload_type) |payload_type| {
+                const payload = choice.payload orelse break :blk false;
+                break :blk valueFits(graph, payload_type, payload.*);
+            }
+            break :blk choice.payload == null;
+        },
         .record => |values| blk: {
             const fields = types.fields(graph, ty) orelse break :blk false;
             if (fields.len != values.len) break :blk false;
@@ -133,7 +167,7 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                 .binary => |x| if (integerBounds(program.graph, f.slots[x.dst]) == null or !types.equal(program.graph, f.slots[x.dst], f.slots[x.left]) or !types.equal(program.graph, f.slots[x.left], f.slots[x.right])) return error.InvalidBytecode,
                 .compare => |x| {
                     if (!valueFits(program.graph, f.slots[x.dst], .{ .boolean = false }) or !types.equal(program.graph, f.slots[x.left], f.slots[x.right])) return error.InvalidBytecode;
-                    if (integerBounds(program.graph, f.slots[x.left]) == null and !(valueFits(program.graph, f.slots[x.left], .{ .boolean = false }) and (x.operator == .equal or x.operator == .not_equal))) return error.InvalidBytecode;
+                    if (integerBounds(program.graph, f.slots[x.left]) == null and !((valueFits(program.graph, f.slots[x.left], .{ .boolean = false }) or types.variants(program.graph, f.slots[x.left]) != null) and (x.operator == .equal or x.operator == .not_equal))) return error.InvalidBytecode;
                 },
                 .record => |x| {
                     const fields = types.fields(program.graph, f.slots[x.dst]) orelse return error.InvalidBytecode;
@@ -152,6 +186,25 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                 .index => |x| {
                     const element = types.arrayElement(program.graph, f.slots[x.base]) orelse return error.InvalidBytecode;
                     if (!types.equal(program.graph, f.slots[x.dst], element) or integerBounds(program.graph, f.slots[x.index]) == null) return error.InvalidBytecode;
+                },
+                .choice => |x| {
+                    const variant = try choiceVariant(program.graph, f.slots[x.dst], x.variant);
+                    if (variant.payload_type) |payload_type| {
+                        const payload = x.payload orelse return error.InvalidBytecode;
+                        if (!types.equal(program.graph, f.slots[payload], payload_type)) return error.InvalidBytecode;
+                    } else if (x.payload != null) return error.InvalidBytecode;
+                },
+                .payload => |x| {
+                    const variant = try choiceVariant(program.graph, f.slots[x.src], x.variant);
+                    if (!types.equal(program.graph, f.slots[x.dst], variant.payload_type orelse return error.InvalidBytecode)) return error.InvalidBytecode;
+                },
+                .is_variant => |x| {
+                    _ = try choiceVariant(program.graph, f.slots[x.src], x.variant);
+                    if (!valueFits(program.graph, f.slots[x.dst], .{ .boolean = false })) return error.InvalidBytecode;
+                },
+                .branch_variant => |x| {
+                    _ = try choiceVariant(program.graph, f.slots[x.src], x.variant);
+                    if (x.yes >= f.code.len or x.no >= f.code.len) return error.InvalidBytecode;
                 },
                 .borrow => |x| {
                     const target = try placeInfo(program.graph, f.slots, x.place);
@@ -212,6 +265,10 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                     successors[0] = target;
                     break :blk 1;
                 },
+                .branch_variant => |x| blk: {
+                    successors = .{ x.yes, x.no };
+                    break :blk 2;
+                },
                 .branch => |x| blk: {
                     successors = .{ x.yes, x.no };
                     break :blk 2;
@@ -250,6 +307,9 @@ pub fn destination(i: Instruction) ?Slot {
         .field => |x| x.dst,
         .array => |x| x.dst,
         .index => |x| x.dst,
+        .choice => |x| x.dst,
+        .payload => |x| x.dst,
+        .is_variant => |x| x.dst,
         .borrow => |x| x.dst,
         .load => |x| x.dst,
         .call => |x| x.dst,
@@ -266,6 +326,10 @@ fn readSlots(a: std.mem.Allocator, i: Instruction, out: *std.ArrayList(Slot)) !v
         .field => |x| try out.append(a, x.base),
         .array => |x| try out.appendSlice(a, x.elements),
         .index => |x| try out.appendSlice(a, &.{ x.base, x.index }),
+        .choice => |x| if (x.payload) |slot| try out.append(a, slot),
+        .payload => |x| try out.append(a, x.src),
+        .is_variant => |x| try out.append(a, x.src),
+        .branch_variant => |x| try out.append(a, x.src),
         .borrow => |x| try readPlace(a, x.place, out),
         .load => |x| try readPlace(a, x.place, out),
         .check_place => |place| try readPlace(a, place, out),
@@ -294,6 +358,10 @@ fn placeInfo(graph: *const g.GlobalSemanticGraph, slots: []const Type, place: Pl
             if (index >= slots.len or integerBounds(graph, slots[index]) == null) return error.InvalidBytecode;
             ty = types.arrayElement(graph, ty) orelse return error.InvalidBytecode;
         },
+        .variant => |id| {
+            const variant = try choiceVariant(graph, ty, id);
+            ty = variant.payload_type orelse return error.InvalidBytecode;
+        },
         .dereference => {
             const pointer = graph.semanticType(ty);
             if (pointer != .pointer) return error.InvalidBytecode;
@@ -308,6 +376,13 @@ fn readPlace(a: std.mem.Allocator, place: Place, out: *std.ArrayList(Slot)) !voi
     try out.append(a, place.root);
     for (place.path) |projection| switch (projection) {
         .element => |index| try out.append(a, index),
-        .field, .dereference => {},
+        .field, .variant, .dereference => {},
     };
+}
+
+pub fn choiceVariant(graph: *const g.GlobalSemanticGraph, ty: Type, id: g.GlobalVariantId) !g.ChoiceVariant {
+    const range = types.variants(graph, ty) orelse return error.InvalidBytecode;
+    const raw = @intFromEnum(id);
+    if (raw < range.start or raw - range.start >= range.len) return error.InvalidBytecode;
+    return graph.variants.items[raw];
 }
