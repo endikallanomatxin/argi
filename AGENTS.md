@@ -321,6 +321,15 @@ feature first.
   one extra scratch byte and destroy partial owners on error. Reserve bounded
   capacity before consuming a chunk.
 
+- Local whole-binding replacement evaluates its RHS into a lexical owner, runs the
+  selected cleanup of the previous value, and moves the replacement into place.
+  Ownership finalization uses cleanup activation to omit destruction for proven
+  first initialization. Preserve temporary provenance in value-sequence summaries;
+  a sequence result must not skip the bindings that establish its dependencies.
+  A block's ret_val can also be its last statement: execute/collect its effects
+  once, retaining its value across following cleanup. Field and indirect
+  replacement still require an evaluated destination and shared cleanup identity.
+
 - Structural automatic cleanup follows record fields and active choice payloads.
   AutoDeinitField keeps variant projections distinct from record fields; preserve
   that distinction in summary substitution, checker state branches, relocation,

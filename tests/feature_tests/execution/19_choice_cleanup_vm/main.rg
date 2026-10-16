@@ -35,10 +35,6 @@ main() -> (.status_code: Int32 = 0) := {
     if counter.count != 3 { abort }
     {
         value :: Result = ..some(.owner = Tracked(.counter = $&counter))
-        match value {
-            ..some $&payload { deinit(.self = $&payload&.owner) }
-            ..none { abort }
-        }
         value = ..none
     }
     if counter.count != 4 { abort }

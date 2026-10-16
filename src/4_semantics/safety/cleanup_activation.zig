@@ -10,6 +10,7 @@ const primitives = @import("../primitives/schema.zig");
 /// The result unions possible cleanup across exits, without caller snapshots.
 pub const Activation = struct {
     roots: std.AutoHashMap(graph_mod.GlobalAutoDeinitId, void),
+    replacements: std.AutoHashMap(graph_mod.GlobalNodeId, void),
     fields: std.AutoHashMap(graph_mod.GlobalAutoDeinitFieldId, void),
     stable_initializers: std.AutoHashMap(graph_mod.GlobalBindingId, graph_mod.GlobalNodeId),
     unstable_bindings: std.AutoHashMap(graph_mod.GlobalBindingId, void),
@@ -37,6 +38,7 @@ pub const Activation = struct {
         self.roots.allocator.free(self.assignment_counts);
         self.roots.allocator.free(self.loop_assigned);
         self.roots.deinit();
+        self.replacements.deinit();
         self.fields.deinit();
     }
 };
@@ -115,11 +117,13 @@ pub fn collect(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSeman
         .allocator = allocator,
         .graph = graph,
         .assignment_nodes = .init(allocator),
+        .addressed_bindings = .init(allocator),
         .activation = .{
             .stable_initializers = .init(allocator),
             .unstable_bindings = .init(allocator),
             .incomplete_outputs = .init(allocator),
             .roots = .init(allocator),
+            .replacements = .init(allocator),
             .fields = .init(allocator),
             .output_bindings = graph.binding_refs.items[function.output_bindings.start..][0..function.output_bindings.len],
             .assignment_counts = counts,
@@ -128,10 +132,23 @@ pub fn collect(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSeman
     };
     errdefer scanner.activation.deinit();
     defer scanner.assignment_nodes.deinit();
+    defer scanner.addressed_bindings.deinit();
     var flow = Flow.init(allocator);
     defer flow.deinit();
+    for (scanner.activation.output_bindings) |binding| {
+        if (graph.binding(binding).initialization == null) try flow.disable(.{ .root = binding });
+    }
     if (graph.function(function_id).body) |body| try scanner.block(body, &flow);
     if (flow.reachable) try scanner.recordOutputExit(&flow);
+    // Loop widening may forget an output's initial empty state. A single
+    // assignment outside loops still initializes an unaddressed output exactly
+    // once, irrespective of unrelated preceding loops or indirect writes.
+    var assignments = scanner.assignment_nodes.keyIterator();
+    while (assignments.next()) |node| {
+        const binding = graph.node(node.*).content.assignment.binding;
+        if (scanner.activation.canForward(binding) and graph.binding(binding).initialization == null and !scanner.addressed_bindings.contains(binding))
+            _ = scanner.activation.replacements.remove(node.*);
+    }
     return scanner.activation;
 }
 
@@ -141,6 +158,7 @@ const Scanner = struct {
     activation: Activation,
     in_loop: bool = false,
     assignment_nodes: std.AutoHashMap(graph_mod.GlobalNodeId, void),
+    addressed_bindings: std.AutoHashMap(graph_mod.GlobalBindingId, void),
 
     fn recordOutputExit(self: *Scanner, flow: *const Flow) !void {
         for (self.activation.output_bindings) |binding| {
@@ -218,7 +236,10 @@ const Scanner = struct {
     fn block(self: *Scanner, id: graph_mod.GlobalBlockId, flow: *Flow) anyerror!void {
         const value = self.graph.blocks.items[@intFromEnum(id)];
         try self.visitRange(value.nodes, flow);
-        if (flow.reachable) if (value.ret_val) |result| try self.node(result, flow);
+        if (flow.reachable) if (value.ret_val) |result| {
+            const nodes = self.graph.node_refs.items[value.nodes.start..][0..value.nodes.len];
+            if (std.mem.indexOfScalar(graph_mod.GlobalNodeId, nodes, result) == null) try self.node(result, flow);
+        };
     }
 
     fn visitRange(self: *Scanner, nodes: primitives.Range(graph_mod.GlobalNodeId), flow: *Flow) anyerror!void {
@@ -253,7 +274,10 @@ const Scanner = struct {
                 try self.recordAssignment(id, assignment.binding);
                 try self.activation.unstable_bindings.put(assignment.binding, {});
                 try self.node(assignment.value, flow);
-                try self.initialize(flow, .{ .root = assignment.binding }, assignment.value);
+                const target = facts.Place{ .root = assignment.binding };
+                if (!flow.skips(target) or self.addressed_bindings.contains(assignment.binding))
+                    try self.activation.replacements.put(id, {});
+                try self.initialize(flow, target, assignment.value);
                 if (std.mem.indexOfScalar(graph_mod.GlobalBindingId, self.activation.output_bindings, assignment.binding) != null and
                     std.mem.indexOfScalar(graph_mod.GlobalBindingId, flow.assigned_outputs.items, assignment.binding) == null)
                     try flow.assigned_outputs.append(assignment.binding);
@@ -263,7 +287,10 @@ const Scanner = struct {
                 if (try self.resolvePlace(value)) |target| try flow.disable(target);
             },
             .address_of => |value| {
-                if (try self.resolvePlace(value)) |target| try self.activation.unstable_bindings.put(target.root, {});
+                if (try self.resolvePlace(value)) |target| {
+                    try self.activation.unstable_bindings.put(target.root, {});
+                    try self.addressed_bindings.put(target.root, {});
+                }
                 try self.node(value, flow);
             },
             .denied_implicit_copy => |value| try self.node(value, flow),
@@ -416,9 +443,14 @@ const Scanner = struct {
             .pointer_assignment => |value| {
                 try self.node(value.pointer, flow);
                 try self.node(value.value, flow);
-                // An unresolved indirect write may reinitialize an owner whose
-                // address escaped. Forget skip proofs rather than guess aliases.
-                flow.disabled.clearRetainingCapacity();
+                // An indirect write can reinitialize escaped storage, but cannot
+                // initialize a local/output whose address has never been formed.
+                var index: usize = 0;
+                while (index < flow.disabled.items.len) {
+                    if (self.addressed_bindings.contains(flow.disabled.items[index].root)) {
+                        _ = flow.disabled.swapRemove(index);
+                    } else index += 1;
+                }
             },
             .explicit_cast => |value| try self.node(value.value, flow),
             .nullable_unwrap_or => |value| {

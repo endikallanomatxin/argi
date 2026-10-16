@@ -117,8 +117,9 @@ scope exits, `return`, loop transfers, structural fields, and active choice payl
 Whole and partial moves cancel the corresponding source cleanup. Explicit destruction
 and outcome-dependent consumption update the same cleanup flags, even for discarded
 call results. Destructors must themselves fit the supported execution subset.
-Replacing a live owning value currently needs explicit cleanup of the old value;
-implicit replacement cleanup is a known frontend limitation shared with native code.
+Replacing a whole local binding evaluates the new value before cleaning up the
+old one. The first initialization does not run a destructor. Owning field
+replacement and indirect writes still need explicit cleanup of the old value.
 
 Raw pointers, C enums, floating point, error propagation/tracing, virtual calls,
 partial initialization through output references, globals, closures, foreign calls,

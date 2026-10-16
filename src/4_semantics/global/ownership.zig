@@ -10,6 +10,7 @@ const reach_context = @import("reach_context.zig");
 const global_types = @import("types.zig");
 const standard_contracts = @import("standard_contracts.zig");
 const primitives = @import("../primitives/schema.zig");
+const cleanup_activation = @import("../safety/cleanup_activation.zig");
 
 pub const Stats = struct {
     copies: u32 = 0,
@@ -40,6 +41,7 @@ pub const Resolver = struct {
     deferred: std.ArrayList(Deferred) = .empty,
     denied_copy: ?DeniedCopy = null,
     auto_nodes: std.ArrayList(AutoNode) = .empty,
+    replacement_candidates: std.AutoHashMapUnmanaged(global_sg.GlobalNodeId, void) = .empty,
     empty_block: ?global_sg.GlobalBlockId = null,
     loop_cleanup_base: ?struct { active: usize, defers: usize } = null,
     stats: Stats = .{},
@@ -55,6 +57,7 @@ pub const Resolver = struct {
     pub fn deinit(self: *Resolver) void {
         self.deferred.deinit(self.allocator);
         self.auto_nodes.deinit(self.allocator);
+        self.replacement_candidates.deinit(self.allocator);
     }
 
     pub fn tryResolve(
@@ -84,6 +87,15 @@ pub const Resolver = struct {
         const function = self.graph.functions.items[@intFromEnum(function_id)];
         const body = function.body orelse return true;
         if (!self.functionReadyForCleanup(function, body)) return false;
+        // Determine possible replacement before adding cleanup sequences. In
+        // particular, an unaddressed output's first initialization has no old
+        // owner and must not instantiate a destructor solely to skip it later.
+        var activation_arena = std.heap.ArenaAllocator.init(self.allocator);
+        defer activation_arena.deinit();
+        var activation = try cleanup_activation.collect(activation_arena.allocator(), self.graph, function_id);
+        defer activation.deinit();
+        var replacements = activation.replacements.keyIterator();
+        while (replacements.next()) |node| try self.replacement_candidates.put(self.allocator, node.*, {});
         var visible: std.ArrayList(global_sg.GlobalBindingId) = .empty;
         defer visible.deinit(self.allocator);
         try visible.appendSlice(
@@ -395,10 +407,11 @@ pub const Resolver = struct {
                 self.graph.error_contexts.items[@intFromEnum(context_id)].cleanup_nodes = cleanup;
             },
             .move_value, .denied_implicit_copy, .address_of => |child| try self.finalizeExpressionCleanup(child, active, defers, visible, owner_function, module_index),
-            // TODO: lower live-value replacement cleanup after RHS evaluation and
-            // before the store. Both safety summaries and backends must observe it;
-            // scope-exit cleanup cannot recover a discarded owning value.
-            .assignment => |assignment| try self.finalizeExpressionCleanup(assignment.value, active, defers, visible, owner_function, module_index),
+            .assignment => |assignment| {
+                const value = try self.bindingReplacement(node_id, assignment.binding, assignment.value, visible, owner_function, module_index);
+                self.graph.nodes.items[@intFromEnum(node_id)].content.assignment.value = value;
+                try self.finalizeExpressionCleanup(value, active, defers, visible, owner_function, module_index);
+            },
             .function_call => |call| {
                 if (call.callee_value) |value| try self.finalizeExpressionCleanup(value, active, defers, visible, owner_function, module_index);
                 try self.finalizeExpressionCleanup(call.input, active, defers, visible, owner_function, module_index);
@@ -482,6 +495,49 @@ pub const Resolver = struct {
             },
             else => {},
         }
+    }
+
+    /// Evaluate the replacement into a lexical owner before destroying the old
+    /// value. The sequence is ordinary checked graph code: destructor effects,
+    /// auxiliary arguments, failure cleanup, and the final move remain visible
+    /// to every consumer rather than being invented by either backend.
+    fn bindingReplacement(
+        self: *Resolver,
+        node_id: global_sg.GlobalNodeId,
+        binding: global_sg.GlobalBindingId,
+        value: global_sg.GlobalNodeId,
+        visible: []const global_sg.GlobalBindingId,
+        owner_function: global_sg.GlobalFunctionId,
+        module_index: usize,
+    ) !global_sg.GlobalNodeId {
+        if (!self.replacement_candidates.contains(node_id)) return value;
+        try self.prepareAutoDeinit(binding, reach_context.Context.fromGlobal(visible, owner_function), module_index);
+        const original_cleanup = self.autoDeinitNode(binding) orelse return value;
+        // Each replacement has its own activation identity. An output's first
+        // assignment cannot destroy an old value, while a later one may.
+        const original_id = self.graph.node(original_cleanup).content.auto_deinit_binding;
+        const plan = self.graph.auto_deinits.items[@intFromEnum(original_id)];
+        const cleanup_id: global_sg.GlobalAutoDeinitId = @enumFromInt(@as(u32, @intCast(self.graph.auto_deinits.items.len)));
+        try self.graph.auto_deinits.append(self.allocator, plan);
+        const cleanup = try self.appendNode(self.graph.node(value).source, try self.builtin(.Void), .{ .auto_deinit_binding = cleanup_id });
+        const record = self.graph.binding(binding);
+        const source = self.graph.node(value).source;
+        const temporary: global_sg.GlobalBindingId = @enumFromInt(@as(u32, @intCast(self.graph.bindings.items.len)));
+        try self.graph.bindings.append(self.allocator, .{
+            .name = try self.graph.addString(self.allocator, "_replacement"),
+            .source = source,
+            .ty = record.ty,
+            .initialization = value,
+            .mutability = .constant,
+        });
+        const declaration = try self.appendNode(source, null, .{ .binding_declaration = temporary });
+        const use = try self.appendNode(source, record.ty, .{ .binding_use = temporary });
+        const result = try self.appendNode(source, record.ty, .{ .move_value = use });
+        const start: u32 = @intCast(self.graph.node_refs.items.len);
+        try self.graph.node_refs.appendSlice(self.allocator, &.{ declaration, cleanup, result });
+        const block: global_sg.GlobalBlockId = @enumFromInt(@as(u32, @intCast(self.graph.blocks.items.len)));
+        try self.graph.blocks.append(self.allocator, .{ .nodes = .{ .start = start, .len = 3 }, .ret_val = result });
+        return self.appendNode(source, record.ty, .{ .value_sequence = block });
     }
 
     fn finalizeBlock(

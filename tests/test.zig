@@ -13449,3 +13449,14 @@ test "feature_tests/execution/20_conditional_cleanup_vm" {
     try runExpect("tests/feature_tests/execution/20_conditional_cleanup_vm", 42);
     try vmExpect("tests/feature_tests/execution/20_conditional_cleanup_vm", 42, null);
 }
+
+test "feature_tests/execution/21_binding_replacement_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/21_binding_replacement_vm");
+    try runExpect("tests/feature_tests/execution/21_binding_replacement_vm", 42);
+    try vmExpect("tests/feature_tests/execution/21_binding_replacement_vm", 42, null);
+}
+
+test "feature_tests/execution/22X_replacement_retains_old_storage" {
+    try buildExpectFail("tests/feature_tests/execution/22X_replacement_retains_old_storage", "reference depends on a root that has ended");
+    try vmExpect("tests/feature_tests/execution/22X_replacement_retains_old_storage", 1, "reference depends on a root that has ended");
+}

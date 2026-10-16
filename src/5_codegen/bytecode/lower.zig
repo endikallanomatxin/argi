@@ -486,8 +486,12 @@ const FunctionLower = struct {
         if (node.content == .function_call) return (try self.call(id)) orelse self.parent.reject(node.source, "void expression");
         if (node.content == .value_sequence) {
             const block_ = self.parent.graph.blocks.items[@intFromEnum(node.content.value_sequence)];
-            try self.block(node.content.value_sequence);
-            return self.expression(block_.ret_val orelse return self.parent.reject(node.source, "sequence without result"));
+            const result_node = block_.ret_val orelse return self.parent.reject(node.source, "sequence without result");
+            var result: ?b.Slot = null;
+            for (self.parent.graph.node_refs.items[block_.nodes.start..][0..block_.nodes.len]) |child| {
+                if (child == result_node) result = try self.expression(child) else try self.statement(child);
+            }
+            return result orelse try self.expression(result_node);
         }
         const dst = try self.newSlot(node.ty orelse return self.parent.reject(node.source, "untyped expression"));
         switch (node.content) {

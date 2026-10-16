@@ -673,6 +673,10 @@ pub const SafetyChecker = struct {
                         try self.refreshStorageGenerationChecked(node.source, state, storage);
                     try self.validateContextualIntegerLiteral(assignment.value, self.graph.binding(assignment.binding).ty);
                     const value = try self.evaluate(function, assignment.value, state);
+                    // Replacement cleanup may end the old value while evaluating
+                    // the RHS sequence. Its new value starts a fresh generation.
+                    if (previous_state != .deinitialized and self.initializednessAtPlace(state, storage) == .deinitialized)
+                        try self.refreshStorageGenerationChecked(node.source, state, storage);
                     try self.setPlace(state, .{ .root = assignment.binding }, .initialized, value);
                 },
                 .auto_deinit_binding => |auto_id| {

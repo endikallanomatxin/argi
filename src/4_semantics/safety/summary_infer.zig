@@ -1205,7 +1205,7 @@ pub const Infer = struct {
         self: *Infer,
         function_id: graph_mod.GlobalFunctionId,
         block_id: graph_mod.GlobalBlockId,
-        outputs: []facts.ValueEffect,
+        outputs: ?[]facts.ValueEffect,
     ) anyerror!void {
         const block = self.graph.blocks.items[@intFromEnum(block_id)];
         for (self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len]) |node_id| {
@@ -1213,15 +1213,16 @@ pub const Infer = struct {
             switch (node.content) {
                 .binding_declaration => |binding| {
                     const initialization = self.graph.binding(binding).initialization orelse continue;
+                    const effect = try self.inferExpression(function_id, initialization);
                     try self.local_address_bindings.put(binding, try self.localAddressTargets(initialization));
-                    try self.bindings.put(binding, try self.inferExpression(function_id, initialization));
+                    try self.bindings.put(binding, effect);
                     try self.place_bindings.put(binding, try self.inferInputPaths(function_id, initialization));
                 },
                 .assignment => |assignment| {
                     const effect = try self.inferExpression(function_id, assignment.value);
                     if (self.outputIndex(function_id, assignment.binding)) |output_index| {
-                        outputs[output_index] = if (outputs[output_index].variants.len != 0 or effect.variants.len != 0)
-                            try self.mergeValueEffects(outputs[output_index], effect)
+                        if (outputs) |values| values[output_index] = if (values[output_index].variants.len != 0 or effect.variants.len != 0)
+                            try self.mergeValueEffects(values[output_index], effect)
                         else
                             effect;
                     } else {
@@ -1536,7 +1537,10 @@ pub const Infer = struct {
             if (!flow.reachable) break;
             try self.infer_capability_node(function, node, flow, exits);
         }
-        if (flow.reachable) if (record.ret_val) |value| try self.infer_capability_node(function, value, flow, exits);
+        if (flow.reachable) if (record.ret_val) |value| {
+            const nodes = self.graph.node_refs.items[record.nodes.start..][0..record.nodes.len];
+            if (std.mem.indexOfScalar(graph_mod.GlobalNodeId, nodes, value) == null) try self.infer_capability_node(function, value, flow, exits);
+        };
     }
 
     fn record_capability_exit(self: *Infer, flow: *const CapabilityFlow, exits: *?CapabilityFlow) !void {
@@ -1952,8 +1956,11 @@ pub const Infer = struct {
             if (!flow.reachable) break;
             try self.inferInputPostStatesNode(function_id, node_id, flow, exits);
         }
-        if (flow.reachable) if (block.ret_val) |value|
-            try self.inferInputPostStatesExpression(function_id, value, &flow.states, exits);
+        if (flow.reachable) if (block.ret_val) |value| {
+            const nodes = self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len];
+            if (std.mem.indexOfScalar(graph_mod.GlobalNodeId, nodes, value) == null)
+                try self.inferInputPostStatesExpression(function_id, value, &flow.states, exits);
+        };
     }
 
     fn inferInputPostStatesNode(
@@ -2894,8 +2901,11 @@ pub const Infer = struct {
             if (!state.reachable) break;
             try self.inferOpaqueEmptyNode(function_id, node_id, effects, state, exits);
         }
-        if (state.reachable) if (block.ret_val) |value|
-            try self.inferOpaqueEmptyExpression(function_id, value, effects, state, exits);
+        if (state.reachable) if (block.ret_val) |value| {
+            const nodes = self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len];
+            if (std.mem.indexOfScalar(graph_mod.GlobalNodeId, nodes, value) == null)
+                try self.inferOpaqueEmptyExpression(function_id, value, effects, state, exits);
+        };
     }
 
     fn inferOpaqueEmptyNode(
@@ -3581,7 +3591,10 @@ pub const Infer = struct {
         const block = self.graph.blocks.items[@intFromEnum(block_id)];
         for (self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len]) |node_id|
             try self.inferRequiredLiveInputsNode(function_id, node_id, required);
-        if (block.ret_val) |value| try self.inferRequiredLiveInputsNode(function_id, value, required);
+        if (block.ret_val) |value| {
+            const nodes = self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len];
+            if (std.mem.indexOfScalar(graph_mod.GlobalNodeId, nodes, value) == null) try self.inferRequiredLiveInputsNode(function_id, value, required);
+        }
     }
 
     fn inferRequiredLiveInputsNode(
@@ -4042,6 +4055,10 @@ pub const Infer = struct {
         const node = self.graph.node(node_id);
         return switch (node.content) {
             .value_sequence => |block| blk: {
+                // A sequence may introduce lexical owners before its result.
+                // Infer their values before projecting that result, preserving
+                // borrowed and owned provenance through temporary bindings.
+                try self.inferBlock(function_id, block, null);
                 const value = self.graph.blocks.items[@intFromEnum(block)].ret_val orelse break :blk .{};
                 break :blk try self.inferExpression(function_id, value);
             },
@@ -4211,7 +4228,7 @@ pub const Infer = struct {
 
     // Field-wise construction is ordinary output construction. Preserve the
     // dependencies of projected writes just as whole-binding assignments do.
-    fn storeOutputProjection(self: *Infer, function: graph_mod.GlobalFunctionId, target: graph_mod.GlobalNodeId, path: []const facts.Projection, value: graph_mod.GlobalNodeId, outputs: []facts.ValueEffect) anyerror!void {
+    fn storeOutputProjection(self: *Infer, function: graph_mod.GlobalFunctionId, target: graph_mod.GlobalNodeId, path: []const facts.Projection, value: graph_mod.GlobalNodeId, outputs: ?[]facts.ValueEffect) anyerror!void {
         switch (self.graph.node(target).content) {
             .binding_use => |binding| {
                 // Input-pointer writes belong to input post-states. Updating
@@ -4225,7 +4242,7 @@ pub const Infer = struct {
                     // existing input post-state flow before broadening this
                     // path. Replaying their RHS can duplicate opaque effects.
                     if (standard_contracts.initializedType(self.graph, function) == null) return;
-                    outputs[index] = try self.storeEffectProjection(outputs[index], path, try self.inferExpression(function, value));
+                    if (outputs) |values| values[index] = try self.storeEffectProjection(values[index], path, try self.inferExpression(function, value));
                 }
             },
             .struct_field_access => |field| {
