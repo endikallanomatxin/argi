@@ -17,6 +17,10 @@ those of the retained global graph. See [usage](../docs/usage.md#experimental-by
 Next: extend values/storage and ordinary cleanup, then define persistent sessions
 and native calls before JIT or `#run`. Do not bypass safety to execute a larger subset.
 
+Calls use an explicit VM frame stack, with one shared instruction budget and a
+configurable depth limit independent of the host call stack. Each run resets its
+execution state; returned aggregate values may be passed into the next run.
+
 Local writes use a root slot plus typed field/index projections. Index operands
 are evaluated once, and intermediate bounds checks retain native evaluation order.
 The interpreter rebuilds only the modified aggregate path; immutable snapshots

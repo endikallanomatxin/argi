@@ -13366,3 +13366,9 @@ test "feature_tests/execution/08_nested_places_vm" {
     try runExpect("tests/feature_tests/execution/08_nested_places_vm", 42);
     try vmExpect("tests/feature_tests/execution/08_nested_places_vm", 42, null);
 }
+
+test "feature_tests/execution/09_recursive_frames_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/09_recursive_frames_vm");
+    try runExpect("tests/feature_tests/execution/09_recursive_frames_vm", 42);
+    try vmExpect("tests/feature_tests/execution/09_recursive_frames_vm", 42, null);
+}

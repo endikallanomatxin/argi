@@ -11,6 +11,13 @@ pub const Limits = struct {
     value_cells: usize = 1_000_000,
 };
 
+const Frame = struct {
+    function: *const b.Function,
+    slots: []b.Value,
+    pc: usize = 0,
+    return_slot: ?b.Slot,
+};
+
 pub const Vm = struct {
     arena: std.heap.ArenaAllocator,
     allocator: std.mem.Allocator,
@@ -35,8 +42,9 @@ pub const Vm = struct {
         defer previous.deinit();
         self.steps = 0;
         self.cells = 0;
+        const function = try self.entryFunction(entry, args);
         const inputs = try self.cloneValues(args);
-        return self.invoke(entry, inputs, 0);
+        return self.execute(function, inputs);
     }
     fn cloneValues(self: *Vm, values: []const b.Value) anyerror![]const b.Value {
         const result = try self.allocate(values.len);
@@ -83,22 +91,36 @@ pub const Vm = struct {
             .element => .{ .array = result },
         };
     }
-    fn invoke(self: *Vm, id: g.GlobalFunctionId, args: []const b.Value, depth: usize) anyerror![]const b.Value {
-        if (depth >= self.limits.call_depth or depth >= 256) return error.ExecutionCallDepthLimit;
+    fn entryFunction(self: *Vm, id: g.GlobalFunctionId, args: []const b.Value) !*const b.Function {
         if (@intFromEnum(id) >= self.program.functions.len) return error.InvalidEntry;
-        const f = self.program.functions[@intFromEnum(id)] orelse return error.InvalidEntry;
-        if (args.len != f.inputs.len) return error.InvalidArguments;
-        for (args, f.inputs) |value, slot| if (!b.valueFits(self.program.graph, f.slots[slot], value)) return error.InvalidArguments;
-        const slots = try self.allocate(f.slots.len);
+        const function = if (self.program.functions[@intFromEnum(id)]) |*value| value else return error.InvalidEntry;
+        if (args.len != function.inputs.len) return error.InvalidArguments;
+        // Check against the bounded supported type shape before cloning caller
+        // values, so malformed input trees cannot drive unbounded recursion.
+        for (args, function.inputs) |value, slot| if (!b.valueFits(self.program.graph, function.slots[slot], value)) return error.InvalidArguments;
+        return function;
+    }
+    fn frame(self: *Vm, function: *const b.Function, args: []const b.Value, return_slot: ?b.Slot) !Frame {
+        const slots = try self.allocate(function.slots.len);
         @memset(slots, .unit);
-        for (args, f.inputs) |value, slot| slots[slot] = value;
-        var pc: usize = 0;
+        for (args, function.inputs) |value, slot| slots[slot] = value;
+        return .{ .function = function, .slots = slots, .return_slot = return_slot };
+    }
+    fn execute(self: *Vm, function: *const b.Function, args: []const b.Value) ![]const b.Value {
+        var frames: std.ArrayList(Frame) = .empty;
+        defer frames.deinit(self.allocator);
+        if (self.limits.call_depth == 0) return error.ExecutionCallDepthLimit;
+        try frames.append(self.allocator, try self.frame(function, args, null));
         while (true) {
-            const inst = f.code[pc];
+            // Never retain this pointer across a push: the frame array may move.
+            const current = &frames.items[frames.items.len - 1];
+            const f = current.function;
+            const slots = current.slots;
+            const inst = f.code[current.pc];
             self.source = inst.source;
             if (self.steps >= self.limits.instructions) return error.ExecutionInstructionLimit;
             self.steps += 1;
-            pc += 1;
+            current.pc += 1;
             switch (inst.op) {
                 .constant => |x| slots[x.dst] = x.value,
                 .copy => |x| slots[x.dst] = slots[x.src],
@@ -170,17 +192,20 @@ pub const Vm = struct {
                     slots[x.dst] = .{ .boolean = yes };
                 },
                 .call => |x| {
+                    if (frames.items.len >= self.limits.call_depth) return error.ExecutionCallDepthLimit;
                     const values = try self.allocate(x.args.len);
                     for (values, x.args) |*value, slot| value.* = slots[slot];
-                    const result = try self.invoke(x.function, values, depth + 1);
-                    if (x.dst) |dst| slots[dst] = result[0];
+                    const callee = &self.program.functions[@intFromEnum(x.function)].?;
+                    try frames.append(self.allocator, try self.frame(callee, values, x.dst));
                 },
-                .branch => |x| pc = if (slots[x.condition].boolean) x.yes else x.no,
-                .jump => |target| pc = target,
+                .branch => |x| current.pc = if (slots[x.condition].boolean) x.yes else x.no,
+                .jump => |target| current.pc = target,
                 .ret => |outputs| {
                     const result = try self.allocate(outputs.len);
                     for (result, outputs) |*value, slot| value.* = slots[slot];
-                    return result;
+                    const completed = frames.pop().?;
+                    if (frames.items.len == 0) return result;
+                    if (completed.return_slot) |dst| frames.items[frames.items.len - 1].slots[dst] = result[0];
                 },
                 .abort_ => return error.ExecutionAborted,
             }

@@ -241,3 +241,42 @@ test "bytecode validates intermediate destinations before later operands" {
         \\}
     , .{}));
 }
+
+test "bytecode call stack does not recurse through the host stack" {
+    try std.testing.expectEqual(@as(i128, 42), try execute(
+        \\recurse(.remaining: Int32) -> (.result: Int32 = 42) := {
+        \\    if remaining > 0 { result = recurse(.remaining = remaining - 1) }
+        \\}
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    status_code = recurse(.remaining = 512)
+        \\}
+    , .{ .call_depth = 1024 }));
+}
+
+test "bytecode VM reuses returned aggregates and recovers after failure" {
+    const g = @import("../4_semantics/global/graph.zig");
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(std.testing.allocator);
+    const a = std.testing.allocator;
+    try graph.types.append(a, .{ .builtin = .Int32 });
+    try graph.types.append(a, .{ .array = .{ .length = 1, .element = @enumFromInt(0) } });
+    const source = @import("../4_semantics/primitives/schema.zig").SourceRef{ .file_index = 0, .offset = 0 };
+    try graph.fields.append(a, .{ .name = .{ .start = 0, .len = 0 }, .ty = @enumFromInt(1), .source = source });
+    try graph.functions.append(a, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 1 }, .output = .{ .start = 0, .len = 1 } });
+    const code = [_]b.Instruction{.{ .source = source, .op = .{ .ret = &.{0} } }};
+    const functions = [_]?b.Function{.{ .slots = &.{@enumFromInt(1)}, .inputs = &.{0}, .outputs = &.{0}, .code = &code }};
+    var executor = try vm.Vm.init(a, .{ .graph = &graph, .functions = &functions }, .{});
+    defer executor.deinit();
+    var result = try executor.run(@enumFromInt(0), &.{.{ .array = &.{.{ .integer = 42 }} }});
+    result = try executor.run(@enumFromInt(0), result);
+    try std.testing.expectEqual(@as(i128, 42), result[0].array[0].integer);
+    try std.testing.expectError(error.InvalidArguments, executor.run(@enumFromInt(0), &.{.{ .array = &.{.{ .boolean = false }} }}));
+    try std.testing.expectError(error.InvalidEntry, executor.run(@enumFromInt(99), &.{}));
+    executor.limits.instructions = 0;
+    try std.testing.expectError(error.ExecutionInstructionLimit, executor.run(@enumFromInt(0), &.{.{ .array = &.{.{ .integer = 42 }} }}));
+    executor.limits.instructions = 100;
+    result = try executor.run(@enumFromInt(0), &.{.{ .array = &.{.{ .integer = 42 }} }});
+    try std.testing.expectEqual(@as(i128, 42), result[0].array[0].integer);
+    executor.limits.call_depth = 0;
+    try std.testing.expectError(error.ExecutionCallDepthLimit, executor.run(@enumFromInt(0), result));
+}
