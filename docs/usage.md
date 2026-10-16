@@ -112,15 +112,24 @@ types; execution checks that a payload is active before reading or writing it.
 `for` invokes the ordinary selected iterator operations, including borrowed array
 iteration and scalar ranges when their checked bodies fit the VM subset.
 
+Automatic cleanup uses the frontend's selected `Deinit` operations, including
+scope exits, `return`, loop transfers, structural fields, and active choice payloads.
+Whole and partial moves cancel the corresponding source cleanup. Explicit destruction
+and outcome-dependent consumption update the same cleanup flags, even for discarded
+call results. Destructors must themselves fit the supported execution subset.
+Replacing a live owning value currently needs explicit cleanup of the old value;
+implicit replacement cleanup is a known frontend limitation shared with native code.
+
 Raw pointers, C enums, floating point, error propagation/tracing, virtual calls,
-resources,
-cleanup, globals, closures, foreign calls, and System capabilities are not yet
-supported. Unsupported constructs in reachable function bodies are rejected
+partial initialization through output references, globals, closures, foreign calls,
+and System capabilities are not yet supported. Unsupported constructs in reachable
+function bodies are rejected
 before execution, including constructs on untaken branches. Integer arithmetic
 wraps at the declared width, matching native execution and constant evaluation.
 Division rounds towards zero; `%` is the signed remainder. The signed minimum
 divided by -1 wraps to itself, with remainder zero. Division by zero and `abort`
-produce source diagnostics.
+produce source diagnostics. These failures stop execution without running user
+destructors; normal lexical cleanup is distinct from abort recovery.
 
 Execution is limited to one million instructions, 128 nested calls, and one
 million cumulative value cells. These are initial fixed limits, not a general

@@ -395,6 +395,9 @@ pub const Resolver = struct {
                 self.graph.error_contexts.items[@intFromEnum(context_id)].cleanup_nodes = cleanup;
             },
             .move_value, .denied_implicit_copy, .address_of => |child| try self.finalizeExpressionCleanup(child, active, defers, visible, owner_function, module_index),
+            // TODO: lower live-value replacement cleanup after RHS evaluation and
+            // before the store. Both safety summaries and backends must observe it;
+            // scope-exit cleanup cannot recover a discarded owning value.
             .assignment => |assignment| try self.finalizeExpressionCleanup(assignment.value, active, defers, visible, owner_function, module_index),
             .function_call => |call| {
                 if (call.callee_value) |value| try self.finalizeExpressionCleanup(value, active, defers, visible, owner_function, module_index);

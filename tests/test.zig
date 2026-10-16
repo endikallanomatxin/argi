@@ -13431,3 +13431,21 @@ test "feature_tests/execution/17X_integer_remainder_zero" {
     try runExpectFailure("tests/feature_tests/execution/17X_integer_remainder_zero");
     try vmExpect("tests/feature_tests/execution/17X_integer_remainder_zero", 1, "ExecutionDivisionByZero");
 }
+
+test "feature_tests/execution/18_cleanup_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/18_cleanup_vm");
+    try runExpect("tests/feature_tests/execution/18_cleanup_vm", 42);
+    try vmExpect("tests/feature_tests/execution/18_cleanup_vm", 42, null);
+}
+
+test "feature_tests/execution/19_choice_cleanup_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/19_choice_cleanup_vm");
+    try runExpect("tests/feature_tests/execution/19_choice_cleanup_vm", 42);
+    try vmExpect("tests/feature_tests/execution/19_choice_cleanup_vm", 42, null);
+}
+
+test "feature_tests/execution/20_conditional_cleanup_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/20_conditional_cleanup_vm");
+    try runExpect("tests/feature_tests/execution/20_conditional_cleanup_vm", 42);
+    try vmExpect("tests/feature_tests/execution/20_conditional_cleanup_vm", 42, null);
+}

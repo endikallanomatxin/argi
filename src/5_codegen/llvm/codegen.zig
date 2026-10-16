@@ -1669,6 +1669,7 @@ pub const CodeGenerator = struct {
 
         const value = (try self.visitNode(assignment.value)) orelse return CodegenError.ValueNotFound;
         _ = c.LLVMBuildStore(self.builder, value.value_ref, pointer.value_ref);
+        if (self.dropStateForNode(assignment.pointer)) |drop| self.storeDropState(drop, true);
     }
 
     fn explicitCast(self: *CodeGenerator, cast: anytype) !TypedValue {

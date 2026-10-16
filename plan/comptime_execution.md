@@ -14,7 +14,7 @@ with source locations, verifies signatures/control flow/definite initialization,
 and executes a bounded scalar/aggregate subset. Function and type identities remain
 those of the retained global graph. See [usage](../docs/usage.md#experimental-bytecode-execution).
 
-Next: extend values/storage and ordinary cleanup, then define persistent sessions
+Next: extend partial initialization and error propagation, then define persistent sessions
 and native calls before JIT or `#run`. Do not bypass safety to execute a larger subset.
 
 Calls use an explicit VM frame stack, with one shared instruction budget and a
@@ -28,12 +28,19 @@ preserve value-copy semantics. Safe references name run-local frame storage plus
 captured projections. The
 storage engine rejects dead frames and readonly writes; the ordinary frontend
 continues to prove lexical lifetimes, aliasing, and storage-generation rules.
-References cannot enter from external values or escape completed frames. Partial
-initialization, resources, and cleanup remain outside the executor subset.
+References cannot enter from external values or escape completed frames.
+
+Cleanup lowers the frontend's selected operations and activation annotations to
+ordinary branches and calls. Per-binding field/variant flags are initialized in
+an entry prologue; moves disable source subtrees and initialization enables them.
+Active payload guards precede their cleanup. Result-dependent consumption follows
+selected output tags, including discarded results. No second ownership analysis
+runs in the VM. Partial initialization through output references and native resources
+remain outside the executor subset. Abort/quota failures do not execute user cleanup.
 
 ## Remaining decisions
 
-- Extend storage to partial initialization, error propagation, and ordinary cleanup.
+- Extend storage to partial initialization and error propagation.
 - Shared VM/native calling convention, output storage, errors, and cleanup.
 - LLVM JIT integration, symbol resolution, and supported host/C signatures.
 - Session persistence, redefinition, failed submissions, reset, and exit.

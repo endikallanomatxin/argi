@@ -8,6 +8,8 @@ pub const Lower = struct {
     allocator: std.mem.Allocator,
     graph: *const g.GlobalSemanticGraph,
     functions: []?b.Function,
+    cleanup_bindings: []const bool,
+    bool_type: ?b.Type,
     pending: std.ArrayList(g.GlobalFunctionId) = .empty,
     source: p.SourceRef = .{ .file_index = 0, .offset = 0 },
     unsupported: []const u8 = "",
@@ -15,7 +17,13 @@ pub const Lower = struct {
     pub fn init(a: std.mem.Allocator, graph: *const g.GlobalSemanticGraph) !Lower {
         const functions = try a.alloc(?b.Function, graph.functions.items.len);
         @memset(functions, null);
-        return .{ .allocator = a, .graph = graph, .functions = functions };
+        const cleanup_bindings = try a.alloc(bool, graph.bindings.items.len);
+        @memset(cleanup_bindings, false);
+        for (graph.auto_deinits.items) |auto| cleanup_bindings[@intFromEnum(auto.binding)] = true;
+        const bool_type: ?b.Type = for (graph.types.items, 0..) |ty, i| {
+            if (ty == .builtin and ty.builtin == .Bool) break @as(b.Type, @enumFromInt(i));
+        } else null;
+        return .{ .allocator = a, .graph = graph, .functions = functions, .cleanup_bindings = cleanup_bindings, .bool_type = bool_type };
     }
     // All bytecode allocations belong to the caller's compilation arena.
     pub fn compile(self: *Lower, entry: g.GlobalFunctionId) !b.Program {
@@ -38,34 +46,155 @@ pub const Lower = struct {
 };
 
 const Loop = struct { breaks: std.ArrayList(u32) = .empty, continues: std.ArrayList(u32) = .empty };
+const DropState = struct { flag: b.Slot, fields: []const DropState = &.{} };
 const FunctionLower = struct {
     parent: *Lower,
     slots: std.ArrayList(b.Type) = .empty,
     code: std.ArrayList(b.Instruction) = .empty,
     bindings: std.AutoHashMapUnmanaged(g.GlobalBindingId, b.Slot) = .empty,
     outputs: []const b.Slot = &.{},
+    drops: std.AutoHashMapUnmanaged(g.GlobalBindingId, DropState) = .empty,
+    drop_flags: std.ArrayList(b.Slot) = .empty,
     loops: std.ArrayList(Loop) = .empty,
 
     fn compile(self: *FunctionLower, id: g.GlobalFunctionId) !b.Function {
         const a = self.parent.allocator;
         defer self.bindings.deinit(a);
+        defer self.drops.deinit(a);
+        defer self.drop_flags.deinit(a);
         defer self.loops.deinit(a);
         const f = self.parent.graph.function(id);
         const source = self.parent.graph.declaration(f.declaration).source;
         self.parent.source = source;
-        if (f.body == null or f.flags.is_c_abi or f.flags.is_deinit or f.flags.is_once) return self.parent.reject(source, "foreign, lifecycle or once function");
+        if (f.body == null or f.flags.is_c_abi or f.flags.is_once) return self.parent.reject(source, "foreign or once function");
         const inputs = try a.alloc(b.Slot, f.input_bindings.len);
-        for (inputs, self.parent.graph.binding_refs.items[f.input_bindings.start..][0..f.input_bindings.len]) |*slot, binding| slot.* = try self.bindingSlot(binding);
+        for (inputs, self.parent.graph.binding_refs.items[f.input_bindings.start..][0..f.input_bindings.len]) |*slot, binding| {
+            slot.* = try self.bindingSlot(binding);
+            if (self.drops.get(binding)) |drop| try self.setDrop(drop, true);
+        }
         const outputs = try a.alloc(b.Slot, f.output_bindings.len);
         self.outputs = outputs;
         for (outputs, self.parent.graph.binding_refs.items[f.output_bindings.start..][0..f.output_bindings.len]) |*slot, binding| {
             slot.* = try self.bindingSlot(binding);
             const record = self.parent.graph.binding(binding);
-            if (record.initialization) |node| try self.copyTo(source, slot.*, try self.expression(node));
+            if (record.initialization) |node| {
+                try self.copyTo(source, slot.*, try self.expression(node));
+                if (self.drops.get(binding)) |drop| try self.setDrop(drop, true);
+            }
         }
         try self.block(f.body.?);
         _ = try self.emit(source, .{ .ret = outputs });
-        return .{ .slots = try self.slots.toOwnedSlice(a), .inputs = inputs, .outputs = outputs, .code = try self.code.toOwnedSlice(a) };
+        // Flags are entry storage, including bindings first encountered in a branch.
+        // Initialize them in a prologue so every CFG join has defined state.
+        const prefix: u32 = @intCast(self.drop_flags.items.len);
+        const code = try a.alloc(b.Instruction, prefix + self.code.items.len);
+        for (self.drop_flags.items, 0..) |flag, i| code[i] = .{ .source = source, .op = .{ .constant = .{ .dst = flag, .value = .{ .boolean = false } } } };
+        for (self.code.items, code[prefix..]) |instruction, *out| {
+            out.* = instruction;
+            switch (out.op) {
+                .jump => |*pc| pc.* += prefix,
+                .branch => |*branch| {
+                    branch.yes += prefix;
+                    branch.no += prefix;
+                },
+                .branch_variant => |*branch| {
+                    branch.yes += prefix;
+                    branch.no += prefix;
+                },
+                else => {},
+            }
+        }
+        self.code.deinit(a);
+        return .{ .slots = try self.slots.toOwnedSlice(a), .inputs = inputs, .outputs = outputs, .code = code };
+    }
+    fn boolType(self: *FunctionLower) !b.Type {
+        return self.parent.bool_type orelse error.InvalidBytecode;
+    }
+    fn buildDrop(self: *FunctionLower, ty: b.Type) anyerror!DropState {
+        var drop = DropState{ .flag = try self.newSlot(try self.boolType()) };
+        try self.drop_flags.append(self.parent.allocator, drop.flag);
+        if (types.variants(self.parent.graph, ty)) |range| {
+            const children = try self.parent.allocator.alloc(DropState, range.len);
+            for (children, self.parent.graph.variants.items[range.start..][0..range.len]) |*child, variant| child.* = try self.buildDrop(variant.payload_type orelse try self.boolType());
+            drop.fields = children;
+        } else if (types.fields(self.parent.graph, ty)) |range| {
+            const children = try self.parent.allocator.alloc(DropState, range.len);
+            for (children, self.parent.graph.fields.items[range.start..][0..range.len]) |*child, field| child.* = try self.buildDrop(field.ty);
+            drop.fields = children;
+        }
+        return drop;
+    }
+    fn setDrop(self: *FunctionLower, drop: DropState, enabled: bool) anyerror!void {
+        _ = try self.emit(self.parent.source, .{ .constant = .{ .dst = drop.flag, .value = .{ .boolean = enabled } } });
+        for (drop.fields) |child| try self.setDrop(child, enabled);
+    }
+    fn nodeDrop(self: *FunctionLower, id: g.GlobalNodeId) ?DropState {
+        return switch (self.parent.graph.node(id).content) {
+            .binding_use => |binding| self.drops.get(binding),
+            .address_of => |value| self.nodeDrop(value),
+            .dereference => |value| self.nodeDrop(value.pointer),
+            .struct_field_access => |value| blk: {
+                const parent = self.nodeDrop(value.value) orelse break :blk null;
+                break :blk if (value.field_index < parent.fields.len) parent.fields[value.field_index] else null;
+            },
+            .choice_payload_access => |value| blk: {
+                const parent = self.nodeDrop(value.value) orelse break :blk null;
+                const range = types.variants(self.parent.graph, self.parent.graph.node(value.value).ty.?) orelse break :blk null;
+                const index = @intFromEnum(value.variant) - range.start;
+                break :blk if (index < parent.fields.len) parent.fields[index] else null;
+            },
+            else => null,
+        };
+    }
+    fn autoDeinit(self: *FunctionLower, id: g.GlobalAutoDeinitId) anyerror!void {
+        const auto = self.parent.graph.auto_deinits.items[@intFromEnum(id)];
+        const root = self.bindings.get(auto.binding) orelse return error.InvalidBytecode;
+        try self.cleanupStorage(auto.deinit_fn, auto.input, auto.self_field_index, auto.fields, .{ .root = root, .path = &.{} }, self.slots.items[root], self.drops.get(auto.binding).?);
+    }
+    fn cleanupStorage(self: *FunctionLower, callee: ?g.GlobalFunctionId, input: ?g.GlobalNodeId, self_index: u32, fields: p.Range(g.GlobalAutoDeinitFieldId), target: b.Place, ty: b.Type, drop: DropState) anyerror!void {
+        const source = self.parent.source;
+        const branch = try self.emit(source, .{ .branch = .{ .condition = drop.flag, .yes = self.position() + 1, .no = 0 } });
+        if (callee) |id| {
+            const function = self.parent.graph.function(id);
+            if (function.output.len != 0) return self.parent.reject(source, "destructor with outputs");
+            const args = try self.parent.allocator.alloc(b.Slot, function.input.len);
+            for (args, self.parent.graph.fields.items[function.input.start..][0..function.input.len], 0..) |*arg, field, index| {
+                if (index == self_index) {
+                    arg.* = try self.newSlot(field.ty);
+                    _ = try self.emit(source, .{ .borrow = .{ .dst = arg.*, .place = target } });
+                } else {
+                    var value = field.default_value;
+                    if (input) |node| {
+                        const content = self.parent.graph.node(node).content;
+                        if (content == .struct_value_literal) for (self.parent.graph.value_fields.items[content.struct_value_literal.fields.start..][0..content.struct_value_literal.fields.len]) |supplied| {
+                            if (std.mem.eql(u8, self.parent.graph.text(supplied.name), self.parent.graph.text(field.name))) {
+                                value = supplied.value;
+                                break;
+                            }
+                        };
+                    }
+                    arg.* = try self.coerce(source, try self.expression(value orelse return error.InvalidBytecode), field.ty);
+                }
+            }
+            try self.parent.pending.append(self.parent.allocator, id);
+            _ = try self.emit(source, .{ .call = .{ .function = id, .args = args, .outputs = &.{} } });
+        } else for (self.parent.graph.auto_deinit_fields.items[fields.start..][0..fields.len]) |field| {
+            if (field.field_index >= drop.fields.len) return error.InvalidBytecode;
+            if (field.is_variant) {
+                const range = types.variants(self.parent.graph, ty) orelse return error.InvalidBytecode;
+                const variant: g.GlobalVariantId = @enumFromInt(range.start + field.field_index);
+                const value = try self.newSlot(ty);
+                _ = try self.emit(source, .{ .load = .{ .dst = value, .place = target } });
+                const active = try self.emit(source, .{ .branch_variant = .{ .src = value, .variant = variant, .yes = self.position() + 1, .no = 0 } });
+                try self.cleanupStorage(field.deinit_fn, field.input, field.self_field_index, field.fields, try self.project(target, .{ .variant = variant }), self.parent.graph.variants.items[@intFromEnum(variant)].payload_type.?, drop.fields[field.field_index]);
+                self.code.items[active].op.branch_variant.no = self.position();
+            } else {
+                const range = types.fields(self.parent.graph, ty) orelse return error.InvalidBytecode;
+                try self.cleanupStorage(field.deinit_fn, field.input, field.self_field_index, field.fields, try self.project(target, .{ .field = field.field_index }), self.parent.graph.fields.items[range.start + field.field_index].ty, drop.fields[field.field_index]);
+            }
+        }
+        try self.setDrop(drop, false);
+        self.code.items[branch].op.branch.no = self.position();
     }
     fn newSlot(self: *FunctionLower, ty: b.Type) !b.Slot {
         if (!b.supportedType(self.parent.graph, ty, 0)) return self.parent.reject(self.parent.source, "type outside the supported VM subset");
@@ -77,6 +206,7 @@ const FunctionLower = struct {
         if (self.bindings.get(id)) |slot_id| return slot_id;
         const slot_id = try self.newSlot(self.parent.graph.binding(id).ty);
         try self.bindings.put(self.parent.allocator, id, slot_id);
+        if (self.parent.cleanup_bindings[@intFromEnum(id)]) try self.drops.put(self.parent.allocator, id, try self.buildDrop(self.parent.graph.binding(id).ty));
         return slot_id;
     }
     fn emit(self: *FunctionLower, source: p.SourceRef, op: @FieldType(b.Instruction, "op")) !u32 {
@@ -99,12 +229,16 @@ const FunctionLower = struct {
                 const binding_ = self.parent.graph.binding(binding_id);
                 const dst = try self.bindingSlot(binding_id);
                 if (!binding_.deferred_initialization) {
-                    if (binding_.initialization) |value| try self.copyTo(node.source, dst, try self.expression(value));
+                    if (binding_.initialization) |value| {
+                        try self.copyTo(node.source, dst, try self.expression(value));
+                        if (self.drops.get(binding_id)) |drop| try self.setDrop(drop, true);
+                    }
                 }
             },
             .assignment => |x| {
                 const dst = self.bindings.get(x.binding) orelse return self.parent.reject(node.source, "global or captured storage");
                 try self.copyTo(node.source, dst, try self.expression(x.value));
+                if (self.drops.get(x.binding)) |drop| try self.setDrop(drop, true);
             },
             .array_store => |x| {
                 const base = try self.place(x.array_ptr);
@@ -117,17 +251,20 @@ const FunctionLower = struct {
                 const target = try self.addressedPlace(x.pointer);
                 const value = try self.coerce(node.source, try self.expression(x.value), self.parent.graph.semanticType(self.parent.graph.node(x.pointer).ty.?).pointer.child);
                 _ = try self.emit(node.source, .{ .store = .{ .place = target, .value = value } });
+                if (self.nodeDrop(x.pointer)) |drop| try self.setDrop(drop, true);
             },
             .struct_field_store => |x| {
                 const base = try self.addressedPlace(x.struct_ptr);
                 const target = try self.project(base, .{ .field = x.field_index });
                 const value = try self.coerce(node.source, try self.expression(x.value), x.field_type);
                 _ = try self.emit(node.source, .{ .store = .{ .place = target, .value = value } });
+                if (self.nodeDrop(x.struct_ptr)) |drop| if (x.field_index < drop.fields.len) try self.setDrop(drop.fields[x.field_index], true);
             },
+            .auto_deinit_binding => |auto| try self.autoDeinit(auto),
             .code_block => |block_id| try self.block(block_id),
             .return_statement => |x| {
                 if (x.expression != null) return self.parent.reject(node.source, "explicit return expression");
-                if (x.cleanup.len != 0) return self.parent.reject(node.source, "cleanup");
+                for (self.parent.graph.node_refs.items[x.cleanup.start..][0..x.cleanup.len]) |cleanup| try self.statement(cleanup);
                 _ = try self.emit(node.source, .{ .ret = self.outputs });
             },
             .if_statement => |x| {
@@ -217,6 +354,10 @@ const FunctionLower = struct {
                     .value, .move => _ = try self.emit(source, .{ .payload = .{ .dst = dst, .src = value, .variant = case.variant } }),
                 }
             }
+            if (case.payload_binding) |binding| {
+                if (case.payload_mode == .move) if (self.nodeDrop(sw.expression)) |drop| try self.setDrop(drop, false);
+                if (self.drops.get(binding)) |drop| try self.setDrop(drop, true);
+            }
             try self.block(case.body);
             try ends.append(self.parent.allocator, try self.emit(source, .{ .jump = 0 }));
             self.code.items[branch].op.branch_variant.no = self.position();
@@ -287,6 +428,8 @@ const FunctionLower = struct {
         const node = self.parent.graph.node(id);
         const x = node.content.function_call;
         if (x.callee_value != null) return self.parent.reject(node.source, "indirect call");
+        if (x.initialized_auto_deinits.len != 0 or x.initializes_auto_deinit != null)
+            return self.parent.reject(node.source, "output storage initialization");
         const input = self.parent.graph.node(x.input).content;
         if (input != .struct_value_literal) return self.parent.reject(node.source, "non-record call arguments");
         const fields = input.struct_value_literal.fields;
@@ -297,6 +440,29 @@ const FunctionLower = struct {
         for (outputs, self.parent.graph.fields.items[f.output.start..][0..f.output.len]) |*slot, field| slot.* = try self.newSlot(field.ty);
         try self.parent.pending.append(self.parent.allocator, x.callee);
         _ = try self.emit(node.source, .{ .call = .{ .outputs = outputs, .function = x.callee, .args = args } });
+        if (x.consumes_auto_deinit) |value| if (self.nodeDrop(value)) |drop| try self.setDrop(drop, false);
+        for (x.consumed_auto_deinits) |value| if (self.nodeDrop(value)) |drop| try self.setDrop(drop, false);
+        for (x.outcome_cleanups) |cleanup| {
+            const drop = self.nodeDrop(cleanup.place) orelse continue;
+            if (cleanup.output_index >= outputs.len) return error.InvalidBytecode;
+            var value = outputs[cleanup.output_index];
+            var branches: std.ArrayList(u32) = .empty;
+            defer branches.deinit(self.parent.allocator);
+            for (0..cleanup.parent_variants.len + 1) |depth| {
+                const index = if (depth < cleanup.parent_variants.len) cleanup.parent_variants[depth] else cleanup.variant_index;
+                const range = types.variants(self.parent.graph, self.slots.items[value]) orelse return error.InvalidBytecode;
+                if (index >= range.len) return error.InvalidBytecode;
+                const variant: g.GlobalVariantId = @enumFromInt(range.start + index);
+                try branches.append(self.parent.allocator, try self.emit(node.source, .{ .branch_variant = .{ .src = value, .variant = variant, .yes = self.position() + 1, .no = 0 } }));
+                if (depth < cleanup.parent_variants.len) {
+                    const child = try self.newSlot(self.parent.graph.variants.items[@intFromEnum(variant)].payload_type orelse return error.InvalidBytecode);
+                    _ = try self.emit(node.source, .{ .payload = .{ .dst = child, .src = value, .variant = variant } });
+                    value = child;
+                }
+            }
+            try self.setDrop(drop, cleanup.enabled);
+            for (branches.items) |branch| self.code.items[branch].op.branch_variant.no = self.position();
+        }
         if (outputs.len == 0) return null;
         if (outputs.len == 1) return outputs[0];
         const result = try self.newSlot(node.ty orelse return self.parent.reject(node.source, "untyped call result"));
@@ -312,7 +478,11 @@ const FunctionLower = struct {
             _ = try self.emit(node.source, .{ .copy = .{ .dst = dst, .src = src } });
             return dst;
         }
-        if (node.content == .move_value) return self.expression(node.content.move_value);
+        if (node.content == .move_value) {
+            const value = try self.expression(node.content.move_value);
+            if (self.nodeDrop(node.content.move_value)) |drop| try self.setDrop(drop, false);
+            return value;
+        }
         if (node.content == .function_call) return (try self.call(id)) orelse self.parent.reject(node.source, "void expression");
         if (node.content == .value_sequence) {
             const block_ = self.parent.graph.blocks.items[@intFromEnum(node.content.value_sequence)];
