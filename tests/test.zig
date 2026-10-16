@@ -13210,3 +13210,26 @@ test "feature_tests/text/86X_unicode_literal_not_byte" {
 test "feature_tests/text/87X_unicode_literal_not_choice_byte" {
     try buildExpectFail("tests/feature_tests/text/87X_unicode_literal_not_choice_byte", "Unicode scalars and bytes require explicit conversion");
 }
+
+test "feature_tests/io/49_borrowed_buffered_reader" {
+    try expectSuccessfulBuild("tests/feature_tests/io/49_borrowed_buffered_reader");
+    try run("tests/feature_tests/io/49_borrowed_buffered_reader");
+}
+
+test "feature_tests/io/50X_buffered_reader_after_storage" {
+    try buildExpectFail("tests/feature_tests/io/50X_buffered_reader_after_storage", "ended");
+}
+
+test "feature_tests/io/51_buffered_default_storage" {
+    try expectSuccessfulBuild("tests/feature_tests/io/51_buffered_default_storage");
+    try run("tests/feature_tests/io/51_buffered_default_storage");
+}
+
+test "feature_tests/io/52X_default_buffer_escape" {
+    try buildExpectFail("tests/feature_tests/io/52X_default_buffer_escape", "function output cannot depend on a local storage generation");
+}
+
+test "feature_tests/io/53_runtime_argument_defaults" {
+    try expectSuccessfulBuild("tests/feature_tests/io/53_runtime_argument_defaults");
+    try run("tests/feature_tests/io/53_runtime_argument_defaults");
+}

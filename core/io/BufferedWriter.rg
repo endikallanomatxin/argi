@@ -9,12 +9,18 @@ BufferedWriter#(.base_type: Type: Writer#(base_type)): Type = (
 
 implement#(.base_type: Type: Writer#(base_type)) Init#(
     BufferedWriter#(.base_type: base_type),
-    (.base: $&base_type, .buffer: MutableArrayView#(.t: UInt8))
+    (
+        .base   : $&base_type,
+        .buffer : MutableArrayView#(.t: UInt8) = view($&zeroed#(.t: [4096]UInt8)())
+    )
 ) (
     .Result : Type = BufferedWriter#(.base_type: base_type)
-    .init   = (.args: (.base: $&base_type, .buffer: MutableArrayView#(.t: UInt8))) -> (
-        .result : Result
-    ) {
+    .init   = (
+        .args : (
+            .base   : $&base_type,
+            .buffer : MutableArrayView#(.t: UInt8) = view($&zeroed#(.t: [4096]UInt8)())
+        )
+    ) -> (.result: Result) {
         base ::= args.base
         buffer ::= args.buffer
 

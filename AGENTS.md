@@ -309,9 +309,14 @@ feature first.
 - Block stream operations use initialized byte views and readonly write sources.
   Validate complete ranges before binary writes, and advance borrowed byte cursor
   positions only on success. Exact reads and complete writes accept partial native
-  progress; zero write progress is an error. Buffered readers initialize their
-  allocation before exposing a native refill view. Deque iterators retain its
-  shape dependency, including in returned borrowed elements.
+  progress; zero write progress is an error. Buffered readers and writers borrow
+  caller-provided initialized byte views; their construction neither allocates
+  nor takes ownership. Omitting the buffer evaluates its zeroed-array default
+  independently in the caller scope. Preserve its temporary storage and lifetime
+  just as for an explicit argument; no allocator or I/O-specific fallback is used.
+  Empty buffers delegate to the base stream. Reader refills publish bytes only on success.
+  Deque iterators retain the deque's shape dependency, including in returned
+  borrowed elements.
   Limited copies stop without lookahead; owning complete reads check EOF with
   one extra scratch byte and destroy partial owners on error. Reserve bounded
   capacity before consuming a chunk.

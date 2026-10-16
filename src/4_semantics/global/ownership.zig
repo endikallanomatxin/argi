@@ -274,6 +274,77 @@ pub const Resolver = struct {
         return true;
     }
 
+    // Default expressions are inserted after syntax lowering. Reserve their
+    // addressable storage in the same lexical block as explicit temporaries,
+    // while leaving initialization at the actual argument evaluation point.
+    fn collectDefaultTemporaries(self: *Resolver, id: global_sg.GlobalNodeId, output: *std.ArrayList(global_sg.GlobalNodeId)) anyerror!void {
+        if (self.graph.argument_default_temporaries.items.len == 0) return;
+        for (self.graph.argument_default_temporaries.items) |temporary| {
+            const content = self.graph.node(id).content;
+            const binding = self.graph.node(temporary.declaration).content.binding_declaration;
+            if (temporary.expression != id and
+                !(content == .assignment and content.assignment.binding == binding)) continue;
+            if (std.mem.indexOfScalar(global_sg.GlobalNodeId, output.items, temporary.declaration) == null)
+                try output.append(self.allocator, temporary.declaration);
+        }
+        const content = self.graph.node(id).content;
+        switch (content) {
+            .code_block, .value_sequence => {}, // Their own blocks retain lexical scope.
+            .struct_value_literal => |literal| {
+                for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |field|
+                    try self.collectDefaultTemporaries(field.value, output);
+            },
+            inline .list_literal, .array_literal => |literal| {
+                for (self.graph.node_refs.items[literal.elements.start..][0..literal.elements.len]) |child|
+                    try self.collectDefaultTemporaries(child, output);
+            },
+            .binding_declaration => |binding| {
+                const record = self.graph.binding(binding);
+                if (!record.deferred_initialization) if (record.initialization) |value|
+                    try self.collectDefaultTemporaries(value, output);
+            },
+            .switch_statement => |index| try self.collectDefaultTemporaries(self.graph.switches.items[@intFromEnum(index)].expression, output),
+            .error_propagation => |index| try self.collectDefaultTemporaries(self.graph.error_propagations.items[@intFromEnum(index)].errable_value, output),
+            .error_context => |index| {
+                const value = self.graph.error_contexts.items[@intFromEnum(index)];
+                try self.collectDefaultTemporaries(value.errable_value, output);
+                try self.collectDefaultTemporaries(value.context, output);
+            },
+            .nullable_unwrap_or => |index| {
+                const value = self.graph.nullable_unwraps.items[@intFromEnum(index)];
+                try self.collectDefaultTemporaries(value.nullable_value, output);
+                try self.collectDefaultTemporaries(value.fallback_value, output);
+            },
+            .testing_expect_error => |index| {
+                const value = self.graph.testing_expect_errors.items[@intFromEnum(index)];
+                try self.collectDefaultTemporaries(value.expected_reason, output);
+                try self.collectDefaultTemporaries(value.actual_result, output);
+                if (value.test_fail_input) |input| try self.collectDefaultTemporaries(input, output);
+            },
+            .virtualize => |index| try self.collectDefaultTemporaries(self.graph.virtualizes.items[@intFromEnum(index)].value, output),
+            .virtual_call => |index| {
+                const value = self.graph.virtual_calls.items[@intFromEnum(index)];
+                try self.collectDefaultTemporaries(value.handle, output);
+                try self.collectDefaultTemporaries(value.input, output);
+            },
+            else => try self.collectDefaultOperands(content, output),
+        }
+    }
+
+    fn collectDefaultOperands(self: *Resolver, value: anytype, output: *std.ArrayList(global_sg.GlobalNodeId)) anyerror!void {
+        const T = @TypeOf(value);
+        if (T == global_sg.GlobalNodeId) {
+            try self.collectDefaultTemporaries(value, output);
+        } else switch (@typeInfo(T)) {
+            .optional => if (value) |child| try self.collectDefaultOperands(child, output),
+            .@"struct" => |info| inline for (info.fields) |field| try self.collectDefaultOperands(@field(value, field.name), output),
+            .@"union" => switch (value) {
+                inline else => |child| try self.collectDefaultOperands(child, output),
+            },
+            else => {},
+        }
+    }
+
     fn finalizeExpressionCleanup(
         self: *Resolver,
         node_id: global_sg.GlobalNodeId,
@@ -449,6 +520,17 @@ pub const Resolver = struct {
         const nodes = try self.allocator.dupe(global_sg.GlobalNodeId, self.graph.node_refs.items[original.nodes.start..][0..original.nodes.len]);
         defer self.allocator.free(nodes);
         for (nodes) |node_id| {
+            var temporaries: std.ArrayList(global_sg.GlobalNodeId) = .empty;
+            defer temporaries.deinit(self.allocator);
+            try self.collectDefaultTemporaries(self.deferValue(node_id) orelse node_id, &temporaries);
+            for (temporaries.items) |declaration| {
+                const binding = self.graph.node(declaration).content.binding_declaration;
+                if (std.mem.indexOfScalar(global_sg.GlobalBindingId, active.items, binding) != null) continue;
+                try rebuilt.append(self.allocator, declaration);
+                try visible.append(self.allocator, binding);
+                try self.prepareAutoDeinit(binding, reach_context.Context.fromGlobal(visible.items, owner_function), module_index);
+                try active.append(self.allocator, binding);
+            }
             try rebuilt.append(self.allocator, node_id);
             const content = self.graph.node(node_id).content;
             if (content != .code_block and content != .value_sequence)

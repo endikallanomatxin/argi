@@ -169,8 +169,16 @@ The text model uses these conventions:
 - `String` is an owning byte buffer over `Allocation`.
 - `String` is also the single growable text buffer shape in `core`; there is
   no separate `TextBuffer` type.
-- buffered I/O wrappers borrow their underlying streams. `BufferedReader` owns
-  its buffer; `BufferedWriter` borrows a caller-provided byte buffer.
+- buffered I/O wrappers borrow their underlying streams and caller-provided
+  initialized byte buffers. Both take `.base` and
+  `.buffer: MutableArrayView#(UInt8)` and construct without allocation or failure.
+  Omitting `.buffer` creates an independent, zero-initialized 4096-byte buffer
+  in the caller scope, just like writing the default expression explicitly.
+  The adapter cannot outlive that storage.
+  Empty buffers delegate directly to the base stream. The caller keeps the
+  storage live; neither wrapper frees it. `BufferedWriter` flushes best-effort
+  during cleanup; explicit flushing reports errors. `BufferedReader` needs no
+  cleanup and never closes its base.
 - `read_line()` returns an owning `String`, so the resulting text outlives the
   temporary buffering used while reading.
 - string literals materialize as borrowed read-only `StringView`.

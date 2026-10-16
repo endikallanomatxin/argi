@@ -75,7 +75,7 @@ pub const Resolver = struct {
             .applicable => {},
             .no_match, .deferred => return null,
         }
-        if (!try self.core.completeCallInputFields(fields, input)) return null;
+        if (!try self.core.completeCallInputFieldsWithReach(fields, input, reach)) return null;
         self.graph.nodes.items[@intFromEnum(input)].ty = ty;
         var node = self.graph.nodes.items[@intFromEnum(input)];
         node.source = source;
@@ -297,7 +297,7 @@ pub const Resolver = struct {
             return .resolved;
         }
 
-        return self.writeStructuralConstruction(module_index, o, value, reference, ty, input);
+        return self.writeStructuralConstruction(module_index, o, value, reference, ty, input, reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function));
     }
 
     fn resolveImplicitGenericCall(
@@ -424,7 +424,7 @@ pub const Resolver = struct {
             return .resolved;
         }
 
-        const result = try self.writeStructuralConstruction(module_index, o, value, reference, ty, input);
+        const result = try self.writeStructuralConstruction(module_index, o, value, reference, ty, input, reach_context.Context.fromModule(module, o, value.visible_bindings, value.owner_function));
         committed = result == .resolved;
         return result;
     }
@@ -458,6 +458,7 @@ pub const Resolver = struct {
         reference: module_entities.ExternalRef,
         ty: global_sg.GlobalTypeId,
         input: global_sg.GlobalNodeId,
+        reach: reach_context.Context,
     ) !resolution.Result {
         const fields = types.fields(self.graph, ty) orelse return .deferred;
         self.core.contextualizeConstructorChoices(module_index, o, fields, input);
@@ -465,7 +466,7 @@ pub const Resolver = struct {
             .applicable => {},
             .no_match, .deferred => return .deferred,
         }
-        if (!try self.core.completeCallInputFields(fields, input)) return .deferred;
+        if (!try self.core.completeCallInputFieldsWithReach(fields, input, reach)) return .deferred;
 
         self.graph.nodes.items[@intFromEnum(input)].ty = ty;
         const target = globalizer.globalNode(o, value.node);

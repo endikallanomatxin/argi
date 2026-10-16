@@ -25,11 +25,20 @@ pub const Stats = struct {
 };
 
 pub const Resolver = struct {
+    pub const ArgumentDefaults = struct {
+        context: *anyopaque,
+        checkpoint: *const fn (*anyopaque) @import("generic_functions.zig").Resolver.SideEffectCheckpoint,
+        rollback: *const fn (*anyopaque, @import("generic_functions.zig").Resolver.SideEffectCheckpoint) void,
+        instantiate: *const fn (*anyopaque, u32, reach_context.Context) anyerror!global_sg.GlobalNodeId,
+    };
+
     allocator: std.mem.Allocator,
     graph: *global_sg.GlobalSemanticGraph,
     modules: []const module_sg.ModuleSemanticGraph,
     offsets: []const globalizer.Offsets,
     profile_io: ?std.Io = null,
+    argument_defaults: ?*const ArgumentDefaults = null,
+
     stats: Stats = .{},
     // Instantiated bodies and cleanup calls have no module pending operation
     // to revisit when a callee gains a transitive reached input. Retain their
@@ -1403,25 +1412,13 @@ pub const Resolver = struct {
         );
     }
 
+    fn instantiateArgumentDefault(self: *Resolver, fallback: global_sg.GlobalNodeId, context: reach_context.Context) !global_sg.GlobalNodeId {
+        const defaults = self.argument_defaults orelse return error.DeferredGenericFunction;
+        return defaults.instantiate(defaults.context, self.graph.node(fallback).content.argument_default, context);
+    }
+
     pub fn completeCallInputFields(self: *Resolver, expected_fields: global_sg.FieldRange, input_node: global_sg.GlobalNodeId) !bool {
-        const literal = switch (self.graph.nodes.items[@intFromEnum(input_node)].content) {
-            .struct_value_literal => |value| value,
-            else => return false,
-        };
-        const start: u32 = @intCast(self.graph.value_fields.items.len);
-        for (0..expected_fields.len) |offset| {
-            const expected = self.graph.fields.items[expected_fields.start + @as(u32, @intCast(offset))];
-            const node = self.callArgument(literal, offset, expected.name) orelse expected.default_value orelse return false;
-            _ = self.coerceContextualValue(node, expected.ty);
-            try self.graph.value_fields.append(self.allocator, .{ .name = expected.name, .value = node });
-        }
-        const ty = try self.structType(expected_fields);
-        self.graph.nodes.items[@intFromEnum(input_node)].ty = ty;
-        self.graph.nodes.items[@intFromEnum(input_node)].content.struct_value_literal = .{
-            .fields = .{ .start = start, .len = expected_fields.len },
-            .assumed_fields = literal.assumed_fields,
-        };
-        return true;
+        return self.completeCallInputFieldsWithReach(expected_fields, input_node, reach_context.Context.fromGlobal(&.{}, null));
     }
 
     pub fn completeCallInputFieldsWithReach(
@@ -1434,14 +1431,22 @@ pub const Resolver = struct {
             .struct_value_literal => |value| value,
             else => return false,
         };
-        const node_mark = self.graph.nodes.items.len;
-        const field_mark = self.graph.value_fields.items.len;
+        const saved = self.graph.checkpoint();
+        const effects = if (self.argument_defaults) |defaults|
+            defaults.checkpoint(defaults.context)
+        else
+            null;
+        const calls = self.reached_calls.items.len;
+        const signatures = self.reached_signature_changes.items.len;
         var published = false;
         defer if (!published) {
-            self.graph.nodes.shrinkRetainingCapacity(node_mark);
-            self.graph.value_fields.shrinkRetainingCapacity(field_mark);
+            self.rollbackReachedCalls(calls);
+            self.rollback_reached_signatures(signatures);
+            self.graph.rollback(saved);
+            if (effects) |checkpoint| self.argument_defaults.?.rollback(self.argument_defaults.?.context, checkpoint);
         };
-        const start: u32 = @intCast(field_mark);
+        var values: std.ArrayList(global_sg.ValueField) = .empty;
+        defer values.deinit(self.allocator);
         for (0..expected_fields.len) |offset| {
             const expected = self.graph.fields.items[expected_fields.start + @as(u32, @intCast(offset))];
             var node = self.callArgument(literal, offset, expected.name);
@@ -1453,6 +1458,8 @@ pub const Resolver = struct {
                         fallback,
                         expected.ty,
                     )
+                else if (self.graph.node(fallback).content == .argument_default)
+                    try self.instantiateArgumentDefault(fallback, context)
                 else
                     fallback;
                 if (node == null and self.graph.nodes.items[@intFromEnum(fallback)].content == .reach_directive)
@@ -1464,9 +1471,11 @@ pub const Resolver = struct {
             }
             const value = node orelse return false;
             _ = self.coerceContextualValue(value, expected.ty);
-            try self.graph.value_fields.append(self.allocator, .{ .name = expected.name, .value = value });
+            try values.append(self.allocator, .{ .name = expected.name, .value = value });
         }
         const ty = try self.structType(expected_fields);
+        const start: u32 = @intCast(self.graph.value_fields.items.len);
+        try self.graph.value_fields.appendSlice(self.allocator, values.items);
         self.graph.nodes.items[@intFromEnum(input_node)].ty = ty;
         self.graph.nodes.items[@intFromEnum(input_node)].content.struct_value_literal = .{
             .fields = .{ .start = start, .len = expected_fields.len },

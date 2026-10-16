@@ -181,6 +181,14 @@ pub const TypeResolutionState = enum(u8) {
 pub const unresolved_type_poison_decl: GlobalDeclId = @enumFromInt(std.math.maxInt(u32));
 const unresolved_binding_type_poison: GlobalTypeId = @enumFromInt(std.math.maxInt(u32));
 
+pub const ArgumentDefaultTemporary = struct { expression: GlobalNodeId, declaration: GlobalNodeId };
+pub const ArgumentDefaultBinding = struct { ty: ?GlobalTypeId, integer: ?i64 };
+pub const ArgumentDefault = struct {
+    module_index: usize,
+    expression: @import("../module/parameterized/ir.zig").ParameterizedNodeId,
+    bindings: primitives.Range(u32),
+};
+
 pub const GlobalSemanticGraph = struct {
     pub const Checkpoint = struct {
         pool_lengths: [@typeInfo(GlobalSemanticGraph).@"struct".fields.len]usize,
@@ -256,6 +264,9 @@ pub const GlobalSemanticGraph = struct {
     fields: std.ArrayList(Field) = .empty,
     variants: std.ArrayList(ChoiceVariant) = .empty,
     generic_arguments: std.ArrayList(GenericArgument) = .empty,
+    argument_defaults: std.ArrayList(ArgumentDefault) = .empty,
+    argument_default_temporaries: std.ArrayList(ArgumentDefaultTemporary) = .empty,
+    argument_default_bindings: std.ArrayList(ArgumentDefaultBinding) = .empty,
     value_fields: std.ArrayList(ValueField) = .empty,
     switch_cases: std.ArrayList(SwitchCase) = .empty,
     switches: std.ArrayList(Switch) = .empty,
@@ -349,7 +360,7 @@ pub const GlobalSemanticGraph = struct {
             &self.testing_expect_errors,       &self.error_propagations,         &self.error_contexts,               &self.node_refs,
             &self.type_refs,                   &self.binding_refs,               &self.function_refs,                &self.virtual_registry_refs,
             &self.strings,                     &self.roots,                      &self.contract_safety_conformances, &self.contract_conformances,
-            &self.contract_operation_bindings,
+            &self.contract_operation_bindings, &self.argument_defaults,          &self.argument_default_temporaries, &self.argument_default_bindings,
         }) |list| list.deinit(allocator);
         self.* = .{};
     }
@@ -663,6 +674,9 @@ pub const GlobalSemanticGraph = struct {
             self.fields.items.len * @sizeOf(Field) +
             self.variants.items.len * @sizeOf(ChoiceVariant) +
             self.generic_arguments.items.len * @sizeOf(GenericArgument) +
+            self.argument_defaults.items.len * @sizeOf(ArgumentDefault) +
+            self.argument_default_temporaries.items.len * @sizeOf(ArgumentDefaultTemporary) +
+            self.argument_default_bindings.items.len * @sizeOf(ArgumentDefaultBinding) +
             self.value_fields.items.len * @sizeOf(ValueField) +
             self.switch_cases.items.len * @sizeOf(SwitchCase) +
             self.switches.items.len * @sizeOf(Switch) +

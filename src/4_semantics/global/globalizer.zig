@@ -530,6 +530,7 @@ fn relocateNode(allocator: std.mem.Allocator, module: *const module_sg.ModuleSem
             .int_literal => |value| .{ .int_literal = value },
             .float_literal => |value| .{ .float_literal = value },
             .char_literal => |value| .{ .char_literal = value },
+            .argument_default => return error.InvalidArgumentDefaultInModule,
             .string_literal => |value| .{ .string_literal = try relocateString(module, value, o.string_base) },
             .bool_literal => |value| .{ .bool_literal = value },
             .list_literal => |value| .{ .list_literal = .{

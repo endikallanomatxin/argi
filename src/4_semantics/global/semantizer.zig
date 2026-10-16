@@ -372,6 +372,13 @@ pub fn semantizeWithOptions(
     contracts.function_context = &generic_functions;
     contracts.instantiate_function = generic_functions_mod.Resolver.instantiateReferencedFunction;
     contracts.instantiate_alias = generic_functions_mod.Resolver.instantiateOperationAlias;
+    const argument_defaults: core_mod.Resolver.ArgumentDefaults = .{
+        .context = &generic_functions,
+        .checkpoint = generic_functions_mod.Resolver.checkpointDefaultEffects,
+        .rollback = generic_functions_mod.Resolver.rollbackDefaultEffects,
+        .instantiate = generic_functions_mod.Resolver.instantiateArgumentDefault,
+    };
+    core.argument_defaults = &argument_defaults;
     generic_functions.nested_call_context = &contracts;
     generic_functions.nested_call_resolver = contract_mod.Resolver.resolveNestedCall;
     generic_functions.nested_constructor_context = &constructors;

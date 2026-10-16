@@ -621,6 +621,8 @@ pub fn Node(comptime Ids: type) type {
             int_literal: i128,
             float_literal: f64,
             char_literal: u32,
+            // Global-only recipe, expanded independently for each omitted input.
+            argument_default: u32,
             string_literal: StringRange,
             bool_literal: bool,
             list_literal: struct {

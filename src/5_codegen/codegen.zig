@@ -680,6 +680,7 @@ pub const CodeGenerator = struct {
     fn globalConstant(self: *CodeGenerator, node_id: graph_mod.GlobalNodeId) CodegenError!TypedValue {
         const node = self.graph.nodes.items[@intFromEnum(node_id)];
         return switch (node.content) {
+            .argument_default => CodegenError.InvalidType,
             .int_literal, .float_literal, .char_literal, .bool_literal, .string_literal => self.emitLiteral(node_id),
             .binary_operation => |operation| self.globalBinaryConstant(operation),
             .binding_use => |binding| blk: {
@@ -950,6 +951,7 @@ pub const CodeGenerator = struct {
     fn visitNodeInner(self: *CodeGenerator, node_id: graph_mod.GlobalNodeId) anyerror!?TypedValue {
         const node = self.graph.nodes.items[@intFromEnum(node_id)];
         return switch (node.content) {
+            .argument_default => CodegenError.InvalidType,
             .declaration, .reach_directive, .type_literal => null,
             .binding_declaration => |binding| blk: {
                 if (self.global_bindings.contains(binding)) {

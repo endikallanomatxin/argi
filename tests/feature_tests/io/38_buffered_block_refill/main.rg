@@ -1,11 +1,9 @@
 Source: Type = (.count: UIntNative)
 
-implement Reader#(Source)(
-    .read_byte = (
-            .self : $&Source
-        ) -> (
-            .result : Errable#(.t: ReadByte, .reasons: (..stream_read_failed))
-        ) {
+implement Reader#(Source) (
+    .read_byte = (.self: $&Source) -> (
+        .result : Errable#(.t: ReadByte, .reasons: (..stream_read_failed))
+    ) {
         if self&.count == 4 {
             result = ..ok ..end
             return
@@ -16,9 +14,9 @@ implement Reader#(Source)(
 )
 
 run_main(.system: System) -> !Void = ..ok Void() := {
-    assume allocator := system.page_allocator
     source :: Source = (.count = 0)
-    reader ::= BufferedReader(.base = $&source, .allocator = allocator, .capacity = 3)!
+    storage: [3]UInt8 = (0, 0, 0)
+    reader ::= BufferedReader(.base = $&source, .buffer = view($&storage))
     match Reader#().read_byte(.self = $&reader)! {
         ..end { abort } ..ok byte { if byte != 65 { abort } }
     }
@@ -31,7 +29,9 @@ run_main(.system: System) -> !Void = ..ok Void() := {
     match Reader#().read_byte(.self = $&reader)! { ..end {} ..ok byte { abort } }
 }
 
-main#(.WriterType: Type: Writer#(WriterType))(.system: System, .writer: $&WriterType = reach writer) -> (.status_code: Int32 = 1) := {
+main#(.WriterType: Type: Writer#(WriterType))(
+    .system: System, .writer: $&WriterType = reach writer
+) -> (.status_code: Int32 = 1) := {
     run_main(.system = system)!!!
     status_code = 0
 }

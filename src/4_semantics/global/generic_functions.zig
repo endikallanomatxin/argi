@@ -2012,6 +2012,42 @@ pub const Resolver = struct {
         return .{ .file_index = self.offsets[module_index].file_base + source.file_index, .offset = source.offset };
     }
 
+    pub fn checkpointDefaultEffects(context: *anyopaque) SideEffectCheckpoint {
+        const self: *Resolver = @ptrCast(@alignCast(context));
+        return self.checkpointSideEffects();
+    }
+
+    pub fn rollbackDefaultEffects(context: *anyopaque, saved: SideEffectCheckpoint) void {
+        const self: *Resolver = @ptrCast(@alignCast(context));
+        self.rollbackSideEffects(saved);
+    }
+
+    pub fn instantiateArgumentDefault(context: *anyopaque, recipe_id: u32, reach: ReachInferenceContext) anyerror!global_sg.GlobalNodeId {
+        const self: *Resolver = @ptrCast(@alignCast(context));
+        const recipe = self.graph.argument_defaults.items[recipe_id];
+        var substitutions = try generic_mod.Resolver.Bindings.init(self.allocator, recipe.bindings.len);
+        defer substitutions.deinit(self.allocator);
+        for (self.graph.argument_default_bindings.items[recipe.bindings.start..][0..recipe.bindings.len], 0..) |binding, index| {
+            substitutions.types[index] = binding.ty;
+            substitutions.ints[index] = binding.integer;
+        }
+        var instance = InstanceContext.init(self, recipe.module_index, .{
+            .declaration = @enumFromInt(0),
+            .parameters = .{ .start = 0, .len = 0 },
+            .input = @enumFromInt(0),
+            .output = @enumFromInt(0),
+            .body = null,
+        }, &substitutions);
+        defer instance.deinit();
+        instance.function = reach.ownerFunction();
+        instance.callsite_reach = reach;
+        const expression = try instance.instantiateNode(recipe.expression);
+        for (instance.callsite_temporaries.items) |declaration| {
+            try self.graph.argument_default_temporaries.append(self.allocator, .{ .expression = expression, .declaration = declaration });
+        }
+        return expression;
+    }
+
     const InstanceContext = struct {
         resolver: *Resolver,
         module_index: usize,
@@ -2021,6 +2057,8 @@ pub const Resolver = struct {
         node_map: instantiation_map.Map(global_sg.GlobalNodeId),
         block_map: instantiation_map.Map(global_sg.GlobalBlockId),
         function: ?global_sg.GlobalFunctionId = null,
+        callsite_reach: ?ReachInferenceContext = null,
+        callsite_temporaries: std.ArrayList(global_sg.GlobalNodeId) = .empty,
 
         fn init(
             resolver: *Resolver,
@@ -2041,6 +2079,7 @@ pub const Resolver = struct {
         }
 
         fn deinit(self: *InstanceContext) void {
+            self.callsite_temporaries.deinit(self.resolver.allocator);
             self.binding_map.deinit(self.resolver.allocator);
             self.node_map.deinit(self.resolver.allocator);
             self.block_map.deinit(self.resolver.allocator);
@@ -2925,13 +2964,8 @@ pub const Resolver = struct {
             // input bindings, including parameters inferred from generic args.
             // Default expressions can be materialized before a function body
             // exists. They have no body-local input bindings to expose.
-            const input_bindings = if (self.function) |owner|
-                self.resolver.graph.function(owner).input_bindings
-            else
-                global_sg.BindingRange{ .start = 0, .len = 0 };
-            const visible = try self.resolver.allocator.dupe(global_sg.GlobalBindingId, self.resolver.graph.binding_refs.items[input_bindings.start..][0..input_bindings.len]);
-            defer self.resolver.allocator.free(visible);
-            const nested_reach = ReachInferenceContext.fromGlobal(visible, self.function);
+            const nested_reach = try self.operatorContext(null);
+            defer self.resolver.allocator.free(nested_reach.global.visible_bindings);
             if (arguments.len == 0) {
                 const operation_module = if (module_path) |path| try self.resolver.core.findModuleForQualifier(self.module_index, module.text(path)) else null;
                 if (try self.resolver.resolveOperationIdentityFiltered(self.module_index, name, input, nested_reach, self.resolver.sourceFor(self.module_index, source), operation_module)) |operation| return operation;
@@ -3155,6 +3189,13 @@ pub const Resolver = struct {
         }
 
         fn operatorContext(self: *InstanceContext, assumed: ?ir.ParameterizedNodeId) !ReachInferenceContext {
+            if (self.callsite_reach) |inherited| {
+                const visible = try self.resolver.allocator.alloc(global_sg.GlobalBindingId, inherited.bindingCount());
+                for (visible, 0..) |*binding, index| binding.* = inherited.bindingAt(index);
+                var result = ReachInferenceContext.fromGlobal(visible, inherited.ownerFunction());
+                if (inherited == .global) result.global.assumed_fields = inherited.global.assumed_fields;
+                return result;
+            }
             var context = ReachInferenceContext.fromGlobal(&.{}, self.function);
             if (assumed) |local| {
                 const input = try self.instantiateNode(local);
@@ -3309,7 +3350,30 @@ pub const Resolver = struct {
             if (detail == .pipe_pointer_mutability and self.resolver.graph.types.items[@intFromEnum(child)] == .pointer)
                 return self.resolver.graph.node(operands[0]);
             const pointer = try self.resolver.generics.internType(.{ .pointer = .{ .child = child, .mutability = mutability } });
-            return .{ .source = self.resolver.sourceFor(self.module_index, source), .ty = pointer, .content = .{ .address_of = operands[0] } };
+            var target = operands[0];
+            if (self.callsite_reach != null) switch (self.resolver.graph.node(target).content) {
+                .binding_use, .assignment, .struct_field_access, .choice_payload_access, .array_index, .dereference => {},
+                else => {
+                    const graph = self.resolver.graph;
+                    const global_source = self.resolver.sourceFor(self.module_index, source);
+                    const binding: global_sg.GlobalBindingId = @enumFromInt(@as(u32, @intCast(graph.bindings.items.len)));
+                    try graph.bindings.append(self.resolver.allocator, .{
+                        .name = try graph.addString(self.resolver.allocator, "#address_temporary"),
+                        .source = global_source,
+                        .ty = child,
+                        .initialization = target,
+                        .deferred_initialization = true,
+                        .mutability = .variable,
+                    });
+                    const declaration: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(graph.nodes.items.len)));
+                    try graph.nodes.append(self.resolver.allocator, .{ .source = global_source, .ty = try self.resolver.generics.internType(.{ .builtin = .Void }), .content = .{ .binding_declaration = binding } });
+                    try self.callsite_temporaries.append(self.resolver.allocator, declaration);
+                    const assignment: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(graph.nodes.items.len)));
+                    try graph.nodes.append(self.resolver.allocator, .{ .source = global_source, .ty = child, .content = .{ .assignment = .{ .binding = binding, .value = target } } });
+                    target = assignment;
+                },
+            };
+            return .{ .source = self.resolver.sourceFor(self.module_index, source), .ty = pointer, .content = .{ .address_of = target } };
         }
 
         fn resolveDereference(self: *InstanceContext, operands: []const global_sg.GlobalNodeId, source: primitives.SourceRef) !global_sg.Node {

@@ -595,10 +595,9 @@ pub const Resolver = struct {
         return global;
     }
 
-    // Record argument shapes retain scalar and payload-free choice defaults
-    // without executing runtime expressions. Function interfaces materialize
-    // their complete defaults separately in their concrete binding context.
-    fn instantiateConstantFieldDefault(self: *Resolver, module_index: usize, id: ir.ParameterizedNodeId, ty: global_sg.GlobalTypeId, bindings: *Bindings) !?global_sg.GlobalNodeId {
+    // Runtime defaults remain recipes while resolving types. Each omitted
+    // argument specializes its expression into fresh caller-owned nodes.
+    fn instantiateFieldDefault(self: *Resolver, module_index: usize, id: ir.ParameterizedNodeId, ty: global_sg.GlobalTypeId, bindings: *Bindings) !?global_sg.GlobalNodeId {
         if (try self.instantiateReachDefault(module_index, id)) |node| return node;
         const module = &self.modules[module_index];
         const node = module.semantic.parameterized_storage.ir.nodes.items[@intFromEnum(id)];
@@ -606,9 +605,9 @@ pub const Resolver = struct {
             .resolved => |value| value,
             .pending => |pending_id| {
                 const pending = module.semantic.parameterized_storage.ir.pending.items[@intFromEnum(pending_id)];
-                if (pending != .resolve_expression or pending.resolve_expression.kind != .choice_literal) return null;
+                if (pending != .resolve_expression or pending.resolve_expression.kind != .choice_literal) return try self.recordArgumentDefault(module_index, id, ty, bindings);
                 const choice = pending.resolve_expression;
-                if (choice.operands.len != 0) return null;
+                if (choice.operands.len != 0) return try self.recordArgumentDefault(module_index, id, ty, bindings);
                 const name = choice.name orelse return null;
                 _ = try self.ensureGenericInstance(ty);
                 const variant = global_types.findVariant(self.graph, ty, module.text(name)) orelse return null;
@@ -628,12 +627,27 @@ pub const Resolver = struct {
             .bool_literal => |value| .{ .bool_literal = value },
             .char_literal => |value| .{ .char_literal = value },
             .string_literal => |value| .{ .string_literal = try self.graph.addString(self.allocator, module.text(value)) },
-            else => return null,
+            else => return try self.recordArgumentDefault(module_index, id, ty, bindings),
         };
         const global: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.graph.nodes.items.len)));
         const literal_type = if (resolved.ty) |source_type| try self.instantiateParameterizedType(module_index, source_type, bindings) else ty;
         try self.graph.nodes.append(self.allocator, .{ .source = self.globalSource(module_index, resolved.source), .ty = literal_type, .content = content });
         return global;
+    }
+
+    fn recordArgumentDefault(self: *Resolver, module_index: usize, expression: ir.ParameterizedNodeId, ty: global_sg.GlobalTypeId, bindings: *Bindings) !global_sg.GlobalNodeId {
+        const binding_start: u32 = @intCast(self.graph.argument_default_bindings.items.len);
+        for (bindings.types, bindings.ints) |bound_type, integer|
+            try self.graph.argument_default_bindings.append(self.allocator, .{ .ty = bound_type, .integer = integer });
+        const recipe: u32 = @intCast(self.graph.argument_defaults.items.len);
+        try self.graph.argument_defaults.append(self.allocator, .{
+            .module_index = module_index,
+            .expression = expression,
+            .bindings = .{ .start = binding_start, .len = @intCast(bindings.types.len) },
+        });
+        const node: global_sg.GlobalNodeId = @enumFromInt(@as(u32, @intCast(self.graph.nodes.items.len)));
+        try self.graph.nodes.append(self.allocator, .{ .source = .{ .file_index = 0, .offset = 0 }, .ty = ty, .content = .{ .argument_default = recipe } });
+        return node;
     }
 
     fn instantiateFields(
@@ -654,7 +668,7 @@ pub const Resolver = struct {
                 .ty = ty,
 
                 .source = self.globalSource(module_index, field.source),
-                .default_value = if (field.default_value) |value| try self.instantiateConstantFieldDefault(module_index, value, ty, bindings) else null,
+                .default_value = if (field.default_value) |value| try self.instantiateFieldDefault(module_index, value, ty, bindings) else null,
             });
         }
         const start: u32 = @intCast(self.graph.fields.items.len);

@@ -88,6 +88,7 @@ const State = struct {
             .int_literal,
             .float_literal,
             .char_literal,
+            .argument_default,
             .string_literal,
             .bool_literal,
             .break_statement,
