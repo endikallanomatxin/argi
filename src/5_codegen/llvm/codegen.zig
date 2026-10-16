@@ -2500,6 +2500,11 @@ pub const CodeGenerator = struct {
 
     fn genAutoDeinit(self: *CodeGenerator, auto_id: graph_mod.GlobalAutoDeinitId) !void {
         const auto = self.graph.auto_deinits.items[@intFromEnum(auto_id)];
+        if (auto.target) |target| {
+            const drop = self.dropStateForNode(target) orelse return CodegenError.InvalidType;
+            const pointer = try self.addressablePointer(target);
+            return self.genAutoDeinitStorage(auto.deinit_fn, auto.input, auto.self_field_index, auto.fields, pointer.value_ref, self.graph.node(target).ty.?, drop);
+        }
         const storage = self.bindings.get(auto.binding) orelse return;
         const drop = storage.drop_state orelse return;
         try self.genAutoDeinitStorage(auto.deinit_fn, auto.input, auto.self_field_index, auto.fields, storage.ref, storage.ty, drop);

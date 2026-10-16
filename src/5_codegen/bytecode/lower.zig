@@ -148,6 +148,10 @@ const FunctionLower = struct {
     }
     fn autoDeinit(self: *FunctionLower, id: g.GlobalAutoDeinitId) anyerror!void {
         const auto = self.parent.graph.auto_deinits.items[@intFromEnum(id)];
+        if (auto.target) |target| {
+            const drop = self.nodeDrop(target) orelse return error.InvalidBytecode;
+            return self.cleanupStorage(auto.deinit_fn, auto.input, auto.self_field_index, auto.fields, try self.place(target), self.parent.graph.node(target).ty.?, drop);
+        }
         const root = self.bindings.get(auto.binding) orelse return error.InvalidBytecode;
         try self.cleanupStorage(auto.deinit_fn, auto.input, auto.self_field_index, auto.fields, .{ .root = root, .path = &.{} }, self.slots.items[root], self.drops.get(auto.binding).?);
     }

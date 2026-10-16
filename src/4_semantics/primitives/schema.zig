@@ -429,6 +429,8 @@ pub fn AutoDeinitField(comptime Ids: type) type {
 pub fn AutoDeinit(comptime Ids: type) type {
     return struct {
         binding: Ids.BindingId,
+        /// Optional subplace of the owning binding, evaluated without reading it.
+        target: ?Ids.NodeId = null,
         deinit_fn: ?Ids.FunctionId,
         input: ?Ids.NodeId = null,
         self_field_index: u32 = 0,

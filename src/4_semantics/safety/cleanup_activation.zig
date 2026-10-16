@@ -383,7 +383,7 @@ const Scanner = struct {
             .break_statement, .continue_statement => flow.reachable = false,
             .auto_deinit_binding => |auto_id| {
                 const cleanup = self.graph.auto_deinits.items[@intFromEnum(auto_id)];
-                const target = facts.Place{ .root = cleanup.binding };
+                const target = if (cleanup.target) |node_id| try self.resolvePlace(node_id) orelse return else facts.Place{ .root = cleanup.binding };
                 if (!flow.skips(target)) {
                     try self.activation.roots.put(auto_id, {});
                     try self.cleanupFields(cleanup.fields, target, flow);
@@ -429,7 +429,11 @@ const Scanner = struct {
             .struct_field_store => |value| {
                 try self.node(value.struct_ptr, flow);
                 try self.node(value.value, flow);
-                if (try self.resolvePlace(value.struct_ptr)) |parent| try self.initialize(flow, try self.project(parent, .{ .field = value.field_index }), value.value);
+                if (try self.resolvePlace(value.struct_ptr)) |parent| {
+                    const target = try self.project(parent, .{ .field = value.field_index });
+                    if (!flow.skips(target)) try self.activation.replacements.put(id, {});
+                    try self.initialize(flow, target, value.value);
+                }
             },
             .array_index => |value| {
                 try self.node(value.array_ptr, flow);
@@ -443,6 +447,9 @@ const Scanner = struct {
             .pointer_assignment => |value| {
                 try self.node(value.pointer, flow);
                 try self.node(value.value, flow);
+                if (try self.resolvePlace(value.pointer)) |target| {
+                    if (!flow.skips(target)) try self.activation.replacements.put(id, {});
+                }
                 // An indirect write can reinitialize escaped storage, but cannot
                 // initialize a local/output whose address has never been formed.
                 var index: usize = 0;

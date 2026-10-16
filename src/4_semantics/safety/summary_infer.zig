@@ -2521,7 +2521,7 @@ pub const Infer = struct {
     ) !void {
         if (self.cleanup) |active| if (!active.roots.contains(auto_id)) return;
         const cleanup = self.graph.auto_deinits.items[@intFromEnum(auto_id)];
-        const binding_effect = self.bindings.get(cleanup.binding);
+        const binding_effect = if (cleanup.target) |target| try self.inferExpression(function_id, target) else self.bindings.get(cleanup.binding);
         if (cleanup.deinit_fn) |deinit_fn| if (cleanup.input) |input| {
             if (self.engine.summaryFor(deinit_fn)) |summary|
                 try self.applyInputPostStatesFromSummary(
@@ -3051,7 +3051,7 @@ pub const Infer = struct {
     ) !void {
         if (self.cleanup) |active| if (!active.roots.contains(auto_id)) return;
         const cleanup = self.graph.auto_deinits.items[@intFromEnum(auto_id)];
-        const binding_effect = self.bindings.get(cleanup.binding);
+        const binding_effect = if (cleanup.target) |target| try self.inferExpression(function_id, target) else self.bindings.get(cleanup.binding);
         if (cleanup.deinit_fn) |deinit_fn| if (cleanup.input) |input| {
             if (self.engine.summaryFor(deinit_fn)) |summary|
                 try self.applyOpaqueEmptySummary(
@@ -3996,7 +3996,7 @@ pub const Infer = struct {
     ) !void {
         if (self.cleanup) |active| if (!active.roots.contains(auto_id)) return;
         const cleanup = self.graph.auto_deinits.items[@intFromEnum(auto_id)];
-        const binding_effect = self.bindings.get(cleanup.binding);
+        const binding_effect = if (cleanup.target) |target| try self.inferExpression(function_id, target) else self.bindings.get(cleanup.binding);
         if (cleanup.input) |input| {
             try self.inferRequiredLiveInputsNode(function_id, input, required);
             if (cleanup.deinit_fn) |deinit_fn| {

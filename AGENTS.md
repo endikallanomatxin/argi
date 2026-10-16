@@ -327,8 +327,11 @@ feature first.
   first initialization. Preserve temporary provenance in value-sequence summaries;
   a sequence result must not skip the bindings that establish its dependencies.
   A block's ret_val can also be its last statement: execute/collect its effects
-  once, retaining its value across following cleanup. Field and indirect
-  replacement still require an evaluated destination and shared cleanup identity.
+  once, retaining its value across following cleanup. Statically rooted local
+  record fields use the same checked replacement sequence
+  and a projected cleanup target; only that field changes generation and cleanup
+  activation. Runtime aliases and indexed replacement still require an evaluated
+  destination and shared cleanup identity.
 
 - Structural automatic cleanup follows record fields and active choice payloads.
   AutoDeinitField keeps variant projections distinct from record fields; preserve

@@ -694,8 +694,12 @@ pub const SafetyChecker = struct {
                     const pointer = try self.evaluatePointerUse(function, node.source, store.struct_ptr, state) orelse continue;
                     const value = try self.evaluate(function, store.value, state);
                     try self.recordOpaqueWrite(node.source, state, pointer, value);
-                    if (try self.resolvePlace(store.struct_ptr, state)) |base|
-                        try self.setPlace(state, try self.project(base, .{ .field = store.field_index }), .initialized, value);
+                    if (try self.resolvePlace(store.struct_ptr, state)) |base| {
+                        const target = try self.project(base, .{ .field = store.field_index });
+                        if (self.initializednessAtPlace(state, target) == .deinitialized)
+                            try self.refreshStorageGenerationChecked(node.source, state, target);
+                        try self.setPlace(state, target, .initialized, value);
+                    }
                 },
                 .array_store => |store| {
                     const pointer = try self.evaluatePointerUse(function, node.source, store.array_ptr, state) orelse continue;
@@ -713,8 +717,12 @@ pub const SafetyChecker = struct {
                         .address_of => |child| try self.evaluateAddress(function, pointer_node.source, child, state, true),
                         else => try self.evaluate(function, assignment.pointer, state),
                     };
+                    const was_deinitialized = if (pointer.referenced_place) |target|
+                        self.initializednessAtPlace(state, target) == .deinitialized
+                    else
+                        false;
                     if (pointer.referenced_place) |target| {
-                        if (self.initializednessAtPlace(state, target) == .deinitialized and pointer.opaque_provenance.len == 0) {
+                        if (was_deinitialized and pointer.opaque_provenance.len == 0) {
                             const old_generation = try self.storageGeneration(state, target);
                             try self.refreshStorageGenerationChecked(node.source, state, target);
                             const generation = try self.storageGeneration(state, target);
@@ -727,6 +735,13 @@ pub const SafetyChecker = struct {
                     }
                     try self.requireLive(function, node.source, pointer, state);
                     const value = try self.evaluate(function, assignment.value, state);
+                    if (pointer.referenced_place) |target| {
+                        if (!was_deinitialized and self.initializednessAtPlace(state, target) == .deinitialized and pointer.opaque_provenance.len == 0) {
+                            const old_generation = try self.storageGeneration(state, target);
+                            try self.refreshStorageGenerationChecked(node.source, state, target);
+                            pointer = try self.replaceValueRoots(pointer, &.{old_generation}, try self.storageGeneration(state, target));
+                        }
+                    }
                     try self.recordOpaqueWrite(node.source, state, pointer, value);
                     if (pointer.referenced_place) |target| try self.setPlace(state, target, .initialized, value);
                 },
@@ -4652,7 +4667,7 @@ pub const SafetyChecker = struct {
         state: *FunctionState,
     ) !void {
         const cleanup = self.graph.auto_deinits.items[@intFromEnum(id)];
-        const storage = facts.Place{ .root = cleanup.binding };
+        const storage = if (cleanup.target) |target| try self.resolvePlace(target, state) orelse return else facts.Place{ .root = cleanup.binding };
         switch (self.initializednessAtPlace(state, storage)) {
             .initialized => if (cleanup.deinit_fn != null) {
                 try self.evaluateResolvedAutoDeinit(function, cleanup, storage, state);

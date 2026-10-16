@@ -467,7 +467,19 @@ pub const Resolver = struct {
             },
             .struct_field_store => |store| {
                 try self.finalizeExpressionCleanup(store.struct_ptr, active, defers, visible, owner_function, module_index);
-                try self.finalizeExpressionCleanup(store.value, active, defers, visible, owner_function, module_index);
+                const parent = if (self.replacement_candidates.contains(node_id)) self.staticAddressTarget(store.struct_ptr) else null;
+                if (parent) |base| {
+                    const fields = global_types.fields(self.graph, store.struct_type) orelse return error.InvalidCleanupTarget;
+                    const field = self.graph.fields.items[fields.start + store.field_index];
+                    const target = try self.appendNode(self.graph.node(node_id).source, store.field_type, .{ .struct_field_access = .{
+                        .value = base,
+                        .field_name = field.name,
+                        .field_index = store.field_index,
+                    } });
+                    const value = try self.projectedReplacement(node_id, target, store.value, visible, owner_function, module_index);
+                    self.graph.nodes.items[@intFromEnum(node_id)].content.struct_field_store.value = value;
+                    try self.finalizeExpressionCleanup(value, active, defers, visible, owner_function, module_index);
+                } else try self.finalizeExpressionCleanup(store.value, active, defers, visible, owner_function, module_index);
             },
             .binary_operation => |operation| {
                 try self.finalizeExpressionCleanup(operation.left, active, defers, visible, owner_function, module_index);
@@ -483,7 +495,12 @@ pub const Resolver = struct {
             },
             .pointer_assignment => |assignment| {
                 try self.finalizeExpressionCleanup(assignment.pointer, active, defers, visible, owner_function, module_index);
-                try self.finalizeExpressionCleanup(assignment.value, active, defers, visible, owner_function, module_index);
+                const value = if (self.staticAddressTarget(assignment.pointer)) |target|
+                    try self.projectedReplacement(node_id, target, assignment.value, visible, owner_function, module_index)
+                else
+                    assignment.value;
+                self.graph.nodes.items[@intFromEnum(node_id)].content.pointer_assignment.value = value;
+                try self.finalizeExpressionCleanup(value, active, defers, visible, owner_function, module_index);
             },
             .explicit_cast => |cast| try self.finalizeExpressionCleanup(cast.value, active, defers, visible, owner_function, module_index),
 
@@ -520,24 +537,69 @@ pub const Resolver = struct {
         const cleanup_id: global_sg.GlobalAutoDeinitId = @enumFromInt(@as(u32, @intCast(self.graph.auto_deinits.items.len)));
         try self.graph.auto_deinits.append(self.allocator, plan);
         const cleanup = try self.appendNode(self.graph.node(value).source, try self.builtin(.Void), .{ .auto_deinit_binding = cleanup_id });
-        const record = self.graph.binding(binding);
+        return self.replacementValue(value, self.graph.binding(binding).ty, cleanup);
+    }
+
+    /// Only pure local storage projections can be reconstructed after the RHS.
+    /// Runtime aliases and effectful address computations require a captured
+    /// destination and a cleanup identity that follows that address.
+    fn staticLocalRoot(self: *Resolver, target: global_sg.GlobalNodeId) ?global_sg.GlobalBindingId {
+        return switch (self.graph.node(target).content) {
+            .binding_use => |binding| binding,
+            .struct_field_access => |access| self.staticLocalRoot(access.value),
+            else => null,
+        };
+    }
+
+    fn staticAddressTarget(self: *Resolver, pointer: global_sg.GlobalNodeId) ?global_sg.GlobalNodeId {
+        return switch (self.graph.node(pointer).content) {
+            .address_of => |target| if (self.staticLocalRoot(target) != null) target else null,
+            else => null,
+        };
+    }
+
+    fn projectedReplacement(
+        self: *Resolver,
+        node_id: global_sg.GlobalNodeId,
+        target: global_sg.GlobalNodeId,
+        value: global_sg.GlobalNodeId,
+        visible: []const global_sg.GlobalBindingId,
+        owner_function: global_sg.GlobalFunctionId,
+        module_index: usize,
+    ) !global_sg.GlobalNodeId {
+        if (!self.replacement_candidates.contains(node_id)) return value;
+        const binding = self.staticLocalRoot(target) orelse return value;
+        // Module-level storage has no lexical cleanup activation.
+        if (std.mem.indexOfScalar(global_sg.GlobalBindingId, visible, binding) == null) return value;
+        const context = reach_context.Context.fromGlobal(visible, owner_function);
+        try self.prepareAutoDeinit(binding, context, module_index);
+        const ty = self.graph.node(target).ty orelse return value;
+        var plan = try self.buildAutoDeinit(binding, target, ty, context, module_index) orelse return value;
+        plan.target = target;
+        const id: global_sg.GlobalAutoDeinitId = @enumFromInt(@as(u32, @intCast(self.graph.auto_deinits.items.len)));
+        try self.graph.auto_deinits.append(self.allocator, plan);
+        const cleanup = try self.appendNode(self.graph.node(value).source, try self.builtin(.Void), .{ .auto_deinit_binding = id });
+        return self.replacementValue(value, ty, cleanup);
+    }
+
+    fn replacementValue(self: *Resolver, value: global_sg.GlobalNodeId, ty: global_sg.GlobalTypeId, cleanup: global_sg.GlobalNodeId) !global_sg.GlobalNodeId {
         const source = self.graph.node(value).source;
         const temporary: global_sg.GlobalBindingId = @enumFromInt(@as(u32, @intCast(self.graph.bindings.items.len)));
         try self.graph.bindings.append(self.allocator, .{
             .name = try self.graph.addString(self.allocator, "_replacement"),
             .source = source,
-            .ty = record.ty,
+            .ty = ty,
             .initialization = value,
             .mutability = .constant,
         });
         const declaration = try self.appendNode(source, null, .{ .binding_declaration = temporary });
-        const use = try self.appendNode(source, record.ty, .{ .binding_use = temporary });
-        const result = try self.appendNode(source, record.ty, .{ .move_value = use });
+        const use = try self.appendNode(source, ty, .{ .binding_use = temporary });
+        const result = try self.appendNode(source, ty, .{ .move_value = use });
         const start: u32 = @intCast(self.graph.node_refs.items.len);
         try self.graph.node_refs.appendSlice(self.allocator, &.{ declaration, cleanup, result });
         const block: global_sg.GlobalBlockId = @enumFromInt(@as(u32, @intCast(self.graph.blocks.items.len)));
         try self.graph.blocks.append(self.allocator, .{ .nodes = .{ .start = start, .len = 3 }, .ret_val = result });
-        return self.appendNode(source, record.ty, .{ .value_sequence = block });
+        return self.appendNode(source, ty, .{ .value_sequence = block });
     }
 
     fn finalizeBlock(

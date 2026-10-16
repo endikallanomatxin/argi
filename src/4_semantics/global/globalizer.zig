@@ -385,6 +385,7 @@ fn appendBodyTables(allocator: std.mem.Allocator, result: *global_sg.GlobalSeman
     });
     for (storage.auto_deinits.items) |value| try result.auto_deinits.append(allocator, .{
         .binding = globalBinding(o, value.binding),
+        .target = if (value.target) |id| globalNode(o, id) else null,
         .deinit_fn = if (value.deinit_fn) |id| globalFunction(o, id) else null,
         .input = if (value.input) |id| globalNode(o, id) else null,
         .self_field_index = value.self_field_index,
