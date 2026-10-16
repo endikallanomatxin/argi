@@ -1,5 +1,5 @@
 const std = @import("std");
-const b = @import("bytecode.zig");
+const b = @import("../5_codegen/bytecode/bytecode.zig");
 const g = @import("../4_semantics/global/graph.zig");
 const p = @import("../4_semantics/primitives/schema.zig");
 

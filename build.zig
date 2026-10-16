@@ -32,7 +32,7 @@ pub fn build(b: *std.Build) void {
     });
 
     const llvm_c = b.addTranslateC(.{
-        .root_source_file = b.path("src/5_codegen/llvm-c.h"),
+        .root_source_file = b.path("src/5_codegen/llvm/llvm-c.h"),
         .target = target,
         .optimize = optimize,
     });

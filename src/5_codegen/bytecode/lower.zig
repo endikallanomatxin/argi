@@ -1,6 +1,6 @@
 const std = @import("std");
-const g = @import("../4_semantics/global/graph.zig");
-const p = @import("../4_semantics/primitives/schema.zig");
+const g = @import("../../4_semantics/global/graph.zig");
+const p = @import("../../4_semantics/primitives/schema.zig");
 const b = @import("bytecode.zig");
 
 pub const Lower = struct {

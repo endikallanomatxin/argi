@@ -1,5 +1,5 @@
 const std = @import("std");
-const link = @import("../5_codegen/link.zig");
+const link = @import("../5_codegen/llvm/link.zig");
 
 pub const BuildFlags = struct {
     target: @import("../1_base/target.zig").Config = .{},

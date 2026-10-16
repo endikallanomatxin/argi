@@ -2,9 +2,9 @@ const std = @import("std");
 const sf = @import("../1_base/source_files.zig");
 const diag = @import("../1_base/diagnostic.zig");
 const frontend = @import("../0_commands/frontend_pipeline.zig");
-const lower = @import("lower.zig");
+const lower = @import("../5_codegen/bytecode/lower.zig");
 const vm = @import("vm.zig");
-const b = @import("bytecode.zig");
+const b = @import("../5_codegen/bytecode/bytecode.zig");
 
 fn execute(source: []const u8, limits: vm.Limits) !i128 {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);

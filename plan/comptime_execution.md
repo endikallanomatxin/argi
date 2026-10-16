@@ -5,6 +5,10 @@ Release order: [0.4](0.4.md). Language semantics:
 
 ## Initial executor
 
+The checked semantic graph feeds alternative backends under `src/5_codegen/`:
+`llvm/` emits native code and `bytecode/` emits verified instructions. The VM
+lives in `src/execution/`; execution is not a subsequent compilation phase.
+
 `argi run --vm <directory>` lowers the checked global graph to typed bytecode
 with source locations, verifies signatures/control flow/definite initialization,
 and executes a bounded scalar/aggregate subset. Function and type identities remain

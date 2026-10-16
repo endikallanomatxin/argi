@@ -2,8 +2,8 @@ const std = @import("std");
 const sf = @import("../1_base/source_files.zig");
 const diag = @import("../1_base/diagnostic.zig");
 const frontend = @import("frontend_pipeline.zig");
-const codegen = @import("../5_codegen/codegen.zig");
-const llvm = @import("../5_codegen/llvm.zig").c;
+const codegen = @import("../5_codegen/llvm/codegen.zig");
+const llvm = @import("../5_codegen/llvm/llvm.zig").c;
 const ModuleCache = frontend.cache.ModuleCache;
 
 const Result = struct {

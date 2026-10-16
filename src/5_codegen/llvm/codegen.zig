@@ -1,14 +1,14 @@
 const std = @import("std");
 const llvm = @import("llvm.zig");
 const c = llvm.c;
-const graph_mod = @import("../4_semantics/global/graph.zig");
-const types = @import("../4_semantics/global/types.zig");
-const reachability = @import("../4_semantics/global/reachability.zig");
-const c_abi = @import("../4_semantics/global/c_abi.zig");
-const primitives = @import("../4_semantics/primitives/schema.zig");
-const diagnostic = @import("../1_base/diagnostic.zig");
-const tok = @import("../2_tokens/token.zig");
-const syn = @import("../3_syntax/syntax_tree.zig");
+const graph_mod = @import("../../4_semantics/global/graph.zig");
+const types = @import("../../4_semantics/global/types.zig");
+const reachability = @import("../../4_semantics/global/reachability.zig");
+const c_abi = @import("../../4_semantics/global/c_abi.zig");
+const primitives = @import("../../4_semantics/primitives/schema.zig");
+const diagnostic = @import("../../1_base/diagnostic.zig");
+const tok = @import("../../2_tokens/token.zig");
+const syn = @import("../../3_syntax/syntax_tree.zig");
 const type_codegen = @import("type_codegen.zig");
 
 pub const CodegenError = error{
@@ -459,19 +459,19 @@ pub const CodeGenerator = struct {
     // Raw addresses remain records inside Argi. Encode/decode only where a
     // typed C signature crosses the boundary; no safe reference is acquired.
     fn cValueType(self: *CodeGenerator, ty: graph_mod.GlobalTypeId) !llvm.c.LLVMTypeRef {
-        if (@import("../4_semantics/global/c_abi.zig").isRawPointer(self.graph, ty))
+        if (@import("../../4_semantics/global/c_abi.zig").isRawPointer(self.graph, ty))
             return c.LLVMPointerType(c.LLVMInt8Type(), 0);
         return self.toLLVMType(ty);
     }
 
     fn encodeCValue(self: *CodeGenerator, value: llvm.c.LLVMValueRef, ty: graph_mod.GlobalTypeId) !llvm.c.LLVMValueRef {
-        if (!@import("../4_semantics/global/c_abi.zig").isRawPointer(self.graph, ty)) return value;
+        if (!@import("../../4_semantics/global/c_abi.zig").isRawPointer(self.graph, ty)) return value;
         const address = c.LLVMBuildExtractValue(self.builder, value, 0, "c.address");
         return c.LLVMBuildIntToPtr(self.builder, address, try self.cValueType(ty), "c.pointer");
     }
 
     fn decodeCValue(self: *CodeGenerator, value: llvm.c.LLVMValueRef, ty: graph_mod.GlobalTypeId) !llvm.c.LLVMValueRef {
-        if (!@import("../4_semantics/global/c_abi.zig").isRawPointer(self.graph, ty)) return value;
+        if (!@import("../../4_semantics/global/c_abi.zig").isRawPointer(self.graph, ty)) return value;
         const record = try self.toLLVMType(ty);
         const address = c.LLVMBuildPtrToInt(self.builder, value, c.LLVMStructGetTypeAtIndex(record, 0), "c.address");
         return c.LLVMBuildInsertValue(self.builder, c.LLVMGetUndef(record), address, 0, "c.raw_pointer");

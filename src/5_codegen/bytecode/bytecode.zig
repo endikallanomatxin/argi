@@ -1,7 +1,7 @@
 const std = @import("std");
-const g = @import("../4_semantics/global/graph.zig");
-const types = @import("../4_semantics/global/types.zig");
-const p = @import("../4_semantics/primitives/schema.zig");
+const g = @import("../../4_semantics/global/graph.zig");
+const types = @import("../../4_semantics/global/types.zig");
+const p = @import("../../4_semantics/primitives/schema.zig");
 
 pub const Slot = u32;
 pub const Type = g.GlobalTypeId;

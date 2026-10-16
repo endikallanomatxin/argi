@@ -1,6 +1,6 @@
 const source_files = @import("1_base/source_files.zig");
 const semantic_literals = @import("4_semantics/semantic_literals.zig");
-const link = @import("5_codegen/link.zig");
+const link = @import("5_codegen/llvm/link.zig");
 const lsp = @import("0_commands/lsp.zig");
 const lsp_service = @import("0_commands/lsp_service.zig");
 const tokenizer = @import("2_tokens/tokenizer.zig");
@@ -56,12 +56,12 @@ const safety_summary_infer = @import("4_semantics/safety/summary_infer.zig");
 const global_lsp_index = @import("0_commands/lsp_index.zig");
 const semantic_representation_test = @import("4_semantics/semantic_representation_test.zig");
 
-const type_codegen = @import("5_codegen/type_codegen.zig");
-const codegen = @import("5_codegen/codegen.zig");
+const type_codegen = @import("5_codegen/llvm/type_codegen.zig");
+const codegen = @import("5_codegen/llvm/codegen.zig");
 const c_abi = @import("4_semantics/global/c_abi.zig");
 
 test {
-    _ = @import("6_execution/tests.zig");
+    _ = @import("execution/tests.zig");
     _ = c_abi;
     _ = semantic_literals;
     _ = source_files;

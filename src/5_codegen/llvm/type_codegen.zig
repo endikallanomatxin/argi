@@ -1,9 +1,9 @@
 const std = @import("std");
 const llvm = @import("llvm.zig");
 const c = llvm.c;
-const graph_mod = @import("../4_semantics/global/graph.zig");
-const types = @import("../4_semantics/global/types.zig");
-const primitives = @import("../4_semantics/primitives/schema.zig");
+const graph_mod = @import("../../4_semantics/global/graph.zig");
+const types = @import("../../4_semantics/global/types.zig");
+const primitives = @import("../../4_semantics/primitives/schema.zig");
 
 pub const Error = error{ InvalidType, OutOfMemory };
 
@@ -235,7 +235,7 @@ pub const Lowerer = struct {
 
 test "global codegen type layer is independent from pointer-based semantic graph" {
     try std.testing.expect(@sizeOf(graph_mod.GlobalTypeId) == 4);
-    try std.testing.expect((@import("../1_base/target.zig").Config{}).pointerBytes() == @sizeOf(*usize));
+    try std.testing.expect((@import("../../1_base/target.zig").Config{}).pointerBytes() == @sizeOf(*usize));
 }
 
 test "choice copy layout matches LLVM storage for empty and large variants" {

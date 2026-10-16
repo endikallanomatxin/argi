@@ -138,7 +138,7 @@ pub const NativeInput = union(enum) {
 };
 
 pub const DriverOptions = struct {
-    target: @import("../1_base/target.zig").Config = .{},
+    target: @import("../../1_base/target.zig").Config = .{},
     cc: ?[]const u8 = null,
     args: []const []const u8 = &.{},
     sysroot: ?[]const u8 = null,
@@ -151,7 +151,7 @@ fn buildLinkArgv(
     output_path: []const u8,
     inputs: []const NativeInput,
     driver_args: []const []const u8,
-    target: @import("../1_base/target.zig").Config,
+    target: @import("../../1_base/target.zig").Config,
 ) ![]const []const u8 {
     var argv: std.ArrayList([]const u8) = .empty;
     try argv.append(allocator, linker);
@@ -183,7 +183,7 @@ fn resolveNamedLibrary(
     inputs: []const NativeInput,
     name: []const u8,
     shared: bool,
-    target: @import("../1_base/target.zig").Config,
+    target: @import("../../1_base/target.zig").Config,
     driver_args: []const []const u8,
 ) ![]const u8 {
     if (std.mem.indexOfAny(u8, name, "/\\") != null) {
@@ -235,7 +235,7 @@ fn resolveNamedLibrary(
 
 // Query the same driver configuration used for library search and final linking.
 // Never accept an unconfigured host driver for a cross-target executable.
-fn validateDriverTarget(allocator: std.mem.Allocator, io: std.Io, environ_map: ?*const std.process.Environ.Map, driver: []const u8, args: []const []const u8, target: @import("../1_base/target.zig").Config) !void {
+fn validateDriverTarget(allocator: std.mem.Allocator, io: std.Io, environ_map: ?*const std.process.Environ.Map, driver: []const u8, args: []const []const u8, target: @import("../../1_base/target.zig").Config) !void {
     var argv: std.ArrayList([]const u8) = .empty;
     try argv.append(allocator, driver);
     try argv.appendSlice(allocator, args);

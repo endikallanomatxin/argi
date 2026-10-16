@@ -2,8 +2,8 @@ const std = @import("std");
 const sf = @import("../1_base/source_files.zig");
 const diag = @import("../1_base/diagnostic.zig");
 const frontend = @import("frontend_pipeline.zig");
-const lower = @import("../6_execution/lower.zig");
-const vm = @import("../6_execution/vm.zig");
+const lower = @import("../5_codegen/bytecode/lower.zig");
+const vm = @import("../execution/vm.zig");
 const g = @import("../4_semantics/global/graph.zig");
 const p = @import("../4_semantics/primitives/schema.zig");
 
