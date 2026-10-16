@@ -331,7 +331,9 @@ feature first.
   record fields use the same checked replacement sequence
   and a projected cleanup target; only that field changes generation and cleanup
   activation. Runtime aliases and indexed replacement still require an evaluated
-  destination and shared cleanup identity.
+  destination and shared cleanup identity. VM lowering rejects owning writes
+  through runtime aliases and indexed storage until those identities are modeled.
+  A reference field's cleanup flag describes its slot, never its referent.
 
 - Structural automatic cleanup follows record fields and active choice payloads.
   AutoDeinitField keeps variant projections distinct from record fields; preserve

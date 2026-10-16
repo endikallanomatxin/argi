@@ -13471,3 +13471,29 @@ test "feature_tests/execution/24X_field_replacement_retains_old_storage" {
     try buildExpectFail("tests/feature_tests/execution/24X_field_replacement_retains_old_storage", "reference depends on a root that has ended");
     try vmExpect("tests/feature_tests/execution/24X_field_replacement_retains_old_storage", 1, "reference depends on a root that has ended");
 }
+
+test "feature_tests/execution/25_owning_reference_vm_boundary" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/25_owning_reference_vm_boundary");
+    try vmExpect("tests/feature_tests/execution/25_owning_reference_vm_boundary", 1, "owning replacement through a runtime reference");
+}
+
+test "feature_tests/execution/26_structural_reference_vm_boundary" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/26_structural_reference_vm_boundary");
+    try vmExpect("tests/feature_tests/execution/26_structural_reference_vm_boundary", 1, "owning replacement through a runtime reference");
+}
+
+test "feature_tests/execution/27_borrowed_reference_write_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/27_borrowed_reference_write_vm");
+    try runExpect("tests/feature_tests/execution/27_borrowed_reference_write_vm", 42);
+    try vmExpect("tests/feature_tests/execution/27_borrowed_reference_write_vm", 42, null);
+}
+
+test "feature_tests/execution/28_reference_field_vm_boundary" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/28_reference_field_vm_boundary");
+    try vmExpect("tests/feature_tests/execution/28_reference_field_vm_boundary", 1, "owning replacement through a runtime reference");
+}
+
+test "feature_tests/execution/29_owning_indexed_vm_boundary" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/29_owning_indexed_vm_boundary");
+    try vmExpect("tests/feature_tests/execution/29_owning_indexed_vm_boundary", 1, "owning replacement in indexed storage");
+}
