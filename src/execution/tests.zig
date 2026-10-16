@@ -242,6 +242,17 @@ test "bytecode validates intermediate destinations before later operands" {
     , .{}));
 }
 
+test "bytecode validates the final destination before RHS effects" {
+    try std.testing.expectError(error.ExecutionIndexOutOfBounds, execute(
+        \\fail() -> (.result: Int32 = 0) := { abort }
+        \\main() -> () := {
+        \\    values :: [2]Int32 = (1, 2)
+        \\    index :: UIntNative = 2
+        \\    values[index] = fail()
+        \\}
+    , .{}));
+}
+
 test "bytecode call stack does not recurse through the host stack" {
     try std.testing.expectEqual(@as(i128, 42), try execute(
         \\recurse(.remaining: Int32) -> (.result: Int32 = 42) := {

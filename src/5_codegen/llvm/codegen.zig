@@ -1265,9 +1265,11 @@ pub const CodeGenerator = struct {
     fn arrayStore(self: *CodeGenerator, store: anytype) !void {
         const pointer = try self.addressablePointer(store.array_ptr);
         const index = (try self.visitNode(store.index)) orelse return CodegenError.ValueNotFound;
-        const value = (try self.visitNode(store.value)) orelse return CodegenError.ValueNotFound;
         const array_type = try self.toLLVMType(store.array_type);
+        // Capture and validate the destination before RHS effects, just like
+        // pointer/field assignment. Never defer its bounds check to the store.
         const element_ptr = try self.arrayElementPointer(pointer.value_ref, array_type, index.value_ref, store.array_type);
+        const value = (try self.visitNode(store.value)) orelse return CodegenError.ValueNotFound;
         _ = c.LLVMBuildStore(self.builder, value.value_ref, element_ptr);
     }
 

@@ -13518,3 +13518,23 @@ test "feature_tests/execution/33_retargetable_alias_vm_boundary" {
     try expectSuccessfulBuild("tests/feature_tests/execution/33_retargetable_alias_vm_boundary");
     try vmExpect("tests/feature_tests/execution/33_retargetable_alias_vm_boundary", 1, "owning replacement through a runtime reference");
 }
+
+test "feature_tests/execution/34X_destination_checked_before_rhs" {
+    const fixture = "tests/feature_tests/execution/34X_destination_checked_before_rhs";
+    try expectSuccessfulBuild(fixture);
+    const path = try outputPathFor(fixture);
+    defer std.testing.allocator.free(path);
+    const result = try runChild(&.{path});
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+    try expect(result.term != .exited or result.term.exited != 0);
+    try expect(std.mem.indexOf(u8, result.stderr, "runtime error: array index is out of bounds") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "explicit abort") == null);
+    try vmExpect("tests/feature_tests/execution/34X_destination_checked_before_rhs", 1, "ExecutionIndexOutOfBounds");
+}
+
+test "feature_tests/execution/35_destination_captured_once_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/35_destination_captured_once_vm");
+    try runExpect("tests/feature_tests/execution/35_destination_captured_once_vm", 42);
+    try vmExpect("tests/feature_tests/execution/35_destination_captured_once_vm", 42, null);
+}

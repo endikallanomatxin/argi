@@ -307,6 +307,7 @@ const FunctionLower = struct {
                 const base = try self.place(x.array_ptr);
                 const index = try self.expression(x.index);
                 const target = try self.project(base, .{ .element = index });
+                _ = try self.emit(node.source, .{ .check_place = target });
                 const value = try self.coerce(node.source, try self.expression(x.value), x.element_type);
                 _ = try self.emit(node.source, .{ .store = .{ .place = target, .value = value } });
             },
