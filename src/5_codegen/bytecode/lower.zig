@@ -3,6 +3,7 @@ const g = @import("../../4_semantics/global/graph.zig");
 const p = @import("../../4_semantics/primitives/schema.zig");
 const b = @import("bytecode.zig");
 const types = @import("../../4_semantics/global/types.zig");
+const cleanup_layout = @import("../cleanup_layout.zig");
 const standard_contracts = @import("../../4_semantics/global/standard_contracts.zig");
 
 pub const Lower = struct {
@@ -144,22 +145,18 @@ const FunctionLower = struct {
             else => return error.InvalidBytecode,
         };
         try self.cleanup.append(a, .{ .root = target.root, .path = path, .flag = try self.newSlot(try self.boolType()) });
-        if (types.variants(self.parent.graph, ty)) |range| {
-            const children = try a.alloc(DropState, range.len);
-            for (children, self.parent.graph.variants.items[range.start..][0..range.len], 0..) |*child, variant, index| {
-                // Payloadless variants have no storage or cleanup subtree.
-                child.* = if (variant.payload_type) |payload|
-                    try self.buildDrop(payload, try self.project(target, .{ .variant = @enumFromInt(range.start + index) }))
-                else
-                    .{ .place = target };
-            }
-            drop.fields = children;
-        } else if (types.fields(self.parent.graph, ty)) |range| {
-            const children = try a.alloc(DropState, range.len);
-            for (children, self.parent.graph.fields.items[range.start..][0..range.len], 0..) |*child, field, index|
-                child.* = try self.buildDrop(field.ty, try self.project(target, .{ .field = @intCast(index) }));
-            drop.fields = children;
+        const shape = cleanup_layout.Shape.of(self.parent.graph, ty);
+        const children = try a.alloc(DropState, shape.len());
+        for (children, 0..) |*state, index| {
+            state.* = if (shape.child(self.parent.graph, index)) |child| blk: {
+                const projection: b.Projection = switch (child.projection) {
+                    .field => |field| .{ .field = field },
+                    .variant => |variant| .{ .variant = variant },
+                };
+                break :blk try self.buildDrop(child.ty, try self.project(target, projection));
+            } else .{ .place = target };
         }
+        drop.fields = children;
         return drop;
     }
     fn setDrop(self: *FunctionLower, drop: DropState, enabled: bool) anyerror!void {

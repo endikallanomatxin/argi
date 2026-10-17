@@ -78,6 +78,12 @@ identities, including references into caller frames, without reading vacant
 values. They use the compiler's existing cleanup flags and sorted layouts, not
 a second ownership analysis. General indirect replacement still requires checked
 cleanup plans and corresponding native evidence transport before it is enabled.
+Both backends share the field/variant layout of cleanup state. Native evidence
+must retain owner/projection identity: zero-sized siblings can share an address
+while retaining independent cleanup obligations.
+For native transport, use a companion pointing to compiler-owned flag storage
+with projection offsets from this shared layout. Pass it where lifecycle
+operations need it; never reconstruct it by comparing value addresses.
 
 A reference needs a target identity and its observed generation. Aliases can
 name the same target while retaining different observed generations. Shared

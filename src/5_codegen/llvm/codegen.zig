@@ -1,5 +1,6 @@
 const std = @import("std");
 const integer = @import("../integer_arithmetic.zig");
+const cleanup_layout = @import("../cleanup_layout.zig");
 const llvm = @import("llvm.zig");
 const c = llvm.c;
 const graph_mod = @import("../../4_semantics/global/graph.zig");
@@ -34,7 +35,7 @@ const TypedValue = struct {
 };
 
 const DropState = struct {
-    flag_ref: llvm.c.LLVMValueRef,
+    flag_ref: llvm.c.LLVMValueRef = null,
     fields: []DropState = &.{},
 };
 
@@ -2410,21 +2411,13 @@ pub const CodeGenerator = struct {
     fn buildDropState(self: *CodeGenerator, ty: graph_mod.GlobalTypeId, entry_builder: llvm.c.LLVMBuilderRef) !*DropState {
         const state = try self.allocator.create(DropState);
         state.* = .{ .flag_ref = c.LLVMBuildAlloca(entry_builder, c.LLVMInt1Type(), "needs.deinit") };
-        if (types.variants(self.graph, ty)) |range| {
-            state.fields = try self.allocator.alloc(DropState, range.len);
-            for (self.graph.variants.items[range.start..][0..range.len], 0..) |variant, index| {
-                state.fields[index] = if (variant.payload_type) |payload|
-                    (try self.buildDropState(payload, entry_builder)).*
-                else
-                    .{ .flag_ref = c.LLVMBuildAlloca(entry_builder, c.LLVMInt1Type(), "needs.deinit") };
-            }
-        } else if (types.fields(self.graph, ty)) |range| {
-            const child_states = try self.allocator.alloc(DropState, range.len);
-            for (self.graph.fields.items[range.start..][0..range.len], 0..) |field, index| {
-                const child = try self.buildDropState(field.ty, entry_builder);
-                child_states[index] = child.*;
-            }
-            state.fields = child_states;
+        const shape = cleanup_layout.Shape.of(self.graph, ty);
+        state.fields = try self.allocator.alloc(DropState, shape.len());
+        for (state.fields, 0..) |*field, index| {
+            field.* = if (shape.child(self.graph, index)) |child|
+                (try self.buildDropState(child.ty, entry_builder)).*
+            else
+                .{};
         }
         return state;
     }
@@ -2434,7 +2427,7 @@ pub const CodeGenerator = struct {
     }
 
     fn storeDropStateValue(self: *CodeGenerator, state: *const DropState, enabled: llvm.c.LLVMValueRef) void {
-        _ = c.LLVMBuildStore(self.builder, enabled, state.flag_ref);
+        if (state.flag_ref != null) _ = c.LLVMBuildStore(self.builder, enabled, state.flag_ref);
         for (state.fields) |*field| self.storeDropStateValue(field, enabled);
     }
 
@@ -2528,6 +2521,7 @@ pub const CodeGenerator = struct {
         const function = c.LLVMGetBasicBlockParent(current);
         const run = c.LLVMAppendBasicBlock(function, "deinit.run");
         const done = c.LLVMAppendBasicBlock(function, "deinit.done");
+        if (drop.flag_ref == null) return CodegenError.InvalidType;
         const enabled = c.LLVMBuildLoad2(self.builder, c.LLVMInt1Type(), drop.flag_ref, "needs.deinit");
         _ = c.LLVMBuildCondBr(self.builder, enabled, run, done);
         c.LLVMPositionBuilderAtEnd(self.builder, run);

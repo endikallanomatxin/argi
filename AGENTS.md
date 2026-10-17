@@ -343,6 +343,11 @@ feature first.
   initialized operands. Reference copies retain target identity, while value
   copies never copy cleanup obligations. Keep general indirect replacement
   rejected until selected plans and native evidence transport are implemented.
+  Native addresses do not identify cleanup obligations: zero-sized siblings
+  may share an address. Both backends use `5_codegen/cleanup_layout.zig` for
+  field/variant shape; transport evidence by owner/projection identity rather
+  than recovering it from a physical pointer. Payloadless variants have no
+  child storage or cleanup flag.
   Immutable record literals can establish reference-field targets through their
   selected initializers. Preserve the original pointer evaluation and renew only
   the reference used for replacement, never sibling fields or record copies.

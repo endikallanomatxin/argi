@@ -13570,3 +13570,9 @@ test "feature_tests/ownership/365X_projected_call_keeps_copy_stale" {
 test "feature_tests/ownership/366X_projected_call_keeps_sibling_stale" {
     try buildExpectFail("tests/feature_tests/ownership/366X_projected_call_keeps_sibling_stale", "reference depends on a root that has ended");
 }
+
+test "feature_tests/execution/38_zero_sized_cleanup_identity_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/38_zero_sized_cleanup_identity_vm");
+    try runExpect("tests/feature_tests/execution/38_zero_sized_cleanup_identity_vm", 42);
+    try vmExpect("tests/feature_tests/execution/38_zero_sized_cleanup_identity_vm", 42, null);
+}
