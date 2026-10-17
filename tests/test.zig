@@ -13709,3 +13709,13 @@ test "feature_tests/execution/51X_comptime_reference_result" {
 test "feature_tests/execution/52X_comptime_instruction_limit" {
     try buildExpectFail("tests/feature_tests/execution/52X_comptime_instruction_limit", "#run evaluation exceeded its instruction limit");
 }
+
+test "feature_tests/execution/53_comptime_argument_calls" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/53_comptime_argument_calls");
+    try runExpect("tests/feature_tests/execution/53_comptime_argument_calls", 42);
+    try vmExpect("tests/feature_tests/execution/53_comptime_argument_calls", 42, null);
+}
+
+test "feature_tests/execution/54X_comptime_shared_budget" {
+    try buildExpectFail("tests/feature_tests/execution/54X_comptime_shared_budget", "#run evaluation exceeded its instruction limit");
+}

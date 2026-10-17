@@ -92,6 +92,7 @@ pub const Function = struct {
 pub const Program = struct {
     graph: *const g.GlobalSemanticGraph,
     functions: []const ?Function,
+    expression: ?*const Function = null,
 };
 
 pub fn integerBounds(graph: *const g.GlobalSemanticGraph, ty: Type) ?p.IntegerRange {

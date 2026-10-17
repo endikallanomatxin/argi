@@ -34,6 +34,7 @@ const Context = struct {
     states: []State = &.{},
     failure_source: ?p.SourceRef = null,
     depth: usize = 0,
+    budget: @import("vm.zig").Limits = .{},
 
     fn process(self: *Context, index: usize) anyerror!void {
         switch (self.states[index]) {
@@ -55,6 +56,20 @@ const Context = struct {
             self.states[index] = .done;
             return;
         }
+        const previous_budget = self.budget;
+        self.budget = .{};
+        defer self.budget = previous_budget;
+        const result = try self.callConstant(id, 0);
+        self.graph.nodes.items[@intFromEnum(id)] = self.graph.node(result);
+        self.states[index] = .done;
+    }
+
+    // Arguments execute ordinary selected functions through the VM. Do not
+    // reproduce arithmetic, dispatch or function bodies in a constant folder.
+    // Implicit argument evaluation does not rewrite its runtime source nodes.
+    fn callConstant(self: *Context, id: g.GlobalNodeId, depth: usize) anyerror!g.GlobalNodeId {
+        if (depth > 64) return error.CompileTimeConstantDepthLimit;
+        const node = self.graph.node(id);
         if (node.content != .function_call) return error.UnsupportedCompileTimeCall;
         const call = node.content.function_call;
         if (call.callee_value != null) return error.UnsupportedCompileTimeCall;
@@ -72,12 +87,12 @@ const Context = struct {
         const args = try self.temporary.alloc(b.Value, fields.len);
         for (args, 0..) |*value, offset| {
             const argument = self.graph.value_fields.items[fields.start + offset].value;
-            value.* = try self.constant(argument, 0);
+            value.* = try self.constant(argument, depth + 1);
         }
-        const values = try @import("evaluate.zig").evaluate(self.allocator, self.graph, self.diagnostics, call.callee, args, node.source, .{});
+        const values = try @import("evaluate.zig").evaluateBudgeted(self.allocator, self.graph, self.diagnostics, call.callee, args, node.source, &self.budget);
         defer self.allocator.free(values);
         if (values.len == 1) {
-            self.graph.nodes.items[@intFromEnum(id)] = self.graph.node(values[0]);
+            return values[0];
         } else {
             const start: u32 = @intCast(self.graph.value_fields.items.len);
             const outputs = self.graph.function(call.callee).output;
@@ -92,9 +107,10 @@ const Context = struct {
                     }
                 }
             }
-            self.graph.nodes.items[@intFromEnum(id)] = .{ .source = node.source, .ty = ty, .content = .{ .struct_value_literal = .{ .fields = .{ .start = start, .len = @intCast(values.len) } } } };
+            const result: g.GlobalNodeId = @enumFromInt(self.graph.nodes.items.len);
+            try self.graph.nodes.append(self.allocator, .{ .source = node.source, .ty = ty, .content = .{ .struct_value_literal = .{ .fields = .{ .start = start, .len = @intCast(values.len) } } } });
+            return result;
         }
-        self.states[index] = .done;
     }
 
     fn constant(self: *Context, id: g.GlobalNodeId, depth: usize) anyerror!b.Value {
@@ -107,6 +123,17 @@ const Context = struct {
         return switch (node.content) {
             .int_literal => |value| .{ .integer = value },
             .bool_literal => |value| .{ .boolean = value },
+            .function_call => try self.constant(try self.callConstant(id, depth + 1), depth + 1),
+            .binary_operation, .comparison => blk: {
+                const operands: [2]g.GlobalNodeId = switch (node.content) {
+                    .binary_operation => |value| .{ value.left, value.right },
+                    .comparison => |value| .{ value.left, value.right },
+                    else => unreachable,
+                };
+                const args = [2]b.Value{ try self.constant(operands[0], depth + 1), try self.constant(operands[1], depth + 1) };
+                const result = try @import("evaluate.zig").evaluatePrimitive(self.allocator, self.graph, id, &operands, &args, &self.budget);
+                break :blk try self.constant(result, depth + 1);
+            },
             .binding_use => |id_binding| blk: {
                 const binding = self.graph.binding(id_binding);
                 if (binding.mutability != .constant) return error.NonConstantCompileTimeArgument;

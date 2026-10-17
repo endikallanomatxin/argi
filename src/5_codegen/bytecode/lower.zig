@@ -32,6 +32,30 @@ pub const Lower = struct {
     pub fn compile(self: *Lower, entry: g.GlobalFunctionId) !b.Program {
         if (@intFromEnum(entry) >= self.functions.len) return error.InvalidEntry;
         try self.pending.append(self.allocator, entry);
+        return self.finish(null);
+    }
+
+    // An expression has its own entry frame, not a fabricated GlobalFunctionId.
+    // Inputs replace already-evaluated operand nodes; normal lowering still
+    // selects every instruction, call and control-flow edge.
+    pub fn compileExpression(self: *Lower, node: g.GlobalNodeId, operands: []const g.GlobalNodeId) !b.Program {
+        const root = self.graph.node(node);
+        if (self.cleanup_types[@intFromEnum(root.ty orelse return error.InvalidBytecode)])
+            return self.reject(root.source, "owning expression entry result");
+        for (operands) |operand| {
+            const value = self.graph.node(operand);
+            if (self.cleanup_types[@intFromEnum(value.ty orelse return error.InvalidBytecode)])
+                return self.reject(value.source, "owning expression entry input");
+        }
+        errdefer {
+            self.pending.deinit(self.allocator);
+            self.pending = .empty;
+        }
+        var function = FunctionLower{ .parent = self };
+        return self.finish(try function.compileExpression(node, operands));
+    }
+
+    fn finish(self: *Lower, expression: ?b.Function) !b.Program {
         defer {
             self.pending.deinit(self.allocator);
             self.pending = .empty;
@@ -53,7 +77,12 @@ pub const Lower = struct {
         // Published programs are immutable snapshots of the retained cache.
         // A later entry may compile more functions, but must not mutate a
         // table already verified and in use by an execution context.
-        return .{ .graph = self.graph, .functions = try self.allocator.dupe(?b.Function, self.functions) };
+        const entry = if (expression) |value| blk: {
+            const stored = try self.allocator.create(b.Function);
+            stored.* = value;
+            break :blk stored;
+        } else null;
+        return .{ .graph = self.graph, .functions = try self.allocator.dupe(?b.Function, self.functions), .expression = entry };
     }
     fn reject(self: *Lower, source: p.SourceRef, name: []const u8) error{UnsupportedExecution} {
         self.source = source;
@@ -78,6 +107,27 @@ const FunctionLower = struct {
     cleanup: std.ArrayList(CleanupEntry) = .empty,
     write_destinations: std.ArrayList(b.Type) = .empty,
     loops: std.ArrayList(Loop) = .empty,
+
+    precomputed: []const struct { node: g.GlobalNodeId, slot: b.Slot } = &.{},
+
+    fn compileExpression(self: *FunctionLower, root: g.GlobalNodeId, operands: []const g.GlobalNodeId) !b.Function {
+        const a = self.parent.allocator;
+        defer self.bindings.deinit(a);
+        defer self.drops.deinit(a);
+        defer self.cleanup.deinit(a);
+        defer self.loops.deinit(a);
+        const inputs = try a.alloc(b.Slot, operands.len);
+        const mapped = try a.alloc(@typeInfo(@TypeOf(self.precomputed)).pointer.child, operands.len);
+        for (operands, inputs, mapped) |node, *slot, *mapping| {
+            slot.* = try self.newSlot(self.parent.graph.node(node).ty orelse return error.InvalidBytecode);
+            mapping.* = .{ .node = node, .slot = slot.* };
+        }
+        self.precomputed = mapped;
+        const outputs = try a.alloc(b.Slot, 1);
+        outputs[0] = try self.expression(root);
+        _ = try self.emit(self.parent.graph.node(root).source, .{ .ret = outputs });
+        return .{ .slots = try self.slots.toOwnedSlice(a), .inputs = inputs, .outputs = outputs, .code = try self.code.toOwnedSlice(a), .cleanup = try self.finishCleanup(), .write_destinations = try self.write_destinations.toOwnedSlice(a) };
+    }
 
     fn compile(self: *FunctionLower, id: g.GlobalFunctionId) !b.Function {
         const a = self.parent.allocator;
@@ -559,6 +609,7 @@ const FunctionLower = struct {
         return result;
     }
     fn expression(self: *FunctionLower, id: g.GlobalNodeId) anyerror!b.Slot {
+        for (self.precomputed) |operand| if (operand.node == id) return operand.slot;
         const node = self.parent.graph.node(id);
         self.parent.source = node.source;
         if (node.content == .binding_use) {

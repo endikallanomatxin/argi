@@ -13,6 +13,13 @@ const Limits = @import("vm.zig").Limits;
 // The graph and its types retain their compiler identity; results are exported
 // into compiler-owned constant nodes, never left pointing into executor storage.
 pub fn evaluate(allocator: std.mem.Allocator, graph: *g.GlobalSemanticGraph, diagnostics: *@import("../1_base/diagnostic.zig").Diagnostics, entry: g.GlobalFunctionId, args: []const bytecode.Value, source: p.SourceRef, limits: Limits) ![]const g.GlobalNodeId {
+    var budget = limits;
+    return evaluateBudgeted(allocator, graph, diagnostics, entry, args, source, &budget);
+}
+
+// One explicit request can evaluate several closed argument calls. They share
+// fuel and cumulative storage accounting rather than resetting quotas per call.
+pub fn evaluateBudgeted(allocator: std.mem.Allocator, graph: *g.GlobalSemanticGraph, diagnostics: *@import("../1_base/diagnostic.zig").Diagnostics, entry: g.GlobalFunctionId, args: []const bytecode.Value, source: p.SourceRef, budget: *Limits) ![]const g.GlobalNodeId {
     if (@intFromEnum(entry) >= graph.functions.items.len) return error.InvalidEntry;
     var scratch = std.heap.ArenaAllocator.init(allocator);
     defer scratch.deinit();
@@ -31,8 +38,12 @@ pub fn evaluate(allocator: std.mem.Allocator, graph: *g.GlobalSemanticGraph, dia
         if (!freezable(graph, lower.cleanup_types, field.ty, 0)) return error.UnfreezableEvaluationResult;
     }
     const program = try lower.compile(entry);
-    var executor = try Vm.init(temporary, program, limits);
+    var executor = try Vm.init(temporary, program, budget.*);
     defer executor.deinit();
+    defer {
+        budget.instructions -|= executor.steps;
+        if (executor.state != .fresh) budget.value_cells -|= executor.storage.cells;
+    }
     const values = try executor.run(entry, args);
     // Validate the entire result before publishing any compiler nodes.
     for (values, graph.fields.items[function.output.start..][0..function.output.len]) |value, field| {
@@ -109,4 +120,37 @@ fn freeze(allocator: std.mem.Allocator, graph: *g.GlobalSemanticGraph, ty: g.Glo
     const result: g.GlobalNodeId = @enumFromInt(graph.nodes.items.len);
     try graph.nodes.append(allocator, .{ .source = source, .ty = ty, .content = content });
     return result;
+}
+
+// Execute an already-selected scalar primitive with constant operands. It uses
+// the normal expression lowerer, verifier and VM, without synthesizing language
+// functions or duplicating primitive semantics in the constant resolver.
+pub fn evaluatePrimitive(allocator: std.mem.Allocator, graph: *g.GlobalSemanticGraph, root: g.GlobalNodeId, operands: []const g.GlobalNodeId, args: []const bytecode.Value, budget: *Limits) !g.GlobalNodeId {
+    const node = graph.node(root);
+    switch (node.content) {
+        .binary_operation, .comparison => {},
+        else => return error.UnsupportedCompileTimeExpression,
+    }
+    var scratch = std.heap.ArenaAllocator.init(allocator);
+    defer scratch.deinit();
+    const temporary = scratch.allocator();
+    var lower = try Lower.init(temporary, graph);
+    const ty = node.ty orelse return error.UnfreezableEvaluationResult;
+    if (!freezable(graph, lower.cleanup_types, ty, 0)) return error.UnfreezableEvaluationResult;
+    for (operands) |operand| {
+        const input = graph.node(operand).ty orelse return error.UnfreezableEvaluationInput;
+        if (!freezable(graph, lower.cleanup_types, input, 0)) return error.UnfreezableEvaluationInput;
+    }
+    const program = try lower.compileExpression(root, operands);
+    var executor = try Vm.init(temporary, program, budget.*);
+    defer executor.deinit();
+    defer {
+        budget.instructions -|= executor.steps;
+        if (executor.state != .fresh) budget.value_cells -|= executor.storage.cells;
+    }
+    const result = try executor.runExpression(args);
+    if (result.len != 1 or !bytecode.valueFits(graph, ty, result[0])) return error.UnfreezableEvaluationResult;
+    // These primitives have scalar results; freeze cannot publish aggregate
+    // tables or reference storage while exporting this one result.
+    return freeze(allocator, graph, ty, result[0], node.source);
 }

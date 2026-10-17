@@ -17,15 +17,19 @@ const choiceVariant = b.choiceVariant;
 pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
     if (!program.graph.target.isNative()) return error.UnsupportedExecutionTarget;
     if (program.functions.len != program.graph.functions.items.len) return error.InvalidBytecode;
-    for (program.functions, 0..) |maybe, fi| {
-        const f = maybe orelse continue;
+    for (0..program.functions.len + @intFromBool(program.expression != null)) |fi| {
+        const f = if (fi == program.functions.len) program.expression.?.* else program.functions[fi] orelse continue;
         if (f.code.len == 0) return error.InvalidBytecode;
         for (f.slots) |ty| if (!supportedType(program.graph, ty, 0)) return error.InvalidBytecode;
         for (f.write_destinations) |ty| if (!supportedType(program.graph, ty, 0)) return error.InvalidBytecode;
-        const declaration = program.graph.function(@enumFromInt(fi));
-        if (f.inputs.len != declaration.input.len or f.outputs.len != declaration.output.len) return error.InvalidBytecode;
-        for (f.inputs, 0..) |slot, i| if (slot >= f.slots.len or !types.equal(program.graph, f.slots[slot], program.graph.fields.items[declaration.input.start + i].ty)) return error.InvalidBytecode;
-        for (f.outputs, 0..) |slot, i| if (slot >= f.slots.len or !types.equal(program.graph, f.slots[slot], program.graph.fields.items[declaration.output.start + i].ty)) return error.InvalidBytecode;
+        for (f.inputs) |slot| if (slot >= f.slots.len) return error.InvalidBytecode;
+        for (f.outputs) |slot| if (slot >= f.slots.len) return error.InvalidBytecode;
+        if (fi < program.functions.len) {
+            const declaration = program.graph.function(@enumFromInt(fi));
+            if (f.inputs.len != declaration.input.len or f.outputs.len != declaration.output.len) return error.InvalidBytecode;
+            for (f.inputs, 0..) |slot, i| if (slot >= f.slots.len or !types.equal(program.graph, f.slots[slot], program.graph.fields.items[declaration.input.start + i].ty)) return error.InvalidBytecode;
+            for (f.outputs, 0..) |slot, i| if (slot >= f.slots.len or !types.equal(program.graph, f.slots[slot], program.graph.fields.items[declaration.output.start + i].ty)) return error.InvalidBytecode;
+        }
         try verifyCleanup(allocator, program.graph, f);
         for (f.code) |inst| {
             var reads: std.ArrayList(Slot) = .empty;

@@ -26,7 +26,8 @@ branch is compiled. This differs from running an ordinary `if` inside
 
 > [!IMPLEMENTATION]
 > `#run` currently accepts resolved function calls with constant scalar or
-> aggregate arguments and representable results. Calls use the checked bytecode
+> aggregate arguments and representable results. Closed calls and selected
+> integer arithmetic/comparisons can compute those arguments. Calls use the checked bytecode
 > subset and its execution limits; references, resource-owning results and host
 > effects cannot cross this boundary. Requests in specialized bodies are retained,
 > and nested requests are resolved before their callers. Evaluation currently

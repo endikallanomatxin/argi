@@ -928,7 +928,19 @@ test "compile-time evaluation exports aggregate constants and rejects escaping r
             const array = graph.node(graph.value_fields.items[record.start + 1].value).content.array_literal.elements;
             try std.testing.expectEqual(@as(i128, 40), graph.node(graph.node_refs.items[array.start]).content.int_literal);
             try std.testing.expectEqual(@as(i128, 42), graph.node(graph.node_refs.items[array.start + 1]).content.int_literal);
+            var budget: vm.Limits = .{ .instructions = 1000, .value_cells = 1000 };
+            _ = try @import("evaluate.zig").evaluateBudgeted(a, graph, &diagnostics, id, &.{.{ .integer = 40 }}, source, &budget);
+            const spent_instructions = 1000 - budget.instructions;
+            const spent_cells = 1000 - budget.value_cells;
+            try std.testing.expect(spent_instructions != 0 and spent_cells != 0);
+            _ = try @import("evaluate.zig").evaluateBudgeted(a, graph, &diagnostics, id, &.{.{ .integer = 40 }}, source, &budget);
+            try std.testing.expectEqual(2 * spent_instructions, 1000 - budget.instructions);
+            try std.testing.expectEqual(2 * spent_cells, 1000 - budget.value_cells);
+            budget.instructions = 1;
             const nodes = graph.nodes.items.len;
+            try std.testing.expectError(error.ExecutionInstructionLimit, @import("evaluate.zig").evaluateBudgeted(a, graph, &diagnostics, id, &.{.{ .integer = 40 }}, source, &budget));
+            try std.testing.expectEqual(@as(usize, 0), budget.instructions);
+            try std.testing.expectEqual(nodes, graph.nodes.items.len);
             try std.testing.expectError(error.ExecutionInstructionLimit, evaluate(a, graph, &diagnostics, id, &.{.{ .integer = 40 }}, source, .{ .instructions = 1 }));
             try std.testing.expectEqual(nodes, graph.nodes.items.len);
         } else if (std.mem.eql(u8, name, "borrow")) {
@@ -1148,4 +1160,76 @@ test "bytecode source run preserves several outputs and void boundaries" {
         \\    status_code = #run answer(.value = ())
         \\}
     , .{}));
+}
+
+test "bytecode source run evaluates closed argument calls through selected operations" {
+    try std.testing.expectEqual(@as(i128, 42), try execute(
+        \\identity(.value: Int32) -> (.result: Int32) := { result = value }
+        \\increment(.value: Int32) -> (.result: Int32) := { result = value + 1 }
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    status_code = #run identity(.value = increment(.value = 20 + 21))
+        \\}
+    , .{ .instructions = 20 }));
+}
+
+test "bytecode expression entries share validation and retained execution" {
+    const g = @import("../4_semantics/global/graph.zig");
+    const a = std.testing.allocator;
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.appendSlice(a, &.{ .{ .builtin = .Int32 }, .{ .builtin = .Bool } });
+    const source = @import("../4_semantics/primitives/schema.zig").SourceRef{ .file_index = 0, .offset = 0 };
+    var code = [_]b.Instruction{
+        .{ .source = source, .op = .{ .binary = .{ .dst = 2, .left = 0, .right = 1, .operator = .addition } } },
+        .{ .source = source, .op = .{ .ret = &.{2} } },
+    };
+    const program: b.Program = .{ .graph = &graph, .functions = &.{}, .expression = &.{
+        .slots = &.{ @enumFromInt(0), @enumFromInt(0), @enumFromInt(0) },
+        .inputs = &.{ 0, 1 },
+        .outputs = &.{2},
+        .code = &code,
+    } };
+    {
+        var executor = try vm.Vm.init(a, program, .{});
+        defer executor.deinit();
+        const args = [_]b.Value{ .{ .integer = 20 }, .{ .integer = 22 } };
+        try std.testing.expectEqual(@as(i128, 42), (try executor.invokeExpression(&args))[0].integer);
+        const context = executor.storage.context;
+        const cells = executor.storage.cells;
+        try std.testing.expectError(error.InvalidArguments, executor.invokeExpression(&.{ .{ .boolean = true }, .{ .integer = 22 } }));
+        try std.testing.expectEqual(cells, executor.storage.cells);
+        try std.testing.expectError(error.InvalidEntry, executor.invoke(@enumFromInt(0), &args));
+        try std.testing.expectEqual(@as(i128, 42), (try executor.invokeExpression(&args))[0].integer);
+        try std.testing.expectEqual(context, executor.storage.context);
+        try std.testing.expectEqual(@as(i128, 42), (try executor.runExpression(&args))[0].integer);
+        try std.testing.expect(context != executor.storage.context);
+    }
+    code[0].op.binary.left = 99;
+    try std.testing.expectError(error.InvalidBytecode, vm.Vm.init(a, program, .{}));
+}
+
+test "bytecode source run leaves implicit argument calls in runtime bindings" {
+    try std.testing.expectError(error.ExecutionInstructionLimit, execute(
+        \\compute() -> (.result: Int32 = 0) := {
+        \\    while result < 1000 { result = result + 1 }
+        \\}
+        \\identity(.value: Int32) -> (.result: Int32) := { result = value }
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    computed: Int32 = compute()
+        \\    status_code = #run identity(.value = computed)
+        \\}
+    , .{ .instructions = 50 }));
+}
+
+test "bytecode source run admits a single argument computation below its budget" {
+    try std.testing.expectEqual(@as(i128, 42), try execute(
+        \\compute(.count: Int32) -> (.result: Int32 = 0) := {
+        \\    while result < count { result = result + 1 }
+        \\}
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    value ::= #run compute(.count = 100000)
+        \\    if value != 100000 { abort }
+        \\    status_code = 42
+        \\}
+    , .{ .instructions = 50 }));
 }

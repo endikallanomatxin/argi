@@ -52,13 +52,19 @@ pub const Vm = struct {
     }
 
     pub fn run(self: *Vm, entry: g.GlobalFunctionId, args: []const b.Value) ![]const b.Value {
+        return self.freshInvoke(entry, args);
+    }
+    pub fn runExpression(self: *Vm, args: []const b.Value) ![]const b.Value {
+        return self.freshInvoke(null, args);
+    }
+    fn freshInvoke(self: *Vm, entry: ?g.GlobalFunctionId, args: []const b.Value) ![]const b.Value {
         // Preserve previous results until invoke has copied the supplied input.
         // This convenience API intentionally starts a fresh execution context.
         var previous = self.arena;
         self.arena = std.heap.ArenaAllocator.init(self.allocator);
         self.state = .fresh;
         defer previous.deinit();
-        return self.invoke(entry, args);
+        return if (entry) |id| self.invoke(id, args) else self.invokeExpression(args);
     }
 
     // Invoke within retained execution storage. Calls share the memory budget
@@ -67,6 +73,15 @@ pub const Vm = struct {
     pub fn invoke(self: *Vm, entry: g.GlobalFunctionId, args: []const b.Value) ![]const b.Value {
         if (self.state == .poisoned) return error.ExecutionContextPoisoned;
         const function = try self.entryFunction(entry, args);
+        return self.invokeFunction(function, args);
+    }
+    pub fn invokeExpression(self: *Vm, args: []const b.Value) ![]const b.Value {
+        if (self.state == .poisoned) return error.ExecutionContextPoisoned;
+        const function = self.program.expression orelse return error.InvalidEntry;
+        try self.validateArguments(function, args);
+        return self.invokeFunction(function, args);
+    }
+    fn invokeFunction(self: *Vm, function: *const b.Function, args: []const b.Value) ![]const b.Value {
         if (self.state == .fresh) {
             self.storage = try Storage.init(self.arena.allocator(), self.limits.value_cells);
             self.state = .ready;
@@ -99,11 +114,14 @@ pub const Vm = struct {
     fn entryFunction(self: *Vm, id: g.GlobalFunctionId, args: []const b.Value) !*const b.Function {
         if (@intFromEnum(id) >= self.program.functions.len) return error.InvalidEntry;
         const function = if (self.program.functions[@intFromEnum(id)]) |*value| value else return error.InvalidEntry;
+        try self.validateArguments(function, args);
+        return function;
+    }
+    fn validateArguments(self: *Vm, function: *const b.Function, args: []const b.Value) !void {
         if (args.len != function.inputs.len) return error.InvalidArguments;
         // Check against the bounded supported type shape before cloning caller
         // values, so malformed input trees cannot drive unbounded recursion.
         for (args, function.inputs) |value, slot| if (!b.valueFits(self.program.graph, function.slots[slot], value)) return error.InvalidArguments;
-        return function;
     }
     fn frame(self: *Vm, function: *const b.Function, args: []const b.Value, return_slots: []const b.Slot) !Frame {
         const id = try self.storage.enterCleanup(function.slots.len, function.cleanup);

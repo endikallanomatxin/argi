@@ -315,6 +315,15 @@ initial source connection does not yet participate in type formation, compile-ti
 argument computation or conditional selection; it must move into staged semantic
 resolution for those uses.
 
+Closed calls and selected integer arithmetic/comparisons in arguments now use
+ordinary VM execution too. Each explicit request shares one remaining instruction
+and cumulative-storage budget across its implicit argument evaluations. Those
+evaluations do not rewrite ordinary runtime source nodes. A separate bytecode
+expression entry supplies typed operand slots without inventing a GlobalFunctionId;
+it uses the same verifier, frame stack and retained-context rules. Owning entry
+inputs/results remain rejected until submission lifetime/cleanup plans exist.
+General expression capture and staged type formation remain pending.
+
 Dependency units use the existing function/node/evidence traversal without
 program roots. Summary inference and temporal checking share the same selected
 unit; operation promises remain selected by identity, not by function name.
