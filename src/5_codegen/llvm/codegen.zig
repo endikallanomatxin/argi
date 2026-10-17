@@ -49,6 +49,24 @@ const BindingStorage = struct {
     drop_state: ?*DropState = null,
 };
 
+// Capture address and lifecycle evidence together before recursively emitting
+// the RHS. No physical-address lookup can recover a zero-sized owner's flags.
+const WriteDestination = struct {
+    address: c.LLVMValueRef,
+    type_ref: c.LLVMTypeRef,
+    cleanup: ?*DropState = null,
+
+    fn activate(self: WriteDestination, generator: *CodeGenerator) void {
+        if (self.cleanup) |drop| generator.storeDropState(drop, true);
+    }
+
+    fn commit(self: WriteDestination, generator: *CodeGenerator, value: TypedValue) !void {
+        if (value.type_ref != self.type_ref) return CodegenError.InvalidType;
+        _ = c.LLVMBuildStore(generator.builder, value.value_ref, self.address);
+        self.activate(generator);
+    }
+};
+
 const ExternSignature = struct { fn_type: c.LLVMTypeRef, return_type: c.LLVMTypeRef, plan: *c_abi.FunctionPlan };
 
 const FunctionSymbol = struct {
@@ -974,16 +992,15 @@ pub const CodeGenerator = struct {
                 const storage = self.bindings.get(assignment.binding) orelse return CodegenError.SymbolNotFound;
                 if (self.graph.bindings.items[@intFromEnum(assignment.binding)].mutability == .constant and storage.initialized)
                     return CodegenError.ConstantReassignment;
-                if (try self.storeLargeNode(assignment.value, storage.ref)) {
+                const destination: WriteDestination = .{ .address = storage.ref, .type_ref = storage.type_ref, .cleanup = storage.drop_state };
+                if (try self.storeLargeNode(assignment.value, destination.address)) {
                     self.bindings.getPtr(assignment.binding).?.initialized = true;
-                    if (storage.drop_state) |drop| self.storeDropState(drop, true);
+                    destination.activate(self);
                     break :blk null;
                 }
                 const value = (try self.visitNode(assignment.value)) orelse return CodegenError.ValueNotFound;
-                if (value.type_ref != storage.type_ref) return CodegenError.InvalidType;
-                _ = c.LLVMBuildStore(self.builder, value.value_ref, storage.ref);
+                try destination.commit(self, value);
                 self.bindings.getPtr(assignment.binding).?.initialized = true;
-                if (storage.drop_state) |drop| self.storeDropState(drop, true);
                 break :blk value;
             },
             .move_value => |value| blk: {
@@ -1288,8 +1305,9 @@ pub const CodeGenerator = struct {
         // Capture and validate the destination before RHS effects, just like
         // pointer/field assignment. Never defer its bounds check to the store.
         const element_ptr = try self.arrayElementPointer(pointer.value_ref, array_type, index.value_ref, store.array_type);
+        const destination: WriteDestination = .{ .address = element_ptr, .type_ref = try self.toLLVMType(store.element_type) };
         const value = (try self.visitNode(store.value)) orelse return CodegenError.ValueNotFound;
-        _ = c.LLVMBuildStore(self.builder, value.value_ref, element_ptr);
+        try destination.commit(self, value);
     }
 
     fn arrayElementPointer(self: *CodeGenerator, pointer: llvm.c.LLVMValueRef, array_type: llvm.c.LLVMTypeRef, index: llvm.c.LLVMValueRef, semantic_type: graph_mod.GlobalTypeId) !llvm.c.LLVMValueRef {
@@ -1315,11 +1333,15 @@ pub const CodeGenerator = struct {
             var lowerer = self.typeLowerer();
             break :blk try lowerer.buildUnionFieldPointer(self.builder, pointer.value_ref, store.field_type, "union.field.ptr");
         } else c.LLVMBuildStructGEP2(self.builder, try self.toLLVMType(store.struct_type), pointer.value_ref, store.field_index, "field.ptr");
+        const cleanup = if (store.cleanup_target) |target|
+            self.dropStateForNode(target)
+        else if (self.dropStateForNode(store.struct_ptr)) |parent|
+            if (store.field_index < parent.fields.len) &parent.fields[store.field_index] else null
+        else
+            null;
+        const destination: WriteDestination = .{ .address = field_ptr, .type_ref = try self.toLLVMType(store.field_type), .cleanup = cleanup };
         const value = (try self.visitNode(store.value)) orelse return CodegenError.ValueNotFound;
-        _ = c.LLVMBuildStore(self.builder, value.value_ref, field_ptr);
-        if (store.cleanup_target) |destination| {
-            if (self.dropStateForNode(destination)) |drop| self.storeDropState(drop, true);
-        } else if (self.dropStateForNode(store.struct_ptr)) |parent| if (store.field_index < parent.fields.len) self.storeDropState(&parent.fields[store.field_index], true);
+        try destination.commit(self, value);
     }
 
     fn binary(self: *CodeGenerator, operation: anytype) !TypedValue {
@@ -1689,10 +1711,15 @@ pub const CodeGenerator = struct {
 
     fn pointerAssignment(self: *CodeGenerator, assignment: anytype) !void {
         const pointer = (try self.visitNode(assignment.pointer)) orelse return CodegenError.ValueNotFound;
-
+        const pointer_type = self.graph.semanticType(self.graph.node(assignment.pointer).ty orelse return CodegenError.InvalidType);
+        if (pointer_type != .pointer) return CodegenError.InvalidType;
+        const destination: WriteDestination = .{
+            .address = pointer.value_ref,
+            .type_ref = try self.toLLVMType(pointer_type.pointer.child),
+            .cleanup = self.dropStateForNode(assignment.cleanup_target orelse assignment.pointer),
+        };
         const value = (try self.visitNode(assignment.value)) orelse return CodegenError.ValueNotFound;
-        _ = c.LLVMBuildStore(self.builder, value.value_ref, pointer.value_ref);
-        if (self.dropStateForNode(assignment.cleanup_target orelse assignment.pointer)) |drop| self.storeDropState(drop, true);
+        try destination.commit(self, value);
     }
 
     fn explicitCast(self: *CodeGenerator, cast: anytype) !TypedValue {

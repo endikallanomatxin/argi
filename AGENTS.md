@@ -326,7 +326,10 @@ feature first.
   Checked `replacement_value` expressions identify the prepared lexical owner,
   selected old-value cleanup and final move in order. Both backends consume the
   shared replacement plan verifier; safety/summaries traverse its ordinary nodes.
-  General value sequences do not imply replacement semantics.
+  General value sequences do not imply replacement semantics. The verifier ties
+  replacement cleanup to the write's exact owner/projection, not just its type.
+  Native write destinations capture address, type and cleanup state before RHS
+  emission and commit through that captured evidence.
   Ownership finalization uses cleanup activation to omit destruction for proven
   first initialization. Preserve temporary provenance in value-sequence summaries;
   a sequence result must not skip the bindings that establish its dependencies.

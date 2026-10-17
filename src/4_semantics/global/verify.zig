@@ -148,9 +148,12 @@ pub fn verifyGlobal(graph: *const graph_mod.GlobalSemanticGraph) !void {
     for (graph.roots.items) |id| try require(verify.idFits(id, graph.nodes.items.len));
 
     try verifyWriteCleanupTargets(graph);
-    for (graph.nodes.items, 0..) |node, index| if (node.content == .replacement_value) {
-        _ = try @import("replacement.zig").plan(graph, @enumFromInt(index));
-    };
+    for (graph.nodes.items, 0..) |node, index| {
+        const replacement = @import("replacement.zig");
+        const id: graph_mod.GlobalNodeId = @enumFromInt(index);
+        if (node.content == .replacement_value) _ = try replacement.plan(graph, id);
+        try replacement.verifyWrite(graph, id);
+    }
 }
 
 fn verifyWriteCleanupTargets(graph: *const graph_mod.GlobalSemanticGraph) !void {

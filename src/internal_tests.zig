@@ -46,6 +46,7 @@ const global_semantic_generic_functions = @import("4_semantics/global/generic_fu
 const global_semantic_contracts = @import("4_semantics/global/contracts.zig");
 const global_semantic_errors = @import("4_semantics/global/errors.zig");
 const global_semantic_ownership = @import("4_semantics/global/ownership.zig");
+const global_semantic_replacement = @import("4_semantics/global/replacement.zig");
 const global_lexical_storage = @import("4_semantics/global/lexical_storage.zig");
 const global_semantizer = @import("4_semantics/global/semantizer.zig");
 const global_safety_facts = @import("4_semantics/safety/facts.zig");
@@ -120,7 +121,7 @@ test {
     _ = global_semantic_errors;
     _ = global_semantic_ownership;
     _ = global_lexical_storage;
-    _ = @import("4_semantics/global/replacement.zig");
+    _ = global_semantic_replacement;
     _ = global_semantizer;
     _ = global_safety_facts;
     _ = global_safety_checker;

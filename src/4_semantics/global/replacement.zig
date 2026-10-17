@@ -1,5 +1,6 @@
 const g = @import("graph.zig");
 const types = @import("types.zig");
+const lexical = @import("lexical_storage.zig");
 
 // A replacement is an ordered checked transition, not an arbitrary expression
 // that happens to call a destructor. Keep ordinary graph nodes inside it so
@@ -52,6 +53,38 @@ pub fn plan(graph: *const g.GlobalSemanticGraph, id: g.GlobalNodeId) !Plan {
     return .{ .block = block_id, .prepared = prepared, .cleanup = cleanup.auto_deinit_binding, .result = nodes[2] };
 }
 
+// The plan and the write form one transition. Equal types alone do not prove
+// identity: sibling owners (including zero-sized fields) have separate cleanup.
+pub fn verifyWrite(graph: *const g.GlobalSemanticGraph, id: g.GlobalNodeId) !void {
+    const write = graph.node(id).content;
+    const value = switch (write) {
+        .assignment => |x| x.value,
+        .pointer_assignment => |x| x.value,
+        .struct_field_store => |x| x.value,
+        .array_store => |x| x.value,
+        else => return,
+    };
+    if (graph.node(value).content != .replacement_value) return;
+    const replacement = try plan(graph, value);
+    const cleanup = graph.auto_deinits.items[@intFromEnum(replacement.cleanup)];
+    switch (write) {
+        .assignment => |x| {
+            if (cleanup.binding != x.binding or cleanup.target != null)
+                return error.InvalidReplacementDestination;
+        },
+        inline .pointer_assignment, .struct_field_store => |x| {
+            const target = x.cleanup_target orelse return error.InvalidReplacementDestination;
+            const selected = cleanup.target orelse return error.InvalidReplacementDestination;
+            if (lexical.root(graph, target) != cleanup.binding or !lexical.equal(graph, selected, target))
+                return error.InvalidReplacementDestination;
+        },
+        // Indexed owner cleanup needs a captured projection plan, which is not
+        // represented by the current lexical cleanup metadata.
+        .array_store => return error.InvalidReplacementDestination,
+        else => unreachable,
+    }
+}
+
 test "checked replacement requires preparation cleanup and one moved result in order" {
     const std = @import("std");
     const a = std.testing.allocator;
@@ -81,6 +114,30 @@ test "checked replacement requires preparation cleanup and one moved result in o
     try graph.blocks.append(a, .{ .nodes = .{ .start = 0, .len = 4 }, .ret_val = @enumFromInt(4) });
     const replacement: g.GlobalNodeId = @enumFromInt(5);
     const valid = try plan(&graph, replacement);
+    try graph.nodes.append(a, .{ .source = source, .ty = null, .content = .{ .assignment = .{ .binding = @enumFromInt(0), .value = replacement } } });
+    const write: g.GlobalNodeId = @enumFromInt(graph.nodes.items.len - 1);
+    try verifyWrite(&graph, write);
+    graph.nodes.items[@intFromEnum(write)].content.assignment.binding = @enumFromInt(1);
+    try std.testing.expectError(error.InvalidReplacementDestination, verifyWrite(&graph, write));
+    const target: g.GlobalNodeId = @enumFromInt(graph.nodes.items.len);
+    try graph.nodes.append(a, .{ .source = source, .ty = @enumFromInt(0), .content = .{ .binding_use = @enumFromInt(0) } });
+    const other: g.GlobalNodeId = @enumFromInt(graph.nodes.items.len);
+    try graph.nodes.append(a, .{ .source = source, .ty = @enumFromInt(0), .content = .{ .binding_use = @enumFromInt(1) } });
+    try graph.types.append(a, .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_write } });
+    const pointer: g.GlobalNodeId = @enumFromInt(graph.nodes.items.len);
+    try graph.nodes.append(a, .{ .source = source, .ty = @enumFromInt(1), .content = .{ .address_of = target } });
+    graph.auto_deinits.items[0].target = target;
+    graph.nodes.items[@intFromEnum(write)].content = .{ .pointer_assignment = .{ .pointer = pointer, .value = replacement, .cleanup_target = target } };
+    try verifyWrite(&graph, write);
+    graph.nodes.items[@intFromEnum(write)].content.pointer_assignment.cleanup_target = other;
+    try std.testing.expectError(error.InvalidReplacementDestination, verifyWrite(&graph, write));
+    graph.nodes.items[@intFromEnum(write)].content.pointer_assignment.cleanup_target = null;
+    try std.testing.expectError(error.InvalidReplacementDestination, verifyWrite(&graph, write));
+    graph.nodes.items[@intFromEnum(write)].content.pointer_assignment.cleanup_target = target;
+    graph.auto_deinits.items[0].target = other;
+    try std.testing.expectError(error.InvalidReplacementDestination, verifyWrite(&graph, write));
+    graph.auto_deinits.items[0].target = null;
+
     try std.testing.expectEqual(@as(g.GlobalBindingId, @enumFromInt(1)), valid.prepared);
     std.mem.swap(g.GlobalNodeId, &graph.node_refs.items[0], &graph.node_refs.items[1]);
     try std.testing.expectError(error.InvalidReplacementPlan, plan(&graph, replacement));

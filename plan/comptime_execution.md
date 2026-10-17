@@ -80,9 +80,12 @@ The checked graph marks prepared replacement expressions as `replacement_value`.
 Their shared plan verifier checks the lexical owner, selected cleanup and final
 move in order; safety and summaries traverse those ordinary operations. Both
 backends consume that plan rather than identifying arbitrary value sequences.
-The surrounding write still supplies the captured destination; joining it with
-the plan for unknown targets remains the next step. AOT must carry the same
-owner/projection evidence through reference-valued fields, arguments and outputs;
+The verifier also ties that cleanup to the surrounding write's exact lexical
+owner/projection, rejecting a same-typed but different destination. Native writes
+capture their address, value type and cleanup state before RHS emission, then
+commit and reactivate that captured state together. This is still local evidence;
+joining the plan with unknown targets remains the next step. AOT must carry the
+same owner/projection evidence through reference-valued fields, arguments and outputs;
 VM references already preserve concrete storage identity across those boundaries.
 Do not generalize lexical body-pattern proofs to substitute for that evidence.
 General owning indirect replacement remains unsupported until both backends and
