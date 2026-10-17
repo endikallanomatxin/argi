@@ -13665,3 +13665,21 @@ test "feature_tests/execution/45_contextual_nested_arrays_vm" {
     try runExpect("tests/feature_tests/execution/45_contextual_nested_arrays_vm", 42);
     try vmExpect("tests/feature_tests/execution/45_contextual_nested_arrays_vm", 42, null);
 }
+
+test "feature_tests/execution/46_record_reference_reinitialization_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/46_record_reference_reinitialization_vm");
+    try runExpect("tests/feature_tests/execution/46_record_reference_reinitialization_vm", 42);
+    try vmExpect("tests/feature_tests/execution/46_record_reference_reinitialization_vm", 42, null);
+}
+
+test "feature_tests/ownership/378X_record_input_keeps_copy_stale" {
+    try buildExpectFail("tests/feature_tests/ownership/378X_record_input_keeps_copy_stale", "reference depends on a root that has ended");
+}
+
+test "feature_tests/ownership/379X_record_input_keeps_possible_alias_stale" {
+    try buildExpectFail("tests/feature_tests/ownership/379X_record_input_keeps_possible_alias_stale", "reference depends on a root that has ended");
+}
+
+test "feature_tests/ownership/380X_record_input_repeated_consumption" {
+    try buildExpectFail("tests/feature_tests/ownership/380X_record_input_repeated_consumption", "consumption requires an initialized owner");
+}

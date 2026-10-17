@@ -8,6 +8,10 @@ const primitives = @import("../primitives/schema.zig");
 pub const Place = place_mod.PlaceFor(graph.GlobalBindingId);
 pub const Projection = place_mod.Projection;
 
+// Function-local identity of an unknown referent. A record input can contain
+// several such accesses; its binding identity cannot distinguish them.
+pub const SymbolicPointeeId = enum(u32) { _ };
+
 // Summary/effect vocabulary contains no graph pointers and is shared verbatim.
 pub const ValidityRootId = base.ValidityRootId;
 pub const StorageCapabilityId = base.StorageCapabilityId;
@@ -111,7 +115,7 @@ pub const ValueFacts = struct {
     referenced_place: ?Place = null,
     /// Unknown parameter referents have consumption identities, not concrete
     /// places or owned roots. Copies retain them without granting validity.
-    symbolic_pointees: []const graph.GlobalBindingId = &.{},
+    symbolic_pointees: []const SymbolicPointeeId = &.{},
     opaque_provenance: []const OpaqueProvenance = &.{},
     /// Concrete vtable method identities carried by a `Virtual` value. Keeping
     /// this in transient safety facts lets exact dispatch survive bindings and

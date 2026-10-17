@@ -239,7 +239,13 @@ feature first.
   symbolic consumption identities/state; preserve copies, joins and loop equality
   without changing their shared borrow root or inventing concrete pointee places.
   Symbolic consumption targets only whole unknown pointers, never aggregate
-  envelopes or opaque domains. Direct input references separate backing validity
+  envelopes or opaque domains. Unknown references in by-value input records
+  use separate function-local SymbolicPointeeIds for each reference leaf, including
+  nested records; they are not binding IDs or proof of disjointness. Preserve
+  explicit empty sibling facts. Summary effects inspect the projected slot type
+  before treating it as referent storage. Opaque-transfer obligations for unknown
+  input roots remain in caller-relative summaries; concrete lexical/acquired
+  loans must still be checked at the caller. Direct input references separate backing validity
   from the observed value generation. Explicit straight-line reinitialization
   renews only its selected reference after RHS evaluation. Historical aliases
   stay stale; distinct consumption identities still carry caller-side alias

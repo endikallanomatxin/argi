@@ -121,9 +121,11 @@ Replacing a whole local binding or a statically identified local record field
 evaluates the new value before cleaning up the old one. Constant local aliases
 of those destinations use the same cleanup, including chains of aliases. The first
 initialization does not run a destructor; neighboring fields retain their cleanup.
-Owning writes through unresolved or retargetable references and indexed storage
-are rejected until their cleanup identities are preserved across aliases. Scalar
-and borrowed-only writes through references remain supported.
+Explicit destruction followed by definite whole-value reinitialization also works
+through reference parameters and reference fields in by-value argument records.
+Earlier copies retain their old lifetime and cannot be used again. General owning
+replacement through unresolved or retargetable references and indexed storage
+remains unsupported. Scalar and borrowed-only writes through references work.
 
 Raw pointers, C enums, floating point, error propagation/tracing, virtual calls,
 partial initialization through output references, globals, closures, foreign calls,

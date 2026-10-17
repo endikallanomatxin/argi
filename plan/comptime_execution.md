@@ -148,10 +148,17 @@ Definite initialization summaries renew the selected symbolic argument slot
 after calls, including reference fields in Args. Possible writes do not renew
 it; copied records and accesses keep their old generations.
 
-Remaining: reconcile branch and loop generations and seed symbolic targets
-inside input records. Then
-connect the complete replacement transition to native evidence and VM output
-initialization, and close the live/vacated four-destructor acceptance case.
+Unknown references inside by-value input records now receive separate dense
+function-local identities, including nested records. Empty siblings retain empty
+facts; the aggregate carries dependencies but no whole-pointer consumption
+identity. Summary effects distinguish a reference field slot from its unknown
+referent. Copies keep their observed generation; renewal changes only the
+selected field. Arrays, choice payloads and contents behind unknown pointers
+still need corresponding input facts.
+
+Remaining: reconcile branch and loop generations, connect complete replacement
+to native evidence and VM output initialization, and close the live/vacated
+four-destructor acceptance case.
 
 ## Storage direction (proposed)
 
