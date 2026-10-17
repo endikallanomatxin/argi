@@ -67,10 +67,9 @@ const WriteDestination = struct {
 // A nested RHS can itself replace another owner. Keep the selected cleanup
 // paired with its captured destination for exactly this expression's emission.
 const Replacement = struct {
-    value: graph_mod.GlobalNodeId,
-    cleanup: graph_mod.GlobalAutoDeinitId,
+    plan: replacement.Plan,
     ty: graph_mod.GlobalTypeId,
-    destination: WriteDestination,
+    destination: ?WriteDestination = null,
 };
 
 const ExternSignature = struct { fn_type: c.LLVMTypeRef, return_type: c.LLVMTypeRef, plan: *c_abi.FunctionPlan };
@@ -1028,10 +1027,12 @@ pub const CodeGenerator = struct {
             .virtualize => |virtualize| try self.genVirtualize(virtualize),
             .virtual_call => |virtual_call| try self.genVirtualCall(virtual_call, null),
             .code_block, .value_sequence => |block| try self.genBlock(block),
-            .replacement_value => blk: {
-                const captured = self.replacement orelse return error.MissingReplacementDestination;
-                if (captured.value != node_id) return error.InvalidReplacementDestination;
-                break :blk try self.genBlock((try replacement.plan(self.graph, node_id)).block);
+            .replacement => blk: {
+                const plan = try replacement.plan(self.graph, node_id);
+                const previous = self.replacement;
+                self.replacement = .{ .plan = plan, .ty = self.graph.binding(plan.prepared).ty };
+                defer self.replacement = previous;
+                break :blk try self.genBlock(plan.block);
             },
             .int_literal, .float_literal, .char_literal, .string_literal, .bool_literal => try self.emitLiteral(node_id),
             .list_literal => |literal| try self.listLiteral(literal, node.ty),
@@ -1721,15 +1722,12 @@ pub const CodeGenerator = struct {
     }
 
     fn prepareWriteValue(self: *CodeGenerator, value: graph_mod.GlobalNodeId, destination: WriteDestination) !TypedValue {
-        if (self.graph.node(value).content != .replacement_value)
-            return (try self.visitNode(value)) orelse CodegenError.ValueNotFound;
-        const plan = try replacement.plan(self.graph, value);
-        const ty = self.graph.node(value).ty orelse return CodegenError.InvalidType;
-        if (destination.cleanup == null or destination.type_ref != try self.toLLVMType(ty))
-            return error.InvalidReplacementDestination;
-        const previous = self.replacement;
-        self.replacement = .{ .value = value, .cleanup = plan.cleanup, .ty = ty, .destination = destination };
-        defer self.replacement = previous;
+        if (self.replacement) |*captured| if (captured.plan.value == value) {
+            if (captured.destination != null or destination.cleanup == null or
+                destination.type_ref != try self.toLLVMType(captured.ty))
+                return error.InvalidReplacementDestination;
+            captured.destination = destination;
+        };
         return (try self.visitNode(value)) orelse CodegenError.ValueNotFound;
     }
 
@@ -2543,10 +2541,11 @@ pub const CodeGenerator = struct {
 
     fn genAutoDeinit(self: *CodeGenerator, auto_id: graph_mod.GlobalAutoDeinitId) !void {
         const auto = self.graph.auto_deinits.items[@intFromEnum(auto_id)];
-        if (self.replacement) |captured| if (captured.cleanup == auto_id) {
+        if (self.replacement) |captured| if (captured.plan.cleanup == auto_id) {
             // Use exactly the address and flag range captured before the RHS.
             // Do not resolve the cleanup target again after its effects.
-            return self.genAutoDeinitStorage(auto.deinit_fn, auto.input, auto.self_field_index, auto.fields, captured.destination.address, captured.ty, captured.destination.cleanup.?);
+            const destination = captured.destination orelse return error.MissingReplacementDestination;
+            return self.genAutoDeinitStorage(auto.deinit_fn, auto.input, auto.self_field_index, auto.fields, destination.address, captured.ty, destination.cleanup.?);
         };
         if (auto.target) |target| {
             const drop = self.dropStateForNode(target) orelse return CodegenError.InvalidType;

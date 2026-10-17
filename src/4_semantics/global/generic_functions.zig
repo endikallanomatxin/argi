@@ -2332,7 +2332,7 @@ pub const Resolver = struct {
                     } },
                     .code_block => |block| .{ .code_block = try self.instantiateBlock(block) },
                     .value_sequence => |block| .{ .value_sequence = try self.instantiateBlock(block) },
-                    .replacement_value => return error.InvalidParameterizedNode,
+                    .replacement => return error.InvalidParameterizedNode,
                     .int_literal => |value| .{ .int_literal = value },
                     .float_literal => |value| .{ .float_literal = value },
                     .char_literal => |value| .{ .char_literal = value },

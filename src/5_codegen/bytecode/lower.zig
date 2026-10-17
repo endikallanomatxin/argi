@@ -321,6 +321,10 @@ const FunctionLower = struct {
             },
             .auto_deinit_binding => |auto| try self.autoDeinit(auto),
             .code_block => |block_id| try self.block(block_id),
+            .replacement => {
+                const plan = try @import("../../4_semantics/global/replacement.zig").plan(self.parent.graph, id);
+                try self.block(plan.block);
+            },
             .return_statement => |x| {
                 if (x.expression != null) return self.parent.reject(node.source, "explicit return expression");
                 for (self.parent.graph.node_refs.items[x.cleanup.start..][0..x.cleanup.len]) |cleanup| try self.statement(cleanup);
@@ -552,8 +556,8 @@ const FunctionLower = struct {
             return value;
         }
         if (node.content == .function_call) return (try self.call(id)) orelse self.parent.reject(node.source, "void expression");
-        if (node.content == .value_sequence or node.content == .replacement_value) {
-            const block_id = if (node.content == .replacement_value)
+        if (node.content == .value_sequence or node.content == .replacement) {
+            const block_id = if (node.content == .replacement)
                 (try @import("../../4_semantics/global/replacement.zig").plan(self.parent.graph, id)).block
             else
                 node.content.value_sequence;

@@ -151,8 +151,7 @@ pub fn verifyGlobal(graph: *const graph_mod.GlobalSemanticGraph) !void {
     for (graph.nodes.items, 0..) |node, index| {
         const replacement = @import("replacement.zig");
         const id: graph_mod.GlobalNodeId = @enumFromInt(index);
-        if (node.content == .replacement_value) _ = try replacement.plan(graph, id);
-        try replacement.verifyWrite(graph, id);
+        if (node.content == .replacement) _ = try replacement.plan(graph, id);
     }
 }
 

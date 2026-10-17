@@ -1093,7 +1093,7 @@ pub const SafetyChecker = struct {
                 try self.joinState(state, state, &right_state);
                 break :blk .{};
             },
-            .value_sequence, .replacement_value => |block| blk: {
+            .value_sequence, .replacement => |block| blk: {
                 var value: facts.ValueFacts = .{};
                 try self.validateBlockWithResult(function, block, state, null, &value);
                 break :blk value;

@@ -425,7 +425,7 @@ pub const Infer = struct {
                 for (self.graph.switch_cases.items[statement.cases.start..][0..statement.cases.len]) |case| try self.selectForwardedCall(function, case.body);
                 if (statement.default_block) |child| try self.selectForwardedCall(function, child);
             },
-            .code_block, .value_sequence, .replacement_value => |child| try self.selectForwardedCall(function, child),
+            .code_block, .value_sequence, .replacement => |child| try self.selectForwardedCall(function, child),
             else => {},
         };
     }
@@ -463,7 +463,7 @@ pub const Infer = struct {
                 for (self.graph.switch_cases.items[statement.cases.start..][0..statement.cases.len]) |case| try self.forwardingSelectors(function, case.body, wanted);
                 if (statement.default_block) |child| try self.forwardingSelectors(function, child, wanted);
             },
-            .code_block, .value_sequence, .replacement_value => |child| try self.forwardingSelectors(function, child, wanted),
+            .code_block, .value_sequence, .replacement => |child| try self.forwardingSelectors(function, child, wanted),
             else => {},
         };
     }
@@ -1268,7 +1268,7 @@ pub const Infer = struct {
                     }
                     if (statement.default_block) |child| try self.inferBlock(function_id, child, outputs);
                 },
-                .code_block, .value_sequence, .replacement_value => |child| try self.inferBlock(function_id, child, outputs),
+                .code_block, .value_sequence, .replacement => |child| try self.inferBlock(function_id, child, outputs),
                 else => {},
             }
         }
@@ -1401,7 +1401,7 @@ pub const Infer = struct {
     fn capability_address_targets(self: *Infer, node: graph_mod.GlobalNodeId, flow: *CapabilityFlow) ![]const graph_mod.GlobalNodeId {
         return switch (self.graph.node(node).content) {
             .address_of => |value| self.allocator.dupe(graph_mod.GlobalNodeId, &.{value}),
-            .value_sequence, .replacement_value => |block| blk: {
+            .value_sequence, .replacement => |block| blk: {
                 const value = self.graph.blocks.items[@intFromEnum(block)].ret_val orelse break :blk &.{};
                 break :blk try self.capability_address_targets(value, flow);
             },
@@ -1454,7 +1454,7 @@ pub const Infer = struct {
             return current;
         }
         return switch (self.graph.node(node).content) {
-            .value_sequence, .replacement_value => |block| blk: {
+            .value_sequence, .replacement => |block| blk: {
                 const value = self.graph.blocks.items[@intFromEnum(block)].ret_val orelse break :blk .{};
                 break :blk try self.capability_value(function, value, flow);
             },
@@ -1787,7 +1787,7 @@ pub const Infer = struct {
                 flow.reachable = false;
                 flow.breaks_loop = true;
             },
-            .code_block, .value_sequence, .replacement_value => |block| try self.infer_capability_block(function, block, flow, exits),
+            .code_block, .value_sequence, .replacement => |block| try self.infer_capability_block(function, block, flow, exits),
             .move_value, .denied_implicit_copy, .address_of => |value| try self.infer_capability_node(function, value, flow, exits),
             .dereference => |read| try self.infer_capability_node(function, read.pointer, flow, exits),
             .struct_field_access => |field| try self.infer_capability_node(function, field.value, flow, exits),
@@ -2144,7 +2144,7 @@ pub const Infer = struct {
                 if (flow.reachable) try self.recordOutcomeExit(exits, flow);
                 flow.reachable = false;
             },
-            .code_block, .value_sequence, .replacement_value => |child| try self.inferInputPostStates(function_id, child, flow, exits),
+            .code_block, .value_sequence, .replacement => |child| try self.inferInputPostStates(function_id, child, flow, exits),
             .break_statement, .continue_statement => {
                 if (self.loop_post_effects) |transfers| {
                     try self.joinInputPostStates(&transfers.states, &transfers.states, states);
@@ -2183,7 +2183,7 @@ pub const Infer = struct {
     ) anyerror!void {
         const node = self.graph.node(node_id);
         switch (node.content) {
-            .value_sequence, .replacement_value => |block| {
+            .value_sequence, .replacement => |block| {
                 var flow = InputPostStateFlow.init(self.allocator);
                 flow.states.deinit();
                 flow.states = states.*;
@@ -3040,7 +3040,7 @@ pub const Infer = struct {
                 state.outcome_variant = null;
                 state.outcome_parent_mismatch = false;
             },
-            .code_block, .value_sequence, .replacement_value => |child| try self.inferOpaqueEmptyBlock(function_id, child, effects, state, exits),
+            .code_block, .value_sequence, .replacement => |child| try self.inferOpaqueEmptyBlock(function_id, child, effects, state, exits),
             .break_statement, .continue_statement, .abort_statement => state.reachable = false,
             .auto_deinit_binding => |auto_id| try self.applyAutoDeinitOpaqueEffects(function_id, auto_id, effects, state),
             else => try self.inferOpaqueEmptyExpression(function_id, node_id, effects, state, exits),
@@ -3128,7 +3128,7 @@ pub const Infer = struct {
     ) anyerror!void {
         const node = self.graph.node(node_id);
         switch (node.content) {
-            .value_sequence, .replacement_value => |block| try self.inferOpaqueEmptyBlock(function_id, block, effects, state, exits),
+            .value_sequence, .replacement => |block| try self.inferOpaqueEmptyBlock(function_id, block, effects, state, exits),
             .move_value, .denied_implicit_copy, .address_of => |value| try self.inferOpaqueEmptyExpression(function_id, value, effects, state, exits),
             .dereference => |value| try self.inferOpaqueEmptyExpression(function_id, value.pointer, effects, state, exits),
             .struct_value_literal => |literal| {
@@ -3756,7 +3756,7 @@ pub const Infer = struct {
                 if (statement.expression) |expression| try self.inferRequiredLiveInputsNode(function_id, expression, required);
                 try self.inferRequiredLiveInputsRange(function_id, statement.cleanup, required);
             },
-            .code_block, .value_sequence, .replacement_value => |child| try self.inferRequiredLiveInputsBlock(function_id, child, required),
+            .code_block, .value_sequence, .replacement => |child| try self.inferRequiredLiveInputsBlock(function_id, child, required),
 
             .auto_deinit_binding => |auto_id| try self.inferAutoDeinitRequiredLiveInputs(function_id, auto_id, required),
             else => {},
@@ -3852,7 +3852,7 @@ pub const Infer = struct {
                 targets[0] = value;
                 break :blk targets;
             },
-            .value_sequence, .replacement_value => |block| blk: {
+            .value_sequence, .replacement => |block| blk: {
                 const value = self.graph.blocks.items[@intFromEnum(block)].ret_val orelse break :blk &.{};
                 break :blk try self.localAddressTargets(value);
             },
@@ -4073,7 +4073,7 @@ pub const Infer = struct {
     ) anyerror!facts.ValueEffect {
         const node = self.graph.node(node_id);
         return switch (node.content) {
-            .value_sequence, .replacement_value => |block| blk: {
+            .value_sequence, .replacement => |block| blk: {
                 // A sequence may introduce lexical owners before its result.
                 // Infer their values before projecting that result, preserving
                 // borrowed and owned provenance through temporary bindings.
@@ -4529,7 +4529,7 @@ pub const Infer = struct {
 
     fn inferInputPaths(self: *Infer, function_id: graph_mod.GlobalFunctionId, node_id: graph_mod.GlobalNodeId) anyerror![]const facts.InputPath {
         return switch (self.graph.node(node_id).content) {
-            .value_sequence, .replacement_value => |block| blk: {
+            .value_sequence, .replacement => |block| blk: {
                 const value = self.graph.blocks.items[@intFromEnum(block)].ret_val orelse break :blk &.{};
                 break :blk try self.inferInputPaths(function_id, value);
             },

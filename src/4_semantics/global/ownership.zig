@@ -140,7 +140,7 @@ pub const Resolver = struct {
                 .binding_declaration => |binding| if (self.graph.isBindingTypeUnresolved(binding)) return false,
                 .binding_use => |binding| if (self.graph.isBindingTypeUnresolved(binding)) return false,
                 .assignment => |assignment| if (self.graph.isBindingTypeUnresolved(assignment.binding)) return false,
-                .code_block, .value_sequence, .replacement_value => |child| if (!self.blockReadyForCleanup(child)) return false,
+                .code_block, .value_sequence, .replacement => |child| if (!self.blockReadyForCleanup(child)) return false,
                 .if_statement => |statement| {
                     if (!self.blockReadyForCleanup(statement.then_block)) return false;
                     if (statement.else_block) |child|
@@ -150,9 +150,9 @@ pub const Resolver = struct {
                 .for_statement => |statement| {
                     if (statement.init) |init| {
                         const init_node = self.graph.nodes.items[@intFromEnum(init)];
-                        if (init_node.content == .code_block or init_node.content == .value_sequence or init_node.content == .replacement_value) {
+                        if (init_node.content == .code_block or init_node.content == .value_sequence or init_node.content == .replacement) {
                             const initialization_block = switch (init_node.content) {
-                                .value_sequence, .replacement_value, .code_block => |child| child,
+                                .value_sequence, .replacement, .code_block => |child| child,
                                 else => unreachable,
                             };
                             if (!self.blockReadyForCleanup(initialization_block)) return false;
@@ -305,7 +305,7 @@ pub const Resolver = struct {
         }
         const content = self.graph.node(id).content;
         switch (content) {
-            .code_block, .value_sequence, .replacement_value => {}, // Their own blocks retain lexical scope.
+            .code_block, .value_sequence, .replacement => {}, // Their own blocks retain lexical scope.
             .struct_value_literal => |literal| {
                 for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |field|
                     try self.collectDefaultTemporaries(field.value, output);
@@ -372,7 +372,8 @@ pub const Resolver = struct {
     ) anyerror!void {
         const node = self.graph.nodes.items[@intFromEnum(node_id)];
         switch (node.content) {
-            .code_block, .value_sequence, .replacement_value => |block| {
+            .replacement => {}, // Already finalized when the transition was built.
+            .code_block, .value_sequence => |block| {
                 // Expressions may contain conditional statement effects. Give
                 // their blocks the same lexical cleanup context as source
                 // blocks, including early returns and branch-local owners.
@@ -415,6 +416,7 @@ pub const Resolver = struct {
                 const value = try self.bindingReplacement(node_id, assignment.binding, assignment.value, visible, owner_function, module_index);
                 self.graph.nodes.items[@intFromEnum(node_id)].content.assignment.value = value;
                 try self.finalizeExpressionCleanup(value, active, defers, visible, owner_function, module_index);
+                if (value != assignment.value) try self.wrapReplacement(node_id);
             },
             .function_call => |call| {
                 if (call.callee_value) |value| try self.finalizeExpressionCleanup(value, active, defers, visible, owner_function, module_index);
@@ -484,6 +486,7 @@ pub const Resolver = struct {
                     const value = try self.projectedReplacement(node_id, target, store.value, visible, owner_function, module_index);
                     self.graph.nodes.items[@intFromEnum(node_id)].content.struct_field_store.value = value;
                     try self.finalizeExpressionCleanup(value, active, defers, visible, owner_function, module_index);
+                    if (value != store.value) try self.wrapReplacement(node_id);
                 } else try self.finalizeExpressionCleanup(store.value, active, defers, visible, owner_function, module_index);
             },
             .binary_operation => |operation| {
@@ -508,6 +511,7 @@ pub const Resolver = struct {
                     assignment.value;
                 self.graph.nodes.items[@intFromEnum(node_id)].content.pointer_assignment.value = value;
                 try self.finalizeExpressionCleanup(value, active, defers, visible, owner_function, module_index);
+                if (value != assignment.value) try self.wrapReplacement(node_id);
             },
             .explicit_cast => |cast| try self.finalizeExpressionCleanup(cast.value, active, defers, visible, owner_function, module_index),
 
@@ -596,6 +600,16 @@ pub const Resolver = struct {
         return self.replacementValue(value, ty, cleanup);
     }
 
+    fn wrapReplacement(self: *Resolver, id: global_sg.GlobalNodeId) !void {
+        const original = self.graph.node(id);
+        const write = try self.appendNode(original.source, original.ty, original.content);
+        const start: u32 = @intCast(self.graph.node_refs.items.len);
+        try self.graph.node_refs.append(self.allocator, write);
+        const block: global_sg.GlobalBlockId = @enumFromInt(self.graph.blocks.items.len);
+        try self.graph.blocks.append(self.allocator, .{ .nodes = .{ .start = start, .len = 1 }, .ret_val = write });
+        self.graph.nodes.items[@intFromEnum(id)].content = .{ .replacement = block };
+    }
+
     fn replacementValue(self: *Resolver, value: global_sg.GlobalNodeId, ty: global_sg.GlobalTypeId, cleanup: global_sg.GlobalNodeId) !global_sg.GlobalNodeId {
         const source = self.graph.node(value).source;
         const temporary: global_sg.GlobalBindingId = @enumFromInt(@as(u32, @intCast(self.graph.bindings.items.len)));
@@ -613,7 +627,7 @@ pub const Resolver = struct {
         try self.graph.node_refs.appendSlice(self.allocator, &.{ declaration, cleanup, result });
         const block: global_sg.GlobalBlockId = @enumFromInt(@as(u32, @intCast(self.graph.blocks.items.len)));
         try self.graph.blocks.append(self.allocator, .{ .nodes = .{ .start = start, .len = 3 }, .ret_val = result });
-        return self.appendNode(source, ty, .{ .replacement_value = block });
+        return self.appendNode(source, ty, .{ .value_sequence = block });
     }
 
     fn finalizeBlock(
@@ -668,7 +682,7 @@ pub const Resolver = struct {
             }
             try rebuilt.append(self.allocator, node_id);
             const content = self.graph.node(node_id).content;
-            if (content != .code_block and content != .value_sequence and content != .replacement_value)
+            if (content != .code_block and content != .value_sequence and content != .replacement)
                 try self.finalizeExpressionCleanup(node_id, active.items, defers.items, visible.items, owner_function, module_index);
             const node = &self.graph.nodes.items[@intFromEnum(node_id)];
             if (self.deferValue(node_id)) |deferred_value| {
@@ -689,7 +703,7 @@ pub const Resolver = struct {
                     try active.append(self.allocator, binding);
                 },
                 .return_statement => |*ret| ret.cleanup = try self.appendCleanup(active.items, defers.items),
-                .code_block, .value_sequence, .replacement_value => |child| try self.finalizeBlock(child, &active, &defers, &visible, &.{}, owner_function, module_index),
+                .code_block, .value_sequence => |child| try self.finalizeBlock(child, &active, &defers, &visible, &.{}, owner_function, module_index),
                 .if_statement => |statement| {
                     try self.finalizeBlock(statement.then_block, &active, &defers, &visible, &.{}, owner_function, module_index);
                     if (statement.else_block) |child|

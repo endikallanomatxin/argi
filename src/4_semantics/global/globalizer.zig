@@ -528,7 +528,7 @@ fn relocateNode(allocator: std.mem.Allocator, module: *const module_sg.ModuleSem
             .virtual_call => |id| .{ .virtual_call = globalVirtualCall(o, id) },
             .code_block => |id| .{ .code_block = globalBlock(o, id) },
             .value_sequence => |id| .{ .value_sequence = globalBlock(o, id) },
-            .replacement_value => |id| .{ .replacement_value = globalBlock(o, id) },
+            .replacement => |id| .{ .replacement = globalBlock(o, id) },
             .int_literal => |value| .{ .int_literal = value },
             .float_literal => |value| .{ .float_literal = value },
             .char_literal => |value| .{ .char_literal = value },

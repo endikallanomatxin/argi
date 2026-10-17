@@ -323,14 +323,13 @@ feature first.
 
 - Local whole-binding replacement evaluates its RHS into a lexical owner, runs the
   selected cleanup of the previous value, and moves the replacement into place.
-  Checked `replacement_value` expressions identify the prepared lexical owner,
-  selected old-value cleanup and final move in order. Both backends consume the
-  shared replacement plan verifier; safety/summaries traverse its ordinary nodes.
-  General value sequences do not imply replacement semantics. The verifier ties
-  replacement cleanup to the write's exact owner/projection, not just its type.
-  Native write destinations capture address, type and cleanup state before RHS
-  emission and commit through that captured evidence. Selected replacement cleanup
-  uses that same captured address and flag range; nested RHS replacement must
+  A checked `replacement` node owns one complete write, including its destination,
+  lexical preparation, selected old-value cleanup and commit. Its shared plan
+  verifier checks their order and exact owner/projection identity. Generic value
+  sequences alone carry no replacement semantics. Safety/summaries traverse the
+  ordinary write and preparation nodes. Both backends consume the complete plan.
+  Native writes capture address, type and cleanup state before RHS emission;
+  selected cleanup and commit use that same destination. Nested replacements
   restore the outer capture. Scope-exit cleanup keeps its separate identity.
   Ownership finalization uses cleanup activation to omit destruction for proven
   first initialization. Preserve temporary provenance in value-sequence summaries;

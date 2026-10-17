@@ -76,17 +76,15 @@ These checks validate execution of selected plans; they do not select destructor
 or replace the safety proof. Fatal interruption still poisons a future persistent
 session rather than promising rollback or replayable cleanup.
 
-The checked graph marks prepared replacement expressions as `replacement_value`.
-Their shared plan verifier checks the lexical owner, selected cleanup and final
-move in order; safety and summaries traverse those ordinary operations. Both
-backends consume that plan rather than identifying arbitrary value sequences.
-The verifier also ties that cleanup to the surrounding write's exact lexical
-owner/projection, rejecting a same-typed but different destination. Native writes
-capture their address, value type and cleanup state before RHS emission, then
-commit and reactivate that captured state together. The selected replacement
-cleanup now receives that same captured address and flag range, rather than
-resolving its target again after RHS effects. Nested replacements restore the
-outer capture; temporary and scope-exit cleanup retain their own identities.
+The checked graph represents a complete write as `replacement`. Its verified
+plan identifies the destination write, prepared owner, selected cleanup and final
+move together. Generic value sequences remain ordinary ordered expressions;
+they no longer identify replacement. Safety and summaries traverse the ordinary
+nodes inside the transition. LLVM and bytecode consume the same complete plan.
+Native capture precedes preparation; cleanup and commit use that captured address
+and flag range. Nested transitions restore the outer capture, independently of
+temporary and scope-exit cleanup.
+
 This remains local evidence. AOT must carry it through reference-valued fields,
 arguments and outputs before using the plan for unknown targets. VM references
 already preserve concrete storage identity across those boundaries.
@@ -115,6 +113,14 @@ expressions still need to populate and forward the companion descriptors.
 Do not generalize lexical body-pattern proofs to substitute for that evidence.
 General owning indirect replacement remains unsupported until both backends and
 the checker implement the transition.
+
+Next acceptance case: call the same `store(target: $&Resource, ...)` with a live
+owner and with storage explicitly vacated by `deinit`. Across both scopes this
+must execute four destructors: two old values and two replacements. The native
+probe currently executes three; VM lowering also rejects caller output-storage
+initialization. Transport and initialization must close this case together,
+without imposing an initialized-only reference precondition or calling cleanup
+unconditionally. This is the next milestone, ahead of further helper APIs.
 
 ## Storage direction (proposed)
 
