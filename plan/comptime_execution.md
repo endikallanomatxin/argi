@@ -183,11 +183,13 @@ Variants without payloads have no entry.
 Both backends share the field/variant layout of cleanup state. `cleanup_plan.zig`
 resolves selected child types, variant identities and auxiliary arguments without
 copying plans or allocating another IR. A shared outcome-path iterator validates
-nested result selectors; backends emit guards before projecting each payload. Conditional traversal and emission remain
-backend-specific; a complete shared lifecycle lowering is still pending.
+nested result selectors; backends emit guards before projecting each payload.
+Selected cleanup traversal is also shared: one compile-time-specialized emitter
+walks activation guards, nominal calls, fields, guarded variant payloads and final
+deactivation. Each backend supplies only representation and instruction emission.
+General replacement lowering and call-state updates still need integration.
 Native evidence must retain owner/projection identity: zero-sized siblings can
-share an address
-while retaining independent cleanup obligations.
+share an address while retaining independent cleanup obligations.
 Native flags use one preorder block per owner; each projected subtree has a
 stable pointer and range. Native definitions, ordinary/virtual calls, generated
 cleanup and trace helpers share one private ABI signature and call emitter;

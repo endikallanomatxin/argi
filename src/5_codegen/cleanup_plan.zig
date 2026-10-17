@@ -114,3 +114,36 @@ test "cleanup outcome paths guard parents and preserve nominal variant identitie
     cleanup.output_index = 1;
     try std.testing.expectError(error.InvalidCleanupPlan, OutcomePath.init(&graph, .{ .start = 0, .len = 1 }, cleanup));
 }
+
+// One walk of the selected plan, specialized for each emitter at compile time.
+// Emitters own only representation and instruction emission. No runtime visitor,
+// extra IR or copied cleanup state is introduced.
+pub const Operation = struct {
+    deinit_fn: ?g.GlobalFunctionId,
+    input: ?g.GlobalNodeId,
+    self_field_index: u32,
+    fields: @import("../4_semantics/primitives/schema.zig").Range(g.GlobalAutoDeinitFieldId),
+
+    fn fromField(field: g.AutoDeinitField) Operation {
+        return .{ .deinit_fn = field.deinit_fn, .input = field.input, .self_field_index = field.self_field_index, .fields = field.fields };
+    }
+};
+
+pub fn emit(backend: anytype, graph: *const g.GlobalSemanticGraph, plan: Operation, target: anytype) anyerror!void {
+    const active = try backend.begin(target);
+    if (plan.deinit_fn) |callee| {
+        try backend.call(target, callee, plan.input, plan.self_field_index);
+    } else {
+        for (graph.auto_deinit_fields.items[plan.fields.start..][0..plan.fields.len]) |field| {
+            const selected = try child(graph, target.ty, field);
+            if (selected.variant != null) {
+                const variant = try backend.beginVariant(target, field, selected);
+                try emit(backend, graph, Operation.fromField(field), try backend.project(target, field, selected));
+                try backend.endVariant(variant);
+            } else {
+                try emit(backend, graph, Operation.fromField(field), try backend.project(target, field, selected));
+            }
+        }
+    }
+    try backend.finish(target, active);
+}

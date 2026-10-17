@@ -220,42 +220,58 @@ const FunctionLower = struct {
         try self.cleanupStorage(auto.deinit_fn, auto.input, auto.self_field_index, auto.fields, .{ .root = root, .path = &.{} }, self.slots.items[root], self.drops.get(auto.binding).?);
     }
     fn cleanupStorage(self: *FunctionLower, callee: ?g.GlobalFunctionId, input: ?g.GlobalNodeId, self_index: u32, fields: p.Range(g.GlobalAutoDeinitFieldId), target: b.Place, ty: b.Type, drop: DropState) anyerror!void {
-        const source = self.parent.source;
-        const live = try self.newSlot(try self.boolType());
-        _ = try self.emit(source, .{ .cleanup_test = .{ .dst = live, .place = self.cleanup.items[@intFromEnum(drop)].place } });
-        const branch = try self.emit(source, .{ .branch = .{ .condition = live, .yes = self.position() + 1, .no = 0 } });
-        if (callee) |id| {
-            const function = self.parent.graph.function(id);
-            if (function.output.len != 0) return self.parent.reject(source, "destructor with outputs");
-            const args = try self.parent.allocator.alloc(b.Slot, function.input.len);
-            for (args, self.parent.graph.fields.items[function.input.start..][0..function.input.len], 0..) |*arg, field, index| {
+        try cleanup_plan.emit(CleanupEmitter{ .lower = self }, self.parent.graph, .{
+            .deinit_fn = callee,
+            .input = input,
+            .self_field_index = self_index,
+            .fields = fields,
+        }, CleanupEmitter.Target{ .place = target, .ty = ty, .drop = drop });
+    }
+    const CleanupEmitter = struct {
+        lower: *FunctionLower,
+        const Target = struct { place: b.Place, ty: b.Type, drop: DropState };
+
+        pub fn begin(self: @This(), target: Target) !u32 {
+            const lower = self.lower;
+            const live = try lower.newSlot(try lower.boolType());
+            _ = try lower.emit(lower.parent.source, .{ .cleanup_test = .{ .dst = live, .place = lower.cleanup.items[@intFromEnum(target.drop)].place } });
+            return lower.emit(lower.parent.source, .{ .branch = .{ .condition = live, .yes = lower.position() + 1, .no = 0 } });
+        }
+        pub fn call(self: @This(), target: Target, id: g.GlobalFunctionId, input: ?g.GlobalNodeId, self_index: u32) !void {
+            const source = self.lower.parent.source;
+            const function = self.lower.parent.graph.function(id);
+            if (function.output.len != 0) return self.lower.parent.reject(source, "destructor with outputs");
+            const args = try self.lower.parent.allocator.alloc(b.Slot, function.input.len);
+            for (args, self.lower.parent.graph.fields.items[function.input.start..][0..function.input.len], 0..) |*arg, field, index| {
                 if (index == self_index) {
-                    arg.* = try self.newSlot(field.ty);
-                    _ = try self.emit(source, .{ .borrow = .{ .dst = arg.*, .place = target } });
+                    arg.* = try self.lower.newSlot(field.ty);
+                    _ = try self.lower.emit(source, .{ .borrow = .{ .dst = arg.*, .place = target.place } });
                 } else {
-                    const value = try cleanup_plan.argument(self.parent.graph, input, field);
-                    arg.* = try self.coerce(source, try self.expression(value), field.ty);
+                    const value = try cleanup_plan.argument(self.lower.parent.graph, input, field);
+                    arg.* = try self.lower.coerce(source, try self.lower.expression(value), field.ty);
                 }
             }
-            try self.parent.pending.append(self.parent.allocator, id);
-            _ = try self.emit(source, .{ .call = .{ .function = id, .args = args, .outputs = &.{} } });
-        } else for (self.parent.graph.auto_deinit_fields.items[fields.start..][0..fields.len]) |field| {
-            const child = try cleanup_plan.child(self.parent.graph, ty, field);
-            const projection: b.Projection = if (child.variant) |variant| .{ .variant = variant } else .{ .field = field.field_index };
-            const child_drop = self.dropChild(drop, projection) orelse return error.InvalidBytecode;
-            if (child.variant) |variant| {
-                const value = try self.newSlot(ty);
-                _ = try self.emit(source, .{ .load = .{ .dst = value, .place = target } });
-                const active = try self.emit(source, .{ .branch_variant = .{ .src = value, .variant = variant, .yes = self.position() + 1, .no = 0 } });
-                try self.cleanupStorage(field.deinit_fn, field.input, field.self_field_index, field.fields, try self.project(target, .{ .variant = variant }), child.ty, child_drop);
-                self.code.items[active].op.branch_variant.no = self.position();
-            } else {
-                try self.cleanupStorage(field.deinit_fn, field.input, field.self_field_index, field.fields, try self.project(target, .{ .field = field.field_index }), child.ty, child_drop);
-            }
+            try self.lower.parent.pending.append(self.lower.parent.allocator, id);
+            _ = try self.lower.emit(source, .{ .call = .{ .function = id, .args = args, .outputs = &.{} } });
         }
-        try self.setDrop(drop, false);
-        self.code.items[branch].op.branch.no = self.position();
-    }
+        pub fn beginVariant(self: @This(), target: Target, _: g.AutoDeinitField, selected: cleanup_plan.Child) !u32 {
+            const lower = self.lower;
+            const value = try lower.newSlot(target.ty);
+            _ = try lower.emit(lower.parent.source, .{ .load = .{ .dst = value, .place = target.place } });
+            return lower.emit(lower.parent.source, .{ .branch_variant = .{ .src = value, .variant = selected.variant.?, .yes = lower.position() + 1, .no = 0 } });
+        }
+        pub fn endVariant(self: @This(), branch: u32) !void {
+            self.lower.code.items[branch].op.branch_variant.no = self.lower.position();
+        }
+        pub fn project(self: @This(), target: Target, field: g.AutoDeinitField, selected: cleanup_plan.Child) !Target {
+            const projection: b.Projection = if (selected.variant) |variant| .{ .variant = variant } else .{ .field = field.field_index };
+            return .{ .place = try self.lower.project(target.place, projection), .ty = selected.ty, .drop = self.lower.dropChild(target.drop, projection) orelse return error.InvalidBytecode };
+        }
+        pub fn finish(self: @This(), target: Target, branch: u32) !void {
+            try self.lower.setDrop(target.drop, false);
+            self.lower.code.items[branch].op.branch.no = self.lower.position();
+        }
+    };
     fn newSlot(self: *FunctionLower, ty: b.Type) !b.Slot {
         if (!b.supportedType(self.parent.graph, ty, 0)) return self.parent.reject(self.parent.source, "type outside the supported VM subset");
         const id: b.Slot = @intCast(self.slots.items.len);

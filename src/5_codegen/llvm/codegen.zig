@@ -2560,44 +2560,63 @@ pub const CodeGenerator = struct {
         ty: graph_mod.GlobalTypeId,
         drop: DropState,
     ) !void {
-        const current = c.LLVMGetInsertBlock(self.builder);
-        const function = c.LLVMGetBasicBlockParent(current);
-        const run = c.LLVMAppendBasicBlock(function, "deinit.run");
-        const done = c.LLVMAppendBasicBlock(function, "deinit.done");
-        if (drop.flag_ref == null) return CodegenError.InvalidType;
-        const enabled = c.LLVMBuildLoad2(self.builder, c.LLVMInt1Type(), drop.flag_ref, "needs.deinit");
-        _ = c.LLVMBuildCondBr(self.builder, enabled, run, done);
-        c.LLVMPositionBuilderAtEnd(self.builder, run);
-        if (deinit_fn) |callee| {
-            try self.callDeinit(callee, input, self_field_index, storage);
-        } else {
-            for (self.graph.auto_deinit_fields.items[fields.start..][0..fields.len]) |field| {
-                const child = try cleanup_plan.child(self.graph, ty, field);
-                const child_drop = drop.project(self.builder, field.field_index) orelse return CodegenError.InvalidType;
-                if (child.variant != null) {
-                    const payload_block = c.LLVMAppendBasicBlock(function, "deinit.payload");
-                    const next_block = c.LLVMAppendBasicBlock(function, "deinit.next");
-                    const base_type = try self.toLLVMType(ty);
-                    const tag_pointer = c.LLVMBuildStructGEP2(self.builder, base_type, storage, 0, "deinit.tag.addr");
-                    const tag = c.LLVMBuildLoad2(self.builder, c.LLVMInt32Type(), tag_pointer, "deinit.tag");
-                    const active = c.LLVMBuildICmp(self.builder, c.LLVMIntEQ, tag, c.LLVMConstInt(c.LLVMInt32Type(), field.field_index, 0), "deinit.active");
-                    _ = c.LLVMBuildCondBr(self.builder, active, payload_block, next_block);
-                    c.LLVMPositionBuilderAtEnd(self.builder, payload_block);
-                    const pointer = c.LLVMBuildStructGEP2(self.builder, base_type, storage, field.field_index + 1, "deinit.payload.addr");
-                    try self.genAutoDeinitStorage(field.deinit_fn, field.input, field.self_field_index, field.fields, pointer, child.ty, child_drop);
-                    if (c.LLVMGetBasicBlockTerminator(c.LLVMGetInsertBlock(self.builder)) == null) _ = c.LLVMBuildBr(self.builder, next_block);
-                    c.LLVMPositionBuilderAtEnd(self.builder, next_block);
-                    continue;
-                }
-                const base_type = try self.toLLVMType(ty);
-                const pointer = c.LLVMBuildStructGEP2(self.builder, base_type, storage, field.field_index, "deinit.field");
-                try self.genAutoDeinitStorage(field.deinit_fn, field.input, field.self_field_index, field.fields, pointer, child.ty, child_drop);
-            }
-        }
-        self.storeDropState(drop, false);
-        if (c.LLVMGetBasicBlockTerminator(c.LLVMGetInsertBlock(self.builder)) == null) _ = c.LLVMBuildBr(self.builder, done);
-        c.LLVMPositionBuilderAtEnd(self.builder, done);
+        try cleanup_plan.emit(CleanupEmitter{ .generator = self }, self.graph, .{
+            .deinit_fn = deinit_fn,
+            .input = input,
+            .self_field_index = self_field_index,
+            .fields = fields,
+        }, CleanupEmitter.Target{ .storage = storage, .ty = ty, .drop = drop });
     }
+
+    const CleanupEmitter = struct {
+        generator: *CodeGenerator,
+        const Target = struct { storage: c.LLVMValueRef, ty: graph_mod.GlobalTypeId, drop: DropState };
+
+        pub fn begin(self: @This(), target: Target) !c.LLVMBasicBlockRef {
+            const generator = self.generator;
+            const function = c.LLVMGetBasicBlockParent(c.LLVMGetInsertBlock(generator.builder));
+            const run = c.LLVMAppendBasicBlock(function, "deinit.run");
+            const done = c.LLVMAppendBasicBlock(function, "deinit.done");
+            if (target.drop.flag_ref == null) return CodegenError.InvalidType;
+            const enabled = c.LLVMBuildLoad2(generator.builder, c.LLVMInt1Type(), target.drop.flag_ref, "needs.deinit");
+            _ = c.LLVMBuildCondBr(generator.builder, enabled, run, done);
+            c.LLVMPositionBuilderAtEnd(generator.builder, run);
+            return done;
+        }
+        pub fn call(self: @This(), target: Target, callee: graph_mod.GlobalFunctionId, input: ?graph_mod.GlobalNodeId, self_index: u32) !void {
+            try self.generator.callDeinit(callee, input, self_index, target.storage);
+        }
+        pub fn beginVariant(self: @This(), target: Target, field: graph_mod.AutoDeinitField, _: cleanup_plan.Child) !c.LLVMBasicBlockRef {
+            const generator = self.generator;
+            const function = c.LLVMGetBasicBlockParent(c.LLVMGetInsertBlock(generator.builder));
+            const payload = c.LLVMAppendBasicBlock(function, "deinit.payload");
+            const next = c.LLVMAppendBasicBlock(function, "deinit.next");
+            const base_type = try generator.toLLVMType(target.ty);
+            const tag_pointer = c.LLVMBuildStructGEP2(generator.builder, base_type, target.storage, 0, "deinit.tag.addr");
+            const tag = c.LLVMBuildLoad2(generator.builder, c.LLVMInt32Type(), tag_pointer, "deinit.tag");
+            const active = c.LLVMBuildICmp(generator.builder, c.LLVMIntEQ, tag, c.LLVMConstInt(c.LLVMInt32Type(), field.field_index, 0), "deinit.active");
+            _ = c.LLVMBuildCondBr(generator.builder, active, payload, next);
+            c.LLVMPositionBuilderAtEnd(generator.builder, payload);
+            return next;
+        }
+        pub fn endVariant(self: @This(), next: c.LLVMBasicBlockRef) !void {
+            const builder = self.generator.builder;
+            if (c.LLVMGetBasicBlockTerminator(c.LLVMGetInsertBlock(builder)) == null) _ = c.LLVMBuildBr(builder, next);
+            c.LLVMPositionBuilderAtEnd(builder, next);
+        }
+        pub fn project(self: @This(), target: Target, field: graph_mod.AutoDeinitField, selected: cleanup_plan.Child) !Target {
+            const generator = self.generator;
+            const drop = target.drop.project(generator.builder, field.field_index) orelse return CodegenError.InvalidType;
+            const index = field.field_index + @as(u32, if (selected.variant != null) 1 else 0);
+            const name: [*:0]const u8 = if (selected.variant != null) "deinit.payload.addr" else "deinit.field";
+            const storage = c.LLVMBuildStructGEP2(generator.builder, try generator.toLLVMType(target.ty), target.storage, index, name);
+            return .{ .storage = storage, .ty = selected.ty, .drop = drop };
+        }
+        pub fn finish(self: @This(), target: Target, done: c.LLVMBasicBlockRef) !void {
+            self.generator.storeDropState(target.drop, false);
+            try self.endVariant(done);
+        }
+    };
 
     fn callDeinit(self: *CodeGenerator, callee: graph_mod.GlobalFunctionId, input_override: ?graph_mod.GlobalNodeId, self_index: u32, storage: llvm.c.LLVMValueRef) !void {
         const function = self.graph.functions.items[@intFromEnum(callee)];
