@@ -162,16 +162,18 @@ pub const Vm = struct {
                     _ = try self.storage.resolve(current.storage, place, &path);
                 },
                 .capture_write => |x| current.write_destinations[x.dst] = try self.storage.captureWrite(current.storage, x.place, x.activate_cleanup),
+                .check_write_cleanup => |id| {
+                    const destination = current.write_destinations[id] orelse return error.UninitializedBytecodeDestination;
+                    try self.chargeCleanup(try self.storage.checkWriteCleanup(destination));
+                },
                 .store => |x| {
                     const destination = current.write_destinations[x.destination] orelse return error.UninitializedBytecodeDestination;
-                    // A captured access is consumed by one commit. Loop iterations
-                    // must execute capture_write again before another store.
-                    current.write_destinations[x.destination] = null;
-                    const value = try slots.get(x.value);
-                    const checked = try self.storage.checkWriteCleanup(destination);
-                    try self.storage.write(destination, value);
-                    const activated = try self.storage.activateWriteCleanup(destination);
-                    try self.chargeCleanup(checked + activated);
+                    try self.storage.write(destination, try slots.get(x.value));
+                },
+                .activate_write_cleanup => |id| {
+                    const destination = current.write_destinations[id] orelse return error.UninitializedBytecodeDestination;
+                    current.write_destinations[id] = null;
+                    try self.chargeCleanup(try self.storage.activateWriteCleanup(destination));
                 },
                 .cleanup_test => |x| {
                     var path: [64]runtime_value.Projection = undefined;

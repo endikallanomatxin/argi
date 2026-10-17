@@ -308,7 +308,7 @@ const FunctionLower = struct {
                 const target = try self.project(base, .{ .element = index });
                 const destination = try self.captureWrite(node.source, target, x.element_type, false);
                 const value = try self.coerce(node.source, try self.expression(x.value), x.element_type);
-                _ = try self.emit(node.source, .{ .store = .{ .destination = destination, .value = value } });
+                try self.commitWrite(node.source, destination, value);
             },
             .pointer_assignment => |x| {
                 const child = self.parent.graph.semanticType(self.parent.graph.node(x.pointer).ty.?).pointer.child;
@@ -317,7 +317,7 @@ const FunctionLower = struct {
                 const target = try self.addressedPlace(x.pointer);
                 const destination = try self.captureWrite(node.source, target, child, self.targetHasCleanup(x.cleanup_target));
                 const value = try self.coerce(node.source, try self.expression(x.value), self.parent.graph.semanticType(self.parent.graph.node(x.pointer).ty.?).pointer.child);
-                _ = try self.emit(node.source, .{ .store = .{ .destination = destination, .value = value } });
+                try self.commitWrite(node.source, destination, value);
             },
             .struct_field_store => |x| {
                 if (self.parent.cleanup_types[@intFromEnum(x.field_type)] and !self.trackedDestination(x.struct_ptr, x.cleanup_target))
@@ -326,7 +326,7 @@ const FunctionLower = struct {
                 const target = try self.project(base, .{ .field = x.field_index });
                 const destination = try self.captureWrite(node.source, target, x.field_type, self.targetHasCleanup(x.cleanup_target));
                 const value = try self.coerce(node.source, try self.expression(x.value), x.field_type);
-                _ = try self.emit(node.source, .{ .store = .{ .destination = destination, .value = value } });
+                try self.commitWrite(node.source, destination, value);
             },
             .auto_deinit_binding => |auto| try self.autoDeinit(auto),
             .code_block => |block_id| try self.block(block_id),
@@ -461,6 +461,11 @@ const FunctionLower = struct {
     }
     fn targetHasCleanup(self: *FunctionLower, target: ?g.GlobalNodeId) bool {
         return if (target) |node| self.nodeDrop(node) != null else false;
+    }
+    fn commitWrite(self: *FunctionLower, source: p.SourceRef, destination: b.Destination, value: b.Slot) !void {
+        _ = try self.emit(source, .{ .check_write_cleanup = destination });
+        _ = try self.emit(source, .{ .store = .{ .destination = destination, .value = value } });
+        _ = try self.emit(source, .{ .activate_write_cleanup = destination });
     }
     fn captureWrite(self: *FunctionLower, source: p.SourceRef, place_: b.Place, ty: b.Type, activate_cleanup: bool) !b.Destination {
         const destination: b.Destination = @intCast(self.write_destinations.items.len);

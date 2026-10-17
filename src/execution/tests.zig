@@ -706,7 +706,9 @@ test "bytecode write destinations capture aliases before later writes" {
         .{ .source = source, .op = .{ .capture_write = .{ .dst = 0, .place = .{ .root = 2, .path = &.{.dereference} } } } },
         .{ .source = source, .op = .{ .borrow = .{ .dst = 2, .place = .{ .root = 1, .path = &.{} } } } },
         .{ .source = source, .op = .{ .constant = .{ .dst = 1, .value = .{ .integer = 42 } } } },
+        .{ .source = source, .op = .{ .check_write_cleanup = 0 } },
         .{ .source = source, .op = .{ .store = .{ .destination = 0, .value = 1 } } },
+        .{ .source = source, .op = .{ .activate_write_cleanup = 0 } },
         .{ .source = source, .op = .{ .copy = .{ .dst = 4, .src = 3 } } },
         .{ .source = source, .op = .{ .ret = &.{0} } },
     };
@@ -715,18 +717,32 @@ test "bytecode write destinations capture aliases before later writes" {
     var executor = try vm.Vm.init(a, program, .{});
     defer executor.deinit();
     try std.testing.expectEqual(@as(i128, 42), (try executor.run(@enumFromInt(0), &.{}))[0].integer);
-    const original_copy = code[9];
-    code[9].op = .{ .store = .{ .destination = 0, .value = 1 } };
+    const check = code[8];
+    code[8].op.check_write_cleanup = 1;
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+    code[8] = check;
+    code[8].op = .{ .copy = .{ .dst = 4, .src = 3 } };
     try std.testing.expectError(error.UninitializedBytecodeDestination, b.verify(a, program));
-    code[9] = original_copy;
+    code[8] = check;
+    const activation = code[10];
+    code[10].op.activate_write_cleanup = 1;
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+    code[10] = activation;
+    code[10].op = .{ .check_write_cleanup = 0 };
+    try std.testing.expectError(error.UninitializedBytecodeDestination, b.verify(a, program));
+    code[10] = activation;
+    const original_copy = code[11];
+    code[11].op = .{ .store = .{ .destination = 0, .value = 1 } };
+    try std.testing.expectError(error.UninitializedBytecodeDestination, b.verify(a, program));
+    code[11] = original_copy;
     // Captured cleanup is required before RHS execution and charged when the
-    // store activates it, just like an explicit cleanup_set instruction.
+    // activation executes, just like an explicit cleanup_set instruction.
     code[5].op.capture_write.activate_cleanup = true;
     try std.testing.expectError(error.ExecutionMissingCleanup, executor.run(@enumFromInt(0), &.{}));
     functions[0].?.cleanup = &.{.{ .root = 0, .path = &.{}, .flag = 3 }};
     code[2].op.constant.value = .{ .boolean = false };
     functions[0].?.outputs = &.{4};
-    code[10].op = .{ .ret = &.{4} };
+    code[12].op = .{ .ret = &.{4} };
     graph.fields.items[0].ty = @enumFromInt(2);
     var tracked = try vm.Vm.init(a, program, .{});
     defer tracked.deinit();
@@ -736,7 +752,7 @@ test "bytecode write destinations capture aliases before later writes" {
     try std.testing.expectError(error.ExecutionInstructionLimit, bounded.run(@enumFromInt(0), &.{}));
     functions[0].?.cleanup = &.{};
     functions[0].?.outputs = &.{0};
-    code[10].op = .{ .ret = &.{0} };
+    code[12].op = .{ .ret = &.{0} };
     graph.fields.items[0].ty = @enumFromInt(0);
     code[5].op.capture_write.activate_cleanup = false;
     // Even a branch that happens to capture at runtime must capture on every
@@ -744,12 +760,12 @@ test "bytecode write destinations capture aliases before later writes" {
     code[4].op = .{ .branch = .{ .condition = 3, .yes = 5, .no = 6 } };
     try std.testing.expectError(error.UninitializedBytecodeDestination, b.verify(a, program));
     code[4].op = .{ .jump = 5 };
-    code[8].op.store.destination = 1;
+    code[9].op.store.destination = 1;
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
-    code[8].op.store.destination = 0;
-    code[8].op.store.value = 3;
+    code[9].op.store.destination = 0;
+    code[9].op.store.value = 3;
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
-    code[8].op.store.value = 1;
+    code[9].op.store.value = 1;
     functions[0].?.write_destinations = &.{@enumFromInt(2)};
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
 }

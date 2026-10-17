@@ -62,7 +62,11 @@ pub const Instruction = struct {
         load: struct { dst: Slot, place: Place },
         check_place: Place,
         capture_write: struct { dst: Destination, place: Place, activate_cleanup: bool = false },
+        // Lowering emits these three consecutively after RHS preparation.
+        // Activation consumes the captured destination; store changes only data.
+        check_write_cleanup: Destination,
         store: struct { destination: Destination, value: Slot },
+        activate_write_cleanup: Destination,
         cleanup_test: struct { dst: Slot, place: Place },
         cleanup_set: struct { place: Place, enabled: bool },
         call: struct { outputs: []const Slot, function: g.GlobalFunctionId, args: []const Slot },

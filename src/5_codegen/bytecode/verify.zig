@@ -102,6 +102,9 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                     const target = try placeInfo(program.graph, f.slots, x.place);
                     if (!target.writable or !types.equal(program.graph, f.write_destinations[x.dst], target.ty)) return error.InvalidBytecode;
                 },
+                .check_write_cleanup, .activate_write_cleanup => |destination| {
+                    if (destination >= f.write_destinations.len) return error.InvalidBytecode;
+                },
                 .store => |x| {
                     if (x.destination >= f.write_destinations.len or !types.equal(program.graph, f.slots[x.value], f.write_destinations[x.destination])) return error.InvalidBytecode;
                 },
@@ -132,38 +135,64 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
             }
         }
         // Definite initialization is the intersection of every predecessor.
-        const states = try allocator.alloc(?[]bool, f.code.len);
+        const states = try allocator.alloc(?[]u8, f.code.len);
         defer {
             for (states) |s| if (s) |v| allocator.free(v);
             allocator.free(states);
         }
+        // Abstract byte states: 0 unavailable, 1 initialized/captured,
+        // 2 cleanup checked, 4 value written. Intersections preserve a stage
+        // only when every incoming path establishes the same stage.
         @memset(states, null);
-        states[0] = try allocator.alloc(bool, std.math.add(usize, f.slots.len, f.write_destinations.len) catch return error.InvalidBytecode);
-        @memset(states[0].?, false);
-        for (f.inputs) |slot| states[0].?[slot] = true;
-        for (f.cleanup) |entry| states[0].?[entry.flag] = true;
+        states[0] = try allocator.alloc(u8, std.math.add(usize, f.slots.len, f.write_destinations.len) catch return error.InvalidBytecode);
+        @memset(states[0].?, 0);
+        for (f.inputs) |slot| states[0].?[slot] = 1;
+        for (f.cleanup) |entry| states[0].?[entry.flag] = 1;
         var pending: std.ArrayList(u32) = .empty;
         defer pending.deinit(allocator);
         try pending.append(allocator, 0);
         while (pending.pop()) |pc| {
-            const initialized = try allocator.dupe(bool, states[pc].?);
+            const initialized = try allocator.dupe(u8, states[pc].?);
             defer allocator.free(initialized);
             var reads: std.ArrayList(Slot) = .empty;
             defer reads.deinit(allocator);
             const inst = f.code[pc];
             try readSlots(allocator, inst, &reads);
-            for (reads.items) |slot| if (!initialized[slot]) return error.UninitializedBytecodeSlot;
+            for (reads.items) |slot| if (initialized[slot] == 0) return error.UninitializedBytecodeSlot;
             switch (inst.op) {
-                .capture_write => |x| initialized[f.slots.len + x.dst] = true,
+                .capture_write => |x| initialized[f.slots.len + x.dst] = 1,
+                .check_write_cleanup => |id| {
+                    const destination = f.slots.len + id;
+                    if (initialized[destination] != 1) return error.UninitializedBytecodeDestination;
+                    initialized[destination] = 2;
+                },
                 .store => |x| {
                     const destination = f.slots.len + x.destination;
-                    if (!initialized[destination]) return error.UninitializedBytecodeDestination;
-                    initialized[destination] = false;
+                    if (initialized[destination] != 2) return error.UninitializedBytecodeDestination;
+                    initialized[destination] = 4;
+                },
+                .activate_write_cleanup => |id| {
+                    const destination = f.slots.len + id;
+                    if (initialized[destination] != 4) return error.UninitializedBytecodeDestination;
+                    initialized[destination] = 0;
                 },
                 else => {},
             }
+            // Cleanup validation and publication enclose exactly one write.
+            // No call, branch or retargeting may invalidate the checked state
+            // between these three instructions.
+            if (inst.op == .check_write_cleanup) {
+                if (pc + 1 >= f.code.len or f.code[pc + 1].op != .store or
+                    f.code[pc + 1].op.store.destination != inst.op.check_write_cleanup)
+                    return error.UninitializedBytecodeDestination;
+            }
+            if (inst.op == .store) {
+                if (pc + 1 >= f.code.len or f.code[pc + 1].op != .activate_write_cleanup or
+                    f.code[pc + 1].op.activate_write_cleanup != inst.op.store.destination)
+                    return error.UninitializedBytecodeDestination;
+            }
             var single: [1]Slot = undefined;
-            for (destinations(inst, &single)) |slot| initialized[slot] = true;
+            for (destinations(inst, &single)) |slot| initialized[slot] = 1;
             var successors: [2]u32 = undefined;
             const count: usize = switch (inst.op) {
                 .ret, .abort_ => 0,
@@ -188,12 +217,12 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
             for (successors[0..count]) |next| {
                 var changed = false;
                 if (states[next]) |old| {
-                    for (old, initialized) |*was, now| if (was.* and !now) {
-                        was.* = false;
+                    for (old, initialized) |*was, now| if (was.* != (was.* & now)) {
+                        was.* &= now;
                         changed = true;
                     };
                 } else {
-                    states[next] = try allocator.dupe(bool, initialized);
+                    states[next] = try allocator.dupe(u8, initialized);
                     changed = true;
                 }
                 if (changed) try pending.append(allocator, next);

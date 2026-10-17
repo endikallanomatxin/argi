@@ -68,14 +68,16 @@ storage, not copies of its cleanup obligations. A checked replacement follows:
 3. Execute the frontend-selected cleanup against the destination's active subtree.
 4. Commit the replacement and activate its cleanup, consuming the captured access.
 
-Bytecode verification consumes destination registers on store, and each loop
-iteration must recapture them. Runtime commit rejects any active flag in the
+Bytecode verification consumes destination registers after explicit activation,
+and each loop iteration must recapture them. Runtime commit rejects any active flag in the
 captured cleanup subtree, including live children under an inactive root. A
 failed write does not reactivate flags. The executor explicitly orders cleanup
 validation, value storage and flag activation. Storage.write changes only the
-value; it never activates cleanup implicitly. The bytecode store instruction
-still groups that protocol; explicit lifecycle lowering remains pending. Checks
-and updates count against fuel.
+value; it never activates cleanup implicitly. Lowering emits separate cleanup
+validation, store and activation instructions against one destination register.
+Verification tracks captured, checked and written stages, requires the final
+three instructions to be consecutive and consumes the register on activation.
+Checks and updates count against fuel. Shared lifecycle lowering remains pending.
 These checks validate execution of selected plans; they do not select destructors
 or replace the safety proof. Fatal interruption still poisons a future persistent
 session rather than promising rollback or replayable cleanup.
