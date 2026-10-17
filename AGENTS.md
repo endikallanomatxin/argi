@@ -329,7 +329,9 @@ feature first.
   General value sequences do not imply replacement semantics. The verifier ties
   replacement cleanup to the write's exact owner/projection, not just its type.
   Native write destinations capture address, type and cleanup state before RHS
-  emission and commit through that captured evidence.
+  emission and commit through that captured evidence. Selected replacement cleanup
+  uses that same captured address and flag range; nested RHS replacement must
+  restore the outer capture. Scope-exit cleanup keeps its separate identity.
   Ownership finalization uses cleanup activation to omit destruction for proven
   first initialization. Preserve temporary provenance in value-sequence summaries;
   a sequence result must not skip the bindings that establish its dependencies.

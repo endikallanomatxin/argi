@@ -3,6 +3,7 @@ const integer = @import("../integer_arithmetic.zig");
 const cleanup_layout = @import("../cleanup_layout.zig");
 const llvm = @import("llvm.zig");
 const argi_abi = @import("argi_abi.zig");
+const replacement = @import("../../4_semantics/global/replacement.zig");
 const c = llvm.c;
 const graph_mod = @import("../../4_semantics/global/graph.zig");
 const types = @import("../../4_semantics/global/types.zig");
@@ -61,6 +62,15 @@ const WriteDestination = struct {
         _ = c.LLVMBuildStore(generator.builder, value.value_ref, self.address);
         self.activate(generator);
     }
+};
+
+// A nested RHS can itself replace another owner. Keep the selected cleanup
+// paired with its captured destination for exactly this expression's emission.
+const Replacement = struct {
+    value: graph_mod.GlobalNodeId,
+    cleanup: graph_mod.GlobalAutoDeinitId,
+    ty: graph_mod.GlobalTypeId,
+    destination: WriteDestination,
 };
 
 const ExternSignature = struct { fn_type: c.LLVMTypeRef, return_type: c.LLVMTypeRef, plan: *c_abi.FunctionPlan };
@@ -136,6 +146,7 @@ pub const CodeGenerator = struct {
     runtime_argv_global: ?llvm.c.LLVMValueRef = null,
     pruned_function_bodies: usize = 0,
     active_source: ?primitives.SourceRef = null,
+    replacement: ?Replacement = null,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -994,7 +1005,7 @@ pub const CodeGenerator = struct {
                     destination.activate(self);
                     break :blk null;
                 }
-                const value = (try self.visitNode(assignment.value)) orelse return CodegenError.ValueNotFound;
+                const value = try self.prepareWriteValue(assignment.value, destination);
                 try destination.commit(self, value);
                 self.bindings.getPtr(assignment.binding).?.initialized = true;
                 break :blk value;
@@ -1017,7 +1028,11 @@ pub const CodeGenerator = struct {
             .virtualize => |virtualize| try self.genVirtualize(virtualize),
             .virtual_call => |virtual_call| try self.genVirtualCall(virtual_call, null),
             .code_block, .value_sequence => |block| try self.genBlock(block),
-            .replacement_value => try self.genBlock((try @import("../../4_semantics/global/replacement.zig").plan(self.graph, node_id)).block),
+            .replacement_value => blk: {
+                const captured = self.replacement orelse return error.MissingReplacementDestination;
+                if (captured.value != node_id) return error.InvalidReplacementDestination;
+                break :blk try self.genBlock((try replacement.plan(self.graph, node_id)).block);
+            },
             .int_literal, .float_literal, .char_literal, .string_literal, .bool_literal => try self.emitLiteral(node_id),
             .list_literal => |literal| try self.listLiteral(literal, node.ty),
             .struct_value_literal => |literal| try self.structLiteral(literal, node.ty),
@@ -1302,7 +1317,7 @@ pub const CodeGenerator = struct {
         // pointer/field assignment. Never defer its bounds check to the store.
         const element_ptr = try self.arrayElementPointer(pointer.value_ref, array_type, index.value_ref, store.array_type);
         const destination: WriteDestination = .{ .address = element_ptr, .type_ref = try self.toLLVMType(store.element_type) };
-        const value = (try self.visitNode(store.value)) orelse return CodegenError.ValueNotFound;
+        const value = try self.prepareWriteValue(store.value, destination);
         try destination.commit(self, value);
     }
 
@@ -1336,7 +1351,7 @@ pub const CodeGenerator = struct {
         else
             null;
         const destination: WriteDestination = .{ .address = field_ptr, .type_ref = try self.toLLVMType(store.field_type), .cleanup = cleanup };
-        const value = (try self.visitNode(store.value)) orelse return CodegenError.ValueNotFound;
+        const value = try self.prepareWriteValue(store.value, destination);
         try destination.commit(self, value);
     }
 
@@ -1705,6 +1720,19 @@ pub const CodeGenerator = struct {
         return .{ .value_ref = c.LLVMBuildLoad2(self.builder, type_ref, pointer.value_ref, "deref"), .type_ref = type_ref, .ty = deref.ty };
     }
 
+    fn prepareWriteValue(self: *CodeGenerator, value: graph_mod.GlobalNodeId, destination: WriteDestination) !TypedValue {
+        if (self.graph.node(value).content != .replacement_value)
+            return (try self.visitNode(value)) orelse CodegenError.ValueNotFound;
+        const plan = try replacement.plan(self.graph, value);
+        const ty = self.graph.node(value).ty orelse return CodegenError.InvalidType;
+        if (destination.cleanup == null or destination.type_ref != try self.toLLVMType(ty))
+            return error.InvalidReplacementDestination;
+        const previous = self.replacement;
+        self.replacement = .{ .value = value, .cleanup = plan.cleanup, .ty = ty, .destination = destination };
+        defer self.replacement = previous;
+        return (try self.visitNode(value)) orelse CodegenError.ValueNotFound;
+    }
+
     fn pointerAssignment(self: *CodeGenerator, assignment: anytype) !void {
         const pointer = (try self.visitNode(assignment.pointer)) orelse return CodegenError.ValueNotFound;
         const pointer_type = self.graph.semanticType(self.graph.node(assignment.pointer).ty orelse return CodegenError.InvalidType);
@@ -1714,7 +1742,7 @@ pub const CodeGenerator = struct {
             .type_ref = try self.toLLVMType(pointer_type.pointer.child),
             .cleanup = self.dropStateForNode(assignment.cleanup_target orelse assignment.pointer),
         };
-        const value = (try self.visitNode(assignment.value)) orelse return CodegenError.ValueNotFound;
+        const value = try self.prepareWriteValue(assignment.value, destination);
         try destination.commit(self, value);
     }
 
@@ -2515,6 +2543,11 @@ pub const CodeGenerator = struct {
 
     fn genAutoDeinit(self: *CodeGenerator, auto_id: graph_mod.GlobalAutoDeinitId) !void {
         const auto = self.graph.auto_deinits.items[@intFromEnum(auto_id)];
+        if (self.replacement) |captured| if (captured.cleanup == auto_id) {
+            // Use exactly the address and flag range captured before the RHS.
+            // Do not resolve the cleanup target again after its effects.
+            return self.genAutoDeinitStorage(auto.deinit_fn, auto.input, auto.self_field_index, auto.fields, captured.destination.address, captured.ty, captured.destination.cleanup.?);
+        };
         if (auto.target) |target| {
             const drop = self.dropStateForNode(target) orelse return CodegenError.InvalidType;
             const pointer = try self.addressablePointer(target);

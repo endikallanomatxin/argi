@@ -13599,6 +13599,11 @@ test "feature_tests/ownership/367X_forwarded_reference_keeps_sibling_stale" {
     try buildExpectFail("tests/feature_tests/ownership/367X_forwarded_reference_keeps_sibling_stale", "reference depends on a root that has ended");
 }
 
+test "feature_tests/ownership/368_nested_replacement_captured_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/368_nested_replacement_captured_cleanup");
+    try runExpect("tests/feature_tests/ownership/368_nested_replacement_captured_cleanup", 42);
+}
+
 test "feature_tests/execution/42_dynamic_reference_cleanup_boundary" {
     try expectSuccessfulBuild("tests/feature_tests/execution/42_dynamic_reference_cleanup_boundary");
     try vmExpect("tests/feature_tests/execution/42_dynamic_reference_cleanup_boundary", 1, "owning replacement through a runtime reference");

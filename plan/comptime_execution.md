@@ -83,10 +83,13 @@ backends consume that plan rather than identifying arbitrary value sequences.
 The verifier also ties that cleanup to the surrounding write's exact lexical
 owner/projection, rejecting a same-typed but different destination. Native writes
 capture their address, value type and cleanup state before RHS emission, then
-commit and reactivate that captured state together. This is still local evidence;
-joining the plan with unknown targets remains the next step. AOT must carry the
-same owner/projection evidence through reference-valued fields, arguments and outputs;
-VM references already preserve concrete storage identity across those boundaries.
+commit and reactivate that captured state together. The selected replacement
+cleanup now receives that same captured address and flag range, rather than
+resolving its target again after RHS effects. Nested replacements restore the
+outer capture; temporary and scope-exit cleanup retain their own identities.
+This remains local evidence. AOT must carry it through reference-valued fields,
+arguments and outputs before using the plan for unknown targets. VM references
+already preserve concrete storage identity across those boundaries.
 The private Argi ABI now provides opt-in typed input evidence and caller-owned
 output-evidence storage, independently of direct/indirect value returns. Its
 shared signature validates both channels before emitting a call or return;
