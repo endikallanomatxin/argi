@@ -70,6 +70,7 @@ pub const Lower = struct {
         return .{ .allocator = a, .graph = graph, .functions = functions, .cleanup_bindings = cleanup_bindings, .cleanup_types = cleanup_types, .bool_type = bool_type };
     }
     // All bytecode allocations belong to the caller's compilation arena.
+    // VM initialization verifies the completed program before accepting it.
     pub fn compile(self: *Lower, entry: g.GlobalFunctionId) !b.Program {
         try self.pending.append(self.allocator, entry);
         defer self.pending.deinit(self.allocator);
@@ -78,9 +79,7 @@ pub const Lower = struct {
             var f = FunctionLower{ .parent = self };
             self.functions[@intFromEnum(id)] = try f.compile(id);
         }
-        const program = b.Program{ .graph = self.graph, .functions = self.functions };
-        try b.verify(self.allocator, program);
-        return program;
+        return .{ .graph = self.graph, .functions = self.functions };
     }
     fn reject(self: *Lower, source: p.SourceRef, name: []const u8) error{UnsupportedExecution} {
         self.source = source;

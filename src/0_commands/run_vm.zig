@@ -72,7 +72,11 @@ pub fn run(io: std.Io, environ: ?*const std.process.Environ.Map, args: []const [
         try report(&diagnostics, graph, compiler.source, message);
         return error.CompilationFailed;
     };
-    var executor = try vm.Vm.init(allocator, program, .{});
+    var executor = vm.Vm.init(allocator, program, .{}) catch |err| {
+        const message = try std.fmt.allocPrint(allocator, "VM initialization failed: {s}", .{@errorName(err)});
+        try report(&diagnostics, graph, compiler.source, message);
+        return error.CompilationFailed;
+    };
     defer executor.deinit();
     const result = executor.run(id, &.{}) catch |err| {
         const message = try std.fmt.allocPrint(allocator, "VM execution failed: {s}", .{@errorName(err)});

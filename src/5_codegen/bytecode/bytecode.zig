@@ -83,6 +83,8 @@ pub const Function = struct {
 
 // Bytecode borrows the finalized graph's type and function identities. Its owner
 // must retain that graph; execution never calls semantic resolution.
+// Program is unverified data. Vm.init validates it once; instructions, function
+// tables and graph metadata must then remain unchanged until Vm.deinit.
 pub const Program = struct {
     graph: *const g.GlobalSemanticGraph,
     functions: []const ?Function,

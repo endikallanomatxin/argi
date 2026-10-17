@@ -10,9 +10,9 @@ The checked semantic graph feeds alternative backends under `src/5_codegen/`:
 lives in `src/execution/`; execution is not a subsequent compilation phase.
 
 `argi run --vm <directory>` lowers the checked global graph to typed bytecode
-with source locations, verifies signatures/control flow/definite initialization,
-and executes a bounded scalar/aggregate subset. Function and type identities remain
-those of the retained global graph. See [usage](../docs/usage.md#experimental-bytecode-execution).
+with source locations. VM initialization verifies signatures, control flow and
+definite initialization once before execution of a bounded scalar/aggregate
+subset. Function and type identities remain those of the retained global graph. See [usage](../docs/usage.md#experimental-bytecode-execution).
 
 Next: resolve lifecycle transitions for runtime destinations, extend partial
 initialization and error propagation, then build persistent sessions and `#run`.

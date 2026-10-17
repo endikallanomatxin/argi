@@ -124,6 +124,7 @@ test "bytecode verifier rejects malformed control flow and missing initializatio
     const functions = [_]?b.Function{.{ .slots = &.{ @enumFromInt(1), @enumFromInt(0) }, .inputs = &.{}, .outputs = &.{1}, .code = &code }};
     const program = b.Program{ .graph = &graph, .functions = &functions };
     try std.testing.expectError(error.UninitializedBytecodeSlot, b.verify(a, program));
+    try std.testing.expectError(error.UninitializedBytecodeSlot, vm.Vm.init(a, program, .{}));
     code[1].op.branch.yes = 2;
     try b.verify(a, program);
     code[1].op.branch.yes = 99;
@@ -133,6 +134,7 @@ test "bytecode verifier rejects malformed control flow and missing initializatio
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
     graph.target.arch = if (@import("builtin").cpu.arch == .aarch64) .x86_64 else .aarch64;
     try std.testing.expectError(error.UnsupportedExecutionTarget, b.verify(a, program));
+    try std.testing.expectError(error.UnsupportedExecutionTarget, vm.Vm.init(a, program, .{}));
 }
 
 test "bytecode returns immutable records across frames" {
