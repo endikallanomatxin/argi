@@ -25,6 +25,7 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
         if (f.inputs.len != declaration.input.len or f.outputs.len != declaration.output.len) return error.InvalidBytecode;
         for (f.inputs, 0..) |slot, i| if (slot >= f.slots.len or !types.equal(program.graph, f.slots[slot], program.graph.fields.items[declaration.input.start + i].ty)) return error.InvalidBytecode;
         for (f.outputs, 0..) |slot, i| if (slot >= f.slots.len or !types.equal(program.graph, f.slots[slot], program.graph.fields.items[declaration.output.start + i].ty)) return error.InvalidBytecode;
+        try verifyCleanup(allocator, program.graph, f);
         for (f.code) |inst| {
             var reads: std.ArrayList(Slot) = .empty;
             defer reads.deinit(allocator);
@@ -99,6 +100,13 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                     const target = try placeInfo(program.graph, f.slots, x.place);
                     if (!target.writable or !types.equal(program.graph, f.slots[x.value], target.ty)) return error.InvalidBytecode;
                 },
+                .cleanup_test => |x| {
+                    _ = try placeInfo(program.graph, f.slots, x.place);
+                    if (!valueFits(program.graph, f.slots[x.dst], .{ .boolean = false })) return error.InvalidBytecode;
+                },
+                .cleanup_set => |x| {
+                    if (!(try placeInfo(program.graph, f.slots, x.place)).writable) return error.InvalidBytecode;
+                },
                 .branch => |x| if (x.yes >= f.code.len or x.no >= f.code.len or !valueFits(program.graph, f.slots[x.condition], .{ .boolean = false })) return error.InvalidBytecode,
                 .jump => |target| if (target >= f.code.len) return error.InvalidBytecode,
                 .ret => |slots| {
@@ -128,6 +136,7 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
         states[0] = try allocator.alloc(bool, f.slots.len);
         @memset(states[0].?, false);
         for (f.inputs) |slot| states[0].?[slot] = true;
+        for (f.cleanup) |entry| states[0].?[entry.flag] = true;
         var pending: std.ArrayList(u32) = .empty;
         defer pending.deinit(allocator);
         try pending.append(allocator, 0);
@@ -196,6 +205,7 @@ fn destinations(i: Instruction, single: *[1]Slot) []const Slot {
         .is_variant => |x| x.dst,
         .borrow => |x| x.dst,
         .load => |x| x.dst,
+        .cleanup_test => |x| x.dst,
         else => null,
     };
     if (slot) |value| {
@@ -225,11 +235,49 @@ fn readSlots(a: std.mem.Allocator, i: Instruction, out: *std.ArrayList(Slot)) !v
             try readPlace(a, x.place, out);
             try out.append(a, x.value);
         },
+        .cleanup_test => |x| try readCleanupPlace(a, x.place, out),
+        .cleanup_set => |x| try readCleanupPlace(a, x.place, out),
         .call => |x| try out.appendSlice(a, x.args),
         .branch => |x| try out.append(a, x.condition),
         .ret => |x| try out.appendSlice(a, x),
         else => {},
     }
+}
+
+fn readCleanupPlace(a: std.mem.Allocator, place: Place, out: *std.ArrayList(Slot)) !void {
+    // A static storage identity exists even before its value is initialized.
+    // Following a runtime reference or index still requires initialized values.
+    for (place.path) |projection| if (projection == .dereference or projection == .element) {
+        return readPlace(a, place, out);
+    };
+}
+
+fn verifyCleanup(a: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, f: b.Function) !void {
+    const flags = try a.alloc(bool, f.slots.len);
+    defer a.free(flags);
+    @memset(flags, false);
+    for (f.cleanup, 0..) |entry, index| {
+        if (entry.root >= f.slots.len or entry.flag >= f.slots.len or flags[entry.flag] or
+            entry.path.len > 64 or !valueFits(graph, f.slots[entry.flag], .{ .boolean = false })) return error.InvalidBytecode;
+        flags[entry.flag] = true;
+        var ty = f.slots[entry.root];
+        for (entry.path) |projection| switch (projection) {
+            .field => |field| {
+                const fields = types.fields(graph, ty) orelse return error.InvalidBytecode;
+                if (field >= fields.len) return error.InvalidBytecode;
+                ty = graph.fields.items[fields.start + field].ty;
+            },
+            .variant => |id| ty = (try choiceVariant(graph, ty, @enumFromInt(id))).payload_type orelse return error.InvalidBytecode,
+            .element => |element| {
+                if (element >= (types.arrayLength(graph, ty) orelse return error.InvalidBytecode)) return error.InvalidBytecode;
+                ty = types.arrayElement(graph, ty) orelse return error.InvalidBytecode;
+            },
+        };
+        if (index != 0 and b.cleanupOrder(f.cleanup[index - 1], entry) != .lt) return error.InvalidBytecode;
+    }
+    for (f.cleanup) |entry| if (flags[entry.root]) return error.InvalidBytecode;
+    for (f.inputs) |slot| if (flags[slot]) return error.InvalidBytecode;
+    for (f.outputs) |slot| if (flags[slot]) return error.InvalidBytecode;
 }
 
 fn placeInfo(graph: *const g.GlobalSemanticGraph, slots: []const Type, place: Place) !struct { ty: Type, writable: bool } {

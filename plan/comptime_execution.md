@@ -40,8 +40,9 @@ continues to prove lexical lifetimes, aliasing, and storage-generation rules.
 References cannot enter from external values or escape completed frames.
 
 Cleanup lowers the frontend's selected operations and activation annotations to
-ordinary branches and calls. Per-binding field/variant flags are initialized in
-an entry prologue; moves disable source subtrees and initialization enables them.
+ordinary branches and calls. Compiler-defined field/variant layouts attach flags
+to actual frame storage. Frames initialize those flags independently of value
+occupancy; moves disable source subtrees and initialization enables them.
 Active payload guards precede their cleanup. Result-dependent consumption follows
 selected output tags, including discarded results. No second ownership analysis
 runs in the VM. Partial initialization through output references and native resources
@@ -72,6 +73,12 @@ occupancy now distinguishes vacancy from a complete value. Partial aggregate
 initialization and value-generation transitions still need checked operations;
 a complete-slot occupancy marker does not provide either.
 
+Bytecode lifecycle instructions now resolve cleanup state through actual storage
+identities, including references into caller frames, without reading vacant
+values. They use the compiler's existing cleanup flags and sorted layouts, not
+a second ownership analysis. General indirect replacement still requires checked
+cleanup plans and corresponding native evidence transport before it is enabled.
+
 A reference needs a target identity and its observed generation. Aliases can
 name the same target while retaining different observed generations. Shared
 borrow dependencies express possible aliasing; they are not the target's own
@@ -93,7 +100,8 @@ Constant local aliases now carry their proven lexical cleanup target on writes;
 both backends preserve the original pointer evaluation and use the target's flags.
 This includes reference fields projected from immutable literal records and
 their copies; mutable records and function results do not establish that proof.
-Retargetable aliases and unknown input referents still need shared cleanup identity.
+Retargetable aliases and unknown input referents still need selected indirect
+cleanup plans and native evidence transport.
 Call summaries now distinguish preserved, possible and definite initialization;
 caller cleanup reactivation follows actual writes and represented result outcomes.
 An initialized post-state alone does not prove a value was written to vacant storage.

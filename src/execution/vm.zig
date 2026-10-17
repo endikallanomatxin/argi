@@ -75,7 +75,7 @@ pub const Vm = struct {
         return function;
     }
     fn frame(self: *Vm, function: *const b.Function, args: []const b.Value, return_slots: []const b.Slot) !Frame {
-        const id = try self.storage.enter(function.slots.len);
+        const id = try self.storage.enterCleanup(function.slots.len, function.cleanup);
         const slots = try self.storage.slots(id);
         for (args, function.inputs) |value, slot| try slots.put(slot, value);
         return .{ .function = function, .storage = id, .return_slots = return_slots };
@@ -156,6 +156,21 @@ pub const Vm = struct {
                     var path: [64]runtime_value.Projection = undefined;
                     const reference = try self.storage.resolve(current.storage, x.place, &path);
                     try self.storage.store(reference, try slots.get(x.value));
+                },
+                .cleanup_test => |x| {
+                    var path: [64]runtime_value.Projection = undefined;
+                    const reference = try self.storage.resolveCleanup(current.storage, x.place, &path);
+                    try slots.put(x.dst, .{ .boolean = try self.storage.cleanupTest(reference) });
+                },
+                .cleanup_set => |x| {
+                    var path: [64]runtime_value.Projection = undefined;
+                    const reference = try self.storage.resolveCleanup(current.storage, x.place, &path);
+                    // A subtree update performs work without allocating value
+                    // cells. Charge its flags too, so a large owner in a loop
+                    // cannot turn one instruction into unbounded cleanup work.
+                    const updated = try self.storage.cleanupSet(reference, x.enabled);
+                    if (updated > self.limits.instructions - self.steps) return error.ExecutionInstructionLimit;
+                    self.steps += updated;
                 },
                 .field => |x| try slots.put(x.dst, (try slots.get(x.base)).record[x.index]),
                 .binary => |x| {

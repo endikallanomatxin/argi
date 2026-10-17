@@ -3,7 +3,7 @@ const b = @import("../5_codegen/bytecode/bytecode.zig");
 const v = @import("../5_codegen/bytecode/value.zig");
 const p = @import("../4_semantics/primitives/schema.zig");
 
-const Frame = struct { values: []?b.Value, alive: bool = true };
+const Frame = struct { values: []?b.Value, cleanup: []const b.Cleanup = &.{}, alive: bool = true };
 
 // Slots contain either a complete value (including Void) or no value. This is
 // concrete occupancy, not the checker's abstract maybe-initialized state, and
@@ -63,14 +63,21 @@ pub const Storage = struct {
         return self.allocator.alloc(b.Value, count);
     }
     pub fn enter(self: *Storage, count: usize) !v.FrameId {
+        return self.enterCleanup(count, &.{});
+    }
+    pub fn enterCleanup(self: *Storage, count: usize, cleanup: []const b.Cleanup) !v.FrameId {
         // Also bound zero-slot frames and the frame identity table.
         try self.charge(1);
         if (self.frames.items.len >= std.math.maxInt(u32)) return error.ExecutionMemoryLimit;
         try self.charge(count);
         const values = try self.allocator.alloc(?b.Value, count);
         @memset(values, null);
+        for (cleanup) |entry| {
+            if (entry.root >= count or entry.flag >= count or entry.root == entry.flag) return error.ExecutionInvalidReference;
+            values[entry.flag] = .{ .boolean = false };
+        }
         const id: v.FrameId = @enumFromInt(self.frames.items.len);
-        try self.frames.append(self.allocator, .{ .values = values });
+        try self.frames.append(self.allocator, .{ .values = values, .cleanup = cleanup });
         return id;
     }
     pub fn leave(self: *Storage, id: v.FrameId) void {
@@ -104,32 +111,48 @@ pub const Storage = struct {
         };
     }
     pub fn resolve(self: *Storage, frame: v.FrameId, place: b.Place, path: *[64]v.Projection) !v.Reference {
+        return self.resolveTarget(frame, place, path, true);
+    }
+    // Lifecycle access locates storage without reading its current value. Only
+    // following a reference or checking an array index needs an operand read.
+    pub fn resolveCleanup(self: *Storage, frame: v.FrameId, place: b.Place, path: *[64]v.Projection) !v.Reference {
+        return self.resolveTarget(frame, place, path, false);
+    }
+    fn resolveTarget(self: *Storage, frame: v.FrameId, place: b.Place, path: *[64]v.Projection, comptime read_value: bool) !v.Reference {
         const locals = try self.slots(frame);
+        if (place.root >= (try locals.cells()).len) return error.ExecutionInvalidReference;
         var reference = v.Reference{ .context = self.context, .frame = frame, .root = place.root, .path = &.{}, .mutability = .read_write };
-        var value = try self.read(reference);
+        var value: ?b.Value = if (read_value) try self.read(reference) else null;
         var length: usize = 0;
-        for (place.path) |projection| switch (projection) {
-            .dereference => {
-                if (value != .reference) return error.ExecutionInvalidReference;
-                reference = value.reference;
+        for (place.path) |projection| {
+            reference.path = path[0..length];
+            if (projection == .dereference) {
+                const pointer = value orelse try self.read(reference);
+                if (pointer != .reference) return error.ExecutionInvalidReference;
+                reference = pointer.reference;
+                try self.validateContext(reference);
+                _ = try self.slots(reference.frame);
                 if (reference.path.len > path.len) return error.ExecutionInvalidReference;
-                value = try self.read(reference);
+                value = if (read_value) try self.read(reference) else null;
                 length = reference.path.len;
                 @memcpy(path[0..length], reference.path);
-            },
-            else => {
-                if (length == path.len) return error.ExecutionInvalidReference;
-                const concrete: v.Projection = switch (projection) {
-                    .field => |index| .{ .field = index },
-                    .variant => |variant| .{ .variant = @intFromEnum(variant) },
-                    .element => |index| .{ .element = try elementIndex((try locals.get(index)).integer, if (value == .array) value.array.len else return error.ExecutionInvalidReference) },
-                    .dereference => unreachable,
-                };
-                value = try child(value, concrete);
-                path[length] = concrete;
-                length += 1;
-            },
-        };
+                continue;
+            }
+            if (length == path.len) return error.ExecutionInvalidReference;
+            const concrete: v.Projection = switch (projection) {
+                .field => |index| .{ .field = index },
+                .variant => |variant| .{ .variant = @intFromEnum(variant) },
+                .element => |index| blk: {
+                    const array = value orelse try self.read(reference);
+                    if (array != .array) return error.ExecutionInvalidReference;
+                    break :blk .{ .element = try elementIndex((try locals.get(index)).integer, array.array.len) };
+                },
+                .dereference => unreachable,
+            };
+            if (read_value) value = try child(value.?, concrete);
+            path[length] = concrete;
+            length += 1;
+        }
         reference.path = path[0..length];
         return reference;
     }
@@ -141,6 +164,43 @@ pub const Storage = struct {
         result.path = try self.allocator.dupe(v.Projection, reference.path);
         result.mutability = mutability;
         return .{ .reference = result };
+    }
+
+    fn cleanupEntry(self: *Storage, reference: v.Reference) !usize {
+        try self.validateContext(reference);
+        _ = try self.slots(reference.frame);
+        const layout = self.frames.items[@intFromEnum(reference.frame)].cleanup;
+        const key = b.Cleanup{ .root = reference.root, .path = reference.path, .flag = 0 };
+        var start: usize = 0;
+        var end = layout.len;
+        while (start < end) {
+            const middle = start + (end - start) / 2;
+            switch (b.cleanupOrder(layout[middle], key)) {
+                .lt => start = middle + 1,
+                .gt => end = middle,
+                .eq => return middle,
+            }
+        }
+        return error.ExecutionMissingCleanup;
+    }
+    pub fn cleanupTest(self: *Storage, reference: v.Reference) !bool {
+        const index = try self.cleanupEntry(reference);
+        const flag = self.frames.items[@intFromEnum(reference.frame)].cleanup[index].flag;
+        return (try (try self.slots(reference.frame)).get(flag)).boolean;
+    }
+    pub fn cleanupSet(self: *Storage, reference: v.Reference, enabled: bool) !usize {
+        try self.validateContext(reference);
+        if (reference.mutability != .read_write) return error.ExecutionReadonlyReference;
+        const index = try self.cleanupEntry(reference);
+        const values = try self.slots(reference.frame);
+        const layout = self.frames.items[@intFromEnum(reference.frame)].cleanup;
+        var updated: usize = 0;
+        for (layout[index..]) |entry| {
+            if (!b.cleanupContains(layout[index], entry)) break;
+            try values.put(entry.flag, .{ .boolean = enabled });
+            updated += 1;
+        }
+        return updated;
     }
     pub fn store(self: *Storage, reference: v.Reference, value: b.Value) !void {
         try self.validateContext(reference);

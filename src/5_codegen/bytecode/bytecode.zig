@@ -1,3 +1,4 @@
+const std = @import("std");
 const g = @import("../../4_semantics/global/graph.zig");
 const types = @import("../../4_semantics/global/types.zig");
 const p = @import("../../4_semantics/primitives/schema.zig");
@@ -9,6 +10,34 @@ pub const Value = @import("value.zig").Value;
 // Index operands are snapshots evaluated by lowering in source order.
 pub const Projection = union(enum) { field: u32, element: Slot, variant: g.GlobalVariantId, dereference };
 pub const Place = struct { root: Slot, path: []const Projection };
+
+// Compiler-selected cleanup state is attached to storage, not copied values or
+// reference slots. Paths are concrete layout projections, never dereferences.
+// Entries are sorted by root and path; each subtree is contiguous for bounded
+// lookup and updates. Flag cells start false independently of value occupancy.
+pub const Cleanup = struct { root: Slot, path: []const @import("value.zig").Projection, flag: Slot };
+
+pub fn cleanupOrder(a: Cleanup, c: Cleanup) std.math.Order {
+    const root = std.math.order(a.root, c.root);
+    if (root != .eq) return root;
+    for (a.path[0..@min(a.path.len, c.path.len)], c.path[0..@min(a.path.len, c.path.len)]) |left, right| {
+        const tag = std.math.order(@intFromEnum(left), @intFromEnum(right));
+        if (tag != .eq) return tag;
+        const order = switch (left) {
+            .field => |index| std.math.order(index, right.field),
+            .element => |index| std.math.order(index, right.element),
+            .variant => |index| std.math.order(index, right.variant),
+        };
+        if (order != .eq) return order;
+    }
+    return std.math.order(a.path.len, c.path.len);
+}
+
+pub fn cleanupContains(parent: Cleanup, child: Cleanup) bool {
+    if (parent.root != child.root or parent.path.len > child.path.len) return false;
+    for (parent.path, child.path[0..parent.path.len]) |left, right| if (!std.meta.eql(left, right)) return false;
+    return true;
+}
 
 pub const Instruction = struct {
     source: p.SourceRef,
@@ -30,6 +59,8 @@ pub const Instruction = struct {
         load: struct { dst: Slot, place: Place },
         check_place: Place,
         store: struct { place: Place, value: Slot },
+        cleanup_test: struct { dst: Slot, place: Place },
+        cleanup_set: struct { place: Place, enabled: bool },
         call: struct { outputs: []const Slot, function: g.GlobalFunctionId, args: []const Slot },
         branch: struct { condition: Slot, yes: u32, no: u32 },
         jump: u32,
@@ -42,6 +73,7 @@ pub const Function = struct {
     inputs: []const Slot,
     outputs: []const Slot,
     code: []const Instruction,
+    cleanup: []const Cleanup = &.{},
 };
 
 // Bytecode borrows the finalized graph's type and function identities. Its owner

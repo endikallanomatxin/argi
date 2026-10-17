@@ -91,7 +91,7 @@ pub const Lower = struct {
 };
 
 const Loop = struct { breaks: std.ArrayList(u32) = .empty, continues: std.ArrayList(u32) = .empty };
-const DropState = struct { flag: b.Slot, fields: []const DropState = &.{} };
+const DropState = struct { place: b.Place, fields: []const DropState = &.{} };
 const FunctionLower = struct {
     parent: *Lower,
     slots: std.ArrayList(b.Type) = .empty,
@@ -99,14 +99,13 @@ const FunctionLower = struct {
     bindings: std.AutoHashMapUnmanaged(g.GlobalBindingId, b.Slot) = .empty,
     outputs: []const b.Slot = &.{},
     drops: std.AutoHashMapUnmanaged(g.GlobalBindingId, DropState) = .empty,
-    drop_flags: std.ArrayList(b.Slot) = .empty,
+    cleanup: std.ArrayList(b.Cleanup) = .empty,
     loops: std.ArrayList(Loop) = .empty,
 
     fn compile(self: *FunctionLower, id: g.GlobalFunctionId) !b.Function {
         const a = self.parent.allocator;
         defer self.bindings.deinit(a);
         defer self.drops.deinit(a);
-        defer self.drop_flags.deinit(a);
         defer self.loops.deinit(a);
         const f = self.parent.graph.function(id);
         const source = self.parent.graph.declaration(f.declaration).source;
@@ -129,49 +128,42 @@ const FunctionLower = struct {
         }
         try self.block(f.body.?);
         _ = try self.emit(source, .{ .ret = outputs });
-        // Flags are entry storage, including bindings first encountered in a branch.
-        // Initialize them in a prologue so every CFG join has defined state.
-        const prefix: u32 = @intCast(self.drop_flags.items.len);
-        const code = try a.alloc(b.Instruction, prefix + self.code.items.len);
-        for (self.drop_flags.items, 0..) |flag, i| code[i] = .{ .source = source, .op = .{ .constant = .{ .dst = flag, .value = .{ .boolean = false } } } };
-        for (self.code.items, code[prefix..]) |instruction, *out| {
-            out.* = instruction;
-            switch (out.op) {
-                .jump => |*pc| pc.* += prefix,
-                .branch => |*branch| {
-                    branch.yes += prefix;
-                    branch.no += prefix;
-                },
-                .branch_variant => |*branch| {
-                    branch.yes += prefix;
-                    branch.no += prefix;
-                },
-                else => {},
-            }
-        }
-        self.code.deinit(a);
-        return .{ .slots = try self.slots.toOwnedSlice(a), .inputs = inputs, .outputs = outputs, .code = code };
+        return .{ .slots = try self.slots.toOwnedSlice(a), .inputs = inputs, .outputs = outputs, .code = try self.code.toOwnedSlice(a), .cleanup = try self.cleanup.toOwnedSlice(a) };
     }
+
     fn boolType(self: *FunctionLower) !b.Type {
         return self.parent.bool_type orelse error.InvalidBytecode;
     }
-    fn buildDrop(self: *FunctionLower, ty: b.Type) anyerror!DropState {
-        var drop = DropState{ .flag = try self.newSlot(try self.boolType()) };
-        try self.drop_flags.append(self.parent.allocator, drop.flag);
+    fn buildDrop(self: *FunctionLower, ty: b.Type, target: b.Place) anyerror!DropState {
+        const a = self.parent.allocator;
+        var drop = DropState{ .place = target };
+        const path = try a.alloc(@import("value.zig").Projection, target.path.len);
+        for (target.path, path) |projection, *out| out.* = switch (projection) {
+            .field => |index| .{ .field = index },
+            .variant => |variant| .{ .variant = @intFromEnum(variant) },
+            else => return error.InvalidBytecode,
+        };
+        try self.cleanup.append(a, .{ .root = target.root, .path = path, .flag = try self.newSlot(try self.boolType()) });
         if (types.variants(self.parent.graph, ty)) |range| {
-            const children = try self.parent.allocator.alloc(DropState, range.len);
-            for (children, self.parent.graph.variants.items[range.start..][0..range.len]) |*child, variant| child.* = try self.buildDrop(variant.payload_type orelse try self.boolType());
+            const children = try a.alloc(DropState, range.len);
+            for (children, self.parent.graph.variants.items[range.start..][0..range.len], 0..) |*child, variant, index| {
+                // Payloadless variants have no storage or cleanup subtree.
+                child.* = if (variant.payload_type) |payload|
+                    try self.buildDrop(payload, try self.project(target, .{ .variant = @enumFromInt(range.start + index) }))
+                else
+                    .{ .place = target };
+            }
             drop.fields = children;
         } else if (types.fields(self.parent.graph, ty)) |range| {
-            const children = try self.parent.allocator.alloc(DropState, range.len);
-            for (children, self.parent.graph.fields.items[range.start..][0..range.len]) |*child, field| child.* = try self.buildDrop(field.ty);
+            const children = try a.alloc(DropState, range.len);
+            for (children, self.parent.graph.fields.items[range.start..][0..range.len], 0..) |*child, field, index|
+                child.* = try self.buildDrop(field.ty, try self.project(target, .{ .field = @intCast(index) }));
             drop.fields = children;
         }
         return drop;
     }
     fn setDrop(self: *FunctionLower, drop: DropState, enabled: bool) anyerror!void {
-        _ = try self.emit(self.parent.source, .{ .constant = .{ .dst = drop.flag, .value = .{ .boolean = enabled } } });
-        for (drop.fields) |child| try self.setDrop(child, enabled);
+        _ = try self.emit(self.parent.source, .{ .cleanup_set = .{ .place = drop.place, .enabled = enabled } });
     }
     fn nodeDrop(self: *FunctionLower, id: g.GlobalNodeId) ?DropState {
         return switch (self.parent.graph.node(id).content) {
@@ -214,7 +206,9 @@ const FunctionLower = struct {
     }
     fn cleanupStorage(self: *FunctionLower, callee: ?g.GlobalFunctionId, input: ?g.GlobalNodeId, self_index: u32, fields: p.Range(g.GlobalAutoDeinitFieldId), target: b.Place, ty: b.Type, drop: DropState) anyerror!void {
         const source = self.parent.source;
-        const branch = try self.emit(source, .{ .branch = .{ .condition = drop.flag, .yes = self.position() + 1, .no = 0 } });
+        const live = try self.newSlot(try self.boolType());
+        _ = try self.emit(source, .{ .cleanup_test = .{ .dst = live, .place = drop.place } });
+        const branch = try self.emit(source, .{ .branch = .{ .condition = live, .yes = self.position() + 1, .no = 0 } });
         if (callee) |id| {
             const function = self.parent.graph.function(id);
             if (function.output.len != 0) return self.parent.reject(source, "destructor with outputs");
@@ -267,7 +261,7 @@ const FunctionLower = struct {
         if (self.bindings.get(id)) |slot_id| return slot_id;
         const slot_id = try self.newSlot(self.parent.graph.binding(id).ty);
         try self.bindings.put(self.parent.allocator, id, slot_id);
-        if (self.parent.cleanup_bindings[@intFromEnum(id)]) try self.drops.put(self.parent.allocator, id, try self.buildDrop(self.parent.graph.binding(id).ty));
+        if (self.parent.cleanup_bindings[@intFromEnum(id)]) try self.drops.put(self.parent.allocator, id, try self.buildDrop(self.parent.graph.binding(id).ty, .{ .root = slot_id, .path = &.{} }));
         return slot_id;
     }
     fn emit(self: *FunctionLower, source: p.SourceRef, op: @FieldType(b.Instruction, "op")) !u32 {

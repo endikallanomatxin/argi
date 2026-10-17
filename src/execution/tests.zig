@@ -370,6 +370,107 @@ test "bytecode storage separates vacant slots from initialized Void" {
     try std.testing.expectError(error.ExecutionUninitializedStorage, slots.get(1));
 }
 
+test "bytecode cleanup identity follows storage across frames without reading vacant values" {
+    const Storage = @import("storage.zig").Storage;
+    const v = @import("../5_codegen/bytecode/value.zig");
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 100);
+    const layout = [_]b.Cleanup{
+        .{ .root = 0, .path = &.{}, .flag = 2 },
+        .{ .root = 0, .path = &.{.{ .field = 0 }}, .flag = 3 },
+        .{ .root = 0, .path = &.{.{ .field = 1 }}, .flag = 4 },
+    };
+    const caller = try storage.enterCleanup(5, &layout);
+    const slots = try storage.slots(caller);
+    var path: [64]v.Projection = undefined;
+    const owner = try storage.resolveCleanup(caller, .{ .root = 0, .path = &.{} }, &path);
+    try std.testing.expect(!try storage.cleanupTest(owner));
+    try std.testing.expectError(error.ExecutionUninitializedStorage, storage.read(owner));
+    const vacant_field = try storage.resolveCleanup(caller, .{ .root = 0, .path = &.{.{ .field = 0 }} }, &path);
+    try std.testing.expect(!try storage.cleanupTest(vacant_field));
+    _ = try storage.cleanupSet(owner, true);
+    try std.testing.expectError(error.ExecutionUninitializedStorage, storage.read(owner));
+    _ = try storage.cleanupSet(owner, false);
+    const record = b.Value{ .record = &.{ .{ .integer = 10 }, .{ .integer = 20 } } };
+    try slots.put(0, record);
+    _ = try storage.cleanupSet(owner, true);
+    const borrowed = try storage.borrow(owner, .read_write);
+    const callee = try storage.enter(1);
+    try (try storage.slots(callee)).put(0, borrowed);
+    const field = try storage.resolveCleanup(callee, .{ .root = 0, .path = &.{ .dereference, .{ .field = 0 } } }, &path);
+    try std.testing.expect(try storage.cleanupTest(field));
+    _ = try storage.cleanupSet(field, false);
+    try std.testing.expect(try storage.cleanupTest(owner));
+    const sibling = try storage.resolveCleanup(caller, .{ .root = 0, .path = &.{.{ .field = 1 }} }, &path);
+    try std.testing.expect(try storage.cleanupTest(sibling));
+    var readonly = borrowed.reference;
+    readonly.mutability = .read_only;
+    try std.testing.expectError(error.ExecutionReadonlyReference, storage.cleanupSet(readonly, false));
+    // A value snapshot does not copy the original storage's cleanup identity.
+    try slots.put(1, record);
+    const copy = try storage.resolveCleanup(caller, .{ .root = 1, .path = &.{} }, &path);
+    try std.testing.expectError(error.ExecutionMissingCleanup, storage.cleanupTest(copy));
+    storage.leave(callee);
+    _ = try storage.cleanupSet(owner, false);
+    try std.testing.expect(!try storage.cleanupTest(owner));
+    storage.leave(caller);
+    try std.testing.expectError(error.ExecutionDeadReference, storage.cleanupTest(owner));
+}
+
+test "bytecode lifecycle instructions update caller state through an ordinary reference argument" {
+    const g = @import("../4_semantics/global/graph.zig");
+    const a = std.testing.allocator;
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.appendSlice(a, &.{ .{ .builtin = .Int32 }, .{ .builtin = .Bool }, .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_write } } });
+    const source = @import("../4_semantics/primitives/schema.zig").SourceRef{ .file_index = 0, .offset = 0 };
+    try graph.fields.appendSlice(a, &.{
+        .{ .name = .{ .start = 0, .len = 0 }, .ty = @enumFromInt(1), .source = source },
+        .{ .name = .{ .start = 0, .len = 0 }, .ty = @enumFromInt(2), .source = source },
+    });
+    try graph.functions.appendSlice(a, &.{
+        .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 1 } },
+        .{ .declaration = @enumFromInt(0), .input = .{ .start = 1, .len = 1 }, .output = .{ .start = 0, .len = 0 } },
+    });
+    const caller = [_]b.Instruction{
+        .{ .source = source, .op = .{ .cleanup_test = .{ .dst = 3, .place = .{ .root = 0, .path = &.{} } } } },
+        .{ .source = source, .op = .{ .branch = .{ .condition = 3, .yes = 8, .no = 2 } } },
+        .{ .source = source, .op = .{ .constant = .{ .dst = 0, .value = .{ .integer = 42 } } } },
+        .{ .source = source, .op = .{ .borrow = .{ .dst = 1, .place = .{ .root = 0, .path = &.{} } } } },
+        .{ .source = source, .op = .{ .cleanup_set = .{ .place = .{ .root = 0, .path = &.{} }, .enabled = true } } },
+        .{ .source = source, .op = .{ .call = .{ .function = @enumFromInt(1), .args = &.{1}, .outputs = &.{} } } },
+        .{ .source = source, .op = .{ .cleanup_test = .{ .dst = 3, .place = .{ .root = 0, .path = &.{} } } } },
+        .{ .source = source, .op = .{ .ret = &.{3} } },
+        .{ .source = source, .op = .abort_ },
+    };
+    const callee = [_]b.Instruction{
+        .{ .source = source, .op = .{ .cleanup_set = .{ .place = .{ .root = 0, .path = &.{.dereference} }, .enabled = false } } },
+        .{ .source = source, .op = .{ .ret = &.{} } },
+    };
+    var functions = [_]?b.Function{
+        .{ .slots = &.{ @enumFromInt(0), @enumFromInt(2), @enumFromInt(1), @enumFromInt(1) }, .inputs = &.{}, .outputs = &.{3}, .code = &caller, .cleanup = &.{.{ .root = 0, .path = &.{}, .flag = 2 }} },
+        .{ .slots = &.{@enumFromInt(2)}, .inputs = &.{0}, .outputs = &.{}, .code = &callee },
+    };
+    const program = b.Program{ .graph = &graph, .functions = &functions };
+    var executor = try vm.Vm.init(a, program, .{});
+    defer executor.deinit();
+    try std.testing.expect(!(try executor.run(@enumFromInt(0), &.{}))[0].boolean);
+    var bounded = try vm.Vm.init(a, program, .{ .instructions = 10 });
+    defer bounded.deinit();
+    try std.testing.expectError(error.ExecutionInstructionLimit, bounded.run(@enumFromInt(0), &.{}));
+    // Metadata cannot alias owner slots or reuse one flag for distinct paths.
+    functions[0].?.cleanup = &.{.{ .root = 2, .path = &.{}, .flag = 2 }};
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+    functions[0].?.cleanup = &.{ .{ .root = 0, .path = &.{}, .flag = 2 }, .{ .root = 0, .path = &.{}, .flag = 3 } };
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+    functions[0].?.cleanup = &.{.{ .root = 0, .path = &.{.{ .field = 0 }}, .flag = 2 }};
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+    functions[0].?.cleanup = &.{.{ .root = 0, .path = &.{}, .flag = 2 }};
+    graph.types.items[2].pointer.mutability = .read_only;
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+}
+
 test "bytecode references cannot name another execution context" {
     const Storage = @import("storage.zig").Storage;
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -387,6 +488,8 @@ test "bytecode references cannot name another execution context" {
     try std.testing.expectError(error.ExecutionForeignReference, second.read(reference.reference));
     try std.testing.expectError(error.ExecutionForeignReference, second.store(reference.reference, .unit));
     try std.testing.expectError(error.ExecutionForeignReference, second.borrow(reference.reference, .read_only));
+    try std.testing.expectError(error.ExecutionForeignReference, second.cleanupTest(reference.reference));
+    try std.testing.expectError(error.ExecutionForeignReference, second.cleanupSet(reference.reference, false));
     try std.testing.expectError(error.ExecutionForeignReference, second.validateLive(&.{.{ .record = &.{reference} }}));
     try std.testing.expectEqual(@as(i128, 99), (try (try second.slots(other_frame)).get(0)).integer);
     first.leave(frame);

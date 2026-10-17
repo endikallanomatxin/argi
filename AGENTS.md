@@ -337,6 +337,12 @@ feature first.
   destination and shared cleanup identity. VM lowering rejects owning writes
   through unresolved aliases and indexed storage until those identities are modeled.
   A reference field's cleanup flag describes its slot, never its referent.
+  Bytecode cleanup flags are attached to concrete storage by sorted compiler
+  layouts and start false on frame entry. Lifecycle queries can address vacant
+  storage without reading its value; following pointers and indices still reads
+  initialized operands. Reference copies retain target identity, while value
+  copies never copy cleanup obligations. Keep general indirect replacement
+  rejected until selected plans and native evidence transport are implemented.
   Immutable record literals can establish reference-field targets through their
   selected initializers. Preserve the original pointer evaluation and renew only
   the reference used for replacement, never sibling fields or record copies.
