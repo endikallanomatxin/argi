@@ -155,7 +155,11 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
             for (reads.items) |slot| if (!initialized[slot]) return error.UninitializedBytecodeSlot;
             switch (inst.op) {
                 .capture_write => |x| initialized[f.slots.len + x.dst] = true,
-                .store => |x| if (!initialized[f.slots.len + x.destination]) return error.UninitializedBytecodeDestination,
+                .store => |x| {
+                    const destination = f.slots.len + x.destination;
+                    if (!initialized[destination]) return error.UninitializedBytecodeDestination;
+                    initialized[destination] = false;
+                },
                 else => {},
             }
             var single: [1]Slot = undefined;

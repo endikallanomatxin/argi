@@ -713,6 +713,10 @@ test "bytecode write destinations capture aliases before later writes" {
     var executor = try vm.Vm.init(a, program, .{});
     defer executor.deinit();
     try std.testing.expectEqual(@as(i128, 42), (try executor.run(@enumFromInt(0), &.{}))[0].integer);
+    const original_copy = code[9];
+    code[9].op = .{ .store = .{ .destination = 0, .value = 1 } };
+    try std.testing.expectError(error.UninitializedBytecodeDestination, b.verify(a, program));
+    code[9] = original_copy;
     // Captured cleanup is required before RHS execution and charged when the
     // store activates it, just like an explicit cleanup_set instruction.
     code[5].op.capture_write.activate_cleanup = true;
@@ -804,7 +808,7 @@ test "bytecode captured writes activate referent cleanup across caller frames" {
     try callee_slots.put(0, try storage.borrow(first, .read_write));
     const destination = try storage.captureWrite(callee, .{ .root = 0, .path = &.{.dereference} }, true);
     try callee_slots.put(0, try storage.borrow(second, .read_write));
-    try std.testing.expectEqual(@as(usize, 1), try storage.write(destination, empty));
+    try std.testing.expectEqual(@as(usize, 2), try storage.write(destination, empty));
     try std.testing.expect(try storage.cleanupTest(first));
     try std.testing.expect(!try storage.cleanupTest(second));
     try std.testing.expect(!(try callee_slots.get(1)).boolean);
@@ -816,9 +820,15 @@ test "bytecode captured writes activate referent cleanup across caller frames" {
     try std.testing.expect(!try storage.cleanupTest(second));
     // Whole-value initialization activates exactly the captured owner's subtree.
     const owner = try storage.captureWrite(caller, .{ .root = 0, .path = &.{} }, true);
-    try std.testing.expectEqual(@as(usize, 3), try storage.write(owner, pair));
+    try std.testing.expectError(error.ExecutionPendingCleanup, storage.write(owner, pair));
+    try std.testing.expect(!(try caller_slots.get(2)).boolean);
+    _ = try storage.cleanupSet(first, false);
+    try std.testing.expectEqual(@as(usize, 6), try storage.write(owner, pair));
     try std.testing.expect((try caller_slots.get(2)).boolean);
     try std.testing.expect(try storage.cleanupTest(second));
+    const replacement = b.Value{ .record = &.{ .{ .integer = 1 }, .{ .integer = 2 } } };
+    try std.testing.expectError(error.ExecutionPendingCleanup, storage.write(owner, replacement));
+    try std.testing.expect((try caller_slots.get(0)).record[0] == .record);
     _ = try storage.cleanupSet(first, false);
     try caller_slots.put(0, .{ .record = &.{} });
     try std.testing.expectError(error.ExecutionInvalidReference, storage.write(destination, empty));

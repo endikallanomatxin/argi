@@ -226,11 +226,25 @@ pub const Storage = struct {
     pub fn write(self: *Storage, destination: WriteDestination, value: b.Value) !usize {
         // Recheck storage liveness, permissions and aggregate shape. Capturing
         // access never grants initialization of vacant or released storage.
+        var checked: usize = 0;
+        if (destination.cleanup_entry) |index| {
+            try self.validateContext(destination.reference);
+            const slots_ = try self.slots(destination.reference.frame);
+            const layout = self.frames.items[@intFromEnum(destination.reference.frame)].cleanup;
+            // A replacement may start with an active or partially moved value,
+            // but its selected cleanup must finish before committing the new one.
+            // Root occupancy alone cannot prove that every child was discharged.
+            for (layout[index..]) |entry| {
+                if (!b.cleanupContains(layout[index], entry)) break;
+                if ((try slots_.get(entry.flag)).boolean) return error.ExecutionPendingCleanup;
+                checked += 1;
+            }
+        }
         try self.store(destination.reference, value);
         // Commit value and its checked cleanup obligation to the same captured
         // storage. No cleanup state is copied from the replacement value.
         return if (destination.cleanup_entry) |index|
-            self.cleanupSetAt(destination.reference, index, true)
+            checked + try self.cleanupSetAt(destination.reference, index, true)
         else
             0;
     }

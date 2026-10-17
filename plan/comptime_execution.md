@@ -58,6 +58,32 @@ selected output tags, including discarded results. No second ownership analysis
 runs in the VM. Partial initialization through output references and native resources
 remain outside the executor subset. Abort/quota failures do not execute user cleanup.
 
+## Lifecycle transitions
+
+Storage owns concrete lifecycle state; reference values carry access to that
+storage, not copies of its cleanup obligations. A checked replacement follows:
+
+1. Capture the destination once while its backing storage is live.
+2. Evaluate the RHS into a separate lexical owner. Failure leaves the old value.
+3. Execute the frontend-selected cleanup against the destination's active subtree.
+4. Commit the replacement and activate its cleanup, consuming the captured access.
+
+Bytecode verification consumes destination registers on store, and each loop
+iteration must recapture them. Runtime commit rejects any active flag in the
+captured cleanup subtree, including live children under an inactive root. A
+failed write does not reactivate flags. Checks and updates count against fuel.
+These checks validate execution of selected plans; they do not select destructors
+or replace the safety proof. Fatal interruption still poisons a future persistent
+session rather than promising rollback or replayable cleanup.
+
+Next, represent this transition directly in the checked graph and summaries,
+instead of recovering it from an arbitrary store. AOT must carry the same
+owner/projection evidence through reference-valued fields, arguments and outputs;
+VM references already preserve concrete storage identity across those boundaries.
+Do not generalize lexical body-pattern proofs to substitute for that evidence.
+General owning indirect replacement remains unsupported until both backends and
+the checker implement the transition.
+
 ## Storage direction (proposed)
 
 The reference-replacement investigation found a shared frontend gap, not only

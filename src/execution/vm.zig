@@ -163,7 +163,11 @@ pub const Vm = struct {
                 },
                 .capture_write => |x| current.write_destinations[x.dst] = try self.storage.captureWrite(current.storage, x.place, x.activate_cleanup),
                 .store => |x| {
-                    const updated = try self.storage.write(current.write_destinations[x.destination] orelse return error.UninitializedBytecodeDestination, try slots.get(x.value));
+                    const destination = current.write_destinations[x.destination] orelse return error.UninitializedBytecodeDestination;
+                    // A captured access is consumed by one commit. Loop iterations
+                    // must execute capture_write again before another store.
+                    current.write_destinations[x.destination] = null;
+                    const updated = try self.storage.write(destination, try slots.get(x.value));
                     try self.chargeCleanup(updated);
                 },
                 .cleanup_test => |x| {
