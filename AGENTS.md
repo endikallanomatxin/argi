@@ -345,6 +345,9 @@ feature first.
   writes reactivate unavailable caller cleanup unconditionally. Conditional
   initialization uses represented result outcomes and must not enable cleanup
   on paths that preserve vacant storage.
+  Call reinitialization renews the selected argument reference slot, including
+  explicit dereference paths through copied or borrowed records; sibling fields
+  and earlier record copies retain their old generations.
 
 - Structural automatic cleanup follows record fields and active choice payloads.
   AutoDeinitField keeps variant projections distinct from record fields; preserve

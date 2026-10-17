@@ -13557,3 +13557,16 @@ test "feature_tests/execution/36_record_reference_replacement_vm" {
 test "feature_tests/execution/37X_record_reference_keeps_sibling_stale" {
     try buildExpectFail("tests/feature_tests/execution/37X_record_reference_keeps_sibling_stale", "reference depends on a root that has ended");
 }
+
+test "feature_tests/ownership/364_projected_call_reinitialization" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/364_projected_call_reinitialization");
+    try runExpect("tests/feature_tests/ownership/364_projected_call_reinitialization", 42);
+}
+
+test "feature_tests/ownership/365X_projected_call_keeps_copy_stale" {
+    try buildExpectFail("tests/feature_tests/ownership/365X_projected_call_keeps_copy_stale", "reference depends on a root that has ended");
+}
+
+test "feature_tests/ownership/366X_projected_call_keeps_sibling_stale" {
+    try buildExpectFail("tests/feature_tests/ownership/366X_projected_call_keeps_sibling_stale", "reference depends on a root that has ended");
+}

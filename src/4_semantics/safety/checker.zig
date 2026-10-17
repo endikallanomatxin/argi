@@ -2984,16 +2984,15 @@ pub const SafetyChecker = struct {
             {
                 const old_generation = try self.storageGeneration(state, target);
                 try self.refreshStorageGenerationChecked(source, state, target);
-                if (reinitializes_dead_place and post_state.target.projections.len == 0 and index < argument_ids.len) {
-                    const argument_node = self.graph.value_fields.items[@intFromEnum(argument_ids[index])].value;
-                    if (try self.resolvePlace(argument_node, state)) |pointer_storage| {
-                        const argument = arguments[index];
-                        if (!pointer_storage.eql(target) and argument.referenced_place != null and argument.referenced_place.?.eql(target)) {
-                            const generation = try self.storageGeneration(state, target);
-                            const refreshed = try self.replaceValueRoots(argument, &.{old_generation}, generation);
-                            // The input pointer used to reinitialize the place
-                            // follows its generation; sibling aliases remain old.
-                            try self.setPlace(state, pointer_storage, .initialized, refreshed);
+                if (reinitializes_dead_place) {
+                    if (try self.summaryInputReferenceSlot(post_state.target, argument_ids, arguments, state)) |pointer_storage| {
+                        if (self.valueAtPlace(state, pointer_storage)) |pointer| {
+                            if (!pointer_storage.eql(target) and pointer.referenced_place != null and pointer.referenced_place.?.eql(target)) {
+                                const refreshed = try self.replaceValueRoots(pointer, &.{old_generation}, try self.storageGeneration(state, target));
+                                // Renew the actual argument reference slot, including
+                                // fields in copied Args. Other copies keep old roots.
+                                try self.setPlace(state, pointer_storage, .initialized, refreshed);
+                            }
                         }
                     }
                 }
@@ -3002,6 +3001,33 @@ pub const SafetyChecker = struct {
             const value = post_values[post_index] orelse facts.ValueFacts{};
             try self.setPlace(state, target, initializedness, value);
         }
+    }
+
+    fn summaryInputReferenceSlot(
+        self: *SafetyChecker,
+        path: facts.InputPath,
+        ids: []const graph_mod.GlobalValueFieldId,
+        arguments: []const facts.ValueFacts,
+        state: *FunctionState,
+    ) !?facts.Place {
+        if (path.storage_domain != null or path.input_index >= ids.len or path.input_index >= arguments.len) return null;
+        const node = self.graph.value_fields.items[@intFromEnum(ids[path.input_index])].value;
+        const ty = self.graph.node(node).ty orelse return null;
+        if (path.projections.len == 0) return if (isPointer(self.graph, ty)) try self.resolvePlace(node, state) else null;
+        if (path.projections[path.projections.len - 1] != .dereference) return null;
+
+        // A by-value record owns its field slots; only the explicit final
+        // dereference reaches the initialized owner. Keep that slot identity
+        // separate from the referent and from sibling reference fields.
+        var slot = if (isPointer(self.graph, ty)) arguments[path.input_index].referenced_place else try self.resolvePlace(node, state);
+        for (path.projections[0 .. path.projections.len - 1]) |projection| {
+            const current = slot orelse return null;
+            slot = if (projection == .dereference)
+                (self.valueAtPlace(state, current) orelse return null).referenced_place
+            else
+                try self.project(current, projection);
+        }
+        return slot;
     }
 
     fn resolveSummaryInputPath(
