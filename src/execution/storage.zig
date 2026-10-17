@@ -36,7 +36,12 @@ pub const Slots = struct {
 var next_context = std.atomic.Value(u64).init(0);
 
 // Captured executor access, never a language value or a safe-reference factory.
-pub const WriteDestination = struct { reference: v.Reference };
+pub const WriteDestination = struct {
+    reference: v.Reference,
+    // Index in this target frame's immutable compiler-selected layout. This
+    // belongs to the referent, never to the local slot holding a reference.
+    cleanup_entry: ?usize,
+};
 
 // Run-local storage. Its allocator is an execution arena; references can neither
 // name another execution nor expose a native address. Dead frame IDs stay dead.
@@ -194,7 +199,9 @@ pub const Storage = struct {
     pub fn cleanupSet(self: *Storage, reference: v.Reference, enabled: bool) !usize {
         try self.validateContext(reference);
         if (reference.mutability != .read_write) return error.ExecutionReadonlyReference;
-        const index = try self.cleanupEntry(reference);
+        return self.cleanupSetAt(reference, try self.cleanupEntry(reference), enabled);
+    }
+    fn cleanupSetAt(self: *Storage, reference: v.Reference, index: usize, enabled: bool) !usize {
         const values = try self.slots(reference.frame);
         const layout = self.frames.items[@intFromEnum(reference.frame)].cleanup;
         var updated: usize = 0;
@@ -205,20 +212,27 @@ pub const Storage = struct {
         }
         return updated;
     }
-    pub fn captureWrite(self: *Storage, frame: v.FrameId, place: b.Place) !WriteDestination {
+    pub fn captureWrite(self: *Storage, frame: v.FrameId, place: b.Place, activate_cleanup: bool) !WriteDestination {
         var path: [64]v.Projection = undefined;
         const reference = try self.resolve(frame, place, &path);
         if (reference.mutability != .read_write) return error.ExecutionReadonlyReference;
+        const cleanup_entry = if (activate_cleanup) try self.cleanupEntry(reference) else null;
         try self.charge(reference.path.len);
         var captured = reference;
         captured.path = try self.allocator.dupe(v.Projection, reference.path);
-        return .{ .reference = captured };
+        return .{ .reference = captured, .cleanup_entry = cleanup_entry };
     }
 
-    pub fn write(self: *Storage, destination: WriteDestination, value: b.Value) !void {
+    pub fn write(self: *Storage, destination: WriteDestination, value: b.Value) !usize {
         // Recheck storage liveness, permissions and aggregate shape. Capturing
         // access never grants initialization of vacant or released storage.
         try self.store(destination.reference, value);
+        // Commit value and its checked cleanup obligation to the same captured
+        // storage. No cleanup state is copied from the replacement value.
+        return if (destination.cleanup_entry) |index|
+            self.cleanupSetAt(destination.reference, index, true)
+        else
+            0;
     }
 
     pub fn store(self: *Storage, reference: v.Reference, value: b.Value) !void {

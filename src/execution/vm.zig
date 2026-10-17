@@ -64,6 +64,10 @@ pub const Vm = struct {
         };
         return result;
     }
+    fn chargeCleanup(self: *Vm, updated: usize) !void {
+        if (updated > self.limits.instructions - self.steps) return error.ExecutionInstructionLimit;
+        self.steps += updated;
+    }
     fn allocate(self: *Vm, count: usize) ![]b.Value {
         return self.storage.allocate(count);
     }
@@ -157,8 +161,11 @@ pub const Vm = struct {
                     var path: [64]runtime_value.Projection = undefined;
                     _ = try self.storage.resolve(current.storage, place, &path);
                 },
-                .capture_write => |x| current.write_destinations[x.dst] = try self.storage.captureWrite(current.storage, x.place),
-                .store => |x| try self.storage.write(current.write_destinations[x.destination] orelse return error.UninitializedBytecodeDestination, try slots.get(x.value)),
+                .capture_write => |x| current.write_destinations[x.dst] = try self.storage.captureWrite(current.storage, x.place, x.activate_cleanup),
+                .store => |x| {
+                    const updated = try self.storage.write(current.write_destinations[x.destination] orelse return error.UninitializedBytecodeDestination, try slots.get(x.value));
+                    try self.chargeCleanup(updated);
+                },
                 .cleanup_test => |x| {
                     var path: [64]runtime_value.Projection = undefined;
                     const reference = try self.storage.resolveCleanup(current.storage, x.place, &path);
@@ -171,8 +178,7 @@ pub const Vm = struct {
                     // cells. Charge its flags too, so a large owner in a loop
                     // cannot turn one instruction into unbounded cleanup work.
                     const updated = try self.storage.cleanupSet(reference, x.enabled);
-                    if (updated > self.limits.instructions - self.steps) return error.ExecutionInstructionLimit;
-                    self.steps += updated;
+                    try self.chargeCleanup(updated);
                 },
                 .field => |x| try slots.put(x.dst, (try slots.get(x.base)).record[x.index]),
                 .binary => |x| {

@@ -705,13 +705,34 @@ test "bytecode write destinations capture aliases before later writes" {
         .{ .source = source, .op = .{ .borrow = .{ .dst = 2, .place = .{ .root = 1, .path = &.{} } } } },
         .{ .source = source, .op = .{ .constant = .{ .dst = 1, .value = .{ .integer = 42 } } } },
         .{ .source = source, .op = .{ .store = .{ .destination = 0, .value = 1 } } },
+        .{ .source = source, .op = .{ .copy = .{ .dst = 4, .src = 3 } } },
         .{ .source = source, .op = .{ .ret = &.{0} } },
     };
-    var functions = [_]?b.Function{.{ .slots = &.{ @enumFromInt(0), @enumFromInt(0), @enumFromInt(1), @enumFromInt(2) }, .inputs = &.{}, .outputs = &.{0}, .code = &code, .write_destinations = &.{@enumFromInt(0)} }};
+    var functions = [_]?b.Function{.{ .slots = &.{ @enumFromInt(0), @enumFromInt(0), @enumFromInt(1), @enumFromInt(2), @enumFromInt(2) }, .inputs = &.{}, .outputs = &.{0}, .code = &code, .write_destinations = &.{@enumFromInt(0)} }};
     const program = b.Program{ .graph = &graph, .functions = &functions };
     var executor = try vm.Vm.init(a, program, .{});
     defer executor.deinit();
     try std.testing.expectEqual(@as(i128, 42), (try executor.run(@enumFromInt(0), &.{}))[0].integer);
+    // Captured cleanup is required before RHS execution and charged when the
+    // store activates it, just like an explicit cleanup_set instruction.
+    code[5].op.capture_write.activate_cleanup = true;
+    try std.testing.expectError(error.ExecutionMissingCleanup, executor.run(@enumFromInt(0), &.{}));
+    functions[0].?.cleanup = &.{.{ .root = 0, .path = &.{}, .flag = 3 }};
+    code[2].op.constant.value = .{ .boolean = false };
+    functions[0].?.outputs = &.{4};
+    code[10].op = .{ .ret = &.{4} };
+    graph.fields.items[0].ty = @enumFromInt(2);
+    var tracked = try vm.Vm.init(a, program, .{});
+    defer tracked.deinit();
+    try std.testing.expect((try tracked.run(@enumFromInt(0), &.{}))[0].boolean);
+    var bounded = try vm.Vm.init(a, program, .{ .instructions = 11 });
+    defer bounded.deinit();
+    try std.testing.expectError(error.ExecutionInstructionLimit, bounded.run(@enumFromInt(0), &.{}));
+    functions[0].?.cleanup = &.{};
+    functions[0].?.outputs = &.{0};
+    code[10].op = .{ .ret = &.{0} };
+    graph.fields.items[0].ty = @enumFromInt(0);
+    code[5].op.capture_write.activate_cleanup = false;
     // Even a branch that happens to capture at runtime must capture on every
     // incoming path before the store. Destination state is separate from values.
     code[4].op = .{ .branch = .{ .condition = 3, .yes = 5, .no = 6 } };
@@ -736,22 +757,72 @@ test "bytecode captured write access retains bounds and storage liveness" {
     const slots = try storage.slots(frame);
     try slots.put(0, .{ .array = &.{ .{ .integer = 1 }, .{ .integer = 2 } } });
     try slots.put(1, .{ .integer = 0 });
-    const destination = try storage.captureWrite(frame, .{ .root = 0, .path = &.{.{ .element = 1 }} });
+    const destination = try storage.captureWrite(frame, .{ .root = 0, .path = &.{.{ .element = 1 }} }, false);
     try slots.put(1, .{ .integer = 1 });
-    try storage.write(destination, .{ .integer = 42 });
+    try std.testing.expectEqual(@as(usize, 0), try storage.write(destination, .{ .integer = 42 }));
     try std.testing.expectEqual(@as(i128, 42), (try slots.get(0)).array[0].integer);
     try std.testing.expectEqual(@as(i128, 2), (try slots.get(0)).array[1].integer);
     try slots.put(1, .{ .integer = 2 });
-    try std.testing.expectError(error.ExecutionIndexOutOfBounds, storage.captureWrite(frame, .{ .root = 0, .path = &.{.{ .element = 1 }} }));
-    try std.testing.expectError(error.ExecutionUninitializedStorage, storage.captureWrite(frame, .{ .root = 2, .path = &.{} }));
+    try std.testing.expectError(error.ExecutionIndexOutOfBounds, storage.captureWrite(frame, .{ .root = 0, .path = &.{.{ .element = 1 }} }, false));
+    try std.testing.expectError(error.ExecutionUninitializedStorage, storage.captureWrite(frame, .{ .root = 2, .path = &.{} }, false));
     var path: [64]@import("../5_codegen/bytecode/value.zig").Projection = undefined;
     const array = try storage.resolve(frame, .{ .root = 0, .path = &.{} }, &path);
     try slots.put(2, try storage.borrow(array, .read_only));
-    try std.testing.expectError(error.ExecutionReadonlyReference, storage.captureWrite(frame, .{ .root = 2, .path = &.{.dereference} }));
+    try std.testing.expectError(error.ExecutionReadonlyReference, storage.captureWrite(frame, .{ .root = 2, .path = &.{.dereference} }, false));
     var foreign = try Storage.init(arena.allocator(), 100);
     try std.testing.expectError(error.ExecutionForeignReference, foreign.write(destination, .{ .integer = 0 }));
     try slots.put(0, .{ .array = &.{} });
     try std.testing.expectError(error.ExecutionIndexOutOfBounds, storage.write(destination, .{ .integer = 0 }));
     storage.leave(frame);
     try std.testing.expectError(error.ExecutionDeadReference, storage.write(destination, .{ .integer = 0 }));
+}
+
+test "bytecode captured writes activate referent cleanup across caller frames" {
+    const Storage = @import("storage.zig").Storage;
+    const v = @import("../5_codegen/bytecode/value.zig");
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 100);
+    const layout = [_]b.Cleanup{
+        .{ .root = 0, .path = &.{}, .flag = 2 },
+        .{ .root = 0, .path = &.{.{ .field = 0 }}, .flag = 3 },
+        .{ .root = 0, .path = &.{.{ .field = 1 }}, .flag = 4 },
+    };
+    const caller = try storage.enterCleanup(5, &layout);
+    const caller_slots = try storage.slots(caller);
+    // Identical zero-sized values retain distinct projected cleanup identities.
+    const empty = b.Value{ .record = &.{} };
+    const pair = b.Value{ .record = &.{ empty, empty } };
+    try caller_slots.put(0, pair);
+    try caller_slots.put(1, pair);
+    const callee = try storage.enterCleanup(2, &.{.{ .root = 0, .path = &.{}, .flag = 1 }});
+    const callee_slots = try storage.slots(callee);
+    var first_path: [64]v.Projection = undefined;
+    var second_path: [64]v.Projection = undefined;
+    const first = try storage.resolve(caller, .{ .root = 0, .path = &.{.{ .field = 0 }} }, &first_path);
+    const second = try storage.resolve(caller, .{ .root = 0, .path = &.{.{ .field = 1 }} }, &second_path);
+    try callee_slots.put(0, try storage.borrow(first, .read_write));
+    const destination = try storage.captureWrite(callee, .{ .root = 0, .path = &.{.dereference} }, true);
+    try callee_slots.put(0, try storage.borrow(second, .read_write));
+    try std.testing.expectEqual(@as(usize, 1), try storage.write(destination, empty));
+    try std.testing.expect(try storage.cleanupTest(first));
+    try std.testing.expect(!try storage.cleanupTest(second));
+    try std.testing.expect(!(try callee_slots.get(1)).boolean);
+    try std.testing.expect(!(try caller_slots.get(2)).boolean);
+    // A value copy has no obligation until the checked graph supplies one.
+    try std.testing.expectError(error.ExecutionMissingCleanup, storage.captureWrite(caller, .{ .root = 1, .path = &.{.{ .field = 0 }} }, true));
+    const plain = try storage.captureWrite(callee, .{ .root = 0, .path = &.{.dereference} }, false);
+    try std.testing.expectEqual(@as(usize, 0), try storage.write(plain, empty));
+    try std.testing.expect(!try storage.cleanupTest(second));
+    // Whole-value initialization activates exactly the captured owner's subtree.
+    const owner = try storage.captureWrite(caller, .{ .root = 0, .path = &.{} }, true);
+    try std.testing.expectEqual(@as(usize, 3), try storage.write(owner, pair));
+    try std.testing.expect((try caller_slots.get(2)).boolean);
+    try std.testing.expect(try storage.cleanupTest(second));
+    _ = try storage.cleanupSet(first, false);
+    try caller_slots.put(0, .{ .record = &.{} });
+    try std.testing.expectError(error.ExecutionInvalidReference, storage.write(destination, empty));
+    try std.testing.expect(!try storage.cleanupTest(first));
+    storage.leave(caller);
+    try std.testing.expectError(error.ExecutionDeadReference, storage.write(destination, empty));
 }

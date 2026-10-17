@@ -35,7 +35,11 @@ have a separate function-local register bank, cannot appear in language values
 or cross calls, and retain concrete storage projections rather than rereading
 reference/index operands at commit. Verification requires capture on every
 incoming path; execution still checks liveness, access and aggregate bounds.
-Capturing does not grant permission to initialize vacant storage.
+Capturing does not grant permission to initialize vacant storage. When a checked
+write activates cleanup, capture also resolves the target's compiler-selected
+flag entry before the RHS; commit activates that same subtree. This never uses
+the flags of a slot that merely contains a reference, and flag updates consume
+the shared execution budget.
 The interpreter rebuilds only the modified aggregate path; immutable snapshots
 preserve value-copy semantics. Safe references name an execution context, frame,
 root slot and captured projections. Context identities are never reused across

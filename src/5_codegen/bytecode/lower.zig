@@ -297,7 +297,7 @@ const FunctionLower = struct {
                 const base = try self.place(x.array_ptr);
                 const index = try self.expression(x.index);
                 const target = try self.project(base, .{ .element = index });
-                const destination = try self.captureWrite(node.source, target, x.element_type);
+                const destination = try self.captureWrite(node.source, target, x.element_type, false);
                 const value = try self.coerce(node.source, try self.expression(x.value), x.element_type);
                 _ = try self.emit(node.source, .{ .store = .{ .destination = destination, .value = value } });
             },
@@ -306,22 +306,18 @@ const FunctionLower = struct {
                 if (self.parent.cleanup_types[@intFromEnum(child)] and !self.trackedDestination(x.pointer, x.cleanup_target))
                     return self.parent.reject(node.source, "owning replacement through a runtime reference");
                 const target = try self.addressedPlace(x.pointer);
-                const destination = try self.captureWrite(node.source, target, child);
+                const destination = try self.captureWrite(node.source, target, child, self.targetHasCleanup(x.cleanup_target));
                 const value = try self.coerce(node.source, try self.expression(x.value), self.parent.graph.semanticType(self.parent.graph.node(x.pointer).ty.?).pointer.child);
                 _ = try self.emit(node.source, .{ .store = .{ .destination = destination, .value = value } });
-                if (self.nodeDrop(x.cleanup_target orelse x.pointer)) |drop| try self.setDrop(drop, true);
             },
             .struct_field_store => |x| {
                 if (self.parent.cleanup_types[@intFromEnum(x.field_type)] and !self.trackedDestination(x.struct_ptr, x.cleanup_target))
                     return self.parent.reject(node.source, "owning replacement through a runtime reference");
                 const base = try self.addressedPlace(x.struct_ptr);
                 const target = try self.project(base, .{ .field = x.field_index });
-                const destination = try self.captureWrite(node.source, target, x.field_type);
+                const destination = try self.captureWrite(node.source, target, x.field_type, self.targetHasCleanup(x.cleanup_target));
                 const value = try self.coerce(node.source, try self.expression(x.value), x.field_type);
                 _ = try self.emit(node.source, .{ .store = .{ .destination = destination, .value = value } });
-                if (x.cleanup_target) |cleanup_target| {
-                    if (self.nodeDrop(cleanup_target)) |drop| try self.setDrop(drop, true);
-                } else if (self.nodeDrop(x.struct_ptr)) |drop| if (x.field_index < drop.fields.len) try self.setDrop(drop.fields[x.field_index], true);
             },
             .auto_deinit_binding => |auto| try self.autoDeinit(auto),
             .code_block => |block_id| try self.block(block_id),
@@ -450,10 +446,13 @@ const FunctionLower = struct {
         const src = try self.coerce(source, value, self.slots.items[dst]);
         _ = try self.emit(source, .{ .copy = .{ .dst = dst, .src = src } });
     }
-    fn captureWrite(self: *FunctionLower, source: p.SourceRef, place_: b.Place, ty: b.Type) !b.Destination {
+    fn targetHasCleanup(self: *FunctionLower, target: ?g.GlobalNodeId) bool {
+        return if (target) |node| self.nodeDrop(node) != null else false;
+    }
+    fn captureWrite(self: *FunctionLower, source: p.SourceRef, place_: b.Place, ty: b.Type, activate_cleanup: bool) !b.Destination {
         const destination: b.Destination = @intCast(self.write_destinations.items.len);
         try self.write_destinations.append(self.parent.allocator, ty);
-        _ = try self.emit(source, .{ .capture_write = .{ .dst = destination, .place = place_ } });
+        _ = try self.emit(source, .{ .capture_write = .{ .dst = destination, .place = place_, .activate_cleanup = activate_cleanup } });
         return destination;
     }
     fn addressedPlace(self: *FunctionLower, id: g.GlobalNodeId) anyerror!b.Place {

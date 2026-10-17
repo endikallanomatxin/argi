@@ -13582,3 +13582,9 @@ test "feature_tests/execution/39_contextual_empty_records_vm" {
     try runExpect("tests/feature_tests/execution/39_contextual_empty_records_vm", 42);
     try vmExpect("tests/feature_tests/execution/39_contextual_empty_records_vm", 42, null);
 }
+
+test "feature_tests/execution/40_captured_replacement_cleanup_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/40_captured_replacement_cleanup_vm");
+    try runExpect("tests/feature_tests/execution/40_captured_replacement_cleanup_vm", 42);
+    try vmExpect("tests/feature_tests/execution/40_captured_replacement_cleanup_vm", 42, null);
+}

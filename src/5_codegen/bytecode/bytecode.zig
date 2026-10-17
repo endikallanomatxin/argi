@@ -61,7 +61,7 @@ pub const Instruction = struct {
         borrow: struct { dst: Slot, place: Place },
         load: struct { dst: Slot, place: Place },
         check_place: Place,
-        capture_write: struct { dst: Destination, place: Place },
+        capture_write: struct { dst: Destination, place: Place, activate_cleanup: bool = false },
         store: struct { destination: Destination, value: Slot },
         cleanup_test: struct { dst: Slot, place: Place },
         cleanup_set: struct { place: Place, enabled: bool },
