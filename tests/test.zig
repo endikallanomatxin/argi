@@ -13576,3 +13576,9 @@ test "feature_tests/execution/38_zero_sized_cleanup_identity_vm" {
     try runExpect("tests/feature_tests/execution/38_zero_sized_cleanup_identity_vm", 42);
     try vmExpect("tests/feature_tests/execution/38_zero_sized_cleanup_identity_vm", 42, null);
 }
+
+test "feature_tests/execution/39_contextual_empty_records_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/39_contextual_empty_records_vm");
+    try runExpect("tests/feature_tests/execution/39_contextual_empty_records_vm", 42);
+    try vmExpect("tests/feature_tests/execution/39_contextual_empty_records_vm", 42, null);
+}

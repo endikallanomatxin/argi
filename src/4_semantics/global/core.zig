@@ -1815,6 +1815,10 @@ pub const Resolver = struct {
     }
 
     fn contextualListLiteralFits(self: *const Resolver, literal: anytype, target: global_sg.GlobalTypeId) bool {
+        if (literal.elements.len == 0) {
+            if (types.isBuiltin(self.graph, target, .Void)) return true;
+            if (types.fields(self.graph, target)) |fields| return fields.len == 0;
+        }
         const element = types.arrayElement(self.graph, target) orelse return false;
         const length = types.arrayLength(self.graph, target) orelse return false;
         if (literal.elements.len != length) return false;
@@ -1830,6 +1834,10 @@ pub const Resolver = struct {
     }
 
     fn contextualStructLiteralFits(self: *const Resolver, literal: anytype, target: global_sg.GlobalTypeId) bool {
+        if (literal.fields.len == 0) {
+            if (types.isBuiltin(self.graph, target, .Void)) return true;
+            if (types.arrayLength(self.graph, target)) |length| return length == 0;
+        }
         const expected_fields = types.fields(self.graph, target) orelse return false;
         if (literal.fields.len > expected_fields.len) return false;
         for (0..expected_fields.len) |offset| {
@@ -1875,6 +1883,15 @@ pub const Resolver = struct {
             // incompatible lists untyped so diagnostics can inspect their elements.
             if (!self.contextualListLiteralFits(self.graph.node(node).content.list_literal, target)) return false;
             const literal = self.graph.node(node).content.list_literal;
+            // Parentheses have no inherent element/record type. Normalize an
+            // empty literal only after its destination establishes the shape.
+            if (literal.elements.len == 0 and types.arrayElement(self.graph, target) == null) {
+                self.graph.nodes.items[@intFromEnum(node)].content = .{ .struct_value_literal = .{
+                    .fields = .{ .start = 0, .len = 0 },
+                } };
+                self.graph.nodes.items[@intFromEnum(node)].ty = target;
+                return true;
+            }
             const element = types.arrayElement(self.graph, target) orelse return false;
             for (self.graph.node_refs.items[literal.elements.start..][0..literal.elements.len]) |item|
                 _ = self.coerceContextualValue(item, element);
@@ -1903,6 +1920,17 @@ pub const Resolver = struct {
         // structural types it has no field range. Context must therefore
         // materialize the empty literal directly instead of asking for fields.
         if (types.isBuiltin(self.graph, target, .Void) and literal.fields.len == 0) {
+            self.graph.nodes.items[@intFromEnum(node)].ty = target;
+            return true;
+        }
+        // Empty parentheses also represent a zero-length array when the
+        // destination supplies its element type.
+        if (literal.fields.len == 0 and types.arrayLength(self.graph, target) == 0) {
+            self.graph.nodes.items[@intFromEnum(node)].content = .{ .array_literal = .{
+                .elements = .{ .start = 0, .len = 0 },
+                .element_type = types.arrayElement(self.graph, target).?,
+                .length = 0,
+            } };
             self.graph.nodes.items[@intFromEnum(node)].ty = target;
             return true;
         }
