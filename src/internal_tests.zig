@@ -1,5 +1,6 @@
 const source_files = @import("1_base/source_files.zig");
 const semantic_literals = @import("4_semantics/semantic_literals.zig");
+const argi_abi = @import("5_codegen/llvm/argi_abi.zig");
 const link = @import("5_codegen/llvm/link.zig");
 const lsp = @import("0_commands/lsp.zig");
 const lsp_service = @import("0_commands/lsp_service.zig");
@@ -137,5 +138,5 @@ test {
     _ = type_codegen;
     _ = codegen;
     _ = cleanup_layout;
-    _ = @import("5_codegen/llvm/argi_abi.zig");
+    _ = argi_abi;
 }

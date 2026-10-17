@@ -87,6 +87,13 @@ commit and reactivate that captured state together. This is still local evidence
 joining the plan with unknown targets remains the next step. AOT must carry the
 same owner/projection evidence through reference-valued fields, arguments and outputs;
 VM references already preserve concrete storage identity across those boundaries.
+The private Argi ABI now provides opt-in typed input evidence and caller-owned
+output-evidence storage, independently of direct/indirect value returns. Its
+shared signature validates both channels before emitting a call or return;
+functions without evidence keep the existing ABI. Codegen does not request these
+channels yet: reference propagation must supply the actual owner/projection
+state first. C imports/exports and callbacks retain their separate ABI.
+
 Do not generalize lexical body-pattern proofs to substitute for that evidence.
 General owning indirect replacement remains unsupported until both backends and
 the checker implement the transition.
