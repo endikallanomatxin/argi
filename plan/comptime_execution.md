@@ -117,7 +117,12 @@ preserve existing aliases. Field replacement must preserve unrelated siblings.
 Constant local aliases now carry their proven lexical cleanup target on writes;
 both backends preserve the original pointer evaluation and use the target's flags.
 This includes reference fields projected from immutable literal records and
-their copies; mutable records and function results do not establish that proof.
+their copies. A checked body that only returns one of its reference inputs
+preserves that identity, including concrete generic specializations. All inputs
+and the single output must be references, so input cleanup cannot change the
+proof during finalization. The original call still executes and retains its
+ordinary safety effects. Defaults never substitute for actual arguments.
+Mutable records and other function results do not establish that proof.
 Retargetable aliases and unknown input referents still need selected indirect
 cleanup plans and native evidence transport.
 Call summaries now distinguish preserved, possible and definite initialization;

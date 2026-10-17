@@ -333,6 +333,9 @@ feature first.
   activation. Constant local reference aliases retain a proven lexical
   cleanup_target on writes; evaluate the original pointer, and update the target's
   cleanup flags, never the reference slot's. The global verifier checks this proof.
+  Reference-only bodies that solely forward an input preserve its lexical identity
+  through ordinary/generic calls. Use the selected input binding and completed
+  argument order; preserve call execution and safety, never substitute defaults.
   Retargetable/unknown aliases and indexed replacement still require an evaluated
   destination and shared cleanup identity. VM lowering rejects owning writes
   through unresolved aliases and indexed storage until those identities are modeled.
