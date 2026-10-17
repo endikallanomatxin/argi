@@ -122,6 +122,17 @@ initialization. Transport and initialization must close this case together,
 without imposing an initialized-only reference precondition or calling cleanup
 unconditionally. This is the next milestone, ahead of further helper APIs.
 
+Direct symbolic input references now separate backing validity from the observed
+value generation. Explicit consumption ends the generation, and a subsequent
+straight-line initialization renews only the selected access after evaluating
+the RHS. Historical aliases remain stale; potentially aliased inputs are still
+conservative. No concrete pointee or disjointness proof is invented.
+
+Remaining: propagate renewal through ordinary call summaries, reconcile branch
+and loop generations, and extend symbolic targets inside input records. Then
+connect the complete replacement transition to native evidence and VM output
+initialization, and close the live/vacated four-destructor acceptance case.
+
 ## Storage direction (proposed)
 
 The reference-replacement investigation found a shared frontend gap, not only

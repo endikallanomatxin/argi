@@ -67,7 +67,14 @@ pub const SafetyChecker = struct {
     const ChoiceRejected = struct { storage: facts.Place, variant_index: u32 };
     const ChoiceTemporaryActive = struct { expression: graph_mod.GlobalNodeId, variant_index: u32 };
 
-    const SymbolicPointeeState = struct { identity: graph_mod.GlobalBindingId, initializedness: value_state.Initializedness };
+    const SymbolicPointeeState = struct {
+        identity: graph_mod.GlobalBindingId,
+        initializedness: value_state.Initializedness,
+        // Unknown referents keep storage validity separate from the current
+        // value incarnation. Neither identity asserts disjointness of inputs.
+        backing: ?facts.ValidityRootId = null,
+        generation: ?facts.ValidityRootId = null,
+    };
 
     const FunctionState = struct {
         tracker: facts.Tracker,
@@ -591,6 +598,7 @@ pub const SafetyChecker = struct {
 
     fn seedFunctionInputs(self: *SafetyChecker, function: graph_mod.Function, state: *FunctionState) !void {
         var shared_pointer_root: ?facts.ValidityRootId = null;
+        var shared_value_generation: ?facts.ValidityRootId = null;
         for (self.graph.binding_refs.items[function.input_bindings.start..][0..function.input_bindings.len]) |binding| {
             const record = self.graph.bindings.items[@intFromEnum(binding)];
             var value: facts.ValueFacts = if (isPointer(self.graph, record.ty)) blk: {
@@ -599,8 +607,16 @@ pub const SafetyChecker = struct {
                     shared_pointer_root = created;
                     break :root_blk created;
                 };
-                try state.symbolic_pointees.append(.{ .identity = binding, .initializedness = .initialized });
-                break :blk .{ .dependencies = try self.oneDependency(root), .symbolic_pointees = try self.allocator.dupe(graph_mod.GlobalBindingId, &.{binding}) };
+                const generation = shared_value_generation orelse generation_blk: {
+                    const created = try state.tracker.establish(.fresh);
+                    shared_value_generation = created;
+                    break :generation_blk created;
+                };
+                try state.symbolic_pointees.append(.{ .identity = binding, .initializedness = .initialized, .backing = root, .generation = generation });
+                break :blk .{
+                    .dependencies = try self.allocator.dupe(facts.ValidityDependency, &.{ .{ .root = root }, .{ .root = generation } }),
+                    .symbolic_pointees = try self.allocator.dupe(graph_mod.GlobalBindingId, &.{binding}),
+                };
             } else .{};
             const ty = if (isPointer(self.graph, record.ty)) self.graph.semanticType(record.ty).pointer.child else record.ty;
             if (self.graph.semanticType(ty) == .virtual) {
@@ -721,6 +737,11 @@ pub const SafetyChecker = struct {
                         self.initializednessAtPlace(state, target) == .deinitialized
                     else
                         false;
+                    const symbolic_renewal = if (pointer.referenced_place == null)
+                        try self.renewSymbolicDestination(assignment.pointer, pointer, state)
+                    else
+                        null;
+                    if (symbolic_renewal) |renewed| pointer = renewed;
                     if (pointer.referenced_place) |target| {
                         if (was_deinitialized and pointer.opaque_provenance.len == 0) {
                             const old_generation = try self.storageGeneration(state, target);
@@ -749,6 +770,19 @@ pub const SafetyChecker = struct {
                     }
                     try self.recordOpaqueWrite(node.source, state, pointer, value);
                     if (pointer.referenced_place) |target| try self.setPlace(state, target, .initialized, value);
+                    if (symbolic_renewal != null) {
+                        if (try self.resolvePlace(assignment.pointer, state)) |slot|
+                            try self.setPlace(state, slot, .initialized, pointer);
+                    }
+                    if (pointer.referenced_place == null) for (pointer.symbolic_pointees) |identity| {
+                        for (state.symbolic_pointees.items) |*entry| if (entry.identity == identity) {
+                            if (entry.generation) |generation| {
+                                if (state.tracker.isAlive(generation)) {
+                                    entry.initializedness = .initialized;
+                                }
+                            }
+                        };
+                    };
                 },
                 .if_statement => |statement| {
                     _ = try self.evaluate(function, statement.condition, state);
@@ -1616,35 +1650,40 @@ pub const SafetyChecker = struct {
             ((post.initializedness == .deinitialized or post.initializedness == .maybe_initialized) and post.ends_previous_roots);
     }
 
-    fn symbolicConsumptionInputs(self: *SafetyChecker, path: facts.InputPath, ids: []const graph_mod.GlobalValueFieldId, arguments: []const facts.ValueFacts) ![]const graph_mod.GlobalBindingId {
-        if (path.storage_domain != null or path.input_index >= arguments.len or path.input_index >= ids.len) return &.{};
+    fn symbolicConsumptionValue(self: *SafetyChecker, path: facts.InputPath, ids: []const graph_mod.GlobalValueFieldId, arguments: []const facts.ValueFacts) !?facts.ValueFacts {
+        if (path.storage_domain != null or path.input_index >= arguments.len or path.input_index >= ids.len) return null;
         var argument = arguments[path.input_index];
         const node = self.graph.value_fields.items[@intFromEnum(ids[path.input_index])].value;
-        var ty = self.graph.node(node).ty orelse return &.{};
+        var ty = self.graph.node(node).ty orelse return null;
         if (path.projections.len != 0) {
-            if (path.projections[path.projections.len - 1] != .dereference or isPointer(self.graph, ty)) return &.{};
+            if (path.projections[path.projections.len - 1] != .dereference or isPointer(self.graph, ty)) return null;
             for (path.projections[0 .. path.projections.len - 1]) |projection| {
                 ty = switch (projection) {
                     .field => |index| blk: {
-                        const fields = types.fields(self.graph, ty) orelse return &.{};
-                        if (index >= fields.len) return &.{};
+                        const fields = types.fields(self.graph, ty) orelse return null;
+                        if (index >= fields.len) return null;
                         break :blk (self.graph.fields.items[fields.start + index]).ty;
                     },
                     .variant => |index| blk: {
-                        const variants = types.variants(self.graph, ty) orelse return &.{};
-                        if (index >= variants.len) return &.{};
-                        break :blk self.graph.variants.items[variants.start + index].payload_type orelse return &.{};
+                        const variants = types.variants(self.graph, ty) orelse return null;
+                        if (index >= variants.len) return null;
+                        break :blk self.graph.variants.items[variants.start + index].payload_type orelse return null;
                     },
-                    .static_index, .dynamic_index => types.arrayElement(self.graph, ty) orelse return &.{},
-                    .dereference => return &.{},
+                    .static_index, .dynamic_index => types.arrayElement(self.graph, ty) orelse return null,
+                    .dereference => return null,
                 };
                 argument = try self.projectValueFacts(argument, &.{projection});
             }
         }
         // Only a whole unknown pointer carries a consumption identity. The
         // surrounding copied record and borrowed dependency envelopes do not.
-        if (!isPointer(self.graph, ty) or argument.referenced_place != null) return &.{};
-        return argument.symbolic_pointees;
+        if (!isPointer(self.graph, ty) or argument.referenced_place != null) return null;
+        return argument;
+    }
+
+    fn symbolicConsumptionInputs(self: *SafetyChecker, path: facts.InputPath, ids: []const graph_mod.GlobalValueFieldId, arguments: []const facts.ValueFacts) ![]const graph_mod.GlobalBindingId {
+        const value = try self.symbolicConsumptionValue(path, ids, arguments) orelse return &.{};
+        return value.symbolic_pointees;
     }
 
     fn validateConsumedInputAliasing(self: *SafetyChecker, source: primitives.SourceRef, summary: facts.SafetySummary, ids: []const graph_mod.GlobalValueFieldId, arguments: []const facts.ValueFacts, state: *FunctionState) !bool {
@@ -1655,9 +1694,21 @@ pub const SafetyChecker = struct {
                 const identities = try self.symbolicConsumptionInputs(post.target, ids, arguments);
                 for (identities) |identity| {
                     for (state.symbolic_pointees.items) |pointee| {
-                        if (pointee.identity != identity or pointee.initializedness == .initialized) continue;
-                        try self.report(source, "consumption requires an initialized owner; this parameter's referent may already have been consumed", .{});
-                        return false;
+                        if (pointee.identity != identity) continue;
+                        if (pointee.initializedness != .initialized) {
+                            try self.report(source, "consumption requires an initialized owner; this parameter's referent may already have been consumed", .{});
+                            return false;
+                        }
+                        const observed = try self.symbolicConsumptionValue(post.target, ids, arguments) orelse continue;
+                        // Whole-input consumption has its own alias obligations
+                        // at the caller. A dead shared value generation alone
+                        // must not forbid consuming a different input identity.
+                        if ((if (pointee.backing) |backing| !state.tracker.isAlive(backing) else false) or
+                            (if (pointee.generation) |generation| !valueDependsOnRoot(observed, generation) else !state.tracker.dependenciesAreAlive(observed)))
+                        {
+                            try self.report(source, "reference depends on a root that has ended", .{});
+                            return false;
+                        }
                     }
                 }
                 for (summary.input_post_states[0..index]) |previous| {
@@ -2863,6 +2914,53 @@ pub const SafetyChecker = struct {
         try self.applySummaryOpaqueStorageEffects(summary, argument_ids, arguments, state);
     }
 
+    // Ending a value must not end its backing storage. All inputs in the same
+    // conservative alias group lose their observed generations; distinct
+    // symbolic consumption identities are never evidence of disjointness.
+    fn endSymbolicGenerations(self: *SafetyChecker, source: primitives.SourceRef, value: facts.ValueFacts, state: *FunctionState) !bool {
+        var handled = false;
+        for (value.symbolic_pointees) |identity| {
+            var backing: ?facts.ValidityRootId = null;
+            for (state.symbolic_pointees.items) |entry| if (entry.identity == identity) {
+                backing = entry.backing;
+                break;
+            };
+            const root = backing orelse continue;
+            handled = true;
+            for (state.symbolic_pointees.items) |entry| {
+                if (entry.backing != root) continue;
+                if (entry.generation) |generation| _ = try self.endRoot(source, state, generation);
+            }
+        }
+        return handled;
+    }
+
+    fn renewSymbolicDestination(self: *SafetyChecker, node: graph_mod.GlobalNodeId, pointer: facts.ValueFacts, state: *FunctionState) !?facts.ValueFacts {
+        // A join of possible targets cannot establish one definite destination.
+        if (pointer.symbolic_pointees.len != 1 or pointer.opaque_provenance.len != 0) return null;
+        const identity = pointer.symbolic_pointees[0];
+        for (state.symbolic_pointees.items, 0..) |entry, index| {
+            if (entry.identity != identity or entry.initializedness != .deinitialized) continue;
+            const backing = entry.backing orelse return null;
+            const previous = entry.generation orelse return null;
+            if (!state.tracker.isAlive(backing)) return null;
+            // Only an access observing the consumed incarnation can initialize
+            // it. An alias from an older replacement cannot become current.
+            var observes = false;
+            for (pointer.dependencies) |dependency| if (dependency.root == previous) {
+                observes = true;
+                break;
+            };
+            if (!observes) return null;
+            _ = try self.resolvePlace(node, state) orelse return null;
+            const generation = try state.tracker.establish(.fresh);
+            const renewed = try self.replaceValueRoots(pointer, &.{previous}, generation);
+            state.symbolic_pointees.items[index].generation = generation;
+            return renewed;
+        }
+        return null;
+    }
+
     fn applySummaryInputPostStates(
         self: *SafetyChecker,
         source: primitives.SourceRef,
@@ -2946,8 +3044,12 @@ pub const SafetyChecker = struct {
             }
 
             const target = try self.resolveSummaryInputPath(post_state.target, argument_ids, arguments, state) orelse {
-                if (post_state.ends_previous_roots and post_state.target.projections.len == 0) {
-                    for (arguments[index].dependencies) |dependency| _ = try self.endRoot(source, state, dependency.root);
+                if (post_state.ends_previous_roots) {
+                    const symbolic = try self.symbolicConsumptionValue(post_state.target, argument_ids, arguments);
+                    const handled = if (symbolic) |value| try self.endSymbolicGenerations(source, value, state) else false;
+                    if (!handled and post_state.target.projections.len == 0) {
+                        for (arguments[index].dependencies) |dependency| _ = try self.endRoot(source, state, dependency.root);
+                    }
                 }
                 continue;
             };
@@ -5357,8 +5459,10 @@ pub const SafetyChecker = struct {
         for (left.symbolic_pointees.items) |pointee| {
             var result = pointee;
             for (right.symbolic_pointees.items) |other| {
-                if (other.identity == pointee.identity and other.initializedness != pointee.initializedness)
-                    result.initializedness = .maybe_initialized;
+                if (other.identity != pointee.identity) continue;
+                if (other.initializedness != pointee.initializedness) result.initializedness = .maybe_initialized;
+                if (other.backing != pointee.backing) result.backing = null;
+                if (other.generation != pointee.generation) result.generation = null;
             }
             try joined.symbolic_pointees.append(result);
         }
@@ -6550,7 +6654,7 @@ fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChe
     for (left.symbolic_pointees.items) |pointee| {
         var found = false;
         for (right.symbolic_pointees.items) |other| if (other.identity == pointee.identity) {
-            if (other.initializedness != pointee.initializedness) return false;
+            if (other.initializedness != pointee.initializedness or other.backing != pointee.backing or other.generation != pointee.generation) return false;
             found = true;
             break;
         };
@@ -8304,4 +8408,46 @@ test "branches share initial storage identities without reviving ended generatio
     try std.testing.expect(replacement != initial);
     try std.testing.expect(!left.tracker.isAlive(initial));
     try std.testing.expect(right.tracker.isAlive(initial));
+}
+
+test "symbolic destination renewal preserves backing validity and historical aliases" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    const source = primitives.SourceRef{ .file_index = 0, .offset = 0 };
+    try graph.nodes.append(allocator, .{ .source = source, .ty = null, .content = .{ .binding_use = @enumFromInt(0) } });
+    var checker = SafetyChecker.init(allocator, undefined, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const backing = try state.tracker.establish(.fresh);
+    const generation = try state.tracker.establish(.fresh);
+    const other_generation = try state.tracker.establish(.fresh);
+    try state.symbolic_pointees.appendSlice(&.{
+        .{ .identity = @enumFromInt(0), .initializedness = .deinitialized, .backing = backing, .generation = generation },
+        .{ .identity = @enumFromInt(1), .initializedness = .initialized, .backing = backing, .generation = other_generation },
+    });
+    const access: facts.ValueFacts = .{
+        .dependencies = &.{ .{ .root = backing }, .{ .root = generation } },
+        .symbolic_pointees = &.{@enumFromInt(0)},
+    };
+    try checker.setPlace(&state, .{ .root = @enumFromInt(0) }, .initialized, access);
+    try std.testing.expect(try checker.endSymbolicGenerations(source, access, &state));
+    try std.testing.expect(state.tracker.isAlive(backing));
+    try std.testing.expect(!state.tracker.isAlive(generation));
+    // Different symbolic identities still belong to one possible-alias group.
+    try std.testing.expect(!state.tracker.isAlive(other_generation));
+    const renewed = (try checker.renewSymbolicDestination(@enumFromInt(0), access, &state)).?;
+    try std.testing.expect(state.tracker.dependenciesAreAlive(renewed));
+    try std.testing.expect(!state.tracker.dependenciesAreAlive(access));
+    // Preparing an initialization neither publishes its reference nor marks
+    // the vacant referent initialized before the RHS has completed.
+    try std.testing.expect(!state.tracker.dependenciesAreAlive(checker.valueAtPlace(&state, .{ .root = @enumFromInt(0) }).?));
+    try std.testing.expectEqual(value_state.Initializedness.deinitialized, state.symbolic_pointees.items[0].initializedness);
+    try std.testing.expect(try checker.renewSymbolicDestination(@enumFromInt(0), access, &state) == null);
+    state.tracker.end(backing);
+    try std.testing.expect(try checker.renewSymbolicDestination(@enumFromInt(0), renewed, &state) == null);
+    try std.testing.expect(!state.tracker.dependenciesAreAlive(renewed));
 }

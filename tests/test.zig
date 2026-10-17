@@ -13608,3 +13608,20 @@ test "feature_tests/execution/42_dynamic_reference_cleanup_boundary" {
     try expectSuccessfulBuild("tests/feature_tests/execution/42_dynamic_reference_cleanup_boundary");
     try vmExpect("tests/feature_tests/execution/42_dynamic_reference_cleanup_boundary", 1, "owning replacement through a runtime reference");
 }
+
+test "feature_tests/ownership/369_symbolic_reference_reinitialization" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/369_symbolic_reference_reinitialization");
+    try runExpect("tests/feature_tests/ownership/369_symbolic_reference_reinitialization", 42);
+}
+
+test "feature_tests/ownership/370X_symbolic_reinitialization_keeps_copy_stale" {
+    try buildExpectFail("tests/feature_tests/ownership/370X_symbolic_reinitialization_keeps_copy_stale", "reference depends on a root that has ended");
+}
+
+test "feature_tests/ownership/371X_symbolic_reinitialization_keeps_possible_alias_stale" {
+    try buildExpectFail("tests/feature_tests/ownership/371X_symbolic_reinitialization_keeps_possible_alias_stale", "reference depends on a root that has ended");
+}
+
+test "feature_tests/ownership/372X_symbolic_reinitialization_rhs_cannot_read_vacant" {
+    try buildExpectFail("tests/feature_tests/ownership/372X_symbolic_reinitialization_rhs_cannot_read_vacant", "reference depends on a root that has ended");
+}

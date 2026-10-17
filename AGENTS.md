@@ -239,7 +239,12 @@ feature first.
   symbolic consumption identities/state; preserve copies, joins and loop equality
   without changing their shared borrow root or inventing concrete pointee places.
   Symbolic consumption targets only whole unknown pointers, never aggregate
-  envelopes or opaque domains. Reject uninitialized/repeated destruction.
+  envelopes or opaque domains. Direct input references separate backing validity
+  from the observed value generation. Explicit straight-line reinitialization
+  renews only its selected reference after RHS evaluation. Historical aliases
+  stay stale; distinct consumption identities still carry caller-side alias
+  obligations, so ending a shared generation alone cannot forbid consuming
+  another input. Reject uninitialized/repeated destruction.
   Erased receiver consumption stays unsupported until runtime cleanup identities
   exist. Destructor declarations use only Deinit; `TypeName deinit(...)` is
   rejected with a migration diagnostic. Cleanup has no nominal destructor
