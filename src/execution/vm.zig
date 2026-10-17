@@ -167,8 +167,11 @@ pub const Vm = struct {
                     // A captured access is consumed by one commit. Loop iterations
                     // must execute capture_write again before another store.
                     current.write_destinations[x.destination] = null;
-                    const updated = try self.storage.write(destination, try slots.get(x.value));
-                    try self.chargeCleanup(updated);
+                    const value = try slots.get(x.value);
+                    const checked = try self.storage.checkWriteCleanup(destination);
+                    try self.storage.write(destination, value);
+                    const activated = try self.storage.activateWriteCleanup(destination);
+                    try self.chargeCleanup(checked + activated);
                 },
                 .cleanup_test => |x| {
                     var path: [64]runtime_value.Projection = undefined;

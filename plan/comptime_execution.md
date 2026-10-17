@@ -71,7 +71,11 @@ storage, not copies of its cleanup obligations. A checked replacement follows:
 Bytecode verification consumes destination registers on store, and each loop
 iteration must recapture them. Runtime commit rejects any active flag in the
 captured cleanup subtree, including live children under an inactive root. A
-failed write does not reactivate flags. Checks and updates count against fuel.
+failed write does not reactivate flags. The executor explicitly orders cleanup
+validation, value storage and flag activation. Storage.write changes only the
+value; it never activates cleanup implicitly. The bytecode store instruction
+still groups that protocol; explicit lifecycle lowering remains pending. Checks
+and updates count against fuel.
 These checks validate execution of selected plans; they do not select destructors
 or replace the safety proof. Fatal interruption still poisons a future persistent
 session rather than promising rollback or replayable cleanup.

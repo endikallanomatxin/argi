@@ -223,9 +223,9 @@ pub const Storage = struct {
         return .{ .reference = captured, .cleanup_entry = cleanup_entry };
     }
 
-    pub fn write(self: *Storage, destination: WriteDestination, value: b.Value) !usize {
-        // Recheck storage liveness, permissions and aggregate shape. Capturing
-        // access never grants initialization of vacant or released storage.
+    // Validate compiler-selected cleanup state independently of value storage.
+    // The executor orders this check, the write and subsequent activation.
+    pub fn checkWriteCleanup(self: *Storage, destination: WriteDestination) !usize {
         var checked: usize = 0;
         if (destination.cleanup_entry) |index| {
             try self.validateContext(destination.reference);
@@ -240,13 +240,22 @@ pub const Storage = struct {
                 checked += 1;
             }
         }
+        return checked;
+    }
+
+    // A write changes only the value. It never manufactures or reactivates a
+    // cleanup obligation, and capture does not authorize vacant storage.
+    pub fn write(self: *Storage, destination: WriteDestination, value: b.Value) !void {
         try self.store(destination.reference, value);
-        // Commit value and its checked cleanup obligation to the same captured
-        // storage. No cleanup state is copied from the replacement value.
-        return if (destination.cleanup_entry) |index|
-            checked + try self.cleanupSetAt(destination.reference, index, true)
-        else
-            0;
+    }
+
+    pub fn activateWriteCleanup(self: *Storage, destination: WriteDestination) !usize {
+        if (destination.cleanup_entry) |index| {
+            try self.validateContext(destination.reference);
+            if (destination.reference.mutability != .read_write) return error.ExecutionReadonlyReference;
+            return self.cleanupSetAt(destination.reference, index, true);
+        }
+        return 0;
     }
 
     pub fn store(self: *Storage, reference: v.Reference, value: b.Value) !void {

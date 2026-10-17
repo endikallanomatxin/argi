@@ -765,7 +765,7 @@ test "bytecode captured write access retains bounds and storage liveness" {
     try slots.put(1, .{ .integer = 0 });
     const destination = try storage.captureWrite(frame, .{ .root = 0, .path = &.{.{ .element = 1 }} }, false);
     try slots.put(1, .{ .integer = 1 });
-    try std.testing.expectEqual(@as(usize, 0), try storage.write(destination, .{ .integer = 42 }));
+    try std.testing.expectEqual(@as(usize, 0), try commitWrite(&storage, destination, .{ .integer = 42 }));
     try std.testing.expectEqual(@as(i128, 42), (try slots.get(0)).array[0].integer);
     try std.testing.expectEqual(@as(i128, 2), (try slots.get(0)).array[1].integer);
     try slots.put(1, .{ .integer = 2 });
@@ -776,11 +776,11 @@ test "bytecode captured write access retains bounds and storage liveness" {
     try slots.put(2, try storage.borrow(array, .read_only));
     try std.testing.expectError(error.ExecutionReadonlyReference, storage.captureWrite(frame, .{ .root = 2, .path = &.{.dereference} }, false));
     var foreign = try Storage.init(arena.allocator(), 100);
-    try std.testing.expectError(error.ExecutionForeignReference, foreign.write(destination, .{ .integer = 0 }));
+    try std.testing.expectError(error.ExecutionForeignReference, commitWrite(&foreign, destination, .{ .integer = 0 }));
     try slots.put(0, .{ .array = &.{} });
-    try std.testing.expectError(error.ExecutionIndexOutOfBounds, storage.write(destination, .{ .integer = 0 }));
+    try std.testing.expectError(error.ExecutionIndexOutOfBounds, commitWrite(&storage, destination, .{ .integer = 0 }));
     storage.leave(frame);
-    try std.testing.expectError(error.ExecutionDeadReference, storage.write(destination, .{ .integer = 0 }));
+    try std.testing.expectError(error.ExecutionDeadReference, commitWrite(&storage, destination, .{ .integer = 0 }));
 }
 
 test "bytecode captured writes activate referent cleanup across caller frames" {
@@ -810,7 +810,13 @@ test "bytecode captured writes activate referent cleanup across caller frames" {
     try callee_slots.put(0, try storage.borrow(first, .read_write));
     const destination = try storage.captureWrite(callee, .{ .root = 0, .path = &.{.dereference} }, true);
     try callee_slots.put(0, try storage.borrow(second, .read_write));
-    try std.testing.expectEqual(@as(usize, 2), try storage.write(destination, empty));
+    try std.testing.expectEqual(@as(usize, 1), try storage.checkWriteCleanup(destination));
+    try storage.write(destination, empty);
+    // The storage write itself changes neither the captured target's flag nor
+    // the sibling's flag. Only the explicit activation publishes cleanup.
+    try std.testing.expect(!try storage.cleanupTest(first));
+    try std.testing.expect(!try storage.cleanupTest(second));
+    try std.testing.expectEqual(@as(usize, 1), try storage.activateWriteCleanup(destination));
     try std.testing.expect(try storage.cleanupTest(first));
     try std.testing.expect(!try storage.cleanupTest(second));
     try std.testing.expect(!(try callee_slots.get(1)).boolean);
@@ -818,23 +824,31 @@ test "bytecode captured writes activate referent cleanup across caller frames" {
     // A value copy has no obligation until the checked graph supplies one.
     try std.testing.expectError(error.ExecutionMissingCleanup, storage.captureWrite(caller, .{ .root = 1, .path = &.{.{ .field = 0 }} }, true));
     const plain = try storage.captureWrite(callee, .{ .root = 0, .path = &.{.dereference} }, false);
-    try std.testing.expectEqual(@as(usize, 0), try storage.write(plain, empty));
+    try std.testing.expectEqual(@as(usize, 0), try commitWrite(&storage, plain, empty));
     try std.testing.expect(!try storage.cleanupTest(second));
     // Whole-value initialization activates exactly the captured owner's subtree.
     const owner = try storage.captureWrite(caller, .{ .root = 0, .path = &.{} }, true);
-    try std.testing.expectError(error.ExecutionPendingCleanup, storage.write(owner, pair));
+    try std.testing.expectError(error.ExecutionPendingCleanup, commitWrite(&storage, owner, pair));
     try std.testing.expect(!(try caller_slots.get(2)).boolean);
     _ = try storage.cleanupSet(first, false);
-    try std.testing.expectEqual(@as(usize, 6), try storage.write(owner, pair));
+    try std.testing.expectEqual(@as(usize, 6), try commitWrite(&storage, owner, pair));
     try std.testing.expect((try caller_slots.get(2)).boolean);
     try std.testing.expect(try storage.cleanupTest(second));
     const replacement = b.Value{ .record = &.{ .{ .integer = 1 }, .{ .integer = 2 } } };
-    try std.testing.expectError(error.ExecutionPendingCleanup, storage.write(owner, replacement));
+    try std.testing.expectError(error.ExecutionPendingCleanup, commitWrite(&storage, owner, replacement));
     try std.testing.expect((try caller_slots.get(0)).record[0] == .record);
     _ = try storage.cleanupSet(first, false);
     try caller_slots.put(0, .{ .record = &.{} });
-    try std.testing.expectError(error.ExecutionInvalidReference, storage.write(destination, empty));
+    try std.testing.expectError(error.ExecutionInvalidReference, commitWrite(&storage, destination, empty));
     try std.testing.expect(!try storage.cleanupTest(first));
     storage.leave(caller);
-    try std.testing.expectError(error.ExecutionDeadReference, storage.write(destination, empty));
+    try std.testing.expectError(error.ExecutionDeadReference, commitWrite(&storage, destination, empty));
+}
+
+// Exercise the same explicit protocol as the executor, including failures
+// before commit and activation only after a successful value write.
+fn commitWrite(storage: *@import("storage.zig").Storage, destination: @import("storage.zig").WriteDestination, value: b.Value) !usize {
+    const checked = try storage.checkWriteCleanup(destination);
+    try storage.write(destination, value);
+    return checked + try storage.activateWriteCleanup(destination);
 }
