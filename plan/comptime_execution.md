@@ -103,6 +103,12 @@ and ABI transport are tested together, but ordinary expression emission does
 not yet populate or propagate these companions. Virtual receivers remain an
 explicit unsupported evidence shape rather than silently losing their state.
 
+Native `cleanup_state.View` now separates flag allocation from projection. Both
+local owners and views of incoming ABI flag pointers use the same layout and
+subtree updates. Borrowing a view emits no flag allocation or initialization;
+absent evidence must be handled before constructing it. Ordinary reference
+expressions still need to populate and forward the companion descriptors.
+
 Do not generalize lexical body-pattern proofs to substitute for that evidence.
 General owning indirect replacement remains unsupported until both backends and
 the checker implement the transition.

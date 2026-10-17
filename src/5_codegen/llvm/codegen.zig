@@ -35,11 +35,7 @@ const TypedValue = struct {
     ty: ?graph_mod.GlobalTypeId = null,
 };
 
-const DropState = struct {
-    flag_ref: llvm.c.LLVMValueRef = null,
-    flag_count: usize = 0,
-    fields: []DropState = &.{},
-};
+const DropState = @import("cleanup_state.zig").View;
 
 const BindingStorage = struct {
     ref: llvm.c.LLVMValueRef,
@@ -2446,45 +2442,11 @@ pub const CodeGenerator = struct {
     }
 
     fn buildDropState(self: *CodeGenerator, ty: graph_mod.GlobalTypeId, entry_builder: llvm.c.LLVMBuilderRef) !*DropState {
-        const count = try self.cleanup_counts.count(self.allocator, self.graph, ty);
-        const flag_type = c.LLVMArrayType2(c.LLVMInt1Type(), count);
-        const flags = c.LLVMBuildAlloca(entry_builder, flag_type, "cleanup.flags");
-        const state = try self.allocator.create(DropState);
-        var next: usize = 0;
-        try self.buildDropView(state, ty, entry_builder, flags, flag_type, &next);
-        std.debug.assert(next == count);
-        return state;
-    }
-
-    // Child views share one owner block. Their first flag and range remain
-    // stable even for zero-sized values, and can become native call evidence.
-    fn buildDropView(self: *CodeGenerator, state: *DropState, ty: graph_mod.GlobalTypeId, builder: llvm.c.LLVMBuilderRef, flags: llvm.c.LLVMValueRef, flag_type: llvm.c.LLVMTypeRef, next: *usize) anyerror!void {
-        const start = next.*;
-        var indices = [_]c.LLVMValueRef{ c.LLVMConstInt(c.LLVMInt32Type(), 0, 0), c.LLVMConstInt(c.LLVMInt64Type(), start, 0) };
-        state.* = .{ .flag_ref = c.LLVMBuildInBoundsGEP2(builder, flag_type, flags, &indices, indices.len, "needs.deinit") };
-        next.* += 1;
-        const shape = cleanup_layout.Shape.of(self.graph, ty);
-        state.fields = try self.allocator.alloc(DropState, shape.len());
-        for (state.fields, 0..) |*field, index| {
-            if (shape.child(self.graph, index)) |child| {
-                try self.buildDropView(field, child.ty, builder, flags, flag_type, next);
-            } else field.* = .{};
-        }
-        state.flag_count = next.* - start;
+        return DropState.allocate(self.allocator, self.graph, &self.cleanup_counts, ty, entry_builder);
     }
 
     fn storeDropState(self: *CodeGenerator, state: *const DropState, enabled: bool) void {
-        self.storeDropStateValue(state, c.LLVMConstInt(c.LLVMInt1Type(), if (enabled) 1 else 0, 0));
-    }
-
-    fn storeDropStateValue(self: *CodeGenerator, state: *const DropState, enabled: llvm.c.LLVMValueRef) void {
-        if (state.flag_count == 0) return;
-        if (state.flag_count == 1) {
-            _ = c.LLVMBuildStore(self.builder, enabled, state.flag_ref);
-        } else {
-            const byte = c.LLVMBuildZExt(self.builder, enabled, c.LLVMInt8Type(), "cleanup.flag.byte");
-            _ = c.LLVMBuildMemSet(self.builder, state.flag_ref, byte, c.LLVMConstInt(c.LLVMInt64Type(), state.flag_count, 0), 1);
-        }
+        state.set(self.builder, enabled);
     }
 
     fn dropStateForNode(self: *CodeGenerator, node_id: graph_mod.GlobalNodeId) ?*DropState {

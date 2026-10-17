@@ -1,5 +1,6 @@
 const source_files = @import("1_base/source_files.zig");
 const semantic_literals = @import("4_semantics/semantic_literals.zig");
+const native_cleanup_state = @import("5_codegen/llvm/cleanup_state.zig");
 const reference_evidence = @import("5_codegen/llvm/reference_evidence.zig");
 const reference_layout = @import("5_codegen/reference_layout.zig");
 const argi_abi = @import("5_codegen/llvm/argi_abi.zig");
@@ -143,4 +144,5 @@ test {
     _ = argi_abi;
     _ = reference_layout;
     _ = reference_evidence;
+    _ = native_cleanup_state;
 }
