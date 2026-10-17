@@ -105,7 +105,12 @@ pub const OutputVariantEffect = struct {
 
 /// Symbolic post-state of a Place reached through a function input.
 pub const PlacePostState = struct {
+    /// Whether this exit establishes a value independently of entry occupancy.
+    /// An initialized post-state alone may simply preserve the incoming value.
+    pub const Initialization = enum { preserved, possible, definite };
+
     target: InputPath,
+    initialization: Initialization = .preserved,
     initializedness: value_state.Initializedness,
     value: ValueEffect = .{},
     ends_previous_roots: bool = false,

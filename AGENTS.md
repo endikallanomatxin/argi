@@ -337,6 +337,11 @@ feature first.
   destination and shared cleanup identity. VM lowering rejects owning writes
   through unresolved aliases and indexed storage until those identities are modeled.
   A reference field's cleanup flag describes its slot, never its referent.
+  Call post-states distinguish preserved, possible and definite initialization;
+  an initialized post-state alone can preserve the entry value. Only definite
+  writes reactivate unavailable caller cleanup unconditionally. Conditional
+  initialization uses represented result outcomes and must not enable cleanup
+  on paths that preserve vacant storage.
 
 - Structural automatic cleanup follows record fields and active choice payloads.
   AutoDeinitField keeps variant projections distinct from record fields; preserve

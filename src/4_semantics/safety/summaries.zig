@@ -252,6 +252,7 @@ fn domainsEql(a: []const facts.InputDomain, b: []const facts.InputDomain) bool {
 
 fn postStateEql(a: facts.PlacePostState, b: facts.PlacePostState) bool {
     if (!inputPathEql(a.target, b.target) or
+        a.initialization != b.initialization or
         a.initializedness != b.initializedness or
         a.ends_previous_roots != b.ends_previous_roots or
         a.refreshes_storage_generation != b.refreshes_storage_generation or

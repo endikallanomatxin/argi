@@ -92,6 +92,9 @@ preserve existing aliases. Field replacement must preserve unrelated siblings.
 Constant local aliases now carry their proven lexical cleanup target on writes;
 both backends preserve the original pointer evaluation and use the target's flags.
 Retargetable aliases and unknown input referents still need shared cleanup identity.
+Call summaries now distinguish preserved, possible and definite initialization;
+caller cleanup reactivation follows actual writes and represented result outcomes.
+An initialized post-state alone does not prove a value was written to vacant storage.
 Do not infer cleanup from the slot containing a reference. Occupancy in opaque
 collections remains owner-controlled, possibly through a length invariant,
 rather than requiring a universal per-element flag table.

@@ -861,6 +861,7 @@ pub const Infer = struct {
                     false,
                     false,
                     false,
+                    .preserved,
                 );
                 break;
             }
@@ -2009,6 +2010,7 @@ pub const Infer = struct {
                     false,
                     false,
                     true,
+                    .definite,
                 );
             },
             .struct_field_store => |store| {
@@ -2027,6 +2029,7 @@ pub const Infer = struct {
                     false,
                     false,
                     true,
+                    .definite,
                 );
             },
             .array_store => |store| {
@@ -2050,6 +2053,7 @@ pub const Infer = struct {
                     false,
                     false,
                     true,
+                    .definite,
                 );
             },
             .if_statement => |statement| {
@@ -2359,7 +2363,7 @@ pub const Infer = struct {
             const source_targets = try self.inferInputPaths(function_id, arguments[0].value);
             const destination_targets = try self.inferInputPaths(function_id, arguments[1].value);
             for (source_targets) |source| {
-                try self.recordInputPostState(states, &.{source}, .moved, .{}, false, false, false, false);
+                try self.recordInputPostState(states, &.{source}, .moved, .{}, false, false, false, false, .preserved);
                 const transferred = try self.inputPlaceValueEffect(source);
                 for (destination_targets) |destination|
                     try self.recordInputPostState(
@@ -2371,6 +2375,7 @@ pub const Infer = struct {
                         true,
                         true,
                         false,
+                        .definite,
                     );
             }
             return;
@@ -2456,7 +2461,7 @@ pub const Infer = struct {
                 const argument = arguments[domain.path.input_index].value;
                 const value = (try self.localPointeeEffect(function_id, argument)) orelse try self.inferExpression(function_id, argument);
                 for (value.domain_values) |mapped| if (mapped.domain_index == domain.domain_index) {
-                    try self.recordInputPostState(states, mapped.value.input_generation_dependencies, .initialized, .{}, false, true, false, false);
+                    try self.recordInputPostState(states, mapped.value.input_generation_dependencies, .initialized, .{}, false, true, false, false, .preserved);
                     for (mapped.value.input_domains) |input| try appendDomain(self.post_domain_sink orelse &self.domain_invalidations, input);
                     resolved = true;
                 };
@@ -2509,6 +2514,7 @@ pub const Infer = struct {
                 post_state.refreshes_storage_generation,
                 post_state.requires_available_destination,
                 post_state.may_repopulate_opaque_storage,
+                post_state.initialization,
             );
         }
     }
@@ -2576,6 +2582,7 @@ pub const Infer = struct {
         refreshes_storage_generation: bool,
         requires_available_destination: bool,
         may_repopulate_opaque_storage: bool,
+        initialization: facts.PlacePostState.Initialization,
     ) !void {
         for (targets) |target| {
             var existing_state: ?*facts.PlacePostState = null;
@@ -2585,6 +2592,14 @@ pub const Infer = struct {
             };
             if (existing_state) |existing| {
                 const was_deinitialized = existing.initializedness != .initialized;
+                existing.initialization = if (initializedness != .initialized)
+                    .preserved
+                else if (initialization == .definite or (!was_deinitialized and existing.initialization == .definite))
+                    .definite
+                else if (initialization == .possible or existing.initialization == .possible)
+                    .possible
+                else
+                    .preserved;
                 existing.initializedness = initializedness;
                 existing.value = value;
                 existing.ends_previous_roots = existing.ends_previous_roots or ends_roots;
@@ -2603,6 +2618,7 @@ pub const Infer = struct {
                 .ends_previous_roots = ends_roots,
                 .refreshes_storage_generation = refreshes_storage_generation,
                 .requires_available_destination = requires_available_destination,
+                .initialization = initialization,
                 .may_repopulate_opaque_storage = may_repopulate_opaque_storage,
             });
         }
@@ -2645,6 +2661,7 @@ pub const Infer = struct {
         for (left.items) |left_state| {
             var merged = left_state;
             if (self.findInputPostState(right.items, left_state.target)) |right_state| {
+                merged.initialization = if (left_state.initialization == right_state.initialization) left_state.initialization else .possible;
                 merged.initializedness = joinInitializedness(left_state.initializedness, right_state.initializedness);
                 merged.value = try self.mergeValueEffects(left_state.value, right_state.value);
                 merged.ends_previous_roots = left_state.ends_previous_roots or right_state.ends_previous_roots;
@@ -2656,6 +2673,7 @@ pub const Infer = struct {
                     left_state.may_repopulate_opaque_storage or right_state.may_repopulate_opaque_storage;
                 self.joinOpaqueOwnershipEffect(&merged, left_state, right_state);
             } else {
+                if (merged.initialization != .preserved) merged.initialization = .possible;
                 // An untouched relocation destination remains available. It
                 // contributes no initialized value to the joined post-state.
                 if (left_state.initializedness != .initialized or left_state.requires_available_destination) {
@@ -2678,6 +2696,7 @@ pub const Infer = struct {
         for (right.items) |right_state| {
             if (self.findInputPostState(left.items, right_state.target) != null) continue;
             var merged = right_state;
+            if (merged.initialization != .preserved) merged.initialization = .possible;
             if (right_state.initializedness != .initialized or right_state.requires_available_destination) {
                 merged.initializedness = .maybe_initialized;
             } else {
@@ -5705,13 +5724,13 @@ test "input post-state joins retain caller-visible transitions" {
     defer states.deinit();
     const target = facts.InputPath{ .input_index = 0 };
 
-    try inference.recordInputPostState(&states, &.{target}, .initialized, .{}, false, false, false, false);
+    try inference.recordInputPostState(&states, &.{target}, .initialized, .{}, false, false, false, false, .preserved);
     try std.testing.expectEqual(@as(usize, 1), states.items.len);
     try std.testing.expectEqual(value_state.Initializedness.initialized, states.items[0].initializedness);
     try std.testing.expect(!states.items[0].refreshes_storage_generation);
 
-    try inference.recordInputPostState(&states, &.{target}, .deinitialized, .{}, true, false, false, false);
-    try inference.recordInputPostState(&states, &.{target}, .initialized, .{}, false, false, false, false);
+    try inference.recordInputPostState(&states, &.{target}, .deinitialized, .{}, true, false, false, false, .preserved);
+    try inference.recordInputPostState(&states, &.{target}, .initialized, .{}, false, false, false, false, .preserved);
     try std.testing.expect(states.items[0].refreshes_storage_generation);
 
     var changed = std.array_list.Managed(facts.PlacePostState).init(std.testing.allocator);
@@ -5723,6 +5742,37 @@ test "input post-state joins retain caller-visible transitions" {
     defer joined.deinit();
     try inference.joinInputPostStates(&joined, &changed, &unchanged);
     try std.testing.expectEqual(value_state.Initializedness.maybe_initialized, joined.items[0].initializedness);
+}
+
+test "initialization effects distinguish definite writes from preserved entry values" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    var engine = summaries.Engine.init(allocator);
+    defer engine.deinit();
+    var inference = Infer.init(allocator, &graph, &engine);
+    defer inference.deinit();
+    var written = std.array_list.Managed(facts.PlacePostState).init(allocator);
+    defer written.deinit();
+    var untouched = std.array_list.Managed(facts.PlacePostState).init(allocator);
+    defer untouched.deinit();
+    var joined = std.array_list.Managed(facts.PlacePostState).init(allocator);
+    defer joined.deinit();
+    const target = facts.InputPath{ .input_index = 0 };
+    try inference.recordInputPostState(&written, &.{target}, .initialized, .{}, false, false, false, false, .definite);
+    try inference.joinInputPostStates(&joined, &written, &untouched);
+    // Both exits assume an initialized input, but only one writes a new value.
+    try std.testing.expectEqual(.initialized, joined.items[0].initializedness);
+    try std.testing.expectEqual(.possible, joined.items[0].initialization);
+    try inference.joinInputPostStates(&joined, &written, &written);
+    try std.testing.expectEqual(.definite, joined.items[0].initialization);
+    try inference.recordInputPostState(&written, &.{target}, .deinitialized, .{}, true, false, false, false, .preserved);
+    try std.testing.expectEqual(.preserved, written.items[0].initialization);
+    try inference.recordInputPostState(&written, &.{target}, .initialized, .{}, false, false, false, false, .definite);
+    try std.testing.expectEqual(.definite, written.items[0].initialization);
+    try std.testing.expect(written.items[0].refreshes_storage_generation);
 }
 
 test "repopulation under an ended ancestor does not survive a summary" {

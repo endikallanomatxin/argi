@@ -1520,13 +1520,18 @@ pub const SafetyChecker = struct {
         // Projected may-states also describe opaque backing-storage replacement;
         // they do not establish consumption of the whole input owner.
         for (summary.input_post_states) |post| {
-            if (post.initializedness != .maybe_initialized or post.target.projections.len != 0) continue;
+            const possible_initialization = post.initialization == .possible;
+            if (post.initializedness != .maybe_initialized and !possible_initialization) continue;
+            if (post.target.projections.len != 0 and !possible_initialization) continue;
             var relocation_source = false;
             for (summary.outcome_post_states) |outcome| for (outcome.input_post_states) |selected| {
                 if (sameInputPath(selected.target, post.target) and selected.initializedness == .moved) relocation_source = true;
             };
-            if (!post.ends_previous_roots and !post.requires_available_destination and !relocation_source) continue;
             const target = try self.resolveSummaryInputPath(post.target, ids, arguments, state) orelse continue;
+            const initializing_unavailable = possible_initialization and self.initializednessAtPlace(state, target) != .initialized;
+            if (!initializing_unavailable and
+                (post.initializedness != .maybe_initialized or post.target.projections.len != 0)) continue;
+            if (!post.ends_previous_roots and !post.requires_available_destination and !relocation_source and !initializing_unavailable) continue;
             var owns_cleanup = false;
             for (self.graph.auto_deinits.items) |cleanup| if (cleanup.binding == target.root) {
                 owns_cleanup = true;
@@ -1541,9 +1546,11 @@ pub const SafetyChecker = struct {
                     if (outcome.output_index != candidate.output_index) continue;
                     for (outcome.input_post_states) |selected| {
                         if (!sameInputPath(selected.target, post.target)) continue;
-                        ambiguous = ambiguous or selected.initializedness == .maybe_initialized;
+                        ambiguous = ambiguous or selected.initializedness == .maybe_initialized or
+                            (initializing_unavailable and selected.initialization == .possible);
                         definite = definite or selected.initializedness == .moved or
-                            (selected.initializedness == .initialized and selected.requires_available_destination) or
+                            (selected.initializedness == .initialized and (selected.requires_available_destination or
+                                (initializing_unavailable and selected.initialization == .definite))) or
                             (selected.initializedness == .deinitialized and selected.ends_previous_roots);
                     }
                 }
@@ -1555,18 +1562,23 @@ pub const SafetyChecker = struct {
             if (!represented) {
                 if (post.requires_available_destination or relocation_source) {
                     try self.report(self.graph.binding(target.root).source, "cannot select cleanup for conditional relocation; return a distinct result variant on each relocating or preserving path", .{});
+                } else if (initializing_unavailable) {
+                    try self.report(self.graph.binding(target.root).source, "cannot select cleanup for conditional initialization; return from each initializing or preserving path with distinct result variants", .{});
                 } else try self.report(self.graph.binding(target.root).source, "cannot select cleanup for conditional consumption; return a distinct result variant on each consuming or preserving path, or consume a moved lexical owner", .{});
             }
         }
         for (summary.outcome_post_states) |outcome| {
             for (outcome.input_post_states) |post| {
-                const initializing = post.requires_available_destination and post.initializedness == .initialized;
+                const target = try self.resolveSummaryInputPath(post.target, ids, arguments, state) orelse continue;
+                const initializing = post.initializedness == .initialized and (post.requires_available_destination or
+                    (post.initialization == .definite and self.initializednessAtPlace(state, target) != .initialized));
                 const relinquishing = post.initializedness == .moved or
                     (post.initializedness == .deinitialized and post.ends_previous_roots);
                 if (!initializing and !relinquishing) continue;
                 var unconditional = false;
                 for (summary.input_post_states) |common| if (sameInputPath(common.target, post.target) and
                     common.initializedness == post.initializedness and
+                    common.initialization == post.initialization and
                     common.requires_available_destination == post.requires_available_destination and
                     common.ends_previous_roots == post.ends_previous_roots)
                 {
@@ -1574,7 +1586,6 @@ pub const SafetyChecker = struct {
                     break;
                 };
                 if (unconditional) continue;
-                const target = try self.resolveSummaryInputPath(post.target, ids, arguments, state) orelse continue;
                 const node = try self.cleanupNodeForPlace(target) orelse {
                     for (self.graph.auto_deinits.items) |cleanup| if (cleanup.binding == target.root) {
                         try self.report(self.graph.binding(target.root).source, "conditional consumption needs a lexical cleanup place; move the indexed or indirect owner into a local value first", .{});
@@ -1687,9 +1698,17 @@ pub const SafetyChecker = struct {
         defer targets.deinit();
         for (summary.input_post_states) |post| {
             if (initializing) {
-                if (!post.requires_available_destination or post.initializedness != .initialized) continue;
+                if (post.initializedness != .initialized or
+                    (!post.requires_available_destination and post.initialization != .definite)) continue;
             } else if (post.initializedness != .moved and (post.initializedness != .deinitialized or !post.ends_previous_roots)) continue;
-            if (try self.resolveSummaryInputPath(post.target, ids, arguments, state)) |target| try appendPlaceFact(&targets, target);
+            if (try self.resolveSummaryInputPath(post.target, ids, arguments, state)) |target| {
+                // Ordinary writes can reinitialize a consumed caller place too.
+                // Availability preconditions describe relocation, not every
+                // transition that must reactivate the caller's cleanup flags.
+                if (initializing and !post.requires_available_destination and
+                    self.initializednessAtPlace(state, target) == .initialized) continue;
+                try appendPlaceFact(&targets, target);
+            }
         }
         var nodes = std.array_list.Managed(graph_mod.GlobalNodeId).init(self.allocator);
         for (targets.items) |target| {
@@ -2930,6 +2949,15 @@ pub const SafetyChecker = struct {
                 continue;
             };
 
+            const entry_initializedness = self.initializednessAtPlace(state, target);
+            if (post_state.initializedness == .initialized and !post_state.requires_available_destination and
+                entry_initializedness != .initialized and post_state.initialization == .preserved) continue;
+            const initializedness = if (post_state.initializedness == .initialized and !post_state.requires_available_destination and
+                entry_initializedness != .initialized and post_state.initialization == .possible)
+                value_state.Initializedness.maybe_initialized
+            else
+                post_state.initializedness;
+
             if (post_state.requires_available_destination) {
                 if (self.getPlace(state, target)) |current| {
                     if (!try self.requireAvailableRelocationDestination(source, current.initializedness))
@@ -2937,7 +2965,7 @@ pub const SafetyChecker = struct {
                 }
             }
 
-            const reinitializes_dead_place = post_state.initializedness == .initialized and
+            const reinitializes_dead_place = initializedness == .initialized and
                 (if (self.getPlace(state, target)) |current| current.initializedness == .deinitialized else false);
             const previous_value = self.valueAtPlace(state, target);
             if (post_state.ends_previous_roots) if (previous_value) |previous| {
@@ -2969,7 +2997,7 @@ pub const SafetyChecker = struct {
             }
 
             const value = post_values[post_index] orelse facts.ValueFacts{};
-            try self.setPlace(state, target, post_state.initializedness, value);
+            try self.setPlace(state, target, initializedness, value);
         }
     }
 
@@ -7389,6 +7417,52 @@ test "direct call summaries annotate auto deinit transitions" {
 
     try std.testing.expectEqual(address, graph.nodes.items[@intFromEnum(initializes_call)].content.function_call.initializes_auto_deinit.?);
     try std.testing.expectEqual(address, graph.nodes.items[@intFromEnum(consumes_call)].content.function_call.consumes_auto_deinit.?);
+}
+
+test "ordinary call writes reactivate cleanup only for unavailable caller storage" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(allocator);
+    const source = primitives.SourceRef{ .file_index = 0, .offset = 0 };
+    const binding: graph_mod.GlobalBindingId = @enumFromInt(0);
+    const storage = facts.Place{ .root = binding };
+    try graph.types.append(allocator, .{ .builtin = .Int32 });
+    try graph.bindings.append(allocator, .{ .name = .{ .start = 0, .len = 0 }, .source = source, .ty = @enumFromInt(0), .mutability = .variable });
+    try graph.nodes.append(allocator, .{ .source = source, .ty = null, .content = .{ .binding_use = binding } });
+    try graph.value_fields.append(allocator, .{ .name = .{ .start = 0, .len = 0 }, .value = @enumFromInt(0) });
+    var checker = SafetyChecker.init(allocator, undefined, &graph);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const summary = facts.SafetySummary{ .input_post_states = &.{.{ .target = .{ .input_index = 0 }, .initializedness = .initialized, .initialization = .definite }} };
+    const arguments = [_]facts.ValueFacts{.{ .referenced_place = storage }};
+    const ids = [_]graph_mod.GlobalValueFieldId{@enumFromInt(0)};
+    for ([_]value_state.Initializedness{ .initialized, .deinitialized, .moved, .maybe_initialized }) |before| {
+        try checker.setPlace(&state, storage, before, .{});
+        const nodes = try checker.callCleanupNodes(summary, &ids, &arguments, &state, true);
+        try std.testing.expectEqual(@as(usize, if (before == .initialized) 0 else 1), nodes.len);
+        if (nodes.len != 0) try std.testing.expectEqual(binding, graph.node(nodes[0]).content.binding_use);
+        // Recording a runtime flag update must not itself change safety facts.
+        try std.testing.expectEqual(before, checker.initializednessAtPlace(&state, storage));
+        for ([_]facts.PlacePostState.Initialization{ .preserved, .possible }) |initialization| {
+            const conditional = facts.SafetySummary{ .input_post_states = &.{.{ .target = .{ .input_index = 0 }, .initializedness = .initialized, .initialization = initialization }} };
+            const preserved = try checker.callCleanupNodes(conditional, &ids, &arguments, &state, true);
+            try std.testing.expectEqual(@as(usize, 0), preserved.len);
+        }
+    }
+    for ([_]facts.PlacePostState.Initialization{ .preserved, .possible, .definite }) |initialization| {
+        try checker.setPlace(&state, storage, .deinitialized, .{});
+        const effects = facts.SafetySummary{ .input_post_states = &.{.{ .target = .{ .input_index = 0 }, .initializedness = .initialized, .initialization = initialization }} };
+        try checker.applySummaryInputPostStates(source, effects, &ids, &arguments, &state);
+        const expected: value_state.Initializedness = switch (initialization) {
+            .preserved => .deinitialized,
+            .possible => .maybe_initialized,
+            .definite => .initialized,
+        };
+        try std.testing.expectEqual(expected, checker.initializednessAtPlace(&state, storage));
+    }
 }
 
 test "conditional owned roots may escape through nested aggregate fields" {

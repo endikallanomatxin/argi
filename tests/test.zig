@@ -13538,3 +13538,12 @@ test "feature_tests/execution/35_destination_captured_once_vm" {
     try runExpect("tests/feature_tests/execution/35_destination_captured_once_vm", 42);
     try vmExpect("tests/feature_tests/execution/35_destination_captured_once_vm", 42, null);
 }
+
+test "feature_tests/ownership/362_call_reinitialization_restores_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/362_call_reinitialization_restores_cleanup");
+    try runExpect("tests/feature_tests/ownership/362_call_reinitialization_restores_cleanup", 42);
+}
+
+test "feature_tests/ownership/363X_conditional_initialization_requires_outcome" {
+    try buildExpectFail("tests/feature_tests/ownership/363X_conditional_initialization_requires_outcome", "cannot select cleanup for conditional initialization");
+}
