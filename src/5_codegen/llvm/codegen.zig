@@ -1,3 +1,4 @@
+const cleanup_plan = @import("../cleanup_plan.zig");
 const std = @import("std");
 const integer = @import("../integer_arithmetic.zig");
 const cleanup_layout = @import("../cleanup_layout.zig");
@@ -2578,13 +2579,10 @@ pub const CodeGenerator = struct {
         if (deinit_fn) |callee| {
             try self.callDeinit(callee, input, self_field_index, storage);
         } else {
-            const type_fields = types.fields(self.graph, ty);
             for (self.graph.auto_deinit_fields.items[fields.start..][0..fields.len]) |field| {
-                if (field.is_variant) {
-                    const variants = types.variants(self.graph, ty) orelse return CodegenError.InvalidType;
-                    if (field.field_index >= variants.len or field.field_index >= drop.fields.len) return CodegenError.InvalidType;
-                    const variant = self.graph.variants.items[variants.start + field.field_index];
-                    const payload_ty = variant.payload_type orelse return CodegenError.InvalidType;
+                if (field.field_index >= drop.fields.len) return CodegenError.InvalidType;
+                const child = try cleanup_plan.child(self.graph, ty, field);
+                if (child.variant != null) {
                     const payload_block = c.LLVMAppendBasicBlock(function, "deinit.payload");
                     const next_block = c.LLVMAppendBasicBlock(function, "deinit.next");
                     const base_type = try self.toLLVMType(ty);
@@ -2594,17 +2592,14 @@ pub const CodeGenerator = struct {
                     _ = c.LLVMBuildCondBr(self.builder, active, payload_block, next_block);
                     c.LLVMPositionBuilderAtEnd(self.builder, payload_block);
                     const pointer = c.LLVMBuildStructGEP2(self.builder, base_type, storage, field.field_index + 1, "deinit.payload.addr");
-                    try self.genAutoDeinitStorage(field.deinit_fn, field.input, field.self_field_index, field.fields, pointer, payload_ty, &drop.fields[field.field_index]);
+                    try self.genAutoDeinitStorage(field.deinit_fn, field.input, field.self_field_index, field.fields, pointer, child.ty, &drop.fields[field.field_index]);
                     if (c.LLVMGetBasicBlockTerminator(c.LLVMGetInsertBlock(self.builder)) == null) _ = c.LLVMBuildBr(self.builder, next_block);
                     c.LLVMPositionBuilderAtEnd(self.builder, next_block);
                     continue;
                 }
-                const range = type_fields orelse continue;
-                if (field.field_index >= range.len or field.field_index >= drop.fields.len) continue;
-                const semantic_field = self.graph.fields.items[range.start + field.field_index];
                 const base_type = try self.toLLVMType(ty);
                 const pointer = c.LLVMBuildStructGEP2(self.builder, base_type, storage, field.field_index, "deinit.field");
-                try self.genAutoDeinitStorage(field.deinit_fn, field.input, field.self_field_index, field.fields, pointer, semantic_field.ty, &drop.fields[field.field_index]);
+                try self.genAutoDeinitStorage(field.deinit_fn, field.input, field.self_field_index, field.fields, pointer, child.ty, &drop.fields[field.field_index]);
             }
         }
         self.storeDropState(drop, false);
@@ -2620,19 +2615,8 @@ pub const CodeGenerator = struct {
         for (self.graph.fields.items[function.input.start..][0..function.input.len], 0..) |field, index| {
             const value = if (index == self_index)
                 storage
-            else blk: {
-                if (input_override) |node| {
-                    if (self.graph.nodes.items[@intFromEnum(node)].content == .struct_value_literal) {
-                        const literal = self.graph.nodes.items[@intFromEnum(node)].content.struct_value_literal;
-                        for (self.graph.value_fields.items[literal.fields.start..][0..literal.fields.len]) |value_field| {
-                            if (!std.mem.eql(u8, self.graph.text(value_field.name), self.graph.text(field.name))) continue;
-                            break :blk ((try self.visitNode(value_field.value)) orelse return CodegenError.ValueNotFound).value_ref;
-                        }
-                    }
-                }
-                const default = field.default_value orelse return CodegenError.InvalidType;
-                break :blk ((try self.visitNode(default)) orelse return CodegenError.ValueNotFound).value_ref;
-            };
+            else
+                ((try self.visitNode(try cleanup_plan.argument(self.graph, input_override, field))) orelse return CodegenError.ValueNotFound).value_ref;
             aggregate = c.LLVMBuildInsertValue(self.builder, aggregate, value, @intCast(index), "deinit.arg");
         }
         _ = try self.callArgi(symbol, aggregate, "");

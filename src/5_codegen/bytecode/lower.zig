@@ -4,6 +4,7 @@ const p = @import("../../4_semantics/primitives/schema.zig");
 const b = @import("bytecode.zig");
 const types = @import("../../4_semantics/global/types.zig");
 const cleanup_layout = @import("../cleanup_layout.zig");
+const cleanup_plan = @import("../cleanup_plan.zig");
 const standard_contracts = @import("../../4_semantics/global/standard_contracts.zig");
 
 pub const Lower = struct {
@@ -213,34 +214,23 @@ const FunctionLower = struct {
                     arg.* = try self.newSlot(field.ty);
                     _ = try self.emit(source, .{ .borrow = .{ .dst = arg.*, .place = target } });
                 } else {
-                    var value = field.default_value;
-                    if (input) |node| {
-                        const content = self.parent.graph.node(node).content;
-                        if (content == .struct_value_literal) for (self.parent.graph.value_fields.items[content.struct_value_literal.fields.start..][0..content.struct_value_literal.fields.len]) |supplied| {
-                            if (std.mem.eql(u8, self.parent.graph.text(supplied.name), self.parent.graph.text(field.name))) {
-                                value = supplied.value;
-                                break;
-                            }
-                        };
-                    }
-                    arg.* = try self.coerce(source, try self.expression(value orelse return error.InvalidBytecode), field.ty);
+                    const value = try cleanup_plan.argument(self.parent.graph, input, field);
+                    arg.* = try self.coerce(source, try self.expression(value), field.ty);
                 }
             }
             try self.parent.pending.append(self.parent.allocator, id);
             _ = try self.emit(source, .{ .call = .{ .function = id, .args = args, .outputs = &.{} } });
         } else for (self.parent.graph.auto_deinit_fields.items[fields.start..][0..fields.len]) |field| {
             if (field.field_index >= drop.fields.len) return error.InvalidBytecode;
-            if (field.is_variant) {
-                const range = types.variants(self.parent.graph, ty) orelse return error.InvalidBytecode;
-                const variant: g.GlobalVariantId = @enumFromInt(range.start + field.field_index);
+            const child = try cleanup_plan.child(self.parent.graph, ty, field);
+            if (child.variant) |variant| {
                 const value = try self.newSlot(ty);
                 _ = try self.emit(source, .{ .load = .{ .dst = value, .place = target } });
                 const active = try self.emit(source, .{ .branch_variant = .{ .src = value, .variant = variant, .yes = self.position() + 1, .no = 0 } });
-                try self.cleanupStorage(field.deinit_fn, field.input, field.self_field_index, field.fields, try self.project(target, .{ .variant = variant }), self.parent.graph.variants.items[@intFromEnum(variant)].payload_type.?, drop.fields[field.field_index]);
+                try self.cleanupStorage(field.deinit_fn, field.input, field.self_field_index, field.fields, try self.project(target, .{ .variant = variant }), child.ty, drop.fields[field.field_index]);
                 self.code.items[active].op.branch_variant.no = self.position();
             } else {
-                const range = types.fields(self.parent.graph, ty) orelse return error.InvalidBytecode;
-                try self.cleanupStorage(field.deinit_fn, field.input, field.self_field_index, field.fields, try self.project(target, .{ .field = field.field_index }), self.parent.graph.fields.items[range.start + field.field_index].ty, drop.fields[field.field_index]);
+                try self.cleanupStorage(field.deinit_fn, field.input, field.self_field_index, field.fields, try self.project(target, .{ .field = field.field_index }), child.ty, drop.fields[field.field_index]);
             }
         }
         try self.setDrop(drop, false);

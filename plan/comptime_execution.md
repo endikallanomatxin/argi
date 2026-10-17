@@ -167,8 +167,12 @@ identities, including references into caller frames, without reading vacant
 values. They use the compiler's existing cleanup flags and sorted layouts, not
 a second ownership analysis. General indirect replacement still requires checked
 cleanup plans and corresponding native evidence transport before it is enabled.
-Both backends share the field/variant layout of cleanup state. Native evidence
-must retain owner/projection identity: zero-sized siblings can share an address
+Both backends share the field/variant layout of cleanup state. `cleanup_plan.zig`
+resolves selected child types, variant identities and auxiliary arguments without
+copying plans or allocating another IR. Conditional traversal and emission remain
+backend-specific; a complete shared lifecycle lowering is still pending.
+Native evidence must retain owner/projection identity: zero-sized siblings can
+share an address
 while retaining independent cleanup obligations.
 Native flags use one preorder block per owner; each projected subtree has a
 stable pointer and range. Native definitions, ordinary/virtual calls, generated
@@ -223,8 +227,11 @@ prerequisite established by this investigation.
 `Vm.run` currently resets its arena and frame numbering. Context identities
 prevent references from resolving to unrelated slots in another run, even when
 frame numbers coincide. Entry validation still rejects external references.
-Persistent handles also need non-reusable value generations and checked
-publishing; context identity alone does not establish cross-command validity.
+External session handles need non-reusable generations and checked publishing;
+context identity alone does not establish cross-command validity. This does not
+require generation checks on every internal VM reference. The retained compiler
+environment proves language borrowing across commands; runtime handle validation
+protects the session boundary rather than implementing a second safety checker.
 
 Separate session bindings, command temporaries and call frames. Session bindings
 must have session lifetime from their creation, not become escaped function
