@@ -128,11 +128,12 @@ straight-line initialization renews only the selected access after evaluating
 the RHS. Historical aliases remain stale; potentially aliased inputs are still
 conservative. No concrete pointee or disjointness proof is invented.
 
-Definite initialization summaries also renew direct symbolic argument slots
-after calls; possible writes do not. Copied accesses keep their old generations.
+Definite initialization summaries renew the selected symbolic argument slot
+after calls, including reference fields in Args. Possible writes do not renew
+it; copied records and accesses keep their old generations.
 
-Remaining: reconcile branch and loop generations and extend symbolic targets
-inside input records, including projected call arguments. Then
+Remaining: reconcile branch and loop generations and seed symbolic targets
+inside input records. Then
 connect the complete replacement transition to native evidence and VM output
 initialization, and close the live/vacated four-destructor acceptance case.
 

@@ -2936,6 +2936,11 @@ pub const SafetyChecker = struct {
     }
 
     fn renewSymbolicDestination(self: *SafetyChecker, node: graph_mod.GlobalNodeId, pointer: facts.ValueFacts, state: *FunctionState) !?facts.ValueFacts {
+        _ = try self.resolvePlace(node, state) orelse return null;
+        return self.renewSymbolicAccess(pointer, state);
+    }
+
+    fn renewSymbolicAccess(self: *SafetyChecker, pointer: facts.ValueFacts, state: *FunctionState) !?facts.ValueFacts {
         // A join of possible targets cannot establish one definite destination.
         if (pointer.symbolic_pointees.len != 1 or pointer.opaque_provenance.len != 0) return null;
         const identity = pointer.symbolic_pointees[0];
@@ -2952,7 +2957,6 @@ pub const SafetyChecker = struct {
                 break;
             };
             if (!observes) return null;
-            _ = try self.resolvePlace(node, state) orelse return null;
             const generation = try state.tracker.establish(.fresh);
             const renewed = try self.replaceValueRoots(pointer, &.{previous}, generation);
             state.symbolic_pointees.items[index].generation = generation;
@@ -3051,19 +3055,19 @@ pub const SafetyChecker = struct {
                         for (arguments[index].dependencies) |dependency| _ = try self.endRoot(source, state, dependency.root);
                     }
                 }
-                // A definite write through a direct input can initialize its
-                // vacant symbolic referent. Renew the actual argument slot;
-                // copies of that access retain the consumed generation.
+                // Renew the argument's reference slot, including a projected
+                // field in Args. Its referent has no concrete Place; the record
+                // slot and other copies remain distinct from that referent.
                 if (post_state.initializedness == .initialized and post_state.initialization == .definite and
-                    !post_state.requires_available_destination and post_state.target.projections.len == 0 and
-                    post_state.target.storage_domain == null and index < argument_ids.len)
+                    !post_state.requires_available_destination)
                 {
-                    const argument = self.graph.value_fields.items[@intFromEnum(argument_ids[index])].value;
-                    if (try self.renewSymbolicDestination(argument, arguments[index], state)) |renewed| {
-                        if (try self.resolvePlace(argument, state)) |slot| {
-                            try self.setPlace(state, slot, .initialized, renewed);
-                            for (state.symbolic_pointees.items) |*entry| {
-                                if (entry.identity == renewed.symbolic_pointees[0]) entry.initializedness = .initialized;
+                    if (try self.summaryInputReferenceSlot(post_state.target, argument_ids, arguments, state)) |slot| {
+                        if (try self.symbolicConsumptionValue(post_state.target, argument_ids, arguments)) |access| {
+                            if (try self.renewSymbolicAccess(access, state)) |renewed| {
+                                try self.setPlace(state, slot, .initialized, renewed);
+                                for (state.symbolic_pointees.items) |*entry| {
+                                    if (entry.identity == renewed.symbolic_pointees[0]) entry.initializedness = .initialized;
+                                }
                             }
                         }
                     }

@@ -13638,3 +13638,12 @@ test "feature_tests/ownership/374X_symbolic_call_reinitialization_keeps_alias_st
 test "feature_tests/ownership/375X_symbolic_call_possible_initialization" {
     try buildExpectFail("tests/feature_tests/ownership/375X_symbolic_call_possible_initialization", "reference depends on a root that has ended");
 }
+
+test "feature_tests/ownership/376_symbolic_record_call_reinitialization" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/376_symbolic_record_call_reinitialization");
+    try runExpect("tests/feature_tests/ownership/376_symbolic_record_call_reinitialization", 42);
+}
+
+test "feature_tests/ownership/377X_symbolic_record_call_keeps_copy_stale" {
+    try buildExpectFail("tests/feature_tests/ownership/377X_symbolic_record_call_keeps_copy_stale", "reference depends on a root that has ended");
+}
