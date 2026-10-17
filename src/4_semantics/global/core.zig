@@ -246,7 +246,7 @@ pub const Resolver = struct {
                 node.ty = inferred;
                 changed = true;
             },
-            .value_sequence => |block| {
+            .value_sequence, .replacement_value => |block| {
                 const value = self.graph.blocks.items[@intFromEnum(block)].ret_val orelse continue;
                 const inferred = self.graph.node(value).ty orelse continue;
                 if (node.ty != null and (node.ty.? == inferred or types.equal(self.graph, node.ty.?, inferred))) continue;
@@ -566,7 +566,7 @@ pub const Resolver = struct {
                 const output = types.fields(self.graph, call.output_type) orelse return false;
                 return output.len == 1 and std.mem.eql(u8, self.graph.text(self.graph.fields.items[output.start].name), name);
             },
-            .value_sequence => |block| return self.isUnpackedOutputField(self.graph.blocks.items[@intFromEnum(block)].ret_val orelse return false, name),
+            .value_sequence, .replacement_value => |block| return self.isUnpackedOutputField(self.graph.blocks.items[@intFromEnum(block)].ret_val orelse return false, name),
             .binding_use => |id| blk: {
                 const binding = self.graph.binding(id);
                 // Internal pipe storage preserves single-output labels while

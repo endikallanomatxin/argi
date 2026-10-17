@@ -120,6 +120,7 @@ test {
     _ = global_semantic_errors;
     _ = global_semantic_ownership;
     _ = global_lexical_storage;
+    _ = @import("4_semantics/global/replacement.zig");
     _ = global_semantizer;
     _ = global_safety_facts;
     _ = global_safety_checker;

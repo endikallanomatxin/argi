@@ -1004,6 +1004,7 @@ pub const CodeGenerator = struct {
             .virtualize => |virtualize| try self.genVirtualize(virtualize),
             .virtual_call => |virtual_call| try self.genVirtualCall(virtual_call, null),
             .code_block, .value_sequence => |block| try self.genBlock(block),
+            .replacement_value => try self.genBlock((try @import("../../4_semantics/global/replacement.zig").plan(self.graph, node_id)).block),
             .int_literal, .float_literal, .char_literal, .string_literal, .bool_literal => try self.emitLiteral(node_id),
             .list_literal => |literal| try self.listLiteral(literal, node.ty),
             .struct_value_literal => |literal| try self.structLiteral(literal, node.ty),

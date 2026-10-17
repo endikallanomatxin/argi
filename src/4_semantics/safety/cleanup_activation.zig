@@ -258,7 +258,7 @@ const Scanner = struct {
 
     fn node(self: *Scanner, id: graph_mod.GlobalNodeId, flow: *Flow) anyerror!void {
         switch (self.graph.node(id).content) {
-            .code_block, .value_sequence => |child| try self.block(child, flow),
+            .code_block, .value_sequence, .replacement_value => |child| try self.block(child, flow),
             .binding_declaration => |binding| {
                 const record = self.graph.binding(binding);
                 if (self.in_loop or record.deferred_initialization) {

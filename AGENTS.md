@@ -323,6 +323,10 @@ feature first.
 
 - Local whole-binding replacement evaluates its RHS into a lexical owner, runs the
   selected cleanup of the previous value, and moves the replacement into place.
+  Checked `replacement_value` expressions identify the prepared lexical owner,
+  selected old-value cleanup and final move in order. Both backends consume the
+  shared replacement plan verifier; safety/summaries traverse its ordinary nodes.
+  General value sequences do not imply replacement semantics.
   Ownership finalization uses cleanup activation to omit destruction for proven
   first initialization. Preserve temporary provenance in value-sequence summaries;
   a sequence result must not skip the bindings that establish its dependencies.

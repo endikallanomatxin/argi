@@ -139,7 +139,6 @@ pub fn verifyGlobal(graph: *const graph_mod.GlobalSemanticGraph) !void {
     for (graph.error_propagations.items) |value| try payload.errorPropagation(graph_mod.Ids, value, bounds);
     for (graph.error_contexts.items) |value| try payload.errorContext(graph_mod.Ids, value, bounds);
     for (graph.nodes.items) |value| try payload.node(graph_mod.Ids, value, bounds);
-    try verifyWriteCleanupTargets(graph);
 
     for (graph.node_refs.items) |id| try require(verify.idFits(id, graph.nodes.items.len));
     for (graph.type_refs.items) |id| try require(verify.idFits(id, graph.types.items.len));
@@ -147,6 +146,11 @@ pub fn verifyGlobal(graph: *const graph_mod.GlobalSemanticGraph) !void {
     for (graph.function_refs.items) |id| try require(verify.idFits(id, graph.functions.items.len));
     for (graph.virtual_registry_refs.items) |id| try require(verify.idFits(id, graph.virtual_registries.items.len));
     for (graph.roots.items) |id| try require(verify.idFits(id, graph.nodes.items.len));
+
+    try verifyWriteCleanupTargets(graph);
+    for (graph.nodes.items, 0..) |node, index| if (node.content == .replacement_value) {
+        _ = try @import("replacement.zig").plan(graph, @enumFromInt(index));
+    };
 }
 
 fn verifyWriteCleanupTargets(graph: *const graph_mod.GlobalSemanticGraph) !void {

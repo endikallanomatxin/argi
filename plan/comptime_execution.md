@@ -76,8 +76,12 @@ These checks validate execution of selected plans; they do not select destructor
 or replace the safety proof. Fatal interruption still poisons a future persistent
 session rather than promising rollback or replayable cleanup.
 
-Next, represent this transition directly in the checked graph and summaries,
-instead of recovering it from an arbitrary store. AOT must carry the same
+The checked graph marks prepared replacement expressions as `replacement_value`.
+Their shared plan verifier checks the lexical owner, selected cleanup and final
+move in order; safety and summaries traverse those ordinary operations. Both
+backends consume that plan rather than identifying arbitrary value sequences.
+The surrounding write still supplies the captured destination; joining it with
+the plan for unknown targets remains the next step. AOT must carry the same
 owner/projection evidence through reference-valued fields, arguments and outputs;
 VM references already preserve concrete storage identity across those boundaries.
 Do not generalize lexical body-pattern proofs to substitute for that evidence.

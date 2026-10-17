@@ -624,6 +624,10 @@ pub fn Node(comptime Ids: type) type {
             // Compiler-generated ordered expressions have an explicit result,
             // unlike source blocks. Their storage belongs to the outer scope.
             value_sequence: Ids.BlockId,
+            // Checked lifecycle expression: prepare one lexical replacement,
+            // run selected old-value cleanup, then move the prepared value.
+            // Ownership finalization creates it; source lowering never does.
+            replacement_value: Ids.BlockId,
             int_literal: i128,
             float_literal: f64,
             char_literal: u32,

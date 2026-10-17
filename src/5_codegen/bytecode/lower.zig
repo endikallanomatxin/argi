@@ -552,8 +552,12 @@ const FunctionLower = struct {
             return value;
         }
         if (node.content == .function_call) return (try self.call(id)) orelse self.parent.reject(node.source, "void expression");
-        if (node.content == .value_sequence) {
-            const block_ = self.parent.graph.blocks.items[@intFromEnum(node.content.value_sequence)];
+        if (node.content == .value_sequence or node.content == .replacement_value) {
+            const block_id = if (node.content == .replacement_value)
+                (try @import("../../4_semantics/global/replacement.zig").plan(self.parent.graph, id)).block
+            else
+                node.content.value_sequence;
+            const block_ = self.parent.graph.blocks.items[@intFromEnum(block_id)];
             const result_node = block_.ret_val orelse return self.parent.reject(node.source, "sequence without result");
             var result: ?b.Slot = null;
             for (self.parent.graph.node_refs.items[block_.nodes.start..][0..block_.nodes.len]) |child| {
