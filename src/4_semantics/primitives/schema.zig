@@ -714,7 +714,14 @@ pub fn Node(comptime Ids: type) type {
                 ty: Ids.TypeId,
                 pointer_type: Ids.TypeId,
             },
-            pointer_assignment: struct { pointer: Ids.NodeId, value: Ids.NodeId, cleanup_target: ?Ids.NodeId = null },
+            pointer_assignment: struct {
+                pointer: Ids.NodeId,
+                value: Ids.NodeId,
+                cleanup_target: ?Ids.NodeId = null,
+                // Published by safety checking; every visited incoming state
+                // must prove initialization rather than replacement.
+                checked_initialization: ?bool = null,
+            },
             type_literal: Ids.TypeId,
             explicit_cast: struct { value: Ids.NodeId, target_type: Ids.TypeId },
         };

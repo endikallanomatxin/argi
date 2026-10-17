@@ -215,6 +215,9 @@ pub const SafetyChecker = struct {
     pub fn analyze(self: *SafetyChecker) !void {
         self.stats = .{ .timing_io = self.profile_io };
         const before = self.diagnostics.list.items.len;
+        for (self.graph.nodes.items) |*node| if (node.content == .pointer_assignment) {
+            node.content.pointer_assignment.checked_initialization = null;
+        };
         try self.validateNominalChoiceLayouts();
         try self.validateForeignSignatures();
 
@@ -741,6 +744,9 @@ pub const SafetyChecker = struct {
                         try self.renewSymbolicDestination(assignment.pointer, pointer, state)
                     else
                         null;
+                    const initializes = was_deinitialized or symbolic_renewal != null;
+                    const proof = &self.graph.nodes.items[@intFromEnum(node_id)].content.pointer_assignment.checked_initialization;
+                    proof.* = (proof.* orelse true) and initializes;
                     if (symbolic_renewal) |renewed| pointer = renewed;
                     if (pointer.referenced_place) |target| {
                         if (was_deinitialized and pointer.opaque_provenance.len == 0) {
@@ -1750,6 +1756,7 @@ pub const SafetyChecker = struct {
     fn callCleanupNodes(self: *SafetyChecker, summary: facts.SafetySummary, ids: []const graph_mod.GlobalValueFieldId, arguments: []const facts.ValueFacts, state: *FunctionState, initializing: bool) ![]const graph_mod.GlobalNodeId {
         var targets = std.array_list.Managed(facts.Place).init(self.allocator);
         defer targets.deinit();
+        var nodes = std.array_list.Managed(graph_mod.GlobalNodeId).init(self.allocator);
         for (summary.input_post_states) |post| {
             if (initializing) {
                 if (post.initializedness != .initialized or
@@ -1762,9 +1769,16 @@ pub const SafetyChecker = struct {
                 if (initializing and !post.requires_available_destination and
                     self.initializednessAtPlace(state, target) == .initialized) continue;
                 try appendPlaceFact(&targets, target);
+            } else if (post.target.projections.len == 0 and post.target.storage_domain == null and post.target.input_index < ids.len) {
+                // Keep the evaluated input identity when its referent is
+                // symbolic. This is runtime storage evidence, not a fabricated
+                // concrete Place or a flag on the reference's local slot.
+                const argument = self.graph.value_fields.items[@intFromEnum(ids[post.target.input_index])].value;
+                const ty = self.graph.node(argument).ty orelse continue;
+                if (isPointer(self.graph, ty) and arguments[post.target.input_index].symbolic_pointees.len != 0)
+                    try nodes.append(argument);
             }
         }
-        var nodes = std.array_list.Managed(graph_mod.GlobalNodeId).init(self.allocator);
         for (targets.items) |target| {
             var covered = false;
             for (targets.items) |other| if (!target.eql(other) and other.isPrefixOf(target)) {

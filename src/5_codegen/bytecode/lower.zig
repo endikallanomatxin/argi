@@ -328,10 +328,11 @@ const FunctionLower = struct {
             },
             .pointer_assignment => |x| {
                 const child = self.parent.graph.semanticType(self.parent.graph.node(x.pointer).ty.?).pointer.child;
-                if (self.parent.cleanup_types[@intFromEnum(child)] and !self.trackedDestination(x.pointer, x.cleanup_target))
+                if (self.parent.cleanup_types[@intFromEnum(child)] and x.checked_initialization != true and !self.trackedDestination(x.pointer, x.cleanup_target))
                     return self.parent.reject(node.source, "owning replacement through a runtime reference");
                 const target = try self.addressedPlace(x.pointer);
-                const destination = try self.captureWrite(node.source, target, child, self.targetHasCleanup(x.cleanup_target));
+                const destination = try self.captureWrite(node.source, target, child, self.targetHasCleanup(x.cleanup_target) or
+                    (x.checked_initialization == true and self.parent.cleanup_types[@intFromEnum(child)]));
                 const value = try self.coerce(node.source, try self.expression(x.value), self.parent.graph.semanticType(self.parent.graph.node(x.pointer).ty.?).pointer.child);
                 try self.commitWrite(node.source, destination, value);
             },
@@ -526,12 +527,26 @@ const FunctionLower = struct {
             else => self.parent.reject(node.source, "write through unsupported storage"),
         };
     }
+    fn updateCallCleanup(self: *FunctionLower, node: g.GlobalNodeId, enabled: bool, fields: p.Range(g.GlobalValueFieldId), args: []const b.Slot) !void {
+        // Use the evaluated argument snapshot, never reevaluate an expression
+        // after the call or update the slot containing a reference.
+        if (self.parent.graph.node(node).ty) |ty| {
+            const semantic = self.parent.graph.semanticType(ty);
+            if (semantic == .pointer and self.parent.cleanup_types[@intFromEnum(semantic.pointer.child)]) {
+                for (self.parent.graph.value_fields.items[fields.start..][0..fields.len], args) |field, slot| {
+                    if (field.value != node) continue;
+                    const target = try self.project(.{ .root = slot, .path = &.{} }, .dereference);
+                    _ = try self.emit(self.parent.source, .{ .cleanup_set = .{ .place = target, .enabled = enabled } });
+                    return;
+                }
+            }
+        }
+        if (self.nodeDrop(node)) |drop| try self.setDrop(drop, enabled);
+    }
     fn call(self: *FunctionLower, id: g.GlobalNodeId) anyerror!?b.Slot {
         const node = self.parent.graph.node(id);
         const x = node.content.function_call;
         if (x.callee_value != null) return self.parent.reject(node.source, "indirect call");
-        if (x.initialized_auto_deinits.len != 0 or x.initializes_auto_deinit != null)
-            return self.parent.reject(node.source, "output storage initialization");
         const input = self.parent.graph.node(x.input).content;
         if (input != .struct_value_literal) return self.parent.reject(node.source, "non-record call arguments");
         const fields = input.struct_value_literal.fields;
@@ -542,8 +557,9 @@ const FunctionLower = struct {
         for (outputs, self.parent.graph.fields.items[f.output.start..][0..f.output.len]) |*slot, field| slot.* = try self.newSlot(field.ty);
         try self.parent.pending.append(self.parent.allocator, x.callee);
         _ = try self.emit(node.source, .{ .call = .{ .outputs = outputs, .function = x.callee, .args = args } });
-        if (x.consumes_auto_deinit) |value| if (self.nodeDrop(value)) |drop| try self.setDrop(drop, false);
-        for (x.consumed_auto_deinits) |value| if (self.nodeDrop(value)) |drop| try self.setDrop(drop, false);
+        if (x.consumes_auto_deinit) |value| try self.updateCallCleanup(value, false, fields, args);
+        for (x.consumed_auto_deinits) |value| try self.updateCallCleanup(value, false, fields, args);
+        for (x.initialized_auto_deinits) |value| try self.updateCallCleanup(value, true, fields, args);
         for (x.outcome_cleanups) |cleanup| {
             const drop = self.nodeDrop(cleanup.place) orelse continue;
             var path = try cleanup_plan.OutcomePath.init(self.parent.graph, f.output, cleanup);
@@ -562,6 +578,7 @@ const FunctionLower = struct {
             try self.setDrop(drop, cleanup.enabled);
             for (branches.items) |branch| self.code.items[branch].op.branch_variant.no = self.position();
         }
+        if (x.initializes_auto_deinit) |value| try self.updateCallCleanup(value, true, fields, args);
         if (outputs.len == 0) return null;
         if (outputs.len == 1) return outputs[0];
         const result = try self.newSlot(node.ty orelse return self.parent.reject(node.source, "untyped call result"));

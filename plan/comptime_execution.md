@@ -120,13 +120,18 @@ forward the companion descriptors.
 
 Do not generalize lexical body-pattern proofs to substitute for that evidence.
 General owning indirect replacement remains unsupported until both backends and
-the checker implement the transition.
+the checker implement the transition. Explicit consume/write/consume through a
+direct symbolic input now executes in bytecode: the checker retains a definite
+initialization proof across every visited incoming state, calls retain symbolic
+consumption targets, and lowering updates the referent's flags through evaluated
+argument snapshots. Live-target replacement still requires its selected plan.
+This does not yet support physically vacant output slots or partial aggregates.
 
 Next acceptance case: call the same `store(target: $&Resource, ...)` with a live
 owner and with storage explicitly vacated by `deinit`. Across both scopes this
 must execute four destructors: two old values and two replacements. The native
-probe currently executes three; VM lowering also rejects caller output-storage
-initialization. Transport and initialization must close this case together,
+probe currently executes three; VM lowering still rejects the unplanned owning
+write in store. Transport and initialization must close this case together,
 without imposing an initialized-only reference precondition or calling cleanup
 unconditionally. This is the next milestone, ahead of further helper APIs.
 

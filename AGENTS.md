@@ -244,7 +244,11 @@ feature first.
   renews only its selected reference after RHS evaluation. Historical aliases
   stay stale; distinct consumption identities still carry caller-side alias
   obligations, so ending a shared generation alone cannot forbid consuming
-  another input. Reject uninitialized/repeated destruction.
+  another input. Reject uninitialized/repeated destruction. Pointer writes retain
+  a definite-initialization proof only when every visited incoming state agrees.
+  Symbolic call cleanup targets retain evaluated input identities. Bytecode flag
+  updates use those argument snapshots and affect referents, never reference slots.
+  Owning writes without that proof still require a checked replacement plan.
   Erased receiver consumption stays unsupported until runtime cleanup identities
   exist. Destructor declarations use only Deinit; `TypeName deinit(...)` is
   rejected with a migration diagnostic. Cleanup has no nominal destructor
