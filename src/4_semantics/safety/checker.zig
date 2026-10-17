@@ -3051,6 +3051,23 @@ pub const SafetyChecker = struct {
                         for (arguments[index].dependencies) |dependency| _ = try self.endRoot(source, state, dependency.root);
                     }
                 }
+                // A definite write through a direct input can initialize its
+                // vacant symbolic referent. Renew the actual argument slot;
+                // copies of that access retain the consumed generation.
+                if (post_state.initializedness == .initialized and post_state.initialization == .definite and
+                    !post_state.requires_available_destination and post_state.target.projections.len == 0 and
+                    post_state.target.storage_domain == null and index < argument_ids.len)
+                {
+                    const argument = self.graph.value_fields.items[@intFromEnum(argument_ids[index])].value;
+                    if (try self.renewSymbolicDestination(argument, arguments[index], state)) |renewed| {
+                        if (try self.resolvePlace(argument, state)) |slot| {
+                            try self.setPlace(state, slot, .initialized, renewed);
+                            for (state.symbolic_pointees.items) |*entry| {
+                                if (entry.identity == renewed.symbolic_pointees[0]) entry.initializedness = .initialized;
+                            }
+                        }
+                    }
+                }
                 continue;
             };
 

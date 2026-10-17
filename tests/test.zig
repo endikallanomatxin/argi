@@ -13625,3 +13625,16 @@ test "feature_tests/ownership/371X_symbolic_reinitialization_keeps_possible_alia
 test "feature_tests/ownership/372X_symbolic_reinitialization_rhs_cannot_read_vacant" {
     try buildExpectFail("tests/feature_tests/ownership/372X_symbolic_reinitialization_rhs_cannot_read_vacant", "reference depends on a root that has ended");
 }
+
+test "feature_tests/ownership/373_symbolic_call_reinitialization" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/373_symbolic_call_reinitialization");
+    try runExpect("tests/feature_tests/ownership/373_symbolic_call_reinitialization", 42);
+}
+
+test "feature_tests/ownership/374X_symbolic_call_reinitialization_keeps_alias_stale" {
+    try buildExpectFail("tests/feature_tests/ownership/374X_symbolic_call_reinitialization_keeps_alias_stale", "reference depends on a root that has ended");
+}
+
+test "feature_tests/ownership/375X_symbolic_call_possible_initialization" {
+    try buildExpectFail("tests/feature_tests/ownership/375X_symbolic_call_possible_initialization", "reference depends on a root that has ended");
+}
