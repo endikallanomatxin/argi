@@ -182,7 +182,8 @@ Variants without payloads have no entry.
 
 Both backends share the field/variant layout of cleanup state. `cleanup_plan.zig`
 resolves selected child types, variant identities and auxiliary arguments without
-copying plans or allocating another IR. Conditional traversal and emission remain
+copying plans or allocating another IR. A shared outcome-path iterator validates
+nested result selectors; backends emit guards before projecting each payload. Conditional traversal and emission remain
 backend-specific; a complete shared lifecycle lowering is still pending.
 Native evidence must retain owner/projection identity: zero-sized siblings can
 share an address

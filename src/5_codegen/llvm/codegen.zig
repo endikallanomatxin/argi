@@ -2513,24 +2513,18 @@ pub const CodeGenerator = struct {
     fn markOutcomeCleanups(self: *CodeGenerator, cleanups: []const primitives.OutcomeCleanup(graph_mod.Ids), result: llvm.c.LLVMValueRef, outputs: graph_mod.FieldRange) !void {
         for (cleanups) |cleanup| {
             const drop = self.dropStateForNode(cleanup.place) orelse continue;
-            if (cleanup.output_index >= outputs.len) return CodegenError.InvalidType;
-            var ty = self.graph.fields.items[outputs.start + cleanup.output_index].ty;
+            var path = try cleanup_plan.OutcomePath.init(self.graph, outputs, cleanup);
             var choice = c.LLVMBuildExtractValue(self.builder, result, cleanup.output_index, "cleanup.result");
             const function = c.LLVMGetBasicBlockParent(c.LLVMGetInsertBlock(self.builder));
             const done = c.LLVMAppendBasicBlock(function, "cleanup.outcome.done");
-            for (0..cleanup.parent_variants.len + 1) |depth| {
-                const index = if (depth < cleanup.parent_variants.len) cleanup.parent_variants[depth] else cleanup.variant_index;
-                const variants = types.variants(self.graph, ty) orelse return CodegenError.InvalidType;
-                if (index >= variants.len) return CodegenError.InvalidType;
+            while (try path.next()) |step| {
                 const selected = c.LLVMAppendBasicBlock(function, "cleanup.outcome.selected");
-                const tag = if (self.isCEnum(ty)) choice else c.LLVMBuildExtractValue(self.builder, choice, 0, "cleanup.outcome.tag");
-                const matches = c.LLVMBuildICmp(self.builder, c.LLVMIntEQ, tag, c.LLVMConstInt(c.LLVMInt32Type(), index, 0), "cleanup.outcome.matches");
+                const tag = if (self.isCEnum(step.ty)) choice else c.LLVMBuildExtractValue(self.builder, choice, 0, "cleanup.outcome.tag");
+                const matches = c.LLVMBuildICmp(self.builder, c.LLVMIntEQ, tag, c.LLVMConstInt(c.LLVMInt32Type(), step.index, 0), "cleanup.outcome.matches");
                 _ = c.LLVMBuildCondBr(self.builder, matches, selected, done);
                 c.LLVMPositionBuilderAtEnd(self.builder, selected);
-                if (depth < cleanup.parent_variants.len) {
-                    ty = self.graph.variants.items[variants.start + index].payload_type orelse return CodegenError.InvalidType;
-                    choice = c.LLVMBuildExtractValue(self.builder, choice, index + 1, "cleanup.outcome.payload");
-                }
+                if (step.payload != null)
+                    choice = c.LLVMBuildExtractValue(self.builder, choice, step.index + 1, "cleanup.outcome.payload");
             }
             self.storeDropState(drop, cleanup.enabled);
             _ = c.LLVMBuildBr(self.builder, done);

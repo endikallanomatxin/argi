@@ -38,3 +38,79 @@ pub fn argument(graph: *const g.GlobalSemanticGraph, input: ?g.GlobalNodeId, fie
     }
     return field.default_value orelse error.InvalidCleanupPlan;
 }
+
+// Borrow the selected outcome path instead of materializing another tree.
+// Each step must be guarded before projecting its payload; the final predicate
+// can select a payloadless variant and never reads that payload.
+pub const OutcomePath = struct {
+    graph: *const g.GlobalSemanticGraph,
+    ty: g.GlobalTypeId,
+    parents: []const u32,
+    final: u32,
+    depth: usize = 0,
+
+    pub const Step = struct {
+        ty: g.GlobalTypeId,
+        index: u32,
+        variant: g.GlobalVariantId,
+        payload: ?g.GlobalTypeId,
+    };
+
+    pub fn init(graph: *const g.GlobalSemanticGraph, outputs: g.FieldRange, cleanup: @import("../4_semantics/primitives/schema.zig").OutcomeCleanup(g.Ids)) !OutcomePath {
+        if (cleanup.output_index >= outputs.len) return error.InvalidCleanupPlan;
+        return .{ .graph = graph, .ty = graph.fields.items[outputs.start + cleanup.output_index].ty, .parents = cleanup.parent_variants, .final = cleanup.variant_index };
+    }
+
+    pub fn next(self: *OutcomePath) !?Step {
+        if (self.depth > self.parents.len) return null;
+        const parent = self.depth < self.parents.len;
+        const index = if (parent) self.parents[self.depth] else self.final;
+        const variants = types.variants(self.graph, self.ty) orelse return error.InvalidCleanupPlan;
+        if (index >= variants.len) return error.InvalidCleanupPlan;
+        const variant: g.GlobalVariantId = @enumFromInt(variants.start + index);
+        const payload = if (parent)
+            self.graph.variants.items[@intFromEnum(variant)].payload_type orelse return error.InvalidCleanupPlan
+        else
+            null;
+        const step = Step{ .ty = self.ty, .index = index, .variant = variant, .payload = payload };
+        if (payload) |ty| self.ty = ty;
+        self.depth += 1;
+        return step;
+    }
+};
+
+test "cleanup outcome paths guard parents and preserve nominal variant identities" {
+    const a = std.testing.allocator;
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source = @import("../4_semantics/primitives/schema.zig").SourceRef{ .file_index = 0, .offset = 0 };
+    const name = @import("../4_semantics/primitives/schema.zig").StringRange{ .start = 0, .len = 0 };
+    try graph.types.appendSlice(a, &.{
+        .{ .structural_choice = .{ .variants = .{ .start = 0, .len = 2 } } },
+        .{ .structural_choice = .{ .variants = .{ .start = 2, .len = 2 } } },
+    });
+    for (0..4) |index| try graph.variants.append(a, .{
+        .name = name,
+        .value = @intCast(index % 2),
+        .source = source,
+        .payload_type = if (index == 0) @enumFromInt(1) else null,
+    });
+    try graph.fields.append(a, .{ .name = name, .ty = @enumFromInt(0), .source = source });
+    var cleanup = @import("../4_semantics/primitives/schema.zig").OutcomeCleanup(g.Ids){ .place = @enumFromInt(0), .output_index = 0, .parent_variants = &.{0}, .variant_index = 1 };
+    var path = try OutcomePath.init(&graph, .{ .start = 0, .len = 1 }, cleanup);
+    const outer = (try path.next()).?;
+    try std.testing.expectEqual(@as(g.GlobalTypeId, @enumFromInt(1)), outer.payload.?);
+    const inner = (try path.next()).?;
+    try std.testing.expectEqual(@as(u32, 1), inner.index);
+    try std.testing.expectEqual(@as(g.GlobalVariantId, @enumFromInt(3)), inner.variant);
+    try std.testing.expect(inner.payload == null);
+    try std.testing.expect(try path.next() == null);
+    cleanup.parent_variants = &.{1};
+    path = try OutcomePath.init(&graph, .{ .start = 0, .len = 1 }, cleanup);
+    try std.testing.expectError(error.InvalidCleanupPlan, path.next());
+    cleanup.parent_variants = &.{2};
+    path = try OutcomePath.init(&graph, .{ .start = 0, .len = 1 }, cleanup);
+    try std.testing.expectError(error.InvalidCleanupPlan, path.next());
+    cleanup.output_index = 1;
+    try std.testing.expectError(error.InvalidCleanupPlan, OutcomePath.init(&graph, .{ .start = 0, .len = 1 }, cleanup));
+}

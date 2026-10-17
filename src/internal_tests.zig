@@ -141,6 +141,7 @@ test {
     _ = type_codegen;
     _ = codegen;
     _ = cleanup_layout;
+    _ = @import("5_codegen/cleanup_plan.zig");
     _ = argi_abi;
     _ = reference_layout;
     _ = reference_evidence;

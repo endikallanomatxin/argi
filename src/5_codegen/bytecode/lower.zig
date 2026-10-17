@@ -530,18 +530,15 @@ const FunctionLower = struct {
         for (x.consumed_auto_deinits) |value| if (self.nodeDrop(value)) |drop| try self.setDrop(drop, false);
         for (x.outcome_cleanups) |cleanup| {
             const drop = self.nodeDrop(cleanup.place) orelse continue;
-            if (cleanup.output_index >= outputs.len) return error.InvalidBytecode;
+            var path = try cleanup_plan.OutcomePath.init(self.parent.graph, f.output, cleanup);
             var value = outputs[cleanup.output_index];
             var branches: std.ArrayList(u32) = .empty;
             defer branches.deinit(self.parent.allocator);
-            for (0..cleanup.parent_variants.len + 1) |depth| {
-                const index = if (depth < cleanup.parent_variants.len) cleanup.parent_variants[depth] else cleanup.variant_index;
-                const range = types.variants(self.parent.graph, self.slots.items[value]) orelse return error.InvalidBytecode;
-                if (index >= range.len) return error.InvalidBytecode;
-                const variant: g.GlobalVariantId = @enumFromInt(range.start + index);
+            while (try path.next()) |step| {
+                const variant = step.variant;
                 try branches.append(self.parent.allocator, try self.emit(node.source, .{ .branch_variant = .{ .src = value, .variant = variant, .yes = self.position() + 1, .no = 0 } }));
-                if (depth < cleanup.parent_variants.len) {
-                    const child = try self.newSlot(self.parent.graph.variants.items[@intFromEnum(variant)].payload_type orelse return error.InvalidBytecode);
+                if (step.payload) |payload| {
+                    const child = try self.newSlot(payload);
                     _ = try self.emit(node.source, .{ .payload = .{ .dst = child, .src = value, .variant = variant } });
                     value = child;
                 }
