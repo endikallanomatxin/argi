@@ -1946,13 +1946,33 @@ pub const Resolver = struct {
         return true;
     }
 
+    // A record can receive its contextual type before calls/binding uses in
+    // nested lists have resolved. The parent's type alone does not establish
+    // that every child has been normalized into its executable value shape.
+    // Retry only when an unfinished literal can now make semantic progress.
+    fn contextualAggregateNeedsCompletion(self: *const Resolver, node: global_sg.GlobalNodeId, target: global_sg.GlobalTypeId) bool {
+        return switch (self.graph.node(node).content) {
+            .list_literal => |literal| self.contextualListLiteralFits(literal, target),
+            .struct_value_literal => |literal| blk: {
+                const fields = types.fields(self.graph, target) orelse break :blk false;
+                for (self.graph.fields.items[fields.start..][0..fields.len], 0..) |field, index| {
+                    const child = self.callArgument(literal, index, field.name) orelse continue;
+                    if (self.contextualAggregateNeedsCompletion(child, field.ty)) break :blk true;
+                }
+                break :blk false;
+            },
+            else => false,
+        };
+    }
+
     pub fn materializeAssignmentValues(self: *Resolver) bool {
         var changed = false;
         for (self.graph.bindings.items, 0..) |binding, raw| {
             if (self.graph.isBindingTypeUnresolved(@enumFromInt(@as(u32, @intCast(raw))))) continue;
             const initialization = binding.initialization orelse continue;
             const current = self.graph.node(initialization).ty;
-            if (current == null or (!types.equal(self.graph, current.?, binding.ty) and self.contextualLiteralFits(initialization, binding.ty)))
+            if (current == null or (!types.equal(self.graph, current.?, binding.ty) and self.contextualLiteralFits(initialization, binding.ty)) or
+                self.contextualAggregateNeedsCompletion(initialization, binding.ty))
                 if (self.coerceContextualValue(initialization, binding.ty)) {
                     changed = true;
                 };
@@ -1967,7 +1987,8 @@ pub const Resolver = struct {
                         else => continue,
                     };
                     const current = self.graph.node(value.value).ty;
-                    if (current == null or (!types.equal(self.graph, current.?, pointer.child) and self.contextualLiteralFits(value.value, pointer.child)))
+                    if (current == null or (!types.equal(self.graph, current.?, pointer.child) and self.contextualLiteralFits(value.value, pointer.child)) or
+                        self.contextualAggregateNeedsCompletion(value.value, pointer.child))
                         if (self.coerceContextualValue(value.value, pointer.child)) {
                             changed = true;
                         };
@@ -1978,7 +1999,8 @@ pub const Resolver = struct {
             if (self.graph.isBindingTypeUnresolved(assignment.binding)) continue;
             const current = self.graph.node(assignment.value).ty;
             const expected = self.graph.binding(assignment.binding).ty;
-            if (current != null and (types.equal(self.graph, current.?, expected) or !self.contextualLiteralFits(assignment.value, expected))) continue;
+            if (current != null and (types.equal(self.graph, current.?, expected) or !self.contextualLiteralFits(assignment.value, expected)) and
+                !self.contextualAggregateNeedsCompletion(assignment.value, expected)) continue;
             // Assignment destinations supply the contextual shape of anonymous
             // aggregates before summary inference and codegen consume them.
             if (self.coerceContextualValue(assignment.value, self.graph.binding(assignment.binding).ty)) changed = true;

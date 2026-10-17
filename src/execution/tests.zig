@@ -899,8 +899,7 @@ test "compile-time evaluation exports aggregate constants and rejects escaping r
         \\    sum :: Int32 = base
         \\    index :: Int32 = 0
         \\    while index < 2 { sum = sum + 1 index = index + 1 }
-        \\    items: [2]Int32 = (base, sum)
-        \\    result = (.sum = sum, .items = items)
+        \\    result = (.sum = sum, .items = (base, sum))
         \\}
         \\borrow(.value: &Int32) -> (.result: &Int32) := { result = value }
         \\main() -> (.status_code: Int32 = 0) := {

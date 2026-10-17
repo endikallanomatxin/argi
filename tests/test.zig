@@ -13659,3 +13659,9 @@ test "feature_tests/execution/44_explicit_reference_reinitialization_vm" {
     try runExpect("tests/feature_tests/execution/44_explicit_reference_reinitialization_vm", 42);
     try vmExpect("tests/feature_tests/execution/44_explicit_reference_reinitialization_vm", 42, null);
 }
+
+test "feature_tests/execution/45_contextual_nested_arrays_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/45_contextual_nested_arrays_vm");
+    try runExpect("tests/feature_tests/execution/45_contextual_nested_arrays_vm", 42);
+    try vmExpect("tests/feature_tests/execution/45_contextual_nested_arrays_vm", 42, null);
+}
