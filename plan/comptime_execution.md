@@ -92,8 +92,10 @@ Both backends share the field/variant layout of cleanup state. Native evidence
 must retain owner/projection identity: zero-sized siblings can share an address
 while retaining independent cleanup obligations.
 Native flags use one preorder block per owner; each projected subtree has a
-stable pointer and range. For transport, pass this companion where lifecycle
-operations need it; never reconstruct it by comparing value addresses.
+stable pointer and range. Native definitions, ordinary/virtual calls, generated
+cleanup and trace helpers share one private ABI signature and call emitter;
+C signatures remain target-specific. For transport, pass this companion where
+lifecycle operations need it; never reconstruct it by comparing value addresses.
 
 A reference needs a target identity and its observed generation. Aliases can
 name the same target while retaining different observed generations. Shared

@@ -135,4 +135,5 @@ test {
     _ = type_codegen;
     _ = codegen;
     _ = cleanup_layout;
+    _ = @import("5_codegen/llvm/argi_abi.zig");
 }
