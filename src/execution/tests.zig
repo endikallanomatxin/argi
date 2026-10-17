@@ -1103,3 +1103,49 @@ test "compile-time evaluation retains selected cleanup in its dependency unit" {
     }
     try std.testing.expect(found);
 }
+
+test "bytecode source run freezes loop results before runtime execution" {
+    try std.testing.expectEqual(@as(i128, 42), try execute(
+        \\calculate(.base: Int32) -> (.result: Int32 = 0) := {
+        \\    result = base
+        \\    while result < 42 { result = result + 1 }
+        \\}
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    answer ::= #run calculate(.base = 40)
+        \\    status_code = answer
+        \\}
+    , .{ .instructions = 20 }));
+}
+
+test "bytecode source run evaluates nested requests in specialized bodies" {
+    try std.testing.expectEqual(@as(i128, 42), try execute(
+        \\calculate(.base: Int32) -> (.result: Int32 = 0) := {
+        \\    result = base
+        \\    while result < 42 { result = result + 1 }
+        \\}
+        \\prepared#(.N: Int32)() -> (.result: Int32 = 0) := {
+        \\    result = #run calculate(.base = N)
+        \\}
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    status_code = #run prepared#(.N = 40)()
+        \\}
+    , .{ .instructions = 20 }));
+}
+
+test "bytecode source run preserves several outputs and void boundaries" {
+    try std.testing.expectEqual(@as(i128, 42), try execute(
+        \\pair() -> (.left: Int32 = 20, .right: Int32 = 22) := {}
+        \\check(.value: Int32) -> () := { if value != 42 { abort } }
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    values ::= #run pair()
+        \\    #run check(.value = 42)
+        \\    status_code = values.left + values.right
+        \\}
+    , .{}));
+    try std.testing.expectEqual(@as(i128, 42), try execute(
+        \\answer(.value: Void) -> (.result: Int32 = 42) := {}
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    status_code = #run answer(.value = ())
+        \\}
+    , .{}));
+}

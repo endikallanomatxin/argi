@@ -708,6 +708,13 @@ const Context = struct {
     }
 
     fn lowerCall(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
+        const result = try self.lowerRuntimeCall(node, expected);
+        if (self.tree.functionCall(node).?.comptime_token != null)
+            try self.graph.semantic.comptime_requests.append(self.allocator, result.node);
+        return result;
+    }
+
+    fn lowerRuntimeCall(self: *Context, node: syn.NodeIndex, expected: ?entities.ModuleTypeId) !Lowered {
         const call = self.tree.functionCall(node).?;
         const name_text = self.tree.tokenTextFromSource(self.source, call.callee_token);
         if (try @import("../target_predicate.zig").evaluate(self.allocator, self.tree, self.source, node, self.graph.target, self.diagnostics)) |matched|

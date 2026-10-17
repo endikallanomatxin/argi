@@ -13683,3 +13683,29 @@ test "feature_tests/ownership/379X_record_input_keeps_possible_alias_stale" {
 test "feature_tests/ownership/380X_record_input_repeated_consumption" {
     try buildExpectFail("tests/feature_tests/ownership/380X_record_input_repeated_consumption", "consumption requires an initialized owner");
 }
+
+test "feature_tests/execution/47_comptime_run" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/47_comptime_run");
+    try runExpect("tests/feature_tests/execution/47_comptime_run", 42);
+    try vmExpect("tests/feature_tests/execution/47_comptime_run", 42, null);
+}
+
+test "feature_tests/execution/48X_comptime_runtime_argument" {
+    try buildExpectFail("tests/feature_tests/execution/48X_comptime_runtime_argument", "#run arguments must be compile-time constants");
+}
+
+test "feature_tests/execution/49X_comptime_abort" {
+    try buildExpectFail("tests/feature_tests/execution/49X_comptime_abort", "#run evaluation aborted");
+}
+
+test "feature_tests/execution/50X_comptime_cycle" {
+    try buildExpectFail("tests/feature_tests/execution/50X_comptime_cycle", "cyclic dependency between #run evaluations");
+}
+
+test "feature_tests/execution/51X_comptime_reference_result" {
+    try buildExpectFail("tests/feature_tests/execution/51X_comptime_reference_result", "#run cannot return references or values requiring cleanup");
+}
+
+test "feature_tests/execution/52X_comptime_instruction_limit" {
+    try buildExpectFail("tests/feature_tests/execution/52X_comptime_instruction_limit", "#run evaluation exceeded its instruction limit");
+}

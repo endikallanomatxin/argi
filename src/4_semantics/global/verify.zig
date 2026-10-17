@@ -8,6 +8,7 @@ const types = @import("types.zig");
 pub fn verifyGlobal(graph: *const graph_mod.GlobalSemanticGraph) !void {
     try require(graph.constructionStateEmpty());
     const bounds = makeBounds(graph);
+    for (graph.comptime_requests.items) |id| try require(verify.idFits(id, graph.nodes.items.len));
     try verifyModulePartitions(graph);
     for (graph.argument_defaults.items) |recipe| {
         try require(recipe.module_index < graph.modules.items.len);

@@ -39,6 +39,7 @@ pub const Storage = struct {
     /// until GlobalSema resolves an initializer/control-flow dependency.
     unresolved_binding_types: std.ArrayList(entities.ModuleBindingId) = .empty,
     nodes: std.ArrayList(entities.ModuleNode) = .empty,
+    comptime_requests: std.ArrayList(entities.ModuleNodeId) = .empty,
     blocks: std.ArrayList(entities.Block) = .empty,
     value_fields: std.ArrayList(entities.ValueField) = .empty,
     switch_cases: std.ArrayList(entities.SwitchCase) = .empty,
@@ -87,6 +88,7 @@ pub const Storage = struct {
         self.bindings.deinit(allocator);
         self.unresolved_binding_types.deinit(allocator);
         self.nodes.deinit(allocator);
+        self.comptime_requests.deinit(allocator);
         self.blocks.deinit(allocator);
         self.value_fields.deinit(allocator);
         self.switch_cases.deinit(allocator);
@@ -133,6 +135,7 @@ pub const Storage = struct {
             self.bindings.items.len * @sizeOf(entities.Binding) +
             self.unresolved_binding_types.items.len * @sizeOf(entities.ModuleBindingId) +
             self.nodes.items.len * @sizeOf(entities.ModuleNode) +
+            self.comptime_requests.items.len * @sizeOf(entities.ModuleNodeId) +
             self.blocks.items.len * @sizeOf(entities.Block) +
             self.value_fields.items.len * @sizeOf(entities.ValueField) +
             self.switch_cases.items.len * @sizeOf(entities.SwitchCase) +

@@ -1,0 +1,178 @@
+const std = @import("std");
+const g = @import("../4_semantics/global/graph.zig");
+const b = @import("../5_codegen/bytecode/bytecode.zig");
+const p = @import("../4_semantics/primitives/schema.zig");
+const diag = @import("../1_base/diagnostic.zig");
+
+// Execute explicit source requests only. Function resolution, specialization,
+// ownership and safety remain frontend responsibilities; this pass consumes
+// finalized dependencies and freezes values through the shared evaluator.
+pub fn resolve(allocator: std.mem.Allocator, graph: *g.GlobalSemanticGraph, diagnostics: *diag.Diagnostics) !void {
+    if (graph.comptime_requests.items.len == 0) return;
+    var scratch = std.heap.ArenaAllocator.init(allocator);
+    defer scratch.deinit();
+    const temporary = scratch.allocator();
+    var context = Context{ .allocator = allocator, .temporary = temporary, .graph = graph, .diagnostics = diagnostics };
+    context.states = try temporary.alloc(State, graph.comptime_requests.items.len);
+    @memset(context.states, .waiting);
+    for (graph.comptime_requests.items, 0..) |request, index| {
+        context.process(index) catch |err| {
+            if (err == error.OutOfMemory or err == error.Reported) return err;
+            try context.report(context.failure_source orelse graph.node(request).source, err);
+            return error.Reported;
+        };
+    }
+    graph.comptime_requests.clearRetainingCapacity();
+}
+
+const State = enum { waiting, executing, done };
+const Context = struct {
+    allocator: std.mem.Allocator,
+    temporary: std.mem.Allocator,
+    graph: *g.GlobalSemanticGraph,
+    diagnostics: *diag.Diagnostics,
+    states: []State = &.{},
+    failure_source: ?p.SourceRef = null,
+    depth: usize = 0,
+
+    fn process(self: *Context, index: usize) anyerror!void {
+        switch (self.states[index]) {
+            .done => return,
+            .executing => return error.CompileTimeEvaluationCycle,
+            .waiting => {},
+        }
+        if (self.depth >= 128) return error.CompileTimeDependencyDepthLimit;
+        self.depth += 1;
+        defer self.depth -= 1;
+        self.states[index] = .executing;
+        const id = self.graph.comptime_requests.items[index];
+        const node = self.graph.node(id);
+        errdefer if (self.failure_source == null) {
+            self.failure_source = node.source;
+        };
+        // Compiler-recognized pure queries can already be literals.
+        if (node.content == .int_literal or node.content == .bool_literal or node.content == .type_literal) {
+            self.states[index] = .done;
+            return;
+        }
+        if (node.content != .function_call) return error.UnsupportedCompileTimeCall;
+        const call = node.content.function_call;
+        if (call.callee_value != null) return error.UnsupportedCompileTimeCall;
+        var unit = try @import("../4_semantics/global/reachability.zig").dependencyUnit(self.temporary, self.graph, &.{call.callee});
+        defer unit.deinit();
+        // Freeze requests inside called bodies before lowering those bodies.
+        // The DFS detects compile-time dependency cycles rather than repeatedly
+        // executing a still-runtime call or imposing declaration order.
+        for (self.graph.comptime_requests.items, 0..) |dependency, dependency_index| {
+            if (unit.containsNode(dependency)) try self.process(dependency_index);
+        }
+        const input = self.graph.node(call.input);
+        if (input.content != .struct_value_literal) return error.NonConstantCompileTimeArgument;
+        const fields = input.content.struct_value_literal.fields;
+        const args = try self.temporary.alloc(b.Value, fields.len);
+        for (args, 0..) |*value, offset| {
+            const argument = self.graph.value_fields.items[fields.start + offset].value;
+            value.* = try self.constant(argument, 0);
+        }
+        const values = try @import("evaluate.zig").evaluate(self.allocator, self.graph, self.diagnostics, call.callee, args, node.source, .{});
+        defer self.allocator.free(values);
+        if (values.len == 1) {
+            self.graph.nodes.items[@intFromEnum(id)] = self.graph.node(values[0]);
+        } else {
+            const start: u32 = @intCast(self.graph.value_fields.items.len);
+            const outputs = self.graph.function(call.callee).output;
+            for (values, self.graph.fields.items[outputs.start..][0..outputs.len]) |value, field|
+                try self.graph.value_fields.append(self.allocator, .{ .name = field.name, .value = value });
+            var ty = node.ty;
+            if (ty == null and values.len == 0) {
+                for (self.graph.types.items, 0..) |candidate, raw| {
+                    if (candidate == .builtin and candidate.builtin == .Void) {
+                        ty = @enumFromInt(raw);
+                        break;
+                    }
+                }
+            }
+            self.graph.nodes.items[@intFromEnum(id)] = .{ .source = node.source, .ty = ty, .content = .{ .struct_value_literal = .{ .fields = .{ .start = start, .len = @intCast(values.len) } } } };
+        }
+        self.states[index] = .done;
+    }
+
+    fn constant(self: *Context, id: g.GlobalNodeId, depth: usize) anyerror!b.Value {
+        if (depth > 64) return error.CompileTimeConstantDepthLimit;
+        for (self.graph.comptime_requests.items, 0..) |request, index| if (request == id) {
+            try self.process(index);
+            break;
+        };
+        const node = self.graph.node(id);
+        return switch (node.content) {
+            .int_literal => |value| .{ .integer = value },
+            .bool_literal => |value| .{ .boolean = value },
+            .binding_use => |id_binding| blk: {
+                const binding = self.graph.binding(id_binding);
+                if (binding.mutability != .constant) return error.NonConstantCompileTimeArgument;
+                break :blk try self.constant(binding.initialization orelse return error.NonConstantCompileTimeArgument, depth + 1);
+            },
+            .struct_value_literal => |literal| blk: {
+                if (node.ty) |ty| {
+                    const semantic = self.graph.semanticType(ty);
+                    if (semantic == .builtin and semantic.builtin == .Void) break :blk .unit;
+                }
+                const values = try self.temporary.alloc(b.Value, literal.fields.len);
+                for (values, 0..) |*value, offset| {
+                    const child = self.graph.value_fields.items[literal.fields.start + offset].value;
+                    value.* = try self.constant(child, depth + 1);
+                }
+                break :blk .{ .record = values };
+            },
+            .array_literal => |literal| blk: {
+                const values = try self.temporary.alloc(b.Value, literal.elements.len);
+                for (values, 0..) |*value, offset| {
+                    const child = self.graph.node_refs.items[literal.elements.start + offset];
+                    value.* = try self.constant(child, depth + 1);
+                }
+                break :blk .{ .array = values };
+            },
+            .choice_literal => |literal| blk: {
+                var payload: ?*b.Value = null;
+                if (literal.payload) |child| {
+                    payload = try self.temporary.create(b.Value);
+                    payload.?.* = try self.constant(child, depth + 1);
+                }
+                break :blk .{ .choice = .{ .variant = @intFromEnum(literal.variant), .payload = payload } };
+            },
+            else => error.NonConstantCompileTimeArgument,
+        };
+    }
+
+    fn report(self: *Context, source: p.SourceRef, err: anyerror) !void {
+        var location = @import("../2_tokens/token.zig").Location{ .file = @enumFromInt(0), .offset = source.offset };
+        if (source.file_index < self.graph.files.items.len) {
+            const file = self.graph.files.items[source.file_index];
+            const dir = self.graph.text(self.graph.modules.items[@intFromEnum(file.module)].dir);
+            for (self.diagnostics.source_db.files, 0..) |candidate, raw| {
+                if (std.mem.eql(u8, std.fs.path.basename(candidate.path), self.graph.text(file.path)) and std.mem.eql(u8, std.fs.path.dirname(candidate.path) orelse ".", dir)) {
+                    location.file = self.diagnostics.source_db.fileId(raw);
+                    break;
+                }
+            }
+        }
+        const message: ?[]const u8 = switch (err) {
+            error.NonConstantCompileTimeArgument => "#run arguments must be compile-time constants; runtime values cannot be used",
+            error.CompileTimeDependencyDepthLimit => "#run dependencies exceeded their nesting limit",
+            error.CompileTimeEvaluationCycle => "cyclic dependency between #run evaluations",
+            error.ExecutionAborted => "#run evaluation aborted",
+            error.ExecutionInstructionLimit => "#run evaluation exceeded its instruction limit",
+            error.ExecutionCallDepthLimit => "#run evaluation exceeded its call depth limit",
+            error.ExecutionMemoryLimit => "#run evaluation exceeded its storage limit",
+            error.UnfreezableEvaluationInput => "#run arguments cannot contain references or values requiring cleanup",
+            error.UnfreezableEvaluationResult => "#run cannot return references or values requiring cleanup",
+            error.UnsupportedExecution => "#run uses an operation outside the supported bytecode subset",
+            error.UnsupportedCompileTimeCall => "#run requires a supported direct function call",
+            else => null,
+        };
+        if (message) |text|
+            try self.diagnostics.add(location, .semantic, "{s}", .{text})
+        else
+            try self.diagnostics.add(location, .semantic, "#run failed: {s}", .{@errorName(err)});
+    }
+};

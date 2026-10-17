@@ -138,6 +138,12 @@ divided by -1 wraps to itself, with remainder zero. Division by zero and `abort`
 produce source diagnostics. These failures stop execution without running user
 destructors; normal lexical cleanup is distinct from abort recovery.
 
+Explicit `#run function(...)` calls use the same executor during compilation,
+including native builds. Arguments must be constants; results freeze into compiler
+values. References and values requiring cleanup cannot be exported. Compile-time
+calls currently resolve after semantic completion and cannot yet supply type
+shapes or compile-time parameters. See [compile-time computation](../description/50_comptime.md).
+
 Execution is limited to one million instructions, 128 nested calls, and one
 million cumulative value cells. These are initial fixed limits, not a general
 sandbox or a stable resource policy. No host I/O or native handles are exposed.

@@ -2192,6 +2192,11 @@ pub const Resolver = struct {
                 .pending => |pending| try self.instantiatePendingNode(storage.pending.items[@intFromEnum(pending)]),
             };
             self.resolver.graph.nodes.items[@intFromEnum(global)] = instantiated;
+            if (local == .pending) {
+                const pending = storage.pending.items[@intFromEnum(local.pending)];
+                if (pending == .resolve_expression and pending.resolve_expression.comptime_run)
+                    try self.resolver.graph.comptime_requests.append(self.resolver.allocator, global);
+            }
             self.resolver.stats.nodes += 1;
             return global;
         }

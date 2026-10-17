@@ -302,8 +302,18 @@ It exports scalar/aggregate outputs as
 compiler-owned graph literals. Input/output types with references or cleanup
 are rejected before execution. Result validation precedes publication; export
 failure rolls back appended nodes and value-field/reference tables. This boundary
-is tested with a loop returning a record containing an array. It is not yet
-connected to source `#run`, type formation or conditional selection.
+is tested with a loop returning a record containing an array.
+
+Source `#run` calls now retain explicit sparse requests through module caching,
+global relocation and generic body specialization. After semantic/safety
+completion, requests resolve their checked dependency units and replace their
+call nodes with frozen constants. Nested requests use dependency order and cycle
+detection, independent of declaration order. Runtime variables are rejected as
+arguments, and aborted evaluation becomes a source diagnostic. AOT and VM tests
+cover an aggregate returned through nested requests in a generic body. This
+initial source connection does not yet participate in type formation, compile-time
+argument computation or conditional selection; it must move into staged semantic
+resolution for those uses.
 
 Dependency units use the existing function/node/evidence traversal without
 program roots. Summary inference and temporal checking share the same selected

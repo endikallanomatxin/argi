@@ -25,13 +25,20 @@ branch is compiled. This differs from running an ordinary `if` inside
 `#run`; the latter executes the conditional during compile-time evaluation.
 
 > [!IMPLEMENTATION]
-> `#run` and general compile-time conditions are not supported yet.
-> `#if` currently accepts the target predicates described below, combined
-> with `not`, `and`, `or`, and parentheses.
+> `#run` currently accepts resolved function calls with constant scalar or
+> aggregate arguments and representable results. Calls use the checked bytecode
+> subset and its execution limits; references, resource-owning results and host
+> effects cannot cross this boundary. Requests in specialized bodies are retained,
+> and nested requests are resolved before their callers. Evaluation currently
+> follows global semantic completion, so computed results cannot yet shape types
+> or compile-time arguments. General compile-time conditions remain unsupported.
+> `#if` accepts the target predicates below, combined with `not`, `and`, `or`,
+> and parentheses.
 
-The experimental `argi run --vm <directory>` command exercises the initial
-checked bytecode executor; it does not enable compile-time execution. Its
-supported subset and limits are documented in [usage](../docs/usage.md#experimental-bytecode-execution).
+The experimental `argi run --vm <directory>` command uses the shared bytecode
+executor for runtime execution. Explicit `#run` requests use that executor during
+compilation regardless of the selected runtime backend. The supported subset and
+limits are documented in [usage](../docs/usage.md#experimental-bytecode-execution).
 
 ## Compilation target
 

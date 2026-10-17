@@ -139,6 +139,7 @@ pub const Syntaxer = struct {
             .ampersand,
             .dollar,
             .tilde,
+            .hash,
             => true,
             else => false,
         };
@@ -1517,6 +1518,26 @@ pub const Syntaxer = struct {
     fn parsePrimary(self: *Syntaxer) !syn.NodeIndex {
         const content = self.currentContent();
 
+        if (self.tokenIs(.hash)) {
+            const prefix: syn.TokenIndex = @enumFromInt(self.index);
+            const location = self.currentLocation();
+            self.advanceOne();
+            if (self.currentContent() != .identifier or !std.mem.eql(u8, self.tokenText(self.currentContent().identifier), "run")) {
+                try self.diags.add(location, .syntax, "expected '#run' before a compile-time call", .{});
+                return error.ExpectedIdentifier;
+            }
+            self.advanceOne();
+            const value = try self.parsePrimary();
+            if (self.file.tag(value) != .function_call) {
+                try self.diags.add(location, .syntax, "#run requires a function call", .{});
+                return error.ExpectedLeftParen;
+            }
+            var extra = self.file.extraData(syn.CallExtra, self.file.data(value).extra);
+            extra.comptime_token = syn.OptionalTokenIndex.init(prefix);
+            self.file.nodes.items(.data)[@intFromEnum(value)] = .{ .extra = try self.addExtra(extra) };
+            return value;
+        }
+
         if (content == .binary_operator and content.binary_operator == .subtraction) {
             return try self.parseSignedNumericLiteral();
         }
@@ -2104,6 +2125,11 @@ pub const Syntaxer = struct {
             const hash_loc = self.tokenLocation();
             self.advanceOne();
             const ident = try self.parseIdentifier();
+            if (std.mem.eql(u8, ident, "run")) {
+                self.index = @intFromEnum(hash_token);
+                const expression = try self.parseExpression();
+                return try self.addNode(.expression_statement, hash_token, .{ .node = expression });
+            }
             if (std.mem.eql(u8, ident, "defer")) {
                 const expr = try self.parseExpression();
                 return try self.addNode(.defer_statement, hash_token, .{ .node = expr });

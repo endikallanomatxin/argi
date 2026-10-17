@@ -110,6 +110,7 @@ pub fn verifyModule(graph: *const graph_mod.ModuleSemanticGraph) !void {
     for (semantic.binding_refs.items) |id| try require(verify.idFits(id, semantic.bindings.items.len));
     for (semantic.function_refs.items) |id| try require(verify.idFits(id, graph.functions.items.len));
     for (semantic.virtual_registry_refs.items) |id| try require(verify.idFits(id, semantic.virtual_registries.items.len));
+    for (semantic.comptime_requests.items) |id| try require(verify.idFits(id, semantic.nodes.items.len));
     for (semantic.roots.items) |id| try require(verify.idFits(id, semantic.nodes.items.len));
 }
 

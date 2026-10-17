@@ -659,6 +659,7 @@ fn firstToken(tree: *const syn.FileSyntaxTree, node: syn.NodeIndex) usize {
     var first: usize = @intFromEnum(tree.mainToken(node));
     if (tree.tag(node) == .assume_statement and first != 0) return first - 1;
     if (tree.functionCall(node)) |call| {
+        if (call.comptime_token) |prefix| first = @min(first, @intFromEnum(prefix));
         if (call.contract_type) |contract_type| first = @min(first, firstToken(tree, contract_type));
         if (call.module_qualifier) |qualifier| first = @min(first, @intFromEnum(qualifier));
         return first;
@@ -799,7 +800,10 @@ fn needsSpace(left: Tag, right: Tag, tokens: tok.View, index: usize) bool {
     if (left == .bang and index >= 2 and tokens.contents[index - 2] == .arrow) return false;
     if (right == .comma or right == .close_parenthesis or right == .close_bracket) return false;
     if (left == .comma) return true;
-    if (right == .dot or right == .hash or right == .bang or right == .double_bang or right == .triple_bang) return false;
+    // A named compile-time directive starts an operand. Generic argument
+    // groups instead attach '#(' to the preceding declaration/callee.
+    if (right == .hash) return index + 1 < tokens.len and tokens.contents[index + 1] == .identifier and left != .open_parenthesis and left != .open_bracket;
+    if (right == .dot or right == .bang or right == .double_bang or right == .triple_bang) return false;
     if (left == .dot or left == .double_dot or left == .hash or left == .dollar or left == .tilde or left == .question_mark) return false;
     if (left == .open_parenthesis or left == .open_bracket) return false;
     if (right == .double_colon) return true;
@@ -1317,5 +1321,12 @@ test "formatter budgets member calls after generic arguments" {
     try expectFormat(
         "transposed ::= math.MatrixTransposition#(math.Matrix#(.rows = 3, .cols = 2, .t: Float64)).transpose(&design)\n",
         "transposed ::= math.MatrixTransposition#(\n    math.Matrix#(.rows = 3, .cols = 2, .t: Float64)\n).transpose(&design)\n",
+    );
+}
+
+test "formatter separates compile-time execution prefixes from assignments" {
+    try expectFormat(
+        "main()->(.result:Int32=0):={result=#run calculate(.value=40)}\n",
+        "main() -> (.result: Int32 = 0) := { result = #run calculate(.value = 40) }\n",
     );
 }

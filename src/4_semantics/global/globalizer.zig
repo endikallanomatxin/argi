@@ -497,6 +497,7 @@ fn appendBodyTables(allocator: std.mem.Allocator, result: *global_sg.GlobalSeman
             .content = .{ .bool_literal = false },
         }) else return error.UnresolvedModuleSemantics,
     };
+    for (storage.comptime_requests.items) |id| try result.comptime_requests.append(allocator, globalNode(o, id));
     for (storage.roots.items) |id| try result.roots.append(allocator, globalNode(o, id));
 }
 

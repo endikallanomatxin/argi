@@ -206,6 +206,11 @@ pub const FrontendPipeline = struct {
         if (self.diagnostics.hasErrors()) return error.Reported;
         try self.buildGlobalGraph();
         try self.analyzeGlobalSafety();
+        // Initial source execution consumes finalized dependencies. Keep the
+        // request table until this boundary so caching and specialization cannot
+        // silently turn #run into an ordinary runtime call. Staged type/value
+        // resolution must eventually schedule these same requests earlier.
+        try @import("../execution/comptime.zig").resolve(self.allocator, &self.global_graph.?, self.diagnostics);
         return &self.global_graph.?;
     }
 
