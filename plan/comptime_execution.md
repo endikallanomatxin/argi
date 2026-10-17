@@ -91,6 +91,8 @@ new generation; sibling aliases stay stale. Ordinary writes without destruction
 preserve existing aliases. Field replacement must preserve unrelated siblings.
 Constant local aliases now carry their proven lexical cleanup target on writes;
 both backends preserve the original pointer evaluation and use the target's flags.
+This includes reference fields projected from immutable literal records and
+their copies; mutable records and function results do not establish that proof.
 Retargetable aliases and unknown input referents still need shared cleanup identity.
 Call summaries now distinguish preserved, possible and definite initialization;
 caller cleanup reactivation follows actual writes and represented result outcomes.

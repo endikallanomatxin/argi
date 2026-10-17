@@ -13547,3 +13547,13 @@ test "feature_tests/ownership/362_call_reinitialization_restores_cleanup" {
 test "feature_tests/ownership/363X_conditional_initialization_requires_outcome" {
     try buildExpectFail("tests/feature_tests/ownership/363X_conditional_initialization_requires_outcome", "cannot select cleanup for conditional initialization");
 }
+
+test "feature_tests/execution/36_record_reference_replacement_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/36_record_reference_replacement_vm");
+    try runExpect("tests/feature_tests/execution/36_record_reference_replacement_vm", 42);
+    try vmExpect("tests/feature_tests/execution/36_record_reference_replacement_vm", 42, null);
+}
+
+test "feature_tests/execution/37X_record_reference_keeps_sibling_stale" {
+    try buildExpectFail("tests/feature_tests/execution/37X_record_reference_keeps_sibling_stale", "reference depends on a root that has ended");
+}

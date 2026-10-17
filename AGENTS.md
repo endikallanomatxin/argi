@@ -337,6 +337,9 @@ feature first.
   destination and shared cleanup identity. VM lowering rejects owning writes
   through unresolved aliases and indexed storage until those identities are modeled.
   A reference field's cleanup flag describes its slot, never its referent.
+  Immutable record literals can establish reference-field targets through their
+  selected initializers. Preserve the original pointer evaluation and renew only
+  the reference used for replacement, never sibling fields or record copies.
   Call post-states distinguish preserved, possible and definite initialization;
   an initialized post-state alone can preserve the entry value. Only definite
   writes reactivate unavailable caller cleanup unconditionally. Conditional
