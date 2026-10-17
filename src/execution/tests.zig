@@ -266,7 +266,7 @@ test "bytecode call stack does not recurse through the host stack" {
     , .{ .call_depth = 1024 }));
 }
 
-test "bytecode VM reuses returned aggregates and recovers after failure" {
+test "bytecode VM retains invocations and resets poisoned execution contexts" {
     const g = @import("../4_semantics/global/graph.zig");
     var graph: g.GlobalSemanticGraph = .{};
     defer graph.deinit(std.testing.allocator);
@@ -281,18 +281,36 @@ test "bytecode VM reuses returned aggregates and recovers after failure" {
     var executor = try vm.Vm.init(a, .{ .graph = &graph, .functions = &functions }, .{});
     defer executor.deinit();
     var result = try executor.run(@enumFromInt(0), &.{.{ .array = &.{.{ .integer = 42 }} }});
-    result = try executor.run(@enumFromInt(0), result);
+    const context = executor.storage.context;
+    result = try executor.invoke(@enumFromInt(0), result);
+    try std.testing.expectEqual(context, executor.storage.context);
     try std.testing.expectEqual(@as(i128, 42), result[0].array[0].integer);
-    try std.testing.expectError(error.InvalidArguments, executor.run(@enumFromInt(0), &.{.{ .array = &.{.{ .boolean = false }} }}));
-    try std.testing.expectError(error.InvalidEntry, executor.run(@enumFromInt(99), &.{}));
+    const cells = executor.storage.cells;
+    try std.testing.expectError(error.InvalidArguments, executor.invoke(@enumFromInt(0), &.{.{ .array = &.{.{ .boolean = false }} }}));
+    try std.testing.expectError(error.InvalidEntry, executor.invoke(@enumFromInt(99), &.{}));
+    try std.testing.expectEqual(cells, executor.storage.cells);
     executor.limits.instructions = 0;
-    try std.testing.expectError(error.ExecutionInstructionLimit, executor.run(@enumFromInt(0), &.{.{ .array = &.{.{ .integer = 42 }} }}));
+    try std.testing.expectError(error.ExecutionInstructionLimit, executor.invoke(@enumFromInt(0), &.{.{ .array = &.{.{ .integer = 42 }} }}));
     for (executor.storage.frames.items) |frame_| try std.testing.expect(!frame_.alive);
     executor.limits.instructions = 100;
-    result = try executor.run(@enumFromInt(0), &.{.{ .array = &.{.{ .integer = 42 }} }});
+    try std.testing.expectError(error.ExecutionContextPoisoned, executor.invoke(@enumFromInt(0), &.{.{ .array = &.{.{ .integer = 42 }} }}));
+    executor.reset();
+    result = try executor.invoke(@enumFromInt(0), &.{.{ .array = &.{.{ .integer = 42 }} }});
+    try std.testing.expect(context != executor.storage.context);
     try std.testing.expectEqual(@as(i128, 42), result[0].array[0].integer);
     executor.limits.call_depth = 0;
     try std.testing.expectError(error.ExecutionCallDepthLimit, executor.run(@enumFromInt(0), result));
+    // Per-invocation fuel resets, whereas retained storage keeps its cumulative
+    // allocation budget. Exhaustion poisons the context until explicit reset.
+    var retained = try vm.Vm.init(a, .{ .graph = &graph, .functions = &functions }, .{ .instructions = 1, .value_cells = 9 });
+    defer retained.deinit();
+    const input = [_]b.Value{.{ .array = &.{.{ .integer = 42 }} }};
+    _ = try retained.invoke(@enumFromInt(0), &input);
+    try std.testing.expectEqual(@as(usize, 1), retained.steps);
+    try std.testing.expectError(error.ExecutionMemoryLimit, retained.invoke(@enumFromInt(0), &input));
+    try std.testing.expectError(error.ExecutionContextPoisoned, retained.invoke(@enumFromInt(0), &input));
+    retained.reset();
+    _ = try retained.invoke(@enumFromInt(0), &input);
 }
 
 test "bytecode references preserve caller storage across calls" {
@@ -867,4 +885,58 @@ fn commitWrite(storage: *@import("storage.zig").Storage, destination: @import("s
     const checked = try storage.checkWriteCleanup(destination);
     try storage.write(destination, value);
     return checked + try storage.activateWriteCleanup(destination);
+}
+
+test "compile-time evaluation exports aggregate constants and rejects escaping references" {
+    const evaluate = @import("evaluate.zig").evaluate;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const files = [_]sf.SourceFile{
+        .{ .path = "app/main.rg", .code =
+        \\Pair: Type = (.sum: Int32, .items: [2]Int32)
+        \\calculate(.base: Int32) -> (.result: Pair) := {
+        \\    sum :: Int32 = base
+        \\    index :: Int32 = 0
+        \\    while index < 2 { sum = sum + 1 index = index + 1 }
+        \\    items: [2]Int32 = (base, sum)
+        \\    result = (.sum = sum, .items = items)
+        \\}
+        \\borrow(.value: &Int32) -> (.result: &Int32) := { result = value }
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    result ::= calculate(.base = 40)
+        \\    status_code = borrow(.value = &result.sum)&
+        \\}
+        },
+        .{ .path = "arithmetic_core/scalar_arithmetic.rg", .origin = .bundled_core, .code = @import("../test_support.zig").arithmetic_core_source },
+    };
+    var diagnostics = diag.Diagnostics.init(&a, &files);
+    defer diagnostics.deinit();
+    var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
+    defer pipeline.deinit();
+    const graph_const = try pipeline.semantizeGlobalFiles(&files);
+    const graph = @constCast(graph_const);
+    const source = @import("../4_semantics/primitives/schema.zig").SourceRef{ .file_index = 0, .offset = 0 };
+    var found = false;
+    for (graph.functions.items, 0..) |function, index| {
+        const name = graph.text(graph.declarationSourceName(function.declaration));
+        const id: @import("../4_semantics/global/graph.zig").GlobalFunctionId = @enumFromInt(index);
+        if (std.mem.eql(u8, name, "calculate")) {
+            found = true;
+            const result = try evaluate(a, graph, id, &.{.{ .integer = 40 }}, source, .{});
+            const record = graph.node(result[0]).content.struct_value_literal.fields;
+            try std.testing.expectEqual(@as(i128, 42), graph.node(graph.value_fields.items[record.start].value).content.int_literal);
+            const array = graph.node(graph.value_fields.items[record.start + 1].value).content.array_literal.elements;
+            try std.testing.expectEqual(@as(i128, 40), graph.node(graph.node_refs.items[array.start]).content.int_literal);
+            try std.testing.expectEqual(@as(i128, 42), graph.node(graph.node_refs.items[array.start + 1]).content.int_literal);
+            const nodes = graph.nodes.items.len;
+            try std.testing.expectError(error.ExecutionInstructionLimit, evaluate(a, graph, id, &.{.{ .integer = 40 }}, source, .{ .instructions = 1 }));
+            try std.testing.expectEqual(nodes, graph.nodes.items.len);
+        } else if (std.mem.eql(u8, name, "borrow")) {
+            const nodes = graph.nodes.items.len;
+            try std.testing.expectError(error.UnfreezableEvaluationInput, evaluate(a, graph, id, &.{}, source, .{}));
+            try std.testing.expectEqual(nodes, graph.nodes.items.len);
+        }
+    }
+    try std.testing.expect(found);
 }

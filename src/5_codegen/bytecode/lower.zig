@@ -5,7 +5,6 @@ const b = @import("bytecode.zig");
 const types = @import("../../4_semantics/global/types.zig");
 const cleanup_layout = @import("../cleanup_layout.zig");
 const cleanup_plan = @import("../cleanup_plan.zig");
-const standard_contracts = @import("../../4_semantics/global/standard_contracts.zig");
 
 pub const Lower = struct {
     allocator: std.mem.Allocator,
@@ -22,49 +21,7 @@ pub const Lower = struct {
         const functions = try a.alloc(?b.Function, graph.functions.items.len);
         @memset(functions, null);
         const cleanup_bindings = try cleanup_layout.requiredBindings(a, graph);
-        const cleanup_types = try a.alloc(bool, graph.types.items.len);
-        @memset(cleanup_types, false);
-        if (standard_contracts.standardDeclaration(graph, "Deinit")) |deinit| {
-            for (graph.contract_conformances.items) |conformance| {
-                if (conformance.declaration != deinit or conformance.participants.len == 0) continue;
-                const participant = graph.generic_arguments.items[conformance.participants.start].value;
-                if (participant == .type and graph.semanticType(participant.type) != .pointer)
-                    cleanup_types[@intFromEnum(participant.type)] = true;
-            }
-        }
-        // Read selected frontend evidence and structural ownership. This is
-        // only a lowering boundary check, never another conformance resolver.
-        var changed = true;
-        while (changed) {
-            changed = false;
-            for (graph.types.items, 0..) |_, index| {
-                if (cleanup_types[index]) continue;
-                const ty: b.Type = @enumFromInt(index);
-                if (graph.semanticType(ty) == .pointer) continue;
-                var owns_cleanup = false;
-                if (types.arrayElement(graph, ty)) |element| {
-                    owns_cleanup = cleanup_types[@intFromEnum(element)];
-                } else if (types.fields(graph, ty)) |fields| {
-                    for (graph.fields.items[fields.start..][0..fields.len]) |field| {
-                        if (cleanup_types[@intFromEnum(field.ty)]) {
-                            owns_cleanup = true;
-                            break;
-                        }
-                    }
-                } else if (types.variants(graph, ty)) |variants| {
-                    for (graph.variants.items[variants.start..][0..variants.len]) |variant| {
-                        if (variant.payload_type) |payload| if (cleanup_types[@intFromEnum(payload)]) {
-                            owns_cleanup = true;
-                            break;
-                        };
-                    }
-                }
-                if (owns_cleanup) {
-                    cleanup_types[index] = true;
-                    changed = true;
-                }
-            }
-        }
+        const cleanup_types = try cleanup_layout.owningTypes(a, graph);
         const bool_type: ?b.Type = for (graph.types.items, 0..) |ty, i| {
             if (ty == .builtin and ty.builtin == .Bool) break @as(b.Type, @enumFromInt(i));
         } else null;

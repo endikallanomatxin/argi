@@ -138,3 +138,53 @@ test "cleanup counts reject overflowing repeated aggregate layouts" {
     defer counts.deinit(a);
     try std.testing.expectError(error.Overflow, counts.count(a, &graph, @enumFromInt(@bitSizeOf(usize))));
 }
+
+// Conservative ownership classification from already-selected frontend evidence.
+// Used at executor/freeze boundaries, never to resolve conformance again.
+pub fn owningTypes(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGraph) ![]bool {
+    const standard_contracts = @import("../4_semantics/global/standard_contracts.zig");
+    const cleanup_types = try allocator.alloc(bool, graph.types.items.len);
+    @memset(cleanup_types, false);
+    if (standard_contracts.standardDeclaration(graph, "Deinit")) |deinit| {
+        for (graph.contract_conformances.items) |conformance| {
+            if (conformance.declaration != deinit or conformance.participants.len == 0) continue;
+            const participant = graph.generic_arguments.items[conformance.participants.start].value;
+            if (participant == .type and graph.semanticType(participant.type) != .pointer)
+                cleanup_types[@intFromEnum(participant.type)] = true;
+        }
+    }
+    // Read selected frontend evidence and structural ownership. This is
+    // only a lowering boundary check, never another conformance resolver.
+    var changed = true;
+    while (changed) {
+        changed = false;
+        for (graph.types.items, 0..) |_, index| {
+            if (cleanup_types[index]) continue;
+            const ty: g.GlobalTypeId = @enumFromInt(index);
+            if (graph.semanticType(ty) == .pointer) continue;
+            var owns_cleanup = false;
+            if (types.arrayElement(graph, ty)) |element| {
+                owns_cleanup = cleanup_types[@intFromEnum(element)];
+            } else if (types.fields(graph, ty)) |fields| {
+                for (graph.fields.items[fields.start..][0..fields.len]) |field| {
+                    if (cleanup_types[@intFromEnum(field.ty)]) {
+                        owns_cleanup = true;
+                        break;
+                    }
+                }
+            } else if (types.variants(graph, ty)) |variants| {
+                for (graph.variants.items[variants.start..][0..variants.len]) |variant| {
+                    if (variant.payload_type) |payload| if (cleanup_types[@intFromEnum(payload)]) {
+                        owns_cleanup = true;
+                        break;
+                    };
+                }
+            }
+            if (owns_cleanup) {
+                cleanup_types[index] = true;
+                changed = true;
+            }
+        }
+    }
+    return cleanup_types;
+}

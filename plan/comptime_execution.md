@@ -25,8 +25,11 @@ policy. Keep function identities independent of the executor, without introducin
 a mixed VM/native ABI or native-layout storage solely for a possible future JIT.
 
 Calls use an explicit VM frame stack, with one shared instruction budget and a
-configurable depth limit independent of the host call stack. Each run resets its
-execution state; returned aggregate values may be passed into the next run.
+configurable depth limit independent of the host call stack. `invoke` retains
+execution storage and context identity, resets per-invocation fuel and shares the
+cumulative allocation budget. Invalid entries/arguments publish no state; a trap
+poisons the context until explicit reset. `run` remains a fresh-context convenience
+API, and returned aggregates may be passed into its next call.
 
 Local writes use a root slot plus typed field/index projections. Index operands
 are evaluated once, and intermediate bounds checks retain native evaluation order.
@@ -280,6 +283,14 @@ not a promise to undo external effects or run language destructors.
 Use a private evaluation context with explicit capabilities and budgets. A
 successful result crosses a freeze boundary into compiler-owned constants;
 evaluator storage, live resource owners and native handles do not cross it.
+`execution/evaluate.zig` now evaluates closed, checked functions through the
+ordinary bytecode lowering and VM, and exports scalar/aggregate outputs as
+compiler-owned graph literals. Input/output types with references or cleanup
+are rejected before execution. Result validation precedes publication; export
+failure rolls back appended nodes and value-field/reference tables. This boundary
+is tested with a loop returning a record containing an array. It is not yet
+connected to source `#run`, type formation or conditional selection.
+
 Start with representable scalar/aggregate constants without references. Later
 support for immutable referenced data requires relocation and validation of the
 whole constant graph, not retention of an evaluator arena. Type values likewise

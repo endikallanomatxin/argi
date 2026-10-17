@@ -30,6 +30,7 @@ pub const Vm = struct {
     limits: Limits,
     steps: usize = 0,
     storage: Storage = undefined,
+    state: enum { fresh, ready, poisoned } = .fresh,
     source: p.SourceRef = .{ .file_index = 0, .offset = 0 },
 
     // Verify before executing anything, including before checking the entry.
@@ -40,14 +41,38 @@ pub const Vm = struct {
     pub fn deinit(self: *Vm) void {
         self.arena.deinit();
     }
+    // Discard execution storage, not language-level cleanup. Session owners
+    // must execute checked exit cleanup before reset on a healthy context.
+    // A trapped context has no resumable cleanup/unwind guarantee.
+    pub fn reset(self: *Vm) void {
+        self.arena.deinit();
+        self.arena = std.heap.ArenaAllocator.init(self.allocator);
+        self.state = .fresh;
+        self.steps = 0;
+    }
+
     pub fn run(self: *Vm, entry: g.GlobalFunctionId, args: []const b.Value) ![]const b.Value {
-        // Results belong to the execution arena until the next run or deinit.
+        // Preserve previous results until invoke has copied the supplied input.
+        // This convenience API intentionally starts a fresh execution context.
         var previous = self.arena;
         self.arena = std.heap.ArenaAllocator.init(self.allocator);
+        self.state = .fresh;
         defer previous.deinit();
-        self.steps = 0;
-        self.storage = try Storage.init(self.arena.allocator(), self.limits.value_cells);
+        return self.invoke(entry, args);
+    }
+
+    // Invoke within retained execution storage. Calls share the memory budget
+    // and context identity; each invocation receives a fresh instruction budget.
+    // Program validation and ordinary safety checking are not repeated here.
+    pub fn invoke(self: *Vm, entry: g.GlobalFunctionId, args: []const b.Value) ![]const b.Value {
+        if (self.state == .poisoned) return error.ExecutionContextPoisoned;
         const function = try self.entryFunction(entry, args);
+        if (self.state == .fresh) {
+            self.storage = try Storage.init(self.arena.allocator(), self.limits.value_cells);
+            self.state = .ready;
+        }
+        self.steps = 0;
+        errdefer self.state = .poisoned;
         const inputs = try self.cloneValues(args);
         return self.execute(function, inputs);
     }
