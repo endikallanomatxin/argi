@@ -99,6 +99,7 @@ const FunctionLower = struct {
     outputs: []const b.Slot = &.{},
     drops: std.AutoHashMapUnmanaged(g.GlobalBindingId, DropState) = .empty,
     cleanup: std.ArrayList(b.Cleanup) = .empty,
+    write_destinations: std.ArrayList(b.Type) = .empty,
     loops: std.ArrayList(Loop) = .empty,
 
     fn compile(self: *FunctionLower, id: g.GlobalFunctionId) !b.Function {
@@ -127,7 +128,7 @@ const FunctionLower = struct {
         }
         try self.block(f.body.?);
         _ = try self.emit(source, .{ .ret = outputs });
-        return .{ .slots = try self.slots.toOwnedSlice(a), .inputs = inputs, .outputs = outputs, .code = try self.code.toOwnedSlice(a), .cleanup = try self.cleanup.toOwnedSlice(a) };
+        return .{ .slots = try self.slots.toOwnedSlice(a), .inputs = inputs, .outputs = outputs, .code = try self.code.toOwnedSlice(a), .cleanup = try self.cleanup.toOwnedSlice(a), .write_destinations = try self.write_destinations.toOwnedSlice(a) };
     }
 
     fn boolType(self: *FunctionLower) !b.Type {
@@ -296,17 +297,18 @@ const FunctionLower = struct {
                 const base = try self.place(x.array_ptr);
                 const index = try self.expression(x.index);
                 const target = try self.project(base, .{ .element = index });
-                _ = try self.emit(node.source, .{ .check_place = target });
+                const destination = try self.captureWrite(node.source, target, x.element_type);
                 const value = try self.coerce(node.source, try self.expression(x.value), x.element_type);
-                _ = try self.emit(node.source, .{ .store = .{ .place = target, .value = value } });
+                _ = try self.emit(node.source, .{ .store = .{ .destination = destination, .value = value } });
             },
             .pointer_assignment => |x| {
                 const child = self.parent.graph.semanticType(self.parent.graph.node(x.pointer).ty.?).pointer.child;
                 if (self.parent.cleanup_types[@intFromEnum(child)] and !self.trackedDestination(x.pointer, x.cleanup_target))
                     return self.parent.reject(node.source, "owning replacement through a runtime reference");
                 const target = try self.addressedPlace(x.pointer);
+                const destination = try self.captureWrite(node.source, target, child);
                 const value = try self.coerce(node.source, try self.expression(x.value), self.parent.graph.semanticType(self.parent.graph.node(x.pointer).ty.?).pointer.child);
-                _ = try self.emit(node.source, .{ .store = .{ .place = target, .value = value } });
+                _ = try self.emit(node.source, .{ .store = .{ .destination = destination, .value = value } });
                 if (self.nodeDrop(x.cleanup_target orelse x.pointer)) |drop| try self.setDrop(drop, true);
             },
             .struct_field_store => |x| {
@@ -314,10 +316,11 @@ const FunctionLower = struct {
                     return self.parent.reject(node.source, "owning replacement through a runtime reference");
                 const base = try self.addressedPlace(x.struct_ptr);
                 const target = try self.project(base, .{ .field = x.field_index });
+                const destination = try self.captureWrite(node.source, target, x.field_type);
                 const value = try self.coerce(node.source, try self.expression(x.value), x.field_type);
-                _ = try self.emit(node.source, .{ .store = .{ .place = target, .value = value } });
-                if (x.cleanup_target) |destination| {
-                    if (self.nodeDrop(destination)) |drop| try self.setDrop(drop, true);
+                _ = try self.emit(node.source, .{ .store = .{ .destination = destination, .value = value } });
+                if (x.cleanup_target) |cleanup_target| {
+                    if (self.nodeDrop(cleanup_target)) |drop| try self.setDrop(drop, true);
                 } else if (self.nodeDrop(x.struct_ptr)) |drop| if (x.field_index < drop.fields.len) try self.setDrop(drop.fields[x.field_index], true);
             },
             .auto_deinit_binding => |auto| try self.autoDeinit(auto),
@@ -446,6 +449,12 @@ const FunctionLower = struct {
     fn copyTo(self: *FunctionLower, source: p.SourceRef, dst: b.Slot, value: b.Slot) !void {
         const src = try self.coerce(source, value, self.slots.items[dst]);
         _ = try self.emit(source, .{ .copy = .{ .dst = dst, .src = src } });
+    }
+    fn captureWrite(self: *FunctionLower, source: p.SourceRef, place_: b.Place, ty: b.Type) !b.Destination {
+        const destination: b.Destination = @intCast(self.write_destinations.items.len);
+        try self.write_destinations.append(self.parent.allocator, ty);
+        _ = try self.emit(source, .{ .capture_write = .{ .dst = destination, .place = place_ } });
+        return destination;
     }
     fn addressedPlace(self: *FunctionLower, id: g.GlobalNodeId) anyerror!b.Place {
         const node = self.parent.graph.node(id);

@@ -198,7 +198,7 @@ test "bytecode array verifier rejects malformed elements and indices" {
         .{ .source = source, .op = .{ .index = .{ .dst = 3, .base = 2, .index = 0 } } },
         .{ .source = source, .op = .{ .ret = &.{3} } },
     };
-    const functions = [_]?b.Function{.{ .slots = &.{ @enumFromInt(0), @enumFromInt(1), @enumFromInt(2), @enumFromInt(0) }, .inputs = &.{}, .outputs = &.{3}, .code = &code }};
+    const functions = [_]?b.Function{.{ .slots = &.{ @enumFromInt(0), @enumFromInt(1), @enumFromInt(2), @enumFromInt(0) }, .inputs = &.{}, .outputs = &.{3}, .code = &code, .write_destinations = &.{@enumFromInt(0)} }};
     const program = b.Program{ .graph = &graph, .functions = &functions };
     try b.verify(a, program);
     code[2].op.array.elements = &.{};
@@ -208,7 +208,7 @@ test "bytecode array verifier rejects malformed elements and indices" {
     code[2].op.array.elements = &.{0};
     code[3].op.index.index = 1;
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
-    code[3].op = .{ .store = .{ .place = .{ .root = 2, .path = &.{.{ .element = 0 }} }, .value = 1 } };
+    code[3].op = .{ .capture_write = .{ .dst = 0, .place = .{ .root = 1, .path = &.{} } } };
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
     code[3].op = .{ .check_place = .{ .root = 2, .path = &.{.{ .field = 0 }} } };
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
@@ -529,12 +529,12 @@ test "bytecode verifies reference access and traps escaped frame storage" {
         .{ .source = source, .op = .{ .load = .{ .dst = 0, .place = .{ .root = 1, .path = &.{.dereference} } } } },
         .{ .source = source, .op = .{ .ret = &.{1} } },
     };
-    const functions = [_]?b.Function{.{ .slots = &.{ @enumFromInt(0), @enumFromInt(1), @enumFromInt(2) }, .inputs = &.{}, .outputs = &.{1}, .code = &code }};
+    const functions = [_]?b.Function{.{ .slots = &.{ @enumFromInt(0), @enumFromInt(1), @enumFromInt(2) }, .inputs = &.{}, .outputs = &.{1}, .code = &code, .write_destinations = &.{@enumFromInt(0)} }};
     const program = b.Program{ .graph = &graph, .functions = &functions };
     var executor = try vm.Vm.init(a, program, .{});
     defer executor.deinit();
     try std.testing.expectError(error.ExecutionDeadReference, executor.run(@enumFromInt(0), &.{}));
-    code[2].op = .{ .store = .{ .place = .{ .root = 1, .path = &.{.dereference} }, .value = 0 } };
+    code[2].op = .{ .capture_write = .{ .dst = 0, .place = .{ .root = 1, .path = &.{.dereference} } } };
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
     code[2].op = .{ .borrow = .{ .dst = 2, .place = .{ .root = 1, .path = &.{.dereference} } } };
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
@@ -682,4 +682,76 @@ test "bytecode verifier checks every call output destination" {
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
     code[0].op.call.outputs = &.{ 0, 99 };
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+}
+
+test "bytecode write destinations capture aliases before later writes" {
+    const g = @import("../4_semantics/global/graph.zig");
+    const a = std.testing.allocator;
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source = @import("../4_semantics/primitives/schema.zig").SourceRef{ .file_index = 0, .offset = 0 };
+    try graph.types.append(a, .{ .builtin = .Int32 });
+    try graph.types.append(a, .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_write } });
+    try graph.types.append(a, .{ .builtin = .Bool });
+    try graph.fields.append(a, .{ .name = .{ .start = 0, .len = 0 }, .ty = @enumFromInt(0), .source = source });
+    try graph.functions.append(a, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 1 } });
+    var code = [_]b.Instruction{
+        .{ .source = source, .op = .{ .constant = .{ .dst = 0, .value = .{ .integer = 40 } } } },
+        .{ .source = source, .op = .{ .constant = .{ .dst = 1, .value = .{ .integer = 1 } } } },
+        .{ .source = source, .op = .{ .constant = .{ .dst = 3, .value = .{ .boolean = true } } } },
+        .{ .source = source, .op = .{ .borrow = .{ .dst = 2, .place = .{ .root = 0, .path = &.{} } } } },
+        .{ .source = source, .op = .{ .jump = 5 } },
+        .{ .source = source, .op = .{ .capture_write = .{ .dst = 0, .place = .{ .root = 2, .path = &.{.dereference} } } } },
+        .{ .source = source, .op = .{ .borrow = .{ .dst = 2, .place = .{ .root = 1, .path = &.{} } } } },
+        .{ .source = source, .op = .{ .constant = .{ .dst = 1, .value = .{ .integer = 42 } } } },
+        .{ .source = source, .op = .{ .store = .{ .destination = 0, .value = 1 } } },
+        .{ .source = source, .op = .{ .ret = &.{0} } },
+    };
+    var functions = [_]?b.Function{.{ .slots = &.{ @enumFromInt(0), @enumFromInt(0), @enumFromInt(1), @enumFromInt(2) }, .inputs = &.{}, .outputs = &.{0}, .code = &code, .write_destinations = &.{@enumFromInt(0)} }};
+    const program = b.Program{ .graph = &graph, .functions = &functions };
+    var executor = try vm.Vm.init(a, program, .{});
+    defer executor.deinit();
+    try std.testing.expectEqual(@as(i128, 42), (try executor.run(@enumFromInt(0), &.{}))[0].integer);
+    // Even a branch that happens to capture at runtime must capture on every
+    // incoming path before the store. Destination state is separate from values.
+    code[4].op = .{ .branch = .{ .condition = 3, .yes = 5, .no = 6 } };
+    try std.testing.expectError(error.UninitializedBytecodeDestination, b.verify(a, program));
+    code[4].op = .{ .jump = 5 };
+    code[8].op.store.destination = 1;
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+    code[8].op.store.destination = 0;
+    code[8].op.store.value = 3;
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+    code[8].op.store.value = 1;
+    functions[0].?.write_destinations = &.{@enumFromInt(2)};
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, program));
+}
+
+test "bytecode captured write access retains bounds and storage liveness" {
+    const Storage = @import("storage.zig").Storage;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 100);
+    const frame = try storage.enter(3);
+    const slots = try storage.slots(frame);
+    try slots.put(0, .{ .array = &.{ .{ .integer = 1 }, .{ .integer = 2 } } });
+    try slots.put(1, .{ .integer = 0 });
+    const destination = try storage.captureWrite(frame, .{ .root = 0, .path = &.{.{ .element = 1 }} });
+    try slots.put(1, .{ .integer = 1 });
+    try storage.write(destination, .{ .integer = 42 });
+    try std.testing.expectEqual(@as(i128, 42), (try slots.get(0)).array[0].integer);
+    try std.testing.expectEqual(@as(i128, 2), (try slots.get(0)).array[1].integer);
+    try slots.put(1, .{ .integer = 2 });
+    try std.testing.expectError(error.ExecutionIndexOutOfBounds, storage.captureWrite(frame, .{ .root = 0, .path = &.{.{ .element = 1 }} }));
+    try std.testing.expectError(error.ExecutionUninitializedStorage, storage.captureWrite(frame, .{ .root = 2, .path = &.{} }));
+    var path: [64]@import("../5_codegen/bytecode/value.zig").Projection = undefined;
+    const array = try storage.resolve(frame, .{ .root = 0, .path = &.{} }, &path);
+    try slots.put(2, try storage.borrow(array, .read_only));
+    try std.testing.expectError(error.ExecutionReadonlyReference, storage.captureWrite(frame, .{ .root = 2, .path = &.{.dereference} }));
+    var foreign = try Storage.init(arena.allocator(), 100);
+    try std.testing.expectError(error.ExecutionForeignReference, foreign.write(destination, .{ .integer = 0 }));
+    try slots.put(0, .{ .array = &.{} });
+    try std.testing.expectError(error.ExecutionIndexOutOfBounds, storage.write(destination, .{ .integer = 0 }));
+    storage.leave(frame);
+    try std.testing.expectError(error.ExecutionDeadReference, storage.write(destination, .{ .integer = 0 }));
 }

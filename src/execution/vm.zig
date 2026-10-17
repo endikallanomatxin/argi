@@ -3,6 +3,7 @@ const b = @import("../5_codegen/bytecode/bytecode.zig");
 const g = @import("../4_semantics/global/graph.zig");
 const integer = @import("../5_codegen/integer_arithmetic.zig");
 const Storage = @import("storage.zig").Storage;
+const WriteDestination = @import("storage.zig").WriteDestination;
 const runtime_value = @import("../5_codegen/bytecode/value.zig");
 const p = @import("../4_semantics/primitives/schema.zig");
 
@@ -19,6 +20,7 @@ const Frame = struct {
     storage: runtime_value.FrameId,
     pc: usize = 0,
     return_slots: []const b.Slot,
+    write_destinations: []?WriteDestination,
 };
 
 pub const Vm = struct {
@@ -78,7 +80,10 @@ pub const Vm = struct {
         const id = try self.storage.enterCleanup(function.slots.len, function.cleanup);
         const slots = try self.storage.slots(id);
         for (args, function.inputs) |value, slot| try slots.put(slot, value);
-        return .{ .function = function, .storage = id, .return_slots = return_slots };
+        try self.storage.charge(function.write_destinations.len);
+        const destinations = try self.arena.allocator().alloc(?WriteDestination, function.write_destinations.len);
+        @memset(destinations, null);
+        return .{ .function = function, .storage = id, .return_slots = return_slots, .write_destinations = destinations };
     }
     fn execute(self: *Vm, function: *const b.Function, args: []const b.Value) ![]const b.Value {
         var frames: std.ArrayList(Frame) = .empty;
@@ -152,11 +157,8 @@ pub const Vm = struct {
                     var path: [64]runtime_value.Projection = undefined;
                     _ = try self.storage.resolve(current.storage, place, &path);
                 },
-                .store => |x| {
-                    var path: [64]runtime_value.Projection = undefined;
-                    const reference = try self.storage.resolve(current.storage, x.place, &path);
-                    try self.storage.store(reference, try slots.get(x.value));
-                },
+                .capture_write => |x| current.write_destinations[x.dst] = try self.storage.captureWrite(current.storage, x.place),
+                .store => |x| try self.storage.write(current.write_destinations[x.destination] orelse return error.UninitializedBytecodeDestination, try slots.get(x.value)),
                 .cleanup_test => |x| {
                     var path: [64]runtime_value.Projection = undefined;
                     const reference = try self.storage.resolveCleanup(current.storage, x.place, &path);

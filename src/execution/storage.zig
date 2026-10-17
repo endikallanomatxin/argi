@@ -35,6 +35,9 @@ pub const Slots = struct {
 
 var next_context = std.atomic.Value(u64).init(0);
 
+// Captured executor access, never a language value or a safe-reference factory.
+pub const WriteDestination = struct { reference: v.Reference };
+
 // Run-local storage. Its allocator is an execution arena; references can neither
 // name another execution nor expose a native address. Dead frame IDs stay dead.
 pub const Storage = struct {
@@ -202,6 +205,22 @@ pub const Storage = struct {
         }
         return updated;
     }
+    pub fn captureWrite(self: *Storage, frame: v.FrameId, place: b.Place) !WriteDestination {
+        var path: [64]v.Projection = undefined;
+        const reference = try self.resolve(frame, place, &path);
+        if (reference.mutability != .read_write) return error.ExecutionReadonlyReference;
+        try self.charge(reference.path.len);
+        var captured = reference;
+        captured.path = try self.allocator.dupe(v.Projection, reference.path);
+        return .{ .reference = captured };
+    }
+
+    pub fn write(self: *Storage, destination: WriteDestination, value: b.Value) !void {
+        // Recheck storage liveness, permissions and aggregate shape. Capturing
+        // access never grants initialization of vacant or released storage.
+        try self.store(destination.reference, value);
+    }
+
     pub fn store(self: *Storage, reference: v.Reference, value: b.Value) !void {
         try self.validateContext(reference);
         if (reference.mutability != .read_write) return error.ExecutionReadonlyReference;

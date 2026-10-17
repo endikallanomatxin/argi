@@ -30,6 +30,12 @@ execution state; returned aggregate values may be passed into the next run.
 
 Local writes use a root slot plus typed field/index projections. Index operands
 are evaluated once, and intermediate bounds checks retain native evaluation order.
+Writes capture a typed destination before evaluating the RHS. These destinations
+have a separate function-local register bank, cannot appear in language values
+or cross calls, and retain concrete storage projections rather than rereading
+reference/index operands at commit. Verification requires capture on every
+incoming path; execution still checks liveness, access and aggregate bounds.
+Capturing does not grant permission to initialize vacant storage.
 The interpreter rebuilds only the modified aggregate path; immutable snapshots
 preserve value-copy semantics. Safe references name an execution context, frame,
 root slot and captured projections. Context identities are never reused across

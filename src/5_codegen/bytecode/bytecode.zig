@@ -4,6 +4,9 @@ const types = @import("../../4_semantics/global/types.zig");
 const p = @import("../../4_semantics/primitives/schema.zig");
 
 pub const Slot = u32;
+// Internal write access cannot be copied into language values or passed/returned
+// as a safe reference. A function captures it before evaluating a store's RHS.
+pub const Destination = u32;
 pub const Type = g.GlobalTypeId;
 pub const Value = @import("value.zig").Value;
 // A place starts in local storage and can follow checked safe references.
@@ -58,7 +61,8 @@ pub const Instruction = struct {
         borrow: struct { dst: Slot, place: Place },
         load: struct { dst: Slot, place: Place },
         check_place: Place,
-        store: struct { place: Place, value: Slot },
+        capture_write: struct { dst: Destination, place: Place },
+        store: struct { destination: Destination, value: Slot },
         cleanup_test: struct { dst: Slot, place: Place },
         cleanup_set: struct { place: Place, enabled: bool },
         call: struct { outputs: []const Slot, function: g.GlobalFunctionId, args: []const Slot },
@@ -74,6 +78,7 @@ pub const Function = struct {
     outputs: []const Slot,
     code: []const Instruction,
     cleanup: []const Cleanup = &.{},
+    write_destinations: []const Type = &.{},
 };
 
 // Bytecode borrows the finalized graph's type and function identities. Its owner

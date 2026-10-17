@@ -21,6 +21,7 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
         const f = maybe orelse continue;
         if (f.code.len == 0) return error.InvalidBytecode;
         for (f.slots) |ty| if (!supportedType(program.graph, ty, 0)) return error.InvalidBytecode;
+        for (f.write_destinations) |ty| if (!supportedType(program.graph, ty, 0)) return error.InvalidBytecode;
         const declaration = program.graph.function(@enumFromInt(fi));
         if (f.inputs.len != declaration.input.len or f.outputs.len != declaration.output.len) return error.InvalidBytecode;
         for (f.inputs, 0..) |slot, i| if (slot >= f.slots.len or !types.equal(program.graph, f.slots[slot], program.graph.fields.items[declaration.input.start + i].ty)) return error.InvalidBytecode;
@@ -96,9 +97,13 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                     if (!types.equal(program.graph, f.slots[x.dst], target.ty)) return error.InvalidBytecode;
                 },
                 .check_place => |place| _ = try placeInfo(program.graph, f.slots, place),
-                .store => |x| {
+                .capture_write => |x| {
+                    if (x.dst >= f.write_destinations.len) return error.InvalidBytecode;
                     const target = try placeInfo(program.graph, f.slots, x.place);
-                    if (!target.writable or !types.equal(program.graph, f.slots[x.value], target.ty)) return error.InvalidBytecode;
+                    if (!target.writable or !types.equal(program.graph, f.write_destinations[x.dst], target.ty)) return error.InvalidBytecode;
+                },
+                .store => |x| {
+                    if (x.destination >= f.write_destinations.len or !types.equal(program.graph, f.slots[x.value], f.write_destinations[x.destination])) return error.InvalidBytecode;
                 },
                 .cleanup_test => |x| {
                     _ = try placeInfo(program.graph, f.slots, x.place);
@@ -133,7 +138,7 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
             allocator.free(states);
         }
         @memset(states, null);
-        states[0] = try allocator.alloc(bool, f.slots.len);
+        states[0] = try allocator.alloc(bool, std.math.add(usize, f.slots.len, f.write_destinations.len) catch return error.InvalidBytecode);
         @memset(states[0].?, false);
         for (f.inputs) |slot| states[0].?[slot] = true;
         for (f.cleanup) |entry| states[0].?[entry.flag] = true;
@@ -148,6 +153,11 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
             const inst = f.code[pc];
             try readSlots(allocator, inst, &reads);
             for (reads.items) |slot| if (!initialized[slot]) return error.UninitializedBytecodeSlot;
+            switch (inst.op) {
+                .capture_write => |x| initialized[f.slots.len + x.dst] = true,
+                .store => |x| if (!initialized[f.slots.len + x.destination]) return error.UninitializedBytecodeDestination,
+                else => {},
+            }
             var single: [1]Slot = undefined;
             for (destinations(inst, &single)) |slot| initialized[slot] = true;
             var successors: [2]u32 = undefined;
@@ -231,10 +241,8 @@ fn readSlots(a: std.mem.Allocator, i: Instruction, out: *std.ArrayList(Slot)) !v
         .borrow => |x| try readPlace(a, x.place, out),
         .load => |x| try readPlace(a, x.place, out),
         .check_place => |place| try readPlace(a, place, out),
-        .store => |x| {
-            try readPlace(a, x.place, out);
-            try out.append(a, x.value);
-        },
+        .capture_write => |x| try readPlace(a, x.place, out),
+        .store => |x| try out.append(a, x.value),
         .cleanup_test => |x| try readCleanupPlace(a, x.place, out),
         .cleanup_set => |x| try readCleanupPlace(a, x.place, out),
         .call => |x| try out.appendSlice(a, x.args),
