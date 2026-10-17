@@ -94,6 +94,15 @@ functions without evidence keep the existing ABI. Codegen does not request these
 channels yet: reference propagation must supply the actual owner/projection
 state first. C imports/exports and callbacks retain their separate ABI.
 
+`reference_layout.zig` defines a separate, memoized layout for reference-valued
+leaves, with semantic field/variant/index projections. Arrays use checked counts
+without per-element expansion; reference recursion stops at the leaf. Native
+companions pair the referent's cleanup-state pointer with its reference-evidence
+storage pointer. Zero-reference values have no companion. The LLVM projection
+and ABI transport are tested together, but ordinary expression emission does
+not yet populate or propagate these companions. Virtual receivers remain an
+explicit unsupported evidence shape rather than silently losing their state.
+
 Do not generalize lexical body-pattern proofs to substitute for that evidence.
 General owning indirect replacement remains unsupported until both backends and
 the checker implement the transition.
