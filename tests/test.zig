@@ -13647,3 +13647,9 @@ test "feature_tests/ownership/376_symbolic_record_call_reinitialization" {
 test "feature_tests/ownership/377X_symbolic_record_call_keeps_copy_stale" {
     try buildExpectFail("tests/feature_tests/ownership/377X_symbolic_record_call_keeps_copy_stale", "reference depends on a root that has ended");
 }
+
+test "feature_tests/execution/43_nested_cleanup_projection_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/43_nested_cleanup_projection_vm");
+    try runExpect("tests/feature_tests/execution/43_nested_cleanup_projection_vm", 42);
+    try vmExpect("tests/feature_tests/execution/43_nested_cleanup_projection_vm", 42, null);
+}

@@ -167,6 +167,11 @@ identities, including references into caller frames, without reading vacant
 values. They use the compiler's existing cleanup flags and sorted layouts, not
 a second ownership analysis. General indirect replacement still requires checked
 cleanup plans and corresponding native evidence transport before it is enabled.
+Bytecode lowering keeps cleanup in one preorder table with 32-bit handles and
+subtree end indices. Projection follows those ranges without allocating a
+parallel recursive DropState tree; finalization emits the runtime flag layout.
+Variants without payloads have no entry.
+
 Both backends share the field/variant layout of cleanup state. `cleanup_plan.zig`
 resolves selected child types, variant identities and auxiliary arguments without
 copying plans or allocating another IR. Conditional traversal and emission remain
