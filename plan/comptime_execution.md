@@ -20,6 +20,12 @@ Do not bypass safety to execute a larger subset.
 
 REPL submissions and imported Argi functions use the same bytecode executor.
 Reuse checked specializations and bytecode within a retained compilation session.
+The bytecode lowerer now retains compiled functions across entry compilations
+and publishes a separate immutable function table for each program. A rejected
+dependency rolls back all new cache entries; retries cannot reuse a caller whose
+closure failed to compile. Published tables keep sharing immutable function code
+and the same finalized graph, which must outlive them. Appending definitions or
+changing graph identities still requires a compilation-session boundary.
 JIT is deferred until measurements justify it; module origin is not an execution
 policy. Keep function identities independent of the executor, without introducing
 a mixed VM/native ABI or native-layout storage solely for a possible future JIT.

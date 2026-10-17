@@ -939,3 +939,59 @@ test "compile-time evaluation exports aggregate constants and rejects escaping r
     }
     try std.testing.expect(found);
 }
+
+test "bytecode retained lowering publishes stable programs for independent entries" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const files = [_]sf.SourceFile{
+        .{ .path = "app/main.rg", .code =
+        \\first() -> (.result: Int32 = 20) := {}
+        \\second() -> (.result: Int32 = 22) := {}
+        \\unsupported() -> (.result: Int32 = 0) := { value: Float32 = 1.5 }
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    status_code = first() + second()
+        \\    unused ::= unsupported()
+        \\}
+        },
+        .{ .path = "arithmetic_core/scalar_arithmetic.rg", .origin = .bundled_core, .code = @import("../test_support.zig").arithmetic_core_source },
+    };
+    var diagnostics = diag.Diagnostics.init(&a, &files);
+    defer diagnostics.deinit();
+    var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
+    defer pipeline.deinit();
+    const graph = try pipeline.semantizeGlobalFiles(&files);
+    const Id = @import("../4_semantics/global/graph.zig").GlobalFunctionId;
+    var first: ?Id = null;
+    var second: ?Id = null;
+    var unsupported: ?Id = null;
+    var main: ?Id = null;
+    for (graph.functions.items, 0..) |function, index| {
+        const name = graph.text(graph.declarationSourceName(function.declaration));
+        if (std.mem.eql(u8, name, "first")) first = @enumFromInt(index);
+        if (std.mem.eql(u8, name, "second")) second = @enumFromInt(index);
+        if (std.mem.eql(u8, name, "unsupported")) unsupported = @enumFromInt(index);
+        if (std.mem.eql(u8, name, "main")) main = @enumFromInt(index);
+    }
+    var compiler = try lower.Lower.init(a, graph);
+    const initial = try compiler.compile(first.?);
+    var executor = try vm.Vm.init(a, initial, .{});
+    defer executor.deinit();
+    const original_code = initial.functions[@intFromEnum(first.?)].?.code.ptr;
+    try std.testing.expectError(error.InvalidEntry, compiler.compile(@enumFromInt(graph.functions.items.len)));
+    try std.testing.expectError(error.UnsupportedExecution, compiler.compile(unsupported.?));
+    try std.testing.expectError(error.UnsupportedExecution, compiler.compile(main.?));
+    try std.testing.expectError(error.UnsupportedExecution, compiler.compile(main.?));
+    try std.testing.expect(compiler.functions[@intFromEnum(main.?)] == null);
+    const extended = try compiler.compile(second.?);
+    try std.testing.expect(initial.functions[@intFromEnum(second.?)] == null);
+    try std.testing.expect(initial.functions[@intFromEnum(unsupported.?)] == null);
+    try std.testing.expectEqual(original_code, extended.functions[@intFromEnum(first.?)].?.code.ptr);
+    try std.testing.expectEqual(@as(i128, 20), (try executor.invoke(first.?, &.{}))[0].integer);
+    try std.testing.expectError(error.InvalidEntry, executor.invoke(second.?, &.{}));
+    var next = try vm.Vm.init(a, extended, .{});
+    defer next.deinit();
+    try std.testing.expectEqual(@as(i128, 22), (try next.invoke(second.?, &.{}))[0].integer);
+    const repeated = try compiler.compile(first.?);
+    try std.testing.expectEqual(original_code, repeated.functions[@intFromEnum(first.?)].?.code.ptr);
+}

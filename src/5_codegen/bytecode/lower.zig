@@ -30,14 +30,30 @@ pub const Lower = struct {
     // All bytecode allocations belong to the caller's compilation arena.
     // VM initialization verifies the completed program before accepting it.
     pub fn compile(self: *Lower, entry: g.GlobalFunctionId) !b.Program {
+        if (@intFromEnum(entry) >= self.functions.len) return error.InvalidEntry;
         try self.pending.append(self.allocator, entry);
-        defer self.pending.deinit(self.allocator);
+        defer {
+            self.pending.deinit(self.allocator);
+            self.pending = .empty;
+        }
+        var compiled: std.ArrayList(g.GlobalFunctionId) = .empty;
+        defer compiled.deinit(self.allocator);
+        // A caller can finish lowering before a dependency fails. Roll back
+        // every new cache entry so retrying it cannot publish an incomplete
+        // dependency closure. Previously published code stays reusable.
+        errdefer for (compiled.items) |id| {
+            self.functions[@intFromEnum(id)] = null;
+        };
         while (self.pending.pop()) |id| {
             if (self.functions[@intFromEnum(id)] != null) continue;
+            try compiled.append(self.allocator, id);
             var f = FunctionLower{ .parent = self };
             self.functions[@intFromEnum(id)] = try f.compile(id);
         }
-        return .{ .graph = self.graph, .functions = self.functions };
+        // Published programs are immutable snapshots of the retained cache.
+        // A later entry may compile more functions, but must not mutate a
+        // table already verified and in use by an execution context.
+        return .{ .graph = self.graph, .functions = try self.allocator.dupe(?b.Function, self.functions) };
     }
     fn reject(self: *Lower, source: p.SourceRef, name: []const u8) error{UnsupportedExecution} {
         self.source = source;
