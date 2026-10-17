@@ -20,9 +20,7 @@ pub const Lower = struct {
     pub fn init(a: std.mem.Allocator, graph: *const g.GlobalSemanticGraph) !Lower {
         const functions = try a.alloc(?b.Function, graph.functions.items.len);
         @memset(functions, null);
-        const cleanup_bindings = try a.alloc(bool, graph.bindings.items.len);
-        @memset(cleanup_bindings, false);
-        for (graph.auto_deinits.items) |auto| cleanup_bindings[@intFromEnum(auto.binding)] = true;
+        const cleanup_bindings = try cleanup_layout.requiredBindings(a, graph);
         const cleanup_types = try a.alloc(bool, graph.types.items.len);
         @memset(cleanup_types, false);
         if (standard_contracts.standardDeclaration(graph, "Deinit")) |deinit| {

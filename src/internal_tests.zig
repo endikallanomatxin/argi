@@ -59,6 +59,7 @@ const semantic_representation_test = @import("4_semantics/semantic_representatio
 
 const type_codegen = @import("5_codegen/llvm/type_codegen.zig");
 const codegen = @import("5_codegen/llvm/codegen.zig");
+const cleanup_layout = @import("5_codegen/cleanup_layout.zig");
 const c_abi = @import("4_semantics/global/c_abi.zig");
 
 test {
@@ -133,4 +134,5 @@ test {
 
     _ = type_codegen;
     _ = codegen;
+    _ = cleanup_layout;
 }

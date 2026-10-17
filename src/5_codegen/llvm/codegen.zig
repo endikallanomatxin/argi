@@ -36,6 +36,7 @@ const TypedValue = struct {
 
 const DropState = struct {
     flag_ref: llvm.c.LLVMValueRef = null,
+    flag_count: usize = 0,
     fields: []DropState = &.{},
 };
 
@@ -90,6 +91,8 @@ pub const CodeGenerator = struct {
     string_literal_counter: u32 = 0,
     virtual_table_counter: u32 = 0,
     trace_locations: std.ArrayList(primitives.SourceRef) = .empty,
+    cleanup_counts: cleanup_layout.Counts = .{},
+    cleanup_bindings: []const bool,
     default_location_source: ?primitives.SourceRef = null,
     runtime_argc_global: ?llvm.c.LLVMValueRef = null,
     runtime_argv_global: ?llvm.c.LLVMValueRef = null,
@@ -119,6 +122,7 @@ pub const CodeGenerator = struct {
             .bindings = std.AutoHashMap(graph_mod.GlobalBindingId, BindingStorage).init(allocator),
             .global_bindings = std.AutoHashMap(graph_mod.GlobalBindingId, GlobalInitState).init(allocator),
             .loop_stack = std.array_list.Managed(LoopContext).init(allocator),
+            .cleanup_bindings = try cleanup_layout.requiredBindings(allocator, graph),
         };
     }
 
@@ -135,6 +139,8 @@ pub const CodeGenerator = struct {
         self.global_bindings.deinit();
         self.loop_stack.deinit();
         self.trace_locations.deinit(self.allocator);
+        self.cleanup_counts.deinit(self.allocator);
+        self.allocator.free(self.cleanup_bindings);
     }
 
     fn typeLowerer(self: *CodeGenerator) type_codegen.Lowerer {
@@ -862,9 +868,9 @@ pub const CodeGenerator = struct {
         if (c.LLVMGetFirstInstruction(entry)) |first| c.LLVMPositionBuilderBefore(entry_builder, first) else c.LLVMPositionBuilderAtEnd(entry_builder, entry);
         const name_z = try self.dupZ(self.graph.text(record.name));
         const storage = c.LLVMBuildAlloca(entry_builder, type_ref, name_z.ptr);
-        const drop = try self.buildDropState(record.ty, entry_builder);
+        const drop = if (self.cleanup_bindings[@intFromEnum(binding)]) try self.buildDropState(record.ty, entry_builder) else null;
         try self.bindings.put(binding, .{ .ref = storage, .type_ref = type_ref, .ty = record.ty, .drop_state = drop });
-        self.storeDropState(drop, false);
+        if (drop) |state| self.storeDropState(state, false);
         if (initialization) |node| try self.initializeLocalBinding(binding, storage, type_ref, drop, node);
     }
 
@@ -2409,17 +2415,31 @@ pub const CodeGenerator = struct {
     }
 
     fn buildDropState(self: *CodeGenerator, ty: graph_mod.GlobalTypeId, entry_builder: llvm.c.LLVMBuilderRef) !*DropState {
+        const count = try self.cleanup_counts.count(self.allocator, self.graph, ty);
+        const flag_type = c.LLVMArrayType2(c.LLVMInt1Type(), count);
+        const flags = c.LLVMBuildAlloca(entry_builder, flag_type, "cleanup.flags");
         const state = try self.allocator.create(DropState);
-        state.* = .{ .flag_ref = c.LLVMBuildAlloca(entry_builder, c.LLVMInt1Type(), "needs.deinit") };
+        var next: usize = 0;
+        try self.buildDropView(state, ty, entry_builder, flags, flag_type, &next);
+        std.debug.assert(next == count);
+        return state;
+    }
+
+    // Child views share one owner block. Their first flag and range remain
+    // stable even for zero-sized values, and can become native call evidence.
+    fn buildDropView(self: *CodeGenerator, state: *DropState, ty: graph_mod.GlobalTypeId, builder: llvm.c.LLVMBuilderRef, flags: llvm.c.LLVMValueRef, flag_type: llvm.c.LLVMTypeRef, next: *usize) anyerror!void {
+        const start = next.*;
+        var indices = [_]c.LLVMValueRef{ c.LLVMConstInt(c.LLVMInt32Type(), 0, 0), c.LLVMConstInt(c.LLVMInt64Type(), start, 0) };
+        state.* = .{ .flag_ref = c.LLVMBuildInBoundsGEP2(builder, flag_type, flags, &indices, indices.len, "needs.deinit") };
+        next.* += 1;
         const shape = cleanup_layout.Shape.of(self.graph, ty);
         state.fields = try self.allocator.alloc(DropState, shape.len());
         for (state.fields, 0..) |*field, index| {
-            field.* = if (shape.child(self.graph, index)) |child|
-                (try self.buildDropState(child.ty, entry_builder)).*
-            else
-                .{};
+            if (shape.child(self.graph, index)) |child| {
+                try self.buildDropView(field, child.ty, builder, flags, flag_type, next);
+            } else field.* = .{};
         }
-        return state;
+        state.flag_count = next.* - start;
     }
 
     fn storeDropState(self: *CodeGenerator, state: *const DropState, enabled: bool) void {
@@ -2427,8 +2447,13 @@ pub const CodeGenerator = struct {
     }
 
     fn storeDropStateValue(self: *CodeGenerator, state: *const DropState, enabled: llvm.c.LLVMValueRef) void {
-        if (state.flag_ref != null) _ = c.LLVMBuildStore(self.builder, enabled, state.flag_ref);
-        for (state.fields) |*field| self.storeDropStateValue(field, enabled);
+        if (state.flag_count == 0) return;
+        if (state.flag_count == 1) {
+            _ = c.LLVMBuildStore(self.builder, enabled, state.flag_ref);
+        } else {
+            const byte = c.LLVMBuildZExt(self.builder, enabled, c.LLVMInt8Type(), "cleanup.flag.byte");
+            _ = c.LLVMBuildMemSet(self.builder, state.flag_ref, byte, c.LLVMConstInt(c.LLVMInt64Type(), state.flag_count, 0), 1);
+        }
     }
 
     fn dropStateForNode(self: *CodeGenerator, node_id: graph_mod.GlobalNodeId) ?*DropState {

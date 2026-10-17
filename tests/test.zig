@@ -8414,7 +8414,7 @@ test "feature_tests/basics/49_release_ir_optimization" {
     const after = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, release_ir, allocator, .limited(1024 * 1024));
     defer allocator.free(after);
     try expect(std.mem.count(u8, before, "alloca ") > std.mem.count(u8, after, "alloca "));
-    try expect(std.mem.count(u8, before, "store i1 ") > std.mem.count(u8, after, "store i1 "));
+    try expect(std.mem.count(u8, before, "store i32 ") > std.mem.count(u8, after, "store i32 "));
 }
 
 test "feature_tests/cross_compilation/01_aarch64_data_model" {

@@ -348,6 +348,11 @@ feature first.
   field/variant shape; transport evidence by owner/projection identity rather
   than recovering it from a physical pointer. Payloadless variants have no
   child storage or cleanup flag.
+  Native flags occupy one contiguous preorder block per owner. A projected
+  DropState is a view of its subrange; bulk updates must preserve siblings.
+  Cleanup layout counts are cached per retained graph and checked for overflow.
+  Both backends allocate flags only for bindings referenced by checked cleanup
+  plans; ordinary locals without cleanup obligations need no flag storage.
   Immutable record literals can establish reference-field targets through their
   selected initializers. Preserve the original pointer evaluation and renew only
   the reference used for replacement, never sibling fields or record copies.

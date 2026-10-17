@@ -81,8 +81,8 @@ cleanup plans and corresponding native evidence transport before it is enabled.
 Both backends share the field/variant layout of cleanup state. Native evidence
 must retain owner/projection identity: zero-sized siblings can share an address
 while retaining independent cleanup obligations.
-For native transport, use a companion pointing to compiler-owned flag storage
-with projection offsets from this shared layout. Pass it where lifecycle
+Native flags use one preorder block per owner; each projected subtree has a
+stable pointer and range. For transport, pass this companion where lifecycle
 operations need it; never reconstruct it by comparing value addresses.
 
 A reference needs a target identity and its observed generation. Aliases can
