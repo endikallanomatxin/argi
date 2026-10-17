@@ -44,7 +44,7 @@ const BindingStorage = struct {
     type_ref: llvm.c.LLVMTypeRef,
     ty: graph_mod.GlobalTypeId,
     initialized: bool = false,
-    drop_state: ?*DropState = null,
+    drop_state: ?DropState = null,
 };
 
 // Capture address and lifecycle evidence together before recursively emitting
@@ -52,7 +52,7 @@ const BindingStorage = struct {
 const WriteDestination = struct {
     address: c.LLVMValueRef,
     type_ref: c.LLVMTypeRef,
-    cleanup: ?*DropState = null,
+    cleanup: ?DropState = null,
 
     fn activate(self: WriteDestination, generator: *CodeGenerator) void {
         if (self.cleanup) |drop| generator.storeDropState(drop, true);
@@ -910,7 +910,7 @@ pub const CodeGenerator = struct {
         if (initialization) |node| try self.initializeLocalBinding(binding, storage, type_ref, drop, node);
     }
 
-    fn initializeLocalBinding(self: *CodeGenerator, binding: graph_mod.GlobalBindingId, storage: llvm.c.LLVMValueRef, type_ref: llvm.c.LLVMTypeRef, drop: ?*DropState, node: graph_mod.GlobalNodeId) !void {
+    fn initializeLocalBinding(self: *CodeGenerator, binding: graph_mod.GlobalBindingId, storage: llvm.c.LLVMValueRef, type_ref: llvm.c.LLVMTypeRef, drop: ?DropState, node: graph_mod.GlobalNodeId) !void {
         if (!try self.storeLargeNode(node, storage)) {
             const value = (try self.visitNode(node)) orelse return CodegenError.ValueNotFound;
             if (value.type_ref != type_ref) return CodegenError.InvalidType;
@@ -1349,7 +1349,7 @@ pub const CodeGenerator = struct {
         const cleanup = if (store.cleanup_target) |target|
             self.dropStateForNode(target)
         else if (self.dropStateForNode(store.struct_ptr)) |parent|
-            if (store.field_index < parent.fields.len) &parent.fields[store.field_index] else null
+            parent.project(self.builder, store.field_index)
         else
             null;
         const destination: WriteDestination = .{ .address = field_ptr, .type_ref = try self.toLLVMType(store.field_type), .cleanup = cleanup };
@@ -2468,15 +2468,15 @@ pub const CodeGenerator = struct {
         return CodegenError.InvalidType;
     }
 
-    fn buildDropState(self: *CodeGenerator, ty: graph_mod.GlobalTypeId, entry_builder: llvm.c.LLVMBuilderRef) !*DropState {
+    fn buildDropState(self: *CodeGenerator, ty: graph_mod.GlobalTypeId, entry_builder: llvm.c.LLVMBuilderRef) !DropState {
         return DropState.allocate(self.allocator, self.graph, &self.cleanup_counts, ty, entry_builder);
     }
 
-    fn storeDropState(self: *CodeGenerator, state: *const DropState, enabled: bool) void {
+    fn storeDropState(self: *CodeGenerator, state: DropState, enabled: bool) void {
         state.set(self.builder, enabled);
     }
 
-    fn dropStateForNode(self: *CodeGenerator, node_id: graph_mod.GlobalNodeId) ?*DropState {
+    fn dropStateForNode(self: *CodeGenerator, node_id: graph_mod.GlobalNodeId) ?DropState {
         return switch (self.graph.nodes.items[@intFromEnum(node_id)].content) {
             .binding_use => |binding| if (self.bindings.getPtr(binding)) |storage| storage.drop_state else null,
             .address_of => |child| self.dropStateForNode(child),
@@ -2485,13 +2485,11 @@ pub const CodeGenerator = struct {
                 const parent = self.dropStateForNode(access.value) orelse break :blk null;
                 const choice_ty = self.graph.node(access.value).ty orelse break :blk null;
                 const index = self.variantIndex(choice_ty, access.variant) catch break :blk null;
-                if (index >= parent.fields.len) break :blk null;
-                break :blk &parent.fields[index];
+                break :blk parent.project(self.builder, index);
             },
             .struct_field_access => |access| blk: {
                 const parent = self.dropStateForNode(access.value) orelse break :blk null;
-                if (access.field_index >= parent.fields.len) break :blk null;
-                break :blk &parent.fields[access.field_index];
+                break :blk parent.project(self.builder, access.field_index);
             },
             else => null,
         };
@@ -2566,7 +2564,7 @@ pub const CodeGenerator = struct {
         fields: primitives.Range(graph_mod.GlobalAutoDeinitFieldId),
         storage: llvm.c.LLVMValueRef,
         ty: graph_mod.GlobalTypeId,
-        drop: *DropState,
+        drop: DropState,
     ) !void {
         const current = c.LLVMGetInsertBlock(self.builder);
         const function = c.LLVMGetBasicBlockParent(current);
@@ -2580,8 +2578,8 @@ pub const CodeGenerator = struct {
             try self.callDeinit(callee, input, self_field_index, storage);
         } else {
             for (self.graph.auto_deinit_fields.items[fields.start..][0..fields.len]) |field| {
-                if (field.field_index >= drop.fields.len) return CodegenError.InvalidType;
                 const child = try cleanup_plan.child(self.graph, ty, field);
+                const child_drop = drop.project(self.builder, field.field_index) orelse return CodegenError.InvalidType;
                 if (child.variant != null) {
                     const payload_block = c.LLVMAppendBasicBlock(function, "deinit.payload");
                     const next_block = c.LLVMAppendBasicBlock(function, "deinit.next");
@@ -2592,14 +2590,14 @@ pub const CodeGenerator = struct {
                     _ = c.LLVMBuildCondBr(self.builder, active, payload_block, next_block);
                     c.LLVMPositionBuilderAtEnd(self.builder, payload_block);
                     const pointer = c.LLVMBuildStructGEP2(self.builder, base_type, storage, field.field_index + 1, "deinit.payload.addr");
-                    try self.genAutoDeinitStorage(field.deinit_fn, field.input, field.self_field_index, field.fields, pointer, child.ty, &drop.fields[field.field_index]);
+                    try self.genAutoDeinitStorage(field.deinit_fn, field.input, field.self_field_index, field.fields, pointer, child.ty, child_drop);
                     if (c.LLVMGetBasicBlockTerminator(c.LLVMGetInsertBlock(self.builder)) == null) _ = c.LLVMBuildBr(self.builder, next_block);
                     c.LLVMPositionBuilderAtEnd(self.builder, next_block);
                     continue;
                 }
                 const base_type = try self.toLLVMType(ty);
                 const pointer = c.LLVMBuildStructGEP2(self.builder, base_type, storage, field.field_index, "deinit.field");
-                try self.genAutoDeinitStorage(field.deinit_fn, field.input, field.self_field_index, field.fields, pointer, child.ty, &drop.fields[field.field_index]);
+                try self.genAutoDeinitStorage(field.deinit_fn, field.input, field.self_field_index, field.fields, pointer, child.ty, child_drop);
             }
         }
         self.storeDropState(drop, false);

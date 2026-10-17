@@ -16,23 +16,37 @@ pub fn requiredBindings(allocator: std.mem.Allocator, graph: *const g.GlobalSema
 // Preorder storage gives every present subtree a contiguous flag range. A
 // companion can point at that range without depending on value addresses.
 pub const Counts = struct {
-    values: std.AutoHashMapUnmanaged(g.GlobalTypeId, usize) = .empty,
+    pub const Span = struct { offset: usize, ty: g.GlobalTypeId };
+    pub const Description = struct { count: usize, children: []const ?Span };
+    values: std.AutoHashMapUnmanaged(g.GlobalTypeId, Description) = .empty,
 
     pub fn deinit(self: *Counts, allocator: std.mem.Allocator) void {
+        var entries = self.values.valueIterator();
+        while (entries.next()) |entry| allocator.free(entry.children);
         self.values.deinit(allocator);
     }
 
-    // Types belong to one retained graph. Memoization also bounds counting a
-    // repeated aggregate DAG without expanding it into every physical flag.
+    // Cache structure once per type, rather than once per owner or projected
+    // view. Descriptions contain ranges, never copies of runtime flag state.
     pub fn count(self: *Counts, allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, ty: g.GlobalTypeId) error{ OutOfMemory, Overflow }!usize {
-        if (self.values.get(ty)) |value| return value;
+        if (self.values.get(ty)) |value| return value.count;
         const shape = Shape.of(graph, ty);
+        const children = try allocator.alloc(?Span, shape.len());
+        errdefer allocator.free(children);
+        @memset(children, null);
         var result: usize = 1;
-        for (0..shape.len()) |index| if (shape.child(graph, index)) |child| {
+        for (children, 0..) |*span, index| if (shape.child(graph, index)) |child| {
+            span.* = .{ .offset = result, .ty = child.ty };
             result = try std.math.add(usize, result, try self.count(allocator, graph, child.ty));
         };
-        try self.values.put(allocator, ty, result);
+        try self.values.put(allocator, ty, .{ .count = result, .children = children });
         return result;
+    }
+
+    // A retained view only refers to a type already materialized by count().
+    // Return by value: map growth must never invalidate an owner's view.
+    pub fn description(self: *const Counts, ty: g.GlobalTypeId) Description {
+        return self.values.get(ty).?;
     }
 };
 
