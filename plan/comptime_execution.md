@@ -296,13 +296,23 @@ not a promise to undo external effects or run language destructors.
 Use a private evaluation context with explicit capabilities and budgets. A
 successful result crosses a freeze boundary into compiler-owned constants;
 evaluator storage, live resource owners and native handles do not cross it.
-`execution/evaluate.zig` now evaluates closed, checked functions through the
-ordinary bytecode lowering and VM, and exports scalar/aggregate outputs as
+`execution/evaluate.zig` now proves a closed function dependency unit with the
+ordinary safety checker, then evaluates it through bytecode lowering and the VM.
+It exports scalar/aggregate outputs as
 compiler-owned graph literals. Input/output types with references or cleanup
 are rejected before execution. Result validation precedes publication; export
 failure rolls back appended nodes and value-field/reference tables. This boundary
 is tested with a loop returning a record containing an array. It is not yet
 connected to source `#run`, type formation or conditional selection.
+
+Dependency units use the existing function/node/evidence traversal without
+program roots. Summary inference and temporal checking share the same selected
+unit; operation promises remain selected by identity, not by function name.
+Output initializers participate in the closure alongside bodies, defaults and
+cleanup. Tests establish that an unrelated body error does not block evaluation,
+while an error in a dependency reached from an output initializer does. The unit
+still requires finalized semantic dependencies; staged resolution and type
+formation remain pending.
 
 Start with representable scalar/aggregate constants without references. Later
 support for immutable referenced data requires relocation and validation of the

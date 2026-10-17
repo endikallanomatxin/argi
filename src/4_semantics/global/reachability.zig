@@ -108,6 +108,26 @@ pub fn expand(
     return state.changed;
 }
 
+// Closed function dependencies without executable-program roots. Evaluation
+// and interactive submissions must not pull unrelated main/global work into
+// their proof merely because it exists in the retained graph.
+pub fn dependencyUnit(allocator: std.mem.Allocator, graph: *const graph_mod.GlobalSemanticGraph, roots: []const graph_mod.GlobalFunctionId) !FunctionSet {
+    for (roots) |root| if (@intFromEnum(root) >= graph.functions.items.len) return error.InvalidEntry;
+    var result = FunctionSet.init(allocator);
+    errdefer result.deinit();
+    var state = State{
+        .allocator = allocator,
+        .graph = graph,
+        .functions = &result,
+        .visited_functions = std.AutoHashMap(graph_mod.GlobalFunctionId, void).init(allocator),
+        .visited_nodes = std.AutoHashMap(graph_mod.GlobalNodeId, void).init(allocator),
+    };
+    defer state.visited_functions.deinit();
+    defer state.visited_nodes.deinit();
+    for (roots) |root| try state.includeFunction(root);
+    return result;
+}
+
 /// Initial summary worklist order, placing concrete dependencies before callers.
 /// Cycles retain a deterministic DFS order and still require fixed-point work.
 /// Reuse the complete graph traversal, including cleanup and callback bodies.
@@ -158,6 +178,8 @@ const State = struct {
         // outside the function body, so their callees are reachable as well.
         for (self.graph.fields.items[function.input.start..][0..function.input.len]) |field|
             if (field.default_value) |value| try self.walkNode(value);
+        for (self.graph.binding_refs.items[function.output_bindings.start..][0..function.output_bindings.len]) |binding|
+            if (self.graph.binding(binding).initialization) |value| try self.walkNode(value);
         const body = function.body orelse return;
         try self.walkBlock(body);
         if (self.dependency_order) |order| if (function.safety_primitive == .none)
@@ -175,6 +197,7 @@ const State = struct {
         const block = self.graph.blocks.items[@intFromEnum(block_id)];
         for (self.graph.node_refs.items[block.nodes.start..][0..block.nodes.len]) |node_id|
             try self.walkNode(node_id);
+        if (block.ret_val) |value| try self.walkNode(value);
     }
 
     fn walkNode(self: *State, node_id: graph_mod.GlobalNodeId) anyerror!void {

@@ -922,18 +922,18 @@ test "compile-time evaluation exports aggregate constants and rejects escaping r
         const id: @import("../4_semantics/global/graph.zig").GlobalFunctionId = @enumFromInt(index);
         if (std.mem.eql(u8, name, "calculate")) {
             found = true;
-            const result = try evaluate(a, graph, id, &.{.{ .integer = 40 }}, source, .{});
+            const result = try evaluate(a, graph, &diagnostics, id, &.{.{ .integer = 40 }}, source, .{});
             const record = graph.node(result[0]).content.struct_value_literal.fields;
             try std.testing.expectEqual(@as(i128, 42), graph.node(graph.value_fields.items[record.start].value).content.int_literal);
             const array = graph.node(graph.value_fields.items[record.start + 1].value).content.array_literal.elements;
             try std.testing.expectEqual(@as(i128, 40), graph.node(graph.node_refs.items[array.start]).content.int_literal);
             try std.testing.expectEqual(@as(i128, 42), graph.node(graph.node_refs.items[array.start + 1]).content.int_literal);
             const nodes = graph.nodes.items.len;
-            try std.testing.expectError(error.ExecutionInstructionLimit, evaluate(a, graph, id, &.{.{ .integer = 40 }}, source, .{ .instructions = 1 }));
+            try std.testing.expectError(error.ExecutionInstructionLimit, evaluate(a, graph, &diagnostics, id, &.{.{ .integer = 40 }}, source, .{ .instructions = 1 }));
             try std.testing.expectEqual(nodes, graph.nodes.items.len);
         } else if (std.mem.eql(u8, name, "borrow")) {
             const nodes = graph.nodes.items.len;
-            try std.testing.expectError(error.UnfreezableEvaluationInput, evaluate(a, graph, id, &.{}, source, .{}));
+            try std.testing.expectError(error.UnfreezableEvaluationInput, evaluate(a, graph, &diagnostics, id, &.{}, source, .{}));
             try std.testing.expectEqual(nodes, graph.nodes.items.len);
         }
     }
@@ -994,4 +994,112 @@ test "bytecode retained lowering publishes stable programs for independent entri
     try std.testing.expectEqual(@as(i128, 22), (try next.invoke(second.?, &.{}))[0].integer);
     const repeated = try compiler.compile(first.?);
     try std.testing.expectEqual(original_code, repeated.functions[@intFromEnum(first.?)].?.code.ptr);
+}
+
+test "compile-time evaluation proves its dependency unit before execution" {
+    const evaluate = @import("evaluate.zig").evaluate;
+    const g = @import("../4_semantics/global/graph.zig");
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const files = [_]sf.SourceFile{
+        .{ .path = "app/main.rg", .code =
+        \\seed() -> (.result: Int32 = 42) := {}
+        \\good() -> (.result: Int32 = seed()) := {}
+        \\bad() -> (.result: Int32 = 0) := {
+        \\    fixed :: Int32 = 0
+        \\    fixed = 1
+        \\    result = fixed
+        \\}
+        \\wrapper() -> (.result: Int32 = bad()) := {}
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    status_code = good() + wrapper()
+        \\}
+        },
+        .{ .path = "arithmetic_core/scalar_arithmetic.rg", .origin = .bundled_core, .code = @import("../test_support.zig").arithmetic_core_source },
+    };
+    var diagnostics = diag.Diagnostics.init(&a, &files);
+    defer diagnostics.deinit();
+    var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
+    defer pipeline.deinit();
+    const graph = @constCast(try pipeline.semantizeGlobalFiles(&files));
+    var good: ?g.GlobalFunctionId = null;
+    var wrapper: ?g.GlobalFunctionId = null;
+    var bad: ?g.GlobalFunctionId = null;
+    for (graph.functions.items, 0..) |function, raw| {
+        const name = graph.text(graph.declarationSourceName(function.declaration));
+        if (std.mem.eql(u8, name, "good")) good = @enumFromInt(raw);
+        if (std.mem.eql(u8, name, "wrapper")) wrapper = @enumFromInt(raw);
+        if (std.mem.eql(u8, name, "bad")) bad = @enumFromInt(raw);
+    }
+    // Introduce a temporal error after ordinary frontend completion. The
+    // evaluator must prove its selected unit itself, not trust the old proof
+    // or require every unrelated function body to be valid.
+    var changed = false;
+    for (graph.bindings.items) |*binding| {
+        if (!std.mem.eql(u8, graph.text(binding.name), "fixed")) continue;
+        binding.mutability = .constant;
+        changed = true;
+    }
+    try std.testing.expect(changed);
+    const source = @import("../4_semantics/primitives/schema.zig").SourceRef{ .file_index = 0, .offset = 0 };
+    const result = try evaluate(a, graph, &diagnostics, good.?, &.{}, source, .{});
+    try std.testing.expectEqual(@as(i128, 42), graph.node(result[0]).content.int_literal);
+    try std.testing.expect(!diagnostics.hasErrors());
+    const unit_mod = @import("../4_semantics/global/reachability.zig");
+    var unit = try unit_mod.dependencyUnit(a, graph, &.{wrapper.?});
+    defer unit.deinit();
+    try std.testing.expect(unit.contains(bad.?));
+    try std.testing.expect(!unit.contains(good.?));
+    try std.testing.expectError(error.Reported, evaluate(a, graph, &diagnostics, wrapper.?, &.{}, source, .{}));
+    try std.testing.expect(diagnostics.hasErrors());
+}
+
+test "compile-time evaluation retains selected cleanup in its dependency unit" {
+    const evaluate = @import("evaluate.zig").evaluate;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const files = [_]sf.SourceFile{
+        .{ .path = "app/main.rg", .code =
+        \\Counter: Type = (.count: Int32)
+        \\Resource: Type = (.counter: $&Counter)
+        \\implement Deinit#(Resource) (
+        \\    .deinit = (.self: $&Resource) -> () {
+        \\        self&.counter&.count = self&.counter&.count + 1
+        \\    }
+        \\)
+        \\calculate() -> (.result: Int32 = 0) := {
+        \\    counter :: Counter = (.count = 41)
+        \\    { owner :: Resource = (.counter = $&counter) }
+        \\    result = counter.count
+        \\}
+        \\main() -> (.status_code: Int32 = calculate()) := {}
+        },
+        .{ .path = "arithmetic_core/scalar_arithmetic.rg", .origin = .bundled_core, .code = @import("../test_support.zig").arithmetic_core_source },
+        .{ .path = "arithmetic_core/deinit.rg", .origin = .bundled_core, .code =
+        \\Deinit#(.T: Type): Contract = (.deinit: (.self: $&T) -> ())
+        },
+    };
+    var diagnostics = diag.Diagnostics.init(&a, &files);
+    defer diagnostics.deinit();
+    var pipeline = frontend.FrontendPipeline.init(a, std.testing.io, &diagnostics, .{});
+    defer pipeline.deinit();
+    const graph = @constCast(try pipeline.semantizeGlobalFiles(&files));
+    const source = @import("../4_semantics/primitives/schema.zig").SourceRef{ .file_index = 0, .offset = 0 };
+    var found = false;
+    for (graph.functions.items, 0..) |function, raw| {
+        if (!std.mem.eql(u8, graph.text(graph.declarationSourceName(function.declaration)), "calculate")) continue;
+        found = true;
+        const id: @import("../4_semantics/global/graph.zig").GlobalFunctionId = @enumFromInt(raw);
+        var unit = try @import("../4_semantics/global/reachability.zig").dependencyUnit(a, graph, &.{id});
+        defer unit.deinit();
+        try std.testing.expect(unit.cleanup_functions.count() != 0);
+        const result = try evaluate(a, graph, &diagnostics, id, &.{}, source, .{});
+        try std.testing.expectEqual(@as(i128, 42), graph.node(result[0]).content.int_literal);
+        // Checking again must remain valid after the evaluator storage ended.
+        const again = try evaluate(a, graph, &diagnostics, id, &.{}, source, .{});
+        try std.testing.expectEqual(@as(i128, 42), graph.node(again[0]).content.int_literal);
+    }
+    try std.testing.expect(found);
 }

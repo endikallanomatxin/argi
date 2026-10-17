@@ -176,6 +176,7 @@ pub const SafetyChecker = struct {
         }
     };
 
+    unit: ?*const @import("../global/reachability.zig").FunctionSet = null,
     allocator: std.mem.Allocator,
     diagnostics: *diagnostics.Diagnostics,
     graph: *graph_mod.GlobalSemanticGraph,
@@ -212,12 +213,25 @@ pub const SafetyChecker = struct {
         self.profile_io = io;
     }
 
+    // Use the same summary fixed point and temporal proof for a closed unit.
+    // The graph must contain finalized checked semantics for its dependencies;
+    // this does not resolve missing bodies or grant evaluator capabilities.
+    pub fn analyzeUnit(self: *SafetyChecker, roots: []const graph_mod.GlobalFunctionId) !void {
+        var unit = try @import("../global/reachability.zig").dependencyUnit(self.allocator, self.graph, roots);
+        defer unit.deinit();
+        const previous = self.unit;
+        self.unit = &unit;
+        defer self.unit = previous;
+        try self.analyze();
+    }
+
     pub fn analyze(self: *SafetyChecker) !void {
         self.stats = .{ .timing_io = self.profile_io };
         const before = self.diagnostics.list.items.len;
-        for (self.graph.nodes.items) |*node| if (node.content == .pointer_assignment) {
-            node.content.pointer_assignment.checked_initialization = null;
-        };
+        for (self.graph.nodes.items, 0..) |*node, raw| {
+            if (self.unit) |unit| if (!unit.containsNode(@enumFromInt(raw))) continue;
+            if (node.content == .pointer_assignment) node.content.pointer_assignment.checked_initialization = null;
+        }
         try self.validateNominalChoiceLayouts();
         try self.validateForeignSignatures();
 
@@ -228,6 +242,7 @@ pub const SafetyChecker = struct {
         var inference = summary_infer.Infer.init(inference_allocator, self.graph, &engine);
         defer inference.deinit();
         inference.profile_io = self.profile_io;
+        inference.unit = self.unit;
         const inference_start = profile.timestamp(self.profile_io);
         try inference.inferSafetySummariesFixedPoint();
         profile.accumulate(self.profile_io, inference_start, &self.stats.summary_inference_ns);
@@ -254,6 +269,7 @@ pub const SafetyChecker = struct {
         for (self.graph.functions.items, 0..) |function, raw| {
             if (function.body == null or function.safety_primitive != .none) continue;
             const id: graph_mod.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
+            if (self.unit) |unit| if (!unit.contains(id)) continue;
             var namespace: facts.Tracker.RootNamespace = .{};
             defer namespace.initial_storage.deinit(self.allocator);
             var state = FunctionState.init(self.allocator);
@@ -278,10 +294,12 @@ pub const SafetyChecker = struct {
         // weaken a declaration by choosing a different dispatch mechanism.
         for (self.graph.contract_safety_conformances.items) |conformance| {
             if (!conformance.safety_required) continue;
+            if (self.unit) |unit| if (!unit.operations.contains(conformance.selection) and !unit.cleanup_functions.contains(conformance.method)) continue;
             try self.validateContractSafetyContract(inference, conformance.contract, conformance.method, conformance.receiver_input_index, conformance.domains, conformance.source);
         }
-        for (self.graph.virtualizes.items) |virtualize| {
+        for (self.graph.virtualizes.items, 0..) |virtualize, raw| {
             if (!virtualize.safety_required) continue;
+            if (self.unit) |unit| if (!unit.virtualizes.contains(@enumFromInt(raw))) continue;
             for (self.graph.virtual_registry_refs.items[virtualize.safety_methods.start..][0..virtualize.safety_methods.len], 0..) |registry_id, index| {
                 const registry = self.graph.virtual_registries.items[@intFromEnum(registry_id)];
                 const declared = registry.safety_contract orelse continue;
@@ -506,6 +524,7 @@ pub const SafetyChecker = struct {
             const declaration = self.graph.declaration(function.declaration);
 
             const id: graph_mod.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
+            if (self.unit) |unit| if (!unit.contains(id)) continue;
             if (standard_contracts.initializedType(self.graph, id) == null) continue;
             if (initializer_contract.classify(self.graph, id) == .invalid)
                 try self.report(declaration.source, "initializer must return its constructed type or one Errable of that type", .{});

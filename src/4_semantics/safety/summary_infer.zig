@@ -19,6 +19,7 @@ const primitive_transfer = @import("../primitives/registry.zig");
 /// recursive effects: this pass describes outputs in terms of function inputs
 /// and lets `summaries.Engine` iterate callers/SCCs to a fixed point.
 pub const Infer = struct {
+    unit: ?*const @import("../global/reachability.zig").FunctionSet = null,
     cleanup: ?*const cleanup_activation.Activation = null,
     cleanup_activations: std.AutoHashMap(graph_mod.GlobalFunctionId, cleanup_activation.Activation),
     profile_io: ?std.Io = null,
@@ -109,6 +110,7 @@ pub const Infer = struct {
 
         for (self.graph.functions.items, 0..) |function, raw| {
             const id: graph_mod.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
+            if (self.unit) |unit| if (!unit.contains(id)) continue;
             if (!self.engine.summaries.contains(id)) {
                 const outputs = try self.allocator.alloc(facts.ValueEffect, function.output_bindings.len);
                 @memset(outputs, .{});
@@ -139,9 +141,14 @@ pub const Infer = struct {
         // Concrete summaries need enough selectors to prove their declarations.
         // These hints select precision only; they never infer virtual effects
         // from concrete implementations or depend on their final summaries.
-        for (self.graph.contract_safety_conformances.items) |proof| if (proof.safety_required) try self.requestContractSelectors(proof.method, proof.contract);
-        for (self.graph.virtualizes.items) |virtualize| {
+        for (self.graph.contract_safety_conformances.items) |proof| {
+            if (!proof.safety_required) continue;
+            if (self.unit) |unit| if (!unit.operations.contains(proof.selection) and !unit.cleanup_functions.contains(proof.method)) continue;
+            try self.requestContractSelectors(proof.method, proof.contract);
+        }
+        for (self.graph.virtualizes.items, 0..) |virtualize, raw| {
             if (!virtualize.safety_required) continue;
+            if (self.unit) |unit| if (!unit.virtualizes.contains(@enumFromInt(raw))) continue;
             for (self.graph.virtual_registry_refs.items[virtualize.safety_methods.start..][0..virtualize.safety_methods.len], 0..) |registry_id, index| {
                 const declared = self.graph.virtual_registries.items[@intFromEnum(registry_id)].safety_contract orelse continue;
                 try self.requestContractSelectors(self.graph.function_refs.items[virtualize.methods.start + index], declared);

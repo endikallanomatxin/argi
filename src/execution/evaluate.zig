@@ -7,16 +7,21 @@ const Lower = @import("../5_codegen/bytecode/lower.zig").Lower;
 const Vm = @import("vm.zig").Vm;
 const Limits = @import("vm.zig").Limits;
 
-// Evaluate a closed, safety-checked dependency unit through the ordinary VM.
+// Prove a closed dependency unit and evaluate it through the ordinary VM.
 // Inputs are external constant values, not session handles or capabilities.
 // No host effects or JIT are admitted by this evaluator's bytecode subset.
 // The graph and its types retain their compiler identity; results are exported
 // into compiler-owned constant nodes, never left pointing into executor storage.
-pub fn evaluate(allocator: std.mem.Allocator, graph: *g.GlobalSemanticGraph, entry: g.GlobalFunctionId, args: []const bytecode.Value, source: p.SourceRef, limits: Limits) ![]const g.GlobalNodeId {
+pub fn evaluate(allocator: std.mem.Allocator, graph: *g.GlobalSemanticGraph, diagnostics: *@import("../1_base/diagnostic.zig").Diagnostics, entry: g.GlobalFunctionId, args: []const bytecode.Value, source: p.SourceRef, limits: Limits) ![]const g.GlobalNodeId {
     if (@intFromEnum(entry) >= graph.functions.items.len) return error.InvalidEntry;
     var scratch = std.heap.ArenaAllocator.init(allocator);
     defer scratch.deinit();
     const temporary = scratch.allocator();
+    // Checking can publish call cleanup annotations into the retained graph.
+    // Those allocations must belong to its owner, not the evaluator arena.
+    var checker = @import("../4_semantics/safety/checker.zig").SafetyChecker.init(allocator, diagnostics, graph);
+    defer checker.deinit();
+    try checker.analyzeUnit(&.{entry});
     var lower = try Lower.init(temporary, graph);
     const function = graph.function(entry);
     for (graph.fields.items[function.input.start..][0..function.input.len]) |field| {
