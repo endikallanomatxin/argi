@@ -59,8 +59,10 @@ pub const VirtualSignatureFailure = struct {
 };
 
 pub const Resolver = struct {
+    const RegistrationCursor = struct { module: u32 = 0, conformance: u32 = 0 };
     pub const ResolutionCheckpoint = struct {
         participant_failure: ?ParticipantConformanceFailure,
+        registration: RegistrationCursor,
     };
     const ConstraintKey = struct {
         module_index: u32,
@@ -91,6 +93,7 @@ pub const Resolver = struct {
     generics: *generic_mod.Resolver,
     virtual_signature_failure: ?VirtualSignatureFailure = null,
     participant_conformance_failure: ?ParticipantConformanceFailure = null,
+    registration: RegistrationCursor = .{},
     stats: Stats = .{},
     profile_implementation_scans: bool = false,
     profile_io: ?std.Io = null,
@@ -106,11 +109,12 @@ pub const Resolver = struct {
     }
 
     pub fn checkpointResolution(self: *const Resolver) ResolutionCheckpoint {
-        return .{ .participant_failure = self.participant_conformance_failure };
+        return .{ .participant_failure = self.participant_conformance_failure, .registration = self.registration };
     }
 
     pub fn rollbackResolution(self: *Resolver, saved: ResolutionCheckpoint) void {
         self.participant_conformance_failure = saved.participant_failure;
+        self.registration = saved.registration;
     }
 
     pub fn tryResolve(
@@ -1668,6 +1672,9 @@ pub const Resolver = struct {
     }
 
     pub fn prepareParticipantConformances(self: *Resolver) !void {
+        if (self.registration.module > self.modules.len or self.offsets.len != self.modules.len) return error.InvalidContractModulePrefix;
+        if (self.participant_conformance_failure != null) return;
+        if (self.registration.module == self.modules.len) return;
         const start = if (self.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
         try self.validateConformanceTemplates();
         const tuples_start = if (self.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
@@ -1676,86 +1683,98 @@ pub const Resolver = struct {
             self.stats.registration_tuples_ns += @intCast(std.Io.Timestamp.now(io, .boot).nanoseconds - tuples_start);
         };
         if (self.participant_conformance_failure != null) return;
-        for (self.modules, 0..) |*module, module_index| {
-            for (module.semantic.parameterized_storage.contract_conformances.items) |conformance| {
-                const contract_name = module.text(switch (conformance.contract_ref) {
-                    .module => |declaration| module.declarations.items[@intFromEnum(declaration)].name,
-                    .external => |external| module.semantic.external_refs.items[@intFromEnum(external)].name,
-                });
-                var failure: ParticipantConformanceFailure = .{ .source = self.sourceFor(module_index, conformance.source), .contract_name = contract_name, .reason = "" };
-                const declaration = self.resolveDeclarationRef(module_index, conformance.contract_ref, .contract_type) catch |err| {
-                    failure.reason = switch (err) {
-                        error.UnknownGlobalDeclaration => "unknown or inaccessible contract",
-                        error.AmbiguousGlobalDeclaration => "ambiguous contract name",
-                        else => return err,
-                    };
-                    self.participant_conformance_failure = failure;
-                    return;
-                };
-                const located = self.findContractDefinition(declaration) orelse return error.InvalidContractDeclaration;
-                if (!located.definition.hasExplicitParticipants()) {
-                    failure.reason = "implement requires a contract with explicit participants";
-                    self.participant_conformance_failure = failure;
-                    return;
+        // Each source conformance is published once. Advance only after its
+        // evidence has been registered successfully, including within a module.
+        while (self.registration.module < self.modules.len) {
+            const conformances = self.modules[self.registration.module].semantic.parameterized_storage.contract_conformances.items;
+            while (self.registration.conformance < conformances.len) {
+                try self.prepareParticipantConformance(self.registration.module, conformances[self.registration.conformance]);
+                if (self.participant_conformance_failure != null) return;
+                self.registration.conformance += 1;
+            }
+            self.registration.module += 1;
+            self.registration.conformance = 0;
+        }
+    }
+
+    fn prepareParticipantConformance(self: *Resolver, module_index: usize, conformance: parameterized_storage.ContractConformance) !void {
+        const module = &self.modules[module_index];
+        const contract_name = module.text(switch (conformance.contract_ref) {
+            .module => |declaration| module.declarations.items[@intFromEnum(declaration)].name,
+            .external => |external| module.semantic.external_refs.items[@intFromEnum(external)].name,
+        });
+        var failure: ParticipantConformanceFailure = .{ .source = self.sourceFor(module_index, conformance.source), .contract_name = contract_name, .reason = "" };
+        const declaration = self.resolveDeclarationRef(module_index, conformance.contract_ref, .contract_type) catch |err| {
+            failure.reason = switch (err) {
+                error.UnknownGlobalDeclaration => "unknown or inaccessible contract",
+                error.AmbiguousGlobalDeclaration => "ambiguous contract name",
+                else => return err,
+            };
+            self.participant_conformance_failure = failure;
+            return;
+        };
+        const located = self.findContractDefinition(declaration) orelse return error.InvalidContractDeclaration;
+        if (!located.definition.hasExplicitParticipants()) {
+            failure.reason = "implement requires a contract with explicit participants";
+            self.participant_conformance_failure = failure;
+            return;
+        }
+        if (conformance.parameters.len != 0) {
+            // Templates are instantiated from participants by selection.
+            _ = try self.prepareOperationBindings(module_index, located, conformance, &failure);
+            return;
+        }
+        const storage = &self.modules[located.module_index].semantic.parameterized_storage;
+        var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
+        defer bindings.deinit(self.allocator);
+        var implementation_bindings = try generic_mod.Resolver.Bindings.init(self.allocator, module.semantic.parameterized_storage.comptime_parameters.items.len);
+        defer implementation_bindings.deinit(self.allocator);
+        const participants = try self.generics.instantiateParameterizedArguments(module_index, conformance.participants, &implementation_bindings);
+        self.generics.bindGlobalArguments(located.module_index, located.definition.participants, participants, &bindings) catch |err| {
+            failure.reason = conformanceArgumentFailure(err) orelse return err;
+            self.participant_conformance_failure = failure;
+            return;
+        };
+        const associated = try self.generics.instantiateParameterizedArguments(module_index, conformance.associated_arguments, &implementation_bindings);
+        self.generics.bindGlobalArguments(located.module_index, located.definition.parameters, associated, &bindings) catch |err| {
+            failure.reason = conformanceArgumentFailure(err) orelse return err;
+            self.participant_conformance_failure = failure;
+            return;
+        };
+        for (self.graph.contract_conformances.items) |previous| {
+            if (previous.declaration != declaration) continue;
+            var equal = true;
+            for (0..located.definition.participants.len) |position| {
+                const actual = bindings.types[located.definition.participants.start + position].?;
+                const old = self.graph.generic_arguments.items[previous.participants.start + position].value.type;
+                if (!global_types.equal(self.graph, actual, old)) {
+                    equal = false;
+                    break;
                 }
-                if (conformance.parameters.len != 0) {
-                    // Templates are instantiated from participants by selection.
-                    _ = try self.prepareOperationBindings(module_index, located, conformance, &failure);
-                    continue;
-                }
-                const storage = &self.modules[located.module_index].semantic.parameterized_storage;
-                var bindings = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
-                defer bindings.deinit(self.allocator);
-                var implementation_bindings = try generic_mod.Resolver.Bindings.init(self.allocator, module.semantic.parameterized_storage.comptime_parameters.items.len);
-                defer implementation_bindings.deinit(self.allocator);
-                const participants = try self.generics.instantiateParameterizedArguments(module_index, conformance.participants, &implementation_bindings);
-                self.generics.bindGlobalArguments(located.module_index, located.definition.participants, participants, &bindings) catch |err| {
-                    failure.reason = conformanceArgumentFailure(err) orelse return err;
-                    self.participant_conformance_failure = failure;
-                    return;
-                };
-                const associated = try self.generics.instantiateParameterizedArguments(module_index, conformance.associated_arguments, &implementation_bindings);
-                self.generics.bindGlobalArguments(located.module_index, located.definition.parameters, associated, &bindings) catch |err| {
-                    failure.reason = conformanceArgumentFailure(err) orelse return err;
-                    self.participant_conformance_failure = failure;
-                    return;
-                };
-                for (self.graph.contract_conformances.items) |previous| {
-                    if (previous.declaration != declaration) continue;
-                    var equal = true;
-                    for (0..located.definition.participants.len) |position| {
-                        const actual = bindings.types[located.definition.participants.start + position].?;
-                        const old = self.graph.generic_arguments.items[previous.participants.start + position].value.type;
-                        if (!global_types.equal(self.graph, actual, old)) {
-                            equal = false;
-                            break;
-                        }
-                    }
-                    if (equal) {
-                        failure.reason = "ambiguous conformances for the same participant tuple";
-                        self.participant_conformance_failure = failure;
-                        return;
-                    }
-                }
-                const operations = self.prepareOperationBindings(module_index, located, conformance, &failure) catch |err| {
-                    if (err != error.InvalidContractConformance) return err;
-                    self.participant_conformance_failure = failure;
-                    return;
-                };
-                // Make canonical associations available before checking operation signatures.
-                // This provisional evidence cannot escape a failed compilation.
-                const canonical_participants = try self.publishConformanceArguments(located, located.definition.participants, &bindings);
-                const canonical_associated = try self.publishConformanceArguments(located, located.definition.parameters, &bindings);
-                try self.graph.contract_conformances.append(self.allocator, .{
-                    .context = @enumFromInt(@as(u32, @intCast(module_index))),
-                    .declaration = declaration,
-                    .participants = canonical_participants,
-                    .associated_arguments = canonical_associated,
-                    .operation_bindings = operations,
-                    .source = failure.source,
-                });
+            }
+            if (equal) {
+                failure.reason = "ambiguous conformances for the same participant tuple";
+                self.participant_conformance_failure = failure;
+                return;
             }
         }
+        const operations = self.prepareOperationBindings(module_index, located, conformance, &failure) catch |err| {
+            if (err != error.InvalidContractConformance) return err;
+            self.participant_conformance_failure = failure;
+            return;
+        };
+        // Make canonical associations available before checking operation signatures.
+        // This provisional evidence cannot escape a failed compilation.
+        const canonical_participants = try self.publishConformanceArguments(located, located.definition.participants, &bindings);
+        const canonical_associated = try self.publishConformanceArguments(located, located.definition.parameters, &bindings);
+        try self.graph.contract_conformances.append(self.allocator, .{
+            .context = @enumFromInt(@as(u32, @intCast(module_index))),
+            .declaration = declaration,
+            .participants = canonical_participants,
+            .associated_arguments = canonical_associated,
+            .operation_bindings = operations,
+            .source = failure.source,
+        });
     }
 
     fn prepareOperationBindings(self: *Resolver, module_index: usize, located: LocatedContractDefinition, conformance: parameterized_storage.ContractConformance, failure: *ParticipantConformanceFailure) !primitives.Range(global_sg.ContractOperationBindingId) {

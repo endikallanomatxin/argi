@@ -151,6 +151,19 @@ pub const Context = struct {
         self.generic_functions.rollback_ownership = ownership_mod.Resolver.rollbackParameterizedCheckpoint;
     }
 
+    /// Rebind borrowed views after relocation appends an immutable module suffix.
+    /// Existing module contents, imports and global identities must stay fixed.
+    /// Registration and resolution are explicit subsequent coordinator steps.
+    pub fn extendModuleViews(self: *Context, modules: []const module_sg.ModuleSemanticGraph, offsets: []const globalizer.Offsets) !void {
+        if (modules.len < self.core.modules.len or offsets.len != modules.len or self.core.graph.modules.items.len != modules.len)
+            return error.InvalidSemanticModuleViews;
+        inline for (.{ "core", "expressions", "constructors", "control", "generics", "generic_functions", "contracts", "errors", "ownership" }) |field| {
+            const resolver = &@field(self, field);
+            resolver.modules = modules;
+            resolver.offsets = offsets;
+        }
+    }
+
     pub fn deinit(self: *Context) void {
         self.ownership.deinit();
         self.errors.deinit();
@@ -209,4 +222,63 @@ test "resolver contexts keep their graphs and pending evaluation independent" {
     try std.testing.expect(right.ownership.graph == &right_graph);
     try std.testing.expect(left.dispatch.core == &left.core);
     try std.testing.expect(right.dispatch.core == &right.core);
+}
+
+fn registrationModule(allocator: std.mem.Allocator, dir: []const u8, source: []const u8) !module_sg.ModuleSemanticGraph {
+    const files = [_]@import("../../1_base/source_files.zig").SourceFile{.{ .path = "main.rg", .code = source }};
+    var diagnostics = diagnostics_mod.Diagnostics.init(&allocator, &files);
+    defer diagnostics.deinit();
+    var tokenizer = @import("../../2_tokens/tokenizer.zig").Tokenizer.init(allocator, &diagnostics, source, @enumFromInt(0));
+    defer tokenizer.deinit();
+    _ = try tokenizer.tokenize();
+    var syntaxer = @import("../../3_syntax/syntaxer.zig").Syntaxer.initFile(allocator, @import("../../3_syntax/syntax_tree.zig").FileSyntaxTree.initOwnedTokens(@enumFromInt(0), tokenizer.takeTokens()), source, &diagnostics);
+    defer syntaxer.deinit();
+    var tree = try syntaxer.parse();
+    defer tree.deinit(allocator);
+    return (try @import("../module/semantizer.zig").build(allocator, dir, &.{.{ .path = "main.rg", .tree = &tree, .source = source }})).graph;
+}
+
+test "resolver context extends conformance registration without duplicating retained evidence" {
+    const a = std.testing.allocator;
+    var first = try registrationModule(a, "first", "Marker#(.Value: Type): Contract = ()\nimplement Marker#(Int32) ()\nimplement Marker#(UInt8) ()\n");
+    defer first.deinit(a);
+    var second = try registrationModule(a, "second", "Other#(.Value: Type): Contract = ()\nimplement Other#(Int64) ()\n");
+    defer second.deinit(a);
+    var duplicate = try registrationModule(a, "duplicate", "Broken#(.Value: Type): Contract = ()\nimplement Broken#(Int32) ()\nimplement Broken#(Int32) ()\n");
+    defer duplicate.deinit(a);
+    const modules = [_]module_sg.ModuleSemanticGraph{ first, second };
+    var retained = try globalizer.relocate(a, modules[0..1], .allow_holes);
+    defer retained.deinit(a);
+    var context: Context = undefined;
+    context.init(a, &retained.graph, modules[0..1], retained.offsets.items, null, null);
+    defer context.deinit();
+    const graph_checkpoint = retained.graph.checkpoint();
+    const resolution_checkpoint = context.contracts.checkpointResolution();
+    try context.contracts.prepareParticipantConformances();
+    try std.testing.expectEqual(@as(usize, 2), retained.graph.contract_conformances.items.len);
+    try context.contracts.prepareParticipantConformances();
+    try std.testing.expectEqual(@as(usize, 2), retained.graph.contract_conformances.items.len);
+    try std.testing.expectEqual(null, context.contracts.participant_conformance_failure);
+    retained.graph.rollback(graph_checkpoint);
+    context.contracts.rollbackResolution(resolution_checkpoint);
+    try context.contracts.prepareParticipantConformances();
+    try std.testing.expectEqual(@as(usize, 2), retained.graph.contract_conformances.items.len);
+    try retained.append(a, modules[1..], .allow_holes);
+    try context.extendModuleViews(&modules, retained.offsets.items);
+    try context.contracts.prepareParticipantConformances();
+    try std.testing.expectEqual(@as(usize, 3), retained.graph.contract_conformances.items.len);
+    try context.contracts.prepareParticipantConformances();
+    try std.testing.expectEqual(@as(usize, 3), retained.graph.contract_conformances.items.len);
+    try std.testing.expectEqual(null, context.contracts.participant_conformance_failure);
+    try std.testing.expectEqual(@as(usize, 2), context.ownership.modules.len);
+    try std.testing.expectEqual(@as(usize, 2), context.generic_functions.offsets.len);
+    try std.testing.expectError(error.InvalidSemanticModuleViews, context.extendModuleViews(modules[0..1], retained.offsets.items[0..1]));
+    try std.testing.expectEqual(@as(usize, 2), context.core.modules.len);
+    const extended = [_]module_sg.ModuleSemanticGraph{ first, second, duplicate };
+    try retained.append(a, &.{duplicate}, .allow_holes);
+    try context.extendModuleViews(&extended, retained.offsets.items);
+    try context.contracts.prepareParticipantConformances();
+    const failure = context.contracts.participant_conformance_failure orelse return error.ExpectedConformanceFailure;
+    try std.testing.expectEqualStrings("ambiguous conformances for the same participant tuple", failure.reason);
+    try std.testing.expectEqual(@as(usize, 4), retained.graph.contract_conformances.items.len);
 }
