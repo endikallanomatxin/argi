@@ -375,8 +375,15 @@ selections remain subject to their enclosing transaction. Pending computation
 must propagate through input/constraint probes rather than count as a mismatch.
 
 - Support temporary type recipes without retaining IDs from rolled-back tails.
-- Replace target-only preprocessing with staged conditional declaration discovery
-  before enabling computed `#if`; discarded imports must remain undiscovered.
+`conditional_source.zig` now indexes conditional source spans independently of
+predicate evaluation. Its decisions are true/false/pending; a pending condition
+hides both arms and exposes only the active unresolved frontier. Target selection
+uses this same plan and retains its previous condition-validation behavior.
+
+- Bind indexed conditions to ordinary syntax and checked expression evaluation.
+  Retain declaration/session state while discovering only newly selected imports;
+  computed `#if` is not enabled yet. Generic body decisions must belong to each
+  specialization rather than one global source mask.
 
 ## Remaining decisions
 

@@ -72,6 +72,7 @@ test {
     _ = c_abi;
     _ = semantic_literals;
     _ = source_files;
+    _ = @import("1_base/conditional_source.zig");
     _ = @import("1_base/target_selection.zig");
     _ = link;
     _ = lsp;

@@ -17,37 +17,43 @@ pub fn errorMessage(err: anyerror) []const u8 {
         error.UnknownTargetValue => "unknown OS, architecture, or ABI name in target predicate",
         error.InvalidTargetCondition => "expected target_os, target_arch, or target_abi with a literal string, or target_pointer_bits with an integer literal; combine predicates with not, and, or",
         error.UnterminatedTargetBranch => "expected closing '}' for target selection branch",
+        error.ConditionalDepthLimit => "conditional selection exceeds the nesting limit",
+        error.ConditionalSourceTooLarge => "conditional source exceeds the supported source size",
         error.UnmatchedTargetElse => "#else requires a preceding #if branch",
         else => @errorName(err),
     };
 }
 
-// Selection precedes import discovery and tokenizing. Blank discarded bytes,
-// rather than deleting them, so every token and diagnostic keeps its original
-// source offset. This deliberately handles target predicates, not general
-// compile-time execution; the original source remains authoritative for tools.
+// The source plan owns branch topology and stable offsets. This wrapper only
+// supplies the established target predicates; staged execution can use the same
+// plan with unresolved decisions without interpreting Argi in this scanner.
 pub fn select(allocator: std.mem.Allocator, source: []const u8, target: target_mod.Config, error_offset: *usize) ![]u8 {
-    const output = try allocator.dupe(u8, source);
-    errdefer allocator.free(output);
-    var selector = Selector{ .source = source, .output = output, .target = target };
-    selector.range(0, source.len, true) catch |err| {
-        error_offset.* = selector.offset;
-        return err;
-    };
-    return output;
+    var plan = try @import("conditional_source.zig").Plan.parse(allocator, source, error_offset);
+    defer plan.deinit(allocator);
+    const decisions = try allocator.alloc(?bool, plan.branches.items.len);
+    defer allocator.free(decisions);
+    // Keep validating target conditions in discarded branches, as before.
+    for (plan.branches.items, decisions) |branch, *decision| {
+        var selector = Selector{ .source = source[0..branch.condition.end], .target = target, .offset = branch.condition.start };
+        decision.* = selector.condition() catch |err| {
+            error_offset.* = selector.offset;
+            return err;
+        };
+        selector.skipTrivia();
+        if (selector.offset != branch.condition.end) {
+            error_offset.* = selector.offset;
+            return error.InvalidTargetCondition;
+        }
+    }
+    const selection = try plan.select(allocator, decisions);
+    allocator.free(selection.pending);
+    return selection.source;
 }
 
 const Selector = struct {
     source: []const u8,
-    output: []u8,
     target: target_mod.Config,
     offset: usize = 0,
-
-    fn blank(self: *Selector, start: usize, end: usize) void {
-        for (self.output[start..end]) |*byte| {
-            if (byte.* != '\n' and byte.* != '\r') byte.* = ' ';
-        }
-    }
 
     fn skipTrivia(self: *Selector) void {
         while (self.offset < self.source.len) {
@@ -126,89 +132,6 @@ const Selector = struct {
         }
         return value;
     }
-
-    fn skipQuoted(self: *Selector) void {
-        const quote = self.source[self.offset];
-        self.offset += 1;
-        while (self.offset < self.source.len) {
-            const byte = self.source[self.offset];
-            self.offset += 1;
-            if (byte == '\\' and self.offset < self.source.len) self.offset += 1 else if (byte == quote) return;
-        }
-    }
-
-    fn closingBrace(self: *Selector) !usize {
-        var depth: usize = 1;
-        while (self.offset < self.source.len) {
-            const byte = self.source[self.offset];
-            if (byte == '"' or byte == '\'') {
-                self.skipQuoted();
-                continue;
-            }
-            if (std.mem.startsWith(u8, self.source[self.offset..], "--")) {
-                while (self.offset < self.source.len and self.source[self.offset] != '\n') self.offset += 1;
-                continue;
-            }
-            self.offset += 1;
-            if (byte == '{') depth += 1;
-            if (byte == '}') {
-                depth -= 1;
-                if (depth == 0) return self.offset - 1;
-            }
-        }
-        return error.UnterminatedTargetBranch;
-    }
-
-    fn range(self: *Selector, start: usize, end: usize, enabled: bool) anyerror!void {
-        self.offset = start;
-        while (self.offset < end) {
-            const byte = self.source[self.offset];
-            if (byte == '"' or byte == '\'') {
-                self.skipQuoted();
-                continue;
-            }
-            if (std.mem.startsWith(u8, self.source[self.offset..], "--")) {
-                while (self.offset < end and self.source[self.offset] != '\n') self.offset += 1;
-                continue;
-            }
-            if (byte != '#') {
-                self.offset += 1;
-                continue;
-            }
-            const directive = self.offset;
-            self.offset += 1;
-            if (!self.word("if")) {
-                if (self.word("else")) return error.UnmatchedTargetElse;
-                self.offset = directive + 1;
-                continue;
-            }
-            const chosen = try self.condition();
-            try self.expect('{');
-            const body_start = self.offset;
-            const body_end = try self.closingBrace();
-            if (body_end >= end) return error.UnterminatedTargetBranch;
-            self.blank(directive, body_start);
-            self.blank(body_end, body_end + 1);
-            try self.range(body_start, body_end, enabled and chosen);
-            self.offset = body_end + 1;
-            self.skipTrivia();
-            if (self.offset < end and self.source[self.offset] == '#') {
-                const else_start = self.offset;
-                self.offset += 1;
-                if (self.word("else")) {
-                    try self.expect('{');
-                    const alternate_start = self.offset;
-                    const alternate_end = try self.closingBrace();
-                    if (alternate_end >= end) return error.UnterminatedTargetBranch;
-                    self.blank(else_start, alternate_start);
-                    self.blank(alternate_end, alternate_end + 1);
-                    try self.range(alternate_start, alternate_end, enabled and !chosen);
-                    self.offset = alternate_end + 1;
-                } else self.offset = else_start;
-            }
-        }
-        if (!enabled) self.blank(start, end);
-    }
 };
 
 test "target selection keeps offsets and excludes imports before discovery" {
@@ -260,4 +183,11 @@ test "pointer width selection follows target ABI and preserves offsets" {
     try std.testing.expect(std.mem.indexOf(u8, selected, "wide") == null);
     try std.testing.expect(!try matches(.{ .arch = .x86_64, .abi = .gnu }, .target_pointer_bits, "32"));
     try std.testing.expectError(error.InvalidTargetCondition, select(std.testing.allocator, "#if target_pointer_bits(\"32\") {}", .{}, &offset));
+}
+
+test "target selection still validates predicates inside discarded branches" {
+    const source = "#if target_os(\"windows\") { #if target_os(\"windos\") {} } #else { valid := 42 }";
+    var offset: usize = 0;
+    try std.testing.expectError(error.UnknownTargetValue, select(std.testing.allocator, source, .{ .os = .linux }, &offset));
+    try std.testing.expect(offset > std.mem.indexOf(u8, source, "windos").?);
 }
