@@ -537,3 +537,11 @@ bindings and the shared cleanup Shape/Counts representation. Source statement
 execution needs no caller-authored slot tables. Integration executes both nested
 owner cleanup and retained-owner session exit before reset. Expression results,
 interactive CLI dispatch and bundled core/import loading remain pending.
+
+The interactive controller owns source loading, candidate preparation, runtime
+execution and checked close/reset. Reset replaces semantic and execution state
+together; poisoned contexts reset without user-code unwinding. Statement recovery
+and explicit close are tested. Named definitions still need an explicit retained
+declaration environment: ordinary module visibility correctly excludes earlier
+submission modules. Normal non-continuation safety scratch ownership also needs
+review before enabling definition publication through this controller.

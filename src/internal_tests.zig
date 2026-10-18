@@ -73,6 +73,7 @@ comptime {
     _ = @import("execution/compilation_session.zig");
     _ = @import("execution/session.zig");
     _ = @import("execution/submissions.zig");
+    _ = @import("execution/interactive.zig");
     _ = c_abi;
     _ = semantic_literals;
     _ = source_files;
