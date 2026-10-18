@@ -149,4 +149,38 @@ Execution is limited to one million instructions, 128 nested calls, and one
 million cumulative value cells. These are initial fixed limits, not a general
 sandbox or a stable resource policy. No host I/O or native handles are exposed.
 `--vm` selects runtime execution; `#run` and computed conditions execute during
-compilation regardless of that option. A persistent REPL and JIT remain pending.
+compilation regardless of that option. JIT remains deferred.
+
+## Experimental persistent REPL
+
+Run `argi repl` to load core and start a retained bytecode session. The same VM
+subset and execution limits described above apply. `--sysroot <path>` selects an
+installation prefix. Input can come from a terminal or a pipe.
+
+```text
+>>> value ::= 40 + 2
+>>> value
+_0 = 42
+>>> answer := () -> (.result: Int32) { result = 7 }
+>>> answer()
+_1 = 7
+>>> _0 + _1
+_2 = 49
+```
+
+Each line is one submission. Use `:begin` and `:end` around multiline definitions
+or statement blocks. Submit definitions separately from executable statements.
+Functions, types and contracts remain available to subsequent submissions;
+redefining accepted names is rejected. Import loading is not yet supported.
+
+Expressions create ordinary numbered bindings (`_0`, `_1`, ...), skipping names
+already in use. Results, owners and loans remain in the session until reset or
+exit; presentation does not copy owners or dereference references. Aggregate
+presentation is bounded, references are shown as `<reference>`, and choices use
+variant indexes. This is an initial value display, not the text-formatting API.
+
+`:reset` runs checked cleanup and starts a fresh session; `:quit` or EOF cleans up
+and exits. Preparation failures publish no state and subsequent input can retry.
+A runtime trap retains any writes already executed and poisons the session; use
+`:reset` before continuing. Trapped code cannot be safely unwound. No System/FFI
+capabilities or native calls are implicitly granted by the REPL.

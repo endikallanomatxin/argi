@@ -68,7 +68,46 @@ pub const Sources = struct {
         return .{ .candidate = try compiler.prepareContinuation(modules, diagnostics, function), .function = function };
     }
 
-    pub fn loadModule(self: *Sources, diagnostics: *diagnostics_mod.Diagnostics, source: []const u8) !*const module_sg.ModuleSemanticGraph {
+    const Parsed = struct {
+        tree: @import("../3_syntax/syntax_tree.zig").FileSyntaxTree,
+        code: []const u8,
+        path: []const u8,
+        dir: []const u8,
+    };
+    pub const SubmissionKind = enum { empty, definitions, statements, expression };
+
+    /// Classification uses the language parser, never punctuation heuristics.
+    /// Mixed module declarations and executable statements require separate
+    /// submissions so their publication/execution boundary remains explicit.
+    pub fn classify(self: *Sources, diagnostics: *diagnostics_mod.Diagnostics, source: []const u8) !SubmissionKind {
+        var parsed = try self.parseSource(diagnostics, source);
+        defer parsed.tree.deinit(self.allocator);
+        if (parsed.tree.roots.len == 1) switch (parsed.tree.tag(parsed.tree.roots[0])) {
+            .expression_statement, .function_call => return .expression,
+            else => {},
+        };
+        var result: SubmissionKind = .empty;
+        for (parsed.tree.roots) |root| {
+            if (parsed.tree.symbolDeclaration(root)) |declaration| if (declaration.value) |value| {
+                if (parsed.tree.tag(value) == .import_statement) {
+                    try diagnostics.add(parsed.tree.location(root), .semantic, "imports in interactive submissions are not yet supported", .{});
+                    return error.Reported;
+                }
+            };
+            const kind: SubmissionKind = switch (parsed.tree.tag(root)) {
+                .function_declaration, .function_declaration_once, .contract_declaration, .contract_conformance, .type_declaration, .c_struct_declaration, .c_incomplete_declaration, .c_enum_declaration, .c_union_declaration, .c_function_pointer_declaration, .choice_option_declaration => .definitions,
+                else => .statements,
+            };
+            if (result != .empty and result != kind) {
+                try diagnostics.add(parsed.tree.location(root), .semantic, "submit definitions separately from executable statements", .{});
+                return error.Reported;
+            }
+            result = kind;
+        }
+        return result;
+    }
+
+    fn parseSource(self: *Sources, diagnostics: *diagnostics_mod.Diagnostics, source: []const u8) !Parsed {
         if (diagnostics.hasErrors()) return error.Reported;
         if (self.sequence == std.math.maxInt(u64)) return error.SubmissionIdentityLimit;
         const sequence = self.sequence;
@@ -85,9 +124,19 @@ pub const Sources = struct {
         var parser = @import("../3_syntax/syntaxer.zig").Syntaxer.initFile(self.allocator, @import("../3_syntax/syntax_tree.zig").FileSyntaxTree.initOwnedTokens(file, tokens.takeTokens()), code, diagnostics);
         defer parser.deinit();
         var tree = try parser.parse();
-        defer tree.deinit(self.allocator);
+        errdefer tree.deinit(self.allocator);
         if (diagnostics.hasErrors()) return error.Reported;
-        const inputs = [_]module_sg.FileInput{.{ .diagnostics = diagnostics, .path = path, .tree = &tree, .source = code }};
+        return .{ .tree = tree, .code = code, .path = path, .dir = dir };
+    }
+
+    pub fn loadModule(self: *Sources, diagnostics: *diagnostics_mod.Diagnostics, source: []const u8) !*const module_sg.ModuleSemanticGraph {
+        var parsed = try self.parseSource(diagnostics, source);
+        defer parsed.tree.deinit(self.allocator);
+        const code = parsed.code;
+        const path = parsed.path;
+        const dir = parsed.dir;
+        const tree = &parsed.tree;
+        const inputs = [_]module_sg.FileInput{.{ .diagnostics = diagnostics, .path = path, .tree = tree, .source = code }};
         const graph = try self.allocator.create(module_sg.ModuleSemanticGraph);
         errdefer self.allocator.destroy(graph);
         graph.* = try module_sg.build(self.allocator, dir, &inputs);

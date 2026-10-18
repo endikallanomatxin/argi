@@ -711,7 +711,17 @@ const FunctionLower = struct {
             if (self.nodeDrop(node.content.move_value)) |drop| try self.setDrop(drop, false);
             return value;
         }
-        if (node.content == .function_call) return (try self.call(id)) orelse self.parent.reject(node.source, "void expression");
+        if (node.content == .function_call) {
+            if (try self.call(id)) |result| return result;
+            // A checked no-output call still has the empty-tuple value in an
+            // expression. Execute the call once before materializing that value.
+            const ty = node.ty orelse return self.parent.reject(node.source, "untyped void expression");
+            const result_type = self.parent.graph.semanticType(ty);
+            if (result_type != .builtin or result_type.builtin != .Void) return self.parent.reject(node.source, "non-unit void expression");
+            const result = try self.newSlot(ty);
+            _ = try self.emit(node.source, .{ .constant = .{ .dst = result, .value = .unit } });
+            return result;
+        }
         if (node.content == .value_sequence or node.content == .replacement) {
             const block_id = if (node.content == .replacement)
                 (try @import("../../4_semantics/global/replacement.zig").plan(self.parent.graph, id)).block

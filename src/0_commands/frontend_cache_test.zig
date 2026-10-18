@@ -725,3 +725,29 @@ test "parallel module semantics permits inline execution when async is unavailab
     try std.testing.expectEqual(null, parallel.failure);
     try std.testing.expectEqualStrings(serial.ir, parallel.ir);
 }
+
+test "module frontend initializes interactive execution without a program entry" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const files = [_]sf.SourceFile{.{
+        .path = "/interactive_core/main.rg",
+        .code = "answer := () -> (.result: Int32) { result = 42 }\n",
+        .origin = .bundled_core,
+    }};
+    var diagnostics = diag.Diagnostics.init(&allocator, &files);
+    defer diagnostics.deinit();
+    var pipeline = frontend.FrontendPipeline.init(allocator, std.testing.io, &diagnostics, .{});
+    defer pipeline.deinit();
+    const modules = try pipeline.prepareModuleFiles(&files);
+    try std.testing.expectEqual(@as(usize, 1), modules.len);
+    try std.testing.expect(pipeline.global_graph == null);
+    var session: @import("../execution/interactive.zig").Interactive = undefined;
+    try session.initWithSources(allocator, &files, modules, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    try session.submitStatements("value ::= answer()");
+    const binding = session.compiler.semantic.resolvers.expressions.session_bindings.items[0];
+    const stored = try session.runtime.context.storage.slots(session.runtime.context.bindings.get(binding).?);
+    try std.testing.expectEqual(@as(i128, 42), (try stored.get(0)).integer);
+    try session.close();
+}

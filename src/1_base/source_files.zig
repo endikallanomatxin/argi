@@ -747,6 +747,24 @@ pub fn collectModule(
     return try collectModuleWithOptions(alloc, io, .{ .fallback_core_dir = core_dir }, module_dir);
 }
 
+/// Load the installed core without inventing a user module or an entrypoint.
+/// Retained interactive frontends can prepare these same module artifacts once.
+pub fn collectCoreWithOptions(alloc: *const std.mem.Allocator, io: std.Io, options: CoreResolutionOptions) !std.array_list.Managed(SourceFile) {
+    var list = std.array_list.Managed(SourceFile).init(alloc.*);
+    errdefer freeList(alloc, &list);
+    const directory = try resolveToolCoreDir(alloc, io, options);
+    defer alloc.free(directory);
+    var seen = DirSet.init(alloc.*);
+    defer {
+        var it = seen.iterator();
+        while (it.next()) |entry| alloc.free(entry.key_ptr.*);
+        seen.deinit();
+    }
+    try collectRgFilesRecursively(alloc, io, &list, directory, &seen, options.source_overrides);
+    markBundledCore(list.items);
+    return list;
+}
+
 pub fn collectModuleWithOptions(
     alloc: *const std.mem.Allocator,
     io: std.Io,

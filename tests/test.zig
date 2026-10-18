@@ -5744,6 +5744,7 @@ test "argi help lists supported commands" {
     try expect(std.mem.indexOf(u8, result.stderr, "Usage: argi <command> [arguments] [options]\n") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "build [path] [flags]") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "run [executable] [build flags]") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "repl [--sysroot <path>]") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "test <directory> [flags]") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "--sysroot <path>") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "--exec <name>") != null);
@@ -5754,6 +5755,44 @@ test "argi help lists supported commands" {
     try expect(std.mem.indexOf(u8, result.stderr, "version") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "format [paths...] [--check]") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "format <file.rg> --stdout") != null);
+}
+
+test "argi repl retains values and shares compile-time execution" {
+    const installed_argi = try installedArgiPath();
+    defer std.testing.allocator.free(installed_argi);
+    var child = try std.process.spawn(std.testing.io, .{
+        .argv = &.{ installed_argi, "repl" },
+        .cwd = .{ .path = compilerRoot() },
+        .stdin = .pipe,
+        .stdout = .pipe,
+        .stderr = .pipe,
+    });
+    defer child.kill(std.testing.io);
+    try child.stdin.?.writeStreamingAll(std.testing.io, "value ::= 40 + 2\nvalue\n" ++
+        "answer := () -> (.result: Int32) { result = 7 }\nanswer()\n_0 + _1\n" ++
+        "enabled := () -> (.result: Bool) { result = true }\n" ++
+        ":begin\n" ++
+        "choose := () -> (.result: Int32) {\n" ++
+        "    #if enabled() { result = 12 } else { result = missing() }\n" ++
+        "}\n:end\n#run choose()\n:reset\ntrue\n");
+    child.stdin.?.close(std.testing.io);
+    child.stdin = null;
+    var buffer: std.Io.File.MultiReader.Buffer(2) = undefined;
+    var reader: std.Io.File.MultiReader = undefined;
+    reader.init(std.testing.allocator, std.testing.io, buffer.toStreams(), &.{ child.stdout.?, child.stderr.? });
+    defer reader.deinit();
+    while (true) reader.fill(1, .none) catch |err| switch (err) {
+        error.EndOfStream => break,
+        else => return err,
+    };
+    const stdout = try reader.toOwnedSlice(0);
+    defer std.testing.allocator.free(stdout);
+    const stderr = try reader.toOwnedSlice(1);
+    defer std.testing.allocator.free(stderr);
+    if (stderr.len != 0) std.debug.print("REPL stderr: {s}\n", .{stderr});
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, try child.wait(std.testing.io));
+    try expectEqualStrings("", stderr);
+    try expectEqualStrings("_0 = 42\n_1 = 7\n_2 = 49\n_3 = 12\n_0 = true\n", stdout);
 }
 
 test "argi version reports current release" {

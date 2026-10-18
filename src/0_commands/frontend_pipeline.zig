@@ -185,9 +185,16 @@ pub const FrontendPipeline = struct {
         return roots;
     }
 
-    /// Produce and safety-check the final indexed semantic graph. This is the
-    /// sole semantic output API of the frontend.
-    pub fn semantizeGlobalFiles(self: *FrontendPipeline, files: []const sf.SourceFile) !*const global_sg.GlobalSemanticGraph {
+    /// Load syntax-free modules without selecting an executable entry or
+    /// constructing a second global graph. The pipeline owns the returned views
+    /// and must outlive retained semantic sessions borrowing them.
+    pub fn prepareModuleFiles(self: *FrontendPipeline, files: []const sf.SourceFile) ![]const module_sg.ModuleSemanticGraph {
+        try self.prepareFiles(files, false);
+        try self.buildModuleGraphs();
+        return self.module_graphs.items;
+    }
+
+    fn prepareFiles(self: *FrontendPipeline, files: []const sf.SourceFile, include_entry: bool) !void {
         _ = try self.parseFiles(files);
         // Syntax diagnostics are terminal for this compilation. Continuing into
         // ModuleSema/GlobalSema can only manufacture secondary unresolved work
@@ -206,10 +213,15 @@ pub const FrontendPipeline = struct {
                 return error.Reported;
             };
         };
-        try self.appendProgramEntry();
+        if (include_entry) try self.appendProgramEntry();
         try self.validateFunctionSignatures();
         try @import("../4_semantics/module/assume_verify.zig").validate(self.allocator, self.syntax_files.items, self.source_db, self.diagnostics);
         if (self.diagnostics.hasErrors()) return error.Reported;
+    }
+
+    /// Produce and safety-check the final indexed semantic graph.
+    pub fn semantizeGlobalFiles(self: *FrontendPipeline, files: []const sf.SourceFile) !*const global_sg.GlobalSemanticGraph {
+        try self.prepareFiles(files, true);
         try self.buildGlobalGraph();
         try self.analyzeGlobalSafety();
         // Initial source execution consumes finalized dependencies. Keep the
@@ -364,7 +376,7 @@ pub const FrontendPipeline = struct {
         self.global_safety_stats = self.safety_ctx.?.stats;
     }
 
-    fn buildGlobalGraph(self: *FrontendPipeline) !void {
+    fn buildModuleGraphs(self: *FrontendPipeline) !void {
         const module_start = std.Io.Timestamp.now(self.io, .boot).nanoseconds;
         self.clearModuleGraphs();
         errdefer self.clearModuleGraphs();
@@ -498,7 +510,10 @@ pub const FrontendPipeline = struct {
         };
 
         self.module_semantizing_ns = @intCast(std.Io.Timestamp.now(self.io, .boot).nanoseconds - module_start);
+    }
 
+    fn buildGlobalGraph(self: *FrontendPipeline) !void {
+        try self.buildModuleGraphs();
         const global_start = std.Io.Timestamp.now(self.io, .boot).nanoseconds;
         const result = try global_semantizer.semantizeWithOptions(self.allocator, self.module_graphs.items, .{
             .target = self.options.target,
