@@ -73,6 +73,10 @@ pub const Resolver = struct {
     };
     const TemplateGroup = struct { declaration: global_sg.GlobalDeclId, arity: usize };
     const ImplementationTemplate = struct { module: usize, index: usize };
+    const TemplateIndex = struct {
+        entries: std.ArrayList(ImplementationTemplate) = .empty,
+        module_count: usize = 0,
+    };
 
     allocator: std.mem.Allocator,
     function_context: ?*anyopaque = null,
@@ -92,12 +96,12 @@ pub const Resolver = struct {
     profile_io: ?std.Io = null,
     constraint_declarations: std.AutoHashMapUnmanaged(ConstraintKey, global_sg.GlobalDeclId) = .empty,
     resolved_contract_refs: std.AutoHashMapUnmanaged(ContractRefKey, global_sg.GlobalDeclId) = .empty,
-    implementation_templates: std.AutoHashMapUnmanaged(TemplateGroup, std.ArrayList(ImplementationTemplate)) = .empty,
+    implementation_templates: std.AutoHashMapUnmanaged(TemplateGroup, TemplateIndex) = .empty,
     pub fn deinit(self: *Resolver) void {
         self.constraint_declarations.deinit(self.allocator);
         self.resolved_contract_refs.deinit(self.allocator);
         var templates = self.implementation_templates.valueIterator();
-        while (templates.next()) |group| group.deinit(self.allocator);
+        while (templates.next()) |group| group.entries.deinit(self.allocator);
         self.implementation_templates.deinit(self.allocator);
     }
 
@@ -755,18 +759,23 @@ pub const Resolver = struct {
     /// Successful reference lookup is stable across GlobalSG rollback.
     fn implementationTemplates(self: *Resolver, declaration: global_sg.GlobalDeclId, arity: usize) ![]const ImplementationTemplate {
         const key: TemplateGroup = .{ .declaration = declaration, .arity = arity };
-        if (self.implementation_templates.get(key)) |group| return group.items;
-        var group: std.ArrayList(ImplementationTemplate) = .empty;
-        errdefer group.deinit(self.allocator);
-        for (self.modules, 0..) |module, owner| {
+        const indexed = try self.implementation_templates.getOrPut(self.allocator, key);
+        if (!indexed.found_existing) indexed.value_ptr.* = .{};
+        const group = indexed.value_ptr;
+        if (self.modules.len < group.module_count) return error.InvalidContractModulePrefix;
+        const previous = group.entries.items.len;
+        errdefer group.entries.shrinkRetainingCapacity(previous);
+        // Source modules form an immutable prefix. Extend even previously empty
+        // groups when new modules arrive; selected evidence is not cached here.
+        for (self.modules[group.module_count..], group.module_count..) |module, owner| {
             for (module.semantic.parameterized_storage.contract_conformances.items, 0..) |template, index| {
                 if (template.parameters.len == 0 or template.participants.len != arity) continue;
                 if (try self.resolveDeclarationRef(owner, template.contract_ref, .contract_type) != declaration) continue;
-                try group.append(self.allocator, .{ .module = owner, .index = index });
+                try group.entries.append(self.allocator, .{ .module = owner, .index = index });
             }
         }
-        try self.implementation_templates.put(self.allocator, key, group);
-        return group.items;
+        group.module_count = self.modules.len;
+        return group.entries.items;
     }
 
     /// Source forms differ only while matching candidates. A selected conformance
@@ -2699,4 +2708,48 @@ test "unconstrained generic types need no constraint substitutions" {
     var resolver: Resolver = .{ .allocator = failing.allocator(), .graph = &graph, .modules = &modules, .offsets = &offsets, .core = undefined, .generics = &generics };
     defer resolver.deinit();
     try std.testing.expectEqual(null, try resolver.findGenericTypeConstraintFailure());
+}
+
+fn extendTemplateIndex(allocator: std.mem.Allocator) !void {
+    const a = std.testing.allocator;
+    var first: module_sg.ModuleSemanticGraph = .{};
+    defer first.deinit(a);
+    var second: module_sg.ModuleSemanticGraph = .{};
+    defer second.deinit(a);
+    const template: parameterized_storage.ContractConformance = .{
+        .parameters = .{ .start = 0, .len = 1 },
+        .contract_ref = .{ .module = @enumFromInt(0) },
+        .participants = .{ .start = 0, .len = 1 },
+        .associated_arguments = .{ .start = 0, .len = 0 },
+        .source = .{ .file_index = 0, .offset = 0 },
+    };
+    try second.semantic.parameterized_storage.contract_conformances.appendNTimes(a, template, 32);
+    const modules = [_]module_sg.ModuleSemanticGraph{ first, second };
+    const offsets = [_]globalizer.Offsets{ std.mem.zeroes(globalizer.Offsets), std.mem.zeroes(globalizer.Offsets) };
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var resolver: Resolver = .{ .allocator = allocator, .graph = &graph, .modules = modules[0..1], .offsets = offsets[0..1], .core = undefined, .generics = undefined };
+    defer resolver.deinit();
+    const declaration: global_sg.GlobalDeclId = @enumFromInt(0);
+    try std.testing.expectEqual(@as(usize, 0), (try resolver.implementationTemplates(declaration, 1)).len);
+    resolver.modules = &modules;
+    resolver.offsets = &offsets;
+    const entries = resolver.implementationTemplates(declaration, 1) catch |err| {
+        const group = resolver.implementation_templates.get(.{ .declaration = declaration, .arity = 1 }).?;
+        try std.testing.expectEqual(@as(usize, 1), group.module_count);
+        try std.testing.expectEqual(@as(usize, 0), group.entries.items.len);
+        return err;
+    };
+    try std.testing.expectEqual(@as(usize, 32), entries.len);
+    for (entries, 0..) |entry, index| {
+        try std.testing.expectEqual(@as(usize, 1), entry.module);
+        try std.testing.expectEqual(index, entry.index);
+    }
+    try std.testing.expectEqual(@as(usize, 32), (try resolver.implementationTemplates(declaration, 1)).len);
+    resolver.modules = modules[0..1];
+    try std.testing.expectError(error.InvalidContractModulePrefix, resolver.implementationTemplates(declaration, 1));
+}
+
+test "contract template indexes extend empty groups transactionally" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, extendTemplateIndex, .{});
 }
