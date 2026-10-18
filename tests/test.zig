@@ -13363,3 +13363,12 @@ test "feature_tests/testing/21_modern_test_syntax" {
         "PASS modern\nPASS multiline\nPASS legacy\n",
     );
 }
+
+test "feature_tests/control_flow/39_defer_keyword" {
+    try expectSuccessfulBuild("tests/feature_tests/control_flow/39_defer_keyword");
+    try run("tests/feature_tests/control_flow/39_defer_keyword");
+}
+
+test "feature_tests/control_flow/40X_defer_hash_prefix" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/control_flow/40X_defer_hash_prefix", "use 'defer' without a '#' prefix");
+}

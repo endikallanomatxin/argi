@@ -5,7 +5,7 @@ test core_path_regression_slice := (.system: System) -> !() {
     full :: Path = unwrap_or_abort(
         .value = path_with_view(.allocator = $&allocator_storage, .view = "/tmp/demo/file.txt")
     )
-    #defer deinit(.self = $&full)
+    defer deinit(.self = $&full)
 
     testing.expect(.condition = is_absolute(.self = &full).ok)!
 

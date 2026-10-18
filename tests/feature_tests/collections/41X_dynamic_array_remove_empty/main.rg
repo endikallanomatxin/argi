@@ -4,7 +4,7 @@ main(.system: System) -> (.status_code: Int32) := {
     values :: DynamicArray#(.t: Int32) = unwrap_or_abort(
         .value = DynamicArray#(.t: Int32)(.capacity = 1)
     )
-    #defer deinit(.self = $&values)
+    defer deinit(.self = $&values)
 
     index :: UIntNative = 0
     remove_result ::= remove(.self = $&values, .index = index).result

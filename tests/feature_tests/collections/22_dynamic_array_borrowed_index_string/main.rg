@@ -7,7 +7,7 @@ main(.system: System) -> (.status_code: Int32) := {
     _ ::= unwrap_or_abort(.value = set_ascii(.self = $&text, .index = 1, .byte = 75))
 
     strings ::= unwrap_or_abort(.value = DynamicArray#(.t: String)(.capacity = 1))
-    #defer deinit(.self = $&strings)
+    defer deinit(.self = $&strings)
     push(.self = $&strings, .value = ~text, .allocator = $&allocator_storage)
 
     first_ptr_result ::= get_reference(.self = &strings, .index = 0).result

@@ -11,7 +11,7 @@ implement#(.t: Type) Init#(Token#(.t: t), (.sample: t)) (
     .init = (.args: (.sample: t)) -> (.result: Result) {
         sample ::= ~args.sample
 
-        #defer discard(.value = 0)
+        defer discard(.value = 0)
         _ ::= sample
         result = (
             .tag = 1

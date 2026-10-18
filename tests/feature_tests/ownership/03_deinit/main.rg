@@ -42,7 +42,7 @@ main (.system: System) -> (.status_code: Int32) := {
     assume allocator ::= $&allocator_storage
     counter :: Int32 = 0
     status_code = 9
-    #defer verify(.counter=$&counter, .status=$&status_code)
+    defer verify(.counter=$&counter, .status=$&status_code)
     handle := Resource(.counter=$&counter, .status=$&status_code)
     if counter != 0 {
         status_code = 6

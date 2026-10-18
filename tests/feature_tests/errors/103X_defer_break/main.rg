@@ -1,2 +1,2 @@
-main() -> () := { while true { #defer { break }
+main() -> () := { while true { defer { break }
     break } }

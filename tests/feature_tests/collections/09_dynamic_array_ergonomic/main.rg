@@ -6,7 +6,7 @@ main(.system: System) -> (.status_code: Int32) := {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
     arr ::= unwrap_or_abort(.value = DynamicArray#(.t: Int32)(.capacity = 1))
-    #defer deinit(.self = $&arr)
+    defer deinit(.self = $&arr)
 
     arr | push(.self = $&_, .value = 40)
     arr | push(.self = $&_, .value = 2)

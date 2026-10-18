@@ -53,7 +53,7 @@ A deferred checked flush handles failure locally rather than returning from
 its containing function. For a program with an explicit exit status:
 
 ```rg
-#defer {
+defer {
     flush(output) handle error {
         status_code = 1
         report_trace(.trace = &error.trace, .writer = writer) handle ignored {}

@@ -1396,3 +1396,10 @@ test "formatter preserves modern test declaration syntax" {
         "test example := (.system: System) -> !() { testing.expect(true)! }\n",
     );
 }
+
+test "formatter preserves implementation and defer keywords" {
+    try expectFormat(
+        "implement Marker#(Value)()\nmain:=()->(){defer cleanup()}\n",
+        "implement Marker#(Value) ()\n\nmain := () -> () { defer cleanup() }\n",
+    );
+}

@@ -4,7 +4,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
     output ::= $&system.terminal&.stdout
     assume reader ::= $&system.terminal&.stdin
-    #defer {
+    defer {
         Writer#().flush(output) handle error {
             status_code = 1
             report_trace(.tracer = error.tracer, .writer = writer) handle ignored {}

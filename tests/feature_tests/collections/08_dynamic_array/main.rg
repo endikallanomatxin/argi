@@ -10,7 +10,7 @@ main(.system: System) -> (.status_code: Int32) := {
     arr :: DynamicArray#(.t: Int32) = unwrap_or_abort(
         .value = DynamicArray#(.t: Int32)(.capacity = initial_capacity)
     )
-    #defer deinit(.self = $&arr)
+    defer deinit(.self = $&arr)
 
     push(.self = $&arr, .value = 10)
     push(.self = $&arr, .value = 20)

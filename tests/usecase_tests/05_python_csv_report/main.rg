@@ -7,7 +7,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     assume writer ::= $&system.terminal&.stderr
     assume allocator := system.page_allocator
     output ::= $&BufferedWriter($&system.terminal&.stdout, view($&zeroed#([4096]UInt8)()))
-    #defer {
+    defer {
         Writer#().flush(output) handle error {
             status_code = 1
             report_trace(.tracer = error.tracer, .writer = writer) handle ignored {}
@@ -47,7 +47,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     }
 
     interpreter ::= p.Python(system.ffi)!!! { status_code = 1 }
-    #defer {
+    defer {
         print_python_error(&interpreter, $&system.terminal&.stderr, allocator) handle error {
             status_code = 1
             report_trace(.tracer = error.tracer, .writer = writer) handle ignored {}

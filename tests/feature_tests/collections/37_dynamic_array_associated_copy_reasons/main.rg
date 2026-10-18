@@ -28,13 +28,13 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
     assume allocator ::= $&allocator_storage
 
     source ::= unwrap_or_abort(.value = DynamicArray#(.t: FallibleValue)(.capacity = 1))
-    #defer deinit(.self = $&source)
+    defer deinit(.self = $&source)
     value ::= FallibleValue(.value = 42)
     push_assume_capacity#(.t: FallibleValue)(.self = $&source, .value = ~value)
 
     require_array_reasons(.value = &source)
 
     nested ::= unwrap_or_abort(.value = DynamicArray#(.t: DynamicArray#(.t: FallibleValue))(.capacity = 1))
-    #defer deinit(.self = $&nested)
+    defer deinit(.self = $&nested)
     require_array_reasons(.value = &nested)
 }

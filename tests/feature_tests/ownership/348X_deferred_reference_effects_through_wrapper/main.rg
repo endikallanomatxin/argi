@@ -5,7 +5,7 @@ replace_reference := (.holder: $&Holder, .new_reference: $&UInt8) -> () {
 }
 
 replace_on_exit := (.holder: $&Holder, .new_reference: $&UInt8) -> () {
-    #defer replace_reference(.holder = holder, .new_reference = new_reference)
+    defer replace_reference(.holder = holder, .new_reference = new_reference)
 }
 
 main(.system: System) -> (.status_code: Int32) := {

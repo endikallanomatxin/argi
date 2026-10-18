@@ -2084,6 +2084,12 @@ pub const Syntaxer = struct {
             .keyword_match => return self.parseMatch(),
             .keyword_while => return self.parseWhile(),
             .keyword_test => return self.parseTestDeclaration(),
+            .keyword_defer => {
+                const defer_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
+                self.advanceOne();
+                const expr = try self.parseExpression();
+                return self.addNode(.defer_statement, defer_token, .{ .node = expr });
+            },
             .keyword_break => {
                 const token_index: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
                 self.advanceOne();
@@ -2110,14 +2116,13 @@ pub const Syntaxer = struct {
         }
 
         if (self.tokenIs(.hash)) {
-            const hash_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
             const hash_loc = self.tokenLocation();
             self.advanceOne();
-            const ident = try self.parseIdentifier();
-            if (std.mem.eql(u8, ident, "defer")) {
-                const expr = try self.parseExpression();
-                return try self.addNode(.defer_statement, hash_token, .{ .node = expr });
+            if (self.tokenIs(.keyword_defer)) {
+                try self.diags.add(hash_loc, .syntax, "use 'defer' without a '#' prefix", .{});
+                return SyntaxerError.ExpectedDeclarationOrAssignment;
             }
+            const ident = try self.parseIdentifier();
             try self.diags.add(hash_loc, .syntax, "unknown directive '#{s}'", .{ident});
             return SyntaxerError.ExpectedDeclarationOrAssignment;
         }
@@ -2153,7 +2158,11 @@ pub const Syntaxer = struct {
         }
 
         const id_loc = self.tokenLocation();
-        var name = try self.parseName();
+        var name = if (self.tokenIs(.keyword_implement)) blk: {
+            const token_index: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
+            self.advanceOne();
+            break :blk ParsedName{ .token = token_index, .text = "implement" };
+        } else try self.parseName();
 
         if (self.currentContent() == .identifier and std.mem.eql(u8, self.tokenText(self.currentContent().identifier), "init")) {
             try self.diags.add(self.tokenLocation(), .syntax, "legacy constructor declarations are unsupported; use implement Init", .{});
