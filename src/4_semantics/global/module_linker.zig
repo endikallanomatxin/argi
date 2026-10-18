@@ -12,7 +12,24 @@ pub fn link(
     offsets: []const globalizer.Offsets,
 ) !void {
     graph.module_aliases.clearRetainingCapacity();
-    for (modules, 0..) |*module, module_index| {
+    try append(allocator, graph, modules, offsets, 0);
+}
+
+/// Link only a newly relocated module suffix. Previously resolved import
+/// identities stay fixed even if a later module has a matching path suffix.
+/// On failure discard the entire new alias batch, preserving retained links.
+pub fn append(
+    allocator: std.mem.Allocator,
+    graph: *global_sg.GlobalSemanticGraph,
+    modules: []const module_sg.ModuleSemanticGraph,
+    offsets: []const globalizer.Offsets,
+    first_module: usize,
+) !void {
+    if (first_module > modules.len or offsets.len != modules.len or graph.modules.items.len != modules.len)
+        return error.InvalidModuleLinkPrefix;
+    const previous = graph.module_aliases.items.len;
+    errdefer graph.module_aliases.shrinkRetainingCapacity(previous);
+    for (modules[first_module..], first_module..) |*module, module_index| {
         const owner: global_sg.GlobalModuleId = @enumFromInt(@as(u32, @intCast(module_index)));
         for (module.semantic.module_aliases.items) |alias| {
             const target = try resolveImportPath(allocator, graph, modules, module_index, module.text(alias.path));
@@ -124,4 +141,40 @@ test "import suffixes accept language separators on Windows" {
     if (@import("builtin").os.tag != .windows) return error.SkipZigTest;
     try std.testing.expect(pathEndsWith("C:\\project\\more\\math", "more/math"));
     try std.testing.expect(!pathEndsWith("C:\\project\\notmore\\math", "more/math"));
+}
+
+test "module link extension preserves retained targets and rolls back rejected aliases" {
+    const a = std.testing.allocator;
+    const strings = @import("../primitives/strings.zig");
+    var first: module_sg.ModuleSemanticGraph = .{};
+    defer first.deinit(a);
+    var target: module_sg.ModuleSemanticGraph = .{};
+    defer target.deinit(a);
+    var later: module_sg.ModuleSemanticGraph = .{};
+    defer later.deinit(a);
+    const first_path = try strings.append(&first.strings, a, "math");
+    try first.semantic.module_aliases.append(a, .{ .declaration = @enumFromInt(0), .path = first_path, .source = .{ .file_index = 0, .offset = 0 } });
+    const valid = try strings.append(&later.strings, a, "app");
+    const missing = try strings.append(&later.strings, a, "missing");
+    try later.semantic.module_aliases.append(a, .{ .declaration = @enumFromInt(0), .path = valid, .source = .{ .file_index = 0, .offset = 0 } });
+    try later.semantic.module_aliases.append(a, .{ .declaration = @enumFromInt(1), .path = missing, .source = .{ .file_index = 0, .offset = 1 } });
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    for ([_][]const u8{ "project/app", "project/math" }) |dir| {
+        try graph.modules.append(a, .{ .dir = try graph.addString(a, dir), .files = .{ .start = 0, .len = 0 }, .declarations = .{ .start = 0, .len = 0 } });
+    }
+    const modules = [_]module_sg.ModuleSemanticGraph{ first, target, later };
+    const offsets = [_]globalizer.Offsets{ std.mem.zeroes(globalizer.Offsets), std.mem.zeroes(globalizer.Offsets), std.mem.zeroes(globalizer.Offsets) };
+    try link(a, &graph, modules[0..2], offsets[0..2]);
+    const retained = graph.module_aliases.items[0];
+    try graph.modules.append(a, .{ .dir = try graph.addString(a, "other/math"), .files = .{ .start = 0, .len = 0 }, .declarations = .{ .start = 0, .len = 0 } });
+    try std.testing.expectError(error.UnknownModuleReference, append(a, &graph, &modules, &offsets, 2));
+    try std.testing.expectEqual(@as(usize, 1), graph.module_aliases.items.len);
+    try std.testing.expectEqualDeep(retained, graph.module_aliases.items[0]);
+    later.semantic.module_aliases.shrinkRetainingCapacity(1);
+    const retried = [_]module_sg.ModuleSemanticGraph{ first, target, later };
+    try append(a, &graph, &retried, &offsets, 2);
+    try std.testing.expectEqual(@as(usize, 2), graph.module_aliases.items.len);
+    try std.testing.expectEqualDeep(retained, graph.module_aliases.items[0]);
+    try std.testing.expectEqual(@as(u32, 0), @intFromEnum(graph.module_aliases.items[1].target));
 }
