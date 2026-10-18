@@ -221,7 +221,8 @@ pub const GlobalSemanticGraph = struct {
         declaration_names: std.StringHashMapUnmanaged(std.ArrayList(GlobalDeclId)) = .empty,
         indexed_declarations: usize = 0,
         parameterized_function_names: std.StringHashMapUnmanaged(std.ArrayList(ParameterizedFunctionCandidate)) = .empty,
-        indexed_parameterized_functions: bool = false,
+        indexed_parameterized_modules: usize = 0,
+        indexed_module_functions: usize = 0,
 
         fn deinit(self: *LookupState, allocator: std.mem.Allocator) void {
             var functions = self.function_names.iterator();
@@ -462,34 +463,44 @@ pub const GlobalSemanticGraph = struct {
         }
     }
 
-    /// Module templates are fixed during GlobalSema, so this lookup index is
-    /// built once. Speculative global specialization never changes it.
+    /// Retained modules are immutable; newly appended modules extend this
+    /// index. Keep a template cursor so allocation failure can resume without
+    /// duplicating candidates already published for the current module.
     pub fn parameterizedFunctionsNamed(
         self: *GlobalSemanticGraph,
         allocator: std.mem.Allocator,
         modules: []const module_sg.ModuleSemanticGraph,
         name: []const u8,
     ) ![]const ParameterizedFunctionCandidate {
-        if (!self.lookup.indexed_parameterized_functions) {
-            for (modules, 0..) |*module, module_index| {
-                for (module.semantic.parameterized_storage.parameterized_functions.items, 0..) |candidate, function_index| {
-                    if (candidate.concrete_function != null) continue;
-                    const spelling = module.text(module.declarations.items[@intFromEnum(candidate.declaration)].name);
-                    if (self.lookup.parameterized_function_names.getPtr(spelling) == null) {
-                        const owned = try allocator.dupe(u8, spelling);
-                        self.lookup.parameterized_function_names.put(allocator, owned, .empty) catch |err| {
-                            allocator.free(owned);
-                            return err;
-                        };
-                    }
-
-                    try self.lookup.parameterized_function_names.getPtr(spelling).?.append(allocator, .{
-                        .module_index = @intCast(module_index),
-                        .function_index = @intCast(function_index),
-                    });
+        std.debug.assert(self.lookup.indexed_parameterized_modules <= modules.len);
+        while (self.lookup.indexed_parameterized_modules < modules.len) {
+            const module_index = self.lookup.indexed_parameterized_modules;
+            const module = &modules[module_index];
+            const templates = module.semantic.parameterized_storage.parameterized_functions.items;
+            while (self.lookup.indexed_module_functions < templates.len) {
+                const function_index = self.lookup.indexed_module_functions;
+                const candidate = templates[function_index];
+                if (candidate.concrete_function != null) {
+                    self.lookup.indexed_module_functions += 1;
+                    continue;
                 }
+                const spelling = module.text(module.declarations.items[@intFromEnum(candidate.declaration)].name);
+                if (self.lookup.parameterized_function_names.getPtr(spelling) == null) {
+                    const owned = try allocator.dupe(u8, spelling);
+                    self.lookup.parameterized_function_names.put(allocator, owned, .empty) catch |err| {
+                        allocator.free(owned);
+                        return err;
+                    };
+                }
+
+                try self.lookup.parameterized_function_names.getPtr(spelling).?.append(allocator, .{
+                    .module_index = @intCast(module_index),
+                    .function_index = @intCast(function_index),
+                });
+                self.lookup.indexed_module_functions += 1;
             }
-            self.lookup.indexed_parameterized_functions = true;
+            self.lookup.indexed_parameterized_modules += 1;
+            self.lookup.indexed_module_functions = 0;
         }
         return if (self.lookup.parameterized_function_names.get(name)) |matches| matches.items else &.{};
     }
@@ -943,4 +954,53 @@ test "selected call evidence stays compact and distinguishes aliased operations"
     try std.testing.expectEqual(@as(u32, 2), graph.callOperation(first).?.index);
     try std.testing.expectEqual(@as(u32, 5), graph.callOperation(second).?.conformance);
     try std.testing.expectEqual(@as(u32, 1), graph.callOperation(second).?.index);
+}
+
+test "parameterized function index extends retained module prefixes" {
+    const a = std.testing.allocator;
+    var first: module_sg.ModuleSemanticGraph = .{ .module_dir = try a.dupe(u8, "first") };
+    defer first.deinit(a);
+    var second: module_sg.ModuleSemanticGraph = .{ .module_dir = try a.dupe(u8, "second") };
+    defer second.deinit(a);
+    for ([_]*module_sg.ModuleSemanticGraph{ &first, &second }) |module| {
+        try module.strings.appendSlice(a, "work");
+        try module.declarations.append(a, .{ .kind = .function, .name = .{ .start = 0, .len = 4 }, .source_offset = 0, .module_file_index = 0 });
+        try module.semantic.parameterized_storage.parameterized_functions.append(a, .{
+            .declaration = @enumFromInt(0),
+            .parameters = .{ .start = 0, .len = 0 },
+            .input = @enumFromInt(0),
+            .output = @enumFromInt(0),
+            .body = null,
+        });
+    }
+    var graph: GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const modules = [_]module_sg.ModuleSemanticGraph{ first, second };
+    try std.testing.expectEqual(@as(usize, 1), (try graph.parameterizedFunctionsNamed(a, modules[0..1], "work")).len);
+    const candidates = try graph.parameterizedFunctionsNamed(a, &modules, "work");
+    try std.testing.expectEqual(@as(usize, 2), candidates.len);
+    try std.testing.expectEqual(@as(u32, 0), candidates[0].module_index);
+    try std.testing.expectEqual(@as(u32, 1), candidates[1].module_index);
+    try std.testing.expectEqual(@as(usize, 2), (try graph.parameterizedFunctionsNamed(a, &modules, "work")).len);
+
+    // Grow the shared spelling's candidate list through several allocations.
+    // An interrupted extension must resume at the next unpublished template.
+    const template = second.semantic.parameterized_storage.parameterized_functions.items[0];
+    try second.semantic.parameterized_storage.parameterized_functions.appendNTimes(a, template, 31);
+    const extended = [_]module_sg.ModuleSemanticGraph{ first, second };
+    for (0..6) |failure_index| {
+        var retry: GlobalSemanticGraph = .{};
+        defer retry.deinit(a);
+        _ = try retry.parameterizedFunctionsNamed(a, extended[0..1], "work");
+        var failing = std.testing.FailingAllocator.init(a, .{ .fail_index = failure_index });
+        _ = retry.parameterizedFunctionsNamed(failing.allocator(), &extended, "work") catch |err| switch (err) {
+            error.OutOfMemory => &.{},
+        };
+        const resumed = try retry.parameterizedFunctionsNamed(a, &extended, "work");
+        try std.testing.expectEqual(@as(usize, 33), resumed.len);
+        for (resumed[1..], 0..) |candidate, index| {
+            try std.testing.expectEqual(@as(u32, 1), candidate.module_index);
+            try std.testing.expectEqual(@as(u32, @intCast(index)), candidate.function_index);
+        }
+    }
 }

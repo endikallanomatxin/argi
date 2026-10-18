@@ -26,6 +26,10 @@ dependency rolls back all new cache entries; retries cannot reuse a caller whose
 closure failed to compile. Published tables keep sharing immutable function code
 and the same finalized graph, which must outlive them. Appending definitions or
 changing graph identities still requires a compilation-session boundary.
+Relocation now appends module batches transactionally without changing retained
+IDs; generic candidate indexes extend the retained module prefix. Next, retain
+GlobalSema's resolver/worklist state across those additions before connecting
+conditional imports or interactive submissions.
 JIT is deferred until measurements justify it; module origin is not an execution
 policy. Keep function identities independent of the executor, without introducing
 a mixed VM/native ABI or native-layout storage solely for a possible future JIT.

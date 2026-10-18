@@ -48,6 +48,27 @@ pub const Relocation = struct {
     graph: global_sg.GlobalSemanticGraph,
     offsets: std.ArrayList(Offsets) = .empty,
 
+    /// Append a complete batch without relocating any previously published ID.
+    /// This owns graph publication only; the caller must reconnect semantic
+    /// resolvers to the retained module/offset slices after a successful append.
+    pub fn append(self: *Relocation, allocator: std.mem.Allocator, modules: []const module_sg.ModuleSemanticGraph, mode: Mode) !void {
+        const saved = self.graph.checkpoint();
+        const offset_count = self.offsets.items.len;
+        errdefer {
+            self.graph.rollback(saved);
+            self.offsets.shrinkRetainingCapacity(offset_count);
+        }
+        const total = std.math.add(usize, offset_count, modules.len) catch return error.GlobalSemanticGraphTooLarge;
+        try self.offsets.ensureTotalCapacity(allocator, total);
+        for (modules) |*module| {
+            try module_verify.verifyModule(module);
+            if (mode == .strict) try requireFinalizable(module);
+            const offsets = try appendModule(allocator, &self.graph, module, mode);
+            self.offsets.appendAssumeCapacity(offsets);
+        }
+        if (mode == .strict) try global_verify.verifyGlobal(&self.graph);
+    }
+
     pub fn deinit(self: *Relocation, allocator: std.mem.Allocator) void {
         self.graph.deinit(allocator);
         self.offsets.deinit(allocator);
@@ -73,16 +94,7 @@ pub fn relocate(
 ) !Relocation {
     var result: Relocation = .{ .graph = .{} };
     errdefer result.deinit(allocator);
-    try result.offsets.ensureTotalCapacity(allocator, modules.len);
-
-    for (modules) |*module| {
-        try module_verify.verifyModule(module);
-        if (mode == .strict) try requireFinalizable(module);
-        const offsets = try appendModule(allocator, &result.graph, module, mode);
-        result.offsets.appendAssumeCapacity(offsets);
-    }
-
-    if (mode == .strict) try global_verify.verifyGlobal(&result.graph);
+    try result.append(allocator, modules, mode);
     return result;
 }
 
@@ -756,4 +768,72 @@ test "globalizer preserves hole identity for GlobalSema" {
     try std.testing.expectEqual(@as(usize, 1), result.graph.nodes.items.len);
     try std.testing.expectEqual(@as(u32, 0), @intFromEnum(globalType(result.offsets.items[0], @enumFromInt(0))));
     try std.testing.expectEqual(@as(u32, 0), @intFromEnum(globalNode(result.offsets.items[0], @enumFromInt(0))));
+}
+
+test "globalizer appends modules without changing retained identities" {
+    const a = std.testing.allocator;
+    var first: module_sg.ModuleSemanticGraph = .{ .module_dir = try a.dupe(u8, "first") };
+    defer first.deinit(a);
+    first.semantic.local_semantics_complete = true;
+    try first.semantic.types.append(a, .{ .resolved = .{ .builtin = .Int32 } });
+    var second: module_sg.ModuleSemanticGraph = .{ .module_dir = try a.dupe(u8, "second") };
+    defer second.deinit(a);
+    second.semantic.local_semantics_complete = true;
+    try second.semantic.types.append(a, .{ .resolved = .{ .builtin = .Bool } });
+    var retained = try relocate(a, &.{first}, .strict);
+    defer retained.deinit(a);
+    const identity = globalType(retained.offsets.items[0], @enumFromInt(0));
+    const before = retained.graph.semanticType(identity);
+    // Resolution may have appended specializations between module batches.
+    const specialization: global_sg.GlobalTypeId = @enumFromInt(retained.graph.types.items.len);
+    try retained.graph.types.append(a, .{ .builtin = .UInt64 });
+    try retained.append(a, &.{second}, .strict);
+    try std.testing.expectEqual(@as(usize, 2), retained.graph.modules.items.len);
+    try std.testing.expectEqual(identity, globalType(retained.offsets.items[0], @enumFromInt(0)));
+    try std.testing.expectEqualDeep(before, retained.graph.semanticType(identity));
+    const appended = globalType(retained.offsets.items[1], @enumFromInt(0));
+    try std.testing.expect(identity != appended and specialization != appended);
+    try std.testing.expectEqual(primitives.BuiltinType.UInt64, retained.graph.semanticType(specialization).builtin);
+    try std.testing.expectEqual(primitives.BuiltinType.Bool, retained.graph.semanticType(appended).builtin);
+}
+
+test "globalizer rejects an append batch atomically and permits retry" {
+    const a = std.testing.allocator;
+    var first: module_sg.ModuleSemanticGraph = .{ .module_dir = try a.dupe(u8, "first") };
+    defer first.deinit(a);
+    first.semantic.local_semantics_complete = true;
+    var second: module_sg.ModuleSemanticGraph = .{ .module_dir = try a.dupe(u8, "second") };
+    defer second.deinit(a);
+    second.semantic.local_semantics_complete = true;
+    try second.semantic.types.append(a, .{ .resolved = .{ .builtin = .Bool } });
+    var rejected: module_sg.ModuleSemanticGraph = .{ .module_dir = try a.dupe(u8, "rejected") };
+    defer rejected.deinit(a);
+    var retained = try relocate(a, &.{first}, .strict);
+    defer retained.deinit(a);
+    const saved = retained.graph.checkpoint();
+    try std.testing.expectError(error.ModuleLocalSemanticsIncomplete, retained.append(a, &.{ second, rejected }, .strict));
+    try std.testing.expectEqual(@as(usize, 1), retained.offsets.items.len);
+    try std.testing.expectEqualDeep(saved, retained.graph.checkpoint());
+    try retained.append(a, &.{second}, .strict);
+    try std.testing.expectEqual(@as(usize, 2), retained.offsets.items.len);
+    try std.testing.expectEqual(@as(u32, 0), @intFromEnum(globalType(retained.offsets.items[1], @enumFromInt(0))));
+}
+
+fn appendWithAllocationFailures(a: std.mem.Allocator) !void {
+    var module: module_sg.ModuleSemanticGraph = .{ .module_dir = try a.dupe(u8, "appended") };
+    defer module.deinit(a);
+    module.semantic.local_semantics_complete = true;
+    try module.semantic.types.append(a, .{ .resolved = .{ .builtin = .Int32 } });
+    var retained: Relocation = .{ .graph = .{} };
+    defer retained.deinit(a);
+    const saved = retained.graph.checkpoint();
+    retained.append(a, &.{module}, .strict) catch |err| {
+        try std.testing.expectEqual(@as(usize, 0), retained.offsets.items.len);
+        try std.testing.expectEqualDeep(saved, retained.graph.checkpoint());
+        return err;
+    };
+}
+
+test "globalizer append rolls back allocation failures" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, appendWithAllocationFailures, .{});
 }
