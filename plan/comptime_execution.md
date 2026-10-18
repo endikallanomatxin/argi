@@ -518,3 +518,10 @@ unchanged. Candidate resolver contexts own independent binding lists, reject
 duplicate session names and publish new direct bindings only after resolution.
 Two separately lowered command modules can now mutate the same persistent slot.
 Generic-body lookup and source-level interactive submission assembly remain.
+
+Submitted module text now passes through the ordinary tokenizer, parser and
+ModuleSema once. The source owner retains rejected input for diagnostics and
+creates immutable accepted-prefix snapshots; growing its module list cannot
+invalidate retained semantic slices. Integration executes two independently
+loaded source modules against one slot. Interactive statement wrapping, command
+classification, bundled core/import loading and CLI input remain pending.
