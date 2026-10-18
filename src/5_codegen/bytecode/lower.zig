@@ -148,11 +148,7 @@ const FunctionLower = struct {
         self.outputs = outputs;
         for (outputs, self.parent.graph.binding_refs.items[f.output_bindings.start..][0..f.output_bindings.len]) |*slot, binding| {
             slot.* = try self.bindingSlot(binding);
-            const record = self.parent.graph.binding(binding);
-            if (record.initialization) |node| {
-                try self.copyTo(source, slot.*, try self.expression(node));
-                if (self.drops.get(binding)) |drop| try self.setDrop(drop, true);
-            }
+            if (self.parent.graph.binding(binding).initialization != null) return error.InvalidBytecode;
         }
         try self.block(f.body.?);
         _ = try self.emit(source, .{ .ret = outputs });

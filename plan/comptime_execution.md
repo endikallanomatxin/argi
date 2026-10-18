@@ -259,6 +259,14 @@ just a `store`. Define how necessary cleanup state crosses ordinary calls,
 including generic specializations. A universal fat-reference ABI is not a
 prerequisite established by this investigation.
 
+Function output defaults now normalize to declaration-ordered first writes in
+an entry prologue before ownership finalization. Summaries, temporal checking,
+once validation and both backends consume those ordinary assignments. Checked
+functions retain no implicit initialization on output bindings. Tests cover
+consumption in a generic output default followed by repeated destruction or
+valid reinitialization; the former was previously accepted and aborted in the VM.
+Concrete output defaults still need lexical input/reach binding during lowering.
+
 ## Persistent execution (proposed)
 
 `Vm.run` currently resets its arena and frame numbering. Context identities

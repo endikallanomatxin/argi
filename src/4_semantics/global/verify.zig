@@ -44,7 +44,11 @@ pub fn verifyGlobal(graph: *const graph_mod.GlobalSemanticGraph) !void {
     for (graph.fields.items) |value| try payload.field(graph_mod.Ids, value, bounds);
     for (graph.variants.items) |value| try payload.variant(graph_mod.Ids, value, bounds);
     for (graph.generic_arguments.items) |value| try payload.genericArgument(graph_mod.Ids, value, bounds);
-    for (graph.functions.items) |value| try payload.function(graph_mod.Ids, value, bounds);
+    for (graph.functions.items) |value| {
+        try payload.function(graph_mod.Ids, value, bounds);
+        if (value.body != null) for (graph.binding_refs.items[value.output_bindings.start..][0..value.output_bindings.len]) |binding|
+            try require(graph.binding(binding).initialization == null);
+    }
     try verifyGenericFunctionInstances(graph);
     for (graph.bindings.items) |value| try payload.binding(graph_mod.Ids, value, bounds);
     for (graph.blocks.items) |value| try payload.block(graph_mod.Ids, value, bounds);

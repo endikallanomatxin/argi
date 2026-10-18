@@ -13719,3 +13719,23 @@ test "feature_tests/execution/53_comptime_argument_calls" {
 test "feature_tests/execution/54X_comptime_shared_budget" {
     try buildExpectFail("tests/feature_tests/execution/54X_comptime_shared_budget", "#run evaluation exceeded its instruction limit");
 }
+
+test "feature_tests/execution/55X_output_default_consumption" {
+    try buildExpectFail("tests/feature_tests/execution/55X_output_default_consumption", "consumption requires an initialized owner");
+}
+
+test "feature_tests/execution/56_output_default_reinitialization" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/56_output_default_reinitialization");
+    try runExpect("tests/feature_tests/execution/56_output_default_reinitialization", 42);
+    try vmExpect("tests/feature_tests/execution/56_output_default_reinitialization", 42, null);
+}
+
+test "feature_tests/execution/57X_output_default_keeps_old_generation" {
+    try buildExpectFail("tests/feature_tests/execution/57X_output_default_keeps_old_generation", "reference depends on a root that has ended");
+}
+
+test "feature_tests/execution/58_output_default_reference" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/58_output_default_reference");
+    try runExpect("tests/feature_tests/execution/58_output_default_reference", 42);
+    try vmExpect("tests/feature_tests/execution/58_output_default_reference", 42, null);
+}

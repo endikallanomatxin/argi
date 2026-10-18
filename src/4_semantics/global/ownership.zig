@@ -87,6 +87,7 @@ pub const Resolver = struct {
     pub fn finalizeFunctionBody(self: *Resolver, function_id: global_sg.GlobalFunctionId) !bool {
         const function = self.graph.functions.items[@intFromEnum(function_id)];
         const body = function.body orelse return true;
+        try self.materializeOutputInitializers(function, body);
         if (!self.functionReadyForCleanup(function, body)) return false;
         // Determine possible replacement before adding cleanup sequences. In
         // particular, an unaddressed output's first initialization has no old
@@ -115,6 +116,33 @@ pub const Resolver = struct {
         const module = self.graph.moduleForDeclaration(function.declaration) orelse return error.MissingFunctionModule;
         try self.finalizeBlock(body, &active, &defers, &visible, &.{}, function_id, @intCast(@intFromEnum(module)));
         return true;
+    }
+
+    // Output defaults execute in declaration order before source statements.
+    // Represent them as ordinary first writes, so lifetime effects, once calls,
+    // summaries and cleanup all consume the same ordered graph. Backends must
+    // not perform another implicit initialization before these writes.
+    fn materializeOutputInitializers(self: *Resolver, function: global_sg.Function, body_id: global_sg.GlobalBlockId) !void {
+        const bindings = self.graph.binding_refs.items[function.output_bindings.start..][0..function.output_bindings.len];
+        var defaults: u32 = 0;
+        for (bindings) |binding| if (self.graph.binding(binding).initialization != null) {
+            defaults += 1;
+        };
+        if (defaults == 0) return;
+        const body = self.graph.blocks.items[@intFromEnum(body_id)];
+        const start = std.math.cast(u32, self.graph.node_refs.items.len) orelse return error.SemanticGraphTooLarge;
+        const count = std.math.add(u32, defaults, body.nodes.len) catch return error.SemanticGraphTooLarge;
+        _ = std.math.add(u32, start, count) catch return error.SemanticGraphTooLarge;
+        try self.graph.node_refs.ensureUnusedCapacity(self.allocator, count);
+        for (bindings) |binding| {
+            const record = self.graph.binding(binding);
+            const value = record.initialization orelse continue;
+            const write = try self.appendNode(record.source, null, .{ .assignment = .{ .binding = binding, .value = value } });
+            self.graph.node_refs.appendAssumeCapacity(write);
+        }
+        self.graph.node_refs.appendSliceAssumeCapacity(self.graph.node_refs.items[body.nodes.start..][0..body.nodes.len]);
+        self.graph.blocks.items[@intFromEnum(body_id)].nodes = .{ .start = start, .len = count };
+        for (bindings) |binding| self.graph.bindings.items[@intFromEnum(binding)].initialization = null;
     }
 
     fn functionReadyForCleanup(

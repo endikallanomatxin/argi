@@ -692,10 +692,10 @@ pub const SafetyChecker = struct {
             }
             try self.setPlace(state, .{ .root = binding }, .initialized, value);
         }
-        // Outputs without defaults are storage to be filled by the body.
+        // Output defaults are explicit first writes in the checked body.
         for (self.graph.binding_refs.items[function.output_bindings.start..][0..function.output_bindings.len]) |binding| {
-            const record = self.graph.binding(binding);
-            try self.setPlace(state, .{ .root = binding }, if (record.initialization == null) .deinitialized else .initialized, .{});
+            if (self.graph.binding(binding).initialization != null) return error.UnmaterializedOutputInitializers;
+            try self.setPlace(state, .{ .root = binding }, .deinitialized, .{});
         }
     }
 

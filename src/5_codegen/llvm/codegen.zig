@@ -834,27 +834,14 @@ pub const CodeGenerator = struct {
             if (storage.drop_state) |drop| self.storeDropState(drop, true);
         }
         for (self.graph.binding_refs.items[function.output_bindings.start..][0..function.output_bindings.len], 0..) |binding, index| {
-            const record = self.graph.bindings.items[@intFromEnum(binding)];
+            if (self.graph.binding(binding).initialization != null) return CodegenError.InvalidType;
+            try self.allocateLocalBinding(binding, null);
             if (symbol.hasIndirectOutput()) {
-                try self.allocateLocalBinding(binding, null);
-                // Output bindings already denote the caller's destination.
-                // Returning them needs no aggregate load or repacking.
+                // Output bindings denote the caller's destination. Their
+                // explicit entry writes need no aggregate load or repacking.
                 self.bindings.getPtr(binding).?.ref = c.LLVMBuildStructGEP2(self.builder, symbol.outputType(), symbol.argiSignature().?.outputStorage(symbol.ref).?, @intCast(index), "return.destination");
-                if (record.initialization) |node| {
-                    const storage = self.bindings.getPtr(binding).?;
-                    if (!try self.storeLargeNode(node, storage.ref)) {
-                        const value = (try self.visitNode(node)) orelse return CodegenError.ValueNotFound;
-                        _ = c.LLVMBuildStore(self.builder, value.value_ref, storage.ref);
-                    }
-                    storage.initialized = true;
-                    if (storage.drop_state) |drop| self.storeDropState(drop, true);
-                }
-            } else try self.allocateLocalBinding(binding, record.initialization);
-            // Tests returning !() succeed when execution reaches the end of
-            // the body. Materialize that success before statements can
-            // propagate an error into the result binding.
-            if (function.flags.is_test and record.initialization == null)
-                try self.initializeTestResult(binding);
+            }
+            if (function.flags.is_test) try self.initializeTestResult(binding);
         }
 
         _ = try self.genBlock(body);
