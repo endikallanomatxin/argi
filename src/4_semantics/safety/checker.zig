@@ -149,6 +149,33 @@ pub const SafetyChecker = struct {
         }
     };
 
+    /// Retained temporal proof state for checked command continuations. Fact
+    /// slices are immutable and borrow the proof allocator's lifetime, just as
+    /// branch states do; keep that arena and referenced graph identities alive.
+    /// Initialize in final storage. Forks own their mutable tables and namespace
+    /// while retaining immutable facts from all preceding accepted commands.
+    pub const ContinuationState = struct {
+        namespace: facts.Tracker.RootNamespace = .{},
+        state: FunctionState,
+
+        pub fn init(self: *ContinuationState, allocator: std.mem.Allocator) void {
+            self.* = .{ .state = FunctionState.init(allocator) };
+            self.state.tracker.namespace = &self.namespace;
+        }
+        pub fn fork(self: *const ContinuationState, destination: *ContinuationState, allocator: std.mem.Allocator) !void {
+            if (self == destination) return error.InvalidSafetyContinuation;
+            destination.* = .{ .state = try self.state.clone(allocator, null) };
+            errdefer destination.state.deinit();
+            destination.namespace = try self.namespace.clone(allocator);
+            destination.state.tracker.namespace = &destination.namespace;
+        }
+        pub fn deinit(self: *ContinuationState) void {
+            self.namespace.initial_storage.deinit(self.state.tracker.allocator);
+            self.state.deinit();
+            self.* = undefined;
+        }
+    };
+
     const LoopTransfers = struct {
         break_state: ?FunctionState = null,
         continue_state: ?FunctionState = null,
@@ -187,6 +214,7 @@ pub const SafetyChecker = struct {
     next_outcome_guard: u64 = 1,
     active_fresh_capabilities: ?*std.AutoHashMap(facts.FreshEffectSource, facts.StorageCapabilityId) = null,
     active_summary_inference: ?*summary_infer.Infer = null,
+    continuation: ?struct { function: graph_mod.GlobalFunctionId, state: *ContinuationState } = null,
     collect_stats: bool = false,
     profile_io: ?std.Io = null,
     stats: Stats = .{},
@@ -223,6 +251,24 @@ pub const SafetyChecker = struct {
         self.unit = &unit;
         defer self.unit = previous;
         try self.analyze();
+    }
+
+    /// Check a candidate command with retained caller-relative temporal facts.
+    /// The command is an input/output-free checked block, not a function whose
+    /// local owners are allowed to escape. Scope cleanup is supplied by its
+    /// checked graph. Rejecting the candidate requires discarding its fork.
+    pub fn analyzeContinuation(self: *SafetyChecker, function: graph_mod.GlobalFunctionId, retained: *ContinuationState) !void {
+        if (self.continuation != null or @intFromEnum(function) >= self.graph.functions.items.len or !retained.state.reachable)
+            return error.InvalidSafetyContinuation;
+        const target = self.graph.function(function);
+        if (target.body == null or target.input.len != 0 or target.output.len != 0 or target.safety_primitive != .none)
+            return error.InvalidSafetyContinuation;
+        if (self.unit) |unit| if (!unit.contains(function)) return error.InvalidSafetyContinuation;
+        self.continuation = .{ .function = function, .state = retained };
+        defer self.continuation = null;
+        if (self.unit == null) {
+            try self.analyzeUnit(&.{function});
+        } else try self.analyze();
     }
 
     pub fn analyze(self: *SafetyChecker) !void {
@@ -270,6 +316,15 @@ pub const SafetyChecker = struct {
             if (function.body == null or function.safety_primitive != .none) continue;
             const id: graph_mod.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
             if (self.unit) |unit| if (!unit.contains(id)) continue;
+            if (self.continuation) |continuation| if (continuation.function == id) {
+                // Candidate tables and namespace are already isolated by fork.
+                // Use the same body visitor and converged call summaries.
+                try self.call_stack.append(id);
+                defer _ = self.call_stack.pop();
+                try self.validateBlock(id, function.body.?, &continuation.state.state, null);
+                if (self.collect_stats) self.stats.functions += 1;
+                continue;
+            };
             var namespace: facts.Tracker.RootNamespace = .{};
             defer namespace.initial_storage.deinit(self.allocator);
             var state = FunctionState.init(self.allocator);
@@ -8607,4 +8662,51 @@ test "opaque transfer defers symbolic input obligations but rejects concrete loa
     try std.testing.expect(!hasExternalOpaqueDependency(unknown, &.{}, &state));
     try std.testing.expect(hasExternalOpaqueDependency(borrowed, &.{}, &state));
     try std.testing.expect(!hasExternalOpaqueDependency(borrowed, &.{external}, &state));
+}
+
+test "safety continuations retain temporal state while candidate forks remain isolated" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const files = [_]@import("../../1_base/source_files.zig").SourceFile{.{ .path = "command.rg", .code = "value" }};
+    var diags = diagnostics.Diagnostics.init(&a, &files);
+    defer diags.deinit();
+    var graph: graph_mod.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source = primitives.SourceRef{ .file_index = 0, .offset = 0 };
+    const name = try graph.addString(a, "value");
+    const path = try graph.addString(a, "command.rg");
+    try graph.files.append(a, .{ .module = @enumFromInt(0), .path = path });
+    try graph.modules.append(a, .{ .dir = name, .files = .{ .start = 0, .len = 1 }, .declarations = .{ .start = 0, .len = 2 } });
+    try graph.types.append(a, .{ .builtin = .Int32 });
+    try graph.nodes.append(a, .{ .source = source, .ty = @enumFromInt(0), .content = .{ .int_literal = 42 } });
+    try graph.bindings.append(a, .{ .name = name, .ty = @enumFromInt(0), .source = source, .mutability = .constant, .initialization = @enumFromInt(0) });
+    try graph.nodes.append(a, .{ .source = source, .ty = null, .content = .{ .binding_declaration = @enumFromInt(0) } });
+    try graph.nodes.append(a, .{ .source = source, .ty = null, .content = .{ .assignment = .{ .binding = @enumFromInt(0), .value = @enumFromInt(0) } } });
+    try graph.node_refs.appendSlice(a, &.{ @enumFromInt(1), @enumFromInt(2) });
+    for (0..2) |index| {
+        try graph.blocks.append(a, .{ .nodes = .{ .start = @intCast(index), .len = 1 } });
+        try graph.declarations.append(a, .{ .kind = .function, .name = name, .source = source });
+        try graph.functions.append(a, .{ .declaration = @enumFromInt(index), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 }, .body = @enumFromInt(index) });
+    }
+    var checker = SafetyChecker.init(a, &diags, &graph);
+    defer checker.deinit();
+    var accepted: SafetyChecker.ContinuationState = undefined;
+    accepted.init(a);
+    defer accepted.deinit();
+    try checker.analyzeContinuation(@enumFromInt(0), &accepted);
+    const storage = facts.Place{ .root = @enumFromInt(0) };
+    try std.testing.expectEqual(value_state.Initializedness.initialized, checker.initializednessAtPlace(&accepted.state, storage));
+    var candidate: SafetyChecker.ContinuationState = undefined;
+    try accepted.fork(&candidate, a);
+    defer candidate.deinit();
+    try std.testing.expect(candidate.state.tracker.namespace.? == &candidate.namespace);
+    try std.testing.expectError(error.Reported, checker.analyzeContinuation(@enumFromInt(1), &candidate));
+    var reassignment = false;
+    for (diags.list.items) |diagnostic| if (std.mem.indexOf(u8, diagnostic.msg, "constant and cannot be reassigned") != null) {
+        reassignment = true;
+    };
+    try std.testing.expect(reassignment);
+    try std.testing.expectEqual(value_state.Initializedness.initialized, checker.initializednessAtPlace(&accepted.state, storage));
+    try std.testing.expect(checker.continuation == null);
 }

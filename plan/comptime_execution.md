@@ -483,3 +483,7 @@ Branch clones share a validity-root namespace; independent submission candidates
 copy that namespace and its initial-storage associations instead. Root IDs cannot
 wrap into accepted identities. Retaining this namespace alone does not retain
 loans: the complete temporal state still needs submission-level integration.
+The checker can now analyze an input/output-free continuation against a forked
+retained state, using its normal dependency unit, summary inference and block
+visitor. Immutable facts retain their proof-arena lifetime. This API must be
+wired to submission scopes and publication before interactive borrowing is ready.
