@@ -13,7 +13,6 @@ const module_linker = @import("module_linker.zig");
 const global_verify = @import("verify.zig");
 const core_mod = @import("core.zig");
 const expression_mod = @import("expressions.zig");
-const constructor_mod = @import("constructors.zig");
 const control_mod = @import("control.zig");
 const generic_mod = @import("generics.zig");
 const generic_functions_mod = @import("generic_functions.zig");
@@ -217,17 +216,33 @@ const PendingWorklists = struct {
     control_and_contracts: std.ArrayList(PendingWorkItem) = .empty,
     errors: std.ArrayList(PendingWorkItem) = .empty,
     ownership: std.ArrayList(PendingWorkItem) = .empty,
+    module_count: usize = 0,
+    operation_count: u32 = 0,
 
     fn init(allocator: std.mem.Allocator, modules: []const module_sg.ModuleSemanticGraph, offsets: []const globalizer.Offsets) !PendingWorklists {
         var result: PendingWorklists = .{};
         errdefer result.deinit(allocator);
-        var flat: u32 = 0;
-        for (modules, 0..) |*module, module_index| {
+        try result.appendModules(allocator, modules, offsets);
+        return result;
+    }
+
+    // Append only the new module suffix. Compaction of resolved queues never
+    // changes flat operation identities used by diagnostics and status tables.
+    fn appendModules(self: *PendingWorklists, allocator: std.mem.Allocator, modules: []const module_sg.ModuleSemanticGraph, offsets: []const globalizer.Offsets) !void {
+        if (modules.len < self.module_count or offsets.len != modules.len) return error.InvalidPendingModulePrefix;
+        var lengths: [pending_phases.len]usize = undefined;
+        for (pending_phases, &lengths) |phase, *length| length.* = self.forPhase(phase).items.len;
+        const saved_operations = self.operation_count;
+        errdefer {
+            for (pending_phases, lengths) |phase, length| self.forPhase(phase).shrinkRetainingCapacity(length);
+            self.operation_count = saved_operations;
+        }
+        for (modules[self.module_count..], self.module_count..) |*module, module_index| {
             for (module.semantic.pending_operations.items, 0..) |operation, operation_index| {
-                try result.forPhase(pendingPhase(operation)).append(allocator, .{
+                try self.forPhase(pendingPhase(operation)).append(allocator, .{
                     .module_index = @intCast(module_index),
                     .operation_index = @intCast(operation_index),
-                    .flat_index = flat,
+                    .flat_index = self.operation_count,
                     .owner_function = if (operation_index < module.semantic.pending_owner_functions.items.len)
                         if (module.semantic.pending_owner_functions.items[operation_index]) |owner|
                             globalizer.globalFunction(offsets[module_index], owner)
@@ -236,10 +251,10 @@ const PendingWorklists = struct {
                     else
                         null,
                 });
-                flat = std.math.add(u32, flat, 1) catch return error.TooManyPendingOperations;
+                self.operation_count = std.math.add(u32, self.operation_count, 1) catch return error.TooManyPendingOperations;
             }
         }
-        return result;
+        self.module_count = modules.len;
     }
 
     fn deinit(self: *PendingWorklists, allocator: std.mem.Allocator) void {
@@ -279,6 +294,42 @@ const PendingWorklists = struct {
     }
 };
 
+// Resolution state outlives individual fixed-point passes. Dense status tables
+// use the same append-only operation identities as the phase queues.
+const ResolutionState = struct {
+    worklists: PendingWorklists = .{},
+    resolved: std.ArrayList(bool) = .empty,
+    invalid: std.ArrayList(bool) = .empty,
+    finalized_functions: std.AutoHashMap(global_sg.GlobalFunctionId, void),
+
+    fn init(allocator: std.mem.Allocator) ResolutionState {
+        return .{ .finalized_functions = .init(allocator) };
+    }
+
+    fn appendModules(self: *ResolutionState, allocator: std.mem.Allocator, modules: []const module_sg.ModuleSemanticGraph, offsets: []const globalizer.Offsets) !void {
+        const total = totalPending(modules);
+        // Reserve before publishing queues so failure preserves all logical state.
+        try self.resolved.ensureTotalCapacity(allocator, total);
+        try self.invalid.ensureTotalCapacity(allocator, total);
+        try self.worklists.appendModules(allocator, modules, offsets);
+        const previous = self.resolved.items.len;
+        self.resolved.expandToCapacity();
+        self.resolved.shrinkRetainingCapacity(total);
+        self.invalid.expandToCapacity();
+        self.invalid.shrinkRetainingCapacity(total);
+        @memset(self.resolved.items[previous..], false);
+        @memset(self.invalid.items[previous..], false);
+    }
+
+    fn deinit(self: *ResolutionState, allocator: std.mem.Allocator) void {
+        self.worklists.deinit(allocator);
+        self.resolved.deinit(allocator);
+        self.invalid.deinit(allocator);
+        self.finalized_functions.deinit();
+        self.* = undefined;
+    }
+};
+
 pub fn semantize(
     allocator: std.mem.Allocator,
     modules: []const module_sg.ModuleSemanticGraph,
@@ -305,130 +356,20 @@ pub fn semantizeWithOptions(
 
     try @import("c_abi.zig").prepareForeignCapabilities(allocator, &relocation.graph);
 
-    var core = core_mod.Resolver{
-        .allocator = allocator,
-        .graph = &relocation.graph,
-        .modules = modules,
-        .offsets = relocation.offsets.items,
-        .profile_io = options.profile_io,
-    };
-    defer core.deinitReachedCalls();
-    if (try resolveQualifiedChoiceOptions(&core, options.diagnostics)) return error.Reported;
-    var expressions = expression_mod.Resolver{
-        .allocator = allocator,
-        .graph = &relocation.graph,
-        .modules = modules,
-        .offsets = relocation.offsets.items,
-    };
-    var constructors = constructor_mod.Resolver{
-        .graph = &relocation.graph,
-        .modules = modules,
-        .offsets = relocation.offsets.items,
-        .core = &core,
-        .diagnostics = options.diagnostics,
-    };
-    var control = control_mod.Resolver{
-        .allocator = allocator,
-        .graph = &relocation.graph,
-        .modules = modules,
-        .offsets = relocation.offsets.items,
-        .core = &core,
-    };
-    var generics = generic_mod.Resolver{
-        .allocator = allocator,
-        .graph = &relocation.graph,
-        .modules = modules,
-        .offsets = relocation.offsets.items,
-        .core = &core,
-        .profile_io = options.profile_io,
-    };
-    defer generics.deinit();
-    var generic_functions = generic_functions_mod.Resolver{
-        .allocator = allocator,
-        .graph = &relocation.graph,
-        .modules = modules,
-        .offsets = relocation.offsets.items,
-        .core = &core,
-        .generics = &generics,
-        .profile_io = options.profile_io,
-    };
-    var staged_execution = @import("comptime_execution.zig").Scheduler{
-        .allocator = allocator,
-        .functions = &generic_functions,
-        .stable_type_count = relocation.graph.types.items.len,
-    };
-    defer staged_execution.deinit();
-    generics.execution_context = &staged_execution;
-    generics.checkpoint_execution = @import("comptime_execution.zig").Scheduler.checkpoint;
-    generics.rollback_execution = @import("comptime_execution.zig").Scheduler.rollback;
-    generics.execute_integer = @import("comptime_execution.zig").Scheduler.integer;
-    generics.execute_boolean = @import("comptime_execution.zig").Scheduler.boolean;
-    var contracts = contract_mod.Resolver{
-        .allocator = allocator,
-        .graph = &relocation.graph,
-        .modules = modules,
-        .offsets = relocation.offsets.items,
-        .core = &core,
-        .generics = &generics,
-        .profile_implementation_scans = options.profile_io != null,
-        .profile_io = options.profile_io,
-    };
-    generics.projection_context = &contracts;
-    generics.projection_resolver = contract_mod.Resolver.resolveAssociatedType;
-    generics.constant_projection_resolver = contract_mod.Resolver.resolveAssociatedInt;
-    constructors.contracts = &contracts;
-    control.generic_functions = &generic_functions;
-    control.contracts = &contracts;
-    defer contracts.deinit();
-    contracts.function_context = &generic_functions;
-    contracts.instantiate_function = generic_functions_mod.Resolver.instantiateReferencedFunction;
-    contracts.instantiate_alias = generic_functions_mod.Resolver.instantiateOperationAlias;
-    const argument_defaults: core_mod.Resolver.ArgumentDefaults = .{
-        .context = &generic_functions,
-        .checkpoint = generic_functions_mod.Resolver.checkpointDefaultEffects,
-        .rollback = generic_functions_mod.Resolver.rollbackDefaultEffects,
-        .instantiate = generic_functions_mod.Resolver.instantiateArgumentDefault,
-    };
-    core.argument_defaults = &argument_defaults;
-    generic_functions.nested_call_context = &contracts;
-    generic_functions.nested_call_resolver = contract_mod.Resolver.resolveNestedCall;
-    generic_functions.nested_constructor_context = &constructors;
-    generic_functions.nested_constructor_resolver = constructor_mod.Resolver.resolveNestedCall;
-    // These resolvers call back into one another while materializing generic
-    // bodies, so wire their stable stack-owned instances after both exist.
-    constructors.generics = &generics;
-    constructors.generic_functions = &generic_functions;
-    var errors = error_mod.Resolver{
-        .allocator = allocator,
-        .graph = &relocation.graph,
-        .modules = modules,
-        .offsets = relocation.offsets.items,
-        .core = &core,
-    };
-    defer errors.deinit();
-    var dispatch = dispatch_mod.Resolver{
-        .core = &core,
-        .generic_functions = &generic_functions,
-        .constructors = &constructors,
-        .contracts = &contracts,
-        .control = &control,
-        .errors = &errors,
-        .profile_io = options.profile_io,
-    };
-    var ownership = ownership_mod.Resolver{
-        .allocator = allocator,
-        .graph = &relocation.graph,
-        .modules = modules,
-        .offsets = relocation.offsets.items,
-        .core = &core,
-        .dispatch = &dispatch,
-        .profile_io = options.profile_io,
-    };
-    defer ownership.deinit();
-    generic_functions.ownership_context = &ownership;
-    generic_functions.register_defer = ownership_mod.Resolver.registerParameterizedDefer;
-    generic_functions.ownership_checkpoint = ownership_mod.Resolver.parameterizedCheckpoint;
-    generic_functions.rollback_ownership = ownership_mod.Resolver.rollbackParameterizedCheckpoint;
+    var resolvers: @import("resolver_context.zig").Context = undefined;
+    resolvers.init(allocator, &relocation.graph, modules, relocation.offsets.items, options.diagnostics, options.profile_io);
+    defer resolvers.deinit();
+    const core = &resolvers.core;
+    const expressions = &resolvers.expressions;
+    const control = &resolvers.control;
+    const generics = &resolvers.generics;
+    const generic_functions = &resolvers.generic_functions;
+    const contracts = &resolvers.contracts;
+    const errors = &resolvers.errors;
+    const dispatch = &resolvers.dispatch;
+    const ownership = &resolvers.ownership;
+    const staged_execution = &resolvers.staged_execution;
+    if (try resolveQualifiedChoiceOptions(core, options.diagnostics)) return error.Reported;
 
     var setup_stages: [setup_stage_count]i96 = @splat(0);
     var setup_start = profileTimestamp(options.profile_io);
@@ -443,15 +384,15 @@ pub fn semantizeWithOptions(
     profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.conformance_registration)]);
     setup_start = profileTimestamp(options.profile_io);
     contracts.resolveAssociatedTypes() catch |err| {
-        try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, &generics);
+        try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, generics);
         try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
         return err;
     };
     profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.associated_types)]);
     setup_start = profileTimestamp(options.profile_io);
     _ = generics.materializeKnownTypes() catch |err| {
-        try reportGenericArgumentFailure(&relocation.graph, options.diagnostics, &generics);
-        try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, &generics);
+        try reportGenericArgumentFailure(&relocation.graph, options.diagnostics, generics);
+        try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, generics);
         try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
         return err;
     };
@@ -479,15 +420,13 @@ pub fn semantizeWithOptions(
 
     try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
 
-    const total = totalPending(modules);
-    const resolved = try allocator.alloc(bool, total);
-    defer allocator.free(resolved);
-    @memset(resolved, false);
-    const invalid = try allocator.alloc(bool, total);
-    defer allocator.free(invalid);
-    @memset(invalid, false);
-    var worklists = try PendingWorklists.init(allocator, modules, relocation.offsets.items);
-    defer worklists.deinit(allocator);
+    var resolution_state = ResolutionState.init(allocator);
+    defer resolution_state.deinit(allocator);
+    try resolution_state.appendModules(allocator, modules, relocation.offsets.items);
+    const total = resolution_state.resolved.items.len;
+    const resolved = resolution_state.resolved.items;
+    const invalid = resolution_state.invalid.items;
+    const worklists = &resolution_state.worklists;
     var pending_resolution_stats: PendingResolutionStats = .{};
     if (options.profile_io != null) {
         for (modules) |module| for (module.semantic.pending_operations.items) |operation| {
@@ -499,7 +438,7 @@ pub fn semantizeWithOptions(
     // Validate declarations independently of executable use. Body proofs follow
     // selected operations, or all materialized bodies in exhaustive mode.
     contracts.validateParticipantConformances() catch |err| {
-        try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, &generics);
+        try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, generics);
         try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
         return err;
     };
@@ -535,8 +474,7 @@ pub fn semantizeWithOptions(
     // GlobalSema is staged by semantic domain. Ownership finalization can add
     // cleanup calls to functions absent from the source call graph. Each newly
     // reachable body gets another resolution pass before its cleanup is built.
-    var finalized_functions = std.AutoHashMap(global_sg.GlobalFunctionId, void).init(allocator);
-    defer finalized_functions.deinit();
+    const finalized_functions = &resolution_state.finalized_functions;
     var changed = true;
     while (true) {
         while (changed) {
@@ -546,7 +484,7 @@ pub fn semantizeWithOptions(
             // Published operation signatures do not make their bodies roots.
             // Complete selected bodies before resolving their pending uses.
             if (generic_functions.materializePublishedBodies(reachable) catch |err| {
-                try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, &generics);
+                try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, generics);
                 try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
                 return err;
             }) changed = true;
@@ -556,14 +494,14 @@ pub fn semantizeWithOptions(
             const pending_start = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
             for (pending_phases) |phase| {
                 if (resolvePendingPhase(
-                    &core,
-                    &expressions,
-                    &dispatch,
-                    &control,
-                    &generics,
-                    &contracts,
-                    &errors,
-                    &ownership,
+                    core,
+                    expressions,
+                    dispatch,
+                    control,
+                    generics,
+                    contracts,
+                    errors,
+                    ownership,
                     modules,
                     relocation.offsets.items,
                     resolved,
@@ -575,7 +513,7 @@ pub fn semantizeWithOptions(
                     options.profile_io,
                     options.diagnostics,
                 ) catch |err| {
-                    try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, &generics);
+                    try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, generics);
                     try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
                     return err;
                 }) changed = true;
@@ -601,8 +539,8 @@ pub fn semantizeWithOptions(
             profileAccumulate(options.profile_io, sweep_start, &profile_addresses_ns);
             sweep_start = profileTimestamp(options.profile_io);
             if (generics.materializeKnownTypes() catch |err| {
-                try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, &generics);
-                try reportGenericArgumentFailure(&relocation.graph, options.diagnostics, &generics);
+                try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, generics);
+                try reportGenericArgumentFailure(&relocation.graph, options.diagnostics, generics);
                 try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
                 return err;
             }) changed = true;
@@ -623,7 +561,7 @@ pub fn semantizeWithOptions(
             if (errors.refreshPropagationResults()) changed = true;
             profileAccumulate(options.profile_io, refresh_start, &profile_error_refresh_ns);
             if (options.profile_io) |io| profile_errors_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - errors_start;
-            if (try completePropagatedReachCalls(&core, modules, relocation.offsets.items)) changed = true;
+            if (try completePropagatedReachCalls(core, modules, relocation.offsets.items)) changed = true;
             // Evidence selected by newly specialized bodies belongs to this
             // fixed point. Its operation bodies must become reachable and have
             // their cleanup finalized before construction metadata is retired.
@@ -631,7 +569,7 @@ pub fn semantizeWithOptions(
             const evidence_types = relocation.graph.types.items.len;
             const evidence_conformances = relocation.graph.contract_conformances.items.len;
             contracts.validateParticipantConformances() catch |err| {
-                try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, &generics);
+                try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, generics);
                 try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
                 return err;
             };
@@ -674,8 +612,8 @@ pub fn semantizeWithOptions(
             };
         }
         const evaluated = if (options.diagnostics) |diagnostics|
-            staged_execution.evaluateReady(diagnostics, &finalized_functions, &pending_bodies) catch |err| {
-                try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, &generics);
+            staged_execution.evaluateReady(diagnostics, finalized_functions, &pending_bodies) catch |err| {
+                try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, generics);
                 return err;
             }
         else
@@ -728,7 +666,7 @@ pub fn semantizeWithOptions(
             return error.Reported;
         if (try diagnosePrivateFields(&relocation.graph, modules, reachable, relocation.offsets.items, diagnostics))
             return error.Reported;
-        if (try diagnoseContractRuntimeBindings(&relocation.graph, &contracts, diagnostics))
+        if (try diagnoseContractRuntimeBindings(&relocation.graph, contracts, diagnostics))
             return error.Reported;
         if (try diagnoseMissingArrayTypeContext(&relocation.graph, diagnostics))
             return error.Reported;
@@ -773,7 +711,7 @@ pub fn semantizeWithOptions(
                 );
                 return error.Reported;
             }
-            if (try diagnoseUnresolvedCall(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, &generic_functions, &contracts, diagnostics))
+            if (try diagnoseUnresolvedCall(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, generic_functions, contracts, diagnostics))
                 return error.Reported;
             if (try diagnoseUnresolvedChoice(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics, true))
                 return error.Reported;
@@ -782,7 +720,7 @@ pub fn semantizeWithOptions(
         return error.UnsupportedGlobalSemantic;
     }
     if (staged_execution.diagnosePending()) {
-        try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, &generics);
+        try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, generics);
         return error.UnresolvedCompileTimeExecution;
     }
     if (relocation.graph.hasUnresolvedTypes()) {
@@ -803,7 +741,7 @@ pub fn semantizeWithOptions(
     if (try diagnoseInvalidMatchPayloadCopies(
         allocator,
         &relocation.graph,
-        &ownership,
+        ownership,
         reachable,
         options.diagnostics,
     ))
@@ -812,7 +750,7 @@ pub fn semantizeWithOptions(
     if (try diagnoseInvalidNumericAssignments(allocator, &relocation.graph, reachable, options.diagnostics))
         return if (options.diagnostics != null) error.Reported else error.InvalidNumericAssignment;
 
-    if (try diagnoseInvalidComparisons(allocator, &core, reachable, options.diagnostics))
+    if (try diagnoseInvalidComparisons(allocator, core, reachable, options.diagnostics))
         return if (options.diagnostics != null) error.Reported else error.InvalidComparison;
 
     if (try diagnoseInvalidPointerOperations(allocator, &relocation.graph, reachable, options.diagnostics))
@@ -843,7 +781,7 @@ pub fn semantizeWithOptions(
     // exposed to Safety, Codegen or editor consumers.
     try relocation.graph.finishTypeResolution(allocator);
     contracts.validateParticipantConformances() catch |err| {
-        try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, &generics);
+        try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, generics);
         try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
         return err;
     };
@@ -3488,4 +3426,89 @@ fn reportParticipantConformanceFailure(allocator: std.mem.Allocator, graph: *con
         return error.Reported;
     }
     return error.InvalidParticipantConformance;
+}
+
+test "pending worklists retain operation identities across module extension" {
+    const a = std.testing.allocator;
+    var first: module_sg.ModuleSemanticGraph = .{};
+    defer first.semantic.deinit(a);
+    var second: module_sg.ModuleSemanticGraph = .{};
+    defer second.semantic.deinit(a);
+    const operation: module_entities.PendingOperation = .{ .resolve_name_use = .{ .node = @enumFromInt(0), .name = .{ .start = 0, .len = 0 } } };
+    try first.semantic.pending_operations.append(a, operation);
+    try second.semantic.pending_operations.append(a, operation);
+    const modules = [_]module_sg.ModuleSemanticGraph{ first, second };
+    const offsets = [_]globalizer.Offsets{ std.mem.zeroes(globalizer.Offsets), std.mem.zeroes(globalizer.Offsets) };
+    var pending = try PendingWorklists.init(a, modules[0..1], offsets[0..1]);
+    defer pending.deinit(a);
+    const queue = pending.forPhase(pendingPhase(operation));
+    try std.testing.expectEqual(@as(u32, 0), queue.items[0].flat_index);
+    queue.clearRetainingCapacity();
+    try pending.appendModules(a, &modules, &offsets);
+    try std.testing.expectEqual(@as(usize, 1), queue.items.len);
+    try std.testing.expectEqual(@as(u32, 1), queue.items[0].flat_index);
+    try std.testing.expectEqual(@as(u32, 1), queue.items[0].module_index);
+    try pending.appendModules(a, &modules, &offsets);
+    try std.testing.expectEqual(@as(usize, 1), queue.items.len);
+    try std.testing.expectError(error.InvalidPendingModulePrefix, pending.appendModules(a, modules[0..1], offsets[0..1]));
+}
+
+test "resolution state preserves statuses and rolls back failed module extension" {
+    const a = std.testing.allocator;
+    var first: module_sg.ModuleSemanticGraph = .{};
+    defer first.semantic.deinit(a);
+    var second: module_sg.ModuleSemanticGraph = .{};
+    defer second.semantic.deinit(a);
+    const operation: module_entities.PendingOperation = .{ .resolve_name_use = .{ .node = @enumFromInt(0), .name = .{ .start = 0, .len = 0 } } };
+    try first.semantic.pending_operations.append(a, operation);
+    try second.semantic.pending_operations.append(a, operation);
+    const modules = [_]module_sg.ModuleSemanticGraph{ first, second };
+    const offsets = [_]globalizer.Offsets{ std.mem.zeroes(globalizer.Offsets), std.mem.zeroes(globalizer.Offsets) };
+    var state = ResolutionState.init(a);
+    defer state.deinit(a);
+    try state.appendModules(a, modules[0..1], offsets[0..1]);
+    try state.finalized_functions.put(@enumFromInt(7), {});
+    state.resolved.items[0] = true;
+    state.invalid.items[0] = true;
+    state.worklists.operation_count = std.math.maxInt(u32);
+    try std.testing.expectError(error.TooManyPendingOperations, state.appendModules(a, &modules, &offsets));
+    try std.testing.expectEqual(@as(usize, 1), state.resolved.items.len);
+    try std.testing.expectEqual(@as(usize, 1), state.worklists.module_count);
+    try std.testing.expectEqual(@as(usize, 1), state.worklists.forPhase(pendingPhase(operation)).items.len);
+    state.worklists.operation_count = 1;
+    try state.appendModules(a, &modules, &offsets);
+    try std.testing.expect(state.finalized_functions.contains(@enumFromInt(7)));
+    try std.testing.expectEqualSlices(bool, &.{ true, false }, state.resolved.items);
+    try std.testing.expectEqualSlices(bool, &.{ true, false }, state.invalid.items);
+    try state.appendModules(a, &modules, &offsets);
+    try std.testing.expectEqual(@as(usize, 2), state.resolved.items.len);
+}
+
+fn extendResolutionWithAllocationFailures(allocator: std.mem.Allocator) !void {
+    const fixture_allocator = std.testing.allocator;
+    var first: module_sg.ModuleSemanticGraph = .{};
+    defer first.semantic.deinit(fixture_allocator);
+    var second: module_sg.ModuleSemanticGraph = .{};
+    defer second.semantic.deinit(fixture_allocator);
+    const operation: module_entities.PendingOperation = .{ .resolve_name_use = .{ .node = @enumFromInt(0), .name = .{ .start = 0, .len = 0 } } };
+    try first.semantic.pending_operations.append(fixture_allocator, operation);
+    try second.semantic.pending_operations.appendNTimes(fixture_allocator, operation, 32);
+    const modules = [_]module_sg.ModuleSemanticGraph{ first, second };
+    const offsets = [_]globalizer.Offsets{ std.mem.zeroes(globalizer.Offsets), std.mem.zeroes(globalizer.Offsets) };
+    var state = ResolutionState.init(allocator);
+    defer state.deinit(allocator);
+    try state.appendModules(allocator, modules[0..1], offsets[0..1]);
+    state.resolved.items[0] = true;
+    state.appendModules(allocator, &modules, &offsets) catch |err| {
+        try std.testing.expectEqualSlices(bool, &.{true}, state.resolved.items);
+        try std.testing.expectEqualSlices(bool, &.{false}, state.invalid.items);
+        try std.testing.expectEqual(@as(usize, 1), state.worklists.module_count);
+        try std.testing.expectEqual(@as(u32, 1), state.worklists.operation_count);
+        try std.testing.expectEqual(@as(usize, 1), state.worklists.forPhase(pendingPhase(operation)).items.len);
+        return err;
+    };
+}
+
+test "resolution state preserves published work on allocation failures" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, extendResolutionWithAllocationFailures, .{});
 }
