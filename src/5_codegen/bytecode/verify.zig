@@ -17,6 +17,17 @@ const choiceVariant = b.choiceVariant;
 pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
     if (!program.graph.target.isNative()) return error.UnsupportedExecutionTarget;
     if (program.functions.len != program.graph.functions.items.len) return error.InvalidBytecode;
+    if (program.session) |session| {
+        for (session.bindings, 0..) |binding, index| {
+            if (@intFromEnum(binding.binding) >= program.graph.bindings.items.len or binding.slots.len == 0 or
+                !types.equal(program.graph, binding.slots[0], program.graph.binding(binding.binding).ty)) return error.InvalidBytecode;
+            for (session.bindings[0..index]) |previous| if (previous.binding == binding.binding) return error.InvalidBytecode;
+            for (binding.slots) |ty| if (!supportedType(program.graph, ty, 0)) return error.InvalidBytecode;
+            for (binding.slots[1..]) |ty| if (!valueFits(program.graph, ty, .{ .boolean = false })) return error.InvalidBytecode;
+            for (binding.cleanup) |entry| if (entry.root != 0 or entry.flag == 0) return error.InvalidBytecode;
+            try verifyCleanup(allocator, program.graph, .{ .slots = binding.slots, .inputs = &.{}, .outputs = &.{}, .code = &.{}, .cleanup = binding.cleanup });
+        }
+    }
     for (0..program.functions.len + @intFromBool(program.expression != null)) |fi| {
         const f = if (fi == program.functions.len) program.expression.?.* else program.functions[fi] orelse continue;
         if (f.code.len == 0) return error.InvalidBytecode;
@@ -41,6 +52,15 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
             switch (inst.op) {
                 .constant => |x| if (!valueFits(program.graph, f.slots[x.dst], x.value)) return error.InvalidBytecode,
                 .copy => |x| if (!types.equal(program.graph, f.slots[x.dst], f.slots[x.src])) return error.InvalidBytecode,
+                .session_initialize => |x| {
+                    const binding = try sessionBinding(program, x.binding);
+                    if (!types.equal(program.graph, binding.slots[0], f.slots[x.value])) return error.InvalidBytecode;
+                },
+                .session_borrow => |x| {
+                    const binding = try sessionBinding(program, x.binding);
+                    const pointer = program.graph.semanticType(f.slots[x.dst]);
+                    if (pointer != .pointer or !types.equal(program.graph, binding.slots[0], pointer.pointer.child)) return error.InvalidBytecode;
+                },
                 .readonly => |x| {
                     const from = program.graph.semanticType(f.slots[x.src]);
                     const to = program.graph.semanticType(f.slots[x.dst]);
@@ -240,6 +260,7 @@ fn destinations(i: Instruction, single: *[1]Slot) []const Slot {
     const slot: ?Slot = switch (i.op) {
         .constant => |x| x.dst,
         .copy => |x| x.dst,
+        .session_borrow => |x| x.dst,
         .readonly => |x| x.dst,
         .binary => |x| x.dst,
         .compare => |x| x.dst,
@@ -264,6 +285,7 @@ fn destinations(i: Instruction, single: *[1]Slot) []const Slot {
 fn readSlots(a: std.mem.Allocator, i: Instruction, out: *std.ArrayList(Slot)) !void {
     switch (i.op) {
         .copy => |x| try out.append(a, x.src),
+        .session_initialize => |x| try out.append(a, x.value),
         .readonly => |x| try out.append(a, x.src),
         .binary => |x| try out.appendSlice(a, &.{ x.left, x.right }),
         .compare => |x| try out.appendSlice(a, &.{ x.left, x.right }),
@@ -359,4 +381,10 @@ fn readPlace(a: std.mem.Allocator, place: Place, out: *std.ArrayList(Slot)) !voi
         .element => |index| try out.append(a, index),
         .field, .variant, .dereference => {},
     };
+}
+
+fn sessionBinding(program: Program, index: u32) !b.SessionBinding {
+    const session = program.session orelse return error.InvalidBytecode;
+    if (index >= session.bindings.len) return error.InvalidBytecode;
+    return session.bindings[index];
 }

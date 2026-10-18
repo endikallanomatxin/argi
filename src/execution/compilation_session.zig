@@ -2,6 +2,16 @@ const std = @import("std");
 const sema = @import("../4_semantics/global/semantizer.zig");
 const module_sg = @import("../4_semantics/module/graph.zig");
 const diagnostics_mod = @import("../1_base/diagnostic.zig");
+const bytecode = @import("../5_codegen/bytecode/bytecode.zig");
+var next_namespace = std.atomic.Value(u64).init(0);
+
+fn allocateNamespace() !bytecode.SessionNamespace {
+    var next = next_namespace.load(.monotonic);
+    while (true) {
+        if (next == std.math.maxInt(u64)) return error.CompilationNamespaceLimit;
+        next = next_namespace.cmpxchgWeak(next, next + 1, .monotonic, .monotonic) orelse return @enumFromInt(next);
+    }
+}
 
 /// Retains accepted semantic construction and immutable checked graph versions.
 /// Initialize in final storage before preparing candidates. ModuleSG prefixes
@@ -13,6 +23,7 @@ pub const CompilationSession = struct {
     semantic: *sema.Session,
     versions: std.ArrayList(*sema.Result) = .empty,
     revision: u64 = 0,
+    namespace: bytecode.SessionNamespace,
 
     pub const Candidate = struct {
         allocator: std.mem.Allocator,
@@ -40,7 +51,7 @@ pub const CompilationSession = struct {
         try semantic.init(allocator, modules, options);
         errdefer semantic.deinit();
         try semantic.advance();
-        return .{ .allocator = allocator, .semantic = semantic };
+        return .{ .allocator = allocator, .semantic = semantic, .namespace = try allocateNamespace() };
     }
 
     pub fn deinit(self: *CompilationSession) void {
@@ -117,6 +128,10 @@ test "compilation session publishes checked candidates and rejects stale revisio
     const modules = [_]module_sg.ModuleSemanticGraph{ first, second };
     var session = try CompilationSession.init(a, modules[0..1], .{});
     defer session.deinit();
+    var independent = try CompilationSession.init(a, &.{}, .{});
+    defer independent.deinit();
+    const namespace = session.namespace;
+    try std.testing.expect(namespace != independent.namespace);
     var candidate = try session.prepare(&modules, &diagnostics);
     defer candidate.deinit();
     var stale = try session.prepare(&modules, &diagnostics);
@@ -135,6 +150,7 @@ test "compilation session publishes checked candidates and rejects stale revisio
     try std.testing.expectEqual(@as(usize, 2), session.versions.items.len);
     try std.testing.expectEqual(@as(usize, 2), session.versions.items[0].graph.modules.items.len);
     try std.testing.expectEqual(@as(u64, 2), session.revision);
+    try std.testing.expectEqual(namespace, session.namespace);
 }
 
 fn sourceModule(allocator: std.mem.Allocator, source: []const u8, diagnostics: *diagnostics_mod.Diagnostics) !module_sg.ModuleSemanticGraph {

@@ -1414,3 +1414,95 @@ test "bytecode failed session initialization leaves storage vacant" {
     try context.storage.initializeSession(session, 0, .{ .integer = 42 });
     try std.testing.expectEqual(@as(i128, 42), (try session.get(0)).integer);
 }
+
+test "bytecode typed session bindings persist across verified program revisions" {
+    const g = @import("../4_semantics/global/graph.zig");
+    const a = std.testing.allocator;
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.appendSlice(a, &.{ .{ .builtin = .Int32 }, .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_write } }, .{ .pointer = .{ .child = @enumFromInt(1), .mutability = .read_write } } });
+    const source = @import("../4_semantics/primitives/schema.zig").SourceRef{ .file_index = 0, .offset = 0 };
+    try graph.bindings.append(a, .{ .name = .{ .start = 0, .len = 0 }, .ty = @enumFromInt(0), .source = source, .mutability = .constant });
+    try graph.bindings.append(a, .{ .name = .{ .start = 0, .len = 0 }, .ty = @enumFromInt(1), .source = source, .mutability = .constant });
+    try graph.fields.append(a, .{ .name = .{ .start = 0, .len = 0 }, .ty = @enumFromInt(0), .source = source });
+    for (0..2) |_| try graph.functions.append(a, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 1 } });
+    const slots = [_]b.Type{ @enumFromInt(0), @enumFromInt(1), @enumFromInt(2) };
+    const bindings = [_]b.SessionBinding{ .{ .binding = @enumFromInt(0), .slots = slots[0..1] }, .{ .binding = @enumFromInt(1), .slots = slots[1..2] } };
+    const interface = b.Session{ .namespace = @enumFromInt(1), .bindings = &bindings };
+    const initialize = [_]b.Instruction{
+        .{ .source = source, .op = .{ .constant = .{ .dst = 0, .value = .{ .integer = 42 } } } },
+        .{ .source = source, .op = .{ .session_initialize = .{ .binding = 0, .value = 0 } } },
+        .{ .source = source, .op = .{ .session_borrow = .{ .binding = 0, .dst = 1 } } },
+        .{ .source = source, .op = .{ .session_initialize = .{ .binding = 1, .value = 1 } } },
+        .{ .source = source, .op = .{ .ret = &.{0} } },
+    };
+    const read = [_]b.Instruction{
+        .{ .source = source, .op = .{ .session_borrow = .{ .binding = 0, .dst = 1 } } },
+        .{ .source = source, .op = .{ .load = .{ .dst = 0, .place = .{ .root = 1, .path = &.{.dereference} } } } },
+        .{ .source = source, .op = .{ .ret = &.{0} } },
+    };
+    const read_reference = [_]b.Instruction{
+        .{ .source = source, .op = .{ .session_borrow = .{ .binding = 1, .dst = 2 } } },
+        .{ .source = source, .op = .{ .load = .{ .dst = 1, .place = .{ .root = 2, .path = &.{.dereference} } } } },
+        .{ .source = source, .op = .{ .load = .{ .dst = 0, .place = .{ .root = 1, .path = &.{.dereference} } } } },
+        .{ .source = source, .op = .{ .ret = &.{0} } },
+    };
+    const write = [_]b.Instruction{
+        .{ .source = source, .op = .{ .session_borrow = .{ .binding = 0, .dst = 1 } } },
+        .{ .source = source, .op = .{ .capture_write = .{ .dst = 0, .place = .{ .root = 1, .path = &.{.dereference} } } } },
+        .{ .source = source, .op = .{ .constant = .{ .dst = 0, .value = .{ .integer = 7 } } } },
+        .{ .source = source, .op = .{ .check_write_cleanup = 0 } },
+        .{ .source = source, .op = .{ .store = .{ .destination = 0, .value = 0 } } },
+        .{ .source = source, .op = .{ .activate_write_cleanup = 0 } },
+        .{ .source = source, .op = .{ .ret = &.{0} } },
+    };
+    const first_functions = [_]?b.Function{ .{ .slots = &slots, .inputs = &.{}, .outputs = &.{0}, .code = &initialize }, null };
+    const read_functions = [_]?b.Function{ null, .{ .slots = &slots, .inputs = &.{}, .outputs = &.{0}, .code = &read } };
+    const reference_functions = [_]?b.Function{ null, .{ .slots = &slots, .inputs = &.{}, .outputs = &.{0}, .code = &read_reference } };
+    const write_functions = [_]?b.Function{ null, .{ .slots = &slots, .inputs = &.{}, .outputs = &.{0}, .code = &write, .write_destinations = slots[0..1] } };
+    var context = vm.Context.init(a, 1000);
+    defer context.deinit();
+    const limits = vm.Limits{ .value_cells = 1000 };
+    var first = try vm.Vm.initShared(a, .{ .graph = &graph, .functions = &first_functions, .session = interface }, limits, &context);
+    defer first.deinit();
+    var reader = try vm.Vm.initShared(a, .{ .graph = &graph, .functions = &read_functions, .session = interface }, limits, &context);
+    defer reader.deinit();
+    var writer = try vm.Vm.initShared(a, .{ .graph = &graph, .functions = &write_functions, .session = interface }, limits, &context);
+    defer writer.deinit();
+    var reference_reader = try vm.Vm.initShared(a, .{ .graph = &graph, .functions = &reference_functions, .session = interface }, limits, &context);
+    defer reference_reader.deinit();
+    _ = try first.invoke(@enumFromInt(0), &.{});
+    try std.testing.expectEqual(@as(i128, 42), (try reference_reader.invoke(@enumFromInt(1), &.{}))[0].integer);
+    try std.testing.expectEqual(@as(i128, 42), (try reader.invoke(@enumFromInt(1), &.{}))[0].integer);
+    _ = try writer.invoke(@enumFromInt(1), &.{});
+    try std.testing.expectEqual(@as(i128, 7), (try reference_reader.invoke(@enumFromInt(1), &.{}))[0].integer);
+    try std.testing.expectEqual(@as(i128, 7), (try reader.invoke(@enumFromInt(1), &.{}))[0].integer);
+    var foreign = try vm.Vm.initShared(a, .{ .graph = &graph, .functions = &read_functions, .session = .{ .namespace = @enumFromInt(2), .bindings = &bindings } }, limits, &context);
+    defer foreign.deinit();
+    const cells = context.storage.cells;
+    try std.testing.expectError(error.ExecutionForeignSession, foreign.invoke(@enumFromInt(1), &.{}));
+    try std.testing.expectEqual(cells, context.storage.cells);
+    try std.testing.expectEqual(@as(i128, 7), (try reader.invoke(@enumFromInt(1), &.{}))[0].integer);
+    var malformed = b.Program{ .graph = &graph, .functions = &read_functions, .session = null };
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, malformed));
+    const duplicates = [_]b.SessionBinding{ bindings[0], bindings[0] };
+    malformed.session = .{ .namespace = interface.namespace, .bindings = &duplicates };
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, malformed));
+    const wrong_type = [_]b.SessionBinding{.{ .binding = @enumFromInt(0), .slots = slots[1..] }};
+    malformed.session = .{ .namespace = interface.namespace, .bindings = &wrong_type };
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, malformed));
+    var missing_binding_code = read;
+    missing_binding_code[0].op.session_borrow.binding = 99;
+    const missing_functions = [_]?b.Function{ null, .{ .slots = &slots, .inputs = &.{}, .outputs = &.{0}, .code = &missing_binding_code } };
+    malformed = .{ .graph = &graph, .functions = &missing_functions, .session = interface };
+    try std.testing.expectError(error.InvalidBytecode, b.verify(a, malformed));
+    const uninitialized_functions = [_]?b.Function{ .{ .slots = &slots, .inputs = &.{}, .outputs = &.{0}, .code = initialize[1..] }, null };
+    malformed = .{ .graph = &graph, .functions = &uninitialized_functions, .session = interface };
+    try std.testing.expectError(error.UninitializedBytecodeSlot, b.verify(a, malformed));
+    context.reset();
+    try std.testing.expectError(error.ExecutionUninitializedStorage, reader.invoke(@enumFromInt(1), &.{}));
+    try std.testing.expectError(error.ExecutionContextPoisoned, first.invoke(@enumFromInt(0), &.{}));
+    context.reset();
+    _ = try first.invoke(@enumFromInt(0), &.{});
+    try std.testing.expectEqual(@as(i128, 42), (try reader.invoke(@enumFromInt(1), &.{}))[0].integer);
+}

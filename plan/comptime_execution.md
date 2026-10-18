@@ -53,8 +53,12 @@ retain stable addresses for existing bytecode. VM program instances can borrow
 one execution context; storage identity, cumulative memory and terminal trap state
 belong to that context, while invocation fuel belongs to each execution. Context
 sharing adds no heap allocation to ordinary isolated VM construction. Next, add
-typed session binding access and source submission loading before wiring
-interactive commands and conditional imports. Concrete storage can now create
+source submission loading and lowering of checked session bindings before wiring
+interactive commands and conditional imports. Verified bytecode can initialize
+and borrow graph-identified session bindings through typed layouts, sharing the
+ordinary captured-write and cleanup protocol. A unique compilation namespace
+separates graph-relative binding IDs across independent compilations. Concrete
+storage can now create
 session-lifetime regions independently of calls, copy their cleanup layouts and
 initialize vacant slots without retaining temporary frame references. Region
 retirement requires inactive cleanup flags. These low-level operations still need

@@ -8,6 +8,14 @@ pub const Slot = u32;
 // as a safe reference. A function captures it before evaluating a store's RHS.
 pub const Destination = u32;
 pub const Type = g.GlobalTypeId;
+pub const SessionNamespace = enum(u64) { _ };
+// Runtime storage is keyed by durable graph bindings inside one compilation
+// namespace. Each binding has a value slot followed only by cleanup flag slots.
+pub const SessionBinding = struct { binding: g.GlobalBindingId, slots: []const Type, cleanup: []const Cleanup = &.{} };
+// The compilation owner issues the namespace and preserves binding/type
+// identities and layouts across revisions. It must never stamp independently
+// rebuilt graphs with the same namespace. This metadata is immutable like code.
+pub const Session = struct { namespace: SessionNamespace, bindings: []const SessionBinding };
 pub const Value = @import("value.zig").Value;
 // A place starts in local storage and can follow checked safe references.
 // Index operands are snapshots evaluated by lowering in source order.
@@ -47,6 +55,8 @@ pub const Instruction = struct {
     op: union(enum) {
         constant: struct { dst: Slot, value: Value },
         copy: struct { dst: Slot, src: Slot },
+        session_initialize: struct { binding: u32, value: Slot },
+        session_borrow: struct { binding: u32, dst: Slot },
         readonly: struct { dst: Slot, src: Slot },
         binary: struct { dst: Slot, left: Slot, right: Slot, operator: p.BinaryOperator },
         compare: struct { dst: Slot, left: Slot, right: Slot, operator: p.ComparisonOperator },
@@ -93,6 +103,7 @@ pub const Program = struct {
     graph: *const g.GlobalSemanticGraph,
     functions: []const ?Function,
     expression: ?*const Function = null,
+    session: ?Session = null,
 };
 
 pub fn integerBounds(graph: *const g.GlobalSemanticGraph, ty: Type) ?p.IntegerRange {

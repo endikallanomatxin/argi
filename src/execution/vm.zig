@@ -34,6 +34,8 @@ pub const Context = struct {
     limit: usize,
     state: enum { fresh, ready, poisoned } = .fresh,
     running: bool = false,
+    namespace: ?b.SessionNamespace = null,
+    bindings: std.AutoHashMapUnmanaged(g.GlobalBindingId, runtime_value.FrameId) = .empty,
 
     pub fn init(allocator: std.mem.Allocator, value_cells: usize) Context {
         return .{ .arena = .init(allocator), .allocator = allocator, .limit = value_cells };
@@ -62,6 +64,26 @@ pub const Context = struct {
         self.arena.deinit();
         self.arena = .init(self.allocator);
         self.state = .fresh;
+        self.namespace = null;
+        self.bindings = .empty;
+    }
+
+    fn checkNamespace(self: *const Context, session: ?b.Session) !void {
+        if (session) |interface| if (self.namespace) |namespace| {
+            if (namespace != interface.namespace) return error.ExecutionForeignSession;
+        };
+    }
+    fn initializeBinding(self: *Context, binding: b.SessionBinding, value: b.Value) !void {
+        if (self.bindings.contains(binding.binding)) return error.ExecutionInitializedStorage;
+        try self.storage.charge(1);
+        try self.bindings.ensureUnusedCapacity(self.arena.allocator(), 1);
+        const target = try self.storage.enterSession(binding.slots.len, binding.cleanup);
+        try self.storage.initializeSession(target, 0, value);
+        self.bindings.putAssumeCapacity(binding.binding, target.frame);
+    }
+    fn borrowBinding(self: *Context, binding: b.SessionBinding, permission: p.PointerMutability) !b.Value {
+        const frame = self.bindings.get(binding.binding) orelse return error.ExecutionUninitializedStorage;
+        return self.storage.borrow(.{ .context = self.storage.context, .frame = frame, .root = 0, .path = &.{}, .mutability = .read_write }, permission);
     }
 };
 
@@ -113,6 +135,8 @@ pub const Vm = struct {
         var previous = self.context().arena;
         self.context().arena = std.heap.ArenaAllocator.init(self.allocator);
         self.context().state = .fresh;
+        self.context().namespace = null;
+        self.context().bindings = .empty;
         defer previous.deinit();
         return if (entry) |id| self.invoke(id, args) else self.invokeExpression(args);
     }
@@ -133,9 +157,11 @@ pub const Vm = struct {
     }
     fn invokeFunction(self: *Vm, function: *const b.Function, args: []const b.Value) ![]const b.Value {
         if (self.context().running) return error.ExecutionContextBusy;
+        try self.context().checkNamespace(self.program.session);
         self.context().running = true;
         defer self.context().running = false;
         try self.context().ensureStorage();
+        if (self.program.session) |session| self.context().namespace = session.namespace;
         self.steps = 0;
         errdefer self.context().state = .poisoned;
         const inputs = try self.context().storage.cloneValues(args);
@@ -191,6 +217,8 @@ pub const Vm = struct {
             switch (inst.op) {
                 .constant => |x| try slots.put(x.dst, x.value),
                 .copy => |x| try slots.put(x.dst, try slots.get(x.src)),
+                .session_initialize => |x| try self.context().initializeBinding(self.program.session.?.bindings[x.binding], try slots.get(x.value)),
+                .session_borrow => |x| try slots.put(x.dst, try self.context().borrowBinding(self.program.session.?.bindings[x.binding], self.program.graph.semanticType(f.slots[x.dst]).pointer.mutability)),
                 .readonly => |x| {
                     var reference = (try slots.get(x.src)).reference;
                     reference.mutability = .read_only;
