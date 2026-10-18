@@ -51,6 +51,21 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
             for (reads.items) |slot| if (slot >= f.slots.len) return error.InvalidBytecode;
             switch (inst.op) {
                 .constant => |x| if (!valueFits(program.graph, f.slots[x.dst], x.value)) return error.InvalidBytecode,
+                .resolve_location => |x| {
+                    if (!types.isBuiltin(program.graph, f.slots[x.id], .UInt32)) return error.InvalidBytecode;
+                    const fields = types.fields(program.graph, f.slots[x.dst]) orelse return error.InvalidBytecode;
+                    if (fields.len != 4) return error.InvalidBytecode;
+                    const names = [_][]const u8{ "source_file", "source_line", "line", "column" };
+                    for (program.graph.fields.items[fields.start..][0..fields.len], 0..) |field, index| {
+                        if (!std.mem.eql(u8, program.graph.text(field.name), names[index])) return error.InvalidBytecode;
+                        if (index < 2) {
+                            const pointer = program.graph.semanticType(field.ty);
+                            if (pointer != .pointer or pointer.pointer.mutability != .read_only) return error.InvalidBytecode;
+                            const bounds = integerBounds(program.graph, pointer.pointer.child) orelse return error.InvalidBytecode;
+                            if (bounds.maximum - bounds.minimum != 255) return error.InvalidBytecode;
+                        } else if (!types.isBuiltin(program.graph, field.ty, .UIntNative)) return error.InvalidBytecode;
+                    }
+                },
                 .trace_location => |x| {
                     if (!types.isBuiltin(program.graph, f.slots[x.dst], .UInt32) or x.location.line == 0 or x.location.column == 0) return error.InvalidBytecode;
                 },
@@ -310,6 +325,7 @@ fn destinations(i: Instruction, single: *[1]Slot) []const Slot {
         .constant => |x| x.dst,
         .static_bytes => |x| x.dst,
         .trace_location => |x| x.dst,
+        .resolve_location => |x| x.dst,
         .virtualize => |x| x.dst,
         .offset_reference => |x| x.dst,
         .copy => |x| x.dst,
@@ -338,6 +354,7 @@ fn destinations(i: Instruction, single: *[1]Slot) []const Slot {
 fn readSlots(a: std.mem.Allocator, i: Instruction, out: *std.ArrayList(Slot)) !void {
     switch (i.op) {
         .copy => |x| try out.append(a, x.src),
+        .resolve_location => |x| try out.append(a, x.id),
         .virtualize => |x| try out.append(a, x.receiver),
         .virtual_call => |x| {
             try out.append(a, x.handle);

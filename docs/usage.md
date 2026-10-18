@@ -143,7 +143,8 @@ executor as compile-time constants.
 `error_location_id()` registers source coordinates in the execution context.
 Retained REPL IDs keep their original submitted text across later commands; reset
 clears them. These IDs cannot be exported as compile-time constants.
-`source_location()` resolution and complete error propagation remain pending.
+`source_location()` resolves those IDs to immutable path, line text and coordinates.
+Unknown IDs stop execution. Complete error propagation remains pending.
 
 Raw pointers, C enums, floating point, error propagation/tracing,
 partial initialization through output references, globals, closures, foreign calls,

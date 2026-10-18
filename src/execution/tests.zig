@@ -1781,3 +1781,32 @@ test "bytecode trace metadata requires an unsigned source ID and valid coordinat
         try std.testing.expectError(error.InvalidBytecode, b.verify(a, .{ .graph = &graph, .functions = &.{}, .expression = &expression }));
     }
 }
+
+test "resolved source text respects signed byte loads" {
+    const a = std.testing.allocator;
+    var graph: @import("../4_semantics/global/graph.zig").GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source = @import("../4_semantics/primitives/schema.zig").SourceRef{ .file_index = 0, .offset = 0 };
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .Int8 },                                                   .{ .builtin = .UInt32 },                                     .{ .builtin = .UIntNative },
+        .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } }, .{ .structural = .{ .fields = .{ .start = 0, .len = 4 } } },
+    });
+    for ([_][]const u8{ "source_file", "source_line", "line", "column" }, 0..) |name, index|
+        try graph.fields.append(a, .{ .source = source, .name = try graph.addString(a, name), .ty = @enumFromInt(@as(u32, if (index < 2) 3 else 2)) });
+    const metadata = b.TraceLocation{ .path = "input.rg", .offset = 0, .line = 1, .column = 1, .source_line = "ñ" };
+    const expression = b.Function{
+        .slots = &.{ @enumFromInt(1), @enumFromInt(4), @enumFromInt(3), @enumFromInt(0) },
+        .inputs = &.{},
+        .outputs = &.{3},
+        .code = &.{
+            .{ .source = source, .op = .{ .trace_location = .{ .dst = 0, .location = &metadata } } },
+            .{ .source = source, .op = .{ .resolve_location = .{ .dst = 1, .id = 0 } } },
+            .{ .source = source, .op = .{ .field = .{ .dst = 2, .base = 1, .index = 1 } } },
+            .{ .source = source, .op = .{ .load = .{ .dst = 3, .place = .{ .root = 2, .path = &.{.dereference} } } } },
+            .{ .source = source, .op = .{ .ret = &.{3} } },
+        },
+    };
+    var executor = try vm.Vm.init(a, .{ .graph = &graph, .functions = &.{}, .expression = &expression }, .{});
+    defer executor.deinit();
+    try std.testing.expectEqual(@as(i128, -61), (try executor.runExpression(&.{}))[0].integer);
+}

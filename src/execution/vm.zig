@@ -106,6 +106,18 @@ pub const Context = struct {
         return .{ .integer = id };
     }
 
+    fn resolveTraceLocation(self: *Context, id: i128) !b.Value {
+        const index = std.math.cast(usize, id) orelse return error.ExecutionInvalidSourceLocation;
+        if (index >= self.trace_locations.items.len) return error.ExecutionInvalidSourceLocation;
+        const location = self.trace_locations.items[index];
+        const fields = try self.storage.allocate(4);
+        fields[0] = try self.literalBytes(location.path);
+        fields[1] = try self.literalBytes(location.source_line);
+        fields[2] = .{ .integer = location.line };
+        fields[3] = .{ .integer = location.column };
+        return .{ .record = fields };
+    }
+
     fn initializeBinding(self: *Context, binding: b.SessionBinding, value: b.Value) !void {
         if (self.bindings.contains(binding.binding)) return error.ExecutionInitializedStorage;
         try self.storage.charge(1);
@@ -258,6 +270,7 @@ pub const Vm = struct {
             current.pc += 1;
             switch (inst.op) {
                 .constant => |x| try slots.put(x.dst, x.value),
+                .resolve_location => |x| try slots.put(x.dst, try self.context().resolveTraceLocation((try slots.get(x.id)).integer)),
                 .trace_location => |x| try slots.put(x.dst, try self.context().registerTraceLocation(x.location.*)),
                 .static_bytes => |x| try slots.put(x.dst, try self.context().literalBytes(x.bytes)),
                 .offset_reference => |x| try slots.put(x.dst, .{ .reference = try self.context().storage.offsetReference((try slots.get(x.src)).reference, (try slots.get(x.elements)).integer) }),
@@ -354,7 +367,17 @@ pub const Vm = struct {
                 },
                 .load => |x| {
                     var path: [64]runtime_value.Projection = undefined;
-                    try slots.put(x.dst, try self.context().storage.read(try self.resolvePlace(unit, current.storage, x.place, &path, true)));
+                    const reference = try self.resolvePlace(unit, current.storage, x.place, &path, true);
+                    var value = try self.context().storage.read(reference);
+                    // Immutable byte backing is compact and untyped. A typed
+                    // load interprets CChar signedness using the target width.
+                    if (value == .integer and self.context().storage.frames.items[@intFromEnum(reference.frame)].duration == .static) {
+                        if (b.integerBounds(unit.graph, f.slots[x.dst])) |bounds| {
+                            if (bounds.maximum - bounds.minimum != 255) return error.ExecutionInvalidReference;
+                            value.integer = try integer.evaluate(.addition, value.integer, 0, bounds);
+                        }
+                    }
+                    try slots.put(x.dst, value);
                 },
                 .check_place => |place| {
                     var path: [64]runtime_value.Projection = undefined;
@@ -445,3 +468,22 @@ pub const Vm = struct {
         }
     }
 };
+
+test "source metadata resolution rejects invalid IDs and retains immutable text" {
+    var context = Context.init(std.testing.allocator, 1024);
+    defer context.deinit();
+    _ = try context.sessionSlots(1, &.{});
+    const id = try context.registerTraceLocation(.{ .path = "input.rg", .offset = 3, .line = 2, .column = 1, .source_line = "ñ" });
+    const duplicate = try context.registerTraceLocation(.{ .path = "input.rg", .offset = 3, .line = 2, .column = 1, .source_line = "ñ" });
+    try std.testing.expectEqual(id.integer, duplicate.integer);
+    const resolved = try context.resolveTraceLocation(id.integer);
+    try std.testing.expectEqual(@as(i128, 2), resolved.record[2].integer);
+    try std.testing.expectEqual(@as(i128, 1), resolved.record[3].integer);
+    const text = resolved.record[1].reference;
+    try std.testing.expectEqual(@as(i128, 0xc3), (try context.storage.readOffset(text, 0)).integer);
+    try std.testing.expectEqual(@as(i128, 0xb1), (try context.storage.readOffset(text, 1)).integer);
+    try std.testing.expectEqual(@as(i128, 0), (try context.storage.readOffset(text, 2)).integer);
+    try std.testing.expectError(error.ExecutionReadonlyReference, context.storage.borrow(text, .read_write));
+    try std.testing.expectError(error.ExecutionInvalidSourceLocation, context.resolveTraceLocation(-1));
+    try std.testing.expectError(error.ExecutionInvalidSourceLocation, context.resolveTraceLocation(1));
+}

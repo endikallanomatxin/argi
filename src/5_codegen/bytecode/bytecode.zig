@@ -96,6 +96,7 @@ pub const Instruction = struct {
     source: p.SourceRef,
     op: union(enum) {
         constant: struct { dst: Slot, value: Value },
+        resolve_location: struct { dst: Slot, id: Slot },
         trace_location: struct { dst: Slot, location: *const TraceLocation },
         static_bytes: struct { dst: Slot, bytes: []const u8 },
         offset_reference: struct { dst: Slot, src: Slot, elements: Slot },

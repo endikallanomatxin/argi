@@ -566,7 +566,11 @@ test "interactive source IDs retain original metadata across commands" {
     defer sources.deinit();
     var diagnostics = diagnostics_mod.Diagnostics.init(&allocator, &.{});
     defer diagnostics.deinit();
-    const loaded = try sources.loadModule(&diagnostics, "SourceLocationId: Type = (.value: UInt32)\n" ++
+    const loaded = try sources.loadModule(&diagnostics, "ImplicitlyCopyable#(.T: Type): Contract = ()\n" ++
+        "SourceLocationId: Type = (.value: UInt32)\n" ++
+        "implement ImplicitlyCopyable#(SourceLocationId) ()\n" ++
+        "SourceLocation: Type = (.source_file: &CChar, .source_line: &CChar, .line: UIntNative, .column: UIntNative)\n" ++
+        "source_location := (.id: SourceLocationId) -> (.location: SourceLocation) { abort }\n" ++
         "error_location_id := () -> (.location: SourceLocationId) { location = (.value = 0) }\n" ++
         "core_located := (.location: SourceLocationId = error_location_id()) -> (.value: UInt32) { value = location.value }\n");
     var core = loaded.*;
@@ -591,6 +595,12 @@ test "interactive source IDs retain original metadata across commands" {
     const core_default = session.runtime.context.trace_locations.items[3];
     try std.testing.expectEqualStrings("core_located()", core_default.source_line);
     try std.testing.expectEqual(@as(u32, 1), core_default.column);
+    const recovered = (try session.submitInput("source_location(_0)")).?.value.record;
+    try std.testing.expectEqual(@as(i128, 1), recovered[2].integer);
+    try std.testing.expectEqual(@as(i128, 1), recovered[3].integer);
+    for ("error_location_id()", 0..) |byte, index| {
+        try std.testing.expectEqual(@as(i128, byte), (try session.runtime.context.storage.readOffset(recovered[1].reference, @intCast(index))).integer);
+    }
     try std.testing.expectError(error.Reported, session.submitInput("#run error_location_id()"));
     try session.reset();
     try std.testing.expectEqual(@as(usize, 0), session.runtime.context.trace_locations.items.len);

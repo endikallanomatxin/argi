@@ -692,7 +692,18 @@ const FunctionLower = struct {
         const node = self.parent.graph.node(id);
         const x = node.content.function_call;
         if (self.coreFunction(x.callee, "error_location_id")) return try self.traceLocation(node);
-        if (self.coreFunction(x.callee, "source_location")) return self.parent.reject(node.source, "source location resolution");
+        if (self.coreFunction(x.callee, "source_location")) {
+            const literal = self.parent.graph.node(x.input).content.struct_value_literal;
+            if (literal.fields.len != 1) return error.InvalidBytecode;
+            const input_value = try self.expression(self.parent.graph.value_fields.items[literal.fields.start].value);
+            const fields = types.fields(self.parent.graph, self.slots.items[input_value]) orelse return error.InvalidBytecode;
+            if (fields.len != 1 or !types.isBuiltin(self.parent.graph, self.parent.graph.fields.items[fields.start].ty, .UInt32)) return error.InvalidBytecode;
+            const id_slot = try self.newSlot(self.parent.graph.fields.items[fields.start].ty);
+            _ = try self.emit(node.source, .{ .field = .{ .dst = id_slot, .base = input_value, .index = 0 } });
+            const result = try self.newSlot(node.ty orelse return error.InvalidBytecode);
+            _ = try self.emit(node.source, .{ .resolve_location = .{ .dst = result, .id = id_slot } });
+            return result;
+        }
         const previous_location = self.default_location_source;
         self.default_location_source = node.source;
         defer self.default_location_source = previous_location;
