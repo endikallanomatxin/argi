@@ -798,6 +798,29 @@ pub const Resolver = struct {
         if (local_cleanup.items.len != 0) self.stats.cleanup_edges += @intCast(local_cleanup.items.len);
     }
 
+    /// Reuse selected cleanup in reverse binding order for an explicit session
+    /// exit. This selects no new destructor and publishes no runtime behavior.
+    /// The coordinator must check the resulting exit command against retained
+    /// temporal facts before executing it or discarding session storage.
+    pub fn selectedSessionCleanup(self: *const Resolver, allocator: std.mem.Allocator, bindings: []const global_sg.GlobalBindingId) ![]global_sg.GlobalNodeId {
+        var result: std.ArrayList(global_sg.GlobalNodeId) = .empty;
+        errdefer result.deinit(allocator);
+        var index = bindings.len;
+        while (index != 0) {
+            index -= 1;
+            const binding = bindings[index];
+            if (std.mem.indexOfScalar(global_sg.GlobalBindingId, bindings[0..index], binding) != null) return error.DuplicateSessionBinding;
+            var found = false;
+            for (self.auto_nodes.items) |entry| if (entry.binding == binding) {
+                found = true;
+                if (entry.node) |node| try result.append(allocator, node);
+                break;
+            };
+            if (!found) return error.UnknownSessionCleanup;
+        }
+        return result.toOwnedSlice(allocator);
+    }
+
     fn appendCleanup(
         self: *Resolver,
         active: []const global_sg.GlobalBindingId,
@@ -1224,4 +1247,20 @@ test "parameterized defer checkpoint restores resolver side effects" {
     try std.testing.expectEqual(@as(usize, 1), resolver.deferred.items.len);
     try std.testing.expectEqual(@as(u32, 1), resolver.stats.defers);
     try std.testing.expectEqual(@as(u32, 1), @intFromEnum(resolver.deferred.items[0].marker));
+}
+
+test "session exit cleanup reuses selected nodes in reverse declaration order" {
+    const a = std.testing.allocator;
+    var resolver: Resolver = .{ .allocator = a, .graph = undefined, .modules = &.{}, .offsets = &.{}, .core = undefined };
+    defer resolver.deinit();
+    try resolver.auto_nodes.appendSlice(a, &.{
+        .{ .binding = @enumFromInt(0), .node = @enumFromInt(10) },
+        .{ .binding = @enumFromInt(1), .node = null },
+        .{ .binding = @enumFromInt(2), .node = @enumFromInt(12) },
+    });
+    const nodes = try resolver.selectedSessionCleanup(a, &.{ @enumFromInt(0), @enumFromInt(1), @enumFromInt(2) });
+    defer a.free(nodes);
+    try std.testing.expectEqualSlices(global_sg.GlobalNodeId, &.{ @enumFromInt(12), @enumFromInt(10) }, nodes);
+    try std.testing.expectError(error.DuplicateSessionBinding, resolver.selectedSessionCleanup(a, &.{ @enumFromInt(0), @enumFromInt(0) }));
+    try std.testing.expectError(error.UnknownSessionCleanup, resolver.selectedSessionCleanup(a, &.{@enumFromInt(9)}));
 }

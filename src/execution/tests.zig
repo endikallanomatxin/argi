@@ -1549,6 +1549,18 @@ test "bytecode session moves update persistent cleanup rather than frame flags" 
     defer executor.deinit();
     try std.testing.expectEqual(@as(i128, 42), (try executor.invokeExpression(&.{}))[0].integer);
     try std.testing.expect(!try context.storage.cleanupTest(reference));
+    // Explicit exit uses the same selected cleanup descriptor and flag state.
+    _ = try context.storage.cleanupSet(reference, true);
+    const cleanup_node: g.GlobalNodeId = @enumFromInt(graph.nodes.items.len);
+    try graph.auto_deinits.append(a, .{ .binding = @enumFromInt(0), .deinit_fn = null });
+    try graph.nodes.append(a, .{ .source = source, .ty = null, .content = .{ .auto_deinit_binding = @enumFromInt(0) } });
+    var exit_compiler = try lower.Lower.initSession(a, &graph, interface);
+    const exit_program = try exit_compiler.compileSessionCleanup(&.{cleanup_node});
+    var exit_vm = try vm.Vm.initShared(a, exit_program, .{ .value_cells = 1000 }, &context);
+    defer exit_vm.deinit();
+    _ = try exit_vm.invokeExpression(&.{});
+    try std.testing.expect(!try context.storage.cleanupTest(reference));
+    _ = try exit_vm.invokeExpression(&.{});
     try context.storage.releaseSession(persistent);
 }
 

@@ -496,3 +496,9 @@ declarations retain their selected cleanup but omit lexical exit destruction;
 nested blocks and initializer temporaries keep ordinary cleanup. Continuation preparation now adds its function as an explicit
 execution root before lazy resolution, preserving its body and dependencies in
 published snapshots without requiring a main entrypoint.
+
+Session exit can collect already-selected cleanup nodes in reverse declaration
+order and lower them through the shared cleanup emitter as a zero-output
+bytecode entry. Persistent flags gate repeated cleanup. The coordinator still
+needs a checked exit continuation, dependency retention and reset/exit execution
+before releasing storage; collecting nodes does not establish that proof.

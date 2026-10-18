@@ -46,6 +46,22 @@ pub const Lower = struct {
         return self.finish(null);
     }
 
+    /// Lower a checked session-exit cleanup list through the ordinary cleanup
+    /// emitter. This entry has no invented semantic function identity. Its
+    /// dependency bodies and persistent layouts must belong to the checked graph.
+    pub fn compileSessionCleanup(self: *Lower, nodes: []const g.GlobalNodeId) !b.Program {
+        if (self.session == null) return error.InvalidBytecode;
+        for (nodes) |id| {
+            if (@intFromEnum(id) >= self.graph.nodes.items.len) return error.InvalidBytecode;
+            const node = self.graph.node(id);
+            if (node.content != .auto_deinit_binding) return error.InvalidBytecode;
+            const cleanup = self.graph.auto_deinits.items[@intFromEnum(node.content.auto_deinit_binding)];
+            if (self.sessionIndex(cleanup.binding) == null) return error.InvalidBytecode;
+        }
+        var function = FunctionLower{ .parent = self };
+        return self.finish(try function.compileCleanup(nodes));
+    }
+
     // An expression has its own entry frame, not a fabricated GlobalFunctionId.
     // Inputs replace already-evaluated operand nodes; normal lowering still
     // selects every instruction, call and control-flow edge.
@@ -120,6 +136,18 @@ const FunctionLower = struct {
     loops: std.ArrayList(Loop) = .empty,
 
     precomputed: []const struct { node: g.GlobalNodeId, slot: b.Slot } = &.{},
+
+    fn compileCleanup(self: *FunctionLower, nodes: []const g.GlobalNodeId) !b.Function {
+        const a = self.parent.allocator;
+        defer self.bindings.deinit(a);
+        defer self.drops.deinit(a);
+        defer self.cleanup.deinit(a);
+        defer self.loops.deinit(a);
+        try self.prepareSessionDrops();
+        for (nodes) |node| try self.statement(node);
+        _ = try self.emit(self.parent.source, .{ .ret = &.{} });
+        return .{ .slots = try self.slots.toOwnedSlice(a), .inputs = &.{}, .outputs = &.{}, .code = try self.code.toOwnedSlice(a), .cleanup = try self.finishCleanup(), .write_destinations = try self.write_destinations.toOwnedSlice(a) };
+    }
 
     fn compileExpression(self: *FunctionLower, root: g.GlobalNodeId, operands: []const g.GlobalNodeId) !b.Function {
         const a = self.parent.allocator;
