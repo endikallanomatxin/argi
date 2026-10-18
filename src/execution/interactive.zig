@@ -25,6 +25,7 @@ pub const Interactive = struct {
     limits: vm.Limits,
     closed: bool = false,
     result_sequence: u64 = 0,
+    prelude: ?[]const u8 = null,
     imports: ?struct { io: std.Io, path: []const u8 } = null,
 
     pub fn init(self: *Interactive, allocator: std.mem.Allocator, modules: []const module_sg.ModuleSemanticGraph, options: sema.Options, limits: vm.Limits) !void {
@@ -42,6 +43,7 @@ pub const Interactive = struct {
         self.closed = false;
         self.result_sequence = 0;
         self.imports = null;
+        self.prelude = null;
         self.diagnostic_arena = .init(allocator);
         errdefer self.diagnostic_arena.deinit();
         self.diagnostic_allocator = self.diagnostic_arena.allocator();
@@ -62,7 +64,19 @@ pub const Interactive = struct {
         self.imports = .{ .io = io, .path = path };
     }
 
+    /// A frontend installs ordinary checked statements before any user input.
+    /// Keep their source outside submission storage so reset can execute it again.
+    pub fn initializePrelude(self: *Interactive, source: []const u8) !void {
+        if (self.closed) return error.InteractiveSessionClosed;
+        if (self.prelude != null or self.compiler.revision != 0) return error.PreludeRequiresFreshSession;
+        const retained = try self.allocator.dupe(u8, source);
+        errdefer self.allocator.free(retained);
+        try self.submitStatements(retained);
+        self.prelude = retained;
+    }
+
     pub fn deinit(self: *Interactive) void {
+        if (self.prelude) |source| self.allocator.free(source);
         if (self.imports) |loader| self.allocator.free(loader.path);
         self.runtime.deinit();
         self.compiler.deinit();
@@ -180,7 +194,8 @@ pub const Interactive = struct {
         var options = self.options;
         options.diagnostics = &self.diagnostics;
         var replacement = try compilation.CompilationSession.init(self.allocator, self.initial_modules, options);
-        errdefer replacement.deinit();
+        var transferred = false;
+        errdefer if (!transferred) replacement.deinit();
         if (self.runtime.context.state != .poisoned) {
             self.diagnostics.list.clearRetainingCapacity();
             try self.cleanup();
@@ -197,9 +212,11 @@ pub const Interactive = struct {
         self.diagnostics = .init(&self.diagnostic_allocator, self.initial_files);
         self.sources = .init(self.allocator);
         self.compiler = replacement;
+        transferred = true;
         self.runtime = .init(self.allocator, &self.compiler, self.limits);
         self.result_sequence = 0;
         self.diagnostics.list.clearRetainingCapacity();
+        if (self.prelude) |source| try self.submitStatements(source);
     }
 };
 
@@ -699,5 +716,44 @@ test "interactive imported globals initialize once and retain mutation across un
     try session.reset();
     try session.submit("library := import(\"./library\")");
     try std.testing.expectEqual(@as(i128, 41), (try session.submitInput("library.advance()")).?.value.integer);
+    try session.close();
+}
+
+test "interactive prelude executes checked assumptions again after reset" {
+    var session: Interactive = undefined;
+    try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    try std.testing.expectError(error.Reported, session.initializePrelude("missing()"));
+    try std.testing.expectEqual(@as(?[]const u8, null), session.prelude);
+    try std.testing.expectEqual(@as(u64, 0), session.compiler.revision);
+    const source = "enabled :: Bool = true\nassume capability ::= &enabled";
+    try session.initializePrelude(source);
+    try session.submit("observe := (.capability: &Bool) -> (.result: Bool) { result = capability& }");
+    try std.testing.expect((try session.submitInput("observe()")).?.value.boolean);
+    try session.submitStatements("enabled = false");
+    try std.testing.expect(!(try session.submitInput("observe()")).?.value.boolean);
+    try std.testing.expectError(error.PreludeRequiresFreshSession, session.initializePrelude("unwanted ::= true"));
+    try session.reset();
+    try std.testing.expectEqualStrings(source, session.prelude.?);
+    try session.submit("observe := (.capability: &Bool) -> (.result: Bool) { result = capability& }");
+    const result = (try session.submitInput("observe()")).?;
+    try std.testing.expect(result.value.boolean);
+    try std.testing.expectEqualStrings("_0", result.name);
+    try session.close();
+}
+
+test "interactive reset retains the new compiler when prelude execution traps" {
+    var session: Interactive = undefined;
+    try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    try session.initializePrelude("enabled ::= true");
+    // The old runtime can finish cleanup; only the replacement receives the
+    // reduced instruction allowance and traps while evaluating the prelude.
+    session.limits.instructions = 1;
+    try std.testing.expectError(error.ExecutionInstructionLimit, session.reset());
+    try std.testing.expectEqual(.poisoned, session.runtime.context.state);
+    session.limits.instructions = 1_000_000;
+    try session.reset();
+    try std.testing.expect((try session.submitInput("enabled")).?.value.boolean);
     try session.close();
 }

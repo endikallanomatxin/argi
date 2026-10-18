@@ -6,9 +6,9 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
 
 ## Next
 
-- Execute and display an ordinary Argi REPL prelude establishing persistent
-  assumed allocator, output and trace capabilities. Add checked host capability
-  operations rather than injecting unchecked bindings or bypassing safety.
+- Extend the ordinary REPL prelude with persistent allocator and output
+  capabilities. Add checked host operations rather than injecting unchecked
+  bindings or bypassing safety.
 - Improve unresolved-name diagnostics in retained sessions.
 - Resolve computed module-level `#if` before discovering selected imports and
   declarations. Preserve source identities and do not analyze inactive branches.

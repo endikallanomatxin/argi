@@ -6,6 +6,8 @@ const interactive = @import("../execution/interactive.zig");
 const repl_input = @import("repl_input.zig");
 const value = @import("../5_codegen/bytecode/value.zig");
 
+const prelude = @embedFile("repl_prelude.rg");
+
 const help =
     \\Enter definitions, statements or expressions. Each line is one submission.
     \\Expression results remain available as _0, _1, ... until reset or exit.
@@ -51,6 +53,10 @@ pub fn run(io: std.Io, environ: ?*const std.process.Environ.Map, args: []const [
     var output_buffer: [4096]u8 = undefined;
     var output = std.Io.File.stdout().writer(io, &output_buffer);
     const terminal = try std.Io.File.stdin().isTty(io) and try std.Io.File.stdout().isTty(io);
+    session.initializePrelude(prelude) catch |err| {
+        if (session.diagnostics.hasErrors()) try session.diagnostics.dump();
+        return err;
+    };
     try interact(&session, &input.interface, &output.interface, terminal);
 }
 
@@ -72,7 +78,10 @@ fn readSubmissions(session: *interactive.Interactive, input: *std.Io.Reader, out
     var editor: repl_input.Editor = .{ .allocator = session.allocator };
     defer editor.deinit();
     var multiline = false;
-    if (terminal) try output.writeAll("Argi experimental REPL. :help for commands.\n");
+    if (terminal) {
+        try output.writeAll("Argi experimental REPL. :help for commands.\n");
+        try showPrelude(session, output);
+    }
     while (true) {
         try output.flush();
         const line = (if (terminal)
@@ -100,7 +109,11 @@ fn readSubmissions(session: *interactive.Interactive, input: *std.Io.Reader, out
         } else if (std.mem.eql(u8, text, ":begin")) {
             multiline = true;
         } else if (std.mem.eql(u8, text, ":reset")) {
-            session.reset() catch |err| try report(session, output, err);
+            session.reset() catch |err| {
+                try report(session, output, err);
+                continue;
+            };
+            if (terminal) try showPrelude(session, output);
         } else if (text[0] == ':') {
             try output.writeAll("Unknown REPL command; use :help.\n");
         } else {
@@ -108,6 +121,10 @@ fn readSubmissions(session: *interactive.Interactive, input: *std.Io.Reader, out
         }
     }
     if (multiline) try output.writeAll("Incomplete multiline submission discarded.\n");
+}
+
+fn showPrelude(session: *const interactive.Interactive, output: *std.Io.Writer) !void {
+    if (session.prelude) |source| try output.print("Prelude:\n{s}\n", .{source});
 }
 
 fn readTerminal(editor: *repl_input.Editor, input: *std.Io.Reader, output: *std.Io.Writer, prompt: []const u8) !?[]const u8 {
