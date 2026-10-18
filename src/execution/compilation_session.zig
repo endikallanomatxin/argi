@@ -50,6 +50,20 @@ const TemporalProof = struct {
     }
 };
 
+pub const Version = struct {
+    graph: @import("../4_semantics/global/graph.zig").GlobalSemanticGraph,
+    stats: sema.Stats,
+    // Non-continuation snapshots own all facts/annotations from their proof.
+    // Continuation facts instead live in the retained TemporalProof chain.
+    safety_arena: ?std.heap.ArenaAllocator = null,
+
+    fn deinit(self: *Version, allocator: std.mem.Allocator) void {
+        self.graph.deinit(allocator);
+        if (self.safety_arena) |*arena| arena.deinit();
+        self.* = undefined;
+    }
+};
+
 /// Retains accepted semantic construction and immutable checked graph versions.
 /// Initialize in final storage before preparing candidates. ModuleSG prefixes
 /// and their immutable source metadata are borrowed and must outlive this owner.
@@ -58,7 +72,7 @@ const TemporalProof = struct {
 pub const CompilationSession = struct {
     allocator: std.mem.Allocator,
     semantic: *sema.Session,
-    versions: std.ArrayList(*sema.Result) = .empty,
+    versions: std.ArrayList(*Version) = .empty,
     revision: u64 = 0,
     namespace: bytecode.SessionNamespace,
     temporal: ?*TemporalProof = null,
@@ -68,7 +82,7 @@ pub const CompilationSession = struct {
         owner: *const CompilationSession,
         revision: u64,
         semantic: ?*sema.Session,
-        checked: ?*sema.Result,
+        checked: ?*Version,
         temporal: ?*TemporalProof = null,
         is_exit: bool = false,
         entry: ?@import("../4_semantics/global/graph.zig").GlobalFunctionId = null,
@@ -76,7 +90,7 @@ pub const CompilationSession = struct {
         pub fn deinit(self: *Candidate) void {
             if (self.temporal) |proof| proof.release();
             if (self.checked) |checked| {
-                checked.graph.deinit(self.allocator);
+                checked.deinit(self.allocator);
                 self.allocator.destroy(checked);
             }
             if (self.semantic) |semantic| {
@@ -99,7 +113,7 @@ pub const CompilationSession = struct {
     pub fn deinit(self: *CompilationSession) void {
         if (self.temporal) |proof| proof.release();
         for (self.versions.items) |version| {
-            version.graph.deinit(self.allocator);
+            version.deinit(self.allocator);
             self.allocator.destroy(version);
         }
         self.versions.deinit(self.allocator);
@@ -139,8 +153,8 @@ pub const CompilationSession = struct {
         const proof = if (continuation != null) try TemporalProof.create(self.allocator, self.temporal) else null;
         errdefer if (proof) |owned| owned.release();
         var checked = try checkedSnapshot(candidate, self.allocator, diagnostics, continuation, proof);
-        errdefer checked.graph.deinit(self.allocator);
-        const version = try self.allocator.create(sema.Result);
+        errdefer checked.deinit(self.allocator);
+        const version = try self.allocator.create(Version);
         version.* = checked;
         return .{ .allocator = self.allocator, .owner = self, .revision = self.revision, .semantic = candidate, .checked = version, .temporal = proof, .is_exit = exit_bindings != null, .entry = continuation };
     }
@@ -172,20 +186,23 @@ pub const CompilationSession = struct {
 // Keep mutable construction open for subsequent submissions. Finalization,
 // temporal safety annotations and frozen constants belong to this independent
 // executable snapshot, using the ordinary compiler's proof and evaluator.
-fn checkedSnapshot(semantic: *const sema.Session, allocator: std.mem.Allocator, diagnostics: *diagnostics_mod.Diagnostics, continuation: ?@import("../4_semantics/global/graph.zig").GlobalFunctionId, proof: ?*TemporalProof) !sema.Result {
+fn checkedSnapshot(semantic: *const sema.Session, allocator: std.mem.Allocator, diagnostics: *diagnostics_mod.Diagnostics, continuation: ?@import("../4_semantics/global/graph.zig").GlobalFunctionId, proof: ?*TemporalProof) !Version {
     var publication: sema.Session = undefined;
     try semantic.fork(&publication, allocator, diagnostics);
     defer publication.deinit();
     var result = try publication.finish();
     errdefer result.graph.deinit(allocator);
-    const proof_allocator = if (proof) |owned| owned.arena.allocator() else allocator;
+    var safety_arena: ?std.heap.ArenaAllocator = if (proof == null) .init(allocator) else null;
+    errdefer if (safety_arena) |*arena| arena.deinit();
+    const proof_allocator = if (proof) |owned| owned.arena.allocator() else safety_arena.?.allocator();
     var safety = Safety.init(proof_allocator, diagnostics, &result.graph);
+    safety.graph_allocator = allocator;
     defer safety.deinit();
     if (continuation) |function| {
         try safety.analyzeContinuation(function, &proof.?.state);
     } else try safety.analyze();
     try @import("comptime.zig").resolve(allocator, &result.graph, diagnostics);
-    return result;
+    return .{ .graph = result.graph, .stats = result.stats, .safety_arena = safety_arena };
 }
 
 test "compilation session publishes checked candidates and rejects stale revisions" {
@@ -510,4 +527,29 @@ test "execution session resolves accepted bindings in later command modules" {
     try runtime.execute(&update, @enumFromInt(first.functions.items.len), &layouts);
     const stored = try runtime.context.storage.slots(runtime.context.bindings.get(binding).?);
     try std.testing.expectEqual(@as(i128, 7), (try stored.get(0)).integer);
+}
+
+fn publishDefinitionWithAllocationFailures(allocator: std.mem.Allocator) !void {
+    const a = std.testing.allocator;
+    const source = "answer := () -> (.result: Int32) { result = 42 }\n";
+    var diagnostic_arena = std.heap.ArenaAllocator.init(a);
+    defer diagnostic_arena.deinit();
+    const diagnostic_allocator = diagnostic_arena.allocator();
+    const files = [_]@import("../1_base/source_files.zig").SourceFile{.{ .path = "submission/main.rg", .code = source }};
+    var diagnostics = diagnostics_mod.Diagnostics.init(&diagnostic_allocator, &files);
+    defer diagnostics.deinit();
+    var module = try sourceModule(a, source, &diagnostics);
+    defer module.deinit(a);
+    var session = try CompilationSession.init(allocator, &.{}, .{});
+    defer session.deinit();
+    var candidate = try session.prepare(&.{module}, &diagnostics);
+    defer candidate.deinit();
+    try std.testing.expect(candidate.checked.?.safety_arena != null);
+    try session.accept(&candidate);
+    try std.testing.expectEqual(@as(usize, 1), session.versions.items.len);
+    try std.testing.expect(session.versions.items[0].safety_arena != null);
+}
+
+test "definition publication retains safety allocations and releases failure paths" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, publishDefinitionWithAllocationFailures, .{});
 }

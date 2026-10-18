@@ -205,6 +205,9 @@ pub const SafetyChecker = struct {
 
     unit: ?*const @import("../global/reachability.zig").FunctionSet = null,
     allocator: std.mem.Allocator,
+    // Graph pools retain their own allocator; facts and annotation slices may
+    // live in a publication/proof arena with a different lifetime.
+    graph_allocator: ?std.mem.Allocator = null,
     diagnostics: *diagnostics.Diagnostics,
     graph: *graph_mod.GlobalSemanticGraph,
     call_stack: std.array_list.Managed(graph_mod.GlobalFunctionId),
@@ -1915,14 +1918,14 @@ pub const SafetyChecker = struct {
         const binding = self.graph.binding(storage.root);
         var ty = binding.ty;
         var node: graph_mod.GlobalNodeId = @enumFromInt(self.graph.nodes.items.len);
-        try self.graph.nodes.append(self.allocator, .{ .source = binding.source, .ty = ty, .content = .{ .binding_use = storage.root } });
+        try self.graph.nodes.append(self.graph_allocator orelse self.allocator, .{ .source = binding.source, .ty = ty, .content = .{ .binding_use = storage.root } });
         for (storage.projections) |projection| switch (projection) {
             .field => |index| {
                 const fields = types.fields(self.graph, ty) orelse return null;
                 if (index >= fields.len) return null;
                 const field = self.graph.fields.items[fields.start + index];
                 const projected: graph_mod.GlobalNodeId = @enumFromInt(self.graph.nodes.items.len);
-                try self.graph.nodes.append(self.allocator, .{ .source = binding.source, .ty = field.ty, .content = .{ .struct_field_access = .{ .value = node, .field_name = field.name, .field_index = index } } });
+                try self.graph.nodes.append(self.graph_allocator orelse self.allocator, .{ .source = binding.source, .ty = field.ty, .content = .{ .struct_field_access = .{ .value = node, .field_name = field.name, .field_index = index } } });
                 node = projected;
                 ty = field.ty;
             },
@@ -1932,7 +1935,7 @@ pub const SafetyChecker = struct {
                 const variant_id: graph_mod.GlobalVariantId = @enumFromInt(variants.start + index);
                 const payload = self.graph.variants.items[@intFromEnum(variant_id)].payload_type orelse return null;
                 const projected: graph_mod.GlobalNodeId = @enumFromInt(self.graph.nodes.items.len);
-                try self.graph.nodes.append(self.allocator, .{ .source = binding.source, .ty = payload, .content = .{ .choice_payload_access = .{ .value = node, .variant = variant_id, .payload_type = payload } } });
+                try self.graph.nodes.append(self.graph_allocator orelse self.allocator, .{ .source = binding.source, .ty = payload, .content = .{ .choice_payload_access = .{ .value = node, .variant = variant_id, .payload_type = payload } } });
                 node = projected;
                 ty = payload;
             },
