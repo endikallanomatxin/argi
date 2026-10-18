@@ -691,10 +691,26 @@ pub const CodeGenerator = struct {
     }
 
     fn initializeGlobalBindings(self: *CodeGenerator) !void {
-        for (self.graph.roots.items) |node_id| switch (self.graph.nodes.items[@intFromEnum(node_id)].content) {
-            .binding_declaration => |binding| try self.ensureGlobalInitialized(binding),
+        var roots: std.ArrayList(graph_mod.GlobalBindingId) = .empty;
+        defer roots.deinit(self.allocator);
+        for (self.graph.roots.items) |node_id| switch (self.graph.node(node_id).content) {
+            .binding_declaration => |binding| try roots.append(self.allocator, binding),
             else => {},
         };
+        var failure: ?graph_mod.GlobalBindingId = null;
+        const plan = @import("../global_initialization.zig").buildReporting(self.allocator, self.graph, roots.items, &failure) catch |err| switch (err) {
+            error.NonConstantGlobalInitializer, error.CyclicGlobalInitializer => {
+                const record = self.graph.binding(failure orelse return CodegenError.InvalidType);
+                if (err == error.CyclicGlobalInitializer)
+                    try self.report(record.source, "module-level binding '{s}' participates in a cyclic initializer dependency", .{self.graph.text(record.name)})
+                else
+                    try self.report(record.source, "module-level binding '{s}' must use a constant initializer for now", .{self.graph.text(record.name)});
+                return CodegenError.Reported;
+            },
+            else => return err,
+        };
+        defer self.allocator.free(plan.order);
+        for (plan.order) |binding| try self.ensureGlobalInitialized(binding);
     }
 
     fn ensureGlobalInitialized(self: *CodeGenerator, binding: graph_mod.GlobalBindingId) CodegenError!void {

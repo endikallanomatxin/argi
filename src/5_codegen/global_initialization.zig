@@ -10,37 +10,53 @@ pub const Plan = struct {
 };
 
 pub fn build(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, roots: []const g.GlobalBindingId) !Plan {
-    const global = try allocator.alloc(bool, graph.bindings.items.len);
-    defer allocator.free(global);
-    @memset(global, false);
+    var failure: ?g.GlobalBindingId = null;
+    return buildReporting(allocator, graph, roots, &failure);
+}
+
+pub fn buildReporting(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, roots: []const g.GlobalBindingId, failure: *?g.GlobalBindingId) !Plan {
+    failure.* = null;
+    const states = try allocator.alloc(Visit, graph.bindings.items.len);
+    defer allocator.free(states);
+    @memset(states, .local);
     for (graph.roots.items) |root| {
         const node = graph.node(root);
-        if (node.content == .binding_declaration) global[@intFromEnum(node.content.binding_declaration)] = true;
+        if (node.content == .binding_declaration) states[@intFromEnum(node.content.binding_declaration)] = .pending;
     }
-    var state: State = .{ .allocator = allocator, .graph = graph, .global = global };
-    defer state.visited.deinit(allocator);
+    var state: State = .{ .allocator = allocator, .graph = graph, .states = states, .failure = failure };
     errdefer state.order.deinit(allocator);
     for (roots) |root| try state.binding(root);
     return .{ .order = try state.order.toOwnedSlice(allocator) };
 }
 
+const Visit = enum(u8) { local, pending, active, done };
+
 const State = struct {
     allocator: std.mem.Allocator,
     graph: *const g.GlobalSemanticGraph,
-    global: []const bool,
+    states: []Visit,
+    failure: *?g.GlobalBindingId,
     active: usize = 0,
-    visited: std.AutoHashMapUnmanaged(g.GlobalBindingId, enum { active, done }) = .empty,
     order: std.ArrayList(g.GlobalBindingId) = .empty,
 
     fn binding(self: *State, id: g.GlobalBindingId) anyerror!void {
+        errdefer if (self.failure.* == null) {
+            self.failure.* = id;
+        };
         if (@intFromEnum(id) >= self.graph.bindings.items.len) return error.InvalidGlobalInitializer;
-        if (self.visited.get(id)) |state| return if (state == .active) error.CyclicGlobalInitializer else {};
-        if (!self.global[@intFromEnum(id)] or self.active >= 256) return error.InvalidGlobalInitializer;
+        const state = &self.states[@intFromEnum(id)];
+        switch (state.*) {
+            .done => return,
+            .active => return error.CyclicGlobalInitializer,
+            .local => return error.InvalidGlobalInitializer,
+            .pending => {},
+        }
+        if (self.active >= 256) return error.InvalidGlobalInitializer;
         self.active += 1;
         defer self.active -= 1;
-        try self.visited.put(self.allocator, id, .active);
+        state.* = .active;
         if (self.graph.binding(id).initialization) |node| try self.value(node, 0);
-        try self.visited.put(self.allocator, id, .done);
+        state.* = .done;
         try self.order.append(self.allocator, id);
     }
 
@@ -95,7 +111,10 @@ test "global initializer plans order dependencies and reject cycles" {
     defer a.free(plan.order);
     try std.testing.expectEqualSlices(g.GlobalBindingId, &.{ @enumFromInt(1), @enumFromInt(0) }, plan.order);
     graph.nodes.items[1].content = .{ .binding_use = @enumFromInt(0) };
-    try std.testing.expectError(error.CyclicGlobalInitializer, build(a, &graph, &.{@enumFromInt(0)}));
+    var failure: ?g.GlobalBindingId = null;
+    try std.testing.expectError(error.CyclicGlobalInitializer, buildReporting(a, &graph, &.{@enumFromInt(0)}, &failure));
+    try std.testing.expectEqual(@as(?g.GlobalBindingId, @enumFromInt(0)), failure);
     graph.nodes.items[1].content = .abort_statement;
-    try std.testing.expectError(error.NonConstantGlobalInitializer, build(a, &graph, &.{@enumFromInt(0)}));
+    try std.testing.expectError(error.NonConstantGlobalInitializer, buildReporting(a, &graph, &.{@enumFromInt(0)}, &failure));
+    try std.testing.expectEqual(@as(?g.GlobalBindingId, @enumFromInt(1)), failure);
 }
