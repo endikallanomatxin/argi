@@ -2636,7 +2636,7 @@ pub const Resolver = struct {
         if (raw < base) return null;
         const local: module_entities.ModuleDeclId = @enumFromInt(raw - base);
         for (self.modules[module_index].semantic.parameterized_storage.parameterized_functions.items) |parameterized|
-            if (parameterized.declaration == local) return parameterized;
+            if (parameterized.concrete_function == null and parameterized.declaration == local) return parameterized;
         return null;
     }
 };

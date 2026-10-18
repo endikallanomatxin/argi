@@ -380,10 +380,13 @@ predicate evaluation. Its decisions are true/false/pending; a pending condition
 hides both arms and exposes only the active unresolved frontier. Target selection
 uses this same plan and retains its previous condition-validation behavior.
 
-- Bind indexed conditions to ordinary syntax and checked expression evaluation.
-  Retain declaration/session state while discovering only newly selected imports;
-  computed `#if` is not enabled yet. Generic body decisions must belong to each
-  specialization rather than one global source mask.
+Computed function-body conditions now use staged checked execution, with separate
+Bool requests and branch materialization per specialization. Concrete bodies retain
+syntax-free IR until their conditions are ready, preserving their ordinary identity.
+
+- Extend selection to module declarations and imports while retaining semantic
+  session state. Discover imports only after their branch is selected.
+- Extend closed condition expressions, preserving short-circuit evaluation.
 
 ## Remaining decisions
 

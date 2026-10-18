@@ -141,11 +141,12 @@ destructors; normal lexical cleanup is distinct from abort recovery.
 Explicit `#run function(...)` calls use the same executor during compilation,
 including native builds. Arguments must be constants; results freeze into compiler
 values. References and values requiring cleanup cannot be exported. Compile-time
-calls currently resolve after semantic completion and cannot yet supply type
-shapes or compile-time parameters. See [compile-time computation](../description/50_comptime.md).
+integer results can supply type shapes and compile-time parameters through staged
+semantic resolution. Computed `#if` in function bodies uses the same evaluator;
+only the selected arm is materialized for each specialization. See [compile-time computation](../description/50_comptime.md).
 
 Execution is limited to one million instructions, 128 nested calls, and one
 million cumulative value cells. These are initial fixed limits, not a general
 sandbox or a stable resource policy. No host I/O or native handles are exposed.
-This command is an executor test surface; it does not implement `#run`, a REPL,
-JIT compilation, frozen compile-time results, or execution caching.
+`--vm` selects runtime execution; `#run` and computed conditions execute during
+compilation regardless of that option. A persistent REPL and JIT remain pending.

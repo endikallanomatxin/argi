@@ -362,6 +362,7 @@ pub fn semantizeWithOptions(
     generics.checkpoint_execution = @import("comptime_execution.zig").Scheduler.checkpoint;
     generics.rollback_execution = @import("comptime_execution.zig").Scheduler.rollback;
     generics.execute_integer = @import("comptime_execution.zig").Scheduler.integer;
+    generics.execute_boolean = @import("comptime_execution.zig").Scheduler.boolean;
     var contracts = contract_mod.Resolver{
         .allocator = allocator,
         .graph = &relocation.graph,
@@ -779,6 +780,10 @@ pub fn semantizeWithOptions(
         }
         dumpUnresolved(modules, resolved, reachable, relocation.offsets.items);
         return error.UnsupportedGlobalSemantic;
+    }
+    if (staged_execution.diagnosePending()) {
+        try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, &generics);
+        return error.UnresolvedCompileTimeExecution;
     }
     if (relocation.graph.hasUnresolvedTypes()) {
         if (options.diagnostics) |diagnostics|

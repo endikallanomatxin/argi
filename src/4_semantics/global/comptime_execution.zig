@@ -20,8 +20,12 @@ pub const Scheduler = struct {
         expression: ir.ParameterizedNodeId,
         bindings: Generics.Bindings,
         node: ?g.GlobalNodeId = null,
-        value: ?i64 = null,
+        kind: Kind = .integer,
+        value: ?Value = null,
     };
+
+    const Kind = enum { integer, boolean };
+    const Value = union(Kind) { integer: i64, boolean: bool };
 
     pub fn deinit(self: *Scheduler) void {
         for (self.requests.items) |*request| request.bindings.deinit(self.allocator);
@@ -43,25 +47,33 @@ pub const Scheduler = struct {
     }
 
     pub fn integer(context: *anyopaque, module: usize, expression: ir.ParameterizedNodeId, bindings: *const Generics.Bindings) anyerror!i64 {
+        return (try requestValue(context, module, expression, bindings, .integer)).integer;
+    }
+
+    pub fn boolean(context: *anyopaque, module: usize, expression: ir.ParameterizedNodeId, bindings: *const Generics.Bindings) anyerror!bool {
+        return (try requestValue(context, module, expression, bindings, .boolean)).boolean;
+    }
+
+    fn requestValue(context: *anyopaque, module: usize, expression: ir.ParameterizedNodeId, bindings: *const Generics.Bindings, kind: Kind) !Value {
         const self: *Scheduler = @ptrCast(@alignCast(context));
         for (bindings.types) |ty| if (ty) |id| {
             if (@intFromEnum(id) >= self.stable_type_count) return error.ComptimeExecutionPending;
         };
         for (self.requests.items) |request| {
-            if (request.module != module or request.expression != expression) continue;
+            if (request.module != module or request.expression != expression or request.kind != kind) continue;
             if (!equalBindings(request.bindings, bindings.*)) continue;
             return request.value orelse error.ComptimeExecutionPending;
         }
-        try self.enqueue(module, expression, bindings);
+        try self.enqueue(module, expression, bindings, kind);
         return error.ComptimeExecutionPending;
     }
 
-    fn enqueue(self: *Scheduler, module: usize, expression: ir.ParameterizedNodeId, bindings: *const Generics.Bindings) !void {
+    fn enqueue(self: *Scheduler, module: usize, expression: ir.ParameterizedNodeId, bindings: *const Generics.Bindings, kind: Kind) !void {
         const types = try self.allocator.dupe(?g.GlobalTypeId, bindings.types);
         errdefer self.allocator.free(types);
         const ints = try self.allocator.dupe(?i64, bindings.ints);
         errdefer self.allocator.free(ints);
-        try self.requests.append(self.allocator, .{ .module = module, .expression = expression, .bindings = .{ .types = types, .ints = ints } });
+        try self.requests.append(self.allocator, .{ .module = module, .expression = expression, .kind = kind, .bindings = .{ .types = types, .ints = ints } });
     }
 
     fn equalBindings(left: Generics.Bindings, right: Generics.Bindings) bool {
@@ -89,12 +101,44 @@ pub const Scheduler = struct {
                 error.UnboundComptimeParameter, error.UnboundGenericTypeParameter, error.UnresolvedParameterizedCall, error.UnresolvedParameterizedExpression => continue,
                 else => return err,
             };
+            var registered = false;
+            for (self.functions.graph.comptime_requests.items) |existing| if (existing == node) {
+                registered = true;
+                break;
+            };
+            if (!registered) try self.functions.graph.comptime_requests.append(self.allocator, node);
             try self.functions.graph.roots.append(self.allocator, node);
             self.requests.items[index].node = node;
             speculation.commit();
             changed = true;
         }
         return changed or self.requests.items.len != count;
+    }
+
+    // A fixed point with unresolved execution demand is not a complete graph.
+    // Do not hand absent dependency bodies to codegen or the final #run pass.
+    pub fn diagnosePending(self: *Scheduler) bool {
+        for (self.requests.items) |request| {
+            if (request.value != null) continue;
+            const source = if (request.node) |node| self.functions.graph.node(node).source else blk: {
+                const storage = &self.functions.modules[request.module].semantic.parameterized_storage.ir;
+                const local = storage.nodes.items[@intFromEnum(request.expression)];
+                const relative: @import("../primitives/schema.zig").SourceRef = switch (local) {
+                    .resolved => |node| node.source,
+                    .pending => |pending| switch (storage.pending.items[@intFromEnum(pending)]) {
+                        .resolve_name => |value| value.source,
+                        .resolve_call => |value| value.source,
+                        .resolve_field => |value| value.source,
+                        .resolve_expression => |value| value.source,
+                        else => .{ .file_index = 0, .offset = 0 },
+                    },
+                };
+                break :blk @import("../primitives/schema.zig").SourceRef{ .file_index = self.functions.offsets[request.module].file_base + relative.file_index, .offset = relative.offset };
+            };
+            self.functions.generics.comptime_failure = .{ .source = source, .reason = "compile-time evaluation has unresolved or cyclic semantic dependencies" };
+            return true;
+        }
+        return false;
     }
 
     pub fn evaluateReady(self: *Scheduler, diagnostics: *@import("../../1_base/diagnostic.zig").Diagnostics, finalized: *const std.AutoHashMap(g.GlobalFunctionId, void), pending_bodies: *const std.AutoHashMap(g.GlobalFunctionId, void)) !bool {
@@ -124,13 +168,22 @@ pub const Scheduler = struct {
             if (!ready) continue;
             try @import("../../execution/comptime.zig").resolveRequest(self.allocator, graph, diagnostics, node);
             const result = graph.node(node);
-            if (result.content != .int_literal) {
-                self.functions.generics.comptime_failure = .{ .source = result.source, .reason = "compile-time integer argument requires an integer result" };
-                return error.CompileTimeIntegerRequired;
-            }
-            request.value = std.math.cast(i64, result.content.int_literal) orelse {
-                self.functions.generics.comptime_failure = .{ .source = result.source, .reason = "compile-time integer argument is outside the supported integer range" };
-                return error.ComptimeIntegerOverflow;
+            request.value = switch (request.kind) {
+                .boolean => if (result.content == .bool_literal) .{ .boolean = result.content.bool_literal } else {
+                    self.functions.generics.comptime_failure = .{ .source = result.source, .reason = "compile-time condition requires a Bool result" };
+                    return error.CompileTimeBooleanRequired;
+                },
+                .integer => blk: {
+                    if (result.content != .int_literal) {
+                        self.functions.generics.comptime_failure = .{ .source = result.source, .reason = "compile-time integer argument requires an integer result" };
+                        return error.CompileTimeIntegerRequired;
+                    }
+                    const value = std.math.cast(i64, result.content.int_literal) orelse {
+                        self.functions.generics.comptime_failure = .{ .source = result.source, .reason = "compile-time integer argument is outside the supported integer range" };
+                        return error.ComptimeIntegerOverflow;
+                    };
+                    break :blk .{ .integer = value };
+                },
             };
             changed = true;
         }
@@ -149,7 +202,7 @@ test "staged integer requests retain bindings across pending retries" {
     for (0..3) |_|
         try std.testing.expectError(error.ComptimeExecutionPending, Scheduler.integer(&scheduler, 0, @enumFromInt(0), &bindings));
     try std.testing.expectEqual(@as(usize, 1), scheduler.requests.items.len);
-    scheduler.requests.items[0].value = 42;
+    scheduler.requests.items[0].value = .{ .integer = 42 };
     try std.testing.expectEqual(@as(i64, 42), try Scheduler.integer(&scheduler, 0, @enumFromInt(0), &bindings));
     bindings.ints[0] = 7;
     try std.testing.expectError(error.ComptimeExecutionPending, Scheduler.integer(&scheduler, 0, @enumFromInt(0), &bindings));
@@ -214,4 +267,17 @@ test "staged execution demand follows generic selection transactions" {
     try std.testing.expectEqual(@as(usize, 1), scheduler.requests.items.len);
     // The sole retained recipe belongs to the genuinely suspended selection.
     try std.testing.expectEqual(@as(u32, 0), @intFromEnum(scheduler.requests.items[0].expression));
+}
+
+test "staged conditions keep Bool results distinct from integer requests" {
+    const a = std.testing.allocator;
+    var scheduler = Scheduler{ .allocator = a, .functions = undefined, .stable_type_count = 0 };
+    defer scheduler.deinit();
+    var bindings = try Generics.Bindings.init(a, 0);
+    defer bindings.deinit(a);
+    try std.testing.expectError(error.ComptimeExecutionPending, Scheduler.boolean(&scheduler, 0, @enumFromInt(0), &bindings));
+    scheduler.requests.items[0].value = .{ .boolean = false };
+    try std.testing.expectEqual(false, try Scheduler.boolean(&scheduler, 0, @enumFromInt(0), &bindings));
+    try std.testing.expectError(error.ComptimeExecutionPending, Scheduler.integer(&scheduler, 0, @enumFromInt(0), &bindings));
+    try std.testing.expectEqual(@as(usize, 2), scheduler.requests.items.len);
 }

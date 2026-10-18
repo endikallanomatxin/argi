@@ -46,6 +46,7 @@ pub const Resolver = struct {
     checkpoint_execution: ?*const fn (*anyopaque) usize = null,
     rollback_execution: ?*const fn (*anyopaque, usize) void = null,
     execute_integer: ?*const fn (*anyopaque, usize, ir.ParameterizedNodeId, *const Bindings) anyerror!i64 = null,
+    execute_boolean: ?*const fn (*anyopaque, usize, ir.ParameterizedNodeId, *const Bindings) anyerror!bool = null,
     argument_failure: ?struct { declaration: global_sg.GlobalDeclId, ty: global_sg.GlobalTypeId, reason: []const u8 } = null,
     projection_context: ?*anyopaque = null,
     projection_resolver: ?*const fn (*anyopaque, global_sg.GlobalTypeId, []const u8, primitives.SourceRef) anyerror!global_sg.GlobalTypeId = null,

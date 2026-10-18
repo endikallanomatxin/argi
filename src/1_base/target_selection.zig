@@ -28,6 +28,20 @@ pub fn errorMessage(err: anyerror) []const u8 {
 // supplies the established target predicates; staged execution can use the same
 // plan with unresolved decisions without interpreting Argi in this scanner.
 pub fn select(allocator: std.mem.Allocator, source: []const u8, target: target_mod.Config, error_offset: *usize) ![]u8 {
+    return selectMode(allocator, source, target, error_offset, .target_only);
+}
+
+pub fn selectImports(allocator: std.mem.Allocator, source: []const u8, target: target_mod.Config, error_offset: *usize) ![]u8 {
+    return selectMode(allocator, source, target, error_offset, .imports);
+}
+
+pub fn selectSyntax(allocator: std.mem.Allocator, source: []const u8, target: target_mod.Config, error_offset: *usize) ![]u8 {
+    return selectMode(allocator, source, target, error_offset, .syntax);
+}
+
+const Mode = enum { target_only, imports, syntax };
+
+fn selectMode(allocator: std.mem.Allocator, source: []const u8, target: target_mod.Config, error_offset: *usize, mode: Mode) ![]u8 {
     var plan = try @import("conditional_source.zig").Plan.parse(allocator, source, error_offset);
     defer plan.deinit(allocator);
     const decisions = try allocator.alloc(?bool, plan.branches.items.len);
@@ -36,16 +50,24 @@ pub fn select(allocator: std.mem.Allocator, source: []const u8, target: target_m
     for (plan.branches.items, decisions) |branch, *decision| {
         var selector = Selector{ .source = source[0..branch.condition.end], .target = target, .offset = branch.condition.start };
         decision.* = selector.condition() catch |err| {
+            if (mode != .target_only and err == error.InvalidTargetCondition) {
+                decision.* = null;
+                continue;
+            }
             error_offset.* = selector.offset;
             return err;
         };
         selector.skipTrivia();
         if (selector.offset != branch.condition.end) {
+            if (mode != .target_only) {
+                decision.* = null;
+                continue;
+            }
             error_offset.* = selector.offset;
             return error.InvalidTargetCondition;
         }
     }
-    const selection = try plan.select(allocator, decisions);
+    const selection = if (mode == .syntax) try plan.selectSyntax(allocator, decisions) else try plan.select(allocator, decisions);
     allocator.free(selection.pending);
     return selection.source;
 }
@@ -190,4 +212,16 @@ test "target selection still validates predicates inside discarded branches" {
     var offset: usize = 0;
     try std.testing.expectError(error.UnknownTargetValue, select(std.testing.allocator, source, .{ .os = .linux }, &offset));
     try std.testing.expect(offset > std.mem.indexOf(u8, source, "windos").?);
+}
+
+test "computed conditions retain syntax but withhold imports" {
+    const a = std.testing.allocator;
+    const source = "#if decide() { a := import(\"./pending\") } #else { b := import(\"./other\") }\n";
+    var offset: usize = 0;
+    const imports = try selectImports(a, source, .{}, &offset);
+    defer a.free(imports);
+    try std.testing.expect(std.mem.indexOf(u8, imports, "import") == null);
+    const syntax = try selectSyntax(a, source, .{}, &offset);
+    defer a.free(syntax);
+    try std.testing.expectEqualStrings(source, syntax);
 }

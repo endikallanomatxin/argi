@@ -473,6 +473,7 @@ pub const GlobalSemanticGraph = struct {
         if (!self.lookup.indexed_parameterized_functions) {
             for (modules, 0..) |*module, module_index| {
                 for (module.semantic.parameterized_storage.parameterized_functions.items, 0..) |candidate, function_index| {
+                    if (candidate.concrete_function != null) continue;
                     const spelling = module.text(module.declarations.items[@intFromEnum(candidate.declaration)].name);
                     if (self.lookup.parameterized_function_names.getPtr(spelling) == null) {
                         const owned = try allocator.dupe(u8, spelling);

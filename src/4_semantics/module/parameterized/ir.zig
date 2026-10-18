@@ -163,6 +163,7 @@ pub const PendingExpressionKind = enum(u8) {
     comparison,
     logical,
     if_statement,
+    comptime_if,
     while_statement,
     for_each,
     match,

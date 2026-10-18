@@ -156,8 +156,8 @@ pub const Context = struct {
                     });
                     stats.generic_types += 1;
                 },
-                .function => {
-                    const function = self.tree.functionDeclaration(declaration_node) orelse continue;
+                .function, .test_function => {
+                    const function = if (declaration.kind == .test_function) self.tree.testDeclaration(declaration_node).?.function else self.tree.functionDeclaration(declaration_node) orelse continue;
                     self.parameters.clearRetainingCapacity();
                     self.bindings.clearRetainingCapacity();
                     const explicit = hasGenericParameters(function.generic_params, function.generic_params_struct);
@@ -172,7 +172,8 @@ pub const Context = struct {
                         .start = parameter_start,
                         .len = @intCast(self.graph.semantic.parameterized_storage.comptime_parameters.items.len - parameter_start),
                     };
-                    if (params.len == 0 and !function.contract_member) continue;
+                    const staged_body = if (function.body) |body| self.tree.hasComptimeSelection(body) else false;
+                    if (params.len == 0 and !function.contract_member and !staged_body) continue;
                     const input = try self.lowerType(function.input, false);
                     const output = try self.lowerType(function.output, false);
                     const input_start: u32 = @intCast(self.graph.semantic.parameterized_storage.ir.bindings.items.len);
@@ -183,6 +184,7 @@ pub const Context = struct {
                     const body = if (function.body) |node| try self.lowerBlock(node) else null;
                     try self.graph.semantic.parameterized_storage.parameterized_functions.append(self.allocator, .{
                         .declaration = decl_id,
+                        .concrete_function = if (params.len == 0 and staged_body) declaration.function_id else null,
                         .parameters = params,
                         .input = input,
                         .output = output,
@@ -1446,7 +1448,7 @@ pub const Context = struct {
         var operands = std.array_list.Managed(ir.ParameterizedNodeId).init(self.allocator);
         defer operands.deinit();
         try self.collectBodyOperands(node, &operands);
-        const kind = parameterizedKindForTag(self.tree.tag(node));
+        const kind: ir.PendingExpressionKind = if (self.tree.ifStatement(node)) |statement| if (statement.comptime_selection) .comptime_if else .if_statement else parameterizedKindForTag(self.tree.tag(node));
         const name = switch (self.tree.tag(node)) {
             .function_call => if (self.tree.functionCall(node)) |call| try self.writer.addString(self.tree.tokenTextFromSource(self.source, call.callee_token)) else null,
             .struct_field_access => if (self.tree.structFieldAccess(node)) |access| try self.writer.addString(self.tree.tokenTextFromSource(self.source, access.field_token)) else null,

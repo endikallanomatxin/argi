@@ -55,6 +55,16 @@ pub const Plan = struct {
     // Null is unresolved, not false. Both arms remain unavailable and only an
     // active unresolved condition becomes pending; its children cannot execute.
     pub fn select(self: *const Plan, allocator: std.mem.Allocator, decisions: []const ?bool) !Selection {
+        return self.render(allocator, decisions, false);
+    }
+
+    // Parsing retains unresolved directives as syntax. Import discovery uses
+    // select instead, withholding both arms until their condition is known.
+    pub fn selectSyntax(self: *const Plan, allocator: std.mem.Allocator, decisions: []const ?bool) !Selection {
+        return self.render(allocator, decisions, true);
+    }
+
+    fn render(self: *const Plan, allocator: std.mem.Allocator, decisions: []const ?bool, retain_pending: bool) !Selection {
         if (decisions.len != self.branches.items.len) return error.InvalidConditionalDecisions;
         const output = try allocator.dupe(u8, self.source);
         errdefer allocator.free(output);
@@ -65,18 +75,23 @@ pub const Plan = struct {
         for (self.branches.items, 0..) |branch, index| {
             const enabled = if (branch.parent == .none) true else blk: {
                 const parent = @intFromEnum(branch.parent);
-                break :blk active[parent] and decisions[parent] != null and decisions[parent].? == branch.parent_arm;
+                break :blk active[parent] and (if (decisions[parent]) |chosen| chosen == branch.parent_arm else retain_pending);
             };
             active[index] = enabled;
-            blank(output, .{ .start = branch.extent.start, .end = branch.then_body.start });
-            blank(output, .{ .start = branch.then_body.end, .end = branch.then_body.end + 1 });
-            if (branch.else_header.start != branch.else_header.end) {
-                blank(output, branch.else_header);
-                blank(output, .{ .start = branch.else_body.end, .end = branch.else_body.end + 1 });
+            const deferred = enabled and decisions[index] == null and retain_pending;
+            if (!deferred) {
+                blank(output, .{ .start = branch.extent.start, .end = branch.then_body.start });
+                blank(output, .{ .start = branch.then_body.end, .end = branch.then_body.end + 1 });
+                if (branch.else_header.start != branch.else_header.end) {
+                    blank(output, branch.else_header);
+                    blank(output, .{ .start = branch.else_body.end, .end = branch.else_body.end + 1 });
+                }
             }
             const chosen = if (enabled) decisions[index] else null;
-            if (chosen == null or !chosen.?) blank(output, branch.then_body);
-            if (chosen == null or chosen.?) blank(output, branch.else_body);
+            if (!deferred) {
+                if (chosen == null or !chosen.?) blank(output, branch.then_body);
+                if (chosen == null or chosen.?) blank(output, branch.else_body);
+            }
             if (enabled and chosen == null) try pending.append(allocator, @enumFromInt(index));
         }
         return .{ .source = output, .pending = try pending.toOwnedSlice(allocator) };

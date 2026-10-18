@@ -100,7 +100,7 @@ pub const FrontendPipeline = struct {
 
         for (files, 0..) |source_file, index| {
             var error_offset: usize = 0;
-            const selected = @import("../1_base/target_selection.zig").select(self.allocator, source_file.code, self.options.target, &error_offset) catch |err| {
+            const selected = @import("../1_base/target_selection.zig").selectSyntax(self.allocator, source_file.code, self.options.target, &error_offset) catch |err| {
                 try self.diagnostics.add(.{ .file = self.source_db.fileId(index), .offset = @intCast(error_offset) }, .syntax, "invalid target selection: {s}", .{@import("../1_base/target_selection.zig").errorMessage(err)});
                 return err;
             };
@@ -200,6 +200,12 @@ pub const FrontendPipeline = struct {
             self.options.semantizing.include_tests,
             self.options.semantizing.selected_test_name,
         );
+        for (self.syntax_files.items) |*file| for (file.roots) |root| {
+            if (file.ifStatement(root)) |conditional| if (conditional.comptime_selection) {
+                try self.diagnostics.add(file.location(root), .semantic, "computed #if at module scope is not yet supported", .{});
+                return error.Reported;
+            };
+        };
         try self.appendProgramEntry();
         try self.validateFunctionSignatures();
         try @import("../4_semantics/module/assume_verify.zig").validate(self.allocator, self.syntax_files.items, self.source_db, self.diagnostics);

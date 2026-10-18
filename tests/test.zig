@@ -13783,3 +13783,53 @@ test "feature_tests/execution/67_comptime_argument_default_suspension" {
     try runExpect("tests/feature_tests/execution/67_comptime_argument_default_suspension", 42);
     try vmExpect("tests/feature_tests/execution/67_comptime_argument_default_suspension", 42, null);
 }
+
+test "feature_tests/execution/68_computed_generic_condition" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/68_computed_generic_condition");
+    try runExpect("tests/feature_tests/execution/68_computed_generic_condition", 42);
+    try vmExpect("tests/feature_tests/execution/68_computed_generic_condition", 42, null);
+}
+
+test "feature_tests/execution/69_computed_concrete_condition" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/69_computed_concrete_condition");
+    try runExpect("tests/feature_tests/execution/69_computed_concrete_condition", 42);
+    try vmExpect("tests/feature_tests/execution/69_computed_concrete_condition", 42, null);
+}
+
+test "feature_tests/execution/70X_computed_nonboolean_condition" {
+    try buildExpectFail("tests/feature_tests/execution/70X_computed_nonboolean_condition", "compile-time condition requires a Bool result");
+}
+
+test "feature_tests/execution/71X_computed_runtime_condition" {
+    try buildExpectFail("tests/feature_tests/execution/71X_computed_runtime_condition", "runtime values cannot be used");
+}
+
+test "feature_tests/execution/72X_computed_selected_branch" {
+    try buildExpectFail("tests/feature_tests/execution/72X_computed_selected_branch", "cannot materialize body");
+}
+
+test "feature_tests/execution/73_computed_condition_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/73_computed_condition_cleanup");
+    try runExpect("tests/feature_tests/execution/73_computed_condition_cleanup", 42);
+    try vmExpect("tests/feature_tests/execution/73_computed_condition_cleanup", 42, null);
+}
+
+test "feature_tests/execution/74X_computed_condition_safety" {
+    try buildExpectFail("tests/feature_tests/execution/74X_computed_condition_safety", "consumption requires an initialized owner");
+}
+
+test "feature_tests/execution/75X_computed_module_condition_boundary" {
+    try buildExpectFail("tests/feature_tests/execution/75X_computed_module_condition_boundary", "computed #if at module scope is not yet supported");
+}
+
+test "feature_tests/execution/76X_computed_condition_cycle" {
+    try buildExpectFail("tests/feature_tests/execution/76X_computed_condition_cycle", "unresolved or cyclic semantic dependencies");
+}
+
+test "feature_tests/execution/77_computed_test_condition" {
+    try argiTestExpectStderr("tests/feature_tests/execution/77_computed_test_condition", &.{}, 0, "PASS selected\n");
+}
+
+test "feature_tests/execution/78X_computed_discarded_binding" {
+    try buildExpectFail("tests/feature_tests/execution/78X_computed_discarded_binding", "cannot materialize body");
+}

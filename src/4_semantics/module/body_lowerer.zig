@@ -153,12 +153,13 @@ const Context = struct {
             defer inputs.deinit();
             var outputs = std.array_list.Managed(entities.ModuleBindingId).init(self.allocator);
             defer outputs.deinit();
+            const staged_body = if (declaration.body) |body| self.tree.hasComptimeSelection(body) else false;
             try self.bindInterface(interface.input, .constant, &inputs);
             try self.bindInterface(interface.output, .variable, &outputs);
             const input_range = try self.writer.appendBindingRefs(inputs.items);
             const output_range = try self.writer.appendBindingRefs(outputs.items);
             self.writer.pending_owner_function = function_id;
-            const body = if (declaration.body) |body_node|
+            const body = if (staged_body) null else if (declaration.body) |body_node|
                 try self.lowerBlockWithDefaults(body_node, .{ .syntax = declaration.output, .bindings = outputs.items })
             else
                 null;
@@ -1121,6 +1122,7 @@ const Context = struct {
 
     fn lowerIf(self: *Context, node: syn.NodeIndex) !Lowered {
         const statement = self.tree.ifStatement(node).?;
+        if (statement.comptime_selection) return error.ConditionalBodyRequiresStagedMaterialization;
         const condition = try self.lowerNode(statement.condition, try self.builtin(.Bool));
 
         const refinement_len = self.refinements.items.len;

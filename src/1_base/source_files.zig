@@ -317,7 +317,7 @@ fn collectImportDirsFromSource(
     target: @import("target.zig").Config,
 ) !void {
     var error_offset: usize = 0;
-    const selected = @import("target_selection.zig").select(alloc.*, source_code, target, &error_offset) catch |err| {
+    const selected = @import("target_selection.zig").selectImports(alloc.*, source_code, target, &error_offset) catch |err| {
         var line: usize = 1;
         var column: usize = 1;
         for (source_code[0..@min(error_offset, source_code.len)]) |byte| {

@@ -80,7 +80,11 @@ const Context = struct {
         const previous_budget = self.budget;
         self.budget = .{};
         defer self.budget = previous_budget;
-        const result = try self.callConstant(id, 0);
+        const result = switch (node.content) {
+            .function_call => try self.callConstant(id, 0),
+            .binary_operation, .comparison, .struct_field_access, .array_index => try self.expressionConstant(id, 0),
+            else => return error.UnsupportedCompileTimeExpression,
+        };
         self.graph.nodes.items[@intFromEnum(id)] = self.graph.node(result);
         self.states[index] = .done;
     }
@@ -145,30 +149,7 @@ const Context = struct {
             .int_literal => |value| .{ .integer = value },
             .bool_literal => |value| .{ .boolean = value },
             .function_call => try self.constant(try self.callConstant(id, depth + 1), depth + 1),
-            .binary_operation, .comparison, .struct_field_access, .array_index => blk: {
-                var operands: [2]g.GlobalNodeId = undefined;
-                const count: usize = switch (node.content) {
-                    .binary_operation => |value| setOperands(&operands, value.left, value.right),
-                    .comparison => |value| setOperands(&operands, value.left, value.right),
-                    .struct_field_access => |value| one: {
-                        operands[0] = value.value;
-                        break :one 1;
-                    },
-                    .array_index => |value| two: {
-                        const base = self.graph.node(value.array_ptr);
-                        // Array indexing can carry a direct value or its borrow.
-                        // Capture the aggregate, never export that reference.
-                        const array = if (base.content == .address_of) base.content.address_of else value.array_ptr;
-                        break :two setOperands(&operands, array, value.index);
-                    },
-                    else => unreachable,
-                };
-                var args: [2]b.Value = undefined;
-                for (operands[0..count], args[0..count]) |operand, *arg|
-                    arg.* = try self.constant(operand, depth + 1);
-                const result = try @import("evaluate.zig").evaluateExpression(self.allocator, self.graph, id, operands[0..count], args[0..count], &self.budget);
-                break :blk try self.constant(result, depth + 1);
-            },
+            .binary_operation, .comparison, .struct_field_access, .array_index => try self.constant(try self.expressionConstant(id, depth + 1), depth + 1),
             .binding_use => |id_binding| blk: {
                 const binding = self.graph.binding(id_binding);
                 if (binding.mutability != .constant) return error.NonConstantCompileTimeArgument;
@@ -204,6 +185,32 @@ const Context = struct {
             },
             else => error.NonConstantCompileTimeArgument,
         };
+    }
+
+    fn expressionConstant(self: *Context, id: g.GlobalNodeId, depth: usize) !g.GlobalNodeId {
+        const node = self.graph.node(id);
+        var operands: [2]g.GlobalNodeId = undefined;
+        const count: usize = switch (node.content) {
+            .binary_operation => |value| setOperands(&operands, value.left, value.right),
+            .comparison => |value| setOperands(&operands, value.left, value.right),
+            .struct_field_access => |value| one: {
+                operands[0] = value.value;
+                break :one 1;
+            },
+            .array_index => |value| two: {
+                const base = self.graph.node(value.array_ptr);
+                // Array indexing can carry a direct value or its borrow.
+                // Capture the aggregate, never export that reference.
+                const array = if (base.content == .address_of) base.content.address_of else value.array_ptr;
+                break :two setOperands(&operands, array, value.index);
+            },
+            else => unreachable,
+        };
+        var args: [2]b.Value = undefined;
+        for (operands[0..count], args[0..count]) |operand, *arg|
+            arg.* = try self.constant(operand, depth + 1);
+        const result = try @import("evaluate.zig").evaluateExpression(self.allocator, self.graph, id, operands[0..count], args[0..count], &self.budget);
+        return result;
     }
 
     fn setOperands(operands: *[2]g.GlobalNodeId, left: g.GlobalNodeId, right: g.GlobalNodeId) usize {

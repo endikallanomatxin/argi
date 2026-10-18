@@ -141,6 +141,14 @@ fn verifyPending(graph: *const graph_mod.ModuleSemanticGraph, pending: ir.Pendin
         },
         .resolve_expression => |value| {
             try require(verify.rangeFits(value.operands, storage.node_refs.items.len));
+            if (value.kind == .comptime_if) {
+                try require(value.operands.len == 2 or value.operands.len == 3);
+                for (storage.node_refs.items[value.operands.start + 1 ..][0 .. value.operands.len - 1]) |branch| {
+                    try require(verify.idFits(branch, storage.nodes.items.len));
+                    const node = storage.nodes.items[@intFromEnum(branch)];
+                    try require(node == .resolved and node.resolved.content == .code_block);
+                }
+            }
             try require(verify.optionalIdFits(value.assumed_arguments, storage.nodes.items.len));
             if (value.name) |name| try require(verify.stringFits(name, graph.strings.items));
             if (value.module_path) |path| try require(verify.stringFits(path, graph.strings.items));

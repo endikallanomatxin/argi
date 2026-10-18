@@ -802,7 +802,9 @@ fn needsSpace(left: Tag, right: Tag, tokens: tok.View, index: usize) bool {
     if (left == .comma) return true;
     // A named compile-time directive starts an operand. Generic argument
     // groups instead attach '#(' to the preceding declaration/callee.
-    if (right == .hash) return index + 1 < tokens.len and tokens.contents[index + 1] == .identifier and left != .open_parenthesis and left != .open_bracket;
+    if (right == .hash) return index + 1 < tokens.len and
+        (tokens.contents[index + 1] == .identifier or tokens.contents[index + 1] == .keyword_if or tokens.contents[index + 1] == .keyword_else) and
+        left != .open_parenthesis and left != .open_bracket;
     if (right == .dot or right == .bang or right == .double_bang or right == .triple_bang) return false;
     if (left == .dot or left == .double_dot or left == .hash or left == .dollar or left == .tilde or left == .question_mark) return false;
     if (left == .open_parenthesis or left == .open_bracket) return false;
@@ -1328,5 +1330,12 @@ test "formatter separates compile-time execution prefixes from assignments" {
     try expectFormat(
         "main()->(.result:Int32=0):={result=#run calculate(.value=40)}\n",
         "main() -> (.result: Int32 = 0) := { result = #run calculate(.value = 40) }\n",
+    );
+}
+
+test "formatter retains conditional compilation directive boundaries" {
+    try expectFormat(
+        "main() -> () := {\n#if true { f() }#else { g() }\n}\n",
+        "main() -> () := {\n    #if true { f() } #else { g() }\n}\n",
     );
 }

@@ -1005,6 +1005,7 @@ pub const Resolver = struct {
     ) bool {
         for (self.modules, 0..) |*candidate_module, candidate_index| {
             for (candidate_module.semantic.parameterized_storage.parameterized_functions.items) |parameterized| {
+                if (parameterized.concrete_function != null) continue;
                 const declaration = globalizer.globalDecl(self.offsets[candidate_index], parameterized.declaration);
                 if (!std.mem.eql(u8, self.graph.text(self.graph.declarations.items[@intFromEnum(declaration)].name), name)) continue;
                 if (self.core.declarationVisible(current_module, declaration, module_filter)) return true;
@@ -1954,46 +1955,95 @@ pub const Resolver = struct {
             if (function.body != null or !function.flags.has_declared_body) continue;
             if (reachable) |set| if (!set.contains(instance.function)) continue;
             const located = self.findParameterized(instance.parameterized_declaration) orelse return error.GenericFunctionParameterizedNotFound;
-            const body = located.parameterized.body orelse continue;
             const storage = &self.modules[located.module_index].semantic.parameterized_storage;
             var substitutions = try generic_mod.Resolver.Bindings.init(self.allocator, storage.comptime_parameters.items.len);
             defer substitutions.deinit(self.allocator);
             try self.generics.bindGlobalArguments(located.module_index, located.parameterized.parameters, instance.arguments, &substitutions);
-            var context = InstanceContext.init(self, located.module_index, located.parameterized, &substitutions);
-            defer context.deinit();
-            context.function = instance.function;
-            inline for (.{ "input_bindings", "output_bindings" }) |name| {
-                const local = @field(located.parameterized, name);
-                const global = @field(function, name);
-                for (0..local.len) |offset| {
-                    try context.binding_map.put(self.allocator, local.start + offset, self.graph.binding_refs.items[global.start + offset]);
-                }
+            if (try self.materializeRetainedBody(located, instance.function, &substitutions)) changed = true;
+        }
+        for (self.modules, 0..) |*module, module_index| {
+            for (module.semantic.parameterized_storage.parameterized_functions.items) |parameterized| {
+                const local = parameterized.concrete_function orelse continue;
+                const function_id = globalizer.globalFunction(self.offsets[module_index], local);
+                const function = self.graph.function(function_id);
+                if (function.body != null or !function.flags.has_declared_body) continue;
+                if (reachable) |set| if (!set.contains(function_id)) continue;
+                var substitutions = try generic_mod.Resolver.Bindings.init(self.allocator, module.semantic.parameterized_storage.comptime_parameters.items.len);
+                defer substitutions.deinit(self.allocator);
+                if (try self.materializeRetainedBody(.{ .module_index = module_index, .parameterized = parameterized }, function_id, &substitutions)) changed = true;
             }
-            const saved_publication = self.publishing_signature;
-            self.publishing_signature = false;
-            defer self.publishing_signature = saved_publication;
-            const body_started = if (self.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
-            defer if (self.profile_io) |io| {
-                self.profile_instantiate_body_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - body_started;
-            };
-            const instantiated = context.instantiateBlock(body) catch |err| {
-                if (err == error.OutOfMemory or err == error.Reported) return err;
-                // A dependency selected by the body owns the more precise
-                // conformance diagnostic; do not hide it behind this fallback.
-                if (self.nested_call_context) |contracts| if (contracts.participant_conformance_failure != null) return err;
-                if (self.generics.comptime_failure == null) {
-                    const declaration = self.graph.declaration(instance.parameterized_declaration);
-                    self.generics.comptime_failure = .{
-                        .source = declaration.source,
-                        .reason = try std.fmt.allocPrint(self.allocator, "cannot materialize body of '{s}': {s}", .{ self.graph.text(self.graph.declarationSourceName(instance.parameterized_declaration)), @errorName(err) }),
-                    };
-                }
-                return err;
-            };
-            self.graph.functions.items[@intFromEnum(instance.function)].body = instantiated;
-            changed = true;
         }
         return changed;
+    }
+
+    fn materializeRetainedBody(self: *Resolver, located: LocatedParameterized, function_id: global_sg.GlobalFunctionId, substitutions: *generic_mod.Resolver.Bindings) !bool {
+        const body = located.parameterized.body orelse return false;
+        const function = self.graph.function(function_id);
+        var speculation = self.beginSpeculation();
+        defer speculation.deinit();
+        errdefer {
+            const failure = self.generics.comptime_failure;
+            const projection = if (self.nested_call_context) |contracts| contracts.participant_conformance_failure else null;
+            speculation.rollback();
+            self.generics.comptime_failure = failure;
+            if (self.nested_call_context) |contracts| if (projection) |retained| {
+                if (retained.is_projection or retained.operation != null) contracts.participant_conformance_failure = retained;
+            };
+        }
+        var context = InstanceContext.init(self, located.module_index, located.parameterized, substitutions);
+        defer context.deinit();
+        context.function = function_id;
+        inline for (.{ "input_bindings", "output_bindings" }) |name| {
+            const local = @field(located.parameterized, name);
+            const global = @field(function, name);
+            for (0..local.len) |offset| try context.binding_map.put(self.allocator, local.start + offset, self.graph.binding_refs.items[global.start + offset]);
+        }
+        // The signature keeps its published identities, including capabilities
+        // completed while resolving this body. Stage only new output defaults;
+        // incomplete work must not leave initializers pointing into rolled-back IR.
+        var defaults: std.ArrayList(struct { binding: global_sg.GlobalBindingId, value: global_sg.GlobalNodeId }) = .empty;
+        defer defaults.deinit(self.allocator);
+        if (located.parameterized.concrete_function != null) {
+            const storage = &self.modules[located.module_index].semantic.parameterized_storage.ir;
+            const outputs = located.parameterized.output_bindings;
+            for (0..outputs.len) |offset| {
+                const local: ir.ParameterizedBindingId = @enumFromInt(outputs.start + @as(u32, @intCast(offset)));
+                const initialization = storage.bindings.items[@intFromEnum(local)].initialization orelse continue;
+                const binding = self.graph.binding_refs.items[function.output_bindings.start + offset];
+                const value = context.instantiateNodeWithExpected(initialization, self.graph.binding(binding).ty) catch |err| {
+                    if (err == error.ComptimeExecutionPending) {
+                        speculation.retainPendingExecution();
+                        return false;
+                    }
+                    return err;
+                };
+                try defaults.append(self.allocator, .{ .binding = binding, .value = value });
+            }
+        }
+        const saved_publication = self.publishing_signature;
+        self.publishing_signature = false;
+        defer self.publishing_signature = saved_publication;
+        const body_started = if (self.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
+        defer if (self.profile_io) |io| {
+            self.profile_instantiate_body_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - body_started;
+        };
+        const instantiated = context.instantiateBlock(body) catch |err| {
+            if (err == error.ComptimeExecutionPending) {
+                speculation.retainPendingExecution();
+                return false;
+            }
+            if (err == error.OutOfMemory or err == error.Reported) return err;
+            if (self.nested_call_context) |contracts| if (contracts.participant_conformance_failure != null) return err;
+            if (self.generics.comptime_failure == null) self.generics.comptime_failure = .{
+                .source = self.graph.declaration(function.declaration).source,
+                .reason = try std.fmt.allocPrint(self.allocator, "cannot materialize body of '{s}': {s}", .{ self.graph.text(self.graph.declarationSourceName(function.declaration)), @errorName(err) }),
+            };
+            return err;
+        };
+        self.graph.functions.items[@intFromEnum(function_id)].body = instantiated;
+        for (defaults.items) |entry| self.graph.bindings.items[@intFromEnum(entry.binding)].initialization = entry.value;
+        speculation.commit();
+        return true;
     }
 
     const LocatedParameterized = struct {
@@ -2124,6 +2174,7 @@ pub const Resolver = struct {
         function: ?global_sg.GlobalFunctionId = null,
         callsite_reach: ?ReachInferenceContext = null,
         callsite_temporaries: std.ArrayList(global_sg.GlobalNodeId) = .empty,
+        conditional_bindings: std.ArrayList(struct { local: ir.ParameterizedBindingId, global: global_sg.GlobalBindingId }) = .empty,
 
         fn init(
             resolver: *Resolver,
@@ -2145,6 +2196,7 @@ pub const Resolver = struct {
 
         fn deinit(self: *InstanceContext) void {
             self.callsite_temporaries.deinit(self.resolver.allocator);
+            self.conditional_bindings.deinit(self.resolver.allocator);
             self.binding_map.deinit(self.resolver.allocator);
             self.node_map.deinit(self.resolver.allocator);
             self.block_map.deinit(self.resolver.allocator);
@@ -2206,6 +2258,12 @@ pub const Resolver = struct {
         }
 
         fn instantiateBlock(self: *InstanceContext, id: ir.ParameterizedBlockId) anyerror!global_sg.GlobalBlockId {
+            return self.instantiateBlockWithScope(id, true);
+        }
+
+        fn instantiateBlockWithScope(self: *InstanceContext, id: ir.ParameterizedBlockId, scoped: bool) anyerror!global_sg.GlobalBlockId {
+            const mark = self.conditional_bindings.items.len;
+            defer if (scoped) self.conditional_bindings.shrinkRetainingCapacity(mark);
             if (self.block_map.get(@intFromEnum(id))) |existing| return existing;
             const local = self.resolver.modules[self.module_index].semantic.parameterized_storage.ir.blocks.items[@intFromEnum(id)];
             const global: global_sg.GlobalBlockId = @enumFromInt(@as(u32, @intCast(self.resolver.graph.blocks.items.len)));
@@ -2215,14 +2273,33 @@ pub const Resolver = struct {
             const storage = &self.resolver.modules[self.module_index].semantic.parameterized_storage.ir;
             var nodes: std.ArrayList(global_sg.GlobalNodeId) = .empty;
             defer nodes.deinit(self.resolver.allocator);
+            var conditional_result = false;
             for (storage.node_refs.items[local.nodes.start..][0..local.nodes.len]) |node| {
-                try nodes.append(self.resolver.allocator, try self.instantiateNode(node));
+                const expression = storage.nodes.items[@intFromEnum(node)];
+                const selected = expression == .pending and storage.pending.items[@intFromEnum(expression.pending)] == .resolve_expression and
+                    storage.pending.items[@intFromEnum(expression.pending)].resolve_expression.kind == .comptime_if;
+                const instantiated = try self.instantiateNode(node);
+                if (selected) {
+                    // #if selects statements in the containing scope, just as
+                    // source selection for target predicates does. It creates
+                    // neither a runtime branch nor an earlier cleanup boundary.
+                    const branch = self.resolver.graph.node(instantiated).content.code_block;
+                    const block = self.resolver.graph.blocks.items[@intFromEnum(branch)];
+                    try nodes.appendSlice(self.resolver.allocator, self.resolver.graph.node_refs.items[block.nodes.start..][0..block.nodes.len]);
+                    if (local.ret_val == node) conditional_result = true;
+                } else {
+                    try nodes.append(self.resolver.allocator, instantiated);
+                    if (!scoped and expression == .resolved and expression.resolved.content == .binding_declaration) {
+                        const binding = expression.resolved.content.binding_declaration;
+                        try self.conditional_bindings.append(self.resolver.allocator, .{ .local = binding, .global = self.binding_map.get(@intFromEnum(binding)).? });
+                    }
+                }
             }
+            const ret_val = if (local.ret_val) |node| if (conditional_result) null else try self.instantiateNode(node) else null;
             const start: u32 = @intCast(self.resolver.graph.node_refs.items.len);
             try self.resolver.graph.node_refs.appendSlice(self.resolver.allocator, nodes.items);
-            const ret_val = if (local.ret_val) |node| try self.instantiateNode(node) else null;
             self.resolver.graph.blocks.items[@intFromEnum(global)] = .{
-                .nodes = .{ .start = start, .len = local.nodes.len },
+                .nodes = .{ .start = start, .len = @intCast(nodes.items.len) },
                 .ret_val = ret_val,
             };
             return global;
@@ -2371,12 +2448,19 @@ pub const Resolver = struct {
             }
             if (node.content == .binding_use or node.content == .binding_declaration) {
                 const declaration = node.content == .binding_declaration;
-                const binding = try self.instantiateBinding(if (declaration) node.content.binding_declaration else node.content.binding_use);
+                const binding = if (declaration) try self.instantiateBinding(node.content.binding_declaration) else try self.lexicalBinding(node.content.binding_use);
                 return .{
                     .source = self.resolver.sourceFor(self.module_index, node.source),
                     .ty = if (self.resolver.graph.isBindingTypeUnresolved(binding)) null else self.resolver.graph.bindings.items[@intFromEnum(binding)].ty,
                     .content = if (declaration) .{ .binding_declaration = binding } else .{ .binding_use = binding },
                 };
+            }
+            if (node.content == .assignment) {
+                const assignment = node.content.assignment;
+                const binding = try self.lexicalBinding(assignment.binding);
+                const expected = if (self.resolver.graph.isBindingTypeUnresolved(binding)) null else self.resolver.graph.binding(binding).ty;
+                const value = if (expected) |target| try self.instantiateNodeWithExpected(assignment.value, target) else try self.instantiateNode(assignment.value);
+                return .{ .source = self.resolver.sourceFor(self.module_index, node.source), .ty = expected, .content = .{ .assignment = .{ .binding = binding, .value = value } } };
             }
             const ty = if (node.ty) |value|
                 try self.resolver.generics.instantiateParameterizedType(self.module_index, value, self.substitutions)
@@ -2390,16 +2474,8 @@ pub const Resolver = struct {
                 .source = self.resolver.sourceFor(self.module_index, node.source),
                 .ty = ty,
                 .content = switch (node.content) {
-                    .binding_use => |binding| .{ .binding_use = try self.instantiateBinding(binding) },
-                    .binding_declaration => |binding| .{ .binding_declaration = try self.instantiateBinding(binding) },
+                    .binding_use, .binding_declaration, .assignment => unreachable,
                     .reach_directive => |reach| .{ .reach_directive = try self.instantiateReach(reach) },
-                    .assignment => |assignment| .{ .assignment = .{
-                        .binding = try self.instantiateBinding(assignment.binding),
-                        .value = if (self.resolver.modules[self.module_index].semantic.parameterized_storage.ir.bindingType(assignment.binding)) |binding_ty|
-                            try self.instantiateNodeAs(assignment.value, binding_ty)
-                        else
-                            try self.instantiateNode(assignment.value),
-                    } },
                     .code_block => |block| .{ .code_block = try self.instantiateBlock(block) },
                     .value_sequence => |block| .{ .value_sequence = try self.instantiateBlock(block) },
                     .replacement => return error.InvalidParameterizedNode,
@@ -2611,6 +2687,21 @@ pub const Resolver = struct {
             var operands = std.array_list.Managed(global_sg.GlobalNodeId).init(self.resolver.allocator);
             defer operands.deinit();
             const local_operands = storage.node_refs.items[value.operands.start..][0..value.operands.len];
+            // Select before instantiating either arm. Discarded names, types
+            // and operations must never become semantic obligations.
+            if (value.kind == .comptime_if) {
+                if (local_operands.len < 2 or local_operands.len > 3) return error.InvalidParameterizedIf;
+                const execute = self.resolver.generics.execute_boolean orelse return error.CompileTimeExecutionUnavailable;
+                const selected = try execute(self.resolver.generics.execution_context.?, self.module_index, local_operands[0], self.substitutions);
+                if (selected or local_operands.len == 3) {
+                    const branch = storage.nodes.items[@intFromEnum(local_operands[if (selected) 1 else 2])].resolved;
+                    const block = try self.instantiateBlockWithScope(branch.content.code_block, false);
+                    return .{ .source = self.resolver.sourceFor(self.module_index, value.source), .ty = try self.resolver.generics.internType(.{ .builtin = .Void }), .content = .{ .code_block = block } };
+                }
+                const block: global_sg.GlobalBlockId = @enumFromInt(self.resolver.graph.blocks.items.len);
+                try self.resolver.graph.blocks.append(self.resolver.allocator, .{ .nodes = .{ .start = 0, .len = 0 }, .ret_val = null });
+                return .{ .source = self.resolver.sourceFor(self.module_index, value.source), .ty = try self.resolver.generics.internType(.{ .builtin = .Void }), .content = .{ .code_block = block } };
+            }
             // Equality against a bare variant is a tag test. Infer its identity
             // from the other operand before attempting to instantiate the tag.
             // Canonicalize reversed tests so refinement and codegen see the value first.
@@ -2676,6 +2767,7 @@ pub const Resolver = struct {
                 .nullable_test => self.resolveNullableTest(operands.items, value.source),
                 .return_statement => self.resolveReturn(operands.items, value.source),
                 .if_statement => self.resolveIf(operands.items, value.source),
+                .comptime_if => unreachable,
                 .while_statement => self.resolveWhile(operands.items, value.source),
                 .for_each => self.resolveForEach(value, operands.items),
                 .match => if (operands.items.len == 1) self.resolveMatch(value, operands.items[0]) else error.InvalidParameterizedMatch,
@@ -3466,9 +3558,35 @@ pub const Resolver = struct {
             return .{ .source = self.resolver.sourceFor(self.module_index, source), .ty = self.resolver.graph.nodes.items[@intFromEnum(operands[1])].ty, .content = .{ .pointer_assignment = .{ .pointer = operands[0], .value = operands[1] } } };
         }
 
+        fn lexicalBinding(self: *InstanceContext, local: ir.ParameterizedBindingId) !global_sg.GlobalBindingId {
+            const module = &self.resolver.modules[self.module_index];
+            const name = module.text(module.semantic.parameterized_storage.ir.bindings.items[@intFromEnum(local)].name);
+            var index = self.conditional_bindings.items.len;
+            while (index != 0) {
+                index -= 1;
+                const entry = self.conditional_bindings.items[index];
+                // Bindings are appended in declaration order. An inserted
+                // declaration can shadow an earlier syntax binding, while a
+                // later explicit declaration keeps its already-bound identity.
+                if (@intFromEnum(entry.local) <= @intFromEnum(local)) continue;
+                if (std.mem.eql(u8, self.resolver.graph.text(self.resolver.graph.binding(entry.global).name), name)) return entry.global;
+            }
+            return self.instantiateBinding(local);
+        }
+
         fn findGlobalBinding(self: *InstanceContext, name: []const u8) ?global_sg.GlobalBindingId {
-            for (self.resolver.graph.bindings.items, 0..) |binding, raw| {
-                if (std.mem.eql(u8, self.resolver.graph.text(binding.name), name)) return @enumFromInt(@as(u32, @intCast(raw)));
+            var index = self.conditional_bindings.items.len;
+            while (index != 0) {
+                index -= 1;
+                const binding = self.conditional_bindings.items[index].global;
+                if (std.mem.eql(u8, self.resolver.graph.text(self.resolver.graph.binding(binding).name), name)) return binding;
+            }
+            // Other functions' local bindings are never a name lookup scope.
+            for (self.resolver.graph.roots.items) |root| {
+                const node = self.resolver.graph.node(root);
+                if (node.content != .binding_declaration) continue;
+                const binding = node.content.binding_declaration;
+                if (std.mem.eql(u8, self.resolver.graph.text(self.resolver.graph.binding(binding).name), name)) return binding;
             }
             return null;
         }

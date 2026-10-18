@@ -34,9 +34,17 @@ branch is compiled. This differs from running an ordinary `if` inside
 > and nested requests are resolved before their callers. Integer results can
 > determine type and function specialization arguments: semantic resolution
 > waits for the selected dependency bodies, proves their safety, and resumes
-> with the frozen result. General compile-time conditions remain unsupported.
-> `#if` accepts the target predicates below, combined with `not`, `and`, `or`,
-> and parentheses.
+> with the frozen result.
+> Within function bodies, computed `#if` conditions accept closed Boolean calls,
+> integer comparisons, and scalar or aggregate projections in that same subset.
+> Generic conditions are evaluated separately for each specialization. Both arms
+> must parse, but only the selected arm is materialized and safety-checked.
+> Selected statements belong to the containing scope, like target selection;
+> use an explicit nested block when a separate lifetime is needed.
+> Runtime inputs cannot determine a compile-time condition.
+> At module scope, `#if` still accepts only the target predicates below, combined
+> with `not`, `and`, `or`, and parentheses. Computed declaration/import selection
+> remains pending.
 
 The experimental `argi run --vm <directory>` command uses the shared bytecode
 executor for runtime execution. Explicit `#run` requests use that executor during
@@ -69,8 +77,9 @@ Use `#if` to select declarations, imports, or statements:
 
 Only the selected branch contributes declarations or dependencies. Imports,
 types, and foreign symbols in the discarded branch do not need to exist.
-Nested selections are allowed. Conditions are checked even in discarded
-branches, and branch delimiters must remain balanced. `#if` is a declaration
+Nested selections are allowed. Target predicates are validated even in discarded
+branches, and branch delimiters must remain balanced. Computed conditions inside
+an unselected function-body branch are not evaluated. `#if` is a declaration
 or statement selection, not a value-producing expression. An ordinary `if`
 does not provide these dependency-selection guarantees.
 
