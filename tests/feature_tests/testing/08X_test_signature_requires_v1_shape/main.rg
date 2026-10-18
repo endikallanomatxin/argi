@@ -1,2 +1,2 @@
-test wrong_signature() -> !() := {
+test wrong_signature := () -> !() {
 }

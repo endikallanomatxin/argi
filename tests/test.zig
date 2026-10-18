@@ -689,7 +689,7 @@ test "installed argi test resolves core from its installation prefix outside rep
     try tmp.dir.writeFile(std.testing.io, .{
         .sub_path = "module/main.rg",
         .data =
-        \\test installed_prefix(.system: System) -> !() := {
+        \\test installed_prefix := (.system: System) -> !() {
         \\    testing.expect(.condition = true)!
         \\}
         \\
@@ -13353,4 +13353,13 @@ test "feature_tests/types/296X_nominal_underlying_assignment" {
 
 test "feature_tests/types/297X_nominal_underlying_raw_argument" {
     try buildExpectFailWithoutParseNoise("tests/feature_tests/types/297X_nominal_underlying_raw_argument", "no function named 'accept_raw' accepts arguments (.value: VertexId)");
+}
+
+test "feature_tests/testing/21_modern_test_syntax" {
+    try argiTestExpectStderr(
+        "tests/feature_tests/testing/21_modern_test_syntax",
+        &.{},
+        0,
+        "PASS modern\nPASS multiline\nPASS legacy\n",
+    );
 }

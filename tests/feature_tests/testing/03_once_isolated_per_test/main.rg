@@ -5,10 +5,10 @@ helper() -> () := {
     setup()
 }
 
-test first(.system: System) -> !() := {
+test first := (.system: System) -> !() {
     helper()
 }
 
-test second(.system: System) -> !() := {
+test second := (.system: System) -> !() {
     helper()
 }

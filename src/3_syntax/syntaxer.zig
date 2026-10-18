@@ -2015,9 +2015,16 @@ pub const Syntaxer = struct {
         self.skipNewLinesAndComments();
 
         const name = try self.parseName();
+        // Tests share ordinary named-function syntax, including `name := (...)`.
+        const body_follows_signature = self.tokenIs(.colon) and self.contentAt(self.index + 1) == .equal;
+        if (body_follows_signature) {
+            self.advanceOne();
+            self.advanceOne();
+            self.skipNewLinesAndComments();
+        }
         if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
 
-        const decl_node = try self.parseNamedFunctionLikeDeclaration(name, false, try self.addNodeRange(&.{}), null, false);
+        const decl_node = try self.parseNamedFunctionLikeDeclaration(name, false, try self.addNodeRange(&.{}), null, body_follows_signature);
         const function = self.file.functionDeclaration(decl_node).?;
 
         if (function.body == null) {

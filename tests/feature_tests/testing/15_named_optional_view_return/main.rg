@@ -1,4 +1,4 @@
-test named_optional_view_return(.system: System) -> !() := {
+test named_optional_view_return := (.system: System) -> !() {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 

@@ -1389,3 +1389,10 @@ test "formatter budgets member calls after generic arguments" {
         "transposed ::= math.MatrixTransposition#(\n    math.Matrix#(.rows = 3, .cols = 2, .t: Float64)\n).transpose(&design)\n",
     );
 }
+
+test "formatter preserves modern test declaration syntax" {
+    try expectFormat(
+        "test example:=(.system:System)->!(){testing.expect(true)!}\n",
+        "test example := (.system: System) -> !() { testing.expect(true)! }\n",
+    );
+}

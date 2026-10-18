@@ -1,4 +1,4 @@
-test core_path_regression_slice(.system: System) -> !() := {
+test core_path_regression_slice := (.system: System) -> !() {
     allocator_storage ::= GeneralPurposeAllocator(.allocator = system.page_allocator)
     assume allocator ::= $&allocator_storage
 
