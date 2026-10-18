@@ -1808,5 +1808,37 @@ test "resolved source text respects signed byte loads" {
     };
     var executor = try vm.Vm.init(a, .{ .graph = &graph, .functions = &.{}, .expression = &expression }, .{});
     defer executor.deinit();
-    try std.testing.expectEqual(@as(i128, -61), (try executor.runExpression(&.{}))[0].integer);
+    for (0..4) |_| {
+        try std.testing.expectEqual(@as(i128, -61), (try executor.runExpression(&.{}))[0].integer);
+        try std.testing.expectEqual(@as(usize, 1), executor.context().trace_locations.items.len);
+        try std.testing.expectEqual(@as(u32, 2), executor.context().literal_bytes.count());
+    }
+}
+
+test "fresh execution retires literal cache and rejects previous references" {
+    const a = std.testing.allocator;
+    var graph: @import("../4_semantics/global/graph.zig").GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source = @import("../4_semantics/primitives/schema.zig").SourceRef{ .file_index = 0, .offset = 0 };
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .UInt8 },
+        .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } },
+    });
+    const expression: b.Function = .{
+        .slots = &.{@enumFromInt(1)},
+        .inputs = &.{},
+        .outputs = &.{0},
+        .code = &.{
+            .{ .source = source, .op = .{ .static_bytes = .{ .dst = 0, .bytes = "retained" } } },
+            .{ .source = source, .op = .{ .ret = &.{0} } },
+        },
+    };
+    var executor = try vm.Vm.init(a, .{ .graph = &graph, .functions = &.{}, .expression = &expression }, .{});
+    defer executor.deinit();
+    const first = (try executor.runExpression(&.{}))[0].reference;
+    const second = (try executor.runExpression(&.{}))[0].reference;
+    try std.testing.expect(first.context != second.context);
+    try std.testing.expectEqualStrings("retained", try executor.context().storage.literalBytes(second));
+    try std.testing.expectError(error.ExecutionForeignReference, executor.context().storage.read(first));
+    try std.testing.expectEqual(@as(u32, 1), executor.context().literal_bytes.count());
 }

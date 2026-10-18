@@ -63,15 +63,23 @@ pub const Context = struct {
         self.arena.deinit();
         self.* = undefined;
     }
-    pub fn reset(self: *Context) void {
+    /// Detach all arena-backed indexes together. Fresh execution keeps the old
+    /// arena alive while copying supplied arguments; reset releases it at once.
+    fn detachStorage(self: *Context) std.heap.ArenaAllocator {
         std.debug.assert(!self.running);
-        self.arena.deinit();
+        const previous = self.arena;
         self.arena = .init(self.allocator);
         self.state = .fresh;
         self.namespace = null;
         self.bindings = .empty;
         self.literal_bytes = .empty;
         self.trace_locations = .empty;
+        return previous;
+    }
+
+    pub fn reset(self: *Context) void {
+        var previous = self.detachStorage();
+        previous.deinit();
     }
 
     fn checkNamespace(self: *const Context, session: ?b.Session) !void {
@@ -177,11 +185,7 @@ pub const Vm = struct {
         if (self.shared_context != null) return error.SharedExecutionContext;
         // Preserve previous results until invoke has copied the supplied input.
         // This convenience API intentionally starts a fresh execution context.
-        var previous = self.context().arena;
-        self.context().arena = std.heap.ArenaAllocator.init(self.allocator);
-        self.context().state = .fresh;
-        self.context().namespace = null;
-        self.context().bindings = .empty;
+        var previous = self.context().detachStorage();
         defer previous.deinit();
         return if (entry) |id| self.invoke(id, args) else self.invokeExpression(args);
     }
