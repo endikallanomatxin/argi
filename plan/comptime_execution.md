@@ -486,4 +486,9 @@ loans: the complete temporal state still needs submission-level integration.
 The checker can now analyze an input/output-free continuation against a forked
 retained state, using its normal dependency unit, summary inference and block
 visitor. Immutable facts retain their proof-arena lifetime. This API must be
-wired to submission scopes and publication before interactive borrowing is ready.
+wired to submission scopes before interactive borrowing is ready. The execution
+compilation session can now prepare a continuation candidate and atomically accept
+its semantic graph and temporal proof together. Proof arenas retain predecessor
+facts by reference; rejected and stale candidates release their own tails. The
+source coordinator still must supply persistent command scopes, explicit roots
+and checked cleanup boundaries.

@@ -13,6 +13,43 @@ fn allocateNamespace() !bytecode.SessionNamespace {
     }
 }
 
+const Safety = @import("../4_semantics/safety/checker.zig").SafetyChecker;
+
+// Immutable facts can refer to preceding accepted facts. Each candidate owns
+// its new arena and retains the parent proof; rejection releases only its tail.
+const TemporalProof = struct {
+    allocator: std.mem.Allocator,
+    arena: std.heap.ArenaAllocator,
+    state: Safety.ContinuationState = undefined,
+    parent: ?*TemporalProof,
+    references: usize = 1,
+
+    fn create(allocator: std.mem.Allocator, parent: ?*TemporalProof) !*TemporalProof {
+        const proof = try allocator.create(TemporalProof);
+        errdefer allocator.destroy(proof);
+        proof.* = .{ .allocator = allocator, .arena = .init(allocator), .parent = parent };
+        errdefer proof.arena.deinit();
+        if (parent) |previous| {
+            if (previous.references == std.math.maxInt(usize)) return error.TemporalProofLimit;
+            try previous.state.fork(&proof.state, proof.arena.allocator());
+            previous.references += 1;
+        } else proof.state.init(proof.arena.allocator());
+        return proof;
+    }
+    fn release(initial: *TemporalProof) void {
+        var current: ?*TemporalProof = initial;
+        while (current) |proof| {
+            proof.references -= 1;
+            if (proof.references != 0) return;
+            current = proof.parent;
+            proof.state.deinit();
+            proof.arena.deinit();
+            const allocator = proof.allocator;
+            allocator.destroy(proof);
+        }
+    }
+};
+
 /// Retains accepted semantic construction and immutable checked graph versions.
 /// Initialize in final storage before preparing candidates. ModuleSG prefixes
 /// and their immutable source metadata are borrowed and must outlive this owner.
@@ -24,6 +61,7 @@ pub const CompilationSession = struct {
     versions: std.ArrayList(*sema.Result) = .empty,
     revision: u64 = 0,
     namespace: bytecode.SessionNamespace,
+    temporal: ?*TemporalProof = null,
 
     pub const Candidate = struct {
         allocator: std.mem.Allocator,
@@ -31,8 +69,10 @@ pub const CompilationSession = struct {
         revision: u64,
         semantic: ?*sema.Session,
         checked: ?*sema.Result,
+        temporal: ?*TemporalProof = null,
 
         pub fn deinit(self: *Candidate) void {
+            if (self.temporal) |proof| proof.release();
             if (self.checked) |checked| {
                 checked.graph.deinit(self.allocator);
                 self.allocator.destroy(checked);
@@ -55,6 +95,7 @@ pub const CompilationSession = struct {
     }
 
     pub fn deinit(self: *CompilationSession) void {
+        if (self.temporal) |proof| proof.release();
         for (self.versions.items) |version| {
             version.graph.deinit(self.allocator);
             self.allocator.destroy(version);
@@ -66,6 +107,16 @@ pub const CompilationSession = struct {
     }
 
     pub fn prepare(self: *const CompilationSession, modules: []const module_sg.ModuleSemanticGraph, diagnostics: *diagnostics_mod.Diagnostics) !Candidate {
+        return self.prepareImpl(modules, diagnostics, null);
+    }
+
+    /// Prepare a checked input/output-free command with the accepted temporal
+    /// state. The source coordinator supplies its finalized command scope.
+    pub fn prepareContinuation(self: *const CompilationSession, modules: []const module_sg.ModuleSemanticGraph, diagnostics: *diagnostics_mod.Diagnostics, function: @import("../4_semantics/global/graph.zig").GlobalFunctionId) !Candidate {
+        return self.prepareImpl(modules, diagnostics, function);
+    }
+
+    fn prepareImpl(self: *const CompilationSession, modules: []const module_sg.ModuleSemanticGraph, diagnostics: *diagnostics_mod.Diagnostics, continuation: ?@import("../4_semantics/global/graph.zig").GlobalFunctionId) !Candidate {
         if (diagnostics.hasErrors()) return error.Reported;
         const candidate = try self.allocator.create(sema.Session);
         errdefer self.allocator.destroy(candidate);
@@ -73,11 +124,13 @@ pub const CompilationSession = struct {
         errdefer candidate.deinit();
         try candidate.appendModules(modules);
         try candidate.advance();
-        var checked = try checkedSnapshot(candidate, self.allocator, diagnostics);
+        const proof = if (continuation != null) try TemporalProof.create(self.allocator, self.temporal) else null;
+        errdefer if (proof) |owned| owned.release();
+        var checked = try checkedSnapshot(candidate, self.allocator, diagnostics, continuation, proof);
         errdefer checked.graph.deinit(self.allocator);
         const version = try self.allocator.create(sema.Result);
         version.* = checked;
-        return .{ .allocator = self.allocator, .owner = self, .revision = self.revision, .semantic = candidate, .checked = version };
+        return .{ .allocator = self.allocator, .owner = self, .revision = self.revision, .semantic = candidate, .checked = version, .temporal = proof };
     }
 
     /// Publish only a checked candidate based on the current accepted revision.
@@ -92,6 +145,11 @@ pub const CompilationSession = struct {
         self.semantic = candidate.semantic.?;
         self.versions.appendAssumeCapacity(candidate.checked.?);
         self.revision += 1;
+        if (candidate.temporal) |proof| {
+            if (self.temporal) |previous_proof| previous_proof.release();
+            self.temporal = proof;
+            candidate.temporal = null;
+        }
         candidate.semantic = null;
         candidate.checked = null;
         previous.deinit();
@@ -102,15 +160,18 @@ pub const CompilationSession = struct {
 // Keep mutable construction open for subsequent submissions. Finalization,
 // temporal safety annotations and frozen constants belong to this independent
 // executable snapshot, using the ordinary compiler's proof and evaluator.
-fn checkedSnapshot(semantic: *const sema.Session, allocator: std.mem.Allocator, diagnostics: *diagnostics_mod.Diagnostics) !sema.Result {
+fn checkedSnapshot(semantic: *const sema.Session, allocator: std.mem.Allocator, diagnostics: *diagnostics_mod.Diagnostics, continuation: ?@import("../4_semantics/global/graph.zig").GlobalFunctionId, proof: ?*TemporalProof) !sema.Result {
     var publication: sema.Session = undefined;
     try semantic.fork(&publication, allocator, diagnostics);
     defer publication.deinit();
     var result = try publication.finish();
     errdefer result.graph.deinit(allocator);
-    var safety = @import("../4_semantics/safety/checker.zig").SafetyChecker.init(allocator, diagnostics, &result.graph);
+    const proof_allocator = if (proof) |owned| owned.arena.allocator() else allocator;
+    var safety = Safety.init(proof_allocator, diagnostics, &result.graph);
     defer safety.deinit();
-    try safety.analyze();
+    if (continuation) |function| {
+        try safety.analyzeContinuation(function, &proof.?.state);
+    } else try safety.analyze();
     try @import("comptime.zig").resolve(allocator, &result.graph, diagnostics);
     return result;
 }
@@ -261,4 +322,47 @@ test "compilation session retains executable graph addresses across publications
     const result = try current_vm.invoke(@enumFromInt(0), previous);
     try std.testing.expectEqual(@as(i128, 42), result[0].integer);
     try std.testing.expectEqual(identity, context.storage.context);
+}
+
+fn prepareContinuationsWithAllocationFailures(allocator: std.mem.Allocator) !void {
+    const a = std.testing.allocator;
+    const source = "command := () -> () {}\n";
+    const files = [_]@import("../1_base/source_files.zig").SourceFile{.{ .path = "submission/main.rg", .code = source }};
+    var diagnostics = diagnostics_mod.Diagnostics.init(&a, &files);
+    defer diagnostics.deinit();
+    var module = try sourceModule(a, source, &diagnostics);
+    defer module.deinit(a);
+    const modules = [_]module_sg.ModuleSemanticGraph{module};
+    var session = try CompilationSession.init(allocator, &.{}, .{});
+    defer session.deinit();
+    var first = try session.prepareContinuation(&modules, &diagnostics, @enumFromInt(0));
+    defer first.deinit();
+    try std.testing.expect(session.temporal == null);
+    try session.accept(&first);
+    const accepted = session.temporal.?;
+    const revision = session.revision;
+    if (session.prepareContinuation(&modules, &diagnostics, @enumFromInt(99))) |unexpected| {
+        var owned = unexpected;
+        owned.deinit();
+        return error.ExpectedInvalidContinuation;
+    } else |err| {
+        if (err == error.OutOfMemory) return err;
+        try std.testing.expectEqual(error.InvalidSafetyContinuation, err);
+    }
+    try std.testing.expect(session.temporal.? == accepted);
+    try std.testing.expectEqual(revision, session.revision);
+    var candidate = try session.prepareContinuation(&modules, &diagnostics, @enumFromInt(0));
+    defer candidate.deinit();
+    try std.testing.expect(candidate.temporal.?.parent.? == accepted);
+    try std.testing.expectEqual(@as(usize, 2), accepted.references);
+    var stale = try session.prepareContinuation(&modules, &diagnostics, @enumFromInt(0));
+    defer stale.deinit();
+    try session.accept(&candidate);
+    try std.testing.expect(session.temporal.?.parent.? == accepted);
+    try std.testing.expectEqual(@as(usize, 2), accepted.references);
+    try std.testing.expectError(error.StaleCompilationCandidate, session.accept(&stale));
+}
+
+test "compilation session publishes temporal continuations and releases rejected proof tails" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, prepareContinuationsWithAllocationFailures, .{});
 }
