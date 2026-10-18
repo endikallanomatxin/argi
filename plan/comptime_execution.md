@@ -31,9 +31,12 @@ IDs; generic candidate indexes extend the retained module prefix. Semantic
 resolvers now share one in-place context that owns their callback targets and
 caches. Phase queues and dense operation status tables can append new modules
 transactionally while preserving prior results; the same resolution state owns
-finalized function identities. Next, update declaration-dependent caches and
-retain the resolution loop across module additions before connecting conditional
-imports and interactive submissions.
+finalized function identities and cumulative resolution progress. The fixed-point
+executor advances without sealing construction metadata, so a retained coordinator
+can resume it. Contract template indexes extend cached groups, including empty
+ones, across module batches. Next, make conformance registration incremental and
+connect retained module views before wiring conditional imports and interactive
+submissions.
 JIT is deferred until measurements justify it; module origin is not an execution
 policy. Keep function identities independent of the executor, without introducing
 a mixed VM/native ABI or native-layout storage solely for a possible future JIT.

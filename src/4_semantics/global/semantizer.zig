@@ -301,6 +301,8 @@ const ResolutionState = struct {
     resolved: std.ArrayList(bool) = .empty,
     invalid: std.ArrayList(bool) = .empty,
     finalized_functions: std.AutoHashMap(global_sg.GlobalFunctionId, void),
+    progress: ResolutionProgress = .{},
+    pending_stats: PendingResolutionStats = .{},
 
     fn init(allocator: std.mem.Allocator) ResolutionState {
         return .{ .finalized_functions = .init(allocator) };
@@ -425,9 +427,8 @@ pub fn semantizeWithOptions(
     try resolution_state.appendModules(allocator, modules, relocation.offsets.items);
     const total = resolution_state.resolved.items.len;
     const resolved = resolution_state.resolved.items;
-    const invalid = resolution_state.invalid.items;
     const worklists = &resolution_state.worklists;
-    var pending_resolution_stats: PendingResolutionStats = .{};
+    const pending_resolution_stats = &resolution_state.pending_stats;
     if (options.profile_io != null) {
         for (modules) |module| for (module.semantic.pending_operations.items) |operation| {
             pending_resolution_stats.initial(operation);
@@ -453,175 +454,9 @@ pub fn semantizeWithOptions(
     }
     defer if (reachable) |set| set.deinit();
     profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.roots)]);
-    var pending_attempts: u64 = 0;
     const profile_preloop = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
-    var profile_rounds: usize = 0;
-    var profile_pending_ns: i96 = 0;
-    var profile_string_literal_types_ns: i96 = 0;
-    var profile_binding_types_ns: i96 = 0;
-    var profile_assignment_values_ns: i96 = 0;
-    var profile_dereferences_ns: i96 = 0;
-    var profile_addresses_ns: i96 = 0;
-    var profile_known_generic_types_ns: i96 = 0;
-    var profile_field_access_types_ns: i96 = 0;
-    var profile_sugar_types_ns: i96 = 0;
-    var profile_errors_ns: i96 = 0;
-    var profile_error_summary_ns: i96 = 0;
-    var profile_error_refresh_ns: i96 = 0;
-    var profile_finalize_ns: i96 = 0;
-    var profile_finalize_count: usize = 0;
-
-    // GlobalSema is staged by semantic domain. Ownership finalization can add
-    // cleanup calls to functions absent from the source call graph. Each newly
-    // reachable body gets another resolution pass before its cleanup is built.
-    const finalized_functions = &resolution_state.finalized_functions;
-    var changed = true;
-    while (true) {
-        while (changed) {
-            staged_execution.stable_type_count = relocation.graph.types.items.len;
-            profile_rounds += 1;
-            changed = false;
-            // Published operation signatures do not make their bodies roots.
-            // Complete selected bodies before resolving their pending uses.
-            if (generic_functions.materializePublishedBodies(reachable) catch |err| {
-                try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, generics);
-                try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
-                return err;
-            }) changed = true;
-            if (reachable) |set| {
-                if (try reachability_mod.expand(allocator, &relocation.graph, set)) changed = true;
-            }
-            const pending_start = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
-            for (pending_phases) |phase| {
-                if (resolvePendingPhase(
-                    core,
-                    expressions,
-                    dispatch,
-                    control,
-                    generics,
-                    contracts,
-                    errors,
-                    ownership,
-                    modules,
-                    relocation.offsets.items,
-                    resolved,
-                    invalid,
-                    worklists.forPhase(phase),
-                    reachable,
-                    &pending_attempts,
-                    if (options.profile_io != null) &pending_resolution_stats else null,
-                    options.profile_io,
-                    options.diagnostics,
-                ) catch |err| {
-                    try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, generics);
-                    try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
-                    return err;
-                }) changed = true;
-            }
-            try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
-            if (options.profile_io) |io| profile_pending_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - pending_start;
-
-            var sweep_start = profileTimestamp(options.profile_io);
-            sweep_start = profileTimestamp(options.profile_io);
-            if (core.materializeTextLiteralTypes()) changed = true;
-            profileAccumulate(options.profile_io, sweep_start, &profile_string_literal_types_ns);
-            sweep_start = profileTimestamp(options.profile_io);
-            if (try core.materializeBindingTypes()) changed = true;
-            profileAccumulate(options.profile_io, sweep_start, &profile_binding_types_ns);
-            sweep_start = profileTimestamp(options.profile_io);
-            if (core.materializeAssignmentValues()) changed = true;
-            profileAccumulate(options.profile_io, sweep_start, &profile_assignment_values_ns);
-            sweep_start = profileTimestamp(options.profile_io);
-            if (core.materializeDereferences()) changed = true;
-            profileAccumulate(options.profile_io, sweep_start, &profile_dereferences_ns);
-            sweep_start = profileTimestamp(options.profile_io);
-            if (try core.materializeAddresses()) changed = true;
-            profileAccumulate(options.profile_io, sweep_start, &profile_addresses_ns);
-            sweep_start = profileTimestamp(options.profile_io);
-            if (generics.materializeKnownTypes() catch |err| {
-                try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, generics);
-                try reportGenericArgumentFailure(&relocation.graph, options.diagnostics, generics);
-                try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
-                return err;
-            }) changed = true;
-            profileAccumulate(options.profile_io, sweep_start, &profile_known_generic_types_ns);
-            sweep_start = profileTimestamp(options.profile_io);
-            if (try contracts.materializeFieldAccessTypes()) changed = true;
-            profileAccumulate(options.profile_io, sweep_start, &profile_field_access_types_ns);
-            // Generic instantiation can intern nullable or inferred Errable
-            // types during this pass. Their materialization must schedule a
-            // further pass so pending uses can observe the final choice shape.
-            sweep_start = profileTimestamp(options.profile_io);
-            if (try control.materializeSugarTypes()) changed = true;
-            profileAccumulate(options.profile_io, sweep_start, &profile_sugar_types_ns);
-            const errors_start = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
-            if (try errors.inferFunctionErrorReasons(reachable)) changed = true;
-            profileAccumulate(options.profile_io, errors_start, &profile_error_summary_ns);
-            const refresh_start = profileTimestamp(options.profile_io);
-            if (errors.refreshPropagationResults()) changed = true;
-            profileAccumulate(options.profile_io, refresh_start, &profile_error_refresh_ns);
-            if (options.profile_io) |io| profile_errors_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - errors_start;
-            if (try completePropagatedReachCalls(core, modules, relocation.offsets.items)) changed = true;
-            // Evidence selected by newly specialized bodies belongs to this
-            // fixed point. Its operation bodies must become reachable and have
-            // their cleanup finalized before construction metadata is retired.
-            const evidence_functions = relocation.graph.functions.items.len;
-            const evidence_types = relocation.graph.types.items.len;
-            const evidence_conformances = relocation.graph.contract_conformances.items.len;
-            contracts.validateParticipantConformances() catch |err| {
-                try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, generics);
-                try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
-                return err;
-            };
-            try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
-            if (evidence_functions != relocation.graph.functions.items.len or
-                evidence_types != relocation.graph.types.items.len or
-                evidence_conformances != relocation.graph.contract_conformances.items.len) changed = true;
-            if (try staged_execution.materialize()) changed = true;
-            if (reachable) |set| {
-                if (try reachability_mod.expand(allocator, &relocation.graph, set)) changed = true;
-            }
-        }
-        var finalized_any = false;
-        const finalization_count = relocation.graph.functions.items.len;
-        var raw: usize = 0;
-        while (raw < finalization_count) : (raw += 1) {
-            const id: global_sg.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
-            if (finalized_functions.contains(id)) continue;
-            if (reachable) |set| {
-                if (!set.contains(id)) continue;
-            }
-            if (relocation.graph.functions.items[raw].body == null) continue;
-            const finalize_start = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
-            const did_finalize = try ownership.finalizeFunctionBody(id);
-            if (options.profile_io) |io| profile_finalize_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - finalize_start;
-            profile_finalize_count += 1;
-            if (!did_finalize) continue;
-            try finalized_functions.put(id, {});
-            finalized_any = true;
-        }
-        const reached_cleanup = if (reachable) |set|
-            try reachability_mod.expand(allocator, &relocation.graph, set)
-        else
-            false;
-        var pending_bodies = std.AutoHashMap(global_sg.GlobalFunctionId, void).init(allocator);
-        defer pending_bodies.deinit();
-        if (staged_execution.requests.items.len != 0) {
-            for (pending_phases) |phase| for (worklists.forPhase(phase).items) |item| {
-                if (item.owner_function) |owner| try pending_bodies.put(owner, {});
-            };
-        }
-        const evaluated = if (options.diagnostics) |diagnostics|
-            staged_execution.evaluateReady(diagnostics, finalized_functions, &pending_bodies) catch |err| {
-                try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, generics);
-                return err;
-            }
-        else
-            false;
-        if (evaluated) try contracts.resolveAssociatedTypes();
-        if (!finalized_any and !reached_cleanup and !evaluated) break;
-        changed = true;
-    }
+    const progress = &resolution_state.progress;
+    try advanceResolution(&options, &resolvers, &resolution_state, reachable);
     const profile_postloop = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
 
     try contracts.validateGenericFunctionInstances();
@@ -828,12 +663,12 @@ pub fn semantizeWithOptions(
         .pending_call_stages = dispatch.pending_call_stages,
         .pending_total = @intCast(total),
         .pending_resolved = @intCast(resolved_count),
-        .pending_attempts = pending_attempts,
+        .pending_attempts = progress.pending_attempts,
         .pending_by_owner = pending_resolution_stats.owners,
         .pending_by_operation = pending_resolution_stats.operations,
         .remaining = 0,
-        .rounds = @intCast(profile_rounds),
-        .cleanup_attempts = @intCast(profile_finalize_count),
+        .rounds = @intCast(progress.profile_rounds),
+        .cleanup_attempts = @intCast(progress.profile_finalize_count),
         .destructor_lookups = @intCast(ownership.profile_destructor_calls),
         .generic_instantiation_calls = generic_functions.profile_instantiate_calls,
         .generic_existing_instances = generic_functions.profile_instantiate_existing,
@@ -853,19 +688,19 @@ pub fn semantizeWithOptions(
         .setup_ns = @intCast(profile_preloop - profile_relocated),
         .setup_stages_ns = setup_stage_times,
         .fixed_point_ns = @intCast(profile_postloop - profile_preloop),
-        .pending_ns = @intCast(profile_pending_ns),
-        .string_literal_types_ns = @intCast(profile_string_literal_types_ns),
-        .binding_types_ns = @intCast(profile_binding_types_ns),
-        .assignment_values_ns = @intCast(profile_assignment_values_ns),
-        .dereferences_ns = @intCast(profile_dereferences_ns),
-        .addresses_ns = @intCast(profile_addresses_ns),
-        .known_generic_types_ns = @intCast(profile_known_generic_types_ns),
-        .field_access_types_ns = @intCast(profile_field_access_types_ns),
-        .sugar_types_ns = @intCast(profile_sugar_types_ns),
-        .error_inference_ns = @intCast(profile_errors_ns),
-        .error_summary_ns = @intCast(profile_error_summary_ns),
-        .error_refresh_ns = @intCast(profile_error_refresh_ns),
-        .cleanup_ns = @intCast(profile_finalize_ns),
+        .pending_ns = @intCast(progress.profile_pending_ns),
+        .string_literal_types_ns = @intCast(progress.profile_string_literal_types_ns),
+        .binding_types_ns = @intCast(progress.profile_binding_types_ns),
+        .assignment_values_ns = @intCast(progress.profile_assignment_values_ns),
+        .dereferences_ns = @intCast(progress.profile_dereferences_ns),
+        .addresses_ns = @intCast(progress.profile_addresses_ns),
+        .known_generic_types_ns = @intCast(progress.profile_known_generic_types_ns),
+        .field_access_types_ns = @intCast(progress.profile_field_access_types_ns),
+        .sugar_types_ns = @intCast(progress.profile_sugar_types_ns),
+        .error_inference_ns = @intCast(progress.profile_errors_ns),
+        .error_summary_ns = @intCast(progress.profile_error_summary_ns),
+        .error_refresh_ns = @intCast(progress.profile_error_refresh_ns),
+        .cleanup_ns = @intCast(progress.profile_finalize_ns),
         .implicit_destructor_ns = @intCast(ownership.profile_destructor_ns),
         .source_generic_selection_ns = @intCast(generic_functions.profile_source_selection_ns),
         .source_generic_completion_ns = @intCast(generic_functions.profile_source_completion_ns),
@@ -878,6 +713,206 @@ pub fn semantizeWithOptions(
         .verify_ns = @intCast(profile_end - profile_preverify),
     };
     return .{ .graph = relocation.takeGraph(allocator), .stats = stats };
+}
+
+const ResolutionProgress = struct {
+    pending_attempts: u64 = 0,
+    profile_rounds: usize = 0,
+    profile_pending_ns: i96 = 0,
+    profile_string_literal_types_ns: i96 = 0,
+    profile_binding_types_ns: i96 = 0,
+    profile_assignment_values_ns: i96 = 0,
+    profile_dereferences_ns: i96 = 0,
+    profile_addresses_ns: i96 = 0,
+    profile_known_generic_types_ns: i96 = 0,
+    profile_field_access_types_ns: i96 = 0,
+    profile_sugar_types_ns: i96 = 0,
+    profile_errors_ns: i96 = 0,
+    profile_error_summary_ns: i96 = 0,
+    profile_error_refresh_ns: i96 = 0,
+    profile_finalize_ns: i96 = 0,
+    profile_finalize_count: usize = 0,
+};
+
+// Advance to quiescence without sealing construction metadata or diagnosing
+// unresolved work. A coordinator can retain this state and resume after adding
+// semantic inputs; only the final publication path seals the graph.
+fn advanceResolution(
+    options: *const Options,
+    resolvers: *@import("resolver_context.zig").Context,
+    state: *ResolutionState,
+    reachable: ?*reachability_mod.FunctionSet,
+) !void {
+    const progress = &state.progress;
+    const pending_resolution_stats = &state.pending_stats;
+    const graph = resolvers.core.graph;
+    const allocator = resolvers.core.allocator;
+    const modules = resolvers.core.modules;
+    const offsets = resolvers.core.offsets;
+    const core = &resolvers.core;
+    const expressions = &resolvers.expressions;
+    const control = &resolvers.control;
+    const generics = &resolvers.generics;
+    const generic_functions = &resolvers.generic_functions;
+    const contracts = &resolvers.contracts;
+    const errors = &resolvers.errors;
+    const dispatch = &resolvers.dispatch;
+    const ownership = &resolvers.ownership;
+    const staged_execution = &resolvers.staged_execution;
+    const resolved = state.resolved.items;
+    const invalid = state.invalid.items;
+    const worklists = &state.worklists;
+    // GlobalSema is staged by semantic domain. Ownership finalization can add
+    // cleanup calls to functions absent from the source call graph. Each newly
+    // reachable body gets another resolution pass before its cleanup is built.
+    const finalized_functions = &state.finalized_functions;
+    var changed = true;
+    while (true) {
+        while (changed) {
+            staged_execution.stable_type_count = graph.types.items.len;
+            progress.profile_rounds += 1;
+            changed = false;
+            // Published operation signatures do not make their bodies roots.
+            // Complete selected bodies before resolving their pending uses.
+            if (generic_functions.materializePublishedBodies(reachable) catch |err| {
+                try reportComptimeExpressionFailure(graph, options.diagnostics, generics);
+                try reportParticipantConformanceFailure(allocator, graph, options.diagnostics, contracts.participant_conformance_failure);
+                return err;
+            }) changed = true;
+            if (reachable) |set| {
+                if (try reachability_mod.expand(allocator, graph, set)) changed = true;
+            }
+            const pending_start = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
+            for (pending_phases) |phase| {
+                if (resolvePendingPhase(
+                    core,
+                    expressions,
+                    dispatch,
+                    control,
+                    generics,
+                    contracts,
+                    errors,
+                    ownership,
+                    modules,
+                    offsets,
+                    resolved,
+                    invalid,
+                    worklists.forPhase(phase),
+                    reachable,
+                    &progress.pending_attempts,
+                    if (options.profile_io != null) pending_resolution_stats else null,
+                    options.profile_io,
+                    options.diagnostics,
+                ) catch |err| {
+                    try reportComptimeExpressionFailure(graph, options.diagnostics, generics);
+                    try reportParticipantConformanceFailure(allocator, graph, options.diagnostics, contracts.participant_conformance_failure);
+                    return err;
+                }) changed = true;
+            }
+            try reportParticipantConformanceFailure(allocator, graph, options.diagnostics, contracts.participant_conformance_failure);
+            if (options.profile_io) |io| progress.profile_pending_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - pending_start;
+
+            var sweep_start = profileTimestamp(options.profile_io);
+            sweep_start = profileTimestamp(options.profile_io);
+            if (core.materializeTextLiteralTypes()) changed = true;
+            profileAccumulate(options.profile_io, sweep_start, &progress.profile_string_literal_types_ns);
+            sweep_start = profileTimestamp(options.profile_io);
+            if (try core.materializeBindingTypes()) changed = true;
+            profileAccumulate(options.profile_io, sweep_start, &progress.profile_binding_types_ns);
+            sweep_start = profileTimestamp(options.profile_io);
+            if (core.materializeAssignmentValues()) changed = true;
+            profileAccumulate(options.profile_io, sweep_start, &progress.profile_assignment_values_ns);
+            sweep_start = profileTimestamp(options.profile_io);
+            if (core.materializeDereferences()) changed = true;
+            profileAccumulate(options.profile_io, sweep_start, &progress.profile_dereferences_ns);
+            sweep_start = profileTimestamp(options.profile_io);
+            if (try core.materializeAddresses()) changed = true;
+            profileAccumulate(options.profile_io, sweep_start, &progress.profile_addresses_ns);
+            sweep_start = profileTimestamp(options.profile_io);
+            if (generics.materializeKnownTypes() catch |err| {
+                try reportComptimeExpressionFailure(graph, options.diagnostics, generics);
+                try reportGenericArgumentFailure(graph, options.diagnostics, generics);
+                try reportParticipantConformanceFailure(allocator, graph, options.diagnostics, contracts.participant_conformance_failure);
+                return err;
+            }) changed = true;
+            profileAccumulate(options.profile_io, sweep_start, &progress.profile_known_generic_types_ns);
+            sweep_start = profileTimestamp(options.profile_io);
+            if (try contracts.materializeFieldAccessTypes()) changed = true;
+            profileAccumulate(options.profile_io, sweep_start, &progress.profile_field_access_types_ns);
+            // Generic instantiation can intern nullable or inferred Errable
+            // types during this pass. Their materialization must schedule a
+            // further pass so pending uses can observe the final choice shape.
+            sweep_start = profileTimestamp(options.profile_io);
+            if (try control.materializeSugarTypes()) changed = true;
+            profileAccumulate(options.profile_io, sweep_start, &progress.profile_sugar_types_ns);
+            const errors_start = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
+            if (try errors.inferFunctionErrorReasons(reachable)) changed = true;
+            profileAccumulate(options.profile_io, errors_start, &progress.profile_error_summary_ns);
+            const refresh_start = profileTimestamp(options.profile_io);
+            if (errors.refreshPropagationResults()) changed = true;
+            profileAccumulate(options.profile_io, refresh_start, &progress.profile_error_refresh_ns);
+            if (options.profile_io) |io| progress.profile_errors_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - errors_start;
+            if (try completePropagatedReachCalls(core, modules, offsets)) changed = true;
+            // Evidence selected by newly specialized bodies belongs to this
+            // fixed point. Its operation bodies must become reachable and have
+            // their cleanup finalized before construction metadata is retired.
+            const evidence_functions = graph.functions.items.len;
+            const evidence_types = graph.types.items.len;
+            const evidence_conformances = graph.contract_conformances.items.len;
+            contracts.validateParticipantConformances() catch |err| {
+                try reportComptimeExpressionFailure(graph, options.diagnostics, generics);
+                try reportParticipantConformanceFailure(allocator, graph, options.diagnostics, contracts.participant_conformance_failure);
+                return err;
+            };
+            try reportParticipantConformanceFailure(allocator, graph, options.diagnostics, contracts.participant_conformance_failure);
+            if (evidence_functions != graph.functions.items.len or
+                evidence_types != graph.types.items.len or
+                evidence_conformances != graph.contract_conformances.items.len) changed = true;
+            if (try staged_execution.materialize()) changed = true;
+            if (reachable) |set| {
+                if (try reachability_mod.expand(allocator, graph, set)) changed = true;
+            }
+        }
+        var finalized_any = false;
+        const finalization_count = graph.functions.items.len;
+        var raw: usize = 0;
+        while (raw < finalization_count) : (raw += 1) {
+            const id: global_sg.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
+            if (finalized_functions.contains(id)) continue;
+            if (reachable) |set| {
+                if (!set.contains(id)) continue;
+            }
+            if (graph.functions.items[raw].body == null) continue;
+            const finalize_start = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
+            const did_finalize = try ownership.finalizeFunctionBody(id);
+            if (options.profile_io) |io| progress.profile_finalize_ns += std.Io.Timestamp.now(io, .boot).nanoseconds - finalize_start;
+            progress.profile_finalize_count += 1;
+            if (!did_finalize) continue;
+            try finalized_functions.put(id, {});
+            finalized_any = true;
+        }
+        const reached_cleanup = if (reachable) |set|
+            try reachability_mod.expand(allocator, graph, set)
+        else
+            false;
+        var pending_bodies = std.AutoHashMap(global_sg.GlobalFunctionId, void).init(allocator);
+        defer pending_bodies.deinit();
+        if (staged_execution.requests.items.len != 0) {
+            for (pending_phases) |phase| for (worklists.forPhase(phase).items) |item| {
+                if (item.owner_function) |owner| try pending_bodies.put(owner, {});
+            };
+        }
+        const evaluated = if (options.diagnostics) |diagnostics|
+            staged_execution.evaluateReady(diagnostics, finalized_functions, &pending_bodies) catch |err| {
+                try reportComptimeExpressionFailure(graph, options.diagnostics, generics);
+                return err;
+            }
+        else
+            false;
+        if (evaluated) try contracts.resolveAssociatedTypes();
+        if (!finalized_any and !reached_cleanup and !evaluated) break;
+        changed = true;
+    }
 }
 
 fn diagnoseInvalidMatchPayloadCopies(
@@ -3511,4 +3546,29 @@ fn extendResolutionWithAllocationFailures(allocator: std.mem.Allocator) !void {
 
 test "resolution state preserves published work on allocation failures" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, extendResolutionWithAllocationFailures, .{});
+}
+
+test "resolution can resume before unresolved construction types are sealed" {
+    const a = std.testing.allocator;
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.append(a, .{ .builtin = .Any });
+    const id: global_sg.GlobalTypeId = @enumFromInt(0);
+    try graph.markTypeUnresolved(a, id);
+    var resolvers: @import("resolver_context.zig").Context = undefined;
+    resolvers.init(a, &graph, &.{}, &.{}, null, null);
+    defer resolvers.deinit();
+    var state = ResolutionState.init(a);
+    defer state.deinit(a);
+    const progress = &state.progress;
+    try std.testing.expectEqual(@as(usize, 0), resolvers.staged_execution.requests.items.len);
+    try advanceResolution(&.{}, &resolvers, &state, null);
+    try std.testing.expect(graph.isTypeUnresolved(id));
+    const first_rounds = progress.profile_rounds;
+    try graph.resolveType(id, .{ .builtin = .Int32 });
+    try std.testing.expectEqual(@as(usize, 0), resolvers.staged_execution.requests.items.len);
+    try advanceResolution(&.{}, &resolvers, &state, null);
+    try std.testing.expect(!graph.isTypeUnresolved(id));
+    try std.testing.expect(progress.profile_rounds > first_rounds);
+    try std.testing.expectEqual(primitives.BuiltinType.Int32, graph.types.items[0].builtin);
 }
