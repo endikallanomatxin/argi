@@ -24,12 +24,19 @@ pub fn evaluateBudgeted(allocator: std.mem.Allocator, graph: *g.GlobalSemanticGr
     var scratch = std.heap.ArenaAllocator.init(allocator);
     defer scratch.deinit();
     const temporary = scratch.allocator();
-    // Checking can publish call cleanup annotations into the retained graph.
-    // Those allocations must belong to its owner, not the evaluator arena.
-    var checker = @import("../4_semantics/safety/checker.zig").SafetyChecker.init(allocator, diagnostics, graph);
+    // Evaluation needs checked call annotations, but neither those annotations
+    // nor the checker's facts belong in the retained construction graph. Borrow
+    // immutable pools and copy only the two columns the checker can annotate.
+    // All evaluation nodes/annotations die together with the scratch arena.
+    var checked = graph.*;
+    checked.nodes = .empty;
+    checked.virtual_calls = .empty;
+    try checked.nodes.appendSlice(temporary, graph.nodes.items);
+    try checked.virtual_calls.appendSlice(temporary, graph.virtual_calls.items);
+    var checker = @import("../4_semantics/safety/checker.zig").SafetyChecker.init(temporary, diagnostics, &checked);
     defer checker.deinit();
     try checker.analyzeUnit(&.{entry});
-    var lower = try Lower.init(temporary, graph);
+    var lower = try Lower.init(temporary, &checked);
     const function = graph.function(entry);
     for (graph.fields.items[function.input.start..][0..function.input.len]) |field| {
         if (!freezable(graph, lower.cleanup_types, field.ty, 0)) return error.UnfreezableEvaluationInput;

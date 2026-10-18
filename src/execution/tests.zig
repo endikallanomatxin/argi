@@ -1599,3 +1599,34 @@ test "bytecode session declarations initialize persistent storage without local 
     try std.testing.expectError(error.ExecutionActiveCleanup, context.storage.releaseSession(persistent));
     try std.testing.expectError(error.ExecutionInitializedStorage, executor.invoke(@enumFromInt(0), &.{}));
 }
+
+test "comptime evaluation releases transient proofs with a retained graph allocator" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const files = [_]sf.SourceFile{.{
+        .path = "evaluation/main.rg",
+        .code = "answer := () -> (.result: Int32) { result = 42 }\n" ++
+            "main := () -> (.status_code: Int32) { status_code = answer() }\n",
+    }};
+    var diagnostics = diag.Diagnostics.init(&allocator, &files);
+    defer diagnostics.deinit();
+    var pipeline = frontend.FrontendPipeline.init(allocator, std.testing.io, &diagnostics, .{});
+    defer pipeline.deinit();
+    const source = try pipeline.semantizeGlobalFiles(&files);
+    var graph = try source.clone(std.testing.allocator);
+    defer graph.deinit(std.testing.allocator);
+    const entry: @import("../4_semantics/global/graph.zig").GlobalFunctionId = for (graph.functions.items, 0..) |function, index| {
+        if (std.mem.eql(u8, graph.text(graph.declarationSourceName(function.declaration)), "main")) break @enumFromInt(index);
+    } else return error.MissingEntry;
+    const before = graph.nodes.items.len;
+    const result = try @import("evaluate.zig").evaluate(std.testing.allocator, &graph, &diagnostics, entry, &.{}, graph.declaration(graph.function(entry).declaration).source, .{});
+    defer std.testing.allocator.free(result);
+    try std.testing.expectEqual(@as(usize, 1), result.len);
+    try std.testing.expectEqual(@as(i128, 42), graph.node(result[0]).content.int_literal);
+    try std.testing.expectEqual(before + 1, graph.nodes.items.len);
+    // Source annotations remain borrowed from the original checked graph;
+    // evaluation publishes only its frozen constant, never scratch proof data.
+    for (graph.nodes.items[0..before], source.nodes.items) |retained, original|
+        try std.testing.expectEqualDeep(original, retained);
+}
