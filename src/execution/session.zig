@@ -68,7 +68,14 @@ pub const Session = struct {
             out.cleanup = cleanup;
         }
         var lower = try @import("../5_codegen/bytecode/lower.zig").Lower.initSession(a, checked, .{ .namespace = self.compiler.namespace, .bindings = retained });
-        const program = try lower.compile(function);
+        const diagnostics = candidate.semantic.?.options.diagnostics orelse return error.MissingSessionDiagnostics;
+        const program = lower.compile(function) catch |err| {
+            if (err == error.UnsupportedExecution) {
+                try diagnostics.add(@import("diagnostics.zig").location(checked, diagnostics, lower.source), .codegen, "bytecode execution does not support {s}", .{lower.unsupported});
+                return error.Reported;
+            }
+            return err;
+        };
         var vm = try execution.Vm.initShared(self.allocator, program, self.limits, &self.context);
         defer vm.deinit();
         try self.units.ensureUnusedCapacity(self.allocator, 1);
@@ -77,7 +84,11 @@ pub const Session = struct {
         published = true;
         // After publication the unit and graph belong to their retained owners,
         // even when this invocation traps and poisons the execution context.
-        _ = try vm.invoke(function, &.{});
+        _ = vm.invoke(function, &.{}) catch |err| {
+            if (err == error.OutOfMemory) return err;
+            try diagnostics.add(@import("diagnostics.zig").location(checked, diagnostics, vm.source), .codegen, "bytecode execution failed: {s}", .{@errorName(err)});
+            return err;
+        };
     }
 
     pub fn executeExit(self: *Session, candidate: *compilation.CompilationSession.Candidate, function: graph.GlobalFunctionId, bindings: []const bytecode.SessionBinding) !void {

@@ -8,8 +8,7 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
 
 - Load imports from interactive submissions through the normal source collector,
   retaining immutable module prefixes and correct relative paths.
-- Map wrapped command diagnostics back to submitted source coordinates; improve
-  unsupported-operation and unresolved-name diagnostics in retained sessions.
+- Improve unresolved-name diagnostics in retained sessions.
 - Resolve computed module-level `#if` before discovering selected imports and
   declarations. Preserve source identities and do not analyze inactive branches.
 - Complete staged request diagnostics without a source database. Support temporary

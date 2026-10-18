@@ -34,10 +34,18 @@ pub const Sources = struct {
     /// coordinator subsequently designates it as a continuation before cleanup.
     /// Each source unit has its own identity; no preceding text is replayed.
     pub fn loadCommand(self: *Sources, diagnostics: *diagnostics_mod.Diagnostics, statements: []const u8) !Command {
+        return self.loadCommandOrigin(diagnostics, statements, null);
+    }
+
+    pub const SourceOrigin = struct { text: []const u8, offset: usize };
+
+    fn loadCommandOrigin(self: *Sources, diagnostics: *diagnostics_mod.Diagnostics, statements: []const u8, origin: ?SourceOrigin) !Command {
         const a = self.arena.allocator();
         const name = try std.fmt.allocPrint(a, "_session_command_{d}", .{self.sequence});
-        const source = try std.fmt.allocPrint(a, "{s} := () -> () {{\n{s}\n}}\n", .{ name, statements });
-        const module = try self.loadModule(diagnostics, source);
+        const header = try std.fmt.allocPrint(a, "{s} := () -> () {{\n", .{name});
+        const source = try std.fmt.allocPrint(a, "{s}{s}\n}}\n", .{ header, statements });
+        const input = origin orelse SourceOrigin{ .text = statements, .offset = 0 };
+        const module = try self.loadModuleOrigin(diagnostics, source, .{ .text = input.text, .offset = try std.math.add(usize, header.len, input.offset) });
         for (module.declarations.items) |declaration| {
             if (std.mem.eql(u8, module.text(declaration.name), name)) {
                 return .{ .module = module, .function = declaration.function_id orelse return error.InvalidCommand };
@@ -59,7 +67,11 @@ pub const Sources = struct {
     /// Join source loading to retained semantic preparation. Rejected sources
     /// remain available for diagnostics but never enter the accepted prefix.
     pub fn prepareCommand(self: *Sources, compiler: *const @import("compilation_session.zig").CompilationSession, diagnostics: *diagnostics_mod.Diagnostics, statements: []const u8) !PreparedCommand {
-        const command = try self.loadCommand(diagnostics, statements);
+        return self.prepareCommandOrigin(compiler, diagnostics, statements, null);
+    }
+
+    pub fn prepareCommandOrigin(self: *Sources, compiler: *const @import("compilation_session.zig").CompilationSession, diagnostics: *diagnostics_mod.Diagnostics, statements: []const u8, origin: ?SourceOrigin) !PreparedCommand {
+        const command = try self.loadCommandOrigin(diagnostics, statements, origin);
         const modules = try self.appendSnapshot(compiler.semantic.modules, command.module);
         // Relocation appends module functions before creating any specialization.
         const base = compiler.semantic.relocation.graph.functions.items.len;
@@ -80,7 +92,7 @@ pub const Sources = struct {
     /// Mixed module declarations and executable statements require separate
     /// submissions so their publication/execution boundary remains explicit.
     pub fn classify(self: *Sources, diagnostics: *diagnostics_mod.Diagnostics, source: []const u8) !SubmissionKind {
-        var parsed = try self.parseSource(diagnostics, source);
+        var parsed = try self.parseSource(diagnostics, source, null);
         defer parsed.tree.deinit(self.allocator);
         if (parsed.tree.roots.len == 1) switch (parsed.tree.tag(parsed.tree.roots[0])) {
             .expression_statement, .function_call => return .expression,
@@ -107,7 +119,7 @@ pub const Sources = struct {
         return result;
     }
 
-    fn parseSource(self: *Sources, diagnostics: *diagnostics_mod.Diagnostics, source: []const u8) !Parsed {
+    fn parseSource(self: *Sources, diagnostics: *diagnostics_mod.Diagnostics, source: []const u8, origin: ?SourceOrigin) !Parsed {
         if (diagnostics.hasErrors()) return error.Reported;
         if (self.sequence == std.math.maxInt(u64)) return error.SubmissionIdentityLimit;
         const sequence = self.sequence;
@@ -117,6 +129,18 @@ pub const Sources = struct {
         const path = try std.fmt.allocPrint(retained, "{s}/main.rg", .{dir});
         const code = try retained.dupe(u8, source);
         const file = try diagnostics.appendSource(.{ .path = path, .code = code });
+        if (origin) |input| {
+            const original = try diagnostics.appendSource(.{
+                .path = try std.fmt.allocPrint(retained, "{s}/input.rg", .{dir}),
+                .code = try retained.dupe(u8, input.text),
+            });
+            try diagnostics.addSourceMap(.{
+                .generated = file,
+                .original = original,
+                .offset = std.math.cast(u32, input.offset) orelse return error.SubmissionIdentityLimit,
+                .length = std.math.cast(u32, input.text.len) orelse return error.SubmissionIdentityLimit,
+            });
+        }
         var tokens = @import("../2_tokens/tokenizer.zig").Tokenizer.init(self.allocator, diagnostics, code, file);
         defer tokens.deinit();
         _ = try tokens.tokenize();
@@ -130,7 +154,11 @@ pub const Sources = struct {
     }
 
     pub fn loadModule(self: *Sources, diagnostics: *diagnostics_mod.Diagnostics, source: []const u8) !*const module_sg.ModuleSemanticGraph {
-        var parsed = try self.parseSource(diagnostics, source);
+        return self.loadModuleOrigin(diagnostics, source, null);
+    }
+
+    fn loadModuleOrigin(self: *Sources, diagnostics: *diagnostics_mod.Diagnostics, source: []const u8, origin: ?SourceOrigin) !*const module_sg.ModuleSemanticGraph {
+        var parsed = try self.parseSource(diagnostics, source, origin);
         defer parsed.tree.deinit(self.allocator);
         const code = parsed.code;
         const path = parsed.path;
@@ -182,6 +210,7 @@ test "submission sources retain immutable modules and rejected source diagnostic
     try std.testing.expectEqualStrings(original_dir, prefix[0].module_dir);
     try std.testing.expect(!std.mem.eql(u8, extended[0].module_dir, extended[1].module_dir));
     try std.testing.expectEqual(@as(usize, 3), diagnostics.source_files.len);
+    try std.testing.expectEqual(@as(usize, 0), diagnostics.source_maps.len);
 }
 
 test "source submissions compile and execute incrementally without history replay" {
@@ -209,6 +238,8 @@ test "source submissions compile and execute incrementally without history repla
     const stored = try runtime.context.storage.slots(runtime.context.bindings.get(binding).?);
     try std.testing.expectEqual(@as(i128, 7), (try stored.get(0)).integer);
     try std.testing.expectEqual(@as(usize, 3), sources.modules.items.len);
-    try std.testing.expectEqual(@as(usize, 3), diagnostics.source_files.len);
+    try std.testing.expectEqual(@as(usize, 6), diagnostics.source_files.len);
+    try std.testing.expectEqual(@as(usize, 3), diagnostics.source_maps.len);
+    try std.testing.expectEqualStrings("retained = 7", diagnostics.source_db.get(diagnostics.source_maps[2].original).source);
     try std.testing.expectEqual(@as(u64, 2), compiler.revision);
 }

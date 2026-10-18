@@ -90,7 +90,12 @@ pub const Interactive = struct {
                 const name = try self.nextResultName();
                 const statement = try std.fmt.allocPrint(self.allocator, "{s} ::= {s}\n", .{ name, source });
                 defer self.allocator.free(statement);
-                try self.submitStatements(statement);
+                var command = try self.sources.prepareCommandOrigin(&self.compiler, &self.diagnostics, statement, .{
+                    .text = source,
+                    .offset = name.len + " ::= ".len,
+                });
+                defer command.deinit();
+                try self.runtime.executeCommand(&command.candidate);
                 const bindings = self.compiler.semantic.resolvers.expressions.session_bindings.items;
                 const binding = bindings[bindings.len - 1];
                 const frame = self.runtime.context.bindings.get(binding) orelse return error.UninitializedBinding;
@@ -373,5 +378,62 @@ test "interactive classification rejects mixed submissions and unresolved import
     try std.testing.expect(std.mem.indexOf(u8, session.diagnostics.list.items[0].msg, "imports in interactive submissions") != null);
     const result = (try session.submitInput("42")).?;
     try std.testing.expectEqual(@as(i128, 42), result.value.integer);
+    try session.close();
+}
+
+test "interactive command diagnostics use original submitted coordinates" {
+    var session: Interactive = undefined;
+    try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    try session.submitStatements("value: Int32 = 42");
+    try std.testing.expectError(error.Reported, session.submitStatements("\nvalue = 7"));
+    try std.testing.expect(session.diagnostics.hasErrors());
+    const diagnostic = session.diagnostics.list.items[0];
+    try std.testing.expect(std.mem.endsWith(u8, session.diagnostics.path(diagnostic.loc), "/input.rg"));
+    const position = session.diagnostics.lineColumn(diagnostic.loc);
+    try std.testing.expectEqual(@as(u32, 2), position.line);
+    try std.testing.expectEqual(@as(u32, 1), position.column);
+    try std.testing.expectEqualStrings("\nvalue = 7", session.diagnostics.source_db.get(diagnostic.loc.file).source);
+    try session.close();
+}
+
+test "interactive execution diagnostics map expression and statement source" {
+    var session: Interactive = undefined;
+    try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    try session.submit("fraction := () -> (.result: Float32) { result = 1.5 }");
+    const revision = session.compiler.revision;
+    try std.testing.expectError(error.Reported, session.submitInput("fraction()"));
+    try std.testing.expectEqual(revision, session.compiler.revision);
+    try std.testing.expect(session.diagnostics.hasErrors());
+    const unsupported = session.diagnostics.list.items[0];
+    try std.testing.expect(std.mem.indexOf(u8, unsupported.msg, "bytecode execution does not support") != null);
+    try std.testing.expect(std.mem.endsWith(u8, session.diagnostics.path(unsupported.loc), "/input.rg"));
+    try std.testing.expectEqualStrings("fraction()", session.diagnostics.source_db.get(unsupported.loc.file).source);
+    try std.testing.expectEqual(@as(u32, 1), session.diagnostics.lineColumn(unsupported.loc).column);
+    try std.testing.expectError(error.ExecutionAborted, session.submitStatements("\nabort"));
+    const aborted = session.diagnostics.list.items[0];
+    try std.testing.expect(std.mem.endsWith(u8, session.diagnostics.path(aborted.loc), "/input.rg"));
+    const position = session.diagnostics.lineColumn(aborted.loc);
+    try std.testing.expectEqual(@as(u32, 2), position.line);
+    try std.testing.expectEqual(@as(u32, 1), position.column);
+    try session.reset();
+    try session.close();
+}
+
+test "interactive compile-time failures preserve definition source and accepted revision" {
+    var session: Interactive = undefined;
+    try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    try session.submit("fail := () -> (.result: Int32) { abort }");
+    const revision = session.compiler.revision;
+    try std.testing.expectError(error.Reported, session.submitInput("#run fail()"));
+    try std.testing.expectEqual(revision, session.compiler.revision);
+    try std.testing.expect(session.diagnostics.hasErrors());
+    const diagnostic = session.diagnostics.list.items[0];
+    const text = session.diagnostics.source_db.get(diagnostic.loc.file).source;
+    try std.testing.expect(std.mem.indexOf(u8, text, "_session_command_") == null);
+    try std.testing.expect(std.mem.indexOf(u8, diagnostic.msg, "aborted") != null);
+    try session.submitStatements("value ::= 42");
     try session.close();
 }

@@ -181,6 +181,8 @@ variant indexes. This is an initial value display, not the text-formatting API.
 
 `:reset` runs checked cleanup and starts a fresh session; `:quit` or EOF cleans up
 and exits. Preparation failures publish no state and subsequent input can retry.
+Diagnostics for wrapped statements and expression results point to the submitted
+text. Unsupported bytecode operations report their source location.
 A runtime trap retains any writes already executed and poisons the session; use
 `:reset` before continuing. Trapped code cannot be safely unwound. No System/FFI
 capabilities or native calls are implicitly granted by the REPL.

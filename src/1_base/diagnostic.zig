@@ -16,6 +16,15 @@ pub const Diagnostic = struct {
     msg: []const u8,
 };
 
+/// One unchanged source span embedded in generated code. Semantic locations
+/// retain generated offsets; only diagnostic presentation follows this map.
+pub const SourceMap = struct {
+    generated: source_db.FileId,
+    original: source_db.FileId,
+    offset: u32,
+    length: u32,
+};
+
 /// A small *bag* allocated from an `Allocator` (an arena works well).
 pub const Diagnostics = struct {
     arena: *const std.mem.Allocator,
@@ -23,6 +32,7 @@ pub const Diagnostics = struct {
     source_db: source_db.SourceDb,
     owned_source_files: ?[]sf.SourceFile = null,
     owns_source_db: bool = true,
+    source_maps: []const SourceMap = &.{},
     list: std.array_list.Managed(Diagnostic),
 
     pub fn init(
@@ -45,13 +55,17 @@ pub const Diagnostics = struct {
             .source_files = owner.source_files,
             .source_db = owner.source_db,
             .owns_source_db = false,
+            .source_maps = owner.source_maps,
             .list = std.array_list.Managed(Diagnostic).init(a.*),
         };
     }
 
     pub fn deinit(self: *Diagnostics) void {
         self.list.deinit();
-        if (self.owns_source_db) self.source_db.deinit(self.arena.*);
+        if (self.owns_source_db) {
+            self.source_db.deinit(self.arena.*);
+            self.arena.free(self.source_maps);
+        }
         if (self.owned_source_files) |files| self.arena.free(files);
     }
 
@@ -70,18 +84,47 @@ pub const Diagnostics = struct {
 
     pub fn add(self: *Diagnostics, loc: tok.Location, kind: Kind, comptime fmt: []const u8, args: anytype) !void {
         const txt = try std.fmt.allocPrint(self.arena.*, fmt, args);
-        try self.list.append(.{ .loc = loc, .kind = kind, .msg = txt });
+        errdefer self.arena.free(txt);
+        try self.list.append(.{ .loc = self.presentedLocation(loc), .kind = kind, .msg = txt });
+    }
+
+    pub fn addSourceMap(self: *Diagnostics, map: SourceMap) !void {
+        std.debug.assert(self.owns_source_db);
+        if (@intFromEnum(map.generated) >= self.source_files.len or @intFromEnum(map.original) >= self.source_files.len or map.generated == map.original) return error.InvalidDiagnosticSourceMap;
+        const generated = self.source_db.get(map.generated).source;
+        const original = self.source_db.get(map.original).source;
+        if (map.offset > generated.len or map.length > generated.len - map.offset or map.length != original.len or
+            !std.mem.eql(u8, generated[map.offset..][0..map.length], original)) return error.InvalidDiagnosticSourceMap;
+        for (self.source_maps) |existing| {
+            // Keep presentation idempotent: each generated file has one span,
+            // and original buffers are never themselves generated buffers.
+            if (existing.generated == map.generated or existing.original == map.generated or existing.generated == map.original) return error.InvalidDiagnosticSourceMap;
+        }
+        const maps = try self.arena.alloc(SourceMap, self.source_maps.len + 1);
+        @memcpy(maps[0..self.source_maps.len], self.source_maps);
+        maps[self.source_maps.len] = map;
+        self.arena.free(self.source_maps);
+        self.source_maps = maps;
+    }
+
+    pub fn presentedLocation(self: *const Diagnostics, loc: tok.Location) tok.Location {
+        for (self.source_maps) |map| {
+            if (loc.file == map.generated and loc.offset >= map.offset and loc.offset - map.offset <= map.length)
+                return .{ .file = map.original, .offset = loc.offset - map.offset };
+        }
+        return loc;
     }
     pub fn hasErrors(self: *Diagnostics) bool {
         return self.list.items.len != 0;
     }
 
     pub fn path(self: *const Diagnostics, loc: tok.Location) []const u8 {
-        return self.source_db.path(loc.file);
+        return self.source_db.path(self.presentedLocation(loc).file);
     }
 
     pub fn lineColumn(self: *const Diagnostics, loc: tok.Location) source_db.LineColumn {
-        return self.source_db.lineColumn(loc.file, loc.offset);
+        const presented = self.presentedLocation(loc);
+        return self.source_db.lineColumn(presented.file, presented.offset);
     }
 
     pub fn dump(self: *Diagnostics) !void {
@@ -98,9 +141,10 @@ pub const Diagnostics = struct {
 
             var shown: usize = 0;
             for (self.list.items) |d| {
-                if (@intFromEnum(d.loc.file) != file_index) continue;
+                const loc = self.presentedLocation(d.loc);
+                if (@intFromEnum(loc.file) != file_index) continue;
                 if (shown >= max_count) break;
-                const position = self.lineColumn(d.loc);
+                const position = self.lineColumn(loc);
                 std.debug.print(
                     "{s}:{d}:{d}: error: {s}\n",
                     .{ f.path, position.line, position.column, d.msg },
@@ -125,4 +169,30 @@ pub const Diagnostics = struct {
 fn indent(lvl: usize) void {
     var i: usize = 0;
     while (i < lvl) : (i += 1) std.debug.print(" ", .{});
+}
+
+test "diagnostic source maps preserve semantic offsets and borrowed presentation" {
+    const allocator = std.testing.allocator;
+    const files = [_]sf.SourceFile{
+        .{ .path = "generated.rg", .code = "header\nvalue\nfooter" },
+        .{ .path = "input.rg", .code = "value" },
+    };
+    var diagnostics = Diagnostics.init(&allocator, &files);
+    defer {
+        for (diagnostics.list.items) |item| allocator.free(item.msg);
+        diagnostics.deinit();
+    }
+    try diagnostics.addSourceMap(.{ .generated = @enumFromInt(0), .original = @enumFromInt(1), .offset = 7, .length = 5 });
+    const generated = tok.Location{ .file = @enumFromInt(0), .offset = 9 };
+    try diagnostics.add(generated, .semantic, "invalid value", .{});
+    const mapped = diagnostics.list.items[0].loc;
+    try std.testing.expectEqual(@as(u32, 9), generated.offset);
+    try std.testing.expectEqual(@as(u32, 2), mapped.offset);
+    try std.testing.expectEqualStrings("input.rg", diagnostics.path(generated));
+    try std.testing.expectEqual(@as(u32, 3), diagnostics.lineColumn(generated).column);
+    try std.testing.expectEqualDeep(mapped, diagnostics.presentedLocation(mapped));
+    var borrowed = Diagnostics.initBorrowed(&allocator, &diagnostics);
+    defer borrowed.deinit();
+    try std.testing.expectEqualDeep(mapped, borrowed.presentedLocation(generated));
+    try std.testing.expectError(error.InvalidDiagnosticSourceMap, diagnostics.addSourceMap(.{ .generated = @enumFromInt(1), .original = @enumFromInt(0), .offset = 0, .length = 5 }));
 }
