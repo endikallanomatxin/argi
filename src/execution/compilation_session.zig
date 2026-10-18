@@ -70,6 +70,8 @@ pub const CompilationSession = struct {
         semantic: ?*sema.Session,
         checked: ?*sema.Result,
         temporal: ?*TemporalProof = null,
+        is_exit: bool = false,
+        entry: ?@import("../4_semantics/global/graph.zig").GlobalFunctionId = null,
 
         pub fn deinit(self: *Candidate) void {
             if (self.temporal) |proof| proof.release();
@@ -139,7 +141,7 @@ pub const CompilationSession = struct {
         errdefer checked.graph.deinit(self.allocator);
         const version = try self.allocator.create(sema.Result);
         version.* = checked;
-        return .{ .allocator = self.allocator, .owner = self, .revision = self.revision, .semantic = candidate, .checked = version, .temporal = proof };
+        return .{ .allocator = self.allocator, .owner = self, .revision = self.revision, .semantic = candidate, .checked = version, .temporal = proof, .is_exit = exit_bindings != null, .entry = continuation };
     }
 
     /// Publish only a checked candidate based on the current accepted revision.
@@ -434,4 +436,41 @@ test "continuation scopes retain direct owners and clean nested owners" {
     try std.testing.expect(exit_graph.node(first).content == .auto_deinit_binding);
     try std.testing.expectEqual(binding, exit_graph.auto_deinits.items[@intFromEnum(exit_graph.node(first).content.auto_deinit_binding)].binding);
     try std.testing.expectError(error.InvalidSafetyContinuation, session.prepareExit(&modules, &diagnostics, @enumFromInt(@intFromEnum(command)), &.{binding}));
+}
+
+test "execution session publishes commands and runs checked exit before reset" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const source = "command := () -> () { retained: Int32 = 42 }\nexit_command := () -> () {}\n";
+    const files = [_]@import("../1_base/source_files.zig").SourceFile{.{ .path = "submission/main.rg", .code = source }};
+    var diagnostics = diagnostics_mod.Diagnostics.init(&a, &files);
+    defer diagnostics.deinit();
+    var module = try sourceModule(a, source, &diagnostics);
+    defer module.deinit(a);
+    const modules = [_]module_sg.ModuleSemanticGraph{module};
+    var compiler = try CompilationSession.init(a, &.{}, .{ .exhaustive_function_bodies = false });
+    defer compiler.deinit();
+    var runtime = @import("session.zig").Session.init(a, &compiler, .{});
+    defer runtime.deinit();
+    var command = try compiler.prepareContinuation(&modules, &diagnostics, @enumFromInt(0));
+    defer command.deinit();
+    const checked = &command.checked.?.graph;
+    const binding = for (checked.bindings.items, 0..) |record, index| {
+        if (std.mem.eql(u8, checked.text(record.name), "retained")) break @as(@import("../4_semantics/global/graph.zig").GlobalBindingId, @enumFromInt(index));
+    } else return error.MissingBinding;
+    const layouts = [_]bytecode.SessionBinding{.{ .binding = binding, .slots = &.{checked.binding(binding).ty} }};
+    try std.testing.expectError(error.InvalidExitCommand, runtime.executeExit(&command, @enumFromInt(0), &layouts));
+    try std.testing.expectEqual(@as(u64, 0), compiler.revision);
+    try runtime.execute(&command, @enumFromInt(0), &layouts);
+    try std.testing.expectEqual(@as(u64, 1), compiler.revision);
+    const frame = runtime.context.bindings.get(binding).?;
+    const stored = try runtime.context.storage.slots(frame);
+    try std.testing.expectEqual(@as(i128, 42), (try stored.get(0)).integer);
+    var exit = try compiler.prepareExit(&modules, &diagnostics, @enumFromInt(1), &.{binding});
+    defer exit.deinit();
+    try runtime.executeExit(&exit, @enumFromInt(1), &layouts);
+    try std.testing.expectEqual(.fresh, runtime.context.state);
+    try std.testing.expectEqual(@as(usize, 0), runtime.context.bindings.count());
+    try std.testing.expectEqual(@as(u64, 2), compiler.revision);
 }

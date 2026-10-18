@@ -71,6 +71,7 @@ const c_abi = @import("4_semantics/global/c_abi.zig");
 comptime {
     _ = @import("execution/tests.zig");
     _ = @import("execution/compilation_session.zig");
+    _ = @import("execution/session.zig");
     _ = c_abi;
     _ = semantic_literals;
     _ = source_files;

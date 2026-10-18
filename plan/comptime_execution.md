@@ -504,3 +504,9 @@ prepares a checked exit continuation from an empty, unfinalized command scope,
 retains its cleanup dependencies and checks it against accepted temporal facts.
 Runtime reset/exit must still execute that accepted continuation before releasing
 healthy storage; collecting nodes alone does not establish that proof.
+
+The execution session now compiles/verifies a checked candidate before accepting
+it and invokes its exact checked entry on persistent storage. Published units own
+their session layouts. A checked exit runs before reset; remaining active cleanup
+poisons the context instead of dropping owners. Source loading, persistent name
+lookup and interactive commands remain pending.
