@@ -437,3 +437,49 @@ test "interactive compile-time failures preserve definition source and accepted 
     try session.submitStatements("value ::= 42");
     try session.close();
 }
+
+test "interactive definition batches keep dependency modules outside the session namespace" {
+    var session: Interactive = undefined;
+    try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    const dependency = try session.sources.loadModule(&session.diagnostics, "helper := () -> (.result: Int32) { result = 7 }");
+    const submitted = try session.sources.loadModule(&session.diagnostics, "answer := () -> (.result: Int32) { result = 42 }");
+    const dependencies = try session.sources.appendSnapshot(session.compiler.semantic.modules, dependency);
+    const prefix = try session.sources.appendSnapshot(dependencies, submitted);
+    var candidate = try session.compiler.prepareDefinitions(prefix, &session.diagnostics);
+    defer candidate.deinit();
+    const resolver = &candidate.semantic.?.resolvers.core;
+    const namespace = resolver.session_namespace.?;
+    try std.testing.expectEqual(@as(usize, 1), namespace.modules.items.len);
+    try std.testing.expectEqual(@as(usize, 1), namespace.declarations.items.len);
+    try std.testing.expectEqualStrings("answer", resolver.graph.text(resolver.graph.declaration(namespace.declarations.items[0]).name));
+    try std.testing.expect(!resolver.sameDeclarationNamespace(0, 1));
+    try session.compiler.accept(&candidate);
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("answer()")).?.value.integer);
+    try session.close();
+}
+
+test "interactive imported aliases survive subsequent submissions without exporting dependency names" {
+    var session: Interactive = undefined;
+    try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    const dependency = try session.sources.loadModule(&session.diagnostics, "helper := () -> (.result: Int32) { result = 7 }");
+    const import_source = try std.fmt.allocPrint(std.testing.allocator, "library := import(\"{s}\")", .{dependency.module_dir});
+    defer std.testing.allocator.free(import_source);
+    const submitted = try session.sources.loadModule(&session.diagnostics, import_source);
+    const dependencies = try session.sources.appendSnapshot(session.compiler.semantic.modules, dependency);
+    const prefix = try session.sources.appendSnapshot(dependencies, submitted);
+    var candidate = try session.compiler.prepareDefinitions(prefix, &session.diagnostics);
+    defer candidate.deinit();
+    try session.compiler.accept(&candidate);
+    try std.testing.expectEqual(@as(i128, 7), (try session.submitInput("library.helper()")).?.value.integer);
+    const resolver = &session.compiler.semantic.resolvers.core;
+    const namespace = resolver.session_namespace.?;
+    try std.testing.expectEqualStrings("library", resolver.graph.text(resolver.graph.declaration(namespace.declarations.items[0]).name));
+    try std.testing.expect(!resolver.sameDeclarationNamespace(0, 1));
+    try std.testing.expectError(error.UnknownModuleReference, resolver.findModuleForQualifier(0, "library"));
+    const revision = session.compiler.revision;
+    try std.testing.expectError(error.DuplicateSessionDeclaration, session.submitStatements("library ::= 99"));
+    try std.testing.expectEqual(revision, session.compiler.revision);
+    try session.close();
+}

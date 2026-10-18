@@ -2126,7 +2126,10 @@ pub const Resolver = struct {
         var found: ?global_sg.GlobalModuleId = null;
         const current: global_sg.GlobalModuleId = @enumFromInt(@as(u32, @intCast(current_module)));
         for (self.graph.module_aliases.items) |alias| {
-            if (alias.owner != current) continue;
+            // Interactive submissions share aliases only with later members of
+            // their explicit namespace. Dependencies retain lexical imports.
+            if (alias.owner != current and
+                (@intFromEnum(alias.owner) > current_module or !self.sameDeclarationNamespace(@intFromEnum(alias.owner), current_module))) continue;
             const declaration = self.graph.declarations.items[@intFromEnum(alias.declaration)];
             if (!std.mem.eql(u8, self.graph.text(declaration.name), qualifier)) continue;
             if (found) |previous| {

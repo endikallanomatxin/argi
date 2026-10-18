@@ -140,7 +140,8 @@ pub const CompilationSession = struct {
 
     /// Export declarations from explicitly submitted definition modules into
     /// the interactive namespace. Imported ordinary modules retain their normal
-    /// visibility; the source coordinator supplies only definition submissions.
+    /// visibility. The source coordinator appends dependencies first and the
+    /// submitted definition module last.
     pub fn prepareDefinitions(self: *const CompilationSession, modules: []const module_sg.ModuleSemanticGraph, diagnostics: *diagnostics_mod.Diagnostics) !Candidate {
         return self.prepareImpl(modules, diagnostics, null, null, true);
     }
@@ -153,20 +154,20 @@ pub const CompilationSession = struct {
         errdefer candidate.deinit();
         const previous_modules = candidate.modules.len;
         if (modules.len < previous_modules) return error.InvalidSemanticModuleViews;
-        if (definitions or continuation != null) {
+        // A source batch ends with its submission module. Earlier new modules
+        // are ordinary dependencies, not interactive namespace participants.
+        if ((definitions or continuation != null) and modules.len > previous_modules) {
             const namespace = try candidate.resolvers.core.sessionNamespace();
-            for (previous_modules..modules.len) |index| {
-                try namespace.modules.append(self.allocator, @enumFromInt(index));
-            }
+            try namespace.modules.append(self.allocator, @enumFromInt(modules.len - 1));
         }
         try candidate.appendModules(modules);
-        if (definitions) {
+        if (definitions and modules.len > previous_modules) {
             const graph = &candidate.relocation.graph;
             const exported = &(try candidate.resolvers.core.sessionNamespace()).declarations;
-            for (graph.modules.items[previous_modules..], previous_modules..) |module, module_index| {
+            for (graph.modules.items[modules.len - 1 ..], modules.len - 1..) |module, module_index| {
                 declarations: for (module.declarations.start..module.declarations.start + module.declarations.len) |raw| {
                     const declaration = graph.declarations.items[raw];
-                    if (declaration.kind != .function and declaration.kind != .type and declaration.kind != .contract_type) continue;
+                    if (declaration.kind != .function and declaration.kind != .type and declaration.kind != .contract_type and declaration.kind != .import_alias) continue;
                     // Inline implementation bodies have private identities, not
                     // source-level names to export or compare across submissions.
                     for (modules[module_index].semantic.parameterized_storage.contract_operations.items) |operation| {
