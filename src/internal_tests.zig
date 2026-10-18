@@ -151,6 +151,7 @@ comptime {
     _ = codegen;
     _ = cleanup_layout;
     _ = @import("5_codegen/cleanup_plan.zig");
+    _ = @import("5_codegen/error_plan.zig");
     _ = argi_abi;
     _ = reference_layout;
     _ = reference_evidence;

@@ -2073,10 +2073,11 @@ pub const CodeGenerator = struct {
 
     fn coerceErrorPayload(self: *CodeGenerator, value: llvm.c.LLVMValueRef, source_ty: graph_mod.GlobalTypeId, target_ty: graph_mod.GlobalTypeId) !llvm.c.LLVMValueRef {
         if (types.equal(self.graph, source_ty, target_ty)) return value;
-        const source_reason = types.findField(self.graph, source_ty, "reason") orelse return CodegenError.InvalidType;
-        const source_trace = types.findField(self.graph, source_ty, "tracer") orelse return CodegenError.InvalidType;
-        const target_reason = types.findField(self.graph, target_ty, "reason") orelse return CodegenError.InvalidType;
-        const target_trace = types.findField(self.graph, target_ty, "tracer") orelse return CodegenError.InvalidType;
+        const plan = try @import("../error_plan.zig").payload(self.graph, source_ty, target_ty);
+        const source_reason = plan.source_reason;
+        const source_trace = plan.source_tracer;
+        const target_reason = plan.target_reason;
+        const target_trace = plan.target_tracer;
         const reason = c.LLVMBuildExtractValue(self.builder, value, source_reason.index, "error.reason");
         const trace = c.LLVMBuildExtractValue(self.builder, value, source_trace.index, "error.tracer");
         const converted_reason = try self.coerceReasonChoice(reason, source_reason.field.ty, target_reason.field.ty);
@@ -2093,11 +2094,9 @@ pub const CodeGenerator = struct {
         var mapped = c.LLVMConstInt(c.LLVMInt32Type(), 0, 0);
         for (0..source_variants.len) |offset| {
             const variant_id: graph_mod.GlobalVariantId = @enumFromInt(source_variants.start + @as(u32, @intCast(offset)));
-            const variant = self.graph.variants.items[@intFromEnum(variant_id)];
-            if (variant.payload_type != null) return CodegenError.InvalidType;
-            const target = types.findVariant(self.graph, target_ty, self.graph.text(variant.name)) orelse return CodegenError.InvalidType;
+            const target = try @import("../error_plan.zig").reasonTarget(self.graph, source_ty, target_ty, variant_id);
             const condition = c.LLVMBuildICmp(self.builder, c.LLVMIntEQ, source_tag, c.LLVMConstInt(c.LLVMInt32Type(), @intCast(try self.variantTag(source_ty, variant_id)), 0), "error.reason.matches");
-            mapped = c.LLVMBuildSelect(self.builder, condition, c.LLVMConstInt(c.LLVMInt32Type(), @intCast(try self.variantTag(target_ty, target.id)), 0), mapped, "error.reason.remap");
+            mapped = c.LLVMBuildSelect(self.builder, condition, c.LLVMConstInt(c.LLVMInt32Type(), @intCast(try self.variantTag(target_ty, target)), 0), mapped, "error.reason.remap");
         }
         const result = c.LLVMGetUndef(try self.toLLVMType(target_ty));
         return c.LLVMBuildInsertValue(self.builder, result, mapped, 0, "error.reason.converted");
