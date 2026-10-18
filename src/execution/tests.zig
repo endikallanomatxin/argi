@@ -1320,6 +1320,8 @@ test "bytecode program instances share context identity storage and trap state" 
     const program = b.Program{ .graph = &graph, .functions = &functions };
     var context = vm.Context.init(a, 1000);
     defer context.deinit();
+    const persistent = try context.sessionSlots(1, &.{});
+    try context.storage.initializeSession(persistent, 0, .{ .integer = 99 });
     const limits = vm.Limits{ .value_cells = 1000 };
     var first = try vm.Vm.initShared(a, program, limits, &context);
     var first_live = true;
@@ -1335,6 +1337,7 @@ test "bytecode program instances share context identity storage and trap state" 
     try std.testing.expectEqual(@as(i128, 42), result[0].array[0].integer);
     try std.testing.expectEqual(identity, context.storage.context);
     try std.testing.expect(context.storage.cells > cells);
+    try std.testing.expectEqual(@as(i128, 99), (try persistent.get(0)).integer);
     try std.testing.expectError(error.SharedExecutionContext, second.run(@enumFromInt(0), result));
     try std.testing.expectEqual(identity, context.storage.context);
     context.running = true;
@@ -1349,5 +1352,65 @@ test "bytecode program instances share context identity storage and trap state" 
     result = try second.invoke(@enumFromInt(0), &.{.{ .array = &.{.{ .integer = 7 }} }});
     try std.testing.expectEqual(@as(i128, 7), result[0].array[0].integer);
     try std.testing.expect(identity != context.storage.context);
+    try std.testing.expectError(error.ExecutionForeignReference, persistent.get(0));
     try std.testing.expectError(error.ExecutionContextLimitMismatch, vm.Vm.initShared(a, program, .{}, &context));
+}
+
+test "bytecode session storage retains data and forbids call-frame publication" {
+    const a = std.testing.allocator;
+    var context = vm.Context.init(a, 1000);
+    defer context.deinit();
+    var cleanup = [_]b.Cleanup{.{ .root = 0, .path = &.{}, .flag = 1 }};
+    const session = try context.sessionSlots(3, &cleanup);
+    // Layout ownership belongs to the execution context, not this input array.
+    cleanup[0].flag = 99;
+    var original = [_]b.Value{.{ .integer = 42 }};
+    try context.storage.initializeSession(session, 0, .{ .array = &original });
+    original[0] = .{ .integer = 7 };
+    const reference = @import("../5_codegen/bytecode/value.zig").Reference{
+        .context = context.storage.context,
+        .frame = session.frame,
+        .root = 0,
+        .path = &.{},
+        .mutability = .read_write,
+    };
+    try std.testing.expectError(error.ExecutionInitializedStorage, context.storage.initializeSession(session, 0, .{ .integer = 7 }));
+    try std.testing.expectError(error.ExecutionInvalidReference, context.storage.initializeSession(session, 1, .{ .boolean = false }));
+    const temporary = try context.storage.enter(1);
+    const locals = try context.storage.slots(temporary);
+    try locals.put(0, .{ .integer = 9 });
+    var local_ref = reference;
+    local_ref.frame = temporary;
+    try std.testing.expectError(error.ExecutionTemporaryReference, context.storage.initializeSession(session, 2, .{ .record = &.{.{ .reference = local_ref }} }));
+    try std.testing.expectError(error.ExecutionUninitializedStorage, session.get(2));
+    context.storage.leave(temporary);
+    try std.testing.expectEqual(@as(i128, 42), (try session.get(0)).array[0].integer);
+    var path = [_]@import("../5_codegen/bytecode/value.zig").Projection{.{ .element = 0 }};
+    var projected = reference;
+    projected.path = &path;
+    try context.storage.initializeSession(session, 2, .{ .reference = projected });
+    path[0] = .{ .element = 99 };
+    try std.testing.expectEqual(@as(i128, 42), (try context.storage.read((try session.get(2)).reference)).integer);
+    try context.storage.validateLive(&.{try session.get(2)});
+    _ = try context.storage.cleanupSet(reference, true);
+    try std.testing.expectError(error.ExecutionActiveCleanup, context.storage.releaseSession(session));
+    _ = try context.storage.cleanupSet(reference, false);
+    try context.storage.releaseSession(session);
+    try std.testing.expectError(error.ExecutionDeadReference, context.storage.read(reference));
+    const old_context = context.storage.context;
+    context.reset();
+    _ = try context.sessionSlots(1, &.{});
+    try std.testing.expect(old_context != context.storage.context);
+    try std.testing.expectError(error.ExecutionForeignReference, session.get(0));
+}
+
+test "bytecode failed session initialization leaves storage vacant" {
+    var context = vm.Context.init(std.testing.allocator, 20);
+    defer context.deinit();
+    const session = try context.sessionSlots(1, &.{});
+    const too_large = [_]b.Value{.{ .integer = 0 }} ** 32;
+    try std.testing.expectError(error.ExecutionMemoryLimit, context.storage.initializeSession(session, 0, .{ .array = &too_large }));
+    try std.testing.expectError(error.ExecutionUninitializedStorage, session.get(0));
+    try context.storage.initializeSession(session, 0, .{ .integer = 42 });
+    try std.testing.expectEqual(@as(i128, 42), (try session.get(0)).integer);
 }

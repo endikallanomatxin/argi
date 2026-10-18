@@ -38,6 +38,20 @@ pub const Context = struct {
     pub fn init(allocator: std.mem.Allocator, value_cells: usize) Context {
         return .{ .arena = .init(allocator), .allocator = allocator, .limit = value_cells };
     }
+    fn ensureStorage(self: *Context) !void {
+        if (self.state == .poisoned) return error.ExecutionContextPoisoned;
+        if (self.state == .fresh) {
+            self.storage = try Storage.init(self.arena.allocator(), self.limit);
+            self.state = .ready;
+        }
+    }
+    pub fn sessionSlots(self: *Context, count: usize, cleanup: []const b.Cleanup) !@import("storage.zig").Slots {
+        if (self.running) return error.ExecutionContextBusy;
+        if (self.state == .poisoned) return error.ExecutionContextPoisoned;
+        errdefer self.state = .poisoned;
+        try self.ensureStorage();
+        return self.storage.enterSession(count, cleanup);
+    }
     pub fn deinit(self: *Context) void {
         std.debug.assert(!self.running);
         self.arena.deinit();
@@ -121,27 +135,11 @@ pub const Vm = struct {
         if (self.context().running) return error.ExecutionContextBusy;
         self.context().running = true;
         defer self.context().running = false;
-        if (self.context().state == .fresh) {
-            self.context().storage = try Storage.init(self.context().arena.allocator(), self.context().limit);
-            self.context().state = .ready;
-        }
+        try self.context().ensureStorage();
         self.steps = 0;
         errdefer self.context().state = .poisoned;
-        const inputs = try self.cloneValues(args);
+        const inputs = try self.context().storage.cloneValues(args);
         return self.execute(function, inputs);
-    }
-    fn cloneValues(self: *Vm, values: []const b.Value) anyerror![]const b.Value {
-        const result = try self.allocate(values.len);
-        for (result, values) |*out, value| out.* = switch (value) {
-            .array => |elements| .{ .array = try self.cloneValues(elements) },
-            .record => |fields| .{ .record = try self.cloneValues(fields) },
-            .choice => |choice| .{ .choice = .{
-                .variant = choice.variant,
-                .payload = if (choice.payload) |payload| &(try self.cloneValues(payload[0..1]))[0] else null,
-            } },
-            else => value,
-        };
-        return result;
     }
     fn chargeCleanup(self: *Vm, updated: usize) !void {
         if (updated > self.limits.instructions - self.steps) return error.ExecutionInstructionLimit;

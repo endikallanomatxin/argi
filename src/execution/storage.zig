@@ -3,7 +3,12 @@ const b = @import("../5_codegen/bytecode/bytecode.zig");
 const v = @import("../5_codegen/bytecode/value.zig");
 const p = @import("../4_semantics/primitives/schema.zig");
 
-const Frame = struct { values: []?b.Value, cleanup: []const b.Cleanup = &.{}, alive: bool = true };
+const Frame = struct {
+    values: []?b.Value,
+    cleanup: []const b.Cleanup = &.{},
+    alive: bool = true,
+    duration: enum { call, session } = .call,
+};
 
 // Slots contain either a complete value (including Void) or no value. This is
 // concrete occupancy, not the checker's abstract maybe-initialized state, and
@@ -70,6 +75,93 @@ pub const Storage = struct {
         try self.charge(count);
         return self.allocator.alloc(b.Value, count);
     }
+    /// Copy complete value data into this context's arena. Copying data never
+    /// copies cleanup obligations or grants permission to duplicate an owner.
+    /// Callers supply the frontend's checked copy/move and publication plans.
+    pub fn cloneValues(self: *Storage, values: []const b.Value) ![]const b.Value {
+        return self.cloneValuesDepth(values, 0);
+    }
+    fn cloneValuesDepth(self: *Storage, values: []const b.Value, depth: usize) anyerror![]const b.Value {
+        if (depth > 64) return error.ExecutionValueDepthLimit;
+        const result = try self.allocate(values.len);
+        for (result, values) |*out, value| out.* = switch (value) {
+            .array => |elements| .{ .array = try self.cloneValuesDepth(elements, depth + 1) },
+            .record => |fields| .{ .record = try self.cloneValuesDepth(fields, depth + 1) },
+            .choice => |choice| .{ .choice = .{
+                .variant = choice.variant,
+                .payload = if (choice.payload) |payload| &(try self.cloneValuesDepth(payload[0..1], depth + 1))[0] else null,
+            } },
+            .reference => |reference| blk: {
+                try self.validateContext(reference);
+                try self.charge(reference.path.len);
+                var retained = reference;
+                retained.path = try self.allocator.dupe(v.Projection, reference.path);
+                break :blk .{ .reference = retained };
+            },
+            else => value,
+        };
+        return result;
+    }
+
+    /// Session slots have their own lifetime from creation. They are never
+    /// promoted call-frame slots. Layouts are copied because their original
+    /// bytecode unit may be released before this storage is retired.
+    pub fn enterSession(self: *Storage, count: usize, cleanup: []const b.Cleanup) !Slots {
+        try self.charge(cleanup.len);
+        const retained = try self.allocator.alloc(b.Cleanup, cleanup.len);
+        for (retained, cleanup) |*out, entry| {
+            try self.charge(entry.path.len);
+            out.* = entry;
+            out.path = try self.allocator.dupe(v.Projection, entry.path);
+        }
+        const frame = try self.enterCleanup(count, retained);
+        self.frames.items[@intFromEnum(frame)].duration = .session;
+        return self.slots(frame);
+    }
+
+    /// Initialize vacant session storage with checked publication data. Reject
+    /// references into command/call frames, including inside aggregates. The
+    /// frontend still proves loans, moves and cleanup transfer; this checks the
+    /// concrete lifetime boundary rather than reconstructing those proofs.
+    pub fn initializeSession(self: *Storage, target: Slots, index: b.Slot, value: b.Value) !void {
+        if (target.storage != self or target.context != self.context) return error.ExecutionForeignReference;
+        const values = try target.cells();
+        if (self.frames.items[@intFromEnum(target.frame)].duration != .session) return error.ExecutionInvalidReference;
+        if (index >= values.len) return error.ExecutionInvalidReference;
+        for (self.frames.items[@intFromEnum(target.frame)].cleanup) |entry|
+            if (entry.flag == index) return error.ExecutionInvalidReference;
+        if (values[index] != null) return error.ExecutionInitializedStorage;
+        try self.validateSessionValues((&value)[0..1], 0);
+        const retained = try self.cloneValues((&value)[0..1]);
+        values[index] = retained[0];
+    }
+
+    fn validateSessionValues(self: *Storage, values: []const b.Value, depth: usize) anyerror!void {
+        if (depth > 64) return error.ExecutionValueDepthLimit;
+        for (values) |value| switch (value) {
+            .reference => |reference| {
+                _ = try self.read(reference);
+                if (self.frames.items[@intFromEnum(reference.frame)].duration != .session) return error.ExecutionTemporaryReference;
+            },
+            .choice => |choice| if (choice.payload) |payload| try self.validateSessionValues(payload[0..1], depth + 1),
+            .record => |fields| try self.validateSessionValues(fields, depth + 1),
+            .array => |elements| try self.validateSessionValues(elements, depth + 1),
+            else => {},
+        };
+    }
+
+    /// Checked cleanup must deactivate every represented obligation before
+    /// retiring session storage. Releasing a region never runs user code.
+    pub fn releaseSession(self: *Storage, target: Slots) !void {
+        if (target.storage != self or target.context != self.context) return error.ExecutionForeignReference;
+        const values = try target.cells();
+        const frame = &self.frames.items[@intFromEnum(target.frame)];
+        if (frame.duration != .session) return error.ExecutionInvalidReference;
+        for (frame.cleanup) |entry|
+            if (values[entry.flag].?.boolean) return error.ExecutionActiveCleanup;
+        frame.alive = false;
+    }
+
     pub fn enter(self: *Storage, count: usize) !v.FrameId {
         return self.enterCleanup(count, &.{});
     }
@@ -89,6 +181,7 @@ pub const Storage = struct {
         return id;
     }
     pub fn leave(self: *Storage, id: v.FrameId) void {
+        std.debug.assert(self.frames.items[@intFromEnum(id)].duration == .call);
         self.frames.items[@intFromEnum(id)].alive = false;
     }
     pub fn slots(self: *Storage, id: v.FrameId) !Slots {

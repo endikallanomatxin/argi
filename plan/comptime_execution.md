@@ -53,8 +53,12 @@ retain stable addresses for existing bytecode. VM program instances can borrow
 one execution context; storage identity, cumulative memory and terminal trap state
 belong to that context, while invocation fuel belongs to each execution. Context
 sharing adds no heap allocation to ordinary isolated VM construction. Next, add
-session binding storage and source submission loading before wiring interactive
-commands and conditional imports.
+typed session binding access and source submission loading before wiring
+interactive commands and conditional imports. Concrete storage can now create
+session-lifetime regions independently of calls, copy their cleanup layouts and
+initialize vacant slots without retaining temporary frame references. Region
+retirement requires inactive cleanup flags. These low-level operations still need
+the frontend's checked binding and cleanup-transfer plans.
 JIT is deferred until measurements justify it; module origin is not an execution
 policy. Keep function identities independent of the executor, without introducing
 a mixed VM/native ABI or native-layout storage solely for a possible future JIT.
