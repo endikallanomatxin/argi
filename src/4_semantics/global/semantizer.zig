@@ -579,6 +579,27 @@ pub const Session = struct {
         self.resolvers.ownership.continuation_function = function;
     }
 
+    /// Fill an empty checked command with the retained selected cleanup list.
+    /// No source body is overwritten and no ordinary function gains implicit
+    /// destruction semantics. The exit is checked as a temporal continuation.
+    pub fn prepareExitScope(self: *Session, function: global_sg.GlobalFunctionId, bindings: []const global_sg.GlobalBindingId) !void {
+        if (self.phase != .ready and self.phase != .quiescent) return error.InvalidSemanticSessionState;
+        if (@intFromEnum(function) >= self.relocation.graph.functions.items.len or self.resolution.finalized_functions.contains(function))
+            return error.InvalidSafetyContinuation;
+        const target = self.relocation.graph.function(function);
+        const body = target.body orelse return error.InvalidSafetyContinuation;
+        if (target.input.len != 0 or target.output.len != 0 or self.relocation.graph.blocks.items[@intFromEnum(body)].nodes.len != 0)
+            return error.InvalidSafetyContinuation;
+        const nodes = try self.resolvers.ownership.selectedSessionCleanup(self.allocator, bindings);
+        defer self.allocator.free(nodes);
+        const start = std.math.cast(u32, self.relocation.graph.node_refs.items.len) orelse return error.SemanticGraphTooLarge;
+        const count = std.math.cast(u32, nodes.len) orelse return error.SemanticGraphTooLarge;
+        _ = std.math.add(u32, start, count) catch return error.SemanticGraphTooLarge;
+        try self.relocation.graph.node_refs.appendSlice(self.allocator, nodes);
+        self.relocation.graph.blocks.items[@intFromEnum(body)].nodes = .{ .start = start, .len = count };
+        try self.prepareContinuationScope(function);
+    }
+
     pub fn includeExecutionRoot(self: *Session, function: global_sg.GlobalFunctionId) !void {
         if (self.phase != .ready and self.phase != .quiescent) return error.InvalidSemanticSessionState;
         if (@intFromEnum(function) >= self.relocation.graph.functions.items.len) return error.InvalidSafetyContinuation;

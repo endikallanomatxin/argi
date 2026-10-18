@@ -107,23 +107,31 @@ pub const CompilationSession = struct {
     }
 
     pub fn prepare(self: *const CompilationSession, modules: []const module_sg.ModuleSemanticGraph, diagnostics: *diagnostics_mod.Diagnostics) !Candidate {
-        return self.prepareImpl(modules, diagnostics, null);
+        return self.prepareImpl(modules, diagnostics, null, null);
     }
 
     /// Prepare a checked input/output-free command with the accepted temporal
     /// state. The source coordinator supplies its finalized command scope.
     pub fn prepareContinuation(self: *const CompilationSession, modules: []const module_sg.ModuleSemanticGraph, diagnostics: *diagnostics_mod.Diagnostics, function: @import("../4_semantics/global/graph.zig").GlobalFunctionId) !Candidate {
-        return self.prepareImpl(modules, diagnostics, function);
+        return self.prepareImpl(modules, diagnostics, function, null);
     }
 
-    fn prepareImpl(self: *const CompilationSession, modules: []const module_sg.ModuleSemanticGraph, diagnostics: *diagnostics_mod.Diagnostics, continuation: ?@import("../4_semantics/global/graph.zig").GlobalFunctionId) !Candidate {
+    /// The loader supplies an empty command scope. Cleanup is selected from
+    /// accepted ownership evidence and checked against accepted temporal facts.
+    pub fn prepareExit(self: *const CompilationSession, modules: []const module_sg.ModuleSemanticGraph, diagnostics: *diagnostics_mod.Diagnostics, function: @import("../4_semantics/global/graph.zig").GlobalFunctionId, bindings: []const @import("../4_semantics/global/graph.zig").GlobalBindingId) !Candidate {
+        return self.prepareImpl(modules, diagnostics, function, bindings);
+    }
+
+    fn prepareImpl(self: *const CompilationSession, modules: []const module_sg.ModuleSemanticGraph, diagnostics: *diagnostics_mod.Diagnostics, continuation: ?@import("../4_semantics/global/graph.zig").GlobalFunctionId, exit_bindings: ?[]const @import("../4_semantics/global/graph.zig").GlobalBindingId) !Candidate {
         if (diagnostics.hasErrors()) return error.Reported;
         const candidate = try self.allocator.create(sema.Session);
         errdefer self.allocator.destroy(candidate);
         try self.semantic.fork(candidate, self.allocator, diagnostics);
         errdefer candidate.deinit();
         try candidate.appendModules(modules);
-        if (continuation) |function| try candidate.prepareContinuationScope(function);
+        if (continuation) |function| {
+            if (exit_bindings) |bindings| try candidate.prepareExitScope(function, bindings) else try candidate.prepareContinuationScope(function);
+        }
         try candidate.advance();
         const proof = if (continuation != null) try TemporalProof.create(self.allocator, self.temporal) else null;
         errdefer if (proof) |owned| owned.release();
@@ -378,7 +386,8 @@ test "continuation scopes retain direct owners and clean nested owners" {
         "Deinit#(.T: Type): Contract = (.deinit: (.self: $&T) -> ())\n" ++
         "Resource: Type = ()\n" ++
         "implement Deinit#(Resource) (.deinit = (.self: $&Resource) -> () {})\n" ++
-        "command := () -> () { retained: Resource = ()\n { temporary: Resource = () } }\n";
+        "command := () -> () { retained: Resource = ()\n { temporary: Resource = () } }\n" ++
+        "exit_command := () -> () {}\n";
     const files = [_]@import("../1_base/source_files.zig").SourceFile{.{ .path = "submission/main.rg", .code = source }};
     var diagnostics = diagnostics_mod.Diagnostics.init(&a, &files);
     defer diagnostics.deinit();
@@ -409,4 +418,20 @@ test "continuation scopes retain direct owners and clean nested owners" {
     }
     try std.testing.expectEqual(@as(usize, 0), persistent_cleanup);
     try std.testing.expectEqual(@as(usize, 1), temporary_cleanup);
+    const binding = for (graph.bindings.items, 0..) |record, index| {
+        if (std.mem.eql(u8, graph.text(record.name), "retained")) break @as(@import("../4_semantics/global/graph.zig").GlobalBindingId, @enumFromInt(index));
+    } else return error.MissingBinding;
+    const exit_function = for (module.declarations.items) |declaration| {
+        if (std.mem.eql(u8, module.text(declaration.name), "exit_command")) break declaration.function_id.?;
+    } else return error.MissingExitCommand;
+    try session.accept(&candidate);
+    var exit = try session.prepareExit(&modules, &diagnostics, @enumFromInt(@intFromEnum(exit_function)), &.{binding});
+    defer exit.deinit();
+    const exit_graph = &exit.checked.?.graph;
+    const exit_body = exit_graph.blocks.items[@intFromEnum(exit_graph.functions.items[@intFromEnum(exit_function)].body.?)];
+    try std.testing.expect(exit_body.nodes.len != 0);
+    const first = exit_graph.node_refs.items[exit_body.nodes.start];
+    try std.testing.expect(exit_graph.node(first).content == .auto_deinit_binding);
+    try std.testing.expectEqual(binding, exit_graph.auto_deinits.items[@intFromEnum(exit_graph.node(first).content.auto_deinit_binding)].binding);
+    try std.testing.expectError(error.InvalidSafetyContinuation, session.prepareExit(&modules, &diagnostics, @enumFromInt(@intFromEnum(command)), &.{binding}));
 }

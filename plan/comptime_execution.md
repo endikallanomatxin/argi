@@ -500,5 +500,7 @@ published snapshots without requiring a main entrypoint.
 Session exit can collect already-selected cleanup nodes in reverse declaration
 order and lower them through the shared cleanup emitter as a zero-output
 bytecode entry. Persistent flags gate repeated cleanup. The coordinator still
-needs a checked exit continuation, dependency retention and reset/exit execution
-before releasing storage; collecting nodes does not establish that proof.
+prepares a checked exit continuation from an empty, unfinalized command scope,
+retains its cleanup dependencies and checks it against accepted temporal facts.
+Runtime reset/exit must still execute that accepted continuation before releasing
+healthy storage; collecting nodes alone does not establish that proof.
