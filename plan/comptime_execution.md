@@ -525,3 +525,9 @@ creates immutable accepted-prefix snapshots; growing its module list cannot
 invalidate retained semantic slices. Integration executes two independently
 loaded source modules against one slot. Interactive statement wrapping, command
 classification, bundled core/import loading and CLI input remain pending.
+
+Statement submissions now receive unique ordinary command scopes, then enter
+continuation preparation before cleanup. The source owner prepares immutable
+module-prefix candidates using retained relocation identities; rejected name
+redefinitions do not enter the accepted prefix, and the next statement can run.
+Automatic persistent layouts, result presentation and CLI command dispatch remain.

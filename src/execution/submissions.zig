@@ -25,6 +25,49 @@ pub const Sources = struct {
         self.* = undefined;
     }
 
+    pub const Command = struct {
+        module: *const module_sg.ModuleSemanticGraph,
+        function: @import("../4_semantics/module/entities.zig").ModuleFunctionId,
+    };
+
+    /// Parse statements in a fresh ordinary function scope. The semantic
+    /// coordinator subsequently designates it as a continuation before cleanup.
+    /// Each source unit has its own identity; no preceding text is replayed.
+    pub fn loadCommand(self: *Sources, diagnostics: *diagnostics_mod.Diagnostics, statements: []const u8) !Command {
+        const a = self.arena.allocator();
+        const name = try std.fmt.allocPrint(a, "_session_command_{d}", .{self.sequence});
+        const source = try std.fmt.allocPrint(a, "{s} := () -> () {{\n{s}\n}}\n", .{ name, statements });
+        const module = try self.loadModule(diagnostics, source);
+        for (module.declarations.items) |declaration| {
+            if (std.mem.eql(u8, module.text(declaration.name), name)) {
+                return .{ .module = module, .function = declaration.function_id orelse return error.InvalidCommand };
+            }
+        }
+        return error.InvalidCommand;
+    }
+
+    pub const PreparedCommand = struct {
+        candidate: @import("compilation_session.zig").CompilationSession.Candidate,
+        function: @import("../4_semantics/global/graph.zig").GlobalFunctionId,
+
+        pub fn deinit(self: *PreparedCommand) void {
+            self.candidate.deinit();
+            self.* = undefined;
+        }
+    };
+
+    /// Join source loading to retained semantic preparation. Rejected sources
+    /// remain available for diagnostics but never enter the accepted prefix.
+    pub fn prepareCommand(self: *Sources, compiler: *const @import("compilation_session.zig").CompilationSession, diagnostics: *diagnostics_mod.Diagnostics, statements: []const u8) !PreparedCommand {
+        const command = try self.loadCommand(diagnostics, statements);
+        const modules = try self.appendSnapshot(compiler.semantic.modules, command.module);
+        // Relocation appends module functions before creating any specialization.
+        const base = compiler.semantic.relocation.graph.functions.items.len;
+        const raw = std.math.add(usize, base, @intFromEnum(command.function)) catch return error.SubmissionIdentityLimit;
+        const function: @import("../4_semantics/global/graph.zig").GlobalFunctionId = @enumFromInt(std.math.cast(u32, raw) orelse return error.SubmissionIdentityLimit);
+        return .{ .candidate = try compiler.prepareContinuation(modules, diagnostics, function), .function = function };
+    }
+
     pub fn loadModule(self: *Sources, diagnostics: *diagnostics_mod.Diagnostics, source: []const u8) !*const module_sg.ModuleSemanticGraph {
         if (diagnostics.hasErrors()) return error.Reported;
         if (self.sequence == std.math.maxInt(u64)) return error.SubmissionIdentityLimit;
@@ -104,22 +147,20 @@ test "source submissions compile and execute incrementally without history repla
     defer compiler.deinit();
     var runtime = @import("session.zig").Session.init(a, &compiler, .{});
     defer runtime.deinit();
-    const first = try sources.loadModule(&diagnostics, "command := () -> () { retained :: Int32 = 42 }\n");
-    const first_prefix = try sources.appendSnapshot(&.{}, first);
-    var command = try compiler.prepareContinuation(first_prefix, &diagnostics, @enumFromInt(0));
-    defer command.deinit();
-    const binding = command.semantic.?.resolvers.expressions.session_bindings.items[0];
-    const layouts = [_]@import("../5_codegen/bytecode/bytecode.zig").SessionBinding{.{ .binding = binding, .slots = &.{command.checked.?.graph.binding(binding).ty} }};
-    try runtime.execute(&command, @enumFromInt(0), &layouts);
-    const second = try sources.loadModule(&diagnostics, "update := () -> () { retained = 7 }\n");
-    const extended = try sources.appendSnapshot(first_prefix, second);
-    const next: @import("../4_semantics/global/graph.zig").GlobalFunctionId = @enumFromInt(first.functions.items.len);
-    var update = try compiler.prepareContinuation(extended, &diagnostics, next);
-    defer update.deinit();
-    try runtime.execute(&update, next, &layouts);
+    var first = try sources.prepareCommand(&compiler, &diagnostics, "retained :: Int32 = 42");
+    defer first.deinit();
+    const binding = first.candidate.semantic.?.resolvers.expressions.session_bindings.items[0];
+    const layouts = [_]@import("../5_codegen/bytecode/bytecode.zig").SessionBinding{.{ .binding = binding, .slots = &.{first.candidate.checked.?.graph.binding(binding).ty} }};
+    try runtime.execute(&first.candidate, first.function, &layouts);
+    try std.testing.expectError(error.DuplicateSessionBinding, sources.prepareCommand(&compiler, &diagnostics, "retained :: Int32 = 99"));
+    try std.testing.expectEqual(@as(u64, 1), compiler.revision);
+    try std.testing.expectEqual(@as(usize, 1), compiler.semantic.modules.len);
+    var second = try sources.prepareCommand(&compiler, &diagnostics, "retained = 7");
+    defer second.deinit();
+    try runtime.execute(&second.candidate, second.function, &layouts);
     const stored = try runtime.context.storage.slots(runtime.context.bindings.get(binding).?);
     try std.testing.expectEqual(@as(i128, 7), (try stored.get(0)).integer);
-    try std.testing.expectEqual(@as(usize, 2), sources.modules.items.len);
-    try std.testing.expectEqual(@as(usize, 2), diagnostics.source_files.len);
+    try std.testing.expectEqual(@as(usize, 3), sources.modules.items.len);
+    try std.testing.expectEqual(@as(usize, 3), diagnostics.source_files.len);
     try std.testing.expectEqual(@as(u64, 2), compiler.revision);
 }
