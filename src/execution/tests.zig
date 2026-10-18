@@ -1551,3 +1551,39 @@ test "bytecode session moves update persistent cleanup rather than frame flags" 
     try std.testing.expect(!try context.storage.cleanupTest(reference));
     try context.storage.releaseSession(persistent);
 }
+
+test "bytecode session declarations initialize persistent storage without local owners" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const g = @import("../4_semantics/global/graph.zig");
+    const p = @import("../4_semantics/primitives/schema.zig");
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.appendSlice(a, &.{ .{ .builtin = .Int32 }, .{ .builtin = .Bool } });
+    const source = p.SourceRef{ .file_index = 0, .offset = 0 };
+    try graph.nodes.append(a, .{ .source = source, .ty = @enumFromInt(0), .content = .{ .int_literal = 42 } });
+    try graph.bindings.append(a, .{ .name = .{ .start = 0, .len = 0 }, .ty = @enumFromInt(0), .source = source, .mutability = .constant, .initialization = @enumFromInt(0) });
+    try graph.nodes.append(a, .{ .source = source, .ty = null, .content = .{ .binding_declaration = @enumFromInt(0) } });
+    try graph.node_refs.append(a, @enumFromInt(1));
+    try graph.blocks.append(a, .{ .nodes = .{ .start = 0, .len = 1 } });
+    try graph.declarations.append(a, .{ .kind = .function, .name = .{ .start = 0, .len = 0 }, .source = source });
+    try graph.functions.append(a, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 }, .body = @enumFromInt(0) });
+    const bindings = [_]b.SessionBinding{.{ .binding = @enumFromInt(0), .slots = &.{ @enumFromInt(0), @enumFromInt(1) }, .cleanup = &.{.{ .root = 0, .flag = 1, .path = &.{} }} }};
+    const interface = b.Session{ .namespace = @enumFromInt(12), .bindings = &bindings };
+    var compiler = try lower.Lower.initSession(a, &graph, interface);
+    const program = try compiler.compile(@enumFromInt(0));
+    try std.testing.expectEqual(@as(usize, 0), program.functions[0].?.cleanup.len);
+    var context = vm.Context.init(a, 1000);
+    defer context.deinit();
+    var executor = try vm.Vm.initShared(a, program, .{ .value_cells = 1000 }, &context);
+    defer executor.deinit();
+    _ = try executor.invoke(@enumFromInt(0), &.{});
+    const frame = context.bindings.get(@enumFromInt(0)).?;
+    const persistent = try context.storage.slots(frame);
+    try std.testing.expectEqual(@as(i128, 42), (try persistent.get(0)).integer);
+    const reference = @import("../5_codegen/bytecode/value.zig").Reference{ .context = context.storage.context, .frame = frame, .root = 0, .path = &.{}, .mutability = .read_write };
+    try std.testing.expect(try context.storage.cleanupTest(reference));
+    try std.testing.expectError(error.ExecutionActiveCleanup, context.storage.releaseSession(persistent));
+    try std.testing.expectError(error.ExecutionInitializedStorage, executor.invoke(@enumFromInt(0), &.{}));
+}

@@ -473,5 +473,7 @@ Session places retain their storage region through projections. Bytecode lowerin
 can read and borrow selected session bindings and route non-owning whole writes
 through captured destinations. Session drop metadata now routes selected cleanup and moves to persistent flags,
 without emitting call-frame flags for the same storage; supplied layouts must
-match the compiler's shape. Owning session replacement and declaration publication
-still require complete checked transfer plans.
+match the compiler's shape. Initialized session declarations now publish their value and activate persistent
+cleanup directly rather than introducing a local owner. Deferred publication is
+rejected until vacant binding plans exist. Owning session replacement and the
+cross-command safety environment still require complete checked transfer plans.

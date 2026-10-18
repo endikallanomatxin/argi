@@ -365,6 +365,14 @@ const FunctionLower = struct {
         switch (node.content) {
             .binding_declaration => |binding_id| {
                 const binding_ = self.parent.graph.binding(binding_id);
+                if (self.parent.sessionIndex(binding_id)) |index| {
+                    if (binding_.deferred_initialization) return self.parent.reject(node.source, "deferred session publication requires vacant binding plans");
+                    const initializer = binding_.initialization orelse return self.parent.reject(node.source, "session declaration without initialization");
+                    const value = try self.coerce(node.source, try self.expression(initializer), binding_.ty);
+                    _ = try self.emit(node.source, .{ .session_initialize = .{ .binding = index, .value = value } });
+                    if (self.drops.get(binding_id)) |drop| try self.setDrop(drop, true);
+                    return;
+                }
                 const dst = try self.bindingSlot(binding_id);
                 if (!binding_.deferred_initialization) {
                     if (binding_.initialization) |value| {
