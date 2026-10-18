@@ -212,17 +212,23 @@ pub const Storage = struct {
         };
     }
     pub fn resolve(self: *Storage, frame: v.FrameId, place: b.Place, path: *[64]v.Projection) !v.Reference {
-        return self.resolveTarget(frame, place, path, true);
+        return self.resolveTarget(frame, place, path, true, null);
     }
     // Lifecycle access locates storage without reading its current value. Only
     // following a reference or checking an array index needs an operand read.
     pub fn resolveCleanup(self: *Storage, frame: v.FrameId, place: b.Place, path: *[64]v.Projection) !v.Reference {
-        return self.resolveTarget(frame, place, path, false);
+        return self.resolveTarget(frame, place, path, false, null);
     }
-    fn resolveTarget(self: *Storage, frame: v.FrameId, place: b.Place, path: *[64]v.Projection, comptime read_value: bool) !v.Reference {
+    pub fn resolveSession(self: *Storage, frame: v.FrameId, target: v.FrameId, place: b.Place, path: *[64]v.Projection, comptime read_value: bool) !v.Reference {
+        return self.resolveTarget(frame, place, path, read_value, target);
+    }
+    fn resolveTarget(self: *Storage, frame: v.FrameId, place: b.Place, path: *[64]v.Projection, comptime read_value: bool, session_frame: ?v.FrameId) !v.Reference {
         const locals = try self.slots(frame);
-        if (place.root >= (try locals.cells()).len) return error.ExecutionInvalidReference;
-        var reference = v.Reference{ .context = self.context, .frame = frame, .root = place.root, .path = &.{}, .mutability = .read_write };
+        if ((place.region == .session) != (session_frame != null)) return error.ExecutionInvalidReference;
+        const target = try self.slots(session_frame orelse frame);
+        const root = if (session_frame != null) 0 else place.root;
+        if (root >= (try target.cells()).len) return error.ExecutionInvalidReference;
+        var reference = v.Reference{ .context = self.context, .frame = target.frame, .root = root, .path = &.{}, .mutability = .read_write };
         var value: ?b.Value = if (read_value) try self.read(reference) else null;
         var length: usize = 0;
         for (place.path) |projection| {
@@ -308,6 +314,10 @@ pub const Storage = struct {
     pub fn captureWrite(self: *Storage, frame: v.FrameId, place: b.Place, activate_cleanup: bool) !WriteDestination {
         var path: [64]v.Projection = undefined;
         const reference = try self.resolve(frame, place, &path);
+        return self.captureResolvedWrite(reference, activate_cleanup);
+    }
+    // The caller has already evaluated and resolved the complete destination.
+    pub fn captureResolvedWrite(self: *Storage, reference: v.Reference, activate_cleanup: bool) !WriteDestination {
         if (reference.mutability != .read_write) return error.ExecutionReadonlyReference;
         const cleanup_entry = if (activate_cleanup) try self.cleanupEntry(reference) else null;
         try self.charge(reference.path.len);

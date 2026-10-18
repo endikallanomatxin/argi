@@ -1449,7 +1449,7 @@ test "bytecode typed session bindings persist across verified program revisions"
     };
     const write = [_]b.Instruction{
         .{ .source = source, .op = .{ .session_borrow = .{ .binding = 0, .dst = 1 } } },
-        .{ .source = source, .op = .{ .capture_write = .{ .dst = 0, .place = .{ .root = 1, .path = &.{.dereference} } } } },
+        .{ .source = source, .op = .{ .capture_write = .{ .dst = 0, .place = .{ .root = 0, .region = .session, .path = &.{} } } } },
         .{ .source = source, .op = .{ .constant = .{ .dst = 0, .value = .{ .integer = 7 } } } },
         .{ .source = source, .op = .{ .check_write_cleanup = 0 } },
         .{ .source = source, .op = .{ .store = .{ .destination = 0, .value = 0 } } },
@@ -1474,7 +1474,20 @@ test "bytecode typed session bindings persist across verified program revisions"
     _ = try first.invoke(@enumFromInt(0), &.{});
     try std.testing.expectEqual(@as(i128, 42), (try reference_reader.invoke(@enumFromInt(1), &.{}))[0].integer);
     try std.testing.expectEqual(@as(i128, 42), (try reader.invoke(@enumFromInt(1), &.{}))[0].integer);
+    // Lower a retained binding expression through the compiler's ordinary
+    // expression entry, without manufacturing local slots or pointer types.
+    const node: g.GlobalNodeId = @enumFromInt(graph.nodes.items.len);
+    try graph.nodes.append(a, .{ .source = source, .ty = @enumFromInt(0), .content = .{ .binding_use = @enumFromInt(0) } });
+    var compilation_arena = std.heap.ArenaAllocator.init(a);
+    defer compilation_arena.deinit();
+    var compiler = try lower.Lower.initSession(compilation_arena.allocator(), &graph, interface);
+    const expression_program = try compiler.compileExpression(node, &.{});
+    try std.testing.expectEqual(b.Place{ .root = 0, .region = .session, .path = &.{} }, expression_program.expression.?.code[0].op.load.place);
+    var expression_vm = try vm.Vm.initShared(a, expression_program, limits, &context);
+    defer expression_vm.deinit();
+    try std.testing.expectEqual(@as(i128, 42), (try expression_vm.invokeExpression(&.{}))[0].integer);
     _ = try writer.invoke(@enumFromInt(1), &.{});
+    try std.testing.expectEqual(@as(i128, 7), (try expression_vm.invokeExpression(&.{}))[0].integer);
     try std.testing.expectEqual(@as(i128, 7), (try reference_reader.invoke(@enumFromInt(1), &.{}))[0].integer);
     try std.testing.expectEqual(@as(i128, 7), (try reader.invoke(@enumFromInt(1), &.{}))[0].integer);
     var foreign = try vm.Vm.initShared(a, .{ .graph = &graph, .functions = &read_functions, .session = .{ .namespace = @enumFromInt(2), .bindings = &bindings } }, limits, &context);

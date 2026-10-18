@@ -53,7 +53,7 @@ retain stable addresses for existing bytecode. VM program instances can borrow
 one execution context; storage identity, cumulative memory and terminal trap state
 belong to that context, while invocation fuel belongs to each execution. Context
 sharing adds no heap allocation to ordinary isolated VM construction. Next, add
-source submission loading and lowering of checked session bindings before wiring
+source submission loading and lifecycle lowering of checked session bindings before wiring
 interactive commands and conditional imports. Verified bytecode can initialize
 and borrow graph-identified session bindings through typed layouts, sharing the
 ordinary captured-write and cleanup protocol. A unique compilation namespace
@@ -468,3 +468,8 @@ uses the checksum-verified source archive for
 [0.18.0-dev.253+16d31ceed](https://ziglang.org/builds/zig-0.18.0-dev.253+16d31ceed.tar.xz)
 under ignored `references/zig/`. Argi keeps its planned reusable executor
 separate from contract resolution; this is not Zig's execution architecture.
+
+Session places retain their storage region through projections. Bytecode lowering
+can read and borrow selected session bindings and route non-owning whole writes
+through captured destinations. Owning session replacement and declaration cleanup
+still require complete checked publication/transfer plans.

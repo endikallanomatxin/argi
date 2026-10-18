@@ -195,6 +195,14 @@ pub const Vm = struct {
         @memset(destinations, null);
         return .{ .function = function, .storage = id, .return_slots = return_slots, .write_destinations = destinations };
     }
+    fn resolvePlace(self: *Vm, frame_id: runtime_value.FrameId, place: b.Place, path: *[64]runtime_value.Projection, comptime read_value: bool) !runtime_value.Reference {
+        if (place.region == .session) {
+            const binding = self.program.session.?.bindings[place.root].binding;
+            const target = self.context().bindings.get(binding) orelse return error.ExecutionUninitializedStorage;
+            return self.context().storage.resolveSession(frame_id, target, place, path, read_value);
+        }
+        return if (read_value) self.context().storage.resolve(frame_id, place, path) else self.context().storage.resolveCleanup(frame_id, place, path);
+    }
     fn execute(self: *Vm, function: *const b.Function, args: []const b.Value) ![]const b.Value {
         var frames: std.ArrayList(Frame) = .empty;
         defer frames.deinit(self.allocator);
@@ -257,19 +265,23 @@ pub const Vm = struct {
                 .branch_variant => |x| current.pc = if ((try slots.get(x.src)).choice.variant == @intFromEnum(x.variant)) x.yes else x.no,
                 .borrow => |x| {
                     var path: [64]runtime_value.Projection = undefined;
-                    const reference = try self.context().storage.resolve(current.storage, x.place, &path);
+                    const reference = try self.resolvePlace(current.storage, x.place, &path, true);
                     const permission = self.program.graph.semanticType(f.slots[x.dst]).pointer.mutability;
                     try slots.put(x.dst, try self.context().storage.borrow(reference, permission));
                 },
                 .load => |x| {
                     var path: [64]runtime_value.Projection = undefined;
-                    try slots.put(x.dst, try self.context().storage.read(try self.context().storage.resolve(current.storage, x.place, &path)));
+                    try slots.put(x.dst, try self.context().storage.read(try self.resolvePlace(current.storage, x.place, &path, true)));
                 },
                 .check_place => |place| {
                     var path: [64]runtime_value.Projection = undefined;
-                    _ = try self.context().storage.resolve(current.storage, place, &path);
+                    _ = try self.resolvePlace(current.storage, place, &path, true);
                 },
-                .capture_write => |x| current.write_destinations[x.dst] = try self.context().storage.captureWrite(current.storage, x.place, x.activate_cleanup),
+                .capture_write => |x| {
+                    var path: [64]runtime_value.Projection = undefined;
+                    const reference = try self.resolvePlace(current.storage, x.place, &path, true);
+                    current.write_destinations[x.dst] = try self.context().storage.captureResolvedWrite(reference, x.activate_cleanup);
+                },
                 .check_write_cleanup => |id| {
                     const destination = current.write_destinations[id] orelse return error.UninitializedBytecodeDestination;
                     try self.chargeCleanup(try self.context().storage.checkWriteCleanup(destination));
@@ -285,12 +297,12 @@ pub const Vm = struct {
                 },
                 .cleanup_test => |x| {
                     var path: [64]runtime_value.Projection = undefined;
-                    const reference = try self.context().storage.resolveCleanup(current.storage, x.place, &path);
+                    const reference = try self.resolvePlace(current.storage, x.place, &path, false);
                     try slots.put(x.dst, .{ .boolean = try self.context().storage.cleanupTest(reference) });
                 },
                 .cleanup_set => |x| {
                     var path: [64]runtime_value.Projection = undefined;
-                    const reference = try self.context().storage.resolveCleanup(current.storage, x.place, &path);
+                    const reference = try self.resolvePlace(current.storage, x.place, &path, false);
                     // A subtree update performs work without allocating value
                     // cells. Charge its flags too, so a large owner in a loop
                     // cannot turn one instruction into unbounded cleanup work.

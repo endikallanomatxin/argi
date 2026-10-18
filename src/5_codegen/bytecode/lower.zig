@@ -16,6 +16,7 @@ pub const Lower = struct {
     pending: std.ArrayList(g.GlobalFunctionId) = .empty,
     source: p.SourceRef = .{ .file_index = 0, .offset = 0 },
     unsupported: []const u8 = "",
+    session: ?b.Session = null,
 
     pub fn init(a: std.mem.Allocator, graph: *const g.GlobalSemanticGraph) !Lower {
         const functions = try a.alloc(?b.Function, graph.functions.items.len);
@@ -26,6 +27,16 @@ pub const Lower = struct {
             if (ty == .builtin and ty.builtin == .Bool) break @as(b.Type, @enumFromInt(i));
         } else null;
         return .{ .allocator = a, .graph = graph, .functions = functions, .cleanup_bindings = cleanup_bindings, .cleanup_types = cleanup_types, .bool_type = bool_type };
+    }
+    pub fn initSession(a: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, session: b.Session) !Lower {
+        var result = try init(a, graph);
+        result.session = session;
+        return result;
+    }
+    fn sessionIndex(self: *const Lower, binding: g.GlobalBindingId) ?u32 {
+        const session = self.session orelse return null;
+        for (session.bindings, 0..) |entry, index| if (entry.binding == binding) return @intCast(index);
+        return null;
     }
     // All bytecode allocations belong to the caller's compilation arena.
     // VM initialization verifies the completed program before accepting it.
@@ -82,7 +93,7 @@ pub const Lower = struct {
             stored.* = value;
             break :blk stored;
         } else null;
-        return .{ .graph = self.graph, .functions = try self.allocator.dupe(?b.Function, self.functions), .expression = entry };
+        return .{ .graph = self.graph, .functions = try self.allocator.dupe(?b.Function, self.functions), .expression = entry, .session = self.session };
     }
     fn reject(self: *Lower, source: p.SourceRef, name: []const u8) error{UnsupportedExecution} {
         self.source = source;
@@ -331,6 +342,14 @@ const FunctionLower = struct {
                 }
             },
             .assignment => |x| {
+                if (self.parent.sessionIndex(x.binding)) |index| {
+                    const ty = self.parent.graph.binding(x.binding).ty;
+                    if (self.parent.cleanup_types[@intFromEnum(ty)]) return self.parent.reject(node.source, "session owner replacement requires a checked cleanup plan");
+                    const destination = try self.captureWrite(node.source, .{ .root = index, .region = .session, .path = &.{} }, ty, false);
+                    const value = try self.coerce(node.source, try self.expression(x.value), ty);
+                    try self.commitWrite(node.source, destination, value);
+                    return;
+                }
                 const dst = self.bindings.get(x.binding) orelse return self.parent.reject(node.source, "global or captured storage");
                 try self.copyTo(node.source, dst, try self.expression(x.value));
                 if (self.drops.get(x.binding)) |drop| try self.setDrop(drop, true);
@@ -519,7 +538,7 @@ const FunctionLower = struct {
         const path = try self.parent.allocator.alloc(b.Projection, base.path.len + 1);
         @memcpy(path[0..base.path.len], base.path);
         path[base.path.len] = projection;
-        return .{ .root = base.root, .path = path };
+        return .{ .root = base.root, .region = base.region, .path = path };
     }
     // Resolve storage syntactically, without evaluating it into a copied value.
     // Address operations retain storage identity. Intermediate array bounds are checked
@@ -528,10 +547,10 @@ const FunctionLower = struct {
         const node = self.parent.graph.node(id);
         self.parent.source = node.source;
         return switch (node.content) {
-            .binding_use => |binding| .{
-                .root = self.bindings.get(binding) orelse return self.parent.reject(node.source, "global or captured storage"),
-                .path = &.{},
-            },
+            .binding_use => |binding| if (self.parent.sessionIndex(binding)) |index|
+                .{ .root = index, .region = .session, .path = &.{} }
+            else
+                .{ .root = self.bindings.get(binding) orelse return self.parent.reject(node.source, "global or captured storage"), .path = &.{} },
             .address_of => |value| self.place(value),
             .dereference => |x| self.project(.{ .root = try self.expression(x.pointer), .path = &.{} }, .dereference),
             .struct_field_access => |x| self.project(try self.place(x.value), .{ .field = x.field_index }),
@@ -609,6 +628,11 @@ const FunctionLower = struct {
         const node = self.parent.graph.node(id);
         self.parent.source = node.source;
         if (node.content == .binding_use) {
+            if (self.parent.sessionIndex(node.content.binding_use)) |index| {
+                const dst = try self.newSlot(node.ty orelse return error.InvalidBytecode);
+                _ = try self.emit(node.source, .{ .load = .{ .dst = dst, .place = .{ .root = index, .region = .session, .path = &.{} } } });
+                return dst;
+            }
             const src = self.bindings.get(node.content.binding_use) orelse return self.parent.reject(node.source, "global or captured storage");
             const dst = try self.newSlot(self.slots.items[src]);
             _ = try self.emit(node.source, .{ .copy = .{ .dst = dst, .src = src } });

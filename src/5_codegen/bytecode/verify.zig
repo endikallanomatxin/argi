@@ -112,18 +112,18 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                     if (x.yes >= f.code.len or x.no >= f.code.len) return error.InvalidBytecode;
                 },
                 .borrow => |x| {
-                    const target = try placeInfo(program.graph, f.slots, x.place);
+                    const target = try placeInfo(program, f.slots, x.place);
                     const pointer = program.graph.semanticType(f.slots[x.dst]);
                     if (pointer != .pointer or !types.equal(program.graph, pointer.pointer.child, target.ty) or (pointer.pointer.mutability == .read_write and !target.writable)) return error.InvalidBytecode;
                 },
                 .load => |x| {
-                    const target = try placeInfo(program.graph, f.slots, x.place);
+                    const target = try placeInfo(program, f.slots, x.place);
                     if (!types.equal(program.graph, f.slots[x.dst], target.ty)) return error.InvalidBytecode;
                 },
-                .check_place => |place| _ = try placeInfo(program.graph, f.slots, place),
+                .check_place => |place| _ = try placeInfo(program, f.slots, place),
                 .capture_write => |x| {
                     if (x.dst >= f.write_destinations.len) return error.InvalidBytecode;
-                    const target = try placeInfo(program.graph, f.slots, x.place);
+                    const target = try placeInfo(program, f.slots, x.place);
                     if (!target.writable or !types.equal(program.graph, f.write_destinations[x.dst], target.ty)) return error.InvalidBytecode;
                 },
                 .check_write_cleanup, .activate_write_cleanup => |destination| {
@@ -133,11 +133,11 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                     if (x.destination >= f.write_destinations.len or !types.equal(program.graph, f.slots[x.value], f.write_destinations[x.destination])) return error.InvalidBytecode;
                 },
                 .cleanup_test => |x| {
-                    _ = try placeInfo(program.graph, f.slots, x.place);
+                    _ = try placeInfo(program, f.slots, x.place);
                     if (!valueFits(program.graph, f.slots[x.dst], .{ .boolean = false })) return error.InvalidBytecode;
                 },
                 .cleanup_set => |x| {
-                    if (!(try placeInfo(program.graph, f.slots, x.place)).writable) return error.InvalidBytecode;
+                    if (!(try placeInfo(program, f.slots, x.place)).writable) return error.InvalidBytecode;
                 },
                 .branch => |x| if (x.yes >= f.code.len or x.no >= f.code.len or !valueFits(program.graph, f.slots[x.condition], .{ .boolean = false })) return error.InvalidBytecode,
                 .jump => |target| if (target >= f.code.len) return error.InvalidBytecode,
@@ -347,9 +347,15 @@ fn verifyCleanup(a: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, f: b
     for (f.outputs) |slot| if (flags[slot]) return error.InvalidBytecode;
 }
 
-fn placeInfo(graph: *const g.GlobalSemanticGraph, slots: []const Type, place: Place) !struct { ty: Type, writable: bool } {
-    if (place.root >= slots.len or place.path.len > 64) return error.InvalidBytecode;
-    var ty = slots[place.root];
+fn placeInfo(program: Program, slots: []const Type, place: Place) !struct { ty: Type, writable: bool } {
+    const graph = program.graph;
+    if (place.path.len > 64) return error.InvalidBytecode;
+    var ty = if (place.region == .session)
+        (try sessionBinding(program, place.root)).slots[0]
+    else if (place.root < slots.len)
+        slots[place.root]
+    else
+        return error.InvalidBytecode;
     var writable = true;
     for (place.path) |projection| switch (projection) {
         .field => |index| {
@@ -376,7 +382,7 @@ fn placeInfo(graph: *const g.GlobalSemanticGraph, slots: []const Type, place: Pl
 }
 
 fn readPlace(a: std.mem.Allocator, place: Place, out: *std.ArrayList(Slot)) !void {
-    try out.append(a, place.root);
+    if (place.region == .local) try out.append(a, place.root);
     for (place.path) |projection| switch (projection) {
         .element => |index| try out.append(a, index),
         .field, .variant, .dereference => {},

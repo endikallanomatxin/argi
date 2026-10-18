@@ -20,7 +20,13 @@ pub const Value = @import("value.zig").Value;
 // A place starts in local storage and can follow checked safe references.
 // Index operands are snapshots evaluated by lowering in source order.
 pub const Projection = union(enum) { field: u32, element: Slot, variant: g.GlobalVariantId, dereference };
-pub const Place = struct { root: Slot, path: []const Projection };
+pub const Place = struct {
+    // Root indexes local slots or the program's typed session binding table.
+    // Dynamic index operands always name local slots in the executing frame.
+    root: u32,
+    region: enum { local, session } = .local,
+    path: []const Projection,
+};
 
 // Compiler-selected cleanup state is attached to storage, not copied values or
 // reference slots. Paths are concrete layout projections, never dereferences.
