@@ -17,6 +17,7 @@ pub const Lower = struct {
     source: p.SourceRef = .{ .file_index = 0, .offset = 0 },
     unsupported: []const u8 = "",
     session: ?b.Session = null,
+    diagnostics: ?*const @import("../../1_base/diagnostic.zig").Diagnostics = null,
 
     pub fn init(a: std.mem.Allocator, graph: *const g.GlobalSemanticGraph) !Lower {
         const functions = try a.alloc(?b.Function, graph.functions.items.len);
@@ -130,6 +131,7 @@ const FunctionLower = struct {
     code: std.ArrayList(b.Instruction) = .empty,
     bindings: std.AutoHashMapUnmanaged(g.GlobalBindingId, b.Slot) = .empty,
     outputs: []const b.Slot = &.{},
+    default_location_source: ?p.SourceRef = null,
     drops: std.AutoHashMapUnmanaged(g.GlobalBindingId, DropState) = .empty,
     cleanup: std.ArrayList(CleanupEntry) = .empty,
     write_destinations: std.ArrayList(b.Type) = .empty,
@@ -652,9 +654,48 @@ const FunctionLower = struct {
         }
         if (self.nodeDrop(node)) |drop| try self.setDrop(drop, enabled);
     }
+    fn coreFunction(self: *FunctionLower, function: g.GlobalFunctionId, name: []const u8) bool {
+        const graph = self.parent.graph;
+        const declaration = graph.function(function).declaration;
+        const owner = graph.moduleForDeclaration(declaration) orelse return false;
+        return graph.modules.items[@intFromEnum(owner)].is_bundled_core and std.mem.eql(u8, graph.text(graph.declaration(declaration).name), name);
+    }
+
+    fn traceLocation(self: *FunctionLower, node: g.Node) !b.Slot {
+        const graph = self.parent.graph;
+        const owner = graph.files.items[node.source.file_index].module;
+        const source = if (graph.modules.items[@intFromEnum(owner)].is_bundled_core) self.default_location_source orelse node.source else node.source;
+        const diagnostics = self.parent.diagnostics orelse return self.parent.reject(source, "source location metadata without a source database");
+        const location = diagnostics.presentedLocation(@import("../../execution/diagnostics.zig").location(graph, diagnostics, source));
+        const position_ = diagnostics.source_db.lineColumn(location.file, location.offset);
+        const file = diagnostics.source_db.get(location.file);
+        const line = file.source[file.line_starts[position_.line - 1]..];
+        const metadata = try self.parent.allocator.create(b.TraceLocation);
+        metadata.* = .{
+            .path = try self.parent.allocator.dupe(u8, diagnostics.source_db.path(location.file)),
+            .offset = location.offset,
+            .line = position_.line,
+            .column = position_.column,
+            .source_line = try self.parent.allocator.dupe(u8, line[0 .. std.mem.indexOfScalar(u8, line, '\n') orelse line.len]),
+        };
+        const ty = node.ty orelse return error.InvalidBytecode;
+        const fields = types.fields(graph, ty) orelse return error.InvalidBytecode;
+        if (fields.len != 1 or !types.isBuiltin(graph, graph.fields.items[fields.start].ty, .UInt32)) return error.InvalidBytecode;
+        const id = try self.newSlot(graph.fields.items[fields.start].ty);
+        _ = try self.emit(source, .{ .trace_location = .{ .dst = id, .location = metadata } });
+        const result = try self.newSlot(ty);
+        _ = try self.emit(source, .{ .record = .{ .dst = result, .fields = try self.parent.allocator.dupe(b.Slot, &.{id}) } });
+        return result;
+    }
+
     fn call(self: *FunctionLower, id: g.GlobalNodeId) anyerror!?b.Slot {
         const node = self.parent.graph.node(id);
         const x = node.content.function_call;
+        if (self.coreFunction(x.callee, "error_location_id")) return try self.traceLocation(node);
+        if (self.coreFunction(x.callee, "source_location")) return self.parent.reject(node.source, "source location resolution");
+        const previous_location = self.default_location_source;
+        self.default_location_source = node.source;
+        defer self.default_location_source = previous_location;
         if (x.callee_value != null) return self.parent.reject(node.source, "indirect call");
         const input = self.parent.graph.node(x.input).content;
         if (input != .struct_value_literal) return self.parent.reject(node.source, "non-record call arguments");

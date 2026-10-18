@@ -37,6 +37,7 @@ pub fn evaluateBudgeted(allocator: std.mem.Allocator, graph: *g.GlobalSemanticGr
     defer checker.deinit();
     try checker.analyzeUnit(&.{entry});
     var lower = try Lower.init(temporary, &checked);
+    lower.diagnostics = diagnostics;
     const function = graph.function(entry);
     for (graph.fields.items[function.input.start..][0..function.input.len]) |field| {
         if (!freezable(graph, lower.cleanup_types, field.ty, 0)) return error.UnfreezableEvaluationInput;
@@ -76,6 +77,14 @@ fn freezable(graph: *const g.GlobalSemanticGraph, owners: []const bool, ty: g.Gl
     if (depth > 64 or owners[@intFromEnum(ty)]) return false;
     if (bytecode.integerBounds(graph, ty) != null) return true;
     const semantic = graph.semanticType(ty);
+    // Source IDs name one executor's metadata table, even though core exposes
+    // an integer representation. They cannot become native executable constants.
+    if (semantic == .declared) {
+        if (types.nominalTypeOwner(graph, ty)) |owner| {
+            if (graph.modules.items[@intFromEnum(owner)].is_bundled_core and
+                std.mem.eql(u8, graph.text(graph.declaration(semantic.declared).name), "SourceLocationId")) return false;
+        }
+    }
     if (semantic == .builtin) return semantic.builtin == .Bool or semantic.builtin == .Void;
     if (semantic == .pointer or semantic == .virtual) return false;
     if (types.arrayElement(graph, ty)) |element| return freezable(graph, owners, element, depth + 1);

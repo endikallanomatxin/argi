@@ -1756,3 +1756,28 @@ test "bytecode verifier rejects forged virtual constants and invalid tables" {
         try std.testing.expectError(error.InvalidBytecode, b.verify(a, .{ .graph = &graph, .functions = &.{}, .expression = &expression }));
     }
 }
+
+test "bytecode trace metadata requires an unsigned source ID and valid coordinates" {
+    const a = std.testing.allocator;
+    var graph: @import("../4_semantics/global/graph.zig").GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.appendSlice(a, &.{ .{ .builtin = .UInt32 }, .{ .builtin = .Int32 } });
+    const source = @import("../4_semantics/primitives/schema.zig").SourceRef{ .file_index = 0, .offset = 0 };
+    const metadata = [_]b.TraceLocation{
+        .{ .path = "input.rg", .offset = 0, .line = 0, .column = 1, .source_line = "" },
+        .{ .path = "input.rg", .offset = 0, .line = 1, .column = 0, .source_line = "" },
+        .{ .path = "input.rg", .offset = 0, .line = 1, .column = 1, .source_line = "" },
+    };
+    for (&metadata, 0..) |*location, index| {
+        const expression = b.Function{
+            .slots = &.{@enumFromInt(@as(u32, if (index == 2) 1 else 0))},
+            .inputs = &.{},
+            .outputs = &.{0},
+            .code = &.{
+                .{ .source = source, .op = .{ .trace_location = .{ .dst = 0, .location = location } } },
+                .{ .source = source, .op = .{ .ret = &.{0} } },
+            },
+        };
+        try std.testing.expectError(error.InvalidBytecode, b.verify(a, .{ .graph = &graph, .functions = &.{}, .expression = &expression }));
+    }
+}

@@ -39,6 +39,7 @@ pub const Context = struct {
     namespace: ?b.SessionNamespace = null,
     bindings: std.AutoHashMapUnmanaged(g.GlobalBindingId, runtime_value.FrameId) = .empty,
     literal_bytes: std.StringHashMapUnmanaged(runtime_value.Reference) = .empty,
+    trace_locations: std.ArrayList(b.TraceLocation) = .empty,
 
     pub fn init(allocator: std.mem.Allocator, value_cells: usize) Context {
         return .{ .arena = .init(allocator), .allocator = allocator, .limit = value_cells };
@@ -70,6 +71,7 @@ pub const Context = struct {
         self.namespace = null;
         self.bindings = .empty;
         self.literal_bytes = .empty;
+        self.trace_locations = .empty;
     }
 
     fn checkNamespace(self: *const Context, session: ?b.Session) !void {
@@ -86,6 +88,22 @@ pub const Context = struct {
         const key = try self.storage.literalBytes(reference);
         self.literal_bytes.putAssumeCapacity(key, reference);
         return .{ .reference = reference };
+    }
+
+    fn registerTraceLocation(self: *Context, location: b.TraceLocation) !b.Value {
+        for (self.trace_locations.items, 0..) |existing, index| {
+            if (existing.offset == location.offset and std.mem.eql(u8, existing.path, location.path) and
+                existing.line == location.line and existing.column == location.column and std.mem.eql(u8, existing.source_line, location.source_line))
+                return .{ .integer = @intCast(index) };
+        }
+        const id = std.math.cast(u32, self.trace_locations.items.len) orelse return error.ExecutionTraceLocationLimit;
+        try self.storage.charge(1 + location.path.len + location.source_line.len);
+        const a = self.arena.allocator();
+        var retained = location;
+        retained.path = try a.dupe(u8, location.path);
+        retained.source_line = try a.dupe(u8, location.source_line);
+        try self.trace_locations.append(a, retained);
+        return .{ .integer = id };
     }
 
     fn initializeBinding(self: *Context, binding: b.SessionBinding, value: b.Value) !void {
@@ -240,6 +258,7 @@ pub const Vm = struct {
             current.pc += 1;
             switch (inst.op) {
                 .constant => |x| try slots.put(x.dst, x.value),
+                .trace_location => |x| try slots.put(x.dst, try self.context().registerTraceLocation(x.location.*)),
                 .static_bytes => |x| try slots.put(x.dst, try self.context().literalBytes(x.bytes)),
                 .offset_reference => |x| try slots.put(x.dst, .{ .reference = try self.context().storage.offsetReference((try slots.get(x.src)).reference, (try slots.get(x.elements)).integer) }),
                 .virtualize => |x| {

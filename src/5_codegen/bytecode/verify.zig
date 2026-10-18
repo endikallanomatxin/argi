@@ -51,6 +51,9 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
             for (reads.items) |slot| if (slot >= f.slots.len) return error.InvalidBytecode;
             switch (inst.op) {
                 .constant => |x| if (!valueFits(program.graph, f.slots[x.dst], x.value)) return error.InvalidBytecode,
+                .trace_location => |x| {
+                    if (!types.isBuiltin(program.graph, f.slots[x.dst], .UInt32) or x.location.line == 0 or x.location.column == 0) return error.InvalidBytecode;
+                },
                 .static_bytes => |x| {
                     const pointer = program.graph.semanticType(f.slots[x.dst]);
                     if (pointer != .pointer or pointer.pointer.mutability != .read_only or
@@ -306,6 +309,7 @@ fn destinations(i: Instruction, single: *[1]Slot) []const Slot {
     const slot: ?Slot = switch (i.op) {
         .constant => |x| x.dst,
         .static_bytes => |x| x.dst,
+        .trace_location => |x| x.dst,
         .virtualize => |x| x.dst,
         .offset_reference => |x| x.dst,
         .copy => |x| x.dst,

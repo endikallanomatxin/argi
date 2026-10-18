@@ -140,6 +140,11 @@ across REPL submissions; they do not run contract resolution at runtime. Receive
 permissions and storage liveness remain checked. Virtual values cannot escape the
 executor as compile-time constants.
 
+`error_location_id()` registers source coordinates in the execution context.
+Retained REPL IDs keep their original submitted text across later commands; reset
+clears them. These IDs cannot be exported as compile-time constants.
+`source_location()` resolution and complete error propagation remain pending.
+
 Raw pointers, C enums, floating point, error propagation/tracing,
 partial initialization through output references, globals, closures, foreign calls,
 and System capabilities are not yet supported. Unsupported constructs in reachable

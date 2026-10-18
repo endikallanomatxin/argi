@@ -82,10 +82,21 @@ pub const VirtualInvocation = struct {
     signature: VirtualSignature,
 };
 
+// Immutable diagnostic coordinates. Context registration assigns durable IDs;
+// descriptors belong to the same retained compilation unit as their code.
+pub const TraceLocation = struct {
+    path: []const u8,
+    offset: u32,
+    line: u32,
+    column: u32,
+    source_line: []const u8,
+};
+
 pub const Instruction = struct {
     source: p.SourceRef,
     op: union(enum) {
         constant: struct { dst: Slot, value: Value },
+        trace_location: struct { dst: Slot, location: *const TraceLocation },
         static_bytes: struct { dst: Slot, bytes: []const u8 },
         offset_reference: struct { dst: Slot, src: Slot, elements: Slot },
         virtualize: struct { dst: Slot, receiver: Slot, table: *const VirtualTable },

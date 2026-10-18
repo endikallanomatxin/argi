@@ -559,3 +559,40 @@ test "interactive virtual calls can enter older and newer code units" {
     try std.testing.expectEqual(@as(i128, 42), result.value.integer);
     try session.close();
 }
+
+test "interactive source IDs retain original metadata across commands" {
+    const allocator = std.testing.allocator;
+    var sources = submissions.Sources.init(allocator);
+    defer sources.deinit();
+    var diagnostics = diagnostics_mod.Diagnostics.init(&allocator, &.{});
+    defer diagnostics.deinit();
+    const loaded = try sources.loadModule(&diagnostics, "SourceLocationId: Type = (.value: UInt32)\n" ++
+        "error_location_id := () -> (.location: SourceLocationId) { location = (.value = 0) }\n" ++
+        "core_located := (.location: SourceLocationId = error_location_id()) -> (.value: UInt32) { value = location.value }\n");
+    var core = loaded.*;
+    core.is_bundled_core = true;
+    var session: Interactive = undefined;
+    try session.initWithSources(allocator, diagnostics.source_files, &.{core}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    const first = (try session.submitInput("error_location_id()")).?.value.record[0].integer;
+    try std.testing.expectEqual(@as(usize, 1), session.runtime.context.trace_locations.items.len);
+    const original = session.runtime.context.trace_locations.items[@intCast(first)];
+    try std.testing.expectEqualStrings("error_location_id()", original.source_line);
+    try std.testing.expectEqual(@as(u32, 1), original.line);
+    try std.testing.expectEqual(@as(u32, 1), original.column);
+    _ = try session.submitInput("error_location_id()");
+    try std.testing.expectEqual(@as(usize, 2), session.runtime.context.trace_locations.items.len);
+    try std.testing.expectEqualStrings(original.path, session.runtime.context.trace_locations.items[@intCast(first)].path);
+    try session.submit("located := (.location: SourceLocationId = error_location_id()) -> (.value: UInt32) { value = location.value }");
+    _ = try session.submitInput("located()");
+    const defaulted = session.runtime.context.trace_locations.items[2];
+    try std.testing.expect(std.mem.startsWith(u8, defaulted.source_line, "located :="));
+    _ = try session.submitInput("core_located()");
+    const core_default = session.runtime.context.trace_locations.items[3];
+    try std.testing.expectEqualStrings("core_located()", core_default.source_line);
+    try std.testing.expectEqual(@as(u32, 1), core_default.column);
+    try std.testing.expectError(error.Reported, session.submitInput("#run error_location_id()"));
+    try session.reset();
+    try std.testing.expectEqual(@as(usize, 0), session.runtime.context.trace_locations.items.len);
+    try session.close();
+}
