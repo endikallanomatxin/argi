@@ -21,7 +21,7 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
 
 ## Execution coverage
 
-- Extend partial initialization and error propagation/tracing.
+- Extend partial initialization and trace reporting.
 - Complete evaluated cleanup identities for owning replacement through indexed
   storage and unresolved/retargetable references, shared with native lowering.
 - Extend scalar representations and explicit host-call capabilities only through

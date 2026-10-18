@@ -1,0 +1,115 @@
+..missing
+..other
+
+CountingTracer: Type = (.count: Int32, .context_bytes: UIntNative)
+
+implement ErrorTracer#(CountingTracer) (
+    .add_context = (
+        .self: $&CountingTracer, .location: SourceLocationId, .context: StringView
+    ) -> () {
+        metadata ::= source_location(location)
+        if metadata.line == 0 or metadata.column == 0 { abort }
+        self&.count = self&.count + 1
+        self&.context_bytes = self&.context_bytes + byte_length(&context).count
+    }
+    .reset_context = (.self: $&CountingTracer) -> () {}
+    .report        = (.self: $&CountingTracer, .writer: $&Virtual#(.contract: Writer)) -> (
+        .result : Errable#(Void, (..stream_write_failed, ..stream_flush_failed))
+    ) {
+        result = ..ok Void()
+    }
+)
+
+Owner: Type = (.drops: $&Int32)
+
+implement Deinit#(Owner) (
+    .deinit = (.self: $&Owner) -> () {
+        self&.drops&= self&.drops&+ 1
+    }
+)
+
+attempt := (.fail: Bool, .tracer: $&Virtual#(.contract: ErrorTracer)) -> (
+    .result : Errable#(Int32, (..missing))
+) {
+    if fail {
+        result = ..error(.reason = ..missing, .tracer = tracer)
+    } else {
+        result = ..ok 42
+    }
+}
+
+propagate := (.fail: Bool, .tracer: $&Virtual#(.contract: ErrorTracer), .drops: $&Int32) -> (
+    .result : Errable#(Int32, (..other, ..missing))
+) {
+    owner ::= Owner(.drops = drops)
+    value ::= attempt(fail, tracer)!
+    result = ..ok value
+}
+
+create_owner := (.fail: Bool, .tracer: $&Virtual#(.contract: ErrorTracer), .drops: $&Int32) -> (
+    .result : Errable#(Owner, (..missing))
+) {
+    if fail {
+        result = ..error(.reason = ..missing, .tracer = tracer)
+    } else {
+        result = ..ok Owner(.drops = drops)
+    }
+}
+
+forward_owner := (.fail: Bool, .tracer: $&Virtual#(.contract: ErrorTracer), .drops: $&Int32) -> (
+    .result : Errable#(Owner, (..other, ..missing))
+) {
+    owner ::= create_owner(fail, tracer, drops)!
+    result = ..ok ~owner
+}
+
+context_text := (.calls: $&Int32) -> (.result: StringView) {
+    calls&= calls&+ 1
+    result = "context"
+}
+
+with_context := (.fail: Bool, .tracer: $&Virtual#(.contract: ErrorTracer), .calls: $&Int32) -> (
+    .result : Errable#(Int32, (..other, ..missing))
+) {
+    value ::= attempt(fail, tracer)!! context_text(calls)
+    result = ..ok value
+}
+
+exercise := () -> (.result: Int32) {
+    tracer :: CountingTracer = (.count = 0, .context_bytes = 0)
+    erased ::= to_virtual#(.contract: ErrorTracer)(.value = $&tracer)
+    drops :: Int32 = 0
+    recovered ::= propagate(true, $&erased, $&drops) handle error, value {
+        match error.reason { ..missing {} ..other { abort } }
+        value = 42
+    }
+    if recovered != 42 or drops != 1 or tracer.count != 1 { abort }
+    successful ::= propagate(false, $&erased, $&drops) handle error, value { abort }
+    if successful != 42 or drops != 2 or tracer.count != 1 { abort }
+    context_calls :: Int32 = 0
+    with_context(false, $&erased, $&context_calls) handle error { abort }
+    if context_calls != 0 { abort }
+    with_context(true, $&erased, $&context_calls) handle error {
+        match error.reason { ..missing {} ..other { abort } }
+    }
+    if tracer.count != 2 or tracer.context_bytes != 7 or context_calls != 1 { abort }
+    if true {
+        owner ::= forward_owner(false, $&erased, $&drops) handle error, value { abort }
+    }
+    if drops != 3 or tracer.count != 2 { abort }
+    forward_owner(true, $&erased, $&drops) handle error {
+        match error.reason { ..missing {} ..other { abort } }
+    }
+    if drops != 3 or tracer.count != 3 { abort }
+    result = 42
+}
+
+main := () -> (.status_code: Int32 = 0) {
+    compiled ::= #run exercise()
+    if compiled != 42 { abort }
+    #if exercise() == 42 {
+        status_code = exercise()
+    } else {
+        abort
+    }
+}

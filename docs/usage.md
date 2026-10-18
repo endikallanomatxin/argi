@@ -144,9 +144,12 @@ executor as compile-time constants.
 Retained REPL IDs keep their original submitted text across later commands; reset
 clears them. These IDs cannot be exported as compile-time constants.
 `source_location()` resolves those IDs to immutable path, line text and coordinates.
-Unknown IDs stop execution. Complete error propagation remains pending.
+Unknown IDs stop execution. Error propagation (`!`) preserves the original tracer,
+converts reason sets and runs checked early-return cleanup. Context propagation
+(`!!`) with a `StringView` evaluates its context only on error and calls the
+ordinary core trace helper.
 
-Raw pointers, C enums, floating point, error propagation/tracing,
+Raw pointers, C enums, floating point, complete trace reporting,
 partial initialization through output references, globals, closures, foreign calls,
 and System capabilities are not yet supported. Unsupported constructs in reachable
 function bodies are rejected

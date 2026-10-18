@@ -4,6 +4,7 @@ const p = @import("../../4_semantics/primitives/schema.zig");
 const b = @import("bytecode.zig");
 const types = @import("../../4_semantics/global/types.zig");
 const cleanup_layout = @import("../cleanup_layout.zig");
+const error_plan = @import("../error_plan.zig");
 const cleanup_plan = @import("../cleanup_plan.zig");
 
 pub const Lower = struct {
@@ -665,6 +666,11 @@ const FunctionLower = struct {
         const graph = self.parent.graph;
         const owner = graph.files.items[node.source.file_index].module;
         const source = if (graph.modules.items[@intFromEnum(owner)].is_bundled_core) self.default_location_source orelse node.source else node.source;
+        return self.traceLocationValue(source, node.ty orelse return error.InvalidBytecode);
+    }
+
+    fn traceLocationValue(self: *FunctionLower, source: p.SourceRef, ty: b.Type) !b.Slot {
+        const graph = self.parent.graph;
         const diagnostics = self.parent.diagnostics orelse return self.parent.reject(source, "source location metadata without a source database");
         const location = diagnostics.presentedLocation(@import("../../execution/diagnostics.zig").location(graph, diagnostics, source));
         const position_ = diagnostics.source_db.lineColumn(location.file, location.offset);
@@ -678,13 +684,112 @@ const FunctionLower = struct {
             .column = position_.column,
             .source_line = try self.parent.allocator.dupe(u8, line[0 .. std.mem.indexOfScalar(u8, line, '\n') orelse line.len]),
         };
-        const ty = node.ty orelse return error.InvalidBytecode;
         const fields = types.fields(graph, ty) orelse return error.InvalidBytecode;
         if (fields.len != 1 or !types.isBuiltin(graph, graph.fields.items[fields.start].ty, .UInt32)) return error.InvalidBytecode;
         const id = try self.newSlot(graph.fields.items[fields.start].ty);
         _ = try self.emit(source, .{ .trace_location = .{ .dst = id, .location = metadata } });
         const result = try self.newSlot(ty);
         _ = try self.emit(source, .{ .record = .{ .dst = result, .fields = try self.parent.allocator.dupe(b.Slot, &.{id}) } });
+        return result;
+    }
+
+    fn coreFunctionId(self: *FunctionLower, name: []const u8, source: p.SourceRef) !g.GlobalFunctionId {
+        for (self.parent.graph.functions.items, 0..) |_, index| {
+            const id: g.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(index)));
+            if (self.coreFunction(id, name)) return id;
+        }
+        return self.parent.reject(source, "missing checked core error helper");
+    }
+
+    fn stringValue(self: *FunctionLower, source: p.SourceRef, ty: b.Type, text: []const u8) !b.Slot {
+        const dst = try self.newSlot(ty);
+        if (self.parent.graph.semanticType(ty) == .pointer) {
+            _ = try self.emit(source, .{ .static_bytes = .{ .dst = dst, .bytes = text } });
+        } else {
+            if (!types.isStringView(self.parent.graph, ty)) return self.parent.reject(source, "string literal representation");
+            const fields = types.fields(self.parent.graph, ty).?;
+            const data = try self.newSlot(self.parent.graph.fields.items[fields.start].ty);
+            const length = try self.newSlot(self.parent.graph.fields.items[fields.start + 1].ty);
+            _ = try self.emit(source, .{ .static_bytes = .{ .dst = data, .bytes = text } });
+            _ = try self.emit(source, .{ .constant = .{ .dst = length, .value = .{ .integer = text.len } } });
+            _ = try self.emit(source, .{ .record = .{ .dst = dst, .fields = try self.parent.allocator.dupe(b.Slot, &.{ data, length }) } });
+        }
+        return dst;
+    }
+
+    fn errorPropagation(self: *FunctionLower, propagation: anytype, context_node: ?g.GlobalNodeId, source: p.SourceRef) anyerror!b.Slot {
+        const graph = self.parent.graph;
+        const value = try self.expression(propagation.errable_value);
+        const branch = try self.emit(source, .{ .branch_variant = .{ .src = value, .variant = propagation.error_variant, .yes = self.position() + 1, .no = 0 } });
+        const payload = try self.newSlot(propagation.error_payload_type);
+        _ = try self.emit(source, .{ .payload = .{ .dst = payload, .src = value, .variant = propagation.error_variant } });
+
+        // Invoke the checked core trace helpers used by native propagation. Their ordinary
+        // bytecode bodies use retained virtual evidence; the VM has no trace hook.
+        const trace = types.findField(graph, propagation.error_payload_type, "tracer") orelse return error.InvalidBytecode;
+        const tracer = try self.newSlot(trace.field.ty);
+        _ = try self.emit(source, .{ .field = .{ .dst = tracer, .base = payload, .index = trace.index } });
+        const context = if (context_node) |node| try self.expression(node) else null;
+        const is_view = if (context) |slot| types.isStringView(graph, self.slots.items[slot]) else true;
+        const helper = try self.coreFunctionId(if (is_view) "_add_error_context" else "_add_error_context_text", source);
+        const function = graph.function(helper);
+        if (function.input.len != 3 or function.output.len != 0) return error.InvalidBytecode;
+        const inputs = graph.fields.items[function.input.start..][0..3];
+        const location = try self.traceLocationValue(source, inputs[1].ty);
+        const text = context orelse try self.stringValue(source, inputs[2].ty, "");
+        const args = try self.parent.allocator.dupe(b.Slot, &.{ try self.coerce(source, tracer, inputs[0].ty), location, try self.coerce(source, text, inputs[2].ty) });
+        try self.parent.pending.append(self.parent.allocator, helper);
+        _ = try self.emit(source, .{ .call = .{ .outputs = &.{}, .function = helper, .args = args } });
+
+        const converted = try self.errorPayload(source, payload, propagation.propagated_error_payload_type);
+        if (self.outputs.len != 1 or !types.equal(graph, self.slots.items[self.outputs[0]], propagation.propagated_errable_type)) return error.InvalidBytecode;
+        _ = try self.emit(source, .{ .choice = .{ .dst = self.outputs[0], .variant = propagation.propagated_error_variant, .payload = converted } });
+        for (graph.node_refs.items[propagation.cleanup_nodes.start..][0..propagation.cleanup_nodes.len]) |cleanup| try self.statement(cleanup);
+        _ = try self.emit(source, .{ .ret = self.outputs });
+
+        self.code.items[branch].op.branch_variant.no = self.position();
+        const ok = try self.newSlot(propagation.ok_payload_type);
+        _ = try self.emit(source, .{ .payload = .{ .dst = ok, .src = value, .variant = propagation.ok_variant } });
+        if (propagation.ok_value_field_index) |index| {
+            const fields = types.fields(graph, propagation.ok_payload_type) orelse return error.InvalidBytecode;
+            if (index >= fields.len) return error.InvalidBytecode;
+            const result = try self.newSlot(graph.fields.items[fields.start + index].ty);
+            _ = try self.emit(source, .{ .field = .{ .dst = result, .base = ok, .index = index } });
+            return result;
+        }
+        return ok;
+    }
+
+    fn errorPayload(self: *FunctionLower, source: p.SourceRef, value: b.Slot, target: b.Type) !b.Slot {
+        const graph = self.parent.graph;
+        const from = self.slots.items[value];
+        if (types.equal(graph, from, target)) return value;
+        const plan = try error_plan.payload(graph, from, target);
+        const reason = try self.newSlot(plan.source_reason.field.ty);
+        const tracer = try self.newSlot(plan.source_tracer.field.ty);
+        _ = try self.emit(source, .{ .field = .{ .dst = reason, .base = value, .index = plan.source_reason.index } });
+        _ = try self.emit(source, .{ .field = .{ .dst = tracer, .base = value, .index = plan.source_tracer.index } });
+        const mapped = try self.newSlot(plan.target_reason.field.ty);
+        const variants = types.variants(graph, plan.source_reason.field.ty) orelse return error.InvalidBytecode;
+        var ends: std.ArrayList(u32) = .empty;
+        defer ends.deinit(self.parent.allocator);
+        for (0..variants.len) |offset| {
+            const variant: g.GlobalVariantId = @enumFromInt(variants.start + @as(u32, @intCast(offset)));
+            const target_variant = try error_plan.reasonTarget(graph, plan.source_reason.field.ty, plan.target_reason.field.ty, variant);
+            const branch = try self.emit(source, .{ .branch_variant = .{ .src = reason, .variant = variant, .yes = self.position() + 1, .no = 0 } });
+            _ = try self.emit(source, .{ .choice = .{ .dst = mapped, .variant = target_variant, .payload = null } });
+            try ends.append(self.parent.allocator, try self.emit(source, .{ .jump = 0 }));
+            self.code.items[branch].op.branch_variant.no = self.position();
+        }
+        _ = try self.emit(source, .abort_);
+        for (ends.items) |end| self.code.items[end].op.jump = self.position();
+        const fields = types.fields(graph, target) orelse return error.InvalidBytecode;
+        if (fields.len != 2) return error.InvalidBytecode;
+        const values = try self.parent.allocator.alloc(b.Slot, 2);
+        values[plan.target_reason.index] = mapped;
+        values[plan.target_tracer.index] = tracer;
+        const result = try self.newSlot(target);
+        _ = try self.emit(source, .{ .record = .{ .dst = result, .fields = values } });
         return result;
     }
 
@@ -823,6 +928,12 @@ const FunctionLower = struct {
             if (self.nodeDrop(node.content.move_value)) |drop| try self.setDrop(drop, false);
             return value;
         }
+        if (node.content == .error_propagation) return self.errorPropagation(self.parent.graph.error_propagations.items[@intFromEnum(node.content.error_propagation)], null, node.source);
+        if (node.content == .error_context) {
+            const propagation = self.parent.graph.error_contexts.items[@intFromEnum(node.content.error_context)];
+            return self.errorPropagation(propagation, propagation.context, node.source);
+        }
+        if (node.content == .string_literal) return self.stringValue(node.source, node.ty orelse return error.InvalidBytecode, self.parent.graph.text(node.content.string_literal));
         if (node.content == .function_call or node.content == .virtual_call) {
             if (if (node.content == .function_call) try self.call(id) else try self.virtualCall(id)) |result| return result;
             // A checked no-output call still has the empty-tuple value in an
@@ -846,6 +957,14 @@ const FunctionLower = struct {
                 if (child == result_node) result = try self.expression(child) else try self.statement(child);
             }
             return result orelse try self.expression(result_node);
+        }
+        if (node.content == .switch_statement) {
+            const ty = node.ty orelse return error.InvalidBytecode;
+            if (!types.isBuiltin(self.parent.graph, ty, .Void)) return error.InvalidBytecode;
+            try self.matchStatement(node.content.switch_statement, node.source);
+            const result = try self.newSlot(ty);
+            _ = try self.emit(node.source, .{ .constant = .{ .dst = result, .value = .unit } });
+            return result;
         }
         const dst = try self.newSlot(node.ty orelse return self.parent.reject(node.source, "untyped expression"));
         switch (node.content) {
@@ -876,21 +995,6 @@ const FunctionLower = struct {
             },
             .choice_payload_access => |x| {
                 _ = try self.emit(node.source, .{ .payload = .{ .dst = dst, .src = try self.expression(x.value), .variant = x.variant } });
-            },
-            .string_literal => |range| {
-                const ty = self.parent.graph.semanticType(self.slots.items[dst]);
-                if (ty == .pointer) {
-                    _ = try self.emit(node.source, .{ .static_bytes = .{ .dst = dst, .bytes = self.parent.graph.text(range) } });
-                } else {
-                    if (!types.isStringView(self.parent.graph, self.slots.items[dst])) return self.parent.reject(node.source, "string literal representation");
-                    const fields = types.fields(self.parent.graph, self.slots.items[dst]).?;
-                    const data = try self.newSlot(self.parent.graph.fields.items[fields.start].ty);
-                    const length = try self.newSlot(self.parent.graph.fields.items[fields.start + 1].ty);
-                    _ = try self.emit(node.source, .{ .static_bytes = .{ .dst = data, .bytes = self.parent.graph.text(range) } });
-                    _ = try self.emit(node.source, .{ .constant = .{ .dst = length, .value = .{ .integer = range.len } } });
-                    const values = try self.parent.allocator.dupe(b.Slot, &.{ data, length });
-                    _ = try self.emit(node.source, .{ .record = .{ .dst = dst, .fields = values } });
-                }
             },
             .int_literal => |value| {
                 _ = try self.emit(node.source, .{ .constant = .{ .dst = dst, .value = .{ .integer = value } } });
