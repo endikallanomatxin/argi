@@ -565,6 +565,15 @@ pub const Session = struct {
         self.phase = .ready;
     }
 
+    /// Keep an explicitly selected command executable through lazy resolution
+    /// and publication. It uses the same reachability closure as program roots.
+    pub fn includeExecutionRoot(self: *Session, function: global_sg.GlobalFunctionId) !void {
+        if (self.phase != .ready and self.phase != .quiescent) return error.InvalidSemanticSessionState;
+        if (@intFromEnum(function) >= self.relocation.graph.functions.items.len) return error.InvalidSafetyContinuation;
+        if (self.reachable) |*set| _ = try set.include(function);
+        self.phase = .ready;
+    }
+
     pub fn advance(self: *Session) !void {
         if (self.phase != .ready and self.phase != .quiescent) return error.InvalidSemanticSessionState;
         errdefer self.phase = .failed;

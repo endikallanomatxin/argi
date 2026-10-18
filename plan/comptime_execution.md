@@ -490,5 +490,7 @@ wired to submission scopes before interactive borrowing is ready. The execution
 compilation session can now prepare a continuation candidate and atomically accept
 its semantic graph and temporal proof together. Proof arenas retain predecessor
 facts by reference; rejected and stale candidates release their own tails. The
-source coordinator still must supply persistent command scopes, explicit roots
-and checked cleanup boundaries.
+source coordinator still must supply persistent command scopes and checked
+cleanup boundaries. Continuation preparation now adds its function as an explicit
+execution root before lazy resolution, preserving its body and dependencies in
+published snapshots without requiring a main entrypoint.

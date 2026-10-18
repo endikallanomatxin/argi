@@ -123,6 +123,7 @@ pub const CompilationSession = struct {
         try self.semantic.fork(candidate, self.allocator, diagnostics);
         errdefer candidate.deinit();
         try candidate.appendModules(modules);
+        if (continuation) |function| try candidate.includeExecutionRoot(function);
         try candidate.advance();
         const proof = if (continuation != null) try TemporalProof.create(self.allocator, self.temporal) else null;
         errdefer if (proof) |owned| owned.release();
@@ -326,18 +327,20 @@ test "compilation session retains executable graph addresses across publications
 
 fn prepareContinuationsWithAllocationFailures(allocator: std.mem.Allocator) !void {
     const a = std.testing.allocator;
-    const source = "command := () -> () {}\n";
+    const source = "command := () -> () { helper() }\nhelper := () -> () {}\n";
     const files = [_]@import("../1_base/source_files.zig").SourceFile{.{ .path = "submission/main.rg", .code = source }};
     var diagnostics = diagnostics_mod.Diagnostics.init(&a, &files);
     defer diagnostics.deinit();
     var module = try sourceModule(a, source, &diagnostics);
     defer module.deinit(a);
     const modules = [_]module_sg.ModuleSemanticGraph{module};
-    var session = try CompilationSession.init(allocator, &.{}, .{});
+    var session = try CompilationSession.init(allocator, &.{}, .{ .exhaustive_function_bodies = false });
     defer session.deinit();
     var first = try session.prepareContinuation(&modules, &diagnostics, @enumFromInt(0));
     defer first.deinit();
     try std.testing.expect(session.temporal == null);
+    try std.testing.expect(first.checked.?.graph.functions.items[0].body != null);
+    try std.testing.expect(first.checked.?.graph.functions.items[1].body != null);
     try session.accept(&first);
     const accepted = session.temporal.?;
     const revision = session.revision;
