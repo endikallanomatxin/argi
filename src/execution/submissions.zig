@@ -150,14 +150,13 @@ test "source submissions compile and execute incrementally without history repla
     var first = try sources.prepareCommand(&compiler, &diagnostics, "retained :: Int32 = 42");
     defer first.deinit();
     const binding = first.candidate.semantic.?.resolvers.expressions.session_bindings.items[0];
-    const layouts = [_]@import("../5_codegen/bytecode/bytecode.zig").SessionBinding{.{ .binding = binding, .slots = &.{first.candidate.checked.?.graph.binding(binding).ty} }};
-    try runtime.execute(&first.candidate, first.function, &layouts);
+    try runtime.executeCommand(&first.candidate);
     try std.testing.expectError(error.DuplicateSessionBinding, sources.prepareCommand(&compiler, &diagnostics, "retained :: Int32 = 99"));
     try std.testing.expectEqual(@as(u64, 1), compiler.revision);
     try std.testing.expectEqual(@as(usize, 1), compiler.semantic.modules.len);
     var second = try sources.prepareCommand(&compiler, &diagnostics, "retained = 7");
     defer second.deinit();
-    try runtime.execute(&second.candidate, second.function, &layouts);
+    try runtime.executeCommand(&second.candidate);
     const stored = try runtime.context.storage.slots(runtime.context.bindings.get(binding).?);
     try std.testing.expectEqual(@as(i128, 7), (try stored.get(0)).integer);
     try std.testing.expectEqual(@as(usize, 3), sources.modules.items.len);

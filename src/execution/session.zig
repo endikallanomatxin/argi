@@ -29,6 +29,19 @@ pub const Session = struct {
         self.* = undefined;
     }
 
+    /// Derive layouts from the exact candidate graph and accepted direct names.
+    /// Temporary layout allocations die after execute copies them into its unit.
+    pub fn executeCommand(self: *Session, candidate: *compilation.CompilationSession.Candidate) !void {
+        const semantic = candidate.semantic orelse return error.StaleCompilationCandidate;
+        const checked = candidate.checked orelse return error.StaleCompilationCandidate;
+        const function = candidate.entry orelse return error.InvalidCommand;
+        var scratch = std.heap.ArenaAllocator.init(self.allocator);
+        defer scratch.deinit();
+        const bindings = try @import("../5_codegen/bytecode/session_layout.zig").build(scratch.allocator(), &checked.graph, semantic.resolvers.expressions.session_bindings.items);
+        if (candidate.is_exit) return self.executeExit(candidate, function, bindings);
+        return self.execute(candidate, function, bindings);
+    }
+
     pub fn execute(self: *Session, candidate: *compilation.CompilationSession.Candidate, function: graph.GlobalFunctionId, bindings: []const bytecode.SessionBinding) !void {
         if (self.context.state == .poisoned) return error.ExecutionContextPoisoned;
         if (self.context.running) return error.ExecutionContextBusy;

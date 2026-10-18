@@ -427,7 +427,11 @@ test "continuation scopes retain direct owners and clean nested owners" {
     const exit_function = for (module.declarations.items) |declaration| {
         if (std.mem.eql(u8, module.text(declaration.name), "exit_command")) break declaration.function_id.?;
     } else return error.MissingExitCommand;
-    try session.accept(&candidate);
+    var runtime = @import("session.zig").Session.init(a, &session, .{});
+    defer runtime.deinit();
+    try runtime.executeCommand(&candidate);
+    const stored = try runtime.context.storage.slots(runtime.context.bindings.get(binding).?);
+    try std.testing.expect((try stored.get(1)).boolean);
     var exit = try session.prepareExit(&modules, &diagnostics, @enumFromInt(@intFromEnum(exit_function)), &.{binding});
     defer exit.deinit();
     const exit_graph = &exit.checked.?.graph;
@@ -436,6 +440,8 @@ test "continuation scopes retain direct owners and clean nested owners" {
     const first = exit_graph.node_refs.items[exit_body.nodes.start];
     try std.testing.expect(exit_graph.node(first).content == .auto_deinit_binding);
     try std.testing.expectEqual(binding, exit_graph.auto_deinits.items[@intFromEnum(exit_graph.node(first).content.auto_deinit_binding)].binding);
+    try runtime.executeCommand(&exit);
+    try std.testing.expectEqual(.fresh, runtime.context.state);
     try std.testing.expectError(error.InvalidSafetyContinuation, session.prepareExit(&modules, &diagnostics, @enumFromInt(@intFromEnum(command)), &.{binding}));
 }
 

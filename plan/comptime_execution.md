@@ -531,3 +531,9 @@ continuation preparation before cleanup. The source owner prepares immutable
 module-prefix candidates using retained relocation identities; rejected name
 redefinitions do not enter the accepted prefix, and the next statement can run.
 Automatic persistent layouts, result presentation and CLI command dispatch remain.
+
+Command execution now derives persistent layouts automatically from checked
+bindings and the shared cleanup Shape/Counts representation. Source statement
+execution needs no caller-authored slot tables. Integration executes both nested
+owner cleanup and retained-owner session exit before reset. Expression results,
+interactive CLI dispatch and bundled core/import loading remain pending.

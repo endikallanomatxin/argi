@@ -575,6 +575,7 @@ pub const Session = struct {
         const target = self.relocation.graph.function(function);
         if (target.input.len != 0 or target.output.len != 0 or (self.resolution.finalized_functions.contains(function) and self.resolvers.ownership.continuation_function != function))
             return error.InvalidSafetyContinuation;
+        _ = try self.resolvers.core.builtin(.Bool);
         try self.includeExecutionRoot(function);
         self.resolvers.ownership.continuation_function = function;
         self.resolvers.expressions.continuation_function = function;
