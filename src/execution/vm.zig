@@ -261,7 +261,24 @@ pub const Vm = struct {
         @memset(destinations, null);
         return .{ .program = program, .function = function, .storage = id, .return_slots = return_slots, .write_destinations = destinations };
     }
-    fn resolvePlace(self: *Vm, program: *const b.Program, frame_id: runtime_value.FrameId, place: b.Place, path: *[64]runtime_value.Projection, comptime read_value: bool) !runtime_value.Reference {
+    fn resolvePlace(self: *Vm, program: *const b.Program, frame_id: runtime_value.FrameId, semantic_place: b.Place, slot_types: []const b.Type, path: *[64]runtime_value.Projection, comptime read_value: bool) !runtime_value.Reference {
+        var root_type: ?b.Type = null;
+        if (semantic_place.region == .session) {
+            root_type = program.session.?.bindings[semantic_place.root].slots[0];
+        } else if (semantic_place.region == .global) {
+            for (program.globals) |global| if (@intFromEnum(global.binding) == semantic_place.root) {
+                root_type = global.ty;
+                break;
+            };
+        } else {
+            // The frame's type table is supplied by the executing function.
+            root_type = slot_types[semantic_place.root];
+        }
+        var normalized: [64]b.Projection = undefined;
+        if (semantic_place.path.len > normalized.len) return error.InvalidBytecode;
+        try b.runtimePath(program.graph, root_type orelse return error.InvalidBytecode, semantic_place.path, normalized[0..semantic_place.path.len]);
+        var place = semantic_place;
+        place.path = normalized[0..semantic_place.path.len];
         if (place.region == .global) {
             const key = Context.globalKey(program, @enumFromInt(place.root));
             const target = self.context().globals.get(key) orelse return error.ExecutionUninitializedStorage;
@@ -384,24 +401,24 @@ pub const Vm = struct {
                         cell[0] = try slots.get(slot);
                         payload = &cell[0];
                     }
-                    try slots.put(x.dst, .{ .choice = .{ .variant = @intFromEnum(x.variant), .payload = payload } });
+                    try slots.put(x.dst, .{ .choice = .{ .variant = try b.variantOrdinal(unit.graph, f.slots[x.dst], x.variant), .payload = payload } });
                 },
                 .payload => |x| {
                     const choice = (try slots.get(x.src)).choice;
-                    if (choice.variant != @intFromEnum(x.variant) or choice.payload == null) return error.ExecutionInactiveVariant;
+                    if (choice.variant != try b.variantOrdinal(unit.graph, f.slots[x.src], x.variant) or choice.payload == null) return error.ExecutionInactiveVariant;
                     try slots.put(x.dst, choice.payload.?.*);
                 },
-                .is_variant => |x| try slots.put(x.dst, .{ .boolean = ((try slots.get(x.src)).choice.variant == @intFromEnum(x.variant)) != x.invert }),
-                .branch_variant => |x| current.pc = if ((try slots.get(x.src)).choice.variant == @intFromEnum(x.variant)) x.yes else x.no,
+                .is_variant => |x| try slots.put(x.dst, .{ .boolean = ((try slots.get(x.src)).choice.variant == try b.variantOrdinal(unit.graph, f.slots[x.src], x.variant)) != x.invert }),
+                .branch_variant => |x| current.pc = if ((try slots.get(x.src)).choice.variant == try b.variantOrdinal(unit.graph, f.slots[x.src], x.variant)) x.yes else x.no,
                 .borrow => |x| {
                     var path: [64]runtime_value.Projection = undefined;
-                    const reference = try self.resolvePlace(unit, current.storage, x.place, &path, true);
+                    const reference = try self.resolvePlace(unit, current.storage, x.place, f.slots, &path, true);
                     const permission = unit.graph.semanticType(f.slots[x.dst]).pointer.mutability;
                     try slots.put(x.dst, try self.context().storage.borrow(reference, permission));
                 },
                 .load => |x| {
                     var path: [64]runtime_value.Projection = undefined;
-                    const reference = try self.resolvePlace(unit, current.storage, x.place, &path, true);
+                    const reference = try self.resolvePlace(unit, current.storage, x.place, f.slots, &path, true);
                     var value = try self.context().storage.read(reference);
                     // Immutable byte backing is compact and untyped. A typed
                     // load interprets CChar signedness using the target width.
@@ -415,11 +432,11 @@ pub const Vm = struct {
                 },
                 .check_place => |place| {
                     var path: [64]runtime_value.Projection = undefined;
-                    _ = try self.resolvePlace(unit, current.storage, place, &path, true);
+                    _ = try self.resolvePlace(unit, current.storage, place, f.slots, &path, true);
                 },
                 .capture_write => |x| {
                     var path: [64]runtime_value.Projection = undefined;
-                    const reference = try self.resolvePlace(unit, current.storage, x.place, &path, true);
+                    const reference = try self.resolvePlace(unit, current.storage, x.place, f.slots, &path, true);
                     current.write_destinations[x.dst] = try self.context().storage.captureResolvedWrite(reference, x.activate_cleanup);
                 },
                 .check_write_cleanup => |id| {
@@ -437,12 +454,12 @@ pub const Vm = struct {
                 },
                 .cleanup_test => |x| {
                     var path: [64]runtime_value.Projection = undefined;
-                    const reference = try self.resolvePlace(unit, current.storage, x.place, &path, false);
+                    const reference = try self.resolvePlace(unit, current.storage, x.place, f.slots, &path, false);
                     try slots.put(x.dst, .{ .boolean = try self.context().storage.cleanupTest(reference) });
                 },
                 .cleanup_set => |x| {
                     var path: [64]runtime_value.Projection = undefined;
-                    const reference = try self.resolvePlace(unit, current.storage, x.place, &path, false);
+                    const reference = try self.resolvePlace(unit, current.storage, x.place, f.slots, &path, false);
                     // A subtree update performs work without allocating value
                     // cells. Charge its flags too, so a large owner in a loop
                     // cannot turn one instruction into unbounded cleanup work.

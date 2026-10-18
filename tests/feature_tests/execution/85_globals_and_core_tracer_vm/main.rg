@@ -6,7 +6,10 @@ exercise := () -> (.result: Int32) {
     tracer ::= FixedSizeErrorTracer(.buffer = view($&trace_buffer))
     erased ::= to_virtual#(.contract: ErrorTracer)(.value = $&tracer)
     assume error_tracer ::= $&erased
+    add_context(.context = "first context")
+    add_context(.context = "ñ context")
     ErrorTracer#().reset_context(error_tracer)
+    add_context(.context = "after reset")
     counter = counter + 1
     result = counter
 }

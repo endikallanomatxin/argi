@@ -181,7 +181,7 @@ const Context = struct {
                     payload = try self.temporary.create(b.Value);
                     payload.?.* = try self.constant(child, depth + 1);
                 }
-                break :blk .{ .choice = .{ .variant = @intFromEnum(literal.variant), .payload = payload } };
+                break :blk .{ .choice = .{ .variant = try b.variantOrdinal(self.graph, node.ty orelse return error.InvalidBytecode, literal.variant), .payload = payload } };
             },
             else => error.NonConstantCompileTimeArgument,
         };

@@ -128,7 +128,7 @@ fn freeze(allocator: std.mem.Allocator, graph: *g.GlobalSemanticGraph, ty: g.Glo
             break :blk .{ .struct_value_literal = .{ .fields = .{ .start = start, .len = @intCast(entries.len) } } };
         },
         .choice => |choice| blk: {
-            const variant: g.GlobalVariantId = @enumFromInt(choice.variant);
+            const variant = try bytecode.variantIdentity(graph, ty, choice.variant);
             const selected = try bytecode.choiceVariant(graph, ty, variant);
             break :blk .{ .choice_literal = .{ .choice_type = ty, .variant = variant, .payload = if (choice.payload) |payload| try freeze(allocator, graph, selected.payload_type.?, payload.*, source) else null } };
         },

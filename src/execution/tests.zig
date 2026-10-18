@@ -1842,3 +1842,39 @@ test "fresh execution retires literal cache and rejects previous references" {
     try std.testing.expectError(error.ExecutionForeignReference, executor.context().storage.read(first));
     try std.testing.expectEqual(@as(u32, 1), executor.context().literal_bytes.count());
 }
+
+test "equivalent borrowed choices use representation tags rather than semantic IDs" {
+    const a = std.testing.allocator;
+    var graph: @import("../4_semantics/global/graph.zig").GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    const source = @import("../4_semantics/primitives/schema.zig").SourceRef{ .file_index = 0, .offset = 0 };
+    const name = try graph.addString(a, "some");
+    try graph.types.appendSlice(a, &.{
+        .{ .builtin = .Int32 },
+        .{ .structural_choice = .{ .variants = .{ .start = 0, .len = 1 } } },
+        .{ .structural_choice = .{ .variants = .{ .start = 1, .len = 1 } } },
+        .{ .pointer = .{ .child = @enumFromInt(1), .mutability = .read_only } },
+        .{ .pointer = .{ .child = @enumFromInt(2), .mutability = .read_only } },
+        .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } },
+    });
+    for (0..2) |_| try graph.variants.append(a, .{ .name = name, .source = source, .payload_type = @enumFromInt(0), .value = 0 });
+    const expression: b.Function = .{
+        .slots = &.{ @enumFromInt(0), @enumFromInt(1), @enumFromInt(3), @enumFromInt(4), @enumFromInt(2), @enumFromInt(0), @enumFromInt(5) },
+        .inputs = &.{},
+        .outputs = &.{5},
+        .code = &.{
+            .{ .source = source, .op = .{ .constant = .{ .dst = 0, .value = .{ .integer = 42 } } } },
+            .{ .source = source, .op = .{ .choice = .{ .dst = 1, .variant = @enumFromInt(0), .payload = 0 } } },
+            .{ .source = source, .op = .{ .borrow = .{ .dst = 2, .place = .{ .root = 1, .path = &.{} } } } },
+            .{ .source = source, .op = .{ .copy = .{ .dst = 3, .src = 2 } } },
+            .{ .source = source, .op = .{ .load = .{ .dst = 4, .place = .{ .root = 3, .path = &.{.dereference} } } } },
+            .{ .source = source, .op = .{ .payload = .{ .dst = 5, .src = 4, .variant = @enumFromInt(1) } } },
+            .{ .source = source, .op = .{ .borrow = .{ .dst = 6, .place = .{ .root = 3, .path = &.{ .dereference, .{ .variant = @enumFromInt(1) } } } } } },
+            .{ .source = source, .op = .{ .load = .{ .dst = 5, .place = .{ .root = 6, .path = &.{.dereference} } } } },
+            .{ .source = source, .op = .{ .ret = &.{5} } },
+        },
+    };
+    var executor = try vm.Vm.init(a, .{ .graph = &graph, .functions = &.{}, .expression = &expression }, .{});
+    defer executor.deinit();
+    try std.testing.expectEqual(@as(i128, 42), (try executor.runExpression(&.{}))[0].integer);
+}

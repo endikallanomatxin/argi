@@ -2,6 +2,7 @@ const p = @import("../../4_semantics/primitives/schema.zig");
 
 pub const FrameId = enum(u32) { _ };
 pub const ContextId = enum(u64) { _ };
+// Variant projections use the same representation positions as runtime values.
 pub const Projection = union(enum) { field: u32, element: usize, variant: u32 };
 
 // An interpreter address contains no host pointer. Indices are captured when
@@ -31,5 +32,6 @@ pub const Value = union(enum) {
     array: []const Value,
     reference: Reference,
     virtual_: *const Virtual,
+    // Position within the checked representation, never a GlobalVariantId.
     choice: struct { variant: u32, payload: ?*const Value },
 };

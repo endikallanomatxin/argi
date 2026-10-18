@@ -178,7 +178,8 @@ const FunctionLower = struct {
         try self.prepareSessionDrops();
         for (nodes) |node| try self.statement(node);
         _ = try self.emit(self.parent.source, .{ .ret = &.{} });
-        return .{ .slots = try self.slots.toOwnedSlice(a), .inputs = &.{}, .outputs = &.{}, .code = try self.code.toOwnedSlice(a), .cleanup = try self.finishCleanup(), .write_destinations = try self.write_destinations.toOwnedSlice(a) };
+        const cleanup = try self.finishCleanup();
+        return .{ .slots = try self.slots.toOwnedSlice(a), .inputs = &.{}, .outputs = &.{}, .code = try self.code.toOwnedSlice(a), .cleanup = cleanup, .write_destinations = try self.write_destinations.toOwnedSlice(a) };
     }
 
     fn compileExpression(self: *FunctionLower, root: g.GlobalNodeId, operands: []const g.GlobalNodeId) !b.Function {
@@ -198,7 +199,8 @@ const FunctionLower = struct {
         const outputs = try a.alloc(b.Slot, 1);
         outputs[0] = try self.expression(root);
         _ = try self.emit(self.parent.graph.node(root).source, .{ .ret = outputs });
-        return .{ .slots = try self.slots.toOwnedSlice(a), .inputs = inputs, .outputs = outputs, .code = try self.code.toOwnedSlice(a), .cleanup = try self.finishCleanup(), .write_destinations = try self.write_destinations.toOwnedSlice(a) };
+        const cleanup = try self.finishCleanup();
+        return .{ .slots = try self.slots.toOwnedSlice(a), .inputs = inputs, .outputs = outputs, .code = try self.code.toOwnedSlice(a), .cleanup = cleanup, .write_destinations = try self.write_destinations.toOwnedSlice(a) };
     }
 
     fn compile(self: *FunctionLower, id: g.GlobalFunctionId) !b.Function {
@@ -225,7 +227,8 @@ const FunctionLower = struct {
         }
         try self.block(f.body.?);
         _ = try self.emit(source, .{ .ret = outputs });
-        return .{ .slots = try self.slots.toOwnedSlice(a), .inputs = inputs, .outputs = outputs, .code = try self.code.toOwnedSlice(a), .cleanup = try self.finishCleanup(), .write_destinations = try self.write_destinations.toOwnedSlice(a) };
+        const cleanup = try self.finishCleanup();
+        return .{ .slots = try self.slots.toOwnedSlice(a), .inputs = inputs, .outputs = outputs, .code = try self.code.toOwnedSlice(a), .cleanup = cleanup, .write_destinations = try self.write_destinations.toOwnedSlice(a) };
     }
 
     fn prepareSessionDrops(self: *FunctionLower) !void {
@@ -237,11 +240,9 @@ const FunctionLower = struct {
             if (entries.len != binding.cleanup.len) return error.InvalidBytecode;
             for (entries, binding.cleanup) |entry, supplied| {
                 if (entry.place.path.len != supplied.path.len) return error.InvalidBytecode;
-                for (entry.place.path, supplied.path) |expected, actual| switch (expected) {
-                    .field => |field| if (actual != .field or actual.field != field) return error.InvalidBytecode,
-                    .variant => |variant| if (actual != .variant or actual.variant != @intFromEnum(variant)) return error.InvalidBytecode,
-                    else => return error.InvalidBytecode,
-                };
+                const expected_path = try b.runtimeCleanupPath(self.parent.allocator, self.parent.graph, binding.slots[0], entry.place.path);
+                defer self.parent.allocator.free(expected_path);
+                for (expected_path, supplied.path) |expected, actual| if (!std.meta.eql(expected, actual)) return error.InvalidBytecode;
             }
             try self.drops.put(self.parent.allocator, binding.binding, drop);
         }
@@ -277,12 +278,7 @@ const FunctionLower = struct {
             if (entry.place.region != .local) continue;
             const out = &result[output_index];
             output_index += 1;
-            const path = try a.alloc(@import("value.zig").Projection, entry.place.path.len);
-            for (entry.place.path, path) |projection, *part| part.* = switch (projection) {
-                .field => |index| .{ .field = index },
-                .variant => |variant| .{ .variant = @intFromEnum(variant) },
-                else => return error.InvalidBytecode,
-            };
+            const path = try b.runtimeCleanupPath(a, self.parent.graph, self.slots.items[entry.place.root], entry.place.path);
             out.* = .{ .root = entry.place.root, .path = path, .flag = entry.flag };
         }
         return result;

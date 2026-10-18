@@ -46,7 +46,7 @@ fn fill(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, ty: g
         @memcpy(projected[0..path.len], path);
         projected[path.len] = switch (child.projection) {
             .field => |field| .{ .field = field },
-            .variant => |variant| .{ .variant = @intFromEnum(variant) },
+            .variant => |variant| .{ .variant = try b.variantOrdinal(graph, ty, variant) },
         };
         try fill(allocator, graph, child.ty, projected, cleanup, cursor, depth + 1);
     };

@@ -438,7 +438,7 @@ fn verifyCleanup(a: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, f: b
                 if (field >= fields.len) return error.InvalidBytecode;
                 ty = graph.fields.items[fields.start + field].ty;
             },
-            .variant => |id| ty = (try choiceVariant(graph, ty, @enumFromInt(id))).payload_type orelse return error.InvalidBytecode,
+            .variant => |ordinal| ty = (try choiceVariant(graph, ty, try b.variantIdentity(graph, ty, ordinal))).payload_type orelse return error.InvalidBytecode,
             .element => |element| {
                 if (element >= (types.arrayLength(graph, ty) orelse return error.InvalidBytecode)) return error.InvalidBytecode;
                 ty = types.arrayElement(graph, ty) orelse return error.InvalidBytecode;

@@ -21,7 +21,7 @@ pub const Value = @import("value.zig").Value;
 // Index operands are snapshots evaluated by lowering in source order.
 pub const Projection = union(enum) { field: u32, element: Slot, variant: g.GlobalVariantId, dereference };
 pub const Place = struct {
-    // Root indexes local slots or the program's typed session binding table.
+    // Root indexes local slots, the typed session table, or a global binding ID.
     // Dynamic index operands always name local slots in the executing frame.
     root: u32,
     region: enum { local, session, global } = .local,
@@ -216,7 +216,8 @@ pub fn valueFits(graph: *const g.GlobalSemanticGraph, ty: Type, value: Value) bo
         // or external inputs. Their shape and access are checked separately.
         .reference, .virtual_ => false,
         .choice => |choice| blk: {
-            const variant = choiceVariant(graph, ty, @enumFromInt(choice.variant)) catch break :blk false;
+            const identity = variantIdentity(graph, ty, choice.variant) catch break :blk false;
+            const variant = graph.variants.items[@intFromEnum(identity)];
             if (variant.payload_type) |payload_type| {
                 const payload = choice.payload orelse break :blk false;
                 break :blk valueFits(graph, payload_type, payload.*);
@@ -239,4 +240,56 @@ pub fn choiceVariant(graph: *const g.GlobalSemanticGraph, ty: Type, id: g.Global
     const raw = @intFromEnum(id);
     if (raw < range.start or raw - range.start >= range.len) return error.InvalidBytecode;
     return graph.variants.items[raw];
+}
+
+/// Semantic identities select and verify operations; runtime discriminants are
+/// positions within an already-checked choice representation.
+pub fn variantOrdinal(graph: *const g.GlobalSemanticGraph, ty: Type, id: g.GlobalVariantId) !u32 {
+    _ = try choiceVariant(graph, ty, id);
+    return @intFromEnum(id) - (types.variants(graph, ty) orelse return error.InvalidBytecode).start;
+}
+
+pub fn variantIdentity(graph: *const g.GlobalSemanticGraph, ty: Type, ordinal: u32) !g.GlobalVariantId {
+    const range = types.variants(graph, ty) orelse return error.InvalidBytecode;
+    if (ordinal >= range.len) return error.InvalidBytecode;
+    return @enumFromInt(range.start + ordinal);
+}
+
+pub fn runtimePath(graph: *const g.GlobalSemanticGraph, root_type: Type, path: []const Projection, out: []Projection) !void {
+    if (path.len != out.len) return error.InvalidBytecode;
+    var ty = root_type;
+    for (path, out) |part, *runtime| {
+        runtime.* = part;
+        switch (part) {
+            .field => |index| {
+                const fields = types.fields(graph, ty) orelse return error.InvalidBytecode;
+                if (index >= fields.len) return error.InvalidBytecode;
+                ty = graph.fields.items[fields.start + index].ty;
+            },
+            .variant => |identity| {
+                runtime.* = .{ .variant = @enumFromInt(try variantOrdinal(graph, ty, identity)) };
+                ty = (try choiceVariant(graph, ty, identity)).payload_type orelse return error.InvalidBytecode;
+            },
+            .element => ty = types.arrayElement(graph, ty) orelse return error.InvalidBytecode,
+            .dereference => {
+                const pointer = graph.semanticType(ty);
+                if (pointer != .pointer) return error.InvalidBytecode;
+                ty = pointer.pointer.child;
+            },
+        }
+    }
+}
+
+pub fn runtimeCleanupPath(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, ty: Type, path: []const Projection) ![]const @import("value.zig").Projection {
+    var normalized: [64]Projection = undefined;
+    if (path.len > normalized.len) return error.InvalidBytecode;
+    try runtimePath(graph, ty, path, normalized[0..path.len]);
+    const result = try allocator.alloc(@import("value.zig").Projection, path.len);
+    errdefer allocator.free(result);
+    for (normalized[0..path.len], result) |part, *out| out.* = switch (part) {
+        .field => |index| .{ .field = index },
+        .variant => |ordinal| .{ .variant = @intFromEnum(ordinal) },
+        else => return error.InvalidBytecode,
+    };
+    return result;
 }

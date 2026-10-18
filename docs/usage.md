@@ -147,7 +147,8 @@ clears them. These IDs cannot be exported as compile-time constants.
 Unknown IDs stop execution. Error propagation (`!`) preserves the original tracer,
 converts reason sets and runs checked early-return cleanup. Context propagation
 (`!!`) with a `StringView` evaluates its context only on error and calls the
-ordinary core trace helper.
+ordinary core trace helper. `FixedSizeErrorTracer` can record and reset contexts
+using its caller-provided byte buffer; complete reporting still needs writer support.
 
 Trusted reinterpretation of initialized integer records and arrays as `UInt8`
 views preserves the original storage, permissions and target byte order. Byte
