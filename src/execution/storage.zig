@@ -43,7 +43,7 @@ pub const WriteDestination = struct {
     cleanup_entry: ?usize,
 };
 
-// Run-local storage. Its allocator is an execution arena; references can neither
+// Context-local storage. Its allocator is an execution arena; references can neither
 // name another execution nor expose a native address. Dead frame IDs stay dead.
 pub const Storage = struct {
     context: v.ContextId,

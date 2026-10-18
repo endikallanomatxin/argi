@@ -42,7 +42,7 @@ pub fn evaluateBudgeted(allocator: std.mem.Allocator, graph: *g.GlobalSemanticGr
     defer executor.deinit();
     defer {
         budget.instructions -|= executor.steps;
-        if (executor.state != .fresh) budget.value_cells -|= executor.storage.cells;
+        if (executor.context().state != .fresh) budget.value_cells -|= executor.context().storage.cells;
     }
     const values = try executor.run(entry, args);
     // Validate the entire result before publishing any compiler nodes.
@@ -146,7 +146,7 @@ pub fn evaluateExpression(allocator: std.mem.Allocator, graph: *g.GlobalSemantic
     defer executor.deinit();
     defer {
         budget.instructions -|= executor.steps;
-        if (executor.state != .fresh) budget.value_cells -|= executor.storage.cells;
+        if (executor.context().state != .fresh) budget.value_cells -|= executor.context().storage.cells;
     }
     const result = try executor.runExpression(args);
     if (result.len != 1 or !bytecode.valueFits(graph, ty, result[0])) return error.UnfreezableEvaluationResult;

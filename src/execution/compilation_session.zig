@@ -209,7 +209,7 @@ test "compilation session retains executable graph addresses across publications
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    const source = "answer := () -> (.result: Int32) { result = 42 }\n";
+    const source = "identity := (.value: Int32) -> (.result: Int32) { result = value }\n";
     const files = [_]@import("../1_base/source_files.zig").SourceFile{.{ .path = "submission/main.rg", .code = source }};
     var diagnostics = diagnostics_mod.Diagnostics.init(&a, &files);
     defer diagnostics.deinit();
@@ -231,8 +231,18 @@ test "compilation session retains executable graph addresses across publications
         try session.accept(&next);
     }
     try std.testing.expect(graph == &session.versions.items[0].graph);
-    var vm = try @import("vm.zig").Vm.init(a, program, .{});
-    defer vm.deinit();
-    const result = try vm.invoke(@enumFromInt(0), &.{});
+    const execution = @import("vm.zig");
+    var context = execution.Context.init(a, 1_000_000);
+    defer context.deinit();
+    var old_vm = try execution.Vm.initShared(a, program, .{}, &context);
+    defer old_vm.deinit();
+    const previous = try old_vm.invoke(@enumFromInt(0), &.{.{ .integer = 42 }});
+    const identity = context.storage.context;
+    var current_compiler = try @import("../5_codegen/bytecode/lower.zig").Lower.init(a, &session.versions.items[session.versions.items.len - 1].graph);
+    const current_program = try current_compiler.compile(@enumFromInt(0));
+    var current_vm = try execution.Vm.initShared(a, current_program, .{}, &context);
+    defer current_vm.deinit();
+    const result = try current_vm.invoke(@enumFromInt(0), previous);
     try std.testing.expectEqual(@as(i128, 42), result[0].integer);
+    try std.testing.expectEqual(identity, context.storage.context);
 }

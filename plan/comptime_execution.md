@@ -49,9 +49,12 @@ fork without replaying source, append modules and reject or finish that candidat
 independently. The execution compilation session checks independent publication
 snapshots through ordinary safety analysis and compile-time evaluation before
 accepting a revision. Stale candidates are rejected; accepted graph versions
-retain stable addresses for existing bytecode. Next, connect session-owned VM
-storage and source submission loading before wiring interactive commands and
-conditional imports.
+retain stable addresses for existing bytecode. VM program instances can borrow
+one execution context; storage identity, cumulative memory and terminal trap state
+belong to that context, while invocation fuel belongs to each execution. Context
+sharing adds no heap allocation to ordinary isolated VM construction. Next, add
+session binding storage and source submission loading before wiring interactive
+commands and conditional imports.
 JIT is deferred until measurements justify it; module origin is not an execution
 policy. Keep function identities independent of the executor, without introducing
 a mixed VM/native ABI or native-layout storage solely for a possible future JIT.

@@ -281,22 +281,22 @@ test "bytecode VM retains invocations and resets poisoned execution contexts" {
     var executor = try vm.Vm.init(a, .{ .graph = &graph, .functions = &functions }, .{});
     defer executor.deinit();
     var result = try executor.run(@enumFromInt(0), &.{.{ .array = &.{.{ .integer = 42 }} }});
-    const context = executor.storage.context;
+    const context = executor.context().storage.context;
     result = try executor.invoke(@enumFromInt(0), result);
-    try std.testing.expectEqual(context, executor.storage.context);
+    try std.testing.expectEqual(context, executor.context().storage.context);
     try std.testing.expectEqual(@as(i128, 42), result[0].array[0].integer);
-    const cells = executor.storage.cells;
+    const cells = executor.context().storage.cells;
     try std.testing.expectError(error.InvalidArguments, executor.invoke(@enumFromInt(0), &.{.{ .array = &.{.{ .boolean = false }} }}));
     try std.testing.expectError(error.InvalidEntry, executor.invoke(@enumFromInt(99), &.{}));
-    try std.testing.expectEqual(cells, executor.storage.cells);
+    try std.testing.expectEqual(cells, executor.context().storage.cells);
     executor.limits.instructions = 0;
     try std.testing.expectError(error.ExecutionInstructionLimit, executor.invoke(@enumFromInt(0), &.{.{ .array = &.{.{ .integer = 42 }} }}));
-    for (executor.storage.frames.items) |frame_| try std.testing.expect(!frame_.alive);
+    for (executor.context().storage.frames.items) |frame_| try std.testing.expect(!frame_.alive);
     executor.limits.instructions = 100;
     try std.testing.expectError(error.ExecutionContextPoisoned, executor.invoke(@enumFromInt(0), &.{.{ .array = &.{.{ .integer = 42 }} }}));
     executor.reset();
     result = try executor.invoke(@enumFromInt(0), &.{.{ .array = &.{.{ .integer = 42 }} }});
-    try std.testing.expect(context != executor.storage.context);
+    try std.testing.expect(context != executor.context().storage.context);
     try std.testing.expectEqual(@as(i128, 42), result[0].array[0].integer);
     executor.limits.call_depth = 0;
     try std.testing.expectError(error.ExecutionCallDepthLimit, executor.run(@enumFromInt(0), result));
@@ -1194,15 +1194,15 @@ test "bytecode expression entries share validation and retained execution" {
         defer executor.deinit();
         const args = [_]b.Value{ .{ .integer = 20 }, .{ .integer = 22 } };
         try std.testing.expectEqual(@as(i128, 42), (try executor.invokeExpression(&args))[0].integer);
-        const context = executor.storage.context;
-        const cells = executor.storage.cells;
+        const context = executor.context().storage.context;
+        const cells = executor.context().storage.cells;
         try std.testing.expectError(error.InvalidArguments, executor.invokeExpression(&.{ .{ .boolean = true }, .{ .integer = 22 } }));
-        try std.testing.expectEqual(cells, executor.storage.cells);
+        try std.testing.expectEqual(cells, executor.context().storage.cells);
         try std.testing.expectError(error.InvalidEntry, executor.invoke(@enumFromInt(0), &args));
         try std.testing.expectEqual(@as(i128, 42), (try executor.invokeExpression(&args))[0].integer);
-        try std.testing.expectEqual(context, executor.storage.context);
+        try std.testing.expectEqual(context, executor.context().storage.context);
         try std.testing.expectEqual(@as(i128, 42), (try executor.runExpression(&args))[0].integer);
-        try std.testing.expect(context != executor.storage.context);
+        try std.testing.expect(context != executor.context().storage.context);
     }
     code[0].op.binary.left = 99;
     try std.testing.expectError(error.InvalidBytecode, vm.Vm.init(a, program, .{}));
@@ -1303,4 +1303,51 @@ test "bytecode staged dependencies survive default argument suspension" {
         \\    status_code = defaulted(.ignored = 0)
         \\}
     , .{ .instructions = 50 }));
+}
+
+test "bytecode program instances share context identity storage and trap state" {
+    const g = @import("../4_semantics/global/graph.zig");
+    const a = std.testing.allocator;
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.append(a, .{ .builtin = .Int32 });
+    try graph.types.append(a, .{ .array = .{ .length = 1, .element = @enumFromInt(0) } });
+    const source = @import("../4_semantics/primitives/schema.zig").SourceRef{ .file_index = 0, .offset = 0 };
+    try graph.fields.append(a, .{ .name = .{ .start = 0, .len = 0 }, .ty = @enumFromInt(1), .source = source });
+    try graph.functions.append(a, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 1 }, .output = .{ .start = 0, .len = 1 } });
+    const code = [_]b.Instruction{.{ .source = source, .op = .{ .ret = &.{0} } }};
+    const functions = [_]?b.Function{.{ .slots = &.{@enumFromInt(1)}, .inputs = &.{0}, .outputs = &.{0}, .code = &code }};
+    const program = b.Program{ .graph = &graph, .functions = &functions };
+    var context = vm.Context.init(a, 1000);
+    defer context.deinit();
+    const limits = vm.Limits{ .value_cells = 1000 };
+    var first = try vm.Vm.initShared(a, program, limits, &context);
+    var first_live = true;
+    defer if (first_live) first.deinit();
+    var second = try vm.Vm.initShared(a, program, limits, &context);
+    defer second.deinit();
+    var result = try first.invoke(@enumFromInt(0), &.{.{ .array = &.{.{ .integer = 42 }} }});
+    const identity = context.storage.context;
+    const cells = context.storage.cells;
+    first.deinit();
+    first_live = false;
+    result = try second.invoke(@enumFromInt(0), result);
+    try std.testing.expectEqual(@as(i128, 42), result[0].array[0].integer);
+    try std.testing.expectEqual(identity, context.storage.context);
+    try std.testing.expect(context.storage.cells > cells);
+    try std.testing.expectError(error.SharedExecutionContext, second.run(@enumFromInt(0), result));
+    try std.testing.expectEqual(identity, context.storage.context);
+    context.running = true;
+    try std.testing.expectError(error.ExecutionContextBusy, second.invoke(@enumFromInt(0), result));
+    context.running = false;
+    try std.testing.expectEqual(.ready, context.state);
+    var trapping = try vm.Vm.initShared(a, program, .{ .value_cells = 1000, .instructions = 0 }, &context);
+    defer trapping.deinit();
+    try std.testing.expectError(error.ExecutionInstructionLimit, trapping.invoke(@enumFromInt(0), result));
+    try std.testing.expectError(error.ExecutionContextPoisoned, second.invoke(@enumFromInt(0), result));
+    context.reset();
+    result = try second.invoke(@enumFromInt(0), &.{.{ .array = &.{.{ .integer = 7 }} }});
+    try std.testing.expectEqual(@as(i128, 7), result[0].array[0].integer);
+    try std.testing.expect(identity != context.storage.context);
+    try std.testing.expectError(error.ExecutionContextLimitMismatch, vm.Vm.initShared(a, program, .{}, &context));
 }

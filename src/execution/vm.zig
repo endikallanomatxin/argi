@@ -23,31 +23,66 @@ const Frame = struct {
     write_destinations: []?WriteDestination,
 };
 
-pub const Vm = struct {
+/// Execution identity and memory outlive individual verified programs. Session
+/// owners can invoke several program versions against this context sequentially.
+/// Cleanup remains checked language code; reset discards storage after cleanup
+/// or a terminal trap and never attempts to synthesize an unwind.
+pub const Context = struct {
     arena: std.heap.ArenaAllocator,
+    allocator: std.mem.Allocator,
+    storage: Storage = undefined,
+    limit: usize,
+    state: enum { fresh, ready, poisoned } = .fresh,
+    running: bool = false,
+
+    pub fn init(allocator: std.mem.Allocator, value_cells: usize) Context {
+        return .{ .arena = .init(allocator), .allocator = allocator, .limit = value_cells };
+    }
+    pub fn deinit(self: *Context) void {
+        std.debug.assert(!self.running);
+        self.arena.deinit();
+        self.* = undefined;
+    }
+    pub fn reset(self: *Context) void {
+        std.debug.assert(!self.running);
+        self.arena.deinit();
+        self.arena = .init(self.allocator);
+        self.state = .fresh;
+    }
+};
+
+pub const Vm = struct {
     allocator: std.mem.Allocator,
     program: b.Program,
     limits: Limits,
     steps: usize = 0,
-    storage: Storage = undefined,
-    state: enum { fresh, ready, poisoned } = .fresh,
+    owned_context: Context,
+    shared_context: ?*Context = null,
     source: p.SourceRef = .{ .file_index = 0, .offset = 0 },
 
     // Verify before executing anything, including before checking the entry.
     pub fn init(a: std.mem.Allocator, program: b.Program, limits: Limits) !Vm {
         try b.verify(a, program);
-        return .{ .arena = std.heap.ArenaAllocator.init(a), .allocator = a, .program = program, .limits = limits };
+        return .{ .owned_context = Context.init(a, limits.value_cells), .allocator = a, .program = program, .limits = limits };
+    }
+    /// Borrow session-owned execution storage without transferring it. The
+    /// memory quota belongs to that context; instruction/depth limits are local
+    /// to each invocation. Fresh-run convenience APIs are unavailable here.
+    pub fn initShared(a: std.mem.Allocator, program: b.Program, limits: Limits, shared: *Context) !Vm {
+        if (limits.value_cells != shared.limit) return error.ExecutionContextLimitMismatch;
+        try b.verify(a, program);
+        return .{ .owned_context = undefined, .shared_context = shared, .allocator = a, .program = program, .limits = limits };
+    }
+    pub fn context(self: *Vm) *Context {
+        return self.shared_context orelse &self.owned_context;
     }
     pub fn deinit(self: *Vm) void {
-        self.arena.deinit();
+        if (self.shared_context == null) self.owned_context.deinit();
     }
-    // Discard execution storage, not language-level cleanup. Session owners
-    // must execute checked exit cleanup before reset on a healthy context.
-    // A trapped context has no resumable cleanup/unwind guarantee.
+    // Session owners must run checked exit cleanup before resetting a healthy
+    // context. A trapped context has no resumable cleanup/unwind guarantee.
     pub fn reset(self: *Vm) void {
-        self.arena.deinit();
-        self.arena = std.heap.ArenaAllocator.init(self.allocator);
-        self.state = .fresh;
+        self.context().reset();
         self.steps = 0;
     }
 
@@ -58,11 +93,12 @@ pub const Vm = struct {
         return self.freshInvoke(null, args);
     }
     fn freshInvoke(self: *Vm, entry: ?g.GlobalFunctionId, args: []const b.Value) ![]const b.Value {
+        if (self.shared_context != null) return error.SharedExecutionContext;
         // Preserve previous results until invoke has copied the supplied input.
         // This convenience API intentionally starts a fresh execution context.
-        var previous = self.arena;
-        self.arena = std.heap.ArenaAllocator.init(self.allocator);
-        self.state = .fresh;
+        var previous = self.context().arena;
+        self.context().arena = std.heap.ArenaAllocator.init(self.allocator);
+        self.context().state = .fresh;
         defer previous.deinit();
         return if (entry) |id| self.invoke(id, args) else self.invokeExpression(args);
     }
@@ -71,23 +107,26 @@ pub const Vm = struct {
     // and context identity; each invocation receives a fresh instruction budget.
     // Program validation and ordinary safety checking are not repeated here.
     pub fn invoke(self: *Vm, entry: g.GlobalFunctionId, args: []const b.Value) ![]const b.Value {
-        if (self.state == .poisoned) return error.ExecutionContextPoisoned;
+        if (self.context().state == .poisoned) return error.ExecutionContextPoisoned;
         const function = try self.entryFunction(entry, args);
         return self.invokeFunction(function, args);
     }
     pub fn invokeExpression(self: *Vm, args: []const b.Value) ![]const b.Value {
-        if (self.state == .poisoned) return error.ExecutionContextPoisoned;
+        if (self.context().state == .poisoned) return error.ExecutionContextPoisoned;
         const function = self.program.expression orelse return error.InvalidEntry;
         try self.validateArguments(function, args);
         return self.invokeFunction(function, args);
     }
     fn invokeFunction(self: *Vm, function: *const b.Function, args: []const b.Value) ![]const b.Value {
-        if (self.state == .fresh) {
-            self.storage = try Storage.init(self.arena.allocator(), self.limits.value_cells);
-            self.state = .ready;
+        if (self.context().running) return error.ExecutionContextBusy;
+        self.context().running = true;
+        defer self.context().running = false;
+        if (self.context().state == .fresh) {
+            self.context().storage = try Storage.init(self.context().arena.allocator(), self.context().limit);
+            self.context().state = .ready;
         }
         self.steps = 0;
-        errdefer self.state = .poisoned;
+        errdefer self.context().state = .poisoned;
         const inputs = try self.cloneValues(args);
         return self.execute(function, inputs);
     }
@@ -109,7 +148,7 @@ pub const Vm = struct {
         self.steps += updated;
     }
     fn allocate(self: *Vm, count: usize) ![]b.Value {
-        return self.storage.allocate(count);
+        return self.context().storage.allocate(count);
     }
     fn entryFunction(self: *Vm, id: g.GlobalFunctionId, args: []const b.Value) !*const b.Function {
         if (@intFromEnum(id) >= self.program.functions.len) return error.InvalidEntry;
@@ -124,11 +163,11 @@ pub const Vm = struct {
         for (args, function.inputs) |value, slot| if (!b.valueFits(self.program.graph, function.slots[slot], value)) return error.InvalidArguments;
     }
     fn frame(self: *Vm, function: *const b.Function, args: []const b.Value, return_slots: []const b.Slot) !Frame {
-        const id = try self.storage.enterCleanup(function.slots.len, function.cleanup);
-        const slots = try self.storage.slots(id);
+        const id = try self.context().storage.enterCleanup(function.slots.len, function.cleanup);
+        const slots = try self.context().storage.slots(id);
         for (args, function.inputs) |value, slot| try slots.put(slot, value);
-        try self.storage.charge(function.write_destinations.len);
-        const destinations = try self.arena.allocator().alloc(?WriteDestination, function.write_destinations.len);
+        try self.context().storage.charge(function.write_destinations.len);
+        const destinations = try self.context().arena.allocator().alloc(?WriteDestination, function.write_destinations.len);
         @memset(destinations, null);
         return .{ .function = function, .storage = id, .return_slots = return_slots, .write_destinations = destinations };
     }
@@ -138,14 +177,14 @@ pub const Vm = struct {
         // Runtime failures end frame liveness without running user cleanup,
         // matching the current abort policy. Persistent sessions must not
         // treat this path as a recoverable cleanup/unwind protocol.
-        defer for (frames.items) |active| self.storage.leave(active.storage);
+        defer for (frames.items) |active| self.context().storage.leave(active.storage);
         if (self.limits.call_depth == 0) return error.ExecutionCallDepthLimit;
         try frames.append(self.allocator, try self.frame(function, args, &.{}));
         while (true) {
             // Never retain this pointer across a push: the frame array may move.
             const current = &frames.items[frames.items.len - 1];
             const f = current.function;
-            const slots = try self.storage.slots(current.storage);
+            const slots = try self.context().storage.slots(current.storage);
             const inst = f.code[current.pc];
             self.source = inst.source;
             if (self.steps >= self.limits.instructions) return error.ExecutionInstructionLimit;
@@ -192,44 +231,44 @@ pub const Vm = struct {
                 .branch_variant => |x| current.pc = if ((try slots.get(x.src)).choice.variant == @intFromEnum(x.variant)) x.yes else x.no,
                 .borrow => |x| {
                     var path: [64]runtime_value.Projection = undefined;
-                    const reference = try self.storage.resolve(current.storage, x.place, &path);
+                    const reference = try self.context().storage.resolve(current.storage, x.place, &path);
                     const permission = self.program.graph.semanticType(f.slots[x.dst]).pointer.mutability;
-                    try slots.put(x.dst, try self.storage.borrow(reference, permission));
+                    try slots.put(x.dst, try self.context().storage.borrow(reference, permission));
                 },
                 .load => |x| {
                     var path: [64]runtime_value.Projection = undefined;
-                    try slots.put(x.dst, try self.storage.read(try self.storage.resolve(current.storage, x.place, &path)));
+                    try slots.put(x.dst, try self.context().storage.read(try self.context().storage.resolve(current.storage, x.place, &path)));
                 },
                 .check_place => |place| {
                     var path: [64]runtime_value.Projection = undefined;
-                    _ = try self.storage.resolve(current.storage, place, &path);
+                    _ = try self.context().storage.resolve(current.storage, place, &path);
                 },
-                .capture_write => |x| current.write_destinations[x.dst] = try self.storage.captureWrite(current.storage, x.place, x.activate_cleanup),
+                .capture_write => |x| current.write_destinations[x.dst] = try self.context().storage.captureWrite(current.storage, x.place, x.activate_cleanup),
                 .check_write_cleanup => |id| {
                     const destination = current.write_destinations[id] orelse return error.UninitializedBytecodeDestination;
-                    try self.chargeCleanup(try self.storage.checkWriteCleanup(destination));
+                    try self.chargeCleanup(try self.context().storage.checkWriteCleanup(destination));
                 },
                 .store => |x| {
                     const destination = current.write_destinations[x.destination] orelse return error.UninitializedBytecodeDestination;
-                    try self.storage.write(destination, try slots.get(x.value));
+                    try self.context().storage.write(destination, try slots.get(x.value));
                 },
                 .activate_write_cleanup => |id| {
                     const destination = current.write_destinations[id] orelse return error.UninitializedBytecodeDestination;
                     current.write_destinations[id] = null;
-                    try self.chargeCleanup(try self.storage.activateWriteCleanup(destination));
+                    try self.chargeCleanup(try self.context().storage.activateWriteCleanup(destination));
                 },
                 .cleanup_test => |x| {
                     var path: [64]runtime_value.Projection = undefined;
-                    const reference = try self.storage.resolveCleanup(current.storage, x.place, &path);
-                    try slots.put(x.dst, .{ .boolean = try self.storage.cleanupTest(reference) });
+                    const reference = try self.context().storage.resolveCleanup(current.storage, x.place, &path);
+                    try slots.put(x.dst, .{ .boolean = try self.context().storage.cleanupTest(reference) });
                 },
                 .cleanup_set => |x| {
                     var path: [64]runtime_value.Projection = undefined;
-                    const reference = try self.storage.resolveCleanup(current.storage, x.place, &path);
+                    const reference = try self.context().storage.resolveCleanup(current.storage, x.place, &path);
                     // A subtree update performs work without allocating value
                     // cells. Charge its flags too, so a large owner in a loop
                     // cannot turn one instruction into unbounded cleanup work.
-                    const updated = try self.storage.cleanupSet(reference, x.enabled);
+                    const updated = try self.context().storage.cleanupSet(reference, x.enabled);
                     try self.chargeCleanup(updated);
                 },
                 .field => |x| try slots.put(x.dst, (try slots.get(x.base)).record[x.index]),
@@ -274,10 +313,10 @@ pub const Vm = struct {
                     const result = try self.allocate(outputs.len);
                     for (result, outputs) |*value, slot| value.* = try slots.get(slot);
                     const completed = frames.pop().?;
-                    self.storage.leave(completed.storage);
-                    try self.storage.validateLive(result);
+                    self.context().storage.leave(completed.storage);
+                    try self.context().storage.validateLive(result);
                     if (frames.items.len == 0) return result;
-                    const caller = try self.storage.slots(frames.items[frames.items.len - 1].storage);
+                    const caller = try self.context().storage.slots(frames.items[frames.items.len - 1].storage);
                     for (completed.return_slots, result) |dst, value| try caller.put(dst, value);
                 },
                 .abort_ => return error.ExecutionAborted,
