@@ -344,376 +344,446 @@ pub fn semantizeWithOptions(
     modules: []const module_sg.ModuleSemanticGraph,
     options: Options,
 ) !Result {
-    const profile_start = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
-    var relocation = try globalizer.relocate(allocator, modules, .allow_holes);
-    relocation.graph.target = options.target;
-    errdefer relocation.deinit(allocator);
-    try module_linker.link(allocator, &relocation.graph, modules, relocation.offsets.items);
-    const profile_relocated = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
-
-    // The globalizer preallocates stable GlobalTypeId slots. Record which of
-    // those slots are genuinely unresolved before any resolver can inspect
-    // them; unresolved is construction state, not the language type `Any`.
-    try markUnresolvedTypeSlots(allocator, &relocation.graph, modules, relocation.offsets.items);
-
-    try @import("c_abi.zig").prepareForeignCapabilities(allocator, &relocation.graph);
-
-    var resolvers: @import("resolver_context.zig").Context = undefined;
-    resolvers.init(allocator, &relocation.graph, modules, relocation.offsets.items, options.diagnostics, options.profile_io);
-    defer resolvers.deinit();
-    const core = &resolvers.core;
-    const expressions = &resolvers.expressions;
-    const control = &resolvers.control;
-    const generics = &resolvers.generics;
-    const generic_functions = &resolvers.generic_functions;
-    const contracts = &resolvers.contracts;
-    const errors = &resolvers.errors;
-    const dispatch = &resolvers.dispatch;
-    const ownership = &resolvers.ownership;
-    const staged_execution = &resolvers.staged_execution;
-    if (try resolveQualifiedChoiceOptions(core, options.diagnostics)) return error.Reported;
-
-    var setup_stages: [setup_stage_count]i96 = @splat(0);
-    var setup_start = profileTimestamp(options.profile_io);
-    try core.resolveExternalTypes();
-    try generics.resolveExternalTypes();
-    profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.external_types)]);
-    setup_start = profileTimestamp(options.profile_io);
-    // Generic record fields can contain associated projections. Publish tuple
-    // associations before materializing either their records or operation types.
-    try contracts.prepareParticipantConformances();
-    try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
-    profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.conformance_registration)]);
-    setup_start = profileTimestamp(options.profile_io);
-    contracts.resolveAssociatedTypes() catch |err| {
-        try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, generics);
-        try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
-        return err;
-    };
-    profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.associated_types)]);
-    setup_start = profileTimestamp(options.profile_io);
-    _ = generics.materializeKnownTypes() catch |err| {
-        try reportGenericArgumentFailure(&relocation.graph, options.diagnostics, generics);
-        try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, generics);
-        try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
-        return err;
-    };
-    profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.known_types)]);
-    setup_start = profileTimestamp(options.profile_io);
-    _ = try control.materializeSugarTypes();
-
-    profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.sugar_types)]);
-    setup_start = profileTimestamp(options.profile_io);
-    if (options.diagnostics) |diagnostics| {
-        for (relocation.graph.functions.items) |function| {
-            for (relocation.graph.fields.items[function.output.start..][0..function.output.len]) |field| {
-                const contract_use = contracts.typeContractUse(field.ty) orelse continue;
-                const declaration = relocation.graph.declaration(function.declaration);
-                try diagnostics.add(
-                    diagnosticLocation(&relocation.graph, diagnostics, declaration.source),
-                    .semantic,
-                    "function '{s}' cannot return contract '{s}' as a runtime value; use a concrete type or Virtual",
-                    .{ relocation.graph.text(declaration.name), relocation.graph.text(relocation.graph.declaration(contract_use.declaration).name) },
-                );
-                return error.Reported;
-            }
-        }
-    }
-
-    try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
-
-    var resolution_state = ResolutionState.init(allocator);
-    defer resolution_state.deinit(allocator);
-    try resolution_state.appendModules(allocator, modules, relocation.offsets.items);
-    const total = resolution_state.resolved.items.len;
-    const resolved = resolution_state.resolved.items;
-    const worklists = &resolution_state.worklists;
-    const pending_resolution_stats = &resolution_state.pending_stats;
-    if (options.profile_io != null) {
-        for (modules) |module| for (module.semantic.pending_operations.items) |operation| {
-            pending_resolution_stats.initial(operation);
-        };
-    }
-    profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.worklists)]);
-    setup_start = profileTimestamp(options.profile_io);
-    // Validate declarations independently of executable use. Body proofs follow
-    // selected operations, or all materialized bodies in exhaustive mode.
-    contracts.validateParticipantConformances() catch |err| {
-        try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, generics);
-        try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
-        return err;
-    };
-    try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
-    profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.conformance_validation)]);
-    setup_start = profileTimestamp(options.profile_io);
-    var reachable_storage: reachability_mod.FunctionSet = undefined;
-    var reachable: ?*reachability_mod.FunctionSet = null;
-    if (!options.exhaustive_function_bodies) {
-        reachable_storage = try reachability_mod.executionRoots(allocator, &relocation.graph, options.selected_test_name);
-        reachable = &reachable_storage;
-    }
-    defer if (reachable) |set| set.deinit();
-    profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.roots)]);
-    const profile_preloop = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
-    const progress = &resolution_state.progress;
-    try advanceResolution(&options, &resolvers, &resolution_state, reachable);
-    const profile_postloop = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
-
-    try contracts.validateGenericFunctionInstances();
-    control.annotateChoiceTests();
-
-    if (reachable) |set| try retireDormantBindingResolution(&relocation.graph, set, try core.builtin(.Any));
-
-    if (control.for_each_failure) |failure| {
-        if (options.diagnostics) |diagnostics| {
-            var actual_name = std.array_list.Managed(u8).init(allocator);
-            defer actual_name.deinit();
-            try appendTypeName(&actual_name, &relocation.graph, failure.actual);
-            try diagnostics.add(
-                diagnosticLocation(&relocation.graph, diagnostics, failure.source),
-                .semantic,
-                "for expects a type implementing contract '{s}', got '{s}'",
-                .{ failure.contract_name, actual_name.items },
-            );
-            return error.Reported;
-        }
-        return error.InvalidForEach;
-    }
-
-    if (contracts.virtual_signature_failure) |failure| {
-        if (options.diagnostics) |diagnostics| {
-            const location = diagnosticLocation(&relocation.graph, diagnostics, failure.source);
-            if (failure.static_contract) {
-                try diagnostics.add(location, .semantic, "invalid safety contract for '{s}': {s}", .{ failure.method_name, failure.reason });
-            } else {
-                try diagnostics.add(location, .semantic, "cannot use '{s}' for virtual dispatch: {s}", .{ failure.method_name, failure.reason });
-            }
-            return error.Reported;
-        }
-        return error.InvalidVirtualSignature;
-    }
-
-    if (try diagnoseArrayAssignments(allocator, &relocation.graph, reachable, options.diagnostics))
-        return error.Reported;
-
-    if (options.diagnostics) |diagnostics| {
-        if (try diagnoseUnresolvedPropagatedReach(allocator, &relocation.graph, modules, relocation.offsets.items, diagnostics))
-            return error.Reported;
-        if (try diagnosePrivateFields(&relocation.graph, modules, reachable, relocation.offsets.items, diagnostics))
-            return error.Reported;
-        if (try diagnoseContractRuntimeBindings(&relocation.graph, contracts, diagnostics))
-            return error.Reported;
-        if (try diagnoseMissingArrayTypeContext(&relocation.graph, diagnostics))
-            return error.Reported;
-    }
-
-    const remaining = worklists.remaining(reachable);
-    var resolved_count: usize = 0;
-    for (resolved) |done| if (done) {
-        resolved_count += 1;
-    };
-    if (remaining != 0) {
-        if (options.diagnostics) |diagnostics| {
-            if (try diagnoseUnresolvedAssignments(&relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
-                return error.Reported;
-            if (try diagnoseUnresolvedArithmetic(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
-                return error.Reported;
-            if (try diagnoseUnresolvedDereference(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
-                return error.Reported;
-            if (try diagnoseUnresolvedQualifiedTypes(allocator, &relocation.graph, modules, relocation.offsets.items, diagnostics))
-                return error.Reported;
-            if (try diagnoseUnresolvedQualifiedNames(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
-                return error.Reported;
-            if (try diagnoseUnresolvedChoice(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics, false))
-                return error.Reported;
-            if (try diagnoseUnresolvedIndex(&relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
-                return error.Reported;
-            if (try diagnoseUnresolvedCopy(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
-                return error.Reported;
-            // A denied copy may already be represented in the graph so Safety
-            // can prefer a preceding move error. If another operation remains
-            // unresolved, report that definite copy failure before unrelated
-            // call-resolution diagnostics prevent Safety from running.
-            if (ownership.denied_copy) |denied| {
-                var type_name = std.array_list.Managed(u8).init(allocator);
-                defer type_name.deinit();
-                try appendTypeName(&type_name, &relocation.graph, denied.ty);
-                try diagnostics.add(
-                    diagnosticLocation(&relocation.graph, diagnostics, denied.source),
-                    .semantic,
-                    "type '{s}' cannot be copied implicitly; use '~value' to transfer ownership",
-                    .{type_name.items},
-                );
-                return error.Reported;
-            }
-            if (try diagnoseUnresolvedCall(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, generic_functions, contracts, diagnostics))
-                return error.Reported;
-            if (try diagnoseUnresolvedChoice(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics, true))
-                return error.Reported;
-        }
-        dumpUnresolved(modules, resolved, reachable, relocation.offsets.items);
-        return error.UnsupportedGlobalSemantic;
-    }
-    if (staged_execution.diagnosePending()) {
-        try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, generics);
-        return error.UnresolvedCompileTimeExecution;
-    }
-    if (relocation.graph.hasUnresolvedTypes()) {
-        if (options.diagnostics) |diagnostics|
-            if (try diagnoseUnresolvedQualifiedTypes(allocator, &relocation.graph, modules, relocation.offsets.items, diagnostics))
-                return error.Reported;
-        std.debug.print("global sema unresolved global type slots remain\n", .{});
-        return error.UnsupportedGlobalSemantic;
-    }
-    if (relocation.graph.hasUnresolvedBindingTypes()) {
-        if (options.diagnostics) |diagnostics|
-            if (try diagnoseUnresolvedBindingTypes(&relocation.graph, diagnostics))
-                return error.Reported;
-        std.debug.print("global sema unresolved binding types remain\n", .{});
-        return error.UnsupportedGlobalSemantic;
-    }
-
-    if (try diagnoseInvalidMatchPayloadCopies(
-        allocator,
-        &relocation.graph,
-        ownership,
-        reachable,
-        options.diagnostics,
-    ))
-        return if (options.diagnostics != null) error.Reported else error.InvalidImplicitCopy;
-
-    if (try diagnoseInvalidNumericAssignments(allocator, &relocation.graph, reachable, options.diagnostics))
-        return if (options.diagnostics != null) error.Reported else error.InvalidNumericAssignment;
-
-    if (try diagnoseInvalidComparisons(allocator, core, reachable, options.diagnostics))
-        return if (options.diagnostics != null) error.Reported else error.InvalidComparison;
-
-    if (try diagnoseInvalidPointerOperations(allocator, &relocation.graph, reachable, options.diagnostics))
-        return if (options.diagnostics != null) error.Reported else error.InvalidPointerOperation;
-
-    if (options.diagnostics) |diagnostics|
-        if (try contracts.findGenericTypeConstraintFailure()) |failure| {
-            var actual_name = std.array_list.Managed(u8).init(allocator);
-            defer actual_name.deinit();
-            try appendTypeName(&actual_name, &relocation.graph, failure.actual);
-            try diagnostics.add(
-                diagnosticLocation(&relocation.graph, diagnostics, failure.source),
-                .semantic,
-                "type '{s}' does not implement contract '{s}' required by generic type parameter '.{s}' of '{s}'",
-                .{
-                    actual_name.items,
-                    relocation.graph.text(relocation.graph.declaration(failure.contract_decl).name),
-                    failure.parameter_name,
-                    relocation.graph.text(relocation.graph.declaration(failure.generic_decl).name),
-                },
-            );
-            return error.Reported;
-        };
-
-    try contracts.closeVirtualMethodRegistries();
-
-    // Construction-only resolution metadata must disappear before the graph is
-    // exposed to Safety, Codegen or editor consumers.
-    try relocation.graph.finishTypeResolution(allocator);
-    contracts.validateParticipantConformances() catch |err| {
-        try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, generics);
-        try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
-        return err;
-    };
-    try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
-    try relocation.graph.finishBindingTypeResolution(allocator);
-
-    var generic_bodies_built: u64 = 0;
-    var generic_bodies_unreachable: u64 = 0;
-    if (options.profile_io != null) {
-        for (relocation.graph.functions.items) |function| {
-            if (function.flags.is_generic_instantiation and function.body != null)
-                generic_bodies_built += 1;
-        }
-    }
-    if (reachable) |set| {
-        for (relocation.graph.contract_safety_conformances.items) |*proof| {
-            const conformance = relocation.graph.contract_conformances.items[proof.selection.conformance];
-            const cleanup = set.cleanup_functions.contains(proof.method) and
-                @import("standard_contracts.zig").standardDeclaration(&relocation.graph, "Deinit") == conformance.declaration;
-            proof.safety_required = cleanup or set.operations.contains(proof.selection);
-        }
-        for (relocation.graph.virtualizes.items, 0..) |*value, raw| {
-            value.safety_required = set.virtualizes.contains(@enumFromInt(raw));
-        }
-        for (relocation.graph.functions.items, 0..) |*function, raw| {
-            const id: global_sg.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
-            if (options.profile_io != null and function.flags.is_generic_instantiation and function.body != null) {
-                if (!set.contains(id)) generic_bodies_unreachable += 1;
-            }
-            if (!set.contains(id)) function.body = null;
-        }
-    }
-
-    var stats = Stats{
-        .core = core.stats,
-        .expressions = expressions.stats,
-        .control = control.stats,
-        .generics = generics.stats,
-        .generic_functions = generic_functions.stats,
-        .generic_selection = generic_functions.selection_profile,
-        .contracts = contracts.stats,
-        .errors = errors.stats,
-        .ownership = ownership.stats,
-        .pending_call_stages = dispatch.pending_call_stages,
-        .pending_total = @intCast(total),
-        .pending_resolved = @intCast(resolved_count),
-        .pending_attempts = progress.pending_attempts,
-        .pending_by_owner = pending_resolution_stats.owners,
-        .pending_by_operation = pending_resolution_stats.operations,
-        .remaining = 0,
-        .rounds = @intCast(progress.profile_rounds),
-        .cleanup_attempts = @intCast(progress.profile_finalize_count),
-        .destructor_lookups = @intCast(ownership.profile_destructor_calls),
-        .generic_instantiation_calls = generic_functions.profile_instantiate_calls,
-        .generic_existing_instances = generic_functions.profile_instantiate_existing,
-        .generic_bodies_built = generic_bodies_built,
-        .generic_bodies_unreachable = generic_bodies_unreachable,
-        .generic_reachability_tracked = reachable != null,
-    };
-
-    const profile_preverify = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
-    try global_verify.verifyGlobal(&relocation.graph);
-    const profile_end = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
-    stats.remaining = 0;
-    var setup_stage_times: [setup_stage_count]u64 = undefined;
-    for (setup_stages, &setup_stage_times) |elapsed, *time| time.* = @intCast(elapsed);
-    if (options.profile_io != null) stats.timings = .{
-        .relocation_ns = @intCast(profile_relocated - profile_start),
-        .setup_ns = @intCast(profile_preloop - profile_relocated),
-        .setup_stages_ns = setup_stage_times,
-        .fixed_point_ns = @intCast(profile_postloop - profile_preloop),
-        .pending_ns = @intCast(progress.profile_pending_ns),
-        .string_literal_types_ns = @intCast(progress.profile_string_literal_types_ns),
-        .binding_types_ns = @intCast(progress.profile_binding_types_ns),
-        .assignment_values_ns = @intCast(progress.profile_assignment_values_ns),
-        .dereferences_ns = @intCast(progress.profile_dereferences_ns),
-        .addresses_ns = @intCast(progress.profile_addresses_ns),
-        .known_generic_types_ns = @intCast(progress.profile_known_generic_types_ns),
-        .field_access_types_ns = @intCast(progress.profile_field_access_types_ns),
-        .sugar_types_ns = @intCast(progress.profile_sugar_types_ns),
-        .error_inference_ns = @intCast(progress.profile_errors_ns),
-        .error_summary_ns = @intCast(progress.profile_error_summary_ns),
-        .error_refresh_ns = @intCast(progress.profile_error_refresh_ns),
-        .cleanup_ns = @intCast(progress.profile_finalize_ns),
-        .implicit_destructor_ns = @intCast(ownership.profile_destructor_ns),
-        .source_generic_selection_ns = @intCast(generic_functions.profile_source_selection_ns),
-        .source_generic_completion_ns = @intCast(generic_functions.profile_source_completion_ns),
-        .generic_instantiation_ns = @intCast(generic_functions.profile_instantiate_ns),
-        .generic_instantiation_lookup_ns = @intCast(generic_functions.profile_instantiate_lookup_ns),
-        .generic_instantiation_body_ns = @intCast(generic_functions.profile_instantiate_body_ns),
-        .generic_instance_context_init_ns = @intCast(generic_functions.profile_instance_context_init_ns),
-        .generic_constraints_ns = @intCast(generic_functions.profile_constraints_ns),
-        .post_resolution_ns = @intCast(profile_preverify - profile_postloop),
-        .verify_ns = @intCast(profile_end - profile_preverify),
-    };
-    return .{ .graph = relocation.takeGraph(allocator), .stats = stats };
+    var session: Session = undefined;
+    try session.init(allocator, modules, options);
+    defer session.deinit();
+    try session.advance();
+    return session.finish();
 }
+
+/// Retained semantic construction state, separate from graph publication.
+/// Initialize in final storage. Borrowed ModuleSGs and optional diagnostics
+/// must remain alive until deinit.
+/// Failed advancement poisons the session; callers must discard it rather than
+/// expose an incompletely checked graph. Published graphs transfer to Result.
+pub const Session = struct {
+    allocator: std.mem.Allocator,
+    modules: []const module_sg.ModuleSemanticGraph,
+    options: Options,
+    relocation: globalizer.Relocation = .{ .graph = .{} },
+    resolvers: @import("resolver_context.zig").Context = undefined,
+    resolvers_initialized: bool = false,
+    resolution: ResolutionState,
+    reachable: ?reachability_mod.FunctionSet = null,
+    phase: enum { preparing, ready, quiescent, published, failed } = .preparing,
+    setup_stages: [setup_stage_count]i96 = @splat(0),
+    profile_start: i96 = 0,
+    profile_relocated: i96 = 0,
+    profile_preloop: i96 = 0,
+    profile_postloop: i96 = 0,
+    fixed_point_ns: i96 = 0,
+
+    pub fn init(self: *Session, allocator: std.mem.Allocator, modules: []const module_sg.ModuleSemanticGraph, options: Options) !void {
+        self.* = .{ .allocator = allocator, .modules = modules, .options = options, .resolution = ResolutionState.init(allocator) };
+        errdefer self.deinit();
+        self.profile_start = profileTimestamp(options.profile_io);
+        self.relocation = try globalizer.relocate(allocator, modules, .allow_holes);
+        const relocation = &self.relocation;
+        relocation.graph.target = options.target;
+        try module_linker.link(allocator, &relocation.graph, modules, relocation.offsets.items);
+        self.profile_relocated = profileTimestamp(options.profile_io);
+
+        // The globalizer preallocates stable GlobalTypeId slots. Record which of
+        // those slots are genuinely unresolved before any resolver can inspect
+        // them; unresolved is construction state, not the language type `Any`.
+        try markUnresolvedTypeSlots(allocator, &relocation.graph, modules, relocation.offsets.items);
+
+        try @import("c_abi.zig").prepareForeignCapabilities(allocator, &relocation.graph);
+
+        const resolvers = &self.resolvers;
+        resolvers.init(allocator, &relocation.graph, modules, relocation.offsets.items, options.diagnostics, options.profile_io);
+        self.resolvers_initialized = true;
+        const core = &resolvers.core;
+        const control = &resolvers.control;
+        const generics = &resolvers.generics;
+        const contracts = &resolvers.contracts;
+        if (try resolveQualifiedChoiceOptions(core, options.diagnostics)) return error.Reported;
+
+        const setup_stages = &self.setup_stages;
+        var setup_start = profileTimestamp(options.profile_io);
+        try core.resolveExternalTypes();
+        try generics.resolveExternalTypes();
+        profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.external_types)]);
+        setup_start = profileTimestamp(options.profile_io);
+        // Generic record fields can contain associated projections. Publish tuple
+        // associations before materializing either their records or operation types.
+        try contracts.prepareParticipantConformances();
+        try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
+        profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.conformance_registration)]);
+        setup_start = profileTimestamp(options.profile_io);
+        contracts.resolveAssociatedTypes() catch |err| {
+            try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, generics);
+            try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
+            return err;
+        };
+        profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.associated_types)]);
+        setup_start = profileTimestamp(options.profile_io);
+        _ = generics.materializeKnownTypes() catch |err| {
+            try reportGenericArgumentFailure(&relocation.graph, options.diagnostics, generics);
+            try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, generics);
+            try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
+            return err;
+        };
+        profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.known_types)]);
+        setup_start = profileTimestamp(options.profile_io);
+        _ = try control.materializeSugarTypes();
+
+        profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.sugar_types)]);
+        setup_start = profileTimestamp(options.profile_io);
+        if (options.diagnostics) |diagnostics| {
+            for (relocation.graph.functions.items) |function| {
+                for (relocation.graph.fields.items[function.output.start..][0..function.output.len]) |field| {
+                    const contract_use = contracts.typeContractUse(field.ty) orelse continue;
+                    const declaration = relocation.graph.declaration(function.declaration);
+                    try diagnostics.add(
+                        diagnosticLocation(&relocation.graph, diagnostics, declaration.source),
+                        .semantic,
+                        "function '{s}' cannot return contract '{s}' as a runtime value; use a concrete type or Virtual",
+                        .{ relocation.graph.text(declaration.name), relocation.graph.text(relocation.graph.declaration(contract_use.declaration).name) },
+                    );
+                    return error.Reported;
+                }
+            }
+        }
+
+        try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
+
+        const resolution_state = &self.resolution;
+        try resolution_state.appendModules(allocator, modules, relocation.offsets.items);
+        const pending_resolution_stats = &resolution_state.pending_stats;
+        if (options.profile_io != null) {
+            for (modules) |module| for (module.semantic.pending_operations.items) |operation| {
+                pending_resolution_stats.initial(operation);
+            };
+        }
+        profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.worklists)]);
+        setup_start = profileTimestamp(options.profile_io);
+        // Validate declarations independently of executable use. Body proofs follow
+        // selected operations, or all materialized bodies in exhaustive mode.
+        contracts.validateParticipantConformances() catch |err| {
+            try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, generics);
+            try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
+            return err;
+        };
+        try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
+        profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.conformance_validation)]);
+        setup_start = profileTimestamp(options.profile_io);
+        if (!options.exhaustive_function_bodies)
+            self.reachable = try reachability_mod.executionRoots(allocator, &relocation.graph, options.selected_test_name);
+        profileAccumulate(options.profile_io, setup_start, &setup_stages[@intFromEnum(SetupStage.roots)]);
+        self.phase = .ready;
+    }
+
+    fn reachableSet(self: *Session) ?*reachability_mod.FunctionSet {
+        return if (self.reachable) |*set| set else null;
+    }
+
+    pub fn advance(self: *Session) !void {
+        if (self.phase != .ready and self.phase != .quiescent) return error.InvalidSemanticSessionState;
+        errdefer self.phase = .failed;
+        const start = profileTimestamp(self.options.profile_io);
+        if (self.phase == .ready) self.profile_preloop = start;
+        try advanceResolution(&self.options, &self.resolvers, &self.resolution, self.reachableSet());
+        self.profile_postloop = profileTimestamp(self.options.profile_io);
+        self.fixed_point_ns += self.profile_postloop - start;
+        self.phase = .quiescent;
+    }
+
+    pub fn finish(self: *Session) !Result {
+        if (self.phase != .quiescent) return error.InvalidSemanticSessionState;
+        errdefer self.phase = .failed;
+        const allocator = self.allocator;
+        const modules = self.modules;
+        const options = self.options;
+        const relocation = &self.relocation;
+        const resolvers = &self.resolvers;
+        const resolution_state = &self.resolution;
+        const total = resolution_state.resolved.items.len;
+        const resolved = resolution_state.resolved.items;
+        const worklists = &resolution_state.worklists;
+        const pending_resolution_stats = &resolution_state.pending_stats;
+        const progress = &resolution_state.progress;
+        const reachable = self.reachableSet();
+        const setup_stages = self.setup_stages;
+        const profile_start = self.profile_start;
+        const profile_relocated = self.profile_relocated;
+        const profile_preloop = self.profile_preloop;
+        const profile_postloop = self.profile_postloop;
+        const core = &resolvers.core;
+        const expressions = &resolvers.expressions;
+        const control = &resolvers.control;
+        const generics = &resolvers.generics;
+        const generic_functions = &resolvers.generic_functions;
+        const contracts = &resolvers.contracts;
+        const errors = &resolvers.errors;
+        const dispatch = &resolvers.dispatch;
+        const ownership = &resolvers.ownership;
+        const staged_execution = &resolvers.staged_execution;
+        try contracts.validateGenericFunctionInstances();
+        control.annotateChoiceTests();
+
+        if (reachable) |set| try retireDormantBindingResolution(&relocation.graph, set, try core.builtin(.Any));
+
+        if (control.for_each_failure) |failure| {
+            if (options.diagnostics) |diagnostics| {
+                var actual_name = std.array_list.Managed(u8).init(allocator);
+                defer actual_name.deinit();
+                try appendTypeName(&actual_name, &relocation.graph, failure.actual);
+                try diagnostics.add(
+                    diagnosticLocation(&relocation.graph, diagnostics, failure.source),
+                    .semantic,
+                    "for expects a type implementing contract '{s}', got '{s}'",
+                    .{ failure.contract_name, actual_name.items },
+                );
+                return error.Reported;
+            }
+            return error.InvalidForEach;
+        }
+
+        if (contracts.virtual_signature_failure) |failure| {
+            if (options.diagnostics) |diagnostics| {
+                const location = diagnosticLocation(&relocation.graph, diagnostics, failure.source);
+                if (failure.static_contract) {
+                    try diagnostics.add(location, .semantic, "invalid safety contract for '{s}': {s}", .{ failure.method_name, failure.reason });
+                } else {
+                    try diagnostics.add(location, .semantic, "cannot use '{s}' for virtual dispatch: {s}", .{ failure.method_name, failure.reason });
+                }
+                return error.Reported;
+            }
+            return error.InvalidVirtualSignature;
+        }
+
+        if (try diagnoseArrayAssignments(allocator, &relocation.graph, reachable, options.diagnostics))
+            return error.Reported;
+
+        if (options.diagnostics) |diagnostics| {
+            if (try diagnoseUnresolvedPropagatedReach(allocator, &relocation.graph, modules, relocation.offsets.items, diagnostics))
+                return error.Reported;
+            if (try diagnosePrivateFields(&relocation.graph, modules, reachable, relocation.offsets.items, diagnostics))
+                return error.Reported;
+            if (try diagnoseContractRuntimeBindings(&relocation.graph, contracts, diagnostics))
+                return error.Reported;
+            if (try diagnoseMissingArrayTypeContext(&relocation.graph, diagnostics))
+                return error.Reported;
+        }
+
+        const remaining = worklists.remaining(reachable);
+        var resolved_count: usize = 0;
+        for (resolved) |done| if (done) {
+            resolved_count += 1;
+        };
+        if (remaining != 0) {
+            if (options.diagnostics) |diagnostics| {
+                if (try diagnoseUnresolvedAssignments(&relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
+                    return error.Reported;
+                if (try diagnoseUnresolvedArithmetic(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
+                    return error.Reported;
+                if (try diagnoseUnresolvedDereference(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
+                    return error.Reported;
+                if (try diagnoseUnresolvedQualifiedTypes(allocator, &relocation.graph, modules, relocation.offsets.items, diagnostics))
+                    return error.Reported;
+                if (try diagnoseUnresolvedQualifiedNames(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
+                    return error.Reported;
+                if (try diagnoseUnresolvedChoice(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics, false))
+                    return error.Reported;
+                if (try diagnoseUnresolvedIndex(&relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
+                    return error.Reported;
+                if (try diagnoseUnresolvedCopy(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics))
+                    return error.Reported;
+                // A denied copy may already be represented in the graph so Safety
+                // can prefer a preceding move error. If another operation remains
+                // unresolved, report that definite copy failure before unrelated
+                // call-resolution diagnostics prevent Safety from running.
+                if (ownership.denied_copy) |denied| {
+                    var type_name = std.array_list.Managed(u8).init(allocator);
+                    defer type_name.deinit();
+                    try appendTypeName(&type_name, &relocation.graph, denied.ty);
+                    try diagnostics.add(
+                        diagnosticLocation(&relocation.graph, diagnostics, denied.source),
+                        .semantic,
+                        "type '{s}' cannot be copied implicitly; use '~value' to transfer ownership",
+                        .{type_name.items},
+                    );
+                    return error.Reported;
+                }
+                if (try diagnoseUnresolvedCall(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, generic_functions, contracts, diagnostics))
+                    return error.Reported;
+                if (try diagnoseUnresolvedChoice(allocator, &relocation.graph, modules, resolved, reachable, relocation.offsets.items, diagnostics, true))
+                    return error.Reported;
+            }
+            dumpUnresolved(modules, resolved, reachable, relocation.offsets.items);
+            return error.UnsupportedGlobalSemantic;
+        }
+        if (staged_execution.diagnosePending()) {
+            try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, generics);
+            return error.UnresolvedCompileTimeExecution;
+        }
+        if (relocation.graph.hasUnresolvedTypes()) {
+            if (options.diagnostics) |diagnostics|
+                if (try diagnoseUnresolvedQualifiedTypes(allocator, &relocation.graph, modules, relocation.offsets.items, diagnostics))
+                    return error.Reported;
+            std.debug.print("global sema unresolved global type slots remain\n", .{});
+            return error.UnsupportedGlobalSemantic;
+        }
+        if (relocation.graph.hasUnresolvedBindingTypes()) {
+            if (options.diagnostics) |diagnostics|
+                if (try diagnoseUnresolvedBindingTypes(&relocation.graph, diagnostics))
+                    return error.Reported;
+            std.debug.print("global sema unresolved binding types remain\n", .{});
+            return error.UnsupportedGlobalSemantic;
+        }
+
+        if (try diagnoseInvalidMatchPayloadCopies(
+            allocator,
+            &relocation.graph,
+            ownership,
+            reachable,
+            options.diagnostics,
+        ))
+            return if (options.diagnostics != null) error.Reported else error.InvalidImplicitCopy;
+
+        if (try diagnoseInvalidNumericAssignments(allocator, &relocation.graph, reachable, options.diagnostics))
+            return if (options.diagnostics != null) error.Reported else error.InvalidNumericAssignment;
+
+        if (try diagnoseInvalidComparisons(allocator, core, reachable, options.diagnostics))
+            return if (options.diagnostics != null) error.Reported else error.InvalidComparison;
+
+        if (try diagnoseInvalidPointerOperations(allocator, &relocation.graph, reachable, options.diagnostics))
+            return if (options.diagnostics != null) error.Reported else error.InvalidPointerOperation;
+
+        if (options.diagnostics) |diagnostics|
+            if (try contracts.findGenericTypeConstraintFailure()) |failure| {
+                var actual_name = std.array_list.Managed(u8).init(allocator);
+                defer actual_name.deinit();
+                try appendTypeName(&actual_name, &relocation.graph, failure.actual);
+                try diagnostics.add(
+                    diagnosticLocation(&relocation.graph, diagnostics, failure.source),
+                    .semantic,
+                    "type '{s}' does not implement contract '{s}' required by generic type parameter '.{s}' of '{s}'",
+                    .{
+                        actual_name.items,
+                        relocation.graph.text(relocation.graph.declaration(failure.contract_decl).name),
+                        failure.parameter_name,
+                        relocation.graph.text(relocation.graph.declaration(failure.generic_decl).name),
+                    },
+                );
+                return error.Reported;
+            };
+
+        try contracts.closeVirtualMethodRegistries();
+
+        // Construction-only resolution metadata must disappear before the graph is
+        // exposed to Safety, Codegen or editor consumers.
+        try relocation.graph.finishTypeResolution(allocator);
+        contracts.validateParticipantConformances() catch |err| {
+            try reportComptimeExpressionFailure(&relocation.graph, options.diagnostics, generics);
+            try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
+            return err;
+        };
+        try reportParticipantConformanceFailure(allocator, &relocation.graph, options.diagnostics, contracts.participant_conformance_failure);
+        try relocation.graph.finishBindingTypeResolution(allocator);
+
+        var generic_bodies_built: u64 = 0;
+        var generic_bodies_unreachable: u64 = 0;
+        if (options.profile_io != null) {
+            for (relocation.graph.functions.items) |function| {
+                if (function.flags.is_generic_instantiation and function.body != null)
+                    generic_bodies_built += 1;
+            }
+        }
+        if (reachable) |set| {
+            for (relocation.graph.contract_safety_conformances.items) |*proof| {
+                const conformance = relocation.graph.contract_conformances.items[proof.selection.conformance];
+                const cleanup = set.cleanup_functions.contains(proof.method) and
+                    @import("standard_contracts.zig").standardDeclaration(&relocation.graph, "Deinit") == conformance.declaration;
+                proof.safety_required = cleanup or set.operations.contains(proof.selection);
+            }
+            for (relocation.graph.virtualizes.items, 0..) |*value, raw| {
+                value.safety_required = set.virtualizes.contains(@enumFromInt(raw));
+            }
+            for (relocation.graph.functions.items, 0..) |*function, raw| {
+                const id: global_sg.GlobalFunctionId = @enumFromInt(@as(u32, @intCast(raw)));
+                if (options.profile_io != null and function.flags.is_generic_instantiation and function.body != null) {
+                    if (!set.contains(id)) generic_bodies_unreachable += 1;
+                }
+                if (!set.contains(id)) function.body = null;
+            }
+        }
+
+        var stats = Stats{
+            .core = core.stats,
+            .expressions = expressions.stats,
+            .control = control.stats,
+            .generics = generics.stats,
+            .generic_functions = generic_functions.stats,
+            .generic_selection = generic_functions.selection_profile,
+            .contracts = contracts.stats,
+            .errors = errors.stats,
+            .ownership = ownership.stats,
+            .pending_call_stages = dispatch.pending_call_stages,
+            .pending_total = @intCast(total),
+            .pending_resolved = @intCast(resolved_count),
+            .pending_attempts = progress.pending_attempts,
+            .pending_by_owner = pending_resolution_stats.owners,
+            .pending_by_operation = pending_resolution_stats.operations,
+            .remaining = 0,
+            .rounds = @intCast(progress.profile_rounds),
+            .cleanup_attempts = @intCast(progress.profile_finalize_count),
+            .destructor_lookups = @intCast(ownership.profile_destructor_calls),
+            .generic_instantiation_calls = generic_functions.profile_instantiate_calls,
+            .generic_existing_instances = generic_functions.profile_instantiate_existing,
+            .generic_bodies_built = generic_bodies_built,
+            .generic_bodies_unreachable = generic_bodies_unreachable,
+            .generic_reachability_tracked = reachable != null,
+        };
+
+        const profile_preverify = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
+        try global_verify.verifyGlobal(&relocation.graph);
+        const profile_end = if (options.profile_io) |io| std.Io.Timestamp.now(io, .boot).nanoseconds else 0;
+        stats.remaining = 0;
+        var setup_stage_times: [setup_stage_count]u64 = undefined;
+        for (setup_stages, &setup_stage_times) |elapsed, *time| time.* = @intCast(elapsed);
+        if (options.profile_io != null) stats.timings = .{
+            .relocation_ns = @intCast(profile_relocated - profile_start),
+            .setup_ns = @intCast(profile_preloop - profile_relocated),
+            .setup_stages_ns = setup_stage_times,
+            .fixed_point_ns = @intCast(self.fixed_point_ns),
+            .pending_ns = @intCast(progress.profile_pending_ns),
+            .string_literal_types_ns = @intCast(progress.profile_string_literal_types_ns),
+            .binding_types_ns = @intCast(progress.profile_binding_types_ns),
+            .assignment_values_ns = @intCast(progress.profile_assignment_values_ns),
+            .dereferences_ns = @intCast(progress.profile_dereferences_ns),
+            .addresses_ns = @intCast(progress.profile_addresses_ns),
+            .known_generic_types_ns = @intCast(progress.profile_known_generic_types_ns),
+            .field_access_types_ns = @intCast(progress.profile_field_access_types_ns),
+            .sugar_types_ns = @intCast(progress.profile_sugar_types_ns),
+            .error_inference_ns = @intCast(progress.profile_errors_ns),
+            .error_summary_ns = @intCast(progress.profile_error_summary_ns),
+            .error_refresh_ns = @intCast(progress.profile_error_refresh_ns),
+            .cleanup_ns = @intCast(progress.profile_finalize_ns),
+            .implicit_destructor_ns = @intCast(ownership.profile_destructor_ns),
+            .source_generic_selection_ns = @intCast(generic_functions.profile_source_selection_ns),
+            .source_generic_completion_ns = @intCast(generic_functions.profile_source_completion_ns),
+            .generic_instantiation_ns = @intCast(generic_functions.profile_instantiate_ns),
+            .generic_instantiation_lookup_ns = @intCast(generic_functions.profile_instantiate_lookup_ns),
+            .generic_instantiation_body_ns = @intCast(generic_functions.profile_instantiate_body_ns),
+            .generic_instance_context_init_ns = @intCast(generic_functions.profile_instance_context_init_ns),
+            .generic_constraints_ns = @intCast(generic_functions.profile_constraints_ns),
+            .post_resolution_ns = @intCast(profile_preverify - profile_postloop),
+            .verify_ns = @intCast(profile_end - profile_preverify),
+        };
+        self.phase = .published;
+        return .{ .graph = relocation.takeGraph(allocator), .stats = stats };
+    }
+
+    pub fn deinit(self: *Session) void {
+        if (self.reachable) |*set| set.deinit();
+        self.resolution.deinit(self.allocator);
+        if (self.resolvers_initialized) self.resolvers.deinit();
+        self.relocation.deinit(self.allocator);
+        self.* = undefined;
+    }
+};
 
 const ResolutionProgress = struct {
     pending_attempts: u64 = 0,
@@ -3548,27 +3618,56 @@ test "resolution state preserves published work on allocation failures" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, extendResolutionWithAllocationFailures, .{});
 }
 
-test "resolution can resume before unresolved construction types are sealed" {
+test "semantic session retains construction state until explicit publication" {
     const a = std.testing.allocator;
-    var graph: global_sg.GlobalSemanticGraph = .{};
-    defer graph.deinit(a);
-    try graph.types.append(a, .{ .builtin = .Any });
+    var session: Session = undefined;
+    try session.init(a, &.{}, .{});
+    defer session.deinit();
+    try std.testing.expectError(error.InvalidSemanticSessionState, session.finish());
+    try session.relocation.graph.types.append(a, .{ .builtin = .Any });
     const id: global_sg.GlobalTypeId = @enumFromInt(0);
-    try graph.markTypeUnresolved(a, id);
-    var resolvers: @import("resolver_context.zig").Context = undefined;
-    resolvers.init(a, &graph, &.{}, &.{}, null, null);
-    defer resolvers.deinit();
-    var state = ResolutionState.init(a);
-    defer state.deinit(a);
-    const progress = &state.progress;
-    try std.testing.expectEqual(@as(usize, 0), resolvers.staged_execution.requests.items.len);
-    try advanceResolution(&.{}, &resolvers, &state, null);
-    try std.testing.expect(graph.isTypeUnresolved(id));
-    const first_rounds = progress.profile_rounds;
-    try graph.resolveType(id, .{ .builtin = .Int32 });
-    try std.testing.expectEqual(@as(usize, 0), resolvers.staged_execution.requests.items.len);
-    try advanceResolution(&.{}, &resolvers, &state, null);
-    try std.testing.expect(!graph.isTypeUnresolved(id));
-    try std.testing.expect(progress.profile_rounds > first_rounds);
-    try std.testing.expectEqual(primitives.BuiltinType.Int32, graph.types.items[0].builtin);
+    try session.relocation.graph.markTypeUnresolved(a, id);
+    try session.advance();
+    try std.testing.expect(session.relocation.graph.isTypeUnresolved(id));
+    try std.testing.expect(session.resolvers.core.graph == &session.relocation.graph);
+    const rounds = session.resolution.progress.profile_rounds;
+    try session.relocation.graph.resolveType(id, .{ .builtin = .Int32 });
+    try session.advance();
+    try std.testing.expect(session.resolution.progress.profile_rounds > rounds);
+    var result = try session.finish();
+    defer result.graph.deinit(a);
+    try std.testing.expectEqual(@as(usize, 1), result.graph.types.items.len);
+    try std.testing.expectEqual(primitives.BuiltinType.Int32, result.graph.types.items[0].builtin);
+    try std.testing.expectEqual(@as(usize, 0), session.relocation.graph.types.items.len);
+    try std.testing.expectError(error.InvalidSemanticSessionState, session.advance());
+    try std.testing.expectError(error.InvalidSemanticSessionState, session.finish());
+}
+
+fn initializeSemanticSessionWithAllocationFailures(allocator: std.mem.Allocator) !void {
+    var module: module_sg.ModuleSemanticGraph = .{ .module_dir = try std.testing.allocator.dupe(u8, "session") };
+    defer module.deinit(std.testing.allocator);
+    var session: Session = undefined;
+    try session.init(allocator, &.{module}, .{});
+    defer session.deinit();
+    try session.advance();
+    var result = try session.finish();
+    defer result.graph.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 1), result.graph.modules.items.len);
+}
+
+test "semantic session releases partially initialized state on allocation failure" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, initializeSemanticSessionWithAllocationFailures, .{});
+}
+
+test "semantic session forbids reuse after publication fails" {
+    const a = std.testing.allocator;
+    var session: Session = undefined;
+    try session.init(a, &.{}, .{});
+    defer session.deinit();
+    try session.relocation.graph.types.append(a, .{ .builtin = .Any });
+    try session.relocation.graph.markTypeUnresolved(a, @enumFromInt(0));
+    try session.advance();
+    try std.testing.expectError(error.UnsupportedGlobalSemantic, session.finish());
+    try std.testing.expectError(error.InvalidSemanticSessionState, session.advance());
+    try std.testing.expectError(error.InvalidSemanticSessionState, session.finish());
 }

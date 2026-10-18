@@ -32,10 +32,13 @@ resolvers now share one in-place context that owns their callback targets and
 caches. Phase queues and dense operation status tables can append new modules
 transactionally while preserving prior results; the same resolution state owns
 finalized function identities and cumulative resolution progress. The fixed-point
-executor advances without sealing construction metadata, so a retained coordinator
-can resume it. Contract template indexes extend cached groups, including empty
-ones, across module batches. Next, make conformance registration incremental and
-connect retained module views before wiring conditional imports and interactive
+executor advances without sealing construction metadata. The ordinary compiler
+uses the retained semantic session's explicit initialization, advancement and
+publication lifecycle. Contract registration tracks its source cursor and module
+views can extend the immutable prefix; template indexes extend cached groups,
+including empty ones. Import linking can append a module suffix transactionally
+without retargeting retained aliases. Next, coordinate transactional module
+addition in the session before wiring conditional imports and interactive
 submissions.
 JIT is deferred until measurements justify it; module origin is not an execution
 policy. Keep function identities independent of the executor, without introducing
