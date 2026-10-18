@@ -306,6 +306,25 @@ pub const GlobalSemanticGraph = struct {
     // before they are exposed to Safety, Codegen or the LSP.
     construction: ConstructionState = .{},
 
+    /// Copy mutable semantic pools while preserving every existing identity.
+    /// Immutable source metadata keeps its original ModuleSG lifetime. Derived
+    /// name indexes are rebuilt lazily in the copy. Ordinary compilation does
+    /// not call this; retained-session publication can isolate speculative edits.
+    pub fn clone(self: *const GlobalSemanticGraph, allocator: std.mem.Allocator) !GlobalSemanticGraph {
+        var result: GlobalSemanticGraph = .{ .target = self.target };
+        errdefer result.deinit(allocator);
+        inline for (@typeInfo(GlobalSemanticGraph).@"struct".fields) |field| {
+            if (comptime switch (@typeInfo(field.type)) {
+                .@"struct" => @hasField(field.type, "items"),
+                else => false,
+            }) try @field(result, field.name).appendSlice(allocator, @field(self, field.name).items);
+        }
+        inline for (@typeInfo(ConstructionState).@"struct".fields) |field| {
+            try @field(result.construction, field.name).appendSlice(allocator, @field(self.construction, field.name).items);
+        }
+        return result;
+    }
+
     /// Snapshot append-only graph storage and the mutable lookup-index tails.
     /// This is deliberately not a transaction for resolver-local caches or
     /// side effects; callers must checkpoint those separately when needed.
@@ -1003,4 +1022,39 @@ test "parameterized function index extends retained module prefixes" {
             try std.testing.expectEqual(@as(u32, @intCast(index)), candidate.function_index);
         }
     }
+}
+
+fn cloneConstructionGraph(allocator: std.mem.Allocator) !void {
+    const source_allocator = std.testing.allocator;
+    var source: GlobalSemanticGraph = .{};
+    defer source.deinit(source_allocator);
+    const name = try source.addString(source_allocator, "retained");
+    try source.declarations.append(source_allocator, .{ .kind = .function, .name = name, .source = .{ .file_index = 0, .offset = 0 } });
+    try source.functions.append(source_allocator, .{ .declaration = @enumFromInt(0), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 } });
+    try source.types.appendSlice(source_allocator, &.{ .{ .builtin = .Any }, .{ .builtin = .Int32 } });
+    try source.markTypeUnresolved(source_allocator, @enumFromInt(0));
+    _ = try source.functionsNamed(source_allocator, "retained");
+    _ = try source.declarationsNamed(source_allocator, "retained");
+    const saved = source.checkpoint();
+    var copy = try source.clone(allocator);
+    defer copy.deinit(allocator);
+    try std.testing.expect(copy.isTypeUnresolved(@enumFromInt(0)));
+    try copy.resolveType(@enumFromInt(0), .{ .builtin = .UInt8 });
+    copy.types.items[1] = .{ .builtin = .Int64 };
+    copy.functions.items[0].flags.is_c_export = true;
+    try std.testing.expect(source.isTypeUnresolved(@enumFromInt(0)));
+    try std.testing.expectEqual(primitives.BuiltinType.Int32, source.types.items[1].builtin);
+    try std.testing.expect(!source.functions.items[0].flags.is_c_export);
+    try std.testing.expectEqual(@as(usize, 1), (try copy.functionsNamed(allocator, "retained")).len);
+    try std.testing.expectEqual(@as(usize, 1), (try copy.declarationsNamed(allocator, "retained")).len);
+    const added_name = try copy.addString(allocator, "submission");
+    try copy.declarations.append(allocator, .{ .kind = .function, .name = added_name, .source = .{ .file_index = 0, .offset = 0 } });
+    try copy.functions.append(allocator, .{ .declaration = @enumFromInt(1), .input = .{ .start = 0, .len = 0 }, .output = .{ .start = 0, .len = 0 } });
+    try std.testing.expectEqual(@as(usize, 1), (try copy.functionsNamed(allocator, "submission")).len);
+    try std.testing.expectEqual(@as(usize, 0), (try source.functionsNamed(source_allocator, "submission")).len);
+    try std.testing.expectEqualDeep(saved, source.checkpoint());
+}
+
+test "semantic graph clones isolate in-place edits and preserve construction identities" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, cloneConstructionGraph, .{});
 }

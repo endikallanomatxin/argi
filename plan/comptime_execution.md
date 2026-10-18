@@ -40,9 +40,12 @@ including empty ones. Import linking can append a module suffix transactionally
 without retargeting retained aliases. The session can append a borrowed module
 suffix and resume resolution, initializing only its external type slots; repeated
 FFI preparation preserves already augmented signatures. Preparation failure
-currently poisons this unpublished construction session. Next, isolate submission
-publication so rejection preserves the accepted session before wiring conditional
-imports and interactive submissions.
+currently poisons this unpublished construction session. Independent copies of
+semantic pools, pending/finalized operation state and staged execution requests
+preserve IDs while isolating candidate edits, including request binding storage.
+Next, retain resolver-local effects and connect candidate publication so rejection
+preserves the accepted session before wiring conditional imports and interactive
+submissions.
 JIT is deferred until measurements justify it; module origin is not an execution
 policy. Keep function identities independent of the executor, without introducing
 a mixed VM/native ABI or native-layout storage solely for a possible future JIT.

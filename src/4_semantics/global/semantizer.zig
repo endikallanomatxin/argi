@@ -308,6 +308,22 @@ const ResolutionState = struct {
         return .{ .finalized_functions = .init(allocator) };
     }
 
+    fn clone(self: *const ResolutionState, allocator: std.mem.Allocator) !ResolutionState {
+        var result = ResolutionState.init(allocator);
+        errdefer result.deinit(allocator);
+        result.progress = self.progress;
+        result.pending_stats = self.pending_stats;
+        result.worklists.module_count = self.worklists.module_count;
+        result.worklists.operation_count = self.worklists.operation_count;
+        for (pending_phases) |phase| {
+            try result.worklists.forPhase(phase).appendSlice(allocator, self.worklists.forPhaseConst(phase).items);
+        }
+        try result.resolved.appendSlice(allocator, self.resolved.items);
+        try result.invalid.appendSlice(allocator, self.invalid.items);
+        result.finalized_functions = try self.finalized_functions.cloneWithAllocator(allocator);
+        return result;
+    }
+
     fn appendModules(self: *ResolutionState, allocator: std.mem.Allocator, modules: []const module_sg.ModuleSemanticGraph, offsets: []const globalizer.Offsets) !void {
         const total = totalPending(modules);
         // Reserve before publishing queues so failure preserves all logical state.
@@ -3746,4 +3762,34 @@ test "semantic session appends modules and resumes with stable type identities" 
     try std.testing.expectEqual(@as(usize, 2), result.graph.modules.items.len);
     try std.testing.expectEqual(primitives.BuiltinType.Int32, result.graph.types.items[@intFromEnum(first_id)].builtin);
     try std.testing.expectEqual(primitives.BuiltinType.UInt8, result.graph.types.items[@intFromEnum(second_id)].builtin);
+}
+
+fn cloneResolutionWithAllocationFailures(allocator: std.mem.Allocator) !void {
+    const a = std.testing.allocator;
+    var source = ResolutionState.init(a);
+    defer source.deinit(a);
+    source.worklists.module_count = 1;
+    source.worklists.operation_count = 1;
+    try source.worklists.types_and_generics.append(a, .{ .module_index = 0, .operation_index = 0, .flat_index = 0, .owner_function = null });
+    try source.resolved.append(a, false);
+    try source.invalid.append(a, false);
+    try source.finalized_functions.put(@enumFromInt(3), {});
+    source.progress.profile_rounds = 7;
+    var candidate = try source.clone(allocator);
+    defer candidate.deinit(allocator);
+    candidate.resolved.items[0] = true;
+    candidate.invalid.items[0] = true;
+    candidate.worklists.types_and_generics.clearRetainingCapacity();
+    _ = candidate.finalized_functions.remove(@enumFromInt(3));
+    candidate.progress.profile_rounds += 1;
+    try std.testing.expect(!source.resolved.items[0]);
+    try std.testing.expect(!source.invalid.items[0]);
+    try std.testing.expectEqual(@as(usize, 1), source.worklists.types_and_generics.items.len);
+    try std.testing.expect(source.finalized_functions.contains(@enumFromInt(3)));
+    try std.testing.expectEqual(@as(usize, 7), source.progress.profile_rounds);
+    try std.testing.expectEqual(@as(usize, 8), candidate.progress.profile_rounds);
+}
+
+test "resolution state clones isolate pending work and finalization" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, cloneResolutionWithAllocationFailures, .{});
 }

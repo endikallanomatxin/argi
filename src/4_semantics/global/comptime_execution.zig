@@ -27,6 +27,21 @@ pub const Scheduler = struct {
     const Kind = enum { integer, boolean };
     const Value = union(Kind) { integer: i64, boolean: bool };
 
+    /// Retain recipes and frozen results in an independently owned candidate.
+    /// The caller supplies the resolver bound to its cloned semantic graph;
+    /// materialized node/type identities remain valid because graph IDs match.
+    pub fn clone(self: *const Scheduler, allocator: std.mem.Allocator, functions: *Functions) !Scheduler {
+        var result: Scheduler = .{ .allocator = allocator, .functions = functions, .stable_type_count = self.stable_type_count };
+        errdefer result.deinit();
+        for (self.requests.items) |request| {
+            try result.enqueue(request.module, request.expression, &request.bindings, request.kind);
+            const retained = &result.requests.items[result.requests.items.len - 1];
+            retained.node = request.node;
+            retained.value = request.value;
+        }
+        return result;
+    }
+
     pub fn deinit(self: *Scheduler) void {
         for (self.requests.items) |*request| request.bindings.deinit(self.allocator);
         self.requests.deinit(self.allocator);
@@ -280,4 +295,36 @@ test "staged conditions keep Bool results distinct from integer requests" {
     try std.testing.expectEqual(false, try Scheduler.boolean(&scheduler, 0, @enumFromInt(0), &bindings));
     try std.testing.expectError(error.ComptimeExecutionPending, Scheduler.integer(&scheduler, 0, @enumFromInt(0), &bindings));
     try std.testing.expectEqual(@as(usize, 2), scheduler.requests.items.len);
+}
+
+fn cloneStagedRequests(allocator: std.mem.Allocator) !void {
+    const a = std.testing.allocator;
+    var source: Scheduler = .{ .allocator = a, .functions = undefined, .stable_type_count = 4 };
+    defer source.deinit();
+    var bindings = try Generics.Bindings.init(a, 1);
+    defer bindings.deinit(a);
+    bindings.types[0] = @enumFromInt(2);
+    bindings.ints[0] = 7;
+    try std.testing.expectError(error.ComptimeExecutionPending, Scheduler.integer(&source, 0, @enumFromInt(0), &bindings));
+    source.requests.items[0].node = @enumFromInt(5);
+    source.requests.items[0].value = .{ .integer = 42 };
+    try std.testing.expectError(error.ComptimeExecutionPending, Scheduler.boolean(&source, 0, @enumFromInt(1), &bindings));
+    var functions: Functions = undefined;
+    var candidate = try source.clone(allocator, &functions);
+    defer candidate.deinit();
+    try std.testing.expect(candidate.functions == &functions);
+    try std.testing.expectEqual(@as(i64, 42), try Scheduler.integer(&candidate, 0, @enumFromInt(0), &bindings));
+    try std.testing.expectEqual(@as(?g.GlobalNodeId, @enumFromInt(5)), candidate.requests.items[0].node);
+    candidate.requests.items[1].bindings.ints[0] = 99;
+    candidate.requests.items[1].bindings.types[0] = @enumFromInt(3);
+    candidate.requests.items[1].value = .{ .boolean = true };
+    try std.testing.expectEqual(@as(?i64, 7), source.requests.items[1].bindings.ints[0]);
+    try std.testing.expectEqual(@as(?g.GlobalTypeId, @enumFromInt(2)), source.requests.items[1].bindings.types[0]);
+    try std.testing.expectEqual(null, source.requests.items[1].value);
+    Scheduler.rollback(&candidate, 1);
+    try std.testing.expectEqual(@as(usize, 2), source.requests.items.len);
+}
+
+test "staged execution clones isolate recipes and retain frozen results" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, cloneStagedRequests, .{});
 }
