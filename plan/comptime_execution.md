@@ -37,9 +37,12 @@ uses the retained semantic session's explicit initialization, advancement and
 publication lifecycle. Contract registration tracks its source cursor and module
 views can extend the immutable prefix; template indexes extend cached groups,
 including empty ones. Import linking can append a module suffix transactionally
-without retargeting retained aliases. Next, coordinate transactional module
-addition in the session before wiring conditional imports and interactive
-submissions.
+without retargeting retained aliases. The session can append a borrowed module
+suffix and resume resolution, initializing only its external type slots; repeated
+FFI preparation preserves already augmented signatures. Preparation failure
+currently poisons this unpublished construction session. Next, isolate submission
+publication so rejection preserves the accepted session before wiring conditional
+imports and interactive submissions.
 JIT is deferred until measurements justify it; module origin is not an execution
 policy. Keep function identities independent of the executor, without introducing
 a mixed VM/native ABI or native-layout storage solely for a possible future JIT.

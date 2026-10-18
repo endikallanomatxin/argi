@@ -478,6 +478,52 @@ pub const Session = struct {
         return if (self.reachable) |*set| set else null;
     }
 
+    /// Add a borrowed immutable module suffix to an unpublished session.
+    /// This construction API poisons the session on a preparation failure.
+    /// Interactive publication must add a transaction around this operation.
+    pub fn appendModules(self: *Session, modules: []const module_sg.ModuleSemanticGraph) !void {
+        if (self.phase != .ready and self.phase != .quiescent) return error.InvalidSemanticSessionState;
+        const previous = self.modules.len;
+        if (modules.len < previous) return error.InvalidSemanticModuleViews;
+        if (modules.len == previous) return;
+        errdefer self.phase = .failed;
+        const allocator = self.allocator;
+        try self.relocation.append(allocator, modules[previous..], .allow_holes);
+        self.modules = modules;
+        try self.resolvers.extendModuleViews(modules, self.relocation.offsets.items);
+        try module_linker.append(allocator, &self.relocation.graph, modules, self.relocation.offsets.items, previous);
+        try markUnresolvedTypeSlots(allocator, &self.relocation.graph, modules[previous..], self.relocation.offsets.items[previous..]);
+        try c_abi.prepareForeignCapabilities(allocator, &self.relocation.graph);
+        const core = &self.resolvers.core;
+        const generics = &self.resolvers.generics;
+        const contracts = &self.resolvers.contracts;
+        if (try resolveQualifiedChoiceOptions(core, self.options.diagnostics)) return error.Reported;
+        try core.resolveExternalTypesFrom(previous);
+        try generics.resolveExternalTypesFrom(previous);
+        try contracts.prepareParticipantConformances();
+        try reportParticipantConformanceFailure(allocator, &self.relocation.graph, self.options.diagnostics, contracts.participant_conformance_failure);
+        try contracts.resolveAssociatedTypes();
+        _ = try generics.materializeKnownTypes();
+        _ = try self.resolvers.control.materializeSugarTypes();
+        try self.resolution.appendModules(allocator, modules, self.relocation.offsets.items);
+        if (self.options.profile_io != null) {
+            for (modules[previous..]) |module| for (module.semantic.pending_operations.items) |operation| {
+                self.resolution.pending_stats.initial(operation);
+            };
+        }
+        try contracts.validateParticipantConformances();
+        try reportParticipantConformanceFailure(allocator, &self.relocation.graph, self.options.diagnostics, contracts.participant_conformance_failure);
+        if (self.reachable) |*set| {
+            var roots = try reachability_mod.executionRoots(allocator, &self.relocation.graph, self.options.selected_test_name);
+            defer roots.deinit();
+            // Root selection includes newly added entry and test declarations;
+            // retain the existing closure through the ordinary expansion pass.
+            var iterator = roots.values.keyIterator();
+            while (iterator.next()) |id| _ = try set.include(id.*);
+        }
+        self.phase = .ready;
+    }
+
     pub fn advance(self: *Session) !void {
         if (self.phase != .ready and self.phase != .quiescent) return error.InvalidSemanticSessionState;
         errdefer self.phase = .failed;
@@ -3670,4 +3716,34 @@ test "semantic session forbids reuse after publication fails" {
     try std.testing.expectError(error.UnsupportedGlobalSemantic, session.finish());
     try std.testing.expectError(error.InvalidSemanticSessionState, session.advance());
     try std.testing.expectError(error.InvalidSemanticSessionState, session.finish());
+}
+
+test "semantic session appends modules and resumes with stable type identities" {
+    const a = std.testing.allocator;
+    var first: module_sg.ModuleSemanticGraph = .{ .module_dir = try a.dupe(u8, "first") };
+    defer first.deinit(a);
+    try first.semantic.types.append(a, .{ .resolved = .{ .builtin = .Int32 } });
+    var second: module_sg.ModuleSemanticGraph = .{ .module_dir = try a.dupe(u8, "second") };
+    defer second.deinit(a);
+    try second.semantic.types.append(a, .{ .resolved = .{ .builtin = .UInt8 } });
+    const modules = [_]module_sg.ModuleSemanticGraph{ first, second };
+    var session: Session = undefined;
+    try session.init(a, modules[0..1], .{ .exhaustive_function_bodies = false });
+    defer session.deinit();
+    try session.advance();
+    const first_id = globalizer.globalType(session.relocation.offsets.items[0], @enumFromInt(0));
+    try session.appendModules(&modules);
+    try std.testing.expectError(error.InvalidSemanticSessionState, session.finish());
+    try std.testing.expectEqual(@as(usize, 2), session.resolvers.core.modules.len);
+    try std.testing.expectEqual(first_id, globalizer.globalType(session.relocation.offsets.items[0], @enumFromInt(0)));
+    const checkpoint = session.relocation.graph.checkpoint();
+    try session.appendModules(&modules);
+    try std.testing.expectEqualDeep(checkpoint, session.relocation.graph.checkpoint());
+    try session.advance();
+    const second_id = globalizer.globalType(session.relocation.offsets.items[1], @enumFromInt(0));
+    var result = try session.finish();
+    defer result.graph.deinit(a);
+    try std.testing.expectEqual(@as(usize, 2), result.graph.modules.items.len);
+    try std.testing.expectEqual(primitives.BuiltinType.Int32, result.graph.types.items[@intFromEnum(first_id)].builtin);
+    try std.testing.expectEqual(primitives.BuiltinType.UInt8, result.graph.types.items[@intFromEnum(second_id)].builtin);
 }

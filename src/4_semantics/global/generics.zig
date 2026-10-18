@@ -60,7 +60,14 @@ pub const Resolver = struct {
     }
 
     pub fn resolveExternalTypes(self: *Resolver) !void {
-        for (self.modules, 0..) |*module, module_index| {
+        return self.resolveExternalTypesFrom(0);
+    }
+
+    /// Initialize relocated holes in a new module suffix without overwriting
+    /// retained slots already materialized by earlier resolution passes.
+    pub fn resolveExternalTypesFrom(self: *Resolver, first_module: usize) !void {
+        if (first_module > self.modules.len) return error.InvalidSemanticModuleViews;
+        for (self.modules[first_module..], first_module..) |*module, module_index| {
             const o = self.offsets[module_index];
             for (0..module_views.typeCount(module)) |raw_type| {
                 const local_id: module_entities.ModuleTypeId = @enumFromInt(@as(u32, @intCast(raw_type)));
