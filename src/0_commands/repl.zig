@@ -3,11 +3,13 @@ const sf = @import("../1_base/source_files.zig");
 const diag = @import("../1_base/diagnostic.zig");
 const frontend = @import("frontend_pipeline.zig");
 const interactive = @import("../execution/interactive.zig");
+const repl_input = @import("repl_input.zig");
 const value = @import("../5_codegen/bytecode/value.zig");
 
 const help =
     \\Enter definitions, statements or expressions. Each line is one submission.
     \\Expression results remain available as _0, _1, ... until reset or exit.
+    \\Up / Down      Recall previous input lines (terminal only)
     \\:begin / :end  Submit a multiline definition or statement block
     \\:reset         Clean up and start a fresh session
     \\:quit          Clean up and exit
@@ -47,7 +49,8 @@ pub fn run(io: std.Io, environ: ?*const std.process.Environ.Map, args: []const [
     var input = std.Io.File.stdin().reader(io, &input_buffer);
     var output_buffer: [4096]u8 = undefined;
     var output = std.Io.File.stdout().writer(io, &output_buffer);
-    try interact(&session, &input.interface, &output.interface, try std.Io.File.stdin().isTty(io));
+    const terminal = try std.Io.File.stdin().isTty(io) and try std.Io.File.stdout().isTty(io);
+    try interact(&session, &input.interface, &output.interface, terminal);
 }
 
 /// Transport loop only. Parsing, resolution, safety, publication and execution
@@ -65,12 +68,16 @@ fn interact(session: *interactive.Interactive, input: *std.Io.Reader, output: *s
 fn readSubmissions(session: *interactive.Interactive, input: *std.Io.Reader, output: *std.Io.Writer, terminal: bool) !void {
     var block: std.ArrayList(u8) = .empty;
     defer block.deinit(session.allocator);
+    var editor: repl_input.Editor = .{ .allocator = session.allocator };
+    defer editor.deinit();
     var multiline = false;
     if (terminal) try output.writeAll("Argi experimental REPL. :help for commands.\n");
     while (true) {
-        if (terminal) try output.writeAll(if (multiline) "... " else ">>> ");
         try output.flush();
-        const line = (try input.takeDelimiter('\n')) orelse break;
+        const line = (if (terminal)
+            try readTerminal(&editor, input, output, if (multiline) "... " else ">>> ")
+        else
+            try input.takeDelimiter('\n')) orelse break;
         const text = std.mem.trim(u8, line, " \t\r");
         if (multiline) {
             if (std.mem.eql(u8, text, ":end")) {
@@ -100,6 +107,12 @@ fn readSubmissions(session: *interactive.Interactive, input: *std.Io.Reader, out
         }
     }
     if (multiline) try output.writeAll("Incomplete multiline submission discarded.\n");
+}
+
+fn readTerminal(editor: *repl_input.Editor, input: *std.Io.Reader, output: *std.Io.Writer, prompt: []const u8) !?[]const u8 {
+    const terminal = try repl_input.Terminal.enter();
+    defer terminal.restore();
+    return editor.read(input, output, prompt);
 }
 
 fn evaluate(session: *interactive.Interactive, output: *std.Io.Writer, source: []const u8) !void {

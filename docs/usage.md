@@ -175,6 +175,9 @@ compilation regardless of that option. JIT remains deferred.
 Run `argi repl` to load core and start a retained bytecode session. The same VM
 subset and execution limits described above apply. `--sysroot <path>` selects an
 installation prefix. Input can come from a terminal or a pipe.
+In a terminal, Up/Down recall earlier lines and restore the unfinished draft.
+Recalled lines can be edited before submission; Ctrl-C cancels the current line
+and Ctrl-D on an empty line exits. History lasts for the current REPL process.
 
 Top-level `assume` declarations remain available to calls and selected cleanup in
 later submissions. Inner blocks keep lexical assumptions local. Rejected
