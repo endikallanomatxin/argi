@@ -13753,3 +13753,13 @@ test "feature_tests/execution/60X_concrete_output_default_consumption" {
 test "feature_tests/execution/61X_output_default_implicit_copy" {
     try buildExpectFail("tests/feature_tests/execution/61X_output_default_implicit_copy", "cannot be copied implicitly");
 }
+
+test "feature_tests/execution/62_comptime_aggregate_projection" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/62_comptime_aggregate_projection");
+    try runExpect("tests/feature_tests/execution/62_comptime_aggregate_projection", 42);
+    try vmExpect("tests/feature_tests/execution/62_comptime_aggregate_projection", 42, null);
+}
+
+test "feature_tests/execution/63X_comptime_projection_bounds" {
+    try buildExpectFail("tests/feature_tests/execution/63X_comptime_projection_bounds", "#run array index is out of bounds");
+}

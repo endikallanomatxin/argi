@@ -15,7 +15,7 @@ definite initialization once before execution of a bounded scalar/aggregate
 subset. Function and type identities remain those of the retained global graph. See [usage](../docs/usage.md#experimental-bytecode-execution).
 
 Next: resolve lifecycle transitions for runtime destinations, extend partial
-initialization and error propagation, then build persistent sessions and `#run`.
+initialization and error propagation, then build persistent sessions and stage compile-time evaluation.
 Do not bypass safety to execute a larger subset.
 
 REPL submissions and imported Argi functions use the same bytecode executor.
@@ -331,7 +331,9 @@ evaluations do not rewrite ordinary runtime source nodes. A separate bytecode
 expression entry supplies typed operand slots without inventing a GlobalFunctionId;
 it uses the same verifier, frame stack and retained-context rules. Owning entry
 inputs/results remain rejected until submission lifetime/cleanup plans exist.
-General expression capture and staged type formation remain pending.
+Field and array projections also use this entry path, including aggregate
+results and ordinary VM bounds checks. General expression capture and staged
+type formation remain pending.
 
 Dependency units use the existing function/node/evidence traversal without
 program roots. Summary inference and temporal checking share the same selected
@@ -355,6 +357,16 @@ runtime System/FFI capabilities or implicitly turn REPL values into constants.
 Cache frozen results against checked code/evidence versions, target, explicit
 inputs and declared external reads, never evaluator storage IDs or native
 addresses.
+
+## Next integration steps
+
+- Retain executable compile-time requests in parameterized integer expressions;
+  the current `IntExpression` cannot represent calls. Resolve closed dependencies
+  before freezing their results, and defer requests whose bodies/types are pending.
+- Make semantic worklists wake users of frozen results before reporting unresolved
+  types. Dependency-unit checking must not require unrelated bodies to finish.
+- Replace target-only preprocessing with staged conditional declaration discovery
+  before enabling computed `#if`; discarded imports must remain undiscovered.
 
 ## Remaining decisions
 

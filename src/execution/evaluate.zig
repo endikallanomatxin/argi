@@ -122,13 +122,13 @@ fn freeze(allocator: std.mem.Allocator, graph: *g.GlobalSemanticGraph, ty: g.Glo
     return result;
 }
 
-// Execute an already-selected scalar primitive with constant operands. It uses
+// Execute an already-selected expression with constant operands. It uses
 // the normal expression lowerer, verifier and VM, without synthesizing language
 // functions or duplicating primitive semantics in the constant resolver.
-pub fn evaluatePrimitive(allocator: std.mem.Allocator, graph: *g.GlobalSemanticGraph, root: g.GlobalNodeId, operands: []const g.GlobalNodeId, args: []const bytecode.Value, budget: *Limits) !g.GlobalNodeId {
+pub fn evaluateExpression(allocator: std.mem.Allocator, graph: *g.GlobalSemanticGraph, root: g.GlobalNodeId, operands: []const g.GlobalNodeId, args: []const bytecode.Value, budget: *Limits) !g.GlobalNodeId {
     const node = graph.node(root);
     switch (node.content) {
-        .binary_operation, .comparison => {},
+        .binary_operation, .comparison, .struct_field_access, .array_index => {},
         else => return error.UnsupportedCompileTimeExpression,
     }
     var scratch = std.heap.ArenaAllocator.init(allocator);
@@ -150,7 +150,13 @@ pub fn evaluatePrimitive(allocator: std.mem.Allocator, graph: *g.GlobalSemanticG
     }
     const result = try executor.runExpression(args);
     if (result.len != 1 or !bytecode.valueFits(graph, ty, result[0])) return error.UnfreezableEvaluationResult;
-    // These primitives have scalar results; freeze cannot publish aggregate
-    // tables or reference storage while exporting this one result.
+    const node_start = graph.nodes.items.len;
+    const field_start = graph.value_fields.items.len;
+    const reference_start = graph.node_refs.items.len;
+    errdefer {
+        graph.nodes.items.len = node_start;
+        graph.value_fields.items.len = field_start;
+        graph.node_refs.items.len = reference_start;
+    }
     return freeze(allocator, graph, ty, result[0], node.source);
 }

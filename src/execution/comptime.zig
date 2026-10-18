@@ -124,14 +124,28 @@ const Context = struct {
             .int_literal => |value| .{ .integer = value },
             .bool_literal => |value| .{ .boolean = value },
             .function_call => try self.constant(try self.callConstant(id, depth + 1), depth + 1),
-            .binary_operation, .comparison => blk: {
-                const operands: [2]g.GlobalNodeId = switch (node.content) {
-                    .binary_operation => |value| .{ value.left, value.right },
-                    .comparison => |value| .{ value.left, value.right },
+            .binary_operation, .comparison, .struct_field_access, .array_index => blk: {
+                var operands: [2]g.GlobalNodeId = undefined;
+                const count: usize = switch (node.content) {
+                    .binary_operation => |value| setOperands(&operands, value.left, value.right),
+                    .comparison => |value| setOperands(&operands, value.left, value.right),
+                    .struct_field_access => |value| one: {
+                        operands[0] = value.value;
+                        break :one 1;
+                    },
+                    .array_index => |value| two: {
+                        const base = self.graph.node(value.array_ptr);
+                        // Array indexing can carry a direct value or its borrow.
+                        // Capture the aggregate, never export that reference.
+                        const array = if (base.content == .address_of) base.content.address_of else value.array_ptr;
+                        break :two setOperands(&operands, array, value.index);
+                    },
                     else => unreachable,
                 };
-                const args = [2]b.Value{ try self.constant(operands[0], depth + 1), try self.constant(operands[1], depth + 1) };
-                const result = try @import("evaluate.zig").evaluatePrimitive(self.allocator, self.graph, id, &operands, &args, &self.budget);
+                var args: [2]b.Value = undefined;
+                for (operands[0..count], args[0..count]) |operand, *arg|
+                    arg.* = try self.constant(operand, depth + 1);
+                const result = try @import("evaluate.zig").evaluateExpression(self.allocator, self.graph, id, operands[0..count], args[0..count], &self.budget);
                 break :blk try self.constant(result, depth + 1);
             },
             .binding_use => |id_binding| blk: {
@@ -171,6 +185,11 @@ const Context = struct {
         };
     }
 
+    fn setOperands(operands: *[2]g.GlobalNodeId, left: g.GlobalNodeId, right: g.GlobalNodeId) usize {
+        operands.* = .{ left, right };
+        return 2;
+    }
+
     fn report(self: *Context, source: p.SourceRef, err: anyerror) !void {
         var location = @import("../2_tokens/token.zig").Location{ .file = @enumFromInt(0), .offset = source.offset };
         if (source.file_index < self.graph.files.items.len) {
@@ -188,6 +207,7 @@ const Context = struct {
             error.CompileTimeDependencyDepthLimit => "#run dependencies exceeded their nesting limit",
             error.CompileTimeEvaluationCycle => "cyclic dependency between #run evaluations",
             error.ExecutionAborted => "#run evaluation aborted",
+            error.ExecutionIndexOutOfBounds => "#run array index is out of bounds",
             error.ExecutionInstructionLimit => "#run evaluation exceeded its instruction limit",
             error.ExecutionCallDepthLimit => "#run evaluation exceeded its call depth limit",
             error.ExecutionMemoryLimit => "#run evaluation exceeded its storage limit",

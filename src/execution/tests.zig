@@ -1244,3 +1244,15 @@ test "bytecode source run evaluates concrete output defaults in function scope" 
         \\}
     , .{ .instructions = 50 }));
 }
+
+test "bytecode source run projects aggregate argument expressions" {
+    try std.testing.expectEqual(@as(i128, 42), try execute(
+        \\values() -> (.data: (.items: [2]Int32)) := {
+        \\    data = (.items = (20, 42))
+        \\}
+        \\identity(.value: Int32) -> (.result: Int32 = value) := {}
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    status_code = #run identity(.value = values().items[1])
+        \\}
+    , .{ .instructions = 50 }));
+}
