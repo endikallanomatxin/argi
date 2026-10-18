@@ -567,6 +567,18 @@ pub const Session = struct {
 
     /// Keep an explicitly selected command executable through lazy resolution
     /// and publication. It uses the same reachability closure as program roots.
+    /// Designate a command before ownership finalization. Direct declarations
+    /// survive command completion; their selected cleanup remains available for
+    /// explicit session exit. Nested scopes keep ordinary destruction rules.
+    pub fn prepareContinuationScope(self: *Session, function: global_sg.GlobalFunctionId) !void {
+        if (@intFromEnum(function) >= self.relocation.graph.functions.items.len) return error.InvalidSafetyContinuation;
+        const target = self.relocation.graph.function(function);
+        if (target.input.len != 0 or target.output.len != 0 or (self.resolution.finalized_functions.contains(function) and self.resolvers.ownership.continuation_function != function))
+            return error.InvalidSafetyContinuation;
+        try self.includeExecutionRoot(function);
+        self.resolvers.ownership.continuation_function = function;
+    }
+
     pub fn includeExecutionRoot(self: *Session, function: global_sg.GlobalFunctionId) !void {
         if (self.phase != .ready and self.phase != .quiescent) return error.InvalidSemanticSessionState;
         if (@intFromEnum(function) >= self.relocation.graph.functions.items.len) return error.InvalidSafetyContinuation;

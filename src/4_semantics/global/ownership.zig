@@ -44,6 +44,9 @@ pub const Resolver = struct {
     auto_nodes: std.ArrayList(AutoNode) = .empty,
     replacement_candidates: std.AutoHashMapUnmanaged(global_sg.GlobalNodeId, void) = .empty,
     empty_block: ?global_sg.GlobalBlockId = null,
+    // Only the designated command's direct declarations have session duration.
+    // Nested blocks and initializer temporaries retain ordinary lexical cleanup.
+    continuation_function: ?global_sg.GlobalFunctionId = null,
     loop_cleanup_base: ?struct { active: usize, defers: usize } = null,
     stats: Stats = .{},
     profile_io: ?std.Io = null,
@@ -728,7 +731,9 @@ pub const Resolver = struct {
                         reach_context.Context.fromGlobal(visible.items, owner_function),
                         module_index,
                     );
-                    try active.append(self.allocator, binding);
+                    const persistent = self.continuation_function == owner_function and
+                        self.graph.function(owner_function).body == block_id;
+                    if (!persistent) try active.append(self.allocator, binding);
                 },
                 .return_statement => |*ret| ret.cleanup = try self.appendCleanup(active.items, defers.items),
                 .code_block, .value_sequence => |child| try self.finalizeBlock(child, &active, &defers, &visible, &.{}, owner_function, module_index),

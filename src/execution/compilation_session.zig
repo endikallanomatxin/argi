@@ -123,7 +123,7 @@ pub const CompilationSession = struct {
         try self.semantic.fork(candidate, self.allocator, diagnostics);
         errdefer candidate.deinit();
         try candidate.appendModules(modules);
-        if (continuation) |function| try candidate.includeExecutionRoot(function);
+        if (continuation) |function| try candidate.prepareContinuationScope(function);
         try candidate.advance();
         const proof = if (continuation != null) try TemporalProof.create(self.allocator, self.temporal) else null;
         errdefer if (proof) |owned| owned.release();
@@ -368,4 +368,45 @@ fn prepareContinuationsWithAllocationFailures(allocator: std.mem.Allocator) !voi
 
 test "compilation session publishes temporal continuations and releases rejected proof tails" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, prepareContinuationsWithAllocationFailures, .{});
+}
+
+test "continuation scopes retain direct owners and clean nested owners" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const source =
+        "Deinit#(.T: Type): Contract = (.deinit: (.self: $&T) -> ())\n" ++
+        "Resource: Type = ()\n" ++
+        "implement Deinit#(Resource) (.deinit = (.self: $&Resource) -> () {})\n" ++
+        "command := () -> () { retained: Resource = ()\n { temporary: Resource = () } }\n";
+    const files = [_]@import("../1_base/source_files.zig").SourceFile{.{ .path = "submission/main.rg", .code = source }};
+    var diagnostics = diagnostics_mod.Diagnostics.init(&a, &files);
+    defer diagnostics.deinit();
+    var module = try sourceModule(a, source, &diagnostics);
+    defer module.deinit(a);
+    // This isolated fixture supplies its own standard Deinit identity.
+    module.is_bundled_core = true;
+    const modules = [_]module_sg.ModuleSemanticGraph{module};
+    var session = try CompilationSession.init(a, &.{}, .{ .exhaustive_function_bodies = false });
+    defer session.deinit();
+    // Resolve the command's relocated function identity from its declaration.
+    const command = for (module.declarations.items) |declaration| {
+        if (std.mem.eql(u8, module.text(declaration.name), "command")) break declaration.function_id.?;
+    } else return error.MissingCommand;
+    var candidate = try session.prepareContinuation(&modules, &diagnostics, @enumFromInt(@intFromEnum(command)));
+    defer candidate.deinit();
+    const graph = &candidate.checked.?.graph;
+    var persistent_cleanup: usize = 0;
+    var temporary_cleanup: usize = 0;
+    for (graph.blocks.items) |block| {
+        for (graph.node_refs.items[block.nodes.start..][0..block.nodes.len]) |node| {
+            if (graph.node(node).content != .auto_deinit_binding) continue;
+            const cleanup = graph.auto_deinits.items[@intFromEnum(graph.node(node).content.auto_deinit_binding)];
+            const name = graph.text(graph.binding(cleanup.binding).name);
+            if (std.mem.eql(u8, name, "retained")) persistent_cleanup += 1;
+            if (std.mem.eql(u8, name, "temporary")) temporary_cleanup += 1;
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 0), persistent_cleanup);
+    try std.testing.expectEqual(@as(usize, 1), temporary_cleanup);
 }

@@ -191,6 +191,7 @@ pub const Context = struct {
         self.ownership.replacement_candidates = try source.ownership.replacement_candidates.clone(allocator);
         self.ownership.denied_copy = source.ownership.denied_copy;
         self.ownership.empty_block = source.ownership.empty_block;
+        self.ownership.continuation_function = source.ownership.continuation_function;
         self.ownership.loop_cleanup_base = source.ownership.loop_cleanup_base;
         self.control.for_each_failure = source.control.for_each_failure;
         self.generic_functions.failed_constraint = source.generic_functions.failed_constraint;
