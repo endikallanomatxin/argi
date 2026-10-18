@@ -19,7 +19,7 @@ each copy can advance independently. All generation operations receive a
 mutable reference, so state dependencies remain explicit.
 
 ```rg
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     generator ::= Pcg32(.seed = 42)
     first ::= next_uint32(.self = $&generator).value
     bounded ::= unwrap_or_abort(.value = uniform_uint32(

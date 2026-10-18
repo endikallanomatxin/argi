@@ -68,7 +68,7 @@ number(.box: &NumberBox) -> (.result: &Int32) := {
     result = &box&.value
 }
 
-main() -> () := {
+main := () -> () {
     box ::= NumberBox(7)
     reference ::= number(&box)
 }

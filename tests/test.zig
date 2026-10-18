@@ -757,7 +757,7 @@ test "argi init creates executable package" {
     try expect(std.mem.indexOf(u8, text, "[run]\n") != null);
     try expect(std.mem.indexOf(u8, text, "default = \"hello\"\n") != null);
     try expectEqualStrings(
-        "main(.system: System) -> (.status_code: Int32 = 0) := {\n" ++
+        "main := (.system: System) -> (.status_code: Int32 = 0) {\n" ++
             "    assume ffi ::= system.ffi\n" ++
             "    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)\n" ++
             "    assume error_tracer ::= FixedSizeErrorTracer(\n" ++

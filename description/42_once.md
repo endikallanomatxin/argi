@@ -24,7 +24,7 @@ once init_terminal() -> () := {
     ...
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     init_terminal()
     status_code = 0
 }
@@ -37,7 +37,7 @@ once init_terminal() -> () := {
     ...
 }
 
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     init_terminal()
     init_terminal()
     status_code = 0
@@ -78,7 +78,7 @@ path_b() -> () := {
 Valid entrypoint:
 
 ```argi
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     path_a()
     status_code = 0
 }
@@ -87,7 +87,7 @@ main() -> (.status_code: Int32) := {
 Invalid entrypoint:
 
 ```argi
-main() -> (.status_code: Int32) := {
+main := () -> (.status_code: Int32) {
     path_a()
     path_b()
     status_code = 0
@@ -113,7 +113,7 @@ once init_terminal() -> () := {
     ...
 }
 
-main(.cond: Bool) -> (.status_code: Int32) := {
+main := (.cond: Bool) -> (.status_code: Int32) {
     if cond {
         init_terminal()
     } else {

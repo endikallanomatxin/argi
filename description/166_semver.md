@@ -5,7 +5,7 @@ The explicit `semver` module implements the syntax and precedence of
 
 ```rg
 semver := import("semver")
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     first ::= unwrap_or_abort(.value = semver.VersionView(.text = "1.2.3-rc.1")).result
     second ::= unwrap_or_abort(.value = semver.parse(.text = "1.2.3+build.001")).result
     if semver.compare(.left = &first, .right = &second).order >= 0 { abort }

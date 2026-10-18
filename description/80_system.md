@@ -40,7 +40,7 @@ may be passed explicitly or supplied through lexical `assume` or a declared
 `reach` input. There is no implicit default allocator. For example:
 
 ```rg
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
 }
 ```
@@ -56,7 +56,7 @@ exits with `0`; the integer form uses its returned status, including on early
 `return`. There is no special fallible-main contract.
 
 ```rg
-main(.system: System) -> () := {
+main := (.system: System) -> () {
     assume writer ::= $&system.terminal&.stderr
     write($&system.terminal&.stdout, "ready\n")!!!
 }
@@ -68,7 +68,7 @@ such an early return, initialize `.status_code: Int32 = 0` and assign `1` in
 an attached error block:
 
 ```rg
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     assume writer ::= $&system.terminal&.stderr
     write($&system.terminal&.stdout, "ready\n")!!! { status_code = 1 }
 }
@@ -98,7 +98,7 @@ Error-reporting helpers also take a writer; route them explicitly to
 `system.terminal&.stderr` or select that writer in a nested lexical scope.
 
 ```rg
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     assume reader ::= $&system.terminal&.stdin
     assume writer ::= $&system.terminal&.stdout
     print("Hello world\n")
@@ -122,7 +122,7 @@ to the base writer. Both borrowed resources must outlive the wrapper; temporarie
 referenced in the `assume` expression remain alive for its enclosing scope.
 
 ```rg
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     assume writer ::= $&BufferedWriter#(.base_type: File)(
         .base = $&system.terminal&.stdout,
         .buffer = view($&zeroed#(.t: [4096]UInt8)()),

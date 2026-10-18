@@ -15,7 +15,7 @@ without a default must receive a value before the function completes. A
 default supplies its value when the body does not replace it:
 
 ```rg
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
 }
 ```
 

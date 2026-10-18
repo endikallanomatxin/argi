@@ -97,7 +97,7 @@ fn writeFileIfMissing(io: std.Io, path: []const u8, contents: []const u8) !void 
 }
 
 const moduleMainParameterized =
-    \\main(.system: System) -> (.status_code: Int32 = 0) := {
+    \\main := (.system: System) -> (.status_code: Int32 = 0) {
     \\    assume ffi ::= system.ffi
     \\    assume allocator ::= $&GeneralPurposeAllocator(system.page_allocator)
     \\    assume error_tracer ::= FixedSizeErrorTracer(
@@ -284,6 +284,7 @@ test "init executable scaffolds basic layout" {
     defer std.testing.allocator.free(private_dir);
 
     try expectFileExists(std.testing.io, entry_main);
+    try expectFileContains(std.testing.io, entry_main, "main := (.system: System) -> (.status_code: Int32 = 0) {");
     try expectFileExists(std.testing.io, manifest);
     try expectFileExists(std.testing.io, gitignore);
     try expectFileMissing(std.testing.io, public_dir);

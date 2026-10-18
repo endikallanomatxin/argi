@@ -69,7 +69,7 @@ Interrupted waits continue with their remaining interval; failures return
 `sleep_failed`.
 
 ```rg
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     assume clock ::= system.clock
     start ::= unwrap_or_abort(.value = monotonic_now()).result
     delay ::= unwrap_or_abort(.value = duration_from_milliseconds(.milliseconds = 10)).result

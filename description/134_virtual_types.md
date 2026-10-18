@@ -48,7 +48,7 @@ _set_box(.self: $&Box, .value: Int32) -> () := {
     self&.value = value
 }
 
-main() -> (.status_code: Int32 = 0) := {
+main := () -> (.status_code: Int32 = 0) {
     box :: Box = (.value = 42)
     shape :: Virtual#(.contract: Shape) = to_virtual(.value = $&box)
     set_value(.self = $&shape, .value = 43)

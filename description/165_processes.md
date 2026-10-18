@@ -5,7 +5,7 @@
 `spawn` accepts it as `.self: &ProcessManager = reach proc_man`.
 
 ```rg
-main(.system: System) -> (.status_code: Int32 = 0) := {
+main := (.system: System) -> (.status_code: Int32 = 0) {
     assume proc_man ::= system.proc_man
     args: [1]StringView = ("--version")
     child ::= unwrap_or_abort(.value = spawn(
