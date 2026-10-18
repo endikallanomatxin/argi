@@ -1664,11 +1664,11 @@ pub const CodeGenerator = struct {
             if (value.type_ref != target_ref) return CodegenError.InvalidType;
             return .{ .value_ref = value.value_ref, .type_ref = target_ref, .ty = target };
         }
-        const source_kind = switch (self.graph.semanticType(source)) {
+        const source_kind = switch (types.representation(self.graph, source) orelse return CodegenError.InvalidType) {
             .builtin => |kind| kind,
             else => null,
         };
-        const target_kind = switch (self.graph.semanticType(target)) {
+        const target_kind = switch (types.representation(self.graph, target) orelse return CodegenError.InvalidType) {
             .builtin => |kind| kind,
             else => null,
         };
@@ -2610,14 +2610,14 @@ pub const CodeGenerator = struct {
     }
 
     fn isFloat(self: *CodeGenerator, ty: graph_mod.GlobalTypeId) bool {
-        return switch (self.graph.types.items[@intFromEnum(ty)]) {
+        return switch (types.representation(self.graph, ty) orelse return false) {
             .builtin => |builtin| builtin == .Float16 or builtin == .Float32 or builtin == .Float64,
             else => false,
         };
     }
 
     fn isUnsigned(self: *CodeGenerator, ty: graph_mod.GlobalTypeId) bool {
-        return switch (self.graph.types.items[@intFromEnum(ty)]) {
+        return switch (types.representation(self.graph, ty) orelse return false) {
             .builtin => |builtin| switch (builtin) {
                 .UIntNative, .UInt8, .UInt16, .UInt32, .UInt64 => true,
                 else => false,

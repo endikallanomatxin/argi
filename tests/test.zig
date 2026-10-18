@@ -13316,3 +13316,41 @@ test "feature_tests/text/88_ascii_edits_are_checked" {
     try expectSuccessfulBuild("tests/feature_tests/text/88_ascii_edits_are_checked");
     try runExpect("tests/feature_tests/text/88_ascii_edits_are_checked", 0);
 }
+
+test "feature_tests/types/289_nominal_underlying" {
+    try expectSuccessfulBuild("tests/feature_tests/types/289_nominal_underlying");
+    try run("tests/feature_tests/types/289_nominal_underlying");
+}
+
+test "feature_tests/types/290X_nominal_underlying_mismatch" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/types/290X_nominal_underlying_mismatch", "no function named 'accept' accepts arguments (.value: EdgeId)");
+}
+
+test "feature_tests/types/291X_nominal_underlying_base_mismatch" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/types/291X_nominal_underlying_base_mismatch", "no function named 'accept' accepts arguments (.value: UIntNative)");
+}
+
+test "feature_tests/types/292X_nominal_underlying_range" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/types/292X_nominal_underlying_range", "integer literal 256 does not fit in 'UInt8'");
+}
+
+test "feature_tests/types/293X_nominal_underlying_cycle" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/types/293X_nominal_underlying_cycle", "cyclic underlying type");
+}
+
+test "feature_tests/types/294_nominal_underlying_shapes" {
+    try expectSuccessfulBuild("tests/feature_tests/types/294_nominal_underlying_shapes");
+    try run("tests/feature_tests/types/294_nominal_underlying_shapes");
+}
+
+test "feature_tests/types/295X_nominal_underlying_contract" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/types/295X_nominal_underlying_contract", "does not satisfy contract constraint 'Marked'");
+}
+
+test "feature_tests/types/296X_nominal_underlying_assignment" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/types/296X_nominal_underlying_assignment", "distinct nominal types require explicit conversion");
+}
+
+test "feature_tests/types/297X_nominal_underlying_raw_argument" {
+    try buildExpectFailWithoutParseNoise("tests/feature_tests/types/297X_nominal_underlying_raw_argument", "no function named 'accept_raw' accepts arguments (.value: VertexId)");
+}

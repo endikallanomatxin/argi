@@ -66,6 +66,7 @@ pub const Declaration = struct {
     module_file_index: u32,
     // Construction-time syntax provenance used while lowering declaration bodies.
     type_id: ?ModuleTypeId = null,
+    underlying_type: ?ModuleTypeId = null,
     function_id: ?ModuleFunctionId = null,
     struct_fields: ?FieldRange = null,
     choice_variants: ?FieldRange = null,

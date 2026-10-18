@@ -6220,7 +6220,7 @@ pub const SafetyChecker = struct {
 
     fn validateIntegerLiteral(self: *SafetyChecker, source: primitives.SourceRef, maybe_ty: ?graph_mod.GlobalTypeId, value: i128) !void {
         const ty = maybe_ty orelse return;
-        const builtin = switch (self.graph.resolvedSemanticType(ty) orelse return) {
+        const builtin = switch (types.representation(self.graph, ty) orelse return) {
             .builtin => |kind| kind,
             else => return,
         };

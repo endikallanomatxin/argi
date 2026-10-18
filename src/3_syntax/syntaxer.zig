@@ -5,6 +5,7 @@ const diagnostic = @import("../1_base/diagnostic.zig");
 
 pub const SyntaxerError = error{
     ExpectedIdentifier,
+    ExpectedType,
     ExpectedConformanceType,
     ExpectedColon,
     ExpectedEqual,
@@ -83,6 +84,8 @@ pub const Syntaxer = struct {
                 try self.diags.add(self.tokenLocation(), .syntax, "CIncomplete declarations cannot have compile-time parameters", .{});
             } else if (err == SyntaxerError.ExpectedConformanceType) {
                 try self.diags.add(self.tokenLocation(), .syntax, "expected a contract type after the conformance relation", .{});
+            } else if (err == SyntaxerError.ExpectedType) {
+                try self.diags.add(self.tokenLocation(), .syntax, "expected an underlying type after 'Type ='", .{});
             } else {
                 try self.diags.add(self.tokenLocation(), .syntax, "syntax error: {s}", .{@errorName(err)});
             }
@@ -2328,9 +2331,10 @@ pub const Syntaxer = struct {
                 if (std.mem.eql(u8, type_name, "Type") or std.mem.eql(u8, type_name, "CEnum") or std.mem.eql(u8, type_name, "CUnion") or std.mem.eql(u8, type_name, "CStruct")) {
                     if (!self.tokenIs(.equal)) return SyntaxerError.ExpectedEqual;
                     self.advanceOne();
-                    if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
                     const tag: syn.Node.Tag = if (std.mem.eql(u8, type_name, "CEnum")) .c_enum_declaration else if (std.mem.eql(u8, type_name, "CUnion")) .c_union_declaration else if (std.mem.eql(u8, type_name, "CStruct")) .c_struct_declaration else .type_declaration;
-                    const lit_node = if (tag == .c_enum_declaration or (tag == .type_declaration and self.parenthesizedTypeIsChoiceLiteral()))
+                    const lit_node = if (tag == .type_declaration and !self.tokenIs(.open_parenthesis))
+                        (try self.parseType()) orelse return SyntaxerError.ExpectedType
+                    else if (tag == .c_enum_declaration or (tag == .type_declaration and self.parenthesizedTypeIsChoiceLiteral()))
                         try self.parseChoiceTypeLiteral(tag == .c_enum_declaration)
                     else
                         try self.parseStructTypeLiteral();

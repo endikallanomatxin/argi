@@ -803,6 +803,30 @@ pub const Resolver = struct {
             }
             return .{ .tuple = index };
         }
+        // Nominal scalar declarations retain the primitive representation facts
+        // of their base. Only these operation-free bundled facts are inherited;
+        // user contracts and implementations still match nominal identities.
+        if (participants.len == 1 and located.definition.requirements.len == 0 and located.definition.parameters.len == 0) {
+            const represented = global_types.representationType(self.graph, participants[0]);
+            const name = self.graph.text(self.graph.declaration(declaration).name);
+            const fact = std.mem.eql(u8, name, "Int") or std.mem.eql(u8, name, "UInt") or std.mem.eql(u8, name, "Float") or
+                std.mem.eql(u8, name, "_BuiltinArithmetic") or std.mem.eql(u8, name, "_BuiltinEquality") or std.mem.eql(u8, name, "_BuiltinOrdering") or
+                std.mem.eql(u8, name, "_BuiltinInteger") or std.mem.startsWith(u8, name, "_IntegerFits");
+            if (fact and standard_contracts.standardDeclaration(self.graph, name) == declaration and
+                represented != null and !global_types.equal(self.graph, represented.?, participants[0]) and
+                self.graph.semanticType(represented.?) == .builtin and
+                try self.selectConformance(declaration, &.{represented.?}, null, depth + 1, deferred) != null)
+            {
+                const start: u32 = @intCast(self.graph.generic_arguments.items.len);
+                const parameter = self.modules[located.module_index].semantic.parameterized_storage.comptime_parameters.items[located.definition.participants.start];
+                try self.graph.generic_arguments.append(self.allocator, .{ .name = try self.graph.addString(self.allocator, self.modules[located.module_index].text(parameter.name)), .value = .{ .type = participants[0] } });
+                const arguments: primitives.Range(global_sg.GlobalGenericArgId) = .{ .start = start, .len = 1 };
+                const index = self.graph.contract_conformances.items.len;
+                try self.graph.contract_conformances.append(self.allocator, .{ .declaration = declaration, .context = @enumFromInt(located.module_index), .participants = arguments, .associated_arguments = .{ .start = start, .len = 0 }, .source = self.graph.declaration(declaration).source, .declaration_validated = true });
+                if (bindings) |target| try self.generics.bindGlobalArguments(located.module_index, located.definition.participants, arguments, target);
+                return .{ .tuple = index };
+            }
+        }
         // Native C identities have no source-level declaration in bundled core.
         // Publish only their checked, operation-free representation fact; Equal
         // still selects its ordinary generic implementation and operation.

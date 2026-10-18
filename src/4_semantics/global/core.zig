@@ -1716,7 +1716,7 @@ pub const Resolver = struct {
 
     pub fn isScalarArithmeticRepresentation(self: *Resolver, a: global_sg.GlobalTypeId, b: global_sg.GlobalTypeId) bool {
         if (!types.equal(self.graph, a, b)) return false;
-        return switch (self.graph.types.items[@intFromEnum(a)]) {
+        return switch (types.representation(self.graph, a) orelse return false) {
             .builtin => |value| switch (value) {
                 .Int8, .Int16, .Int32, .Int64, .UIntNative, .UInt8, .UInt16, .UInt32, .UInt64, .Float16, .Float32, .Float64 => true,
                 else => false,
@@ -1767,7 +1767,7 @@ pub const Resolver = struct {
 
     pub fn floatLiteralFits(self: *const Resolver, node: global_sg.GlobalNodeId, target: global_sg.GlobalTypeId) bool {
         if (self.graph.node(node).content != .float_literal) return false;
-        return switch (self.graph.semanticType(target)) {
+        return switch (types.representation(self.graph, target) orelse return false) {
             .builtin => |value| value == .Float16 or value == .Float32 or value == .Float64,
             else => false,
         };
@@ -1777,6 +1777,7 @@ pub const Resolver = struct {
         if (self.integerLiteralFits(node, target) or self.floatLiteralFits(node, target)) return true;
         if (self.pendingChoiceLiteralFits(node, target)) return true;
         switch (self.graph.nodes.items[@intFromEnum(node)].content) {
+            .bool_literal => return if (types.representation(self.graph, target)) |represented| represented == .builtin and represented.builtin == .Bool else false,
             .string_literal => return switch (self.graph.types.items[@intFromEnum(target)]) {
                 .pointer => |pointer| pointer.mutability == .read_only and types.isBuiltin(self.graph, pointer.child, primitives.builtinTypeNamedForTarget("CChar", self.graph.target.stdTarget()).?),
                 else => false,
@@ -1858,7 +1859,7 @@ pub const Resolver = struct {
         _ = self.coerceContextualValue(value, element);
         // Even an out-of-range integer literal carries its destination type
         // into Safety, which diagnoses the range before codegen can emit it.
-        if (self.graph.node(value).content == .int_literal) switch (self.graph.semanticType(element)) {
+        if (self.graph.node(value).content == .int_literal) switch (types.representation(self.graph, element) orelse return) {
             .builtin => |kind| if (primitives.integerRange(kind, self.graph.target.stdTarget()) != null) {
                 self.graph.nodes.items[@intFromEnum(value)].ty = element;
             },
@@ -1963,7 +1964,7 @@ pub const Resolver = struct {
             .int_literal => |number| number,
             else => return false,
         };
-        const fits = switch (self.graph.types.items[@intFromEnum(target)]) {
+        const fits = switch (types.representation(self.graph, target) orelse return false) {
             .builtin => |builtin_type| switch (builtin_type) {
                 .Int8 => value >= std.math.minInt(i8) and value <= std.math.maxInt(i8),
                 .Int16 => value >= std.math.minInt(i16) and value <= std.math.maxInt(i16),
@@ -1999,7 +2000,7 @@ pub const Resolver = struct {
 
     pub fn isBuiltinComparable(self: *Resolver, a: global_sg.GlobalTypeId, b: global_sg.GlobalTypeId) bool {
         if (!types.equal(self.graph, a, b)) return false;
-        return switch (self.graph.types.items[@intFromEnum(a)]) {
+        return switch (types.representation(self.graph, a) orelse return false) {
             .builtin => |value| value != .Void and value != .Type and value != .Any,
             else => false,
         };
