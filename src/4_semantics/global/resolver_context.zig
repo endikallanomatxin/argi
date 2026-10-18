@@ -151,6 +151,57 @@ pub const Context = struct {
         self.generic_functions.rollback_ownership = ownership_mod.Resolver.rollbackParameterizedCheckpoint;
     }
 
+    /// Fork retained effects into resolvers wired to an identity-preserving
+    /// graph copy. Callback targets always belong to the destination context.
+    /// Source modules remain borrowed; all mutable caches and effects are owned.
+    pub fn cloneFrom(self: *Context, source: *const Context, allocator: std.mem.Allocator, graph: *global_sg.GlobalSemanticGraph, offsets: []const globalizer.Offsets, diagnostics: ?*diagnostics_mod.Diagnostics) !void {
+        if (self == source or offsets.len != source.core.modules.len or graph.modules.items.len != source.core.modules.len or
+            source.generic_functions.publishing_signature or source.ownership.loop_cleanup_base != null)
+            return error.InvalidSemanticForkState;
+        self.init(allocator, graph, source.core.modules, offsets, diagnostics, source.core.profile_io);
+        errdefer self.deinit();
+        for (source.core.reached_calls.items) |call| {
+            var retained = call;
+            retained.visible = try allocator.dupe(global_sg.GlobalBindingId, call.visible);
+            self.core.reached_calls.append(allocator, retained) catch |err| {
+                allocator.free(retained.visible);
+                return err;
+            };
+        }
+        try self.core.reached_signature_changes.appendSlice(allocator, source.core.reached_signature_changes.items);
+        self.generics.pointer_types = try source.generics.pointer_types.clone(allocator);
+        self.generics.generic_types = try source.generics.generic_types.clone(allocator);
+        self.generics.comptime_failure = source.generics.comptime_failure;
+        self.generics.argument_failure = source.generics.argument_failure;
+        self.contracts.constraint_declarations = try source.contracts.constraint_declarations.clone(allocator);
+        self.contracts.resolved_contract_refs = try source.contracts.resolved_contract_refs.clone(allocator);
+        var templates = source.contracts.implementation_templates.iterator();
+        while (templates.next()) |entry| {
+            var group = entry.value_ptr.*;
+            group.entries = try group.entries.clone(allocator);
+            self.contracts.implementation_templates.put(allocator, entry.key_ptr.*, group) catch |err| {
+                group.entries.deinit(allocator);
+                return err;
+            };
+        }
+        self.contracts.rollbackResolution(source.contracts.checkpointResolution());
+        self.contracts.virtual_signature_failure = source.contracts.virtual_signature_failure;
+        try self.ownership.deferred.appendSlice(allocator, source.ownership.deferred.items);
+        try self.ownership.auto_nodes.appendSlice(allocator, source.ownership.auto_nodes.items);
+        self.ownership.replacement_candidates = try source.ownership.replacement_candidates.clone(allocator);
+        self.ownership.denied_copy = source.ownership.denied_copy;
+        self.ownership.empty_block = source.ownership.empty_block;
+        self.ownership.loop_cleanup_base = source.ownership.loop_cleanup_base;
+        self.control.for_each_failure = source.control.for_each_failure;
+        self.generic_functions.failed_constraint = source.generic_functions.failed_constraint;
+        self.staged_execution = try source.staged_execution.clone(allocator, &self.generic_functions);
+        // Error inference scratch is rebuilt on each pass; it carries no facts.
+        inline for (.{ "core", "expressions", "control", "generics", "generic_functions", "contracts", "errors", "ownership" }) |field|
+            @field(self, field).stats = @field(source, field).stats;
+        self.dispatch.pending_call_stages = source.dispatch.pending_call_stages;
+        self.generic_functions.selection_profile = source.generic_functions.selection_profile;
+    }
+
     /// Rebind borrowed views after relocation appends an immutable module suffix.
     /// Existing module contents, imports and global identities must stay fixed.
     /// Registration and resolution are explicit subsequent coordinator steps.
@@ -281,4 +332,53 @@ test "resolver context extends conformance registration without duplicating reta
     const failure = context.contracts.participant_conformance_failure orelse return error.ExpectedConformanceFailure;
     try std.testing.expectEqualStrings("ambiguous conformances for the same participant tuple", failure.reason);
     try std.testing.expectEqual(@as(usize, 4), retained.graph.contract_conformances.items.len);
+}
+
+fn cloneRetainedContext(allocator: std.mem.Allocator) !void {
+    const a = std.testing.allocator;
+    var graph: global_sg.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    var source: Context = undefined;
+    source.init(a, &graph, &.{}, &.{}, null, null);
+    defer source.deinit();
+    const visible = try a.dupe(global_sg.GlobalBindingId, &.{@enumFromInt(1)});
+    try source.core.reached_calls.append(a, .{ .callee = @enumFromInt(2), .input = @enumFromInt(3), .owner = null, .skip_receiver = false, .visible = visible });
+    try source.ownership.deferred.append(a, .{ .marker = @enumFromInt(4), .value = @enumFromInt(5) });
+    try source.ownership.auto_nodes.append(a, .{ .binding = @enumFromInt(1), .node = @enumFromInt(6) });
+    try source.ownership.replacement_candidates.put(a, @enumFromInt(6), {});
+    try source.generics.pointer_types.put(a, .{ .child = @enumFromInt(0), .mutability = .read_only }, @enumFromInt(1));
+    const group = try source.contracts.implementation_templates.getOrPut(a, .{ .declaration = @enumFromInt(7), .arity = 1 });
+    group.value_ptr.* = .{};
+    try group.value_ptr.entries.append(a, .{ .module = 0, .index = 0 });
+    var bindings = try generic_mod.Resolver.Bindings.init(a, 0);
+    defer bindings.deinit(a);
+    try std.testing.expectError(error.ComptimeExecutionPending, source.generics.execute_integer.?(source.generics.execution_context.?, 0, @enumFromInt(0), &bindings));
+    var candidate_graph = try graph.clone(a);
+    defer candidate_graph.deinit(a);
+    var candidate: Context = undefined;
+    try candidate.cloneFrom(&source, allocator, &candidate_graph, &.{}, null);
+    defer candidate.deinit();
+    try std.testing.expect(candidate.core.graph == &candidate_graph);
+    try std.testing.expect(candidate.generics.core == &candidate.core);
+    try std.testing.expect(candidate.generics.execution_context.? == @as(*anyopaque, &candidate.staged_execution));
+    try std.testing.expect(candidate.staged_execution.functions == &candidate.generic_functions);
+    try std.testing.expect(candidate.ownership.dispatch.? == &candidate.dispatch);
+    candidate.core.reached_calls.items[0].visible[0] = @enumFromInt(9);
+    candidate.ownership.deferred.clearRetainingCapacity();
+    candidate.ownership.auto_nodes.clearRetainingCapacity();
+    _ = candidate.ownership.replacement_candidates.remove(@enumFromInt(6));
+    candidate.generics.pointer_types.clearRetainingCapacity();
+    candidate.contracts.implementation_templates.getPtr(.{ .declaration = @enumFromInt(7), .arity = 1 }).?.entries.clearRetainingCapacity();
+    execution.Scheduler.rollback(&candidate.staged_execution, 0);
+    try std.testing.expectEqual(@as(u32, 1), @intFromEnum(source.core.reached_calls.items[0].visible[0]));
+    try std.testing.expectEqual(@as(usize, 1), source.ownership.deferred.items.len);
+    try std.testing.expectEqual(@as(usize, 1), source.ownership.auto_nodes.items.len);
+    try std.testing.expect(source.ownership.replacement_candidates.contains(@enumFromInt(6)));
+    try std.testing.expectEqual(@as(usize, 1), source.generics.pointer_types.count());
+    try std.testing.expectEqual(@as(usize, 1), source.contracts.implementation_templates.get(.{ .declaration = @enumFromInt(7), .arity = 1 }).?.entries.items.len);
+    try std.testing.expectEqual(@as(usize, 1), source.staged_execution.requests.items.len);
+}
+
+test "resolver context clones isolate retained effects and callback targets" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, cloneRetainedContext, .{});
 }

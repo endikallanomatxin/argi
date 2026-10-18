@@ -24,6 +24,14 @@ pub const FunctionSet = struct {
         };
     }
 
+    pub fn clone(self: *const FunctionSet, allocator: std.mem.Allocator) !FunctionSet {
+        var result = FunctionSet.init(allocator);
+        errdefer result.deinit();
+        inline for (@typeInfo(FunctionSet).@"struct".fields) |field|
+            @field(result, field.name) = try @field(self, field.name).cloneWithAllocator(allocator);
+        return result;
+    }
+
     pub fn deinit(self: *FunctionSet) void {
         self.values.deinit();
         self.bindings.deinit();

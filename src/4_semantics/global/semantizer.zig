@@ -490,6 +490,31 @@ pub const Session = struct {
         self.phase = .ready;
     }
 
+    /// Build an independent candidate without rerunning accepted source.
+    /// Both sessions borrow the same immutable ModuleSG prefix. Initialize the
+    /// candidate in its final storage; reject it by deinitializing it. Accepting
+    /// a candidate exchanges owner pointers, never moves these callback targets.
+    pub fn fork(self: *const Session, candidate: *Session, allocator: std.mem.Allocator, diagnostics: ?*diagnostics_mod.Diagnostics) !void {
+        if (self == candidate or self.phase != .quiescent) return error.InvalidSemanticSessionState;
+        var options = self.options;
+        options.diagnostics = diagnostics;
+        candidate.* = .{ .allocator = allocator, .modules = self.modules, .options = options, .resolution = ResolutionState.init(allocator) };
+        errdefer candidate.deinit();
+        candidate.relocation.graph = try self.relocation.graph.clone(allocator);
+        candidate.relocation.offsets = try self.relocation.offsets.clone(allocator);
+        try candidate.resolvers.cloneFrom(&self.resolvers, allocator, &candidate.relocation.graph, candidate.relocation.offsets.items, diagnostics);
+        candidate.resolvers_initialized = true;
+        candidate.resolution = try self.resolution.clone(allocator);
+        if (self.reachable) |*set| candidate.reachable = try set.clone(allocator);
+        candidate.setup_stages = self.setup_stages;
+        candidate.profile_start = self.profile_start;
+        candidate.profile_relocated = self.profile_relocated;
+        candidate.profile_preloop = self.profile_preloop;
+        candidate.profile_postloop = self.profile_postloop;
+        candidate.fixed_point_ns = self.fixed_point_ns;
+        candidate.phase = .quiescent;
+    }
+
     fn reachableSet(self: *Session) ?*reachability_mod.FunctionSet {
         return if (self.reachable) |*set| set else null;
     }
@@ -3792,4 +3817,68 @@ fn cloneResolutionWithAllocationFailures(allocator: std.mem.Allocator) !void {
 
 test "resolution state clones isolate pending work and finalization" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, cloneResolutionWithAllocationFailures, .{});
+}
+
+fn forkSemanticSession(allocator: std.mem.Allocator) !void {
+    const a = std.testing.allocator;
+    var module: module_sg.ModuleSemanticGraph = .{ .module_dir = try a.dupe(u8, "accepted") };
+    defer module.deinit(a);
+    try module.semantic.types.append(a, .{ .resolved = .{ .builtin = .Int32 } });
+    var accepted: Session = undefined;
+    try accepted.init(a, &.{module}, .{ .exhaustive_function_bodies = false });
+    defer accepted.deinit();
+    try accepted.advance();
+    const saved = accepted.relocation.graph.checkpoint();
+    const saved_rounds = accepted.resolution.progress.profile_rounds;
+    var candidate: Session = undefined;
+    try accepted.fork(&candidate, allocator, null);
+    defer candidate.deinit();
+    try std.testing.expect(candidate.resolvers.core.graph == &candidate.relocation.graph);
+    try std.testing.expect(candidate.resolvers.generics.core == &candidate.resolvers.core);
+    try candidate.relocation.graph.types.append(allocator, .{ .builtin = .Any });
+    try candidate.relocation.graph.markTypeUnresolved(allocator, @enumFromInt(1));
+    try candidate.advance();
+    try std.testing.expectError(error.UnsupportedGlobalSemantic, candidate.finish());
+    try std.testing.expectEqualDeep(saved, accepted.relocation.graph.checkpoint());
+    try std.testing.expectEqual(saved_rounds, accepted.resolution.progress.profile_rounds);
+    try accepted.advance();
+    var result = try accepted.finish();
+    defer result.graph.deinit(a);
+    try std.testing.expectEqual(@as(usize, 2), result.graph.types.items.len);
+    try std.testing.expectEqual(primitives.BuiltinType.Int32, result.graph.types.items[0].builtin);
+}
+
+test "semantic session forks reject candidate edits without changing accepted state" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, forkSemanticSession, .{});
+}
+
+test "semantic session forks prepare independent module additions" {
+    const a = std.testing.allocator;
+    var first: module_sg.ModuleSemanticGraph = .{ .module_dir = try a.dupe(u8, "retained") };
+    defer first.deinit(a);
+    try first.semantic.types.append(a, .{ .resolved = .{ .builtin = .Int32 } });
+    var second: module_sg.ModuleSemanticGraph = .{ .module_dir = try a.dupe(u8, "submission") };
+    defer second.deinit(a);
+    try second.semantic.types.append(a, .{ .resolved = .{ .builtin = .UInt8 } });
+    const modules = [_]module_sg.ModuleSemanticGraph{ first, second };
+    var accepted: Session = undefined;
+    try accepted.init(a, modules[0..1], .{});
+    defer accepted.deinit();
+    try std.testing.expectError(error.InvalidSemanticSessionState, accepted.fork(&accepted, a, null));
+    try accepted.advance();
+    const saved = accepted.relocation.graph.checkpoint();
+    var candidate: Session = undefined;
+    try accepted.fork(&candidate, a, null);
+    defer candidate.deinit();
+    try candidate.appendModules(&modules);
+    try candidate.advance();
+    try std.testing.expectEqual(@as(usize, 2), candidate.resolvers.core.modules.len);
+    try std.testing.expectEqual(@as(usize, 1), accepted.resolvers.core.modules.len);
+    try std.testing.expectEqualDeep(saved, accepted.relocation.graph.checkpoint());
+    var result = try candidate.finish();
+    defer result.graph.deinit(a);
+    try std.testing.expectEqual(@as(usize, 2), result.graph.modules.items.len);
+    try std.testing.expectEqual(primitives.BuiltinType.Int32, result.graph.types.items[0].builtin);
+    try std.testing.expectEqual(primitives.BuiltinType.UInt8, result.graph.types.items[1].builtin);
+    try std.testing.expectEqualDeep(saved, accepted.relocation.graph.checkpoint());
 }

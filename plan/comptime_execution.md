@@ -43,9 +43,11 @@ FFI preparation preserves already augmented signatures. Preparation failure
 currently poisons this unpublished construction session. Independent copies of
 semantic pools, pending/finalized operation state and staged execution requests
 preserve IDs while isolating candidate edits, including request binding storage.
-Next, retain resolver-local effects and connect candidate publication so rejection
-preserves the accepted session before wiring conditional imports and interactive
-submissions.
+Resolver contexts copy retained call environments, cleanup effects and caches,
+rebinding callbacks to candidate-owned targets. A quiescent semantic session can
+fork without replaying source, append modules and reject or finish that candidate
+independently. Next, connect checked candidate publication and session-owned VM
+storage before wiring conditional imports and interactive submissions.
 JIT is deferred until measurements justify it; module origin is not an execution
 policy. Keep function identities independent of the executor, without introducing
 a mixed VM/native ABI or native-layout storage solely for a possible future JIT.
