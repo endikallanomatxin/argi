@@ -1594,7 +1594,7 @@ pub const Resolver = struct {
             // Composite expressions are constraints rather than invertible
             // bindings. Once their operands have been inferred elsewhere the
             // regular evaluator validates the dependent value.
-            .binary, .projection => (self.generics.evalInt(module_index, expression, bindings) catch return false) == actual,
+            .binary, .projection, .execution => (self.generics.evalInt(module_index, expression, bindings) catch return false) == actual,
         };
     }
 

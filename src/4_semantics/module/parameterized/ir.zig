@@ -77,6 +77,8 @@ pub const IntBinaryOperator = enum(u8) { add, subtract, multiply, divide, modulo
 
 pub const IntExpression = union(enum) {
     literal: i64,
+    // Retain ordinary executable IR for staged compile-time evaluation.
+    execution: ParameterizedNodeId,
     parameter: ComptimeParameterId,
     projection: struct { base: ParameterizedTypeId, member: primitives.StringRange, source: primitives.SourceRef },
     binary: struct {

@@ -987,6 +987,8 @@ pub const Context = struct {
     }
 
     pub fn lowerIntExpression(self: *Context, node: syn.NodeIndex) anyerror!ir.ParameterizedIntExprId {
+        if (self.tree.functionCall(node)) |call| if (call.comptime_token != null)
+            return self.addInt(.{ .execution = try self.lowerBodyNode(node) });
         if (self.tree.syntaxType(node)) |syntax| if (syntax == .projection) {
             return self.addInt(.{ .projection = .{
                 .base = try self.lowerType(syntax.projection.base, false),

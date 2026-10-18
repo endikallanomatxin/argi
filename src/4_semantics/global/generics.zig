@@ -739,6 +739,15 @@ pub const Resolver = struct {
         const expression = self.modules[module_index].semantic.parameterized_storage.ir.int_expressions.items[@intFromEnum(id)];
         return switch (expression) {
             .literal => |value| value,
+            .execution => |node| {
+                const local = self.modules[module_index].semantic.parameterized_storage.ir.nodes.items[@intFromEnum(node)];
+                const source = switch (local) {
+                    .resolved => |value| value.source,
+                    .pending => |pending| self.modules[module_index].semantic.parameterized_storage.ir.pending.items[@intFromEnum(pending)].resolve_expression.source,
+                };
+                self.recordComptimeFailure(module_index, source, "compile-time execution in type or specialization arguments requires staged dependency resolution");
+                return error.ComptimeExecutionNotReady;
+            },
             .parameter => |parameter| bindings.ints[@intFromEnum(parameter)] orelse error.UnboundComptimeParameter,
             .projection => |value| blk: {
                 const base = try self.instantiateParameterizedType(module_index, value.base, bindings);

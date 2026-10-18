@@ -360,9 +360,10 @@ addresses.
 
 ## Next integration steps
 
-- Retain executable compile-time requests in parameterized integer expressions;
-  the current `IntExpression` cannot represent calls. Resolve closed dependencies
-  before freezing their results, and defer requests whose bodies/types are pending.
+- Parameterized integer expressions now retain executable `#run` nodes through
+  module caching. Connect those nodes to dependency scheduling: resolve closed
+  dependencies before freezing results, and defer requests whose bodies/types
+  are pending. Evaluation in type/specialization arguments is not connected yet.
 - Make semantic worklists wake users of frozen results before reporting unresolved
   types. Dependency-unit checking must not require unrelated bodies to finish.
 - Replace target-only preprocessing with staged conditional declaration discovery

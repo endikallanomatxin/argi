@@ -1178,3 +1178,61 @@ fn buildArithmeticTestCore(allocator: std.mem.Allocator) !module_semantizer.Buil
     result.graph.is_bundled_core = true;
     return result;
 }
+
+test "compile-time integer calls retain executable parameterized nodes" {
+    const allocator = std.testing.allocator;
+    const source =
+        "compute(.value: Int32) -> (.result: Int32 = value) := {}\n" ++
+        "repeat#(.n: Int32)(.value: Int32) -> (.result: Int32 = value) := {}\n" ++
+        "Holder#(.n: Int32): Type = (.value: Int32)\n" ++
+        "main() -> () := { repeat#(.n = #run compute(.value = 4))(.value = 42) }\n" ++
+        "use(.value: Holder#(.n = #run compute(.value = 3))) -> () := {}\n";
+    var tree = try parseSource(allocator, source, @enumFromInt(0));
+    defer tree.deinit(allocator);
+    var module = try @import("semantizer.zig").build(allocator, "staged", &.{.{ .path = "staged/main.rg", .tree = &tree, .source = source }});
+    defer module.graph.deinit(allocator);
+    var found = false;
+    for (module.graph.semantic.external_refs.items) |reference| {
+        if (!std.mem.eql(u8, module.graph.text(reference.name), "repeat")) continue;
+        const arguments = reference.computed_arguments orelse continue;
+        const storage = &module.graph.semantic.parameterized_storage.ir;
+        const argument = storage.generic_arguments.items[arguments.start];
+        const expression = storage.int_expressions.items[@intFromEnum(argument.value.comptime_int)];
+        const node = storage.nodes.items[@intFromEnum(expression.execution)];
+        const pending = storage.pending.items[@intFromEnum(node.pending)].resolve_expression;
+        try std.testing.expect(pending.comptime_run);
+        try std.testing.expectEqualStrings("compute", module.graph.text(pending.name.?));
+        found = true;
+    }
+    try std.testing.expect(found);
+    const codec = @import("../../0_commands/module_cache_codec.zig");
+    const fingerprint: [32]u8 = @splat(0);
+    const encoded = try codec.encode(allocator, &module.graph, fingerprint);
+    defer allocator.free(encoded);
+    var decoded = try codec.decode(allocator, encoded, fingerprint);
+    defer decoded.deinit(allocator);
+    var retained = false;
+    for (decoded.semantic.parameterized_storage.ir.int_expressions.items) |expression| {
+        if (expression != .execution) continue;
+        const storage = &decoded.semantic.parameterized_storage.ir;
+        const node = storage.nodes.items[@intFromEnum(expression.execution)];
+        const pending = storage.pending.items[@intFromEnum(node.pending)].resolve_expression;
+        try std.testing.expect(pending.comptime_run);
+        try std.testing.expectEqualStrings("compute", decoded.text(pending.name.?));
+        retained = true;
+    }
+    try std.testing.expect(retained);
+    var has_computed_type = false;
+    for (decoded.semantic.external_refs.items) |reference|
+        if (reference.computed_type != null) {
+            has_computed_type = true;
+        };
+    try std.testing.expect(has_computed_type);
+    const storage = &decoded.semantic.parameterized_storage.ir;
+    for (storage.int_expressions.items) |*expression| {
+        if (expression.* != .execution) continue;
+        expression.execution = @enumFromInt(storage.nodes.items.len);
+        break;
+    }
+    try std.testing.expectError(error.InvalidModuleParameterizedIR, @import("parameterized/ir_verify.zig").verifyIR(&decoded));
+}

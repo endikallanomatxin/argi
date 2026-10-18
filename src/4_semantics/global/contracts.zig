@@ -2325,7 +2325,7 @@ pub const Resolver = struct {
                 slot.* = actual;
                 break :blk true;
             },
-            .binary, .projection => (self.generics.evalInt(module_index, pattern, bindings) catch return false) == actual,
+            .binary, .projection, .execution => (self.generics.evalInt(module_index, pattern, bindings) catch return false) == actual,
         };
     }
 

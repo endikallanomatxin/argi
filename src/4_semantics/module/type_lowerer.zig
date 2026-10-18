@@ -167,7 +167,7 @@ pub const Context = struct {
     }
 
     fn lowerGeneric(self: *Context, owner: syn.NodeIndex, generic: syn.GenericType) anyerror!entities.ModuleTypeId {
-        if (self.hasAssociatedConstant(generic.arguments)) {
+        if (@import("type_arguments.zig").requiresResolution(self.tree, generic.arguments)) {
             const external_start = self.graph.semantic.external_refs.items.len;
             const computed = try @import("parameterized/lowerer.zig").lowerConcreteTypeExpression(self.graph, self.writer, self.file_index, self.tree, self.source, owner);
             // Preserve lexical import aliases in the anonymous expression.
@@ -258,19 +258,6 @@ pub const Context = struct {
             .name => |name| self.lowerName(owner, name.name_token, name.qualifier_token, range),
             else => error.InvalidGenericBase,
         };
-    }
-
-    fn hasAssociatedConstant(self: *const Context, node: syn.NodeIndex) bool {
-        if (self.tree.tag(node) == .associated_type_projection) return true;
-        if (self.tree.binaryOperation(node)) |operation|
-            return self.hasAssociatedConstant(operation.lhs) or self.hasAssociatedConstant(operation.rhs);
-        if (self.tree.structTypeLiteral(node)) |literal| {
-            for (literal.fields) |field_node| {
-                const field = self.tree.structTypeField(field_node) orelse continue;
-                if (field.default_value) |value| if (self.hasAssociatedConstant(value)) return true;
-            }
-        }
-        return false;
     }
 
     fn evalComptimeInt(self: *Context, node: syn.NodeIndex) anyerror!i64 {

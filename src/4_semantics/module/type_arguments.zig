@@ -23,3 +23,16 @@ pub fn name(tree: *const syn.FileSyntaxTree, source: []const u8, field: syn.Stru
 pub fn isVirtualContractParameter(parameter_name: []const u8) bool {
     return std.mem.eql(u8, parameter_name, "contract");
 }
+
+// These arguments need retained parameterized IR rather than literal folding.
+pub fn requiresResolution(tree: *const syn.FileSyntaxTree, node: syn.NodeIndex) bool {
+    if (tree.tag(node) == .associated_type_projection) return true;
+    if (tree.functionCall(node)) |call| if (call.comptime_token != null) return true;
+    if (tree.binaryOperation(node)) |operation|
+        return requiresResolution(tree, operation.lhs) or requiresResolution(tree, operation.rhs);
+    if (tree.structTypeLiteral(node)) |literal| for (literal.fields) |field_node| {
+        const field = tree.structTypeField(field_node) orelse continue;
+        if (field.default_value) |value| if (requiresResolution(tree, value)) return true;
+    };
+    return false;
+}
