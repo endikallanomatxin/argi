@@ -64,7 +64,12 @@ spaces. Evaluation order, short-circuiting, and precedence remain unchanged.
 Consecutive fields in multiline structs align their names, type markers,
 types, and default-value assignments. This applies equally to the structural
 input and value literals used by calls. Comments and blank lines separate
-alignment groups. Other declarations use uniform spacing.
+alignment groups. Each alignment column may add at most 24 padding spaces.
+When a long field exceeds that limit, it is removed from the first column and
+alignment is retried for the remaining fields. Removed fields form secondary
+columns under the same rule, without reordering source rows. This applies to
+both field names and default-value assignments. Other declarations use uniform
+spacing.
 
 Comments, literal contents, declaration order, import order, and field order
 are preserved. Blank-line runs become at most one blank line, leading and
