@@ -496,6 +496,9 @@ const FunctionLower = struct {
             .function_call => {
                 _ = try self.call(id);
             },
+            .virtual_call => {
+                _ = try self.virtualCall(id);
+            },
             else => {
                 _ = try self.expression(id);
             },
@@ -668,31 +671,83 @@ const FunctionLower = struct {
             try self.parent.pending.append(self.parent.allocator, x.callee);
             _ = try self.emit(node.source, .{ .call = .{ .outputs = outputs, .function = x.callee, .args = args } });
         }
-        if (x.consumes_auto_deinit) |value| try self.updateCallCleanup(value, false, fields, args);
-        for (x.consumed_auto_deinits) |value| try self.updateCallCleanup(value, false, fields, args);
-        for (x.initialized_auto_deinits) |value| try self.updateCallCleanup(value, true, fields, args);
-        for (x.outcome_cleanups) |cleanup| {
+        try self.updateCallCleanups(node.source, f.output, fields, args, outputs, x.consumes_auto_deinit, x.consumed_auto_deinits, x.initialized_auto_deinits, x.outcome_cleanups);
+        if (x.initializes_auto_deinit) |value| try self.updateCallCleanup(value, true, fields, args);
+        if (outputs.len == 0) return null;
+        if (outputs.len == 1) return outputs[0];
+        const result = try self.newSlot(node.ty orelse return self.parent.reject(node.source, "untyped call result"));
+        _ = try self.emit(node.source, .{ .record = .{ .dst = result, .fields = outputs } });
+        return result;
+    }
+    fn updateCallCleanups(
+        self: *FunctionLower,
+        source: p.SourceRef,
+        output_fields: g.FieldRange,
+        fields: p.Range(g.GlobalValueFieldId),
+        args: []const b.Slot,
+        outputs: []const b.Slot,
+        consumes: ?g.GlobalNodeId,
+        consumed: []const g.GlobalNodeId,
+        initialized: []const g.GlobalNodeId,
+        outcomes: []const p.OutcomeCleanup(g.Ids),
+    ) !void {
+        if (consumes) |value| try self.updateCallCleanup(value, false, fields, args);
+        for (consumed) |value| try self.updateCallCleanup(value, false, fields, args);
+        for (initialized) |value| try self.updateCallCleanup(value, true, fields, args);
+        for (outcomes) |cleanup| {
             const drop = self.nodeDrop(cleanup.place) orelse continue;
-            var path = try cleanup_plan.OutcomePath.init(self.parent.graph, f.output, cleanup);
+            var path = try cleanup_plan.OutcomePath.init(self.parent.graph, output_fields, cleanup);
             var value = outputs[cleanup.output_index];
             var branches: std.ArrayList(u32) = .empty;
             defer branches.deinit(self.parent.allocator);
             while (try path.next()) |step| {
                 const variant = step.variant;
-                try branches.append(self.parent.allocator, try self.emit(node.source, .{ .branch_variant = .{ .src = value, .variant = variant, .yes = self.position() + 1, .no = 0 } }));
+                try branches.append(self.parent.allocator, try self.emit(source, .{ .branch_variant = .{ .src = value, .variant = variant, .yes = self.position() + 1, .no = 0 } }));
                 if (step.payload) |payload| {
                     const child = try self.newSlot(payload);
-                    _ = try self.emit(node.source, .{ .payload = .{ .dst = child, .src = value, .variant = variant } });
+                    _ = try self.emit(source, .{ .payload = .{ .dst = child, .src = value, .variant = variant } });
                     value = child;
                 }
             }
             try self.setDrop(drop, cleanup.enabled);
             for (branches.items) |branch| self.code.items[branch].op.branch_variant.no = self.position();
         }
-        if (x.initializes_auto_deinit) |value| try self.updateCallCleanup(value, true, fields, args);
+    }
+
+    fn virtualCall(self: *FunctionLower, id: g.GlobalNodeId) anyerror!?b.Slot {
+        const graph = self.parent.graph;
+        const node = graph.node(id);
+        const call_id = node.content.virtual_call;
+        const call_ = graph.virtual_calls.items[@intFromEnum(call_id)];
+        const handle = try self.expression(call_.handle);
+        const literal = graph.node(call_.input).content.struct_value_literal;
+        const input = types.fields(graph, call_.input_type) orelse return error.InvalidBytecode;
+        const output = types.fields(graph, call_.output_type) orelse return error.InvalidBytecode;
+        const args = try self.parent.allocator.alloc(b.Slot, literal.fields.len);
+        for (args, graph.value_fields.items[literal.fields.start..][0..literal.fields.len], 0..) |*arg, field, index| {
+            arg.* = if (index == call_.self_input_index) handle else try self.coerce(node.source, try self.expression(field.value), graph.fields.items[input.start + index].ty);
+        }
+        const outputs = try self.parent.allocator.alloc(b.Slot, output.len);
+        for (outputs, graph.fields.items[output.start..][0..output.len]) |*slot, field| slot.* = try self.newSlot(field.ty);
+        const invocation = try self.parent.allocator.create(b.VirtualInvocation);
+        const input_types = try self.parent.allocator.alloc(b.Type, input.len);
+        for (input_types, graph.fields.items[input.start..][0..input.len]) |*ty, field| ty.* = field.ty;
+        const output_types = try self.parent.allocator.alloc(b.Type, output.len);
+        for (output_types, graph.fields.items[output.start..][0..output.len]) |*ty, field| ty.* = field.ty;
+        invocation.* = .{ .outputs = outputs, .args = args, .handle = handle, .signature = .{
+            .virtual_type = graph.semanticType(self.slots.items[handle]).pointer.child,
+            .inputs = input_types,
+            .outputs = output_types,
+            .receiver_input_index = call_.self_input_index,
+            .receiver_permission = call_.self_permission,
+            .method_index = call_.method_index,
+            .method_count = call_.method_count,
+        } };
+        _ = try self.emit(node.source, .{ .virtual_call = invocation });
+        try self.updateCallCleanups(node.source, output, literal.fields, args, outputs, call_.consumes_auto_deinit, call_.consumed_auto_deinits, call_.initialized_auto_deinits, call_.outcome_cleanups);
         if (outputs.len == 0) return null;
         if (outputs.len == 1) return outputs[0];
-        const result = try self.newSlot(node.ty orelse return self.parent.reject(node.source, "untyped call result"));
+        const result = try self.newSlot(node.ty orelse return error.InvalidBytecode);
         _ = try self.emit(node.source, .{ .record = .{ .dst = result, .fields = outputs } });
         return result;
     }
@@ -716,8 +771,8 @@ const FunctionLower = struct {
             if (self.nodeDrop(node.content.move_value)) |drop| try self.setDrop(drop, false);
             return value;
         }
-        if (node.content == .function_call) {
-            if (try self.call(id)) |result| return result;
+        if (node.content == .function_call or node.content == .virtual_call) {
+            if (if (node.content == .function_call) try self.call(id) else try self.virtualCall(id)) |result| return result;
             // A checked no-output call still has the empty-tuple value in an
             // expression. Execute the call once before materializing that value.
             const ty = node.ty orelse return self.parent.reject(node.source, "untyped void expression");
@@ -742,6 +797,18 @@ const FunctionLower = struct {
         }
         const dst = try self.newSlot(node.ty orelse return self.parent.reject(node.source, "untyped expression"));
         switch (node.content) {
+            .virtualize => |evidence| {
+                const selected = self.parent.graph.virtualizes.items[@intFromEnum(evidence)];
+                const table = try self.parent.allocator.create(b.VirtualTable);
+                const methods = try self.parent.allocator.alloc(std.meta.Elem(@TypeOf(table.methods)), selected.methods.len);
+                for (methods, self.parent.graph.function_refs.items[selected.methods.start..][0..selected.methods.len], 0..) |*out, method, index| {
+                    try self.parent.pending.append(self.parent.allocator, method);
+                    const registry_id = self.parent.graph.virtual_registry_refs.items[selected.safety_methods.start + index];
+                    out.* = .{ .function = method, .receiver_input_index = self.parent.graph.virtual_registries.items[@intFromEnum(registry_id)].receiver_input_index };
+                }
+                table.* = .{ .virtual_type = selected.virtual_type, .concrete_type = selected.concrete_type, .methods = methods };
+                _ = try self.emit(node.source, .{ .virtualize = .{ .dst = dst, .receiver = try self.expression(selected.value), .table = table } });
+            },
             .address_of => |value| {
                 const target = try self.place(value);
                 _ = try self.emit(node.source, .{ .borrow = .{ .dst = dst, .place = target } });

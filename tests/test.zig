@@ -13878,3 +13878,9 @@ test "feature_tests/execution/79_string_literals_vm" {
     try runExpect("tests/feature_tests/execution/79_string_literals_vm", 42);
     try vmExpect("tests/feature_tests/execution/79_string_literals_vm", 42, null);
 }
+
+test "feature_tests/execution/80_virtual_dispatch_vm" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/80_virtual_dispatch_vm");
+    try runExpect("tests/feature_tests/execution/80_virtual_dispatch_vm", 42);
+    try vmExpect("tests/feature_tests/execution/80_virtual_dispatch_vm", 42, null);
+}

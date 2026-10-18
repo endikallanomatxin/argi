@@ -14,6 +14,14 @@ pub const Reference = struct {
     mutability: p.PointerMutability,
 };
 
+// Runtime erasure retains one immutable code unit selected at construction.
+// The context owns this descriptor; its compiler owner retains the code/graph.
+pub const Virtual = struct {
+    receiver: Reference,
+    program: @import("bytecode.zig").Program,
+    table: *const @import("bytecode.zig").VirtualTable,
+};
+
 pub const Value = union(enum) {
     integer: i128,
     boolean: bool,
@@ -21,5 +29,6 @@ pub const Value = union(enum) {
     record: []const Value,
     array: []const Value,
     reference: Reference,
+    virtual_: *const Virtual,
     choice: struct { variant: u32, payload: ?*const Value },
 };

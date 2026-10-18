@@ -1694,3 +1694,65 @@ test "bytecode verifier rejects mutable literal references" {
     };
     try std.testing.expectError(error.InvalidBytecode, b.verify(a, .{ .graph = &graph, .functions = &.{}, .expression = &expression }));
 }
+
+test "bytecode executes preselected virtual operations" {
+    try std.testing.expectEqual(@as(i128, 42), try execute(
+        \\Readable#(.Source: Type): Contract = (.read: (.source: &Source) -> (.result: Int32) where {})
+        \\Box: Type = (.value: Int32)
+        \\implement Readable#(Box) (.read = (.source: &Box) -> (.result: Int32) { result = source&.value })
+        \\main := () -> (.status_code: Int32 = 0) {
+        \\    box :: Box = (.value = 42)
+        \\    erased ::= to_virtual#(.contract: Readable)(.value = &box)
+        \\    status_code = Readable#().read(&erased).result
+        \\}
+    , .{}));
+}
+
+test "virtual values cannot publish temporary receivers or cross contexts" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const storage_mod = @import("storage.zig");
+    var storage = try storage_mod.Storage.init(arena.allocator(), 100);
+    var graph: @import("../4_semantics/global/graph.zig").GlobalSemanticGraph = .{};
+    const program = b.Program{ .graph = &graph, .functions = &.{} };
+    const frame = try storage.enter(1);
+    try (try storage.slots(frame)).put(0, .{ .integer = 42 });
+    const receiver = @import("../5_codegen/bytecode/value.zig").Reference{
+        .context = storage.context,
+        .frame = frame,
+        .root = 0,
+        .path = &.{},
+        .mutability = .read_only,
+    };
+    const erased = try storage.virtualize(receiver, &program, &.{ .virtual_type = @enumFromInt(0), .concrete_type = @enumFromInt(0), .methods = &.{} });
+    const retained = try storage.enterSession(1, &.{});
+    try std.testing.expectError(error.ExecutionTemporaryReference, storage.initializeSession(retained, 0, erased));
+    var other = try storage_mod.Storage.init(arena.allocator(), 100);
+    try std.testing.expectError(error.ExecutionForeignReference, other.cloneValues(&.{erased}));
+    storage.leave(frame);
+    try std.testing.expectError(error.ExecutionDeadReference, storage.validateLive(&.{erased}));
+}
+
+test "bytecode verifier rejects forged virtual constants and invalid tables" {
+    const a = std.testing.allocator;
+    var graph: @import("../4_semantics/global/graph.zig").GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.append(a, .{ .builtin = .Int32 });
+    try graph.types.append(a, .{ .virtual = @enumFromInt(0) });
+    try graph.types.append(a, .{ .pointer = .{ .child = @enumFromInt(0), .mutability = .read_only } });
+    const source = @import("../4_semantics/primitives/schema.zig").SourceRef{ .file_index = 0, .offset = 0 };
+    const forged: @import("../5_codegen/bytecode/value.zig").Virtual = undefined;
+    const instructions = [_]b.Instruction{
+        .{ .source = source, .op = .{ .constant = .{ .dst = 1, .value = .{ .virtual_ = &forged } } } },
+        .{ .source = source, .op = .{ .virtualize = .{ .dst = 1, .receiver = 0, .table = &.{ .virtual_type = @enumFromInt(99), .concrete_type = @enumFromInt(0), .methods = &.{} } } } },
+    };
+    for (instructions) |instruction| {
+        const expression = b.Function{
+            .slots = &.{ @enumFromInt(2), @enumFromInt(1) },
+            .inputs = &.{0},
+            .outputs = &.{1},
+            .code = &.{ instruction, .{ .source = source, .op = .{ .ret = &.{1} } } },
+        };
+        try std.testing.expectError(error.InvalidBytecode, b.verify(a, .{ .graph = &graph, .functions = &.{}, .expression = &expression }));
+    }
+}

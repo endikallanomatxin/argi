@@ -525,3 +525,37 @@ test "interactive inherited assumptions supply selected nested cleanup" {
     try std.testing.expect((try session.submitInput("state.used")).?.value.boolean);
     try session.close();
 }
+
+test "interactive virtual values retain their creation unit across submissions" {
+    var session: Interactive = undefined;
+    try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    try session.submit("Readable#(.Source: Type): Contract = (.read: (.source: &Source) -> (.result: Int32) where {})");
+    try session.submit("Box: Type = (.value: Int32)");
+    try session.submit("read_box := (.source: &Box) -> (.result: Int32) { result = source&.value }");
+    try session.submit("implement Readable#(Box) (.read = read_box)");
+    try session.submitStatements("box :: Box = (.value = 42)\nerased ::= to_virtual#(.contract: Readable)(.value = &box)");
+    const first = (try session.submitInput("Readable#().read(&erased).result")).?;
+    try std.testing.expectEqual(@as(i128, 42), first.value.integer);
+    try session.submitStatements("box.value = 7");
+    const second = (try session.submitInput("Readable#().read(&erased).result")).?;
+    try std.testing.expectEqual(@as(i128, 7), second.value.integer);
+    try session.close();
+}
+
+test "interactive virtual calls can enter older and newer code units" {
+    var session: Interactive = undefined;
+    try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    try session.submit("Readable#(.Source: Type): Contract = (.read: (.source: &Source) -> (.result: Int32) where {})");
+    try session.submit("Relay#(.Source: Type): Contract = (.relay: (.source: &Source, .target: &Virtual#(.contract: Readable)) -> (.result: Int32) where {})");
+    try session.submit("RelayState: Type = ()");
+    try session.submit("implement Relay#(RelayState) (.relay = (.source: &RelayState, .target: &Virtual#(.contract: Readable)) -> (.result: Int32) { result = Readable#().read(target).result })");
+    try session.submitStatements("relay_state :: RelayState = ()\nrelay_handle ::= to_virtual#(.contract: Relay)(.value = &relay_state)");
+    try session.submit("Box: Type = (.value: Int32)");
+    try session.submit("implement Readable#(Box) (.read = (.source: &Box) -> (.result: Int32) { result = source&.value })");
+    try session.submitStatements("box :: Box = (.value = 42)\nreader_handle ::= to_virtual#(.contract: Readable)(.value = &box)");
+    const result = (try session.submitInput("Relay#().relay(&relay_handle, &reader_handle).result")).?;
+    try std.testing.expectEqual(@as(i128, 42), result.value.integer);
+    try session.close();
+}

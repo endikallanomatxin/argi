@@ -56,12 +56,40 @@ pub fn cleanupContains(parent: Cleanup, child: Cleanup) bool {
     return true;
 }
 
+// Erasure is lowered once into code/ABI data. The executor never consults
+// conformance registries or declaration-level safety metadata.
+pub const VirtualTable = struct {
+    virtual_type: Type,
+    concrete_type: Type,
+    methods: []const struct { function: g.GlobalFunctionId, receiver_input_index: u32 },
+};
+pub const VirtualSignature = struct {
+    virtual_type: Type,
+    inputs: []const Type,
+    outputs: []const Type,
+    receiver_input_index: u32,
+    receiver_permission: p.PointerMutability,
+    method_index: u32,
+    method_count: u32,
+};
+
+// Keep infrequent call metadata behind one immutable descriptor so virtual
+// calls do not widen the tagged payload of every bytecode instruction.
+pub const VirtualInvocation = struct {
+    outputs: []const Slot,
+    args: []const Slot,
+    handle: Slot,
+    signature: VirtualSignature,
+};
+
 pub const Instruction = struct {
     source: p.SourceRef,
     op: union(enum) {
         constant: struct { dst: Slot, value: Value },
         static_bytes: struct { dst: Slot, bytes: []const u8 },
         offset_reference: struct { dst: Slot, src: Slot, elements: Slot },
+        virtualize: struct { dst: Slot, receiver: Slot, table: *const VirtualTable },
+        virtual_call: *const VirtualInvocation,
         copy: struct { dst: Slot, src: Slot },
         session_initialize: struct { binding: u32, value: Slot },
         session_borrow: struct { binding: u32, dst: Slot },
@@ -107,6 +135,8 @@ pub const Function = struct {
 // must retain that graph; execution never calls semantic resolution.
 // Program is unverified data. Vm.init validates it once; instructions, function
 // tables and graph metadata must then remain unchanged until Vm.deinit.
+// A shared context can retain virtual code after Vm.deinit. Its owner must
+// retain those backing tables and graphs until context reset or destruction.
 pub const Program = struct {
     graph: *const g.GlobalSemanticGraph,
     functions: []const ?Function,
@@ -125,6 +155,7 @@ pub fn supportedType(graph: *const g.GlobalSemanticGraph, ty: Type, depth: usize
     if (integerBounds(graph, ty) != null) return true;
     const semantic = graph.semanticType(ty);
     if (semantic == .builtin) return semantic.builtin == .Bool or semantic.builtin == .Void;
+    if (semantic == .virtual) return true;
     if (semantic == .pointer) return supportedType(graph, semantic.pointer.child, depth + 1);
     if (types.arrayElement(graph, ty)) |element| return supportedType(graph, element, depth + 1);
     if (types.variants(graph, ty)) |variants| {
@@ -167,7 +198,7 @@ pub fn valueFits(graph: *const g.GlobalSemanticGraph, ty: Type, value: Value) bo
         },
         // Reference values are created by borrow instructions, never constants
         // or external inputs. Their shape and access are checked separately.
-        .reference => false,
+        .reference, .virtual_ => false,
         .choice => |choice| blk: {
             const variant = choiceVariant(graph, ty, @enumFromInt(choice.variant)) catch break :blk false;
             if (variant.payload_type) |payload_type| {

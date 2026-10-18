@@ -156,7 +156,7 @@ pub const Scheduler = struct {
         return false;
     }
 
-    pub fn evaluateReady(self: *Scheduler, diagnostics: *@import("../../1_base/diagnostic.zig").Diagnostics, finalized: *const std.AutoHashMap(g.GlobalFunctionId, void), pending_bodies: *const std.AutoHashMap(g.GlobalFunctionId, void)) !bool {
+    pub fn evaluateReady(self: *Scheduler, contracts: *@import("contracts.zig").Resolver, diagnostics: *@import("../../1_base/diagnostic.zig").Diagnostics, finalized: *const std.AutoHashMap(g.GlobalFunctionId, void), pending_bodies: *const std.AutoHashMap(g.GlobalFunctionId, void)) !bool {
         var changed = false;
         const graph = self.functions.graph;
         for (self.requests.items) |*request| {
@@ -181,6 +181,7 @@ pub const Scheduler = struct {
                 };
             }
             if (!ready) continue;
+            try contracts.closeVirtualMethodRegistriesInUnit(&unit);
             try @import("../../execution/comptime.zig").resolveRequest(self.allocator, graph, diagnostics, node);
             const result = graph.node(node);
             request.value = switch (request.kind) {

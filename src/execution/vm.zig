@@ -1,6 +1,7 @@
 const std = @import("std");
 const b = @import("../5_codegen/bytecode/bytecode.zig");
 const g = @import("../4_semantics/global/graph.zig");
+const types = @import("../4_semantics/global/types.zig");
 const integer = @import("../5_codegen/integer_arithmetic.zig");
 const Storage = @import("storage.zig").Storage;
 const WriteDestination = @import("storage.zig").WriteDestination;
@@ -16,6 +17,7 @@ pub const Limits = struct {
 };
 
 const Frame = struct {
+    program: *const b.Program,
     function: *const b.Function,
     storage: runtime_value.FrameId,
     pc: usize = 0,
@@ -178,7 +180,7 @@ pub const Vm = struct {
         self.steps = 0;
         errdefer self.context().state = .poisoned;
         const inputs = try self.context().storage.cloneValues(args);
-        return self.execute(function, inputs);
+        return self.execute(&self.program, function, inputs);
     }
     fn chargeCleanup(self: *Vm, updated: usize) !void {
         if (updated > self.limits.instructions - self.steps) return error.ExecutionInstructionLimit;
@@ -199,24 +201,24 @@ pub const Vm = struct {
         // values, so malformed input trees cannot drive unbounded recursion.
         for (args, function.inputs) |value, slot| if (!b.valueFits(self.program.graph, function.slots[slot], value)) return error.InvalidArguments;
     }
-    fn frame(self: *Vm, function: *const b.Function, args: []const b.Value, return_slots: []const b.Slot) !Frame {
+    fn frame(self: *Vm, program: *const b.Program, function: *const b.Function, args: []const b.Value, return_slots: []const b.Slot) !Frame {
         const id = try self.context().storage.enterCleanup(function.slots.len, function.cleanup);
         const slots = try self.context().storage.slots(id);
         for (args, function.inputs) |value, slot| try slots.put(slot, value);
         try self.context().storage.charge(function.write_destinations.len);
         const destinations = try self.context().arena.allocator().alloc(?WriteDestination, function.write_destinations.len);
         @memset(destinations, null);
-        return .{ .function = function, .storage = id, .return_slots = return_slots, .write_destinations = destinations };
+        return .{ .program = program, .function = function, .storage = id, .return_slots = return_slots, .write_destinations = destinations };
     }
-    fn resolvePlace(self: *Vm, frame_id: runtime_value.FrameId, place: b.Place, path: *[64]runtime_value.Projection, comptime read_value: bool) !runtime_value.Reference {
+    fn resolvePlace(self: *Vm, program: *const b.Program, frame_id: runtime_value.FrameId, place: b.Place, path: *[64]runtime_value.Projection, comptime read_value: bool) !runtime_value.Reference {
         if (place.region == .session) {
-            const binding = self.program.session.?.bindings[place.root].binding;
+            const binding = program.session.?.bindings[place.root].binding;
             const target = self.context().bindings.get(binding) orelse return error.ExecutionUninitializedStorage;
             return self.context().storage.resolveSession(frame_id, target, place, path, read_value);
         }
         return if (read_value) self.context().storage.resolve(frame_id, place, path) else self.context().storage.resolveCleanup(frame_id, place, path);
     }
-    fn execute(self: *Vm, function: *const b.Function, args: []const b.Value) ![]const b.Value {
+    fn execute(self: *Vm, program: *const b.Program, function: *const b.Function, args: []const b.Value) ![]const b.Value {
         var frames: std.ArrayList(Frame) = .empty;
         defer frames.deinit(self.allocator);
         // Runtime failures end frame liveness without running user cleanup,
@@ -224,11 +226,12 @@ pub const Vm = struct {
         // treat this path as a recoverable cleanup/unwind protocol.
         defer for (frames.items) |active| self.context().storage.leave(active.storage);
         if (self.limits.call_depth == 0) return error.ExecutionCallDepthLimit;
-        try frames.append(self.allocator, try self.frame(function, args, &.{}));
+        try frames.append(self.allocator, try self.frame(program, function, args, &.{}));
         while (true) {
             // Never retain this pointer across a push: the frame array may move.
             const current = &frames.items[frames.items.len - 1];
             const f = current.function;
+            const unit = current.program;
             const slots = try self.context().storage.slots(current.storage);
             const inst = f.code[current.pc];
             self.source = inst.source;
@@ -239,9 +242,55 @@ pub const Vm = struct {
                 .constant => |x| try slots.put(x.dst, x.value),
                 .static_bytes => |x| try slots.put(x.dst, try self.context().literalBytes(x.bytes)),
                 .offset_reference => |x| try slots.put(x.dst, .{ .reference = try self.context().storage.offsetReference((try slots.get(x.src)).reference, (try slots.get(x.elements)).integer) }),
+                .virtualize => |x| {
+                    const receiver = try slots.get(x.receiver);
+                    if (receiver != .reference) return error.ExecutionInvalidVirtual;
+                    try slots.put(x.dst, try self.context().storage.virtualize(receiver.reference, unit, x.table));
+                },
+                .virtual_call => |x| {
+                    if (frames.items.len >= self.limits.call_depth) return error.ExecutionCallDepthLimit;
+                    const pointer = try slots.get(x.handle);
+                    if (pointer != .reference) return error.ExecutionInvalidVirtual;
+                    const erased = try self.context().storage.read(pointer.reference);
+                    if (erased != .virtual_) return error.ExecutionInvalidVirtual;
+                    const virtual = erased.virtual_;
+                    _ = try self.context().storage.read(virtual.receiver);
+                    if (unit.session) |namespace| {
+                        const origin = virtual.program.session orelse return error.ExecutionForeignSession;
+                        if (namespace.namespace != origin.namespace) return error.ExecutionForeignSession;
+                    } else if (virtual.program.session != null or unit.graph != virtual.program.graph) return error.ExecutionForeignSession;
+                    // Shared compilation namespaces preserve append-only type IDs.
+                    // Either frame can be older; compare in the longer retained prefix.
+                    const universe = if (unit.graph.types.items.len >= virtual.program.graph.types.items.len) unit.graph else virtual.program.graph;
+                    const selected = virtual.table;
+                    const signature = &x.signature;
+                    const handle_type = unit.graph.semanticType(f.slots[x.handle]).pointer.child;
+                    if (!types.equal(universe, handle_type, selected.virtual_type) or signature.method_count != selected.methods.len) return error.ExecutionInvalidVirtual;
+                    const method = selected.methods[signature.method_index];
+                    if (method.receiver_input_index != signature.receiver_input_index) return error.ExecutionInvalidVirtual;
+                    const callee = &virtual.program.functions[@intFromEnum(method.function)].?;
+                    if (callee.inputs.len != x.args.len or callee.outputs.len != x.outputs.len) return error.ExecutionInvalidVirtual;
+                    const values = try self.allocate(x.args.len);
+                    for (values, x.args, callee.inputs, 0..) |*value, slot, input, index| {
+                        if (index == signature.receiver_input_index) {
+                            var receiver = virtual.receiver;
+                            const permission = virtual.program.graph.semanticType(callee.slots[input]).pointer.mutability;
+                            if (permission == .read_write and (pointer.reference.mutability != .read_write or receiver.mutability != .read_write)) return error.ExecutionReadonlyReference;
+                            receiver.mutability = permission;
+                            value.* = .{ .reference = receiver };
+                        } else {
+                            if (!types.equal(universe, f.slots[slot], callee.slots[input])) return error.ExecutionInvalidVirtual;
+                            value.* = try slots.get(slot);
+                        }
+                    }
+                    for (x.outputs, callee.outputs) |slot, output| {
+                        if (!types.equal(universe, f.slots[slot], callee.slots[output])) return error.ExecutionInvalidVirtual;
+                    }
+                    try frames.append(self.allocator, try self.frame(&virtual.program, callee, values, x.outputs));
+                },
                 .copy => |x| try slots.put(x.dst, try slots.get(x.src)),
-                .session_initialize => |x| try self.context().initializeBinding(self.program.session.?.bindings[x.binding], try slots.get(x.value)),
-                .session_borrow => |x| try slots.put(x.dst, try self.context().borrowBinding(self.program.session.?.bindings[x.binding], self.program.graph.semanticType(f.slots[x.dst]).pointer.mutability)),
+                .session_initialize => |x| try self.context().initializeBinding(unit.session.?.bindings[x.binding], try slots.get(x.value)),
+                .session_borrow => |x| try slots.put(x.dst, try self.context().borrowBinding(unit.session.?.bindings[x.binding], unit.graph.semanticType(f.slots[x.dst]).pointer.mutability)),
                 .readonly => |x| {
                     var reference = (try slots.get(x.src)).reference;
                     reference.mutability = .read_only;
@@ -280,21 +329,21 @@ pub const Vm = struct {
                 .branch_variant => |x| current.pc = if ((try slots.get(x.src)).choice.variant == @intFromEnum(x.variant)) x.yes else x.no,
                 .borrow => |x| {
                     var path: [64]runtime_value.Projection = undefined;
-                    const reference = try self.resolvePlace(current.storage, x.place, &path, true);
-                    const permission = self.program.graph.semanticType(f.slots[x.dst]).pointer.mutability;
+                    const reference = try self.resolvePlace(unit, current.storage, x.place, &path, true);
+                    const permission = unit.graph.semanticType(f.slots[x.dst]).pointer.mutability;
                     try slots.put(x.dst, try self.context().storage.borrow(reference, permission));
                 },
                 .load => |x| {
                     var path: [64]runtime_value.Projection = undefined;
-                    try slots.put(x.dst, try self.context().storage.read(try self.resolvePlace(current.storage, x.place, &path, true)));
+                    try slots.put(x.dst, try self.context().storage.read(try self.resolvePlace(unit, current.storage, x.place, &path, true)));
                 },
                 .check_place => |place| {
                     var path: [64]runtime_value.Projection = undefined;
-                    _ = try self.resolvePlace(current.storage, place, &path, true);
+                    _ = try self.resolvePlace(unit, current.storage, place, &path, true);
                 },
                 .capture_write => |x| {
                     var path: [64]runtime_value.Projection = undefined;
-                    const reference = try self.resolvePlace(current.storage, x.place, &path, true);
+                    const reference = try self.resolvePlace(unit, current.storage, x.place, &path, true);
                     current.write_destinations[x.dst] = try self.context().storage.captureResolvedWrite(reference, x.activate_cleanup);
                 },
                 .check_write_cleanup => |id| {
@@ -312,12 +361,12 @@ pub const Vm = struct {
                 },
                 .cleanup_test => |x| {
                     var path: [64]runtime_value.Projection = undefined;
-                    const reference = try self.resolvePlace(current.storage, x.place, &path, false);
+                    const reference = try self.resolvePlace(unit, current.storage, x.place, &path, false);
                     try slots.put(x.dst, .{ .boolean = try self.context().storage.cleanupTest(reference) });
                 },
                 .cleanup_set => |x| {
                     var path: [64]runtime_value.Projection = undefined;
-                    const reference = try self.resolvePlace(current.storage, x.place, &path, false);
+                    const reference = try self.resolvePlace(unit, current.storage, x.place, &path, false);
                     // A subtree update performs work without allocating value
                     // cells. Charge its flags too, so a large owner in a loop
                     // cannot turn one instruction into unbounded cleanup work.
@@ -328,7 +377,7 @@ pub const Vm = struct {
                 .binary => |x| {
                     const left = (try slots.get(x.left)).integer;
                     const right = (try slots.get(x.right)).integer;
-                    const range = b.integerBounds(self.program.graph, f.slots[x.dst]).?;
+                    const range = b.integerBounds(unit.graph, f.slots[x.dst]).?;
                     const n = integer.evaluate(x.operator, left, right, range) catch return error.ExecutionDivisionByZero;
                     try slots.put(x.dst, .{ .integer = n });
                 },
@@ -357,8 +406,8 @@ pub const Vm = struct {
                     if (frames.items.len >= self.limits.call_depth) return error.ExecutionCallDepthLimit;
                     const values = try self.allocate(x.args.len);
                     for (values, x.args) |*value, slot| value.* = try slots.get(slot);
-                    const callee = &self.program.functions[@intFromEnum(x.function)].?;
-                    try frames.append(self.allocator, try self.frame(callee, values, x.outputs));
+                    const callee = &unit.functions[@intFromEnum(x.function)].?;
+                    try frames.append(self.allocator, try self.frame(unit, callee, values, x.outputs));
                 },
                 .branch => |x| current.pc = if ((try slots.get(x.condition)).boolean) x.yes else x.no,
                 .jump => |target| current.pc = target,

@@ -76,6 +76,16 @@ pub const Storage = struct {
         try self.charge(count);
         return self.allocator.alloc(b.Value, count);
     }
+    pub fn virtualize(self: *Storage, receiver: v.Reference, program: *const b.Program, table: *const b.VirtualTable) !b.Value {
+        _ = try self.read(receiver);
+        const descriptor_cells = comptime std.math.divCeil(usize, @sizeOf(v.Virtual), @sizeOf(b.Value)) catch unreachable;
+        try self.charge(descriptor_cells + receiver.path.len);
+        const descriptor = try self.allocator.create(v.Virtual);
+        var retained = receiver;
+        retained.path = try self.allocator.dupe(v.Projection, receiver.path);
+        descriptor.* = .{ .receiver = retained, .program = program.*, .table = table };
+        return .{ .virtual_ = descriptor };
+    }
     /// Copy complete value data into this context's arena. Copying data never
     /// copies cleanup obligations or grants permission to duplicate an owner.
     /// Callers supply the frontend's checked copy/move and publication plans.
@@ -92,6 +102,10 @@ pub const Storage = struct {
                 .variant = choice.variant,
                 .payload = if (choice.payload) |payload| &(try self.cloneValuesDepth(payload[0..1], depth + 1))[0] else null,
             } },
+            .virtual_ => |handle| blk: {
+                try self.validateContext(handle.receiver);
+                break :blk value;
+            },
             .reference => |reference| blk: {
                 try self.validateContext(reference);
                 try self.charge(reference.path.len);
@@ -144,6 +158,7 @@ pub const Storage = struct {
                 _ = try self.read(reference);
                 if (self.frames.items[@intFromEnum(reference.frame)].duration == .call) return error.ExecutionTemporaryReference;
             },
+            .virtual_ => |handle| try self.validateSessionValues(&.{.{ .reference = handle.receiver }}, depth + 1),
             .choice => |choice| if (choice.payload) |payload| try self.validateSessionValues(payload[0..1], depth + 1),
             .record => |fields| try self.validateSessionValues(fields, depth + 1),
             .array => |elements| try self.validateSessionValues(elements, depth + 1),
@@ -473,6 +488,7 @@ pub const Storage = struct {
     pub fn validateLive(self: *Storage, values: []const b.Value) anyerror!void {
         for (values) |value| switch (value) {
             .reference => |reference| _ = try self.read(reference),
+            .virtual_ => |handle| _ = try self.read(handle.receiver),
             .choice => |choice| if (choice.payload) |payload| try self.validateLive(payload[0..1]),
             .record => |fields| try self.validateLive(fields),
             .array => |elements| try self.validateLive(elements),

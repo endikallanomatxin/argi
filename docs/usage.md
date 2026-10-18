@@ -134,7 +134,13 @@ Earlier copies retain their old lifetime and cannot be used again. General ownin
 replacement through unresolved or retargetable references and indexed storage
 remains unsupported. Scalar and borrowed-only writes through references work.
 
-Raw pointers, C enums, floating point, error propagation/tracing, virtual calls,
+Unary virtual values retain their concrete receiver and the immutable bytecode
+unit containing the selected operations. Calls use that evidence directly, including
+across REPL submissions; they do not run contract resolution at runtime. Receiver
+permissions and storage liveness remain checked. Virtual values cannot escape the
+executor as compile-time constants.
+
+Raw pointers, C enums, floating point, error propagation/tracing,
 partial initialization through output references, globals, closures, foreign calls,
 and System capabilities are not yet supported. Unsupported constructs in reachable
 function bodies are rejected

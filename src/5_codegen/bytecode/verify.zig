@@ -61,6 +61,41 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                     if (pointer != .pointer or !types.equal(program.graph, f.slots[x.dst], f.slots[x.src]) or
                         !types.isBuiltin(program.graph, f.slots[x.elements], .UIntNative)) return error.InvalidBytecode;
                 },
+                .virtualize => |x| {
+                    const selected = x.table;
+                    if (@intFromEnum(selected.virtual_type) >= program.graph.types.items.len or @intFromEnum(selected.concrete_type) >= program.graph.types.items.len or
+                        program.graph.semanticType(selected.virtual_type) != .virtual or !types.equal(program.graph, f.slots[x.dst], selected.virtual_type)) return error.InvalidBytecode;
+                    const receiver = program.graph.semanticType(f.slots[x.receiver]);
+                    if (receiver != .pointer or !types.equal(program.graph, receiver.pointer.child, selected.concrete_type)) return error.InvalidBytecode;
+                    for (selected.methods) |method| {
+                        if (@intFromEnum(method.function) >= program.functions.len or program.functions[@intFromEnum(method.function)] == null) return error.InvalidBytecode;
+                        const implementation = program.functions[@intFromEnum(method.function)].?;
+                        if (method.receiver_input_index >= implementation.inputs.len) return error.InvalidBytecode;
+                        const expected = program.graph.semanticType(implementation.slots[implementation.inputs[method.receiver_input_index]]);
+                        if (expected != .pointer or !types.equal(program.graph, expected.pointer.child, selected.concrete_type) or
+                            (expected.pointer.mutability == .read_write and receiver.pointer.mutability != .read_write)) return error.InvalidBytecode;
+                    }
+                },
+                .virtual_call => |x| {
+                    const signature = &x.signature;
+                    if (x.args.len != signature.inputs.len or x.outputs.len != signature.outputs.len or signature.receiver_input_index >= x.args.len or signature.method_index >= signature.method_count) return error.InvalidBytecode;
+                    if (@intFromEnum(signature.virtual_type) >= program.graph.types.items.len or program.graph.semanticType(signature.virtual_type) != .virtual) return error.InvalidBytecode;
+                    const handle = program.graph.semanticType(f.slots[x.handle]);
+                    if (handle != .pointer or !types.equal(program.graph, handle.pointer.child, signature.virtual_type) or
+                        (signature.receiver_permission == .read_write and handle.pointer.mutability != .read_write)) return error.InvalidBytecode;
+                    const contract = program.graph.semanticType(signature.virtual_type).virtual;
+                    for (x.args, signature.inputs, 0..) |slot, ty, index| {
+                        if (@intFromEnum(ty) >= program.graph.types.items.len) return error.InvalidBytecode;
+                        if (index == signature.receiver_input_index) {
+                            const receiver = program.graph.semanticType(ty);
+                            if (slot != x.handle or receiver != .pointer or receiver.pointer.mutability != signature.receiver_permission or !types.equal(program.graph, receiver.pointer.child, contract)) return error.InvalidBytecode;
+                        } else if (!types.equal(program.graph, f.slots[slot], ty)) return error.InvalidBytecode;
+                    }
+                    for (x.outputs, signature.outputs, 0..) |slot, ty, index| {
+                        if (@intFromEnum(ty) >= program.graph.types.items.len or !types.equal(program.graph, f.slots[slot], ty)) return error.InvalidBytecode;
+                        for (x.outputs[0..index]) |previous| if (previous == slot) return error.InvalidBytecode;
+                    }
+                },
                 .copy => |x| if (!types.equal(program.graph, f.slots[x.dst], f.slots[x.src])) return error.InvalidBytecode,
                 .session_initialize => |x| {
                     const binding = try sessionBinding(program, x.binding);
@@ -267,9 +302,11 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
 
 fn destinations(i: Instruction, single: *[1]Slot) []const Slot {
     if (i.op == .call) return i.op.call.outputs;
+    if (i.op == .virtual_call) return i.op.virtual_call.outputs;
     const slot: ?Slot = switch (i.op) {
         .constant => |x| x.dst,
         .static_bytes => |x| x.dst,
+        .virtualize => |x| x.dst,
         .offset_reference => |x| x.dst,
         .copy => |x| x.dst,
         .session_borrow => |x| x.dst,
@@ -297,6 +334,11 @@ fn destinations(i: Instruction, single: *[1]Slot) []const Slot {
 fn readSlots(a: std.mem.Allocator, i: Instruction, out: *std.ArrayList(Slot)) !void {
     switch (i.op) {
         .copy => |x| try out.append(a, x.src),
+        .virtualize => |x| try out.append(a, x.receiver),
+        .virtual_call => |x| {
+            try out.append(a, x.handle);
+            try out.appendSlice(a, x.args);
+        },
         .offset_reference => |x| try out.appendSlice(a, &.{ x.src, x.elements }),
         .session_initialize => |x| try out.append(a, x.value),
         .readonly => |x| try out.append(a, x.src),

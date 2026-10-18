@@ -24,8 +24,8 @@ Release order: [0.4](0.4.md). Current commands and supported execution subset:
 - Extend partial initialization and error propagation/tracing.
 - Complete evaluated cleanup identities for owning replacement through indexed
   storage and unresolved/retargetable references, shared with native lowering.
-- Extend supported virtual calls, scalar representations and explicit host-call
-  capabilities only through checked signatures and evidence.
+- Extend scalar representations and explicit host-call capabilities only through
+  checked signatures and evidence.
 - Add configurable quotas and cancellation at safe points. Measure repeated
   execution and retained memory before considering JIT.
 

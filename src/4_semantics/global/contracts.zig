@@ -2435,15 +2435,30 @@ pub const Resolver = struct {
     /// Safety generates dispatch summaries from the declaration and checks
     /// each selected concrete method independently.
     pub fn closeVirtualMethodRegistries(self: *Resolver) !void {
-        for (self.graph.virtualizes.items) |virtualize| {
+        try self.closeVirtualMethodRegistriesInUnit(null);
+    }
+
+    /// Staged evaluation closes only its resolved dependency unit. Unrelated
+    /// virtual constructions may still have pending bodies or type bindings.
+    pub fn closeVirtualMethodRegistriesInUnit(self: *Resolver, unit: ?*const @import("reachability.zig").FunctionSet) !void {
+        for (self.graph.virtualizes.items, 0..) |virtualize, raw| {
+            if (unit) |selected| if (!selected.virtualizes.contains(@enumFromInt(raw))) continue;
             const registries = self.graph.virtual_registry_refs.items[virtualize.safety_methods.start..][0..virtualize.safety_methods.len];
             for (registries, 0..) |registry_id, method_index|
-                try self.closeVirtualMethodRegistry(registry_id, self.graph.semanticType(virtualize.virtual_type).virtual, method_index);
+                try self.closeVirtualMethodRegistry(registry_id, self.graph.semanticType(virtualize.virtual_type).virtual, method_index, unit);
         }
-
-        for (self.graph.virtual_calls.items) |call| {
+        var nodes = if (unit) |selected| selected.nodes.keyIterator() else null;
+        if (nodes) |*selected| {
+            while (selected.next()) |node| {
+                const content = self.graph.node(node.*).content;
+                if (content != .virtual_call) continue;
+                const call = self.graph.virtual_calls.items[@intFromEnum(content.virtual_call)];
+                const contract_ty = contract_evidence.virtualContractType(self.graph, call) orelse continue;
+                try self.closeVirtualMethodRegistry(call.safety_methods, contract_ty, call.method_index, unit);
+            }
+        } else for (self.graph.virtual_calls.items) |call| {
             const contract_ty = contract_evidence.virtualContractType(self.graph, call) orelse continue;
-            try self.closeVirtualMethodRegistry(call.safety_methods, contract_ty, call.method_index);
+            try self.closeVirtualMethodRegistry(call.safety_methods, contract_ty, call.method_index, null);
         }
     }
 
@@ -2452,6 +2467,7 @@ pub const Resolver = struct {
         registry_id: global_sg.GlobalVirtualRegistryId,
         contract_ty: global_sg.GlobalTypeId,
         method_index: usize,
+        unit: ?*const @import("reachability.zig").FunctionSet,
     ) !void {
         const use = self.contractUse(contract_ty) orelse return error.InvalidVirtualContract;
         const located = self.findContractDefinition(use.declaration) orelse return error.InvalidVirtualContract;
@@ -2464,7 +2480,8 @@ pub const Resolver = struct {
         var implementations: std.ArrayList(global_sg.GlobalFunctionId) = .empty;
         defer implementations.deinit(self.allocator);
 
-        for (self.graph.virtualizes.items) |candidate| {
+        for (self.graph.virtualizes.items, 0..) |candidate, raw| {
+            if (unit) |selected| if (!selected.virtualizes.contains(@enumFromInt(raw))) continue;
             if (!global_types.equal(self.graph, self.graph.semanticType(candidate.virtual_type).virtual, contract_ty) or method_index >= candidate.methods.len) continue;
             const implementation = self.graph.function_refs.items[candidate.methods.start + @as(u32, @intCast(method_index))];
             var exists = false;

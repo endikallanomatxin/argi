@@ -1167,7 +1167,7 @@ fn advanceResolution(
             };
         }
         const evaluated = if (options.diagnostics) |diagnostics|
-            staged_execution.evaluateReady(diagnostics, finalized_functions, &pending_bodies) catch |err| {
+            staged_execution.evaluateReady(contracts, diagnostics, finalized_functions, &pending_bodies) catch |err| {
                 try reportComptimeExpressionFailure(graph, options.diagnostics, generics);
                 return err;
             }

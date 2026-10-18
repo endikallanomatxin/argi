@@ -150,6 +150,7 @@ fn printValue(output: *std.Io.Writer, item: value.Value, depth: usize) std.Io.Wr
         .boolean => |boolean| try output.writeAll(if (boolean) "true" else "false"),
         .unit => try output.writeAll("()"),
         .reference => try output.writeAll("<reference>"),
+        .virtual_ => try output.writeAll("<virtual>"),
         .record, .array => |elements| {
             try output.writeByte(if (item == .record) '(' else '[');
             for (elements, 0..) |element, index| {

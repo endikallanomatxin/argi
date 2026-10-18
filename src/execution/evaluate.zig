@@ -97,7 +97,7 @@ fn freeze(allocator: std.mem.Allocator, graph: *g.GlobalSemanticGraph, ty: g.Glo
         .integer => |integer| .{ .int_literal = integer },
         .boolean => |boolean| .{ .bool_literal = boolean },
         .unit => .{ .struct_value_literal = .{ .fields = .{ .start = 0, .len = 0 } } },
-        .reference => return error.UnfreezableEvaluationResult,
+        .reference, .virtual_ => return error.UnfreezableEvaluationResult,
         .array => |values| blk: {
             const element = types.arrayElement(graph, ty).?;
             const nodes = try allocator.alloc(g.GlobalNodeId, values.len);
