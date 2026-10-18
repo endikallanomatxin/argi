@@ -638,6 +638,7 @@ fn validateModuleGraphAcyclic(
     }
 
     for (imports.items) |entry| {
+        if (visited_dirs.contains(entry.resolved_dir)) continue;
         try ensureImportDirExists(io, entry);
         try validateModuleGraphAcyclic(alloc, io, entry.resolved_dir, null, null, overrides, visited_dirs, stack, target);
     }
@@ -683,6 +684,7 @@ fn collectModuleOrder(
     }
 
     for (imports.items) |entry| {
+        if (visited_dirs.contains(entry.resolved_dir)) continue;
         try ensureImportDirExists(io, entry);
         try collectModuleOrder(alloc, io, entry.resolved_dir, null, null, overrides, visited_dirs, ordered_dirs, target);
     }
@@ -837,6 +839,52 @@ pub fn collectModuleWithOptions(
     }
 
     return list;
+}
+
+/// Discover only an in-memory submission's dependencies. Accepted module
+/// directories are immutable leaves: neither reread nor rediscover their files.
+/// Source paths use the caller's real import base, independently of submission IDs.
+pub fn collectImportedModules(
+    alloc: *const std.mem.Allocator,
+    io: std.Io,
+    source: SourceFile,
+    retained_dirs: []const []const u8,
+    options: CoreResolutionOptions,
+) !std.array_list.Managed(SourceFile) {
+    var arena = std.heap.ArenaAllocator.init(alloc.*);
+    defer arena.deinit();
+    const scratch = arena.allocator();
+    var imports = ImportList.init(scratch);
+    try collectImportDirsFromSource(&scratch, io, source.path, source.code, &imports, options.target);
+    var visited = DirSet.init(scratch);
+    var ordered_seen = DirSet.init(scratch);
+    for (retained_dirs) |dir| {
+        try visited.put(dir, {});
+        try ordered_seen.put(dir, {});
+    }
+    var stack = std.array_list.Managed([]const u8).init(scratch);
+    var ordered = std.array_list.Managed([]const u8).init(scratch);
+    for (imports.items) |entry| {
+        if (visited.contains(entry.resolved_dir)) continue;
+        try ensureImportDirExists(io, entry);
+        try validateModuleGraphAcyclic(&scratch, io, entry.resolved_dir, null, null, options.source_overrides, &visited, &stack, options.target);
+    }
+    for (imports.items) |entry|
+        try collectModuleOrder(&scratch, io, entry.resolved_dir, null, null, options.source_overrides, &ordered_seen, &ordered, options.target);
+    var files = std.array_list.Managed(SourceFile).init(scratch);
+    var seen = DirSet.init(scratch);
+    for (ordered.items) |dir|
+        try collectRgFilesInDir(&scratch, io, &files, dir, null, &seen, options.source_overrides);
+    var result = std.array_list.Managed(SourceFile).init(alloc.*);
+    errdefer freeList(alloc, &result);
+    for (files.items) |file| {
+        const path = try alloc.dupe(u8, file.path);
+        errdefer alloc.free(path);
+        const code = try alloc.dupe(u8, file.code);
+        errdefer alloc.free(code);
+        try result.append(.{ .path = path, .code = code });
+    }
+    return result;
 }
 
 pub fn collectWithEntrySource(

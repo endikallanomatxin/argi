@@ -25,6 +25,7 @@ pub const Interactive = struct {
     limits: vm.Limits,
     closed: bool = false,
     result_sequence: u64 = 0,
+    imports: ?struct { io: std.Io, path: []const u8 } = null,
 
     pub fn init(self: *Interactive, allocator: std.mem.Allocator, modules: []const module_sg.ModuleSemanticGraph, options: sema.Options, limits: vm.Limits) !void {
         return self.initWithSources(allocator, &.{}, modules, options, limits);
@@ -40,6 +41,7 @@ pub const Interactive = struct {
         self.limits = limits;
         self.closed = false;
         self.result_sequence = 0;
+        self.imports = null;
         self.diagnostic_arena = .init(allocator);
         errdefer self.diagnostic_arena.deinit();
         self.diagnostic_allocator = self.diagnostic_arena.allocator();
@@ -52,7 +54,16 @@ pub const Interactive = struct {
         self.compiler = try compilation.CompilationSession.init(allocator, modules, selected);
         self.runtime = .init(allocator, &self.compiler, limits);
     }
+    pub fn enableImports(self: *Interactive, io: std.Io, directory: []const u8) !void {
+        const cwd = try std.process.currentPathAlloc(io, self.allocator);
+        defer self.allocator.free(cwd);
+        const path = try std.fs.path.resolve(self.allocator, &.{ cwd, directory, "__argi_repl__.rg" });
+        if (self.imports) |previous| self.allocator.free(previous.path);
+        self.imports = .{ .io = io, .path = path };
+    }
+
     pub fn deinit(self: *Interactive) void {
+        if (self.imports) |loader| self.allocator.free(loader.path);
         self.runtime.deinit();
         self.compiler.deinit();
         self.diagnostics.deinit();
@@ -126,7 +137,16 @@ pub const Interactive = struct {
     pub fn submitDefinitions(self: *Interactive, source: []const u8) !void {
         try self.beginSubmission();
         const module = try self.sources.loadModule(&self.diagnostics, source);
-        const prefix = try self.sources.appendSnapshot(self.compiler.semantic.modules, module);
+        var dependencies = self.compiler.semantic.modules;
+        if (module.semantic.module_aliases.items.len != 0) {
+            const loader = self.imports orelse {
+                try self.diagnostics.add(.{ .file = self.diagnostics.source_db.fileId(self.diagnostics.source_files.len - 1), .offset = 0 }, .semantic, "interactive imports require a configured source loader", .{});
+                return error.Reported;
+            };
+            dependencies = try self.sources.loadImports(&self.diagnostics, loader.io, loader.path, source, dependencies, self.options.target);
+            try self.sources.resolveSubmissionImports(module, loader.io, loader.path);
+        }
+        const prefix = try self.sources.appendSnapshot(dependencies, module);
         var candidate = try self.compiler.prepareDefinitions(prefix, &self.diagnostics);
         defer candidate.deinit();
         try self.compiler.accept(&candidate);
@@ -376,7 +396,7 @@ test "interactive classification rejects mixed submissions and unresolved import
     try std.testing.expectEqual(revision, session.compiler.revision);
     try std.testing.expectError(error.Reported, session.submit("module := import(\"./support\")"));
     try std.testing.expectEqual(revision, session.compiler.revision);
-    try std.testing.expect(std.mem.indexOf(u8, session.diagnostics.list.items[0].msg, "imports in interactive submissions") != null);
+    try std.testing.expect(std.mem.indexOf(u8, session.diagnostics.list.items[0].msg, "interactive imports require a configured source loader") != null);
     const result = (try session.submitInput("42")).?;
     try std.testing.expectEqual(@as(i128, 42), result.value.integer);
     try session.close();
@@ -604,5 +624,57 @@ test "interactive source IDs retain original metadata across commands" {
     try std.testing.expectError(error.Reported, session.submitInput("#run error_location_id()"));
     try session.reset();
     try std.testing.expectEqual(@as(usize, 0), session.runtime.context.trace_locations.items.len);
+    try session.close();
+}
+
+test "interactive imports load folder dependencies transactionally and retain accepted source" {
+    const a = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, "library");
+    try tmp.dir.createDirPath(io, "dependency");
+    try tmp.dir.createDirPath(io, "later");
+    try tmp.dir.createDirPath(io, "broken");
+    try tmp.dir.createDirPath(io, "cycle_a");
+    try tmp.dir.createDirPath(io, "cycle_b");
+    try tmp.dir.writeFile(io, .{ .sub_path = "dependency/main.rg", .data = "answer := () -> (.result: Int32) { result = 42 }" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "library/main.rg", .data = "dep := import(\"../dependency\")\nanswer := () -> (.result: Int32) { result = dep.answer() }" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "library/extra.rg", .data = "extra := () -> (.result: Int32) { result = 7 }" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "later/main.rg", .data = "dep := import(\"../dependency\")\nanswer := () -> (.result: Int32) { result = dep.answer() }" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "broken/main.rg", .data = "broken := () -> () {" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "cycle_a/main.rg", .data = "other := import(\"../cycle_b\")" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "cycle_b/main.rg", .data = "other := import(\"../cycle_a\")" });
+    const base = try tmp.dir.realPathFileAlloc(io, ".", a);
+    defer a.free(base);
+    var session: Interactive = undefined;
+    try session.init(a, &.{}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    try session.enableImports(io, base);
+    try session.submit("library := import(\"./library\")");
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("library.answer()")).?.value.integer);
+    try std.testing.expectEqual(@as(i128, 7), (try session.submitInput("library.extra()")).?.value.integer);
+    // Already-published dependencies are immutable, even when another new
+    // module imports them after the files have changed or become invalid.
+    try tmp.dir.writeFile(io, .{ .sub_path = "dependency/main.rg", .data = "broken := () -> () {" });
+    try session.submit("again := import(\"./library\")");
+    try session.submit("later := import(\"./later\")");
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("again.answer()")).?.value.integer);
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("later.answer()")).?.value.integer);
+    const revision = session.compiler.revision;
+    try std.testing.expectError(error.ExpectedRightBrace, session.submit("bad := import(\"./broken\")"));
+    try std.testing.expectEqual(revision, session.compiler.revision);
+    try std.testing.expectError(error.ImportCycle, session.submit("cycle := import(\"./cycle_a\")"));
+    try std.testing.expectEqual(revision, session.compiler.revision);
+    try std.testing.expectError(error.UnknownModuleReference, session.compiler.semantic.resolvers.core.findModuleForQualifier(0, "bad"));
+    try std.testing.expectError(error.Reported, session.submitInput("answer()"));
+    try std.testing.expectEqual(@as(i128, 42), (try session.submitInput("library.answer()")).?.value.integer);
+    try tmp.dir.writeFile(io, .{ .sub_path = "broken/main.rg", .data = "answer := () -> (.result: Int32) { result = 11 }" });
+    try session.submit("bad := import(\"./broken\")");
+    try std.testing.expectEqual(@as(i128, 11), (try session.submitInput("bad.answer()")).?.value.integer);
+    try tmp.dir.writeFile(io, .{ .sub_path = "dependency/main.rg", .data = "answer := () -> (.result: Int32) { result = 99 }" });
+    try session.reset();
+    try session.submit("library := import(\"./library\")");
+    try std.testing.expectEqual(@as(i128, 99), (try session.submitInput("library.answer()")).?.value.integer);
     try session.close();
 }

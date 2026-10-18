@@ -100,13 +100,11 @@ pub const Sources = struct {
         };
         var result: SubmissionKind = .empty;
         for (parsed.tree.roots) |root| {
-            if (parsed.tree.symbolDeclaration(root)) |declaration| if (declaration.value) |value| {
-                if (parsed.tree.tag(value) == .import_statement) {
-                    try diagnostics.add(parsed.tree.location(root), .semantic, "imports in interactive submissions are not yet supported", .{});
-                    return error.Reported;
-                }
-            };
-            const kind: SubmissionKind = switch (parsed.tree.tag(root)) {
+            const is_import = if (parsed.tree.symbolDeclaration(root)) |declaration|
+                if (declaration.value) |value| parsed.tree.tag(value) == .import_statement else false
+            else
+                false;
+            const kind: SubmissionKind = if (is_import) .definitions else switch (parsed.tree.tag(root)) {
                 .function_declaration, .function_declaration_once, .contract_declaration, .contract_conformance, .type_declaration, .c_struct_declaration, .c_incomplete_declaration, .c_enum_declaration, .c_union_declaration, .c_function_pointer_declaration, .choice_option_declaration => .definitions,
                 else => .statements,
             };
@@ -127,6 +125,11 @@ pub const Sources = struct {
         const retained = self.arena.allocator();
         const dir = try std.fmt.allocPrint(retained, "/__argi_session__/submission_{d}", .{sequence});
         const path = try std.fmt.allocPrint(retained, "{s}/main.rg", .{dir});
+        return self.parseFile(diagnostics, source, origin, path, dir);
+    }
+
+    fn parseFile(self: *Sources, diagnostics: *diagnostics_mod.Diagnostics, source: []const u8, origin: ?SourceOrigin, path: []const u8, dir: []const u8) !Parsed {
+        const retained = self.arena.allocator();
         const code = try retained.dupe(u8, source);
         const file = try diagnostics.appendSource(.{ .path = path, .code = code });
         if (origin) |input| {
@@ -153,11 +156,11 @@ pub const Sources = struct {
         return .{ .tree = tree, .code = code, .path = path, .dir = dir };
     }
 
-    pub fn loadModule(self: *Sources, diagnostics: *diagnostics_mod.Diagnostics, source: []const u8) !*const module_sg.ModuleSemanticGraph {
+    pub fn loadModule(self: *Sources, diagnostics: *diagnostics_mod.Diagnostics, source: []const u8) !*module_sg.ModuleSemanticGraph {
         return self.loadModuleOrigin(diagnostics, source, null);
     }
 
-    fn loadModuleOrigin(self: *Sources, diagnostics: *diagnostics_mod.Diagnostics, source: []const u8, origin: ?SourceOrigin) !*const module_sg.ModuleSemanticGraph {
+    fn loadModuleOrigin(self: *Sources, diagnostics: *diagnostics_mod.Diagnostics, source: []const u8, origin: ?SourceOrigin) !*module_sg.ModuleSemanticGraph {
         var parsed = try self.parseSource(diagnostics, source, origin);
         defer parsed.tree.deinit(self.allocator);
         const code = parsed.code;
@@ -165,14 +168,71 @@ pub const Sources = struct {
         const dir = parsed.dir;
         const tree = &parsed.tree;
         const inputs = [_]module_sg.FileInput{.{ .diagnostics = diagnostics, .path = path, .tree = tree, .source = code }};
+        return self.finishModule(diagnostics, dir, &inputs, .{});
+    }
+
+    fn finishModule(self: *Sources, diagnostics: *diagnostics_mod.Diagnostics, dir: []const u8, inputs: []const module_sg.FileInput, target: @import("../1_base/target.zig").Config) !*module_sg.ModuleSemanticGraph {
         const graph = try self.allocator.create(module_sg.ModuleSemanticGraph);
         errdefer self.allocator.destroy(graph);
-        graph.* = try module_sg.build(self.allocator, dir, &inputs);
+        graph.* = try module_sg.buildForTarget(self.allocator, dir, inputs, target);
         errdefer graph.deinit(self.allocator);
-        _ = try @import("../4_semantics/module/semantizer.zig").finish(self.allocator, graph, &inputs, diagnostics);
+        _ = try @import("../4_semantics/module/semantizer.zig").finish(self.allocator, graph, inputs, diagnostics);
         if (diagnostics.hasErrors()) return error.Reported;
         try self.modules.append(self.allocator, graph);
         return graph;
+    }
+
+    /// Build dependency modules through the ordinary tokenizer, parser and
+    /// ModuleSema. Only the accepted prefix determines which files are reused.
+    pub fn loadImports(self: *Sources, diagnostics: *diagnostics_mod.Diagnostics, io: std.Io, importer_path: []const u8, source: []const u8, prefix: []const module_sg.ModuleSemanticGraph, target: @import("../1_base/target.zig").Config) ![]const module_sg.ModuleSemanticGraph {
+        const sf = @import("../1_base/source_files.zig");
+        const a = self.allocator;
+        const dirs = try a.alloc([]const u8, prefix.len);
+        defer a.free(dirs);
+        for (dirs, prefix) |*dir, module| dir.* = module.module_dir;
+        var files = try sf.collectImportedModules(&a, io, .{ .path = importer_path, .code = source }, dirs, .{ .target = target });
+        defer sf.freeList(&a, &files);
+        const first_module = self.modules.items.len;
+        var start: usize = 0;
+        while (start < files.items.len) {
+            const dir = std.fs.path.dirname(files.items[start].path) orelse ".";
+            var end = start + 1;
+            while (end < files.items.len and std.mem.eql(u8, std.fs.path.dirname(files.items[end].path) orelse ".", dir)) : (end += 1) {}
+            const parsed = try a.alloc(Parsed, end - start);
+            defer a.free(parsed);
+            var count: usize = 0;
+            defer for (parsed[0..count]) |*file| file.tree.deinit(a);
+            for (files.items[start..end], parsed) |file, *out| {
+                const path = try self.arena.allocator().dupe(u8, file.path);
+                const owned_dir = try self.arena.allocator().dupe(u8, dir);
+                out.* = try self.parseFile(diagnostics, file.code, null, path, owned_dir);
+                count += 1;
+            }
+            const inputs = try a.alloc(module_sg.FileInput, parsed.len);
+            defer a.free(inputs);
+            for (inputs, parsed) |*input, *file| input.* = .{ .diagnostics = diagnostics, .path = file.path, .tree = &file.tree, .source = file.code };
+            _ = try self.finishModule(diagnostics, dir, inputs, target);
+            start = end;
+        }
+        const added = self.modules.items[first_module..];
+        if (added.len == 0) return prefix;
+        const count = std.math.add(usize, prefix.len, added.len) catch return error.SubmissionIdentityLimit;
+        const snapshot = try self.arena.allocator().alloc(module_sg.ModuleSemanticGraph, count);
+        @memcpy(snapshot[0..prefix.len], prefix);
+        for (snapshot[prefix.len..], added) |*out, module| out.* = module.*;
+        return snapshot;
+    }
+
+    /// Synthetic modules keep unique identities. Resolve their import spellings
+    /// at the loader boundary against the real caller directory instead.
+    pub fn resolveSubmissionImports(self: *Sources, graph: *module_sg.ModuleSemanticGraph, io: std.Io, importer_path: []const u8) !void {
+        var writer = @import("../4_semantics/module/writer.zig").Writer.init(self.allocator, graph);
+        for (graph.semantic.module_aliases.items) |*alias| {
+            const spelling = std.mem.trim(u8, graph.text(alias.path), "\"'");
+            const resolved = try @import("../1_base/source_files.zig").resolveImportDir(&self.allocator, io, importer_path, spelling);
+            defer self.allocator.free(resolved);
+            alias.path = try writer.addString(resolved);
+        }
     }
 
     /// Each snapshot is immutable and independently allocated; growth of the

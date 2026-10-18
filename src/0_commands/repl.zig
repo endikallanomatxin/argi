@@ -45,6 +45,7 @@ pub fn run(io: std.Io, environ: ?*const std.process.Environ.Map, args: []const [
     var session: interactive.Interactive = undefined;
     try session.initWithSources(std.heap.page_allocator, files.items, modules, .{ .exhaustive_function_bodies = false }, .{});
     defer session.deinit();
+    try session.enableImports(io, ".");
     var input_buffer: [64 * 1024]u8 = undefined;
     var input = std.Io.File.stdin().reader(io, &input_buffer);
     var output_buffer: [4096]u8 = undefined;

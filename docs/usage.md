@@ -200,7 +200,9 @@ _2 = 49
 Each line is one submission. Use `:begin` and `:end` around multiline definitions
 or statement blocks. Submit definitions separately from executable statements.
 Functions, types and contracts remain available to subsequent submissions;
-redefining accepted names is rejected. Import loading is not yet supported.
+redefining accepted names is rejected. Imports use the normal folder-module loader;
+relative paths start at the directory where the REPL was launched. Dependencies
+are retained across submissions and reimports; reset allows fresh source loading.
 
 Expressions create ordinary numbered bindings (`_0`, `_1`, ...), skipping names
 already in use. Results, owners and loans remain in the session until reset or
