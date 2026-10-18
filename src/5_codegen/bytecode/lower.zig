@@ -824,6 +824,16 @@ const FunctionLower = struct {
         if (f.safety_primitive == .reference_offset or f.safety_primitive == .mutable_reference_offset) {
             if (args.len != 2 or outputs.len != 1) return self.parent.reject(node.source, "reference offset signature");
             _ = try self.emit(node.source, .{ .offset_reference = .{ .dst = outputs[0], .src = args[0], .elements = args[1] } });
+        } else if (f.safety_primitive == .reinterpret_reference or f.safety_primitive == .mutable_reinterpret_reference) {
+            if (args.len != 1 or outputs.len != 1) return error.InvalidBytecode;
+            const from = self.parent.graph.semanticType(self.slots.items[args[0]]);
+            const to = self.parent.graph.semanticType(self.slots.items[outputs[0]]);
+            if (from != .pointer or to != .pointer or !types.isBuiltin(self.parent.graph, to.pointer.child, .UInt8)) return self.parent.reject(node.source, "reinterpretation outside numeric byte views");
+            const layout = @import("numeric_layout.zig").compile(self.parent.allocator, self.parent.graph, from.pointer.child) catch |err| switch (err) {
+                error.UnsupportedNumericLayout => return self.parent.reject(node.source, "byte reinterpretation of nonnumeric storage"),
+                else => return err,
+            };
+            _ = try self.emit(node.source, .{ .numeric_bytes = .{ .dst = outputs[0], .src = args[0], .layout = layout } });
         } else {
             try self.parent.pending.append(self.parent.allocator, x.callee);
             _ = try self.emit(node.source, .{ .call = .{ .outputs = outputs, .function = x.callee, .args = args } });

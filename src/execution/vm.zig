@@ -273,6 +273,11 @@ pub const Vm = struct {
                 .resolve_location => |x| try slots.put(x.dst, try self.context().resolveTraceLocation((try slots.get(x.id)).integer)),
                 .trace_location => |x| try slots.put(x.dst, try self.context().registerTraceLocation(x.location.*)),
                 .static_bytes => |x| try slots.put(x.dst, try self.context().literalBytes(x.bytes)),
+                .numeric_bytes => |x| {
+                    var reference = try self.context().storage.numericBytes((try slots.get(x.src)).reference, x.layout, unit.graph.target.arch.endian());
+                    reference.mutability = unit.graph.semanticType(f.slots[x.dst]).pointer.mutability;
+                    try slots.put(x.dst, .{ .reference = reference });
+                },
                 .offset_reference => |x| try slots.put(x.dst, .{ .reference = try self.context().storage.offsetReference((try slots.get(x.src)).reference, (try slots.get(x.elements)).integer) }),
                 .virtualize => |x| {
                     const receiver = try slots.get(x.receiver);

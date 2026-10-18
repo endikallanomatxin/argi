@@ -18,6 +18,19 @@ pub const Layout = struct {
     pub const Field = struct { offset: usize, layout: *const Layout };
 };
 
+pub fn equal(left: *const Layout, right: *const Layout) bool {
+    if (left.size != right.size or left.alignment != right.alignment or std.meta.activeTag(left.shape) != std.meta.activeTag(right.shape)) return false;
+    return switch (left.shape) {
+        .integer => |integer| integer.signed == right.shape.integer.signed,
+        .array => |array| array.length == right.shape.array.length and array.stride == right.shape.array.stride and equal(array.element, right.shape.array.element),
+        .fields => |fields| blk: {
+            if (fields.len != right.shape.fields.len) break :blk false;
+            for (fields, right.shape.fields) |a, c| if (a.offset != c.offset or !equal(a.layout, c.layout)) break :blk false;
+            break :blk true;
+        },
+    };
+}
+
 pub fn compile(allocator: std.mem.Allocator, graph: *const g.GlobalSemanticGraph, ty: g.GlobalTypeId) !*const Layout {
     return compileDepth(allocator, graph, ty, 0);
 }

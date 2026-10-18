@@ -99,6 +99,7 @@ pub const Instruction = struct {
         resolve_location: struct { dst: Slot, id: Slot },
         trace_location: struct { dst: Slot, location: *const TraceLocation },
         static_bytes: struct { dst: Slot, bytes: []const u8 },
+        numeric_bytes: struct { dst: Slot, src: Slot, layout: *const @import("numeric_layout.zig").Layout },
         offset_reference: struct { dst: Slot, src: Slot, elements: Slot },
         virtualize: struct { dst: Slot, receiver: Slot, table: *const VirtualTable },
         virtual_call: *const VirtualInvocation,

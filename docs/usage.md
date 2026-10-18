@@ -149,6 +149,11 @@ converts reason sets and runs checked early-return cleanup. Context propagation
 (`!!`) with a `StringView` evaluates its context only on error and calls the
 ordinary core trace helper.
 
+Trusted reinterpretation of initialized integer records and arrays as `UInt8`
+views preserves the original storage, permissions and target byte order. Byte
+writes update the numeric value without creating cleanup obligations. Reference
+fields and nonnumeric representations remain unsupported.
+
 Raw pointers, C enums, floating point, complete trace reporting,
 partial initialization through output references, globals, closures, foreign calls,
 and System capabilities are not yet supported. Unsupported constructs in reachable

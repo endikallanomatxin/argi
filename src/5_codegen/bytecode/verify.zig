@@ -74,6 +74,16 @@ pub fn verify(allocator: std.mem.Allocator, program: Program) !void {
                     if (pointer != .pointer or pointer.pointer.mutability != .read_only or
                         !types.isBuiltin(program.graph, pointer.pointer.child, .UInt8)) return error.InvalidBytecode;
                 },
+                .numeric_bytes => |x| {
+                    const from = program.graph.semanticType(f.slots[x.src]);
+                    const to = program.graph.semanticType(f.slots[x.dst]);
+                    if (from != .pointer or to != .pointer or !types.isBuiltin(program.graph, to.pointer.child, .UInt8) or
+                        (to.pointer.mutability == .read_write and from.pointer.mutability != .read_write)) return error.InvalidBytecode;
+                    var arena = std.heap.ArenaAllocator.init(allocator);
+                    defer arena.deinit();
+                    const expected = @import("numeric_layout.zig").compile(arena.allocator(), program.graph, from.pointer.child) catch return error.InvalidBytecode;
+                    if (!@import("numeric_layout.zig").equal(expected, x.layout)) return error.InvalidBytecode;
+                },
                 .offset_reference => |x| {
                     const pointer = program.graph.semanticType(f.slots[x.src]);
                     if (pointer != .pointer or !types.equal(program.graph, f.slots[x.dst], f.slots[x.src]) or
@@ -327,6 +337,7 @@ fn destinations(i: Instruction, single: *[1]Slot) []const Slot {
         .trace_location => |x| x.dst,
         .resolve_location => |x| x.dst,
         .virtualize => |x| x.dst,
+        .numeric_bytes => |x| x.dst,
         .offset_reference => |x| x.dst,
         .copy => |x| x.dst,
         .session_borrow => |x| x.dst,
@@ -360,6 +371,7 @@ fn readSlots(a: std.mem.Allocator, i: Instruction, out: *std.ArrayList(Slot)) !v
             try out.append(a, x.handle);
             try out.appendSlice(a, x.args);
         },
+        .numeric_bytes => |x| try out.append(a, x.src),
         .offset_reference => |x| try out.appendSlice(a, &.{ x.src, x.elements }),
         .session_initialize => |x| try out.append(a, x.value),
         .readonly => |x| try out.append(a, x.src),
