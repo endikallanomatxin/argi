@@ -72,6 +72,7 @@ comptime {
     _ = @import("0_commands/repl.zig");
     _ = @import("5_codegen/bytecode/numeric_layout.zig");
     _ = @import("execution/storage.zig");
+    _ = @import("5_codegen/global_initialization.zig");
     _ = @import("execution/tests.zig");
     _ = @import("execution/compilation_session.zig");
     _ = @import("execution/session.zig");
