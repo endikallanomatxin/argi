@@ -127,6 +127,7 @@ const FunctionLower = struct {
         defer self.drops.deinit(a);
         defer self.cleanup.deinit(a);
         defer self.loops.deinit(a);
+        try self.prepareSessionDrops();
         const inputs = try a.alloc(b.Slot, operands.len);
         const mapped = try a.alloc(@typeInfo(@TypeOf(self.precomputed)).pointer.child, operands.len);
         for (operands, inputs, mapped) |node, *slot, *mapping| {
@@ -150,6 +151,7 @@ const FunctionLower = struct {
         const source = self.parent.graph.declaration(f.declaration).source;
         self.parent.source = source;
         if (f.body == null or f.flags.is_c_abi or f.flags.is_once) return self.parent.reject(source, "foreign or once function");
+        try self.prepareSessionDrops();
         const inputs = try a.alloc(b.Slot, f.input_bindings.len);
         for (inputs, self.parent.graph.binding_refs.items[f.input_bindings.start..][0..f.input_bindings.len]) |*slot, binding| {
             slot.* = try self.bindingSlot(binding);
@@ -166,13 +168,31 @@ const FunctionLower = struct {
         return .{ .slots = try self.slots.toOwnedSlice(a), .inputs = inputs, .outputs = outputs, .code = try self.code.toOwnedSlice(a), .cleanup = try self.finishCleanup(), .write_destinations = try self.write_destinations.toOwnedSlice(a) };
     }
 
+    fn prepareSessionDrops(self: *FunctionLower) !void {
+        const session = self.parent.session orelse return;
+        for (session.bindings, 0..) |binding, index| {
+            if (binding.cleanup.len == 0) continue;
+            const drop = try self.buildDrop(binding.slots[0], .{ .root = @intCast(index), .region = .session, .path = &.{} });
+            const entries = self.cleanup.items[@intFromEnum(drop)..];
+            if (entries.len != binding.cleanup.len) return error.InvalidBytecode;
+            for (entries, binding.cleanup) |entry, supplied| {
+                if (entry.place.path.len != supplied.path.len) return error.InvalidBytecode;
+                for (entry.place.path, supplied.path) |expected, actual| switch (expected) {
+                    .field => |field| if (actual != .field or actual.field != field) return error.InvalidBytecode,
+                    .variant => |variant| if (actual != .variant or actual.variant != @intFromEnum(variant)) return error.InvalidBytecode,
+                    else => return error.InvalidBytecode,
+                };
+            }
+            try self.drops.put(self.parent.allocator, binding.binding, drop);
+        }
+    }
     fn boolType(self: *FunctionLower) !b.Type {
         return self.parent.bool_type orelse error.InvalidBytecode;
     }
     fn buildDrop(self: *FunctionLower, ty: b.Type, target: b.Place) anyerror!DropState {
         const a = self.parent.allocator;
         const id: DropState = @enumFromInt(@as(u32, @intCast(self.cleanup.items.len)));
-        const flag = try self.newSlot(try self.boolType());
+        const flag = if (target.region == .local) try self.newSlot(try self.boolType()) else 0;
         try self.cleanup.append(a, .{ .place = target, .flag = flag, .end = 0 });
         const shape = cleanup_layout.Shape.of(self.parent.graph, ty);
         for (0..shape.len()) |index| if (shape.child(self.parent.graph, index)) |child| {
@@ -187,8 +207,16 @@ const FunctionLower = struct {
     }
     fn finishCleanup(self: *FunctionLower) ![]const b.Cleanup {
         const a = self.parent.allocator;
-        const result = try a.alloc(b.Cleanup, self.cleanup.items.len);
-        for (self.cleanup.items, result) |entry, *out| {
+        var count: usize = 0;
+        for (self.cleanup.items) |entry| if (entry.place.region == .local) {
+            count += 1;
+        };
+        const result = try a.alloc(b.Cleanup, count);
+        var output_index: usize = 0;
+        for (self.cleanup.items) |entry| {
+            if (entry.place.region != .local) continue;
+            const out = &result[output_index];
+            output_index += 1;
             const path = try a.alloc(@import("value.zig").Projection, entry.place.path.len);
             for (entry.place.path, path) |projection, *part| part.* = switch (projection) {
                 .field => |index| .{ .field = index },
@@ -245,6 +273,10 @@ const FunctionLower = struct {
         if (auto.target) |target| {
             const drop = self.nodeDrop(target) orelse return error.InvalidBytecode;
             return self.cleanupStorage(auto.deinit_fn, auto.input, auto.self_field_index, auto.fields, try self.place(target), self.parent.graph.node(target).ty.?, drop);
+        }
+        if (self.parent.sessionIndex(auto.binding)) |index| {
+            const drop = self.drops.get(auto.binding) orelse return error.InvalidBytecode;
+            return self.cleanupStorage(auto.deinit_fn, auto.input, auto.self_field_index, auto.fields, .{ .root = index, .region = .session, .path = &.{} }, self.parent.graph.binding(auto.binding).ty, drop);
         }
         const root = self.bindings.get(auto.binding) orelse return error.InvalidBytecode;
         try self.cleanupStorage(auto.deinit_fn, auto.input, auto.self_field_index, auto.fields, .{ .root = root, .path = &.{} }, self.slots.items[root], self.drops.get(auto.binding).?);

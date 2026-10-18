@@ -1519,3 +1519,35 @@ test "bytecode typed session bindings persist across verified program revisions"
     _ = try first.invoke(@enumFromInt(0), &.{});
     try std.testing.expectEqual(@as(i128, 42), (try reader.invoke(@enumFromInt(1), &.{}))[0].integer);
 }
+
+test "bytecode session moves update persistent cleanup rather than frame flags" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const g = @import("../4_semantics/global/graph.zig");
+    var graph: g.GlobalSemanticGraph = .{};
+    defer graph.deinit(a);
+    try graph.types.appendSlice(a, &.{ .{ .builtin = .Int32 }, .{ .builtin = .Bool } });
+    const source = @import("../4_semantics/primitives/schema.zig").SourceRef{ .file_index = 0, .offset = 0 };
+    try graph.bindings.append(a, .{ .name = .{ .start = 0, .len = 0 }, .ty = @enumFromInt(0), .source = source, .mutability = .constant });
+    try graph.nodes.append(a, .{ .source = source, .ty = @enumFromInt(0), .content = .{ .binding_use = @enumFromInt(0) } });
+    try graph.nodes.append(a, .{ .source = source, .ty = @enumFromInt(0), .content = .{ .move_value = @enumFromInt(0) } });
+    const bindings = [_]b.SessionBinding{.{ .binding = @enumFromInt(0), .slots = &.{ @enumFromInt(0), @enumFromInt(1) }, .cleanup = &.{.{ .root = 0, .flag = 1, .path = &.{} }} }};
+    const interface = b.Session{ .namespace = @enumFromInt(9), .bindings = &bindings };
+    var compiler = try lower.Lower.initSession(a, &graph, interface);
+    const program = try compiler.compileExpression(@enumFromInt(1), &.{});
+    try std.testing.expectEqual(@as(usize, 0), program.expression.?.cleanup.len);
+    var context = vm.Context.init(a, 1000);
+    defer context.deinit();
+    const persistent = try context.sessionSlots(2, bindings[0].cleanup);
+    try context.storage.initializeSession(persistent, 0, .{ .integer = 42 });
+    try context.bindings.put(context.arena.allocator(), @enumFromInt(0), persistent.frame);
+    context.namespace = interface.namespace;
+    const reference = @import("../5_codegen/bytecode/value.zig").Reference{ .context = context.storage.context, .frame = persistent.frame, .root = 0, .path = &.{}, .mutability = .read_write };
+    _ = try context.storage.cleanupSet(reference, true);
+    var executor = try vm.Vm.initShared(a, program, .{ .value_cells = 1000 }, &context);
+    defer executor.deinit();
+    try std.testing.expectEqual(@as(i128, 42), (try executor.invokeExpression(&.{}))[0].integer);
+    try std.testing.expect(!try context.storage.cleanupTest(reference));
+    try context.storage.releaseSession(persistent);
+}

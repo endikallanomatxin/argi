@@ -471,5 +471,7 @@ separate from contract resolution; this is not Zig's execution architecture.
 
 Session places retain their storage region through projections. Bytecode lowering
 can read and borrow selected session bindings and route non-owning whole writes
-through captured destinations. Owning session replacement and declaration cleanup
-still require complete checked publication/transfer plans.
+through captured destinations. Session drop metadata now routes selected cleanup and moves to persistent flags,
+without emitting call-frame flags for the same storage; supplied layouts must
+match the compiler's shape. Owning session replacement and declaration publication
+still require complete checked transfer plans.
