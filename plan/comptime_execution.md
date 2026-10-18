@@ -46,8 +46,12 @@ preserve IDs while isolating candidate edits, including request binding storage.
 Resolver contexts copy retained call environments, cleanup effects and caches,
 rebinding callbacks to candidate-owned targets. A quiescent semantic session can
 fork without replaying source, append modules and reject or finish that candidate
-independently. Next, connect checked candidate publication and session-owned VM
-storage before wiring conditional imports and interactive submissions.
+independently. The execution compilation session checks independent publication
+snapshots through ordinary safety analysis and compile-time evaluation before
+accepting a revision. Stale candidates are rejected; accepted graph versions
+retain stable addresses for existing bytecode. Next, connect session-owned VM
+storage and source submission loading before wiring interactive commands and
+conditional imports.
 JIT is deferred until measurements justify it; module origin is not an execution
 policy. Keep function identities independent of the executor, without introducing
 a mixed VM/native ABI or native-layout storage solely for a possible future JIT.
