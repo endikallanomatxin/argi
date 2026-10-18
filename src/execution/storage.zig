@@ -188,6 +188,13 @@ pub const Storage = struct {
 
     fn offsetInto(self: *Storage, reference: v.Reference, elements: i128, path: *[64]v.Projection) !v.Reference {
         _ = try self.read(reference);
+        if (reference.byte_view) |view| {
+            const amount = std.math.cast(usize, elements) orelse return error.ExecutionIndexOutOfBounds;
+            var result = reference;
+            result.byte_view.?.offset = std.math.add(usize, view.offset, amount) catch return error.ExecutionIndexOutOfBounds;
+            _ = try self.read(result);
+            return result;
+        }
         if (elements < 0) return error.ExecutionIndexOutOfBounds;
         if (elements == 0) return reference;
         if (reference.path.len == 0 or reference.path[reference.path.len - 1] != .element) return error.ExecutionIndexOutOfBounds;
@@ -205,7 +212,7 @@ pub const Storage = struct {
     pub fn offsetReference(self: *Storage, reference: v.Reference, elements: i128) !v.Reference {
         var path: [64]v.Projection = undefined;
         var result = try self.offsetInto(reference, elements, &path);
-        if (elements == 0) return result;
+        if (elements == 0 or result.byte_view != null) return result;
         try self.charge(result.path.len);
         result.path = try self.allocator.dupe(v.Projection, result.path);
         return result;
@@ -270,8 +277,25 @@ pub const Storage = struct {
         if (index < 0 or index >= length) return error.ExecutionIndexOutOfBounds;
         return @intCast(index);
     }
+    pub fn numericBytes(self: *Storage, reference: v.Reference, layout: *const @import("../5_codegen/bytecode/numeric_layout.zig").Layout, endian: std.builtin.Endian) !v.Reference {
+        if (reference.byte_view != null) return error.ExecutionInvalidReference;
+        _ = try self.read(reference);
+        if (layout.size == 0) return error.ExecutionIndexOutOfBounds;
+        var result = reference;
+        try self.charge(reference.path.len);
+        result.path = try self.allocator.dupe(v.Projection, reference.path);
+        result.byte_view = .{ .layout = layout, .offset = 0, .endian = endian };
+        _ = try self.read(result);
+        return result;
+    }
+
     pub fn read(self: *Storage, reference: v.Reference) !b.Value {
         try self.validateContext(reference);
+        if (reference.byte_view) |view| {
+            var base = reference;
+            base.byte_view = null;
+            return .{ .integer = try @import("../5_codegen/bytecode/numeric_layout.zig").readByte(view.layout, try self.read(base), view.offset, view.endian) };
+        }
         _ = try self.frameValues(reference.frame);
         const frame = self.frames.items[@intFromEnum(reference.frame)];
         if (frame.duration == .static) {
@@ -326,7 +350,7 @@ pub const Storage = struct {
                 @memcpy(path[0..length], reference.path);
                 continue;
             }
-            if (length == path.len) return error.ExecutionInvalidReference;
+            if (reference.byte_view != null or length == path.len) return error.ExecutionInvalidReference;
             const concrete: v.Projection = switch (projection) {
                 .field => |index| .{ .field = index },
                 .variant => |variant| .{ .variant = @intFromEnum(variant) },
@@ -355,6 +379,7 @@ pub const Storage = struct {
     }
 
     fn cleanupEntry(self: *Storage, reference: v.Reference) !usize {
+        if (reference.byte_view != null) return error.ExecutionInvalidReference;
         try self.validateContext(reference);
         _ = try self.slots(reference.frame);
         const layout = self.frames.items[@intFromEnum(reference.frame)].cleanup;
@@ -443,6 +468,14 @@ pub const Storage = struct {
 
     pub fn store(self: *Storage, reference: v.Reference, value: b.Value) !void {
         try self.validateWritable(reference);
+        if (reference.byte_view) |view| {
+            if (value != .integer or value.integer < 0 or value.integer > 255) return error.ExecutionInvalidReference;
+            var base = reference;
+            base.byte_view = null;
+            try self.charge(view.layout.size);
+            const updated = try @import("../5_codegen/bytecode/numeric_layout.zig").writeByte(self.allocator, view.layout, try self.read(base), view.offset, @intCast(value.integer), view.endian);
+            return self.store(base, updated);
+        }
         const values = try self.slots(reference.frame);
         const previous = try values.get(reference.root);
         try values.put(reference.root, try self.update(previous, reference.path, value));
@@ -496,3 +529,29 @@ pub const Storage = struct {
         };
     }
 };
+
+test "numeric byte storage views retain identity permissions and frame lifetime" {
+    const numeric = @import("../5_codegen/bytecode/numeric_layout.zig");
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var storage = try Storage.init(arena.allocator(), 4096);
+    const frame = try storage.enter(1);
+    const slots_ = try storage.slots(frame);
+    try slots_.put(0, .{ .integer = 0x12345678 });
+    const root: v.Reference = .{ .context = storage.context, .frame = frame, .root = 0, .path = &.{}, .mutability = .read_write };
+    const layout: numeric.Layout = .{ .size = 4, .alignment = 4, .shape = .{ .integer = .{ .signed = false } } };
+    const bytes = try storage.numericBytes(root, &layout, .little);
+    try std.testing.expectEqual(@as(i128, 0x78), (try storage.read(bytes)).integer);
+    const second = try storage.offsetReference(bytes, 1);
+    try storage.store(second, .{ .integer = 0xab });
+    try std.testing.expectEqual(@as(i128, 0x1234ab78), (try storage.read(root)).integer);
+    try slots_.put(0, .{ .integer = 42 });
+    try std.testing.expectEqual(@as(i128, 42), (try storage.read(bytes)).integer);
+    const readonly = (try storage.borrow(bytes, .read_only)).reference;
+    try std.testing.expectError(error.ExecutionReadonlyReference, storage.store(readonly, .{ .integer = 0 }));
+    try std.testing.expectError(error.ExecutionIndexOutOfBounds, storage.offsetReference(bytes, 4));
+    try std.testing.expectError(error.ExecutionInvalidReference, storage.store(bytes, .{ .integer = 256 }));
+    try std.testing.expectError(error.ExecutionInvalidReference, storage.captureResolvedWrite(bytes, true));
+    storage.leave(frame);
+    try std.testing.expectError(error.ExecutionDeadReference, storage.read(bytes));
+}

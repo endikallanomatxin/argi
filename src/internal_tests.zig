@@ -71,6 +71,7 @@ const c_abi = @import("4_semantics/global/c_abi.zig");
 comptime {
     _ = @import("0_commands/repl.zig");
     _ = @import("5_codegen/bytecode/numeric_layout.zig");
+    _ = @import("execution/storage.zig");
     _ = @import("execution/tests.zig");
     _ = @import("execution/compilation_session.zig");
     _ = @import("execution/session.zig");

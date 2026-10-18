@@ -12,6 +12,7 @@ pub const Reference = struct {
     root: u32,
     path: []const Projection,
     mutability: p.PointerMutability,
+    byte_view: ?struct { layout: *const @import("numeric_layout.zig").Layout, offset: usize, endian: @import("std").builtin.Endian } = null,
 };
 
 // Runtime erasure retains one immutable code unit selected at construction.
