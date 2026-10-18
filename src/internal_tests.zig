@@ -67,7 +67,8 @@ const codegen = @import("5_codegen/llvm/codegen.zig");
 const cleanup_layout = @import("5_codegen/cleanup_layout.zig");
 const c_abi = @import("4_semantics/global/c_abi.zig");
 
-test {
+// Register imported tests independently of the runner's name filters.
+comptime {
     _ = @import("execution/tests.zig");
     _ = c_abi;
     _ = semantic_literals;
