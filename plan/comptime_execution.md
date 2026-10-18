@@ -541,7 +541,19 @@ interactive CLI dispatch and bundled core/import loading remain pending.
 The interactive controller owns source loading, candidate preparation, runtime
 execution and checked close/reset. Reset replaces semantic and execution state
 together; poisoned contexts reset without user-code unwinding. Statement recovery
-and explicit close are tested. Named definitions still need an explicit retained
-declaration environment: ordinary module visibility correctly excludes earlier
-submission modules. Normal non-continuation safety scratch ownership also needs
-review before enabling definition publication through this controller.
+and explicit close are tested. Definition submissions use the explicit retained
+declaration environment described below; normal imported modules retain ordinary
+visibility. Safety publication owns its annotation arena separately from graph
+pools.
+
+Interactive definition submissions now explicitly export function/type/contract
+identities and mark their source modules as namespace participants. Later marked
+commands and definitions use ordinary declaration lookup; unrelated modules do
+not gain visibility. Duplicate declarations and conflicting value names are
+rejected without changing the accepted revision. Safety publication arenas own
+non-continuation annotations independently of mutable graph-pool allocation.
+Submission modules share one explicit declaration namespace for contract ownership
+as well as lookup; foreign imported modules do not acquire implementation rights.
+Generic definitions and separately submitted contract implementations execute
+through the same checked bytecode path. Namespace tables are allocated only for
+interactive compilation; the ordinary resolver retains one optional pointer.

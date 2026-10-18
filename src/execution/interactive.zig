@@ -57,6 +57,15 @@ pub const Interactive = struct {
         defer command.deinit();
         try self.runtime.executeCommand(&command.candidate);
     }
+    pub fn submitDefinitions(self: *Interactive, source: []const u8) !void {
+        try self.beginSubmission();
+        const module = try self.sources.loadModule(&self.diagnostics, source);
+        const prefix = try self.sources.appendSnapshot(self.compiler.semantic.modules, module);
+        var candidate = try self.compiler.prepareDefinitions(prefix, &self.diagnostics);
+        defer candidate.deinit();
+        try self.compiler.accept(&candidate);
+    }
+
     fn beginSubmission(self: *Interactive) !void {
         if (self.closed) return error.InteractiveSessionClosed;
         if (self.runtime.context.state == .poisoned) return error.ExecutionContextPoisoned;
@@ -130,5 +139,68 @@ test "interactive controller recovers poisoned contexts by reset" {
     try std.testing.expectError(error.ExecutionContextPoisoned, session.close());
     try session.reset();
     try session.submitStatements("fresh ::= 7");
+    try session.close();
+}
+
+test "interactive definitions remain visible to subsequent definitions and statements" {
+    var session: Interactive = undefined;
+    try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    try session.submitDefinitions("answer := () -> (.result: Int32) { result = 42 }\n");
+    try session.submitDefinitions("forward := () -> (.result: Int32) { result = answer() }\n");
+    try session.submitStatements("value ::= forward()");
+    try session.submitStatements("other ::= value");
+    try session.submitDefinitions("later := () -> (.result: Int32) { result = answer() }\n");
+    try session.submitDefinitions("identity#(.T: Type) := (.value: T) -> (.result: T) { result = value }\n");
+    try session.submitStatements("generic_value ::= identity#(Int32)(.value = later())");
+    const binding = session.compiler.semantic.resolvers.expressions.session_bindings.items[0];
+    const stored = try session.runtime.context.storage.slots(session.runtime.context.bindings.get(binding).?);
+    try std.testing.expectEqual(@as(i128, 42), (try stored.get(0)).integer);
+    const generic_binding = session.compiler.semantic.resolvers.expressions.session_bindings.items[2];
+    const generic_stored = try session.runtime.context.storage.slots(session.runtime.context.bindings.get(generic_binding).?);
+    try std.testing.expectEqual(@as(i128, 42), (try generic_stored.get(0)).integer);
+    const revision = session.compiler.revision;
+    try std.testing.expectError(error.DuplicateSessionDeclaration, session.submitDefinitions("answer := () -> (.result: Int32) { result = 7 }\n"));
+    try std.testing.expectEqual(revision, session.compiler.revision);
+    try std.testing.expectError(error.DuplicateSessionDeclaration, session.submitStatements("answer ::= 7"));
+    try std.testing.expectEqual(revision, session.compiler.revision);
+    // Loading an ordinary module must not grant the interactive namespace.
+    const isolated = try session.sources.loadModule(&session.diagnostics, "outside := () -> (.result: Int32) { result = answer() }\n");
+    const prefix = try session.sources.appendSnapshot(session.compiler.semantic.modules, isolated);
+    var ordinary = try session.compiler.prepare(prefix, &session.diagnostics);
+    defer ordinary.deinit();
+    const core = &ordinary.semantic.?.resolvers.core;
+    try std.testing.expect(!core.sameDeclarationNamespace(0, core.modules.len - 1));
+    try std.testing.expect(core.sameDeclarationNamespace(0, 1));
+    const declaration = for (core.session_namespace.?.declarations.items) |decl| {
+        if (std.mem.eql(u8, core.graph.text(core.graph.declaration(decl).name), "answer")) break decl;
+    } else return error.MissingDeclaration;
+    try std.testing.expect(!core.declarationVisible(core.modules.len - 1, declaration, null));
+    const later = for (core.session_namespace.?.declarations.items) |decl| {
+        if (std.mem.eql(u8, core.graph.text(core.graph.declaration(decl).name), "later")) break decl;
+    } else return error.MissingDeclaration;
+    // Deferred specialization of an earlier definition cannot acquire names
+    // introduced by a future submission merely because it materializes later.
+    try std.testing.expect(!core.declarationVisible(0, later, null));
+    try std.testing.expectEqual(revision, session.compiler.revision);
+    try session.close();
+}
+
+test "interactive contract definitions select implementations in later submissions" {
+    var session: Interactive = undefined;
+    try session.init(std.testing.allocator, &.{}, .{ .exhaustive_function_bodies = false }, .{});
+    defer session.deinit();
+    try session.submitDefinitions("Echo#(.T: Type): Contract = (.echo: (.value: T) -> (.result: T))\n");
+    session.submitDefinitions("implement Echo#(Int32) (.echo = (.value: Int32) -> (.result: Int32) { result = value })\n") catch |err| {
+        try session.diagnostics.dump();
+        return err;
+    };
+    // Identical source offsets in different submissions must not make private
+    // implementation-body identities collide in the source namespace.
+    try session.submitDefinitions("implement Echo#(Int64) (.echo = (.value: Int64) -> (.result: Int64) { result = value })\n");
+    try session.submitStatements("value ::= echo(.value = 42)");
+    const binding = session.compiler.semantic.resolvers.expressions.session_bindings.items[0];
+    const stored = try session.runtime.context.storage.slots(session.runtime.context.bindings.get(binding).?);
+    try std.testing.expectEqual(@as(i128, 42), (try stored.get(0)).integer);
     try session.close();
 }

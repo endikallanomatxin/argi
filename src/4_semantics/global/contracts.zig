@@ -1618,7 +1618,7 @@ pub const Resolver = struct {
         for (storage.generic_arguments.items[conformance.participants.start..][0..conformance.participants.len]) |argument| {
             if (argument.value != .type) continue;
             if (try self.templateParticipantOwner(module_index, argument.value.type)) |owner|
-                if (@intFromEnum(owner) == module_index) return true;
+                if (self.core.sameDeclarationNamespace(@intFromEnum(owner), module_index)) return true;
         }
         return false;
     }
@@ -1646,7 +1646,7 @@ pub const Resolver = struct {
                     .contract_name = self.graph.text(self.graph.declaration(declaration).name),
                     .reason = "",
                 };
-                if (conformance.parameters.len != 0 and located.module_index != module_index and
+                if (conformance.parameters.len != 0 and !self.core.sameDeclarationNamespace(located.module_index, module_index) and
                     !(module.is_bundled_core and self.modules[located.module_index].is_bundled_core) and
                     !try self.templateOwnsParticipant(module_index, conformance))
                 {
@@ -1913,13 +1913,13 @@ pub const Resolver = struct {
                 .contract_name = self.modules[located.module_index].text(self.modules[located.module_index].declarations.items[@intFromEnum(located.definition.declaration)].name),
                 .reason = "",
             };
-            if (located.module_index != module_index and
+            if (!self.core.sameDeclarationNamespace(located.module_index, module_index) and
                 !(self.modules[module_index].is_bundled_core and self.modules[located.module_index].is_bundled_core))
             {
                 var owns_participant = false;
                 for (self.graph.generic_arguments.items[conformance.participants.start..][0..conformance.participants.len]) |argument| {
                     if (global_types.conformanceParticipantOwner(self.graph, argument.value.type)) |owner|
-                        if (@intFromEnum(owner) == module_index) {
+                        if (self.core.sameDeclarationNamespace(@intFromEnum(owner), module_index)) {
                             owns_participant = true;
                             break;
                         };

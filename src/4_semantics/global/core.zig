@@ -40,6 +40,10 @@ pub const Resolver = struct {
     argument_defaults: ?*const ArgumentDefaults = null,
 
     stats: Stats = .{},
+    // Explicit interactive namespace; ordinary modules never acquire visibility
+    // through this path merely because another module was loaded later.
+    session_namespace: ?*SessionNamespace = null,
+
     // Instantiated bodies and cleanup calls have no module pending operation
     // to revisit when a callee gains a transitive reached input. Retain their
     // lexical context until the signatures reach the semantizing fixed point.
@@ -60,6 +64,37 @@ pub const Resolver = struct {
         input: global_sg.FieldRange,
         bindings: global_sg.BindingRange,
     };
+
+    pub const SessionNamespace = struct {
+        modules: std.ArrayList(global_sg.GlobalModuleId) = .empty,
+        declarations: std.ArrayList(global_sg.GlobalDeclId) = .empty,
+    };
+
+    pub fn sessionNamespace(self: *Resolver) !*SessionNamespace {
+        if (self.session_namespace) |namespace| return namespace;
+        const namespace = try self.allocator.create(SessionNamespace);
+        namespace.* = .{};
+        self.session_namespace = namespace;
+        return namespace;
+    }
+
+    /// Submission modules retain distinct source identities but belong to one
+    /// explicit interactive namespace. Imported modules never join it implicitly.
+    pub fn sameDeclarationNamespace(self: *const Resolver, left: usize, right: usize) bool {
+        if (left == right) return true;
+        const namespace = self.session_namespace orelse return false;
+        return std.mem.indexOfScalar(global_sg.GlobalModuleId, namespace.modules.items, @enumFromInt(left)) != null and
+            std.mem.indexOfScalar(global_sg.GlobalModuleId, namespace.modules.items, @enumFromInt(right)) != null;
+    }
+
+    pub fn deinit(self: *Resolver) void {
+        self.deinitReachedCalls();
+        if (self.session_namespace) |namespace| {
+            namespace.modules.deinit(self.allocator);
+            namespace.declarations.deinit(self.allocator);
+            self.allocator.destroy(namespace);
+        }
+    }
 
     pub fn rollback_reached_signatures(self: *Resolver, count: usize) void {
         var index = self.reached_signature_changes.items.len;
@@ -544,6 +579,11 @@ pub const Resolver = struct {
     pub fn declarationVisible(self: *const Resolver, current_module: usize, declaration: global_sg.GlobalDeclId, qualified_module: ?global_sg.GlobalModuleId) bool {
         const owner = self.graph.moduleForDeclaration(declaration) orelse return false;
         const own_module = @intFromEnum(owner) == current_module;
+        if (self.session_namespace) |namespace| {
+            if (qualified_module == null and @intFromEnum(owner) <= current_module and
+                std.mem.indexOfScalar(global_sg.GlobalModuleId, namespace.modules.items, @enumFromInt(current_module)) != null and
+                std.mem.indexOfScalar(global_sg.GlobalDeclId, namespace.declarations.items, declaration) != null) return true;
+        }
         const name = self.graph.text(self.graph.declarations.items[@intFromEnum(declaration)].name);
         // Bundled core modules form one trusted implementation boundary.
         // Private helpers remain invisible to ordinary user modules.
@@ -2253,7 +2293,9 @@ test "address type materializes after its child resolves" {
 }
 
 test "global core resolver is graph-only" {
-    try std.testing.expect(@sizeOf(Resolver) <= 192);
+    // Interactive visibility contributes one optional pointer, never embedded
+    // namespace tables or syntax ownership in the ordinary resolver.
+    try std.testing.expect(@sizeOf(Resolver) <= 200);
 }
 
 test "qualified lookup follows linked module alias" {

@@ -123,28 +123,63 @@ pub const CompilationSession = struct {
     }
 
     pub fn prepare(self: *const CompilationSession, modules: []const module_sg.ModuleSemanticGraph, diagnostics: *diagnostics_mod.Diagnostics) !Candidate {
-        return self.prepareImpl(modules, diagnostics, null, null);
+        return self.prepareImpl(modules, diagnostics, null, null, false);
     }
 
     /// Prepare a checked input/output-free command with the accepted temporal
     /// state. The source coordinator supplies its finalized command scope.
     pub fn prepareContinuation(self: *const CompilationSession, modules: []const module_sg.ModuleSemanticGraph, diagnostics: *diagnostics_mod.Diagnostics, function: @import("../4_semantics/global/graph.zig").GlobalFunctionId) !Candidate {
-        return self.prepareImpl(modules, diagnostics, function, null);
+        return self.prepareImpl(modules, diagnostics, function, null, false);
     }
 
     /// The loader supplies an empty command scope. Cleanup is selected from
     /// accepted ownership evidence and checked against accepted temporal facts.
     pub fn prepareExit(self: *const CompilationSession, modules: []const module_sg.ModuleSemanticGraph, diagnostics: *diagnostics_mod.Diagnostics, function: @import("../4_semantics/global/graph.zig").GlobalFunctionId, bindings: []const @import("../4_semantics/global/graph.zig").GlobalBindingId) !Candidate {
-        return self.prepareImpl(modules, diagnostics, function, bindings);
+        return self.prepareImpl(modules, diagnostics, function, bindings, false);
     }
 
-    fn prepareImpl(self: *const CompilationSession, modules: []const module_sg.ModuleSemanticGraph, diagnostics: *diagnostics_mod.Diagnostics, continuation: ?@import("../4_semantics/global/graph.zig").GlobalFunctionId, exit_bindings: ?[]const @import("../4_semantics/global/graph.zig").GlobalBindingId) !Candidate {
+    /// Export declarations from explicitly submitted definition modules into
+    /// the interactive namespace. Imported ordinary modules retain their normal
+    /// visibility; the source coordinator supplies only definition submissions.
+    pub fn prepareDefinitions(self: *const CompilationSession, modules: []const module_sg.ModuleSemanticGraph, diagnostics: *diagnostics_mod.Diagnostics) !Candidate {
+        return self.prepareImpl(modules, diagnostics, null, null, true);
+    }
+
+    fn prepareImpl(self: *const CompilationSession, modules: []const module_sg.ModuleSemanticGraph, diagnostics: *diagnostics_mod.Diagnostics, continuation: ?@import("../4_semantics/global/graph.zig").GlobalFunctionId, exit_bindings: ?[]const @import("../4_semantics/global/graph.zig").GlobalBindingId, definitions: bool) !Candidate {
         if (diagnostics.hasErrors()) return error.Reported;
         const candidate = try self.allocator.create(sema.Session);
         errdefer self.allocator.destroy(candidate);
         try self.semantic.fork(candidate, self.allocator, diagnostics);
         errdefer candidate.deinit();
+        const previous_modules = candidate.modules.len;
+        if (modules.len < previous_modules) return error.InvalidSemanticModuleViews;
+        if (definitions or continuation != null) {
+            const namespace = try candidate.resolvers.core.sessionNamespace();
+            for (previous_modules..modules.len) |index| {
+                try namespace.modules.append(self.allocator, @enumFromInt(index));
+            }
+        }
         try candidate.appendModules(modules);
+        if (definitions) {
+            const graph = &candidate.relocation.graph;
+            const exported = &(try candidate.resolvers.core.sessionNamespace()).declarations;
+            for (graph.modules.items[previous_modules..], previous_modules..) |module, module_index| {
+                declarations: for (module.declarations.start..module.declarations.start + module.declarations.len) |raw| {
+                    const declaration = graph.declarations.items[raw];
+                    if (declaration.kind != .function and declaration.kind != .type and declaration.kind != .contract_type) continue;
+                    // Inline implementation bodies have private identities, not
+                    // source-level names to export or compare across submissions.
+                    for (modules[module_index].semantic.parameterized_storage.contract_operations.items) |operation| {
+                        if (operation.function == .module and @intFromEnum(operation.function.module) == raw - module.declarations.start)
+                            continue :declarations;
+                    }
+                    const name = graph.text(declaration.name);
+                    for (exported.items) |previous| if (std.mem.eql(u8, graph.text(graph.declaration(previous).name), name)) return error.DuplicateSessionDeclaration;
+                    for (candidate.resolvers.expressions.session_bindings.items) |binding| if (std.mem.eql(u8, graph.text(graph.binding(binding).name), name)) return error.DuplicateSessionDeclaration;
+                    try exported.append(self.allocator, @enumFromInt(raw));
+                }
+            }
+        }
         if (continuation) |function| {
             if (exit_bindings) |bindings| try candidate.prepareExitScope(function, bindings) else try candidate.prepareContinuationScope(function);
         }

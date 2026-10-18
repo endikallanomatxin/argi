@@ -596,6 +596,9 @@ pub const Session = struct {
             if (std.mem.indexOfScalar(global_sg.GlobalBindingId, retained.items, binding) != null) continue;
             const name = self.relocation.graph.text(self.relocation.graph.binding(binding).name);
             for (retained.items) |previous| if (std.mem.eql(u8, self.relocation.graph.text(self.relocation.graph.binding(previous).name), name)) return error.DuplicateSessionBinding;
+            if (self.resolvers.core.session_namespace) |namespace| for (namespace.declarations.items) |declaration| {
+                if (std.mem.eql(u8, self.relocation.graph.text(self.relocation.graph.declaration(declaration).name), name)) return error.DuplicateSessionDeclaration;
+            };
             try retained.append(self.allocator, binding);
         }
     }
