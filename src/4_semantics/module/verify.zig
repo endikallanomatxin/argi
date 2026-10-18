@@ -165,6 +165,7 @@ fn verifyOverlays(graph: *const graph_mod.ModuleSemanticGraph) !void {
         try require(!hasFieldOverlayBefore(graph, index, value.field));
 
         try require(verify.optionalIdFits(value.default_value, graph.semantic.nodes.items.len));
+        try require(!value.default_at_entry or value.default_value == null);
     }
     for (graph.semantic.variant_semantics.items, 0..) |value, index| {
         try require(verify.idFits(value.variant, views.variantCount(graph)));

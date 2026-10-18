@@ -134,6 +134,8 @@ pub const FunctionSemantic = struct {
 pub const FieldSemantic = struct {
     field: ModuleFieldId,
     default_value: ?ModuleNodeId = null,
+    // Executable outputs initialize through their function entry statements.
+    default_at_entry: bool = false,
 };
 
 pub const VariantSemantic = struct {

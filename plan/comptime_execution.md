@@ -265,7 +265,8 @@ once validation and both backends consume those ordinary assignments. Checked
 functions retain no implicit initialization on output bindings. Tests cover
 consumption in a generic output default followed by repeated destruction or
 valid reinitialization; the former was previously accepted and aborted in the VM.
-Concrete output defaults still need lexical input/reach binding during lowering.
+Concrete defaults lower inside the function scope, including ordinary inputs,
+earlier outputs and lexical temporaries. They are not reusable field defaults.
 
 ## Persistent execution (proposed)
 

@@ -96,7 +96,7 @@ pub fn fieldView(graph: *const graph_mod.ModuleSemanticGraph, id: entities.Modul
 fn constructionField(graph: *const graph_mod.ModuleSemanticGraph, id: entities.ModuleFieldId, field: graph_mod.Field) !entities.Field {
     if (field.module_file_index >= graph.file_offsets.items.len) return error.InvalidModuleFileIndex;
     const semantic = findFieldSemantic(graph, id);
-    if (field.has_default and (semantic == null or semantic.?.default_value == null))
+    if (field.has_default and (semantic == null or (semantic.?.default_value == null and !semantic.?.default_at_entry)))
         return error.ModuleFieldDefaultNotLowered;
     return .{
         .name = field.name,

@@ -1233,3 +1233,14 @@ test "bytecode source run admits a single argument computation below its budget"
         \\}
     , .{ .instructions = 50 }));
 }
+
+test "bytecode source run evaluates concrete output defaults in function scope" {
+    try std.testing.expectEqual(@as(i128, 42), try execute(
+        \\increment(.value: Int32) -> (.result: Int32 = value + 1) := {}
+        \\compute(.value: Int32) -> (.first: Int32 = value | increment(_), .second: Int32 = first + 1) := {}
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    values := #run compute(.value = 40)
+        \\    status_code = values.second
+        \\}
+    , .{ .instructions = 50 }));
+}

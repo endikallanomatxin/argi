@@ -22,9 +22,8 @@ main() -> (.status_code: Int32 = 0) := {
 }
 ```
 
-> [!IMPLEMENTATION]
-> Concrete output initializers do not yet bind function inputs or reached
-> capabilities. Their lexical scope still needs to match generic instances.
+Output defaults can refer to function inputs and earlier outputs. Their
+temporaries belong to the function scope, just as temporaries in its body.
 
 Empty `()` denotes no input or no output. A `return` leaves the function; it
 does not carry a separate result expression. Results come from the output

@@ -279,7 +279,20 @@ const Context = struct {
                         self.tree.functionDeclaration(declaration_node).?;
                     const function = self.graph.functions.items[@intFromEnum(function_id)];
                     try self.lowerDeferredDefaults(function.input.start, function.input.len, syntax_function.input, stats);
-                    try self.lowerDeferredDefaults(function.output.start, function.output.len, syntax_function.output, stats);
+                    // Executable output defaults belong to the function entry scope.
+                    if (syntax_function.body == null) {
+                        try self.lowerDeferredDefaults(function.output.start, function.output.len, syntax_function.output, stats);
+                    } else {
+                        const fields = (self.tree.structTypeLiteral(syntax_function.output) orelse return error.ExpectedStructType).fields;
+                        for (fields, 0..) |field_node, offset| {
+                            const field = self.tree.structTypeField(field_node) orelse return error.InvalidStructField;
+                            if (field.default_value == null) continue;
+                            try self.graph.semantic.field_semantics.append(self.allocator, .{
+                                .field = @enumFromInt(function.output.start + @as(u32, @intCast(offset))),
+                                .default_at_entry = true,
+                            });
+                        }
+                    }
                 },
                 else => {},
             }
@@ -287,9 +300,6 @@ const Context = struct {
     }
 
     fn lowerDeferredDefaults(self: *Context, range_start: u32, range_len: u32, struct_node: syn.NodeIndex, stats: *Stats) !void {
-        // TODO: Lower concrete output defaults in the function's lexical scope,
-        // including ordinary inputs and reached capabilities, as generic bodies
-        // do. An error default currently needs an explicit trace field.
         const semantic_field_base = self.graph.fields.items.len + self.graph.structural_fields.items.len;
         const literal = self.tree.structTypeLiteral(struct_node) orelse return error.ExpectedStructType;
         if (literal.fields.len != range_len) return error.InterfaceFieldCountMismatch;

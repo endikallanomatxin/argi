@@ -158,7 +158,10 @@ const Context = struct {
             const input_range = try self.writer.appendBindingRefs(inputs.items);
             const output_range = try self.writer.appendBindingRefs(outputs.items);
             self.writer.pending_owner_function = function_id;
-            const body = if (declaration.body) |body_node| try self.lowerBlock(body_node) else null;
+            const body = if (declaration.body) |body_node|
+                try self.lowerBlockWithDefaults(body_node, .{ .syntax = declaration.output, .bindings = outputs.items })
+            else
+                null;
             const foreign = if (declaration.c_options) |options| try self.lowerForeignOptions(options) else ForeignOptions{};
             if (foreign.exported and declaration.body == null)
                 return self.foreignOptionError(declaration.c_options.?, "an exported CFunction requires a body");
@@ -269,7 +272,13 @@ const Context = struct {
         }
     }
 
+    const OutputDefaults = struct { syntax: syn.NodeIndex, bindings: []const entities.ModuleBindingId };
+
     fn lowerBlock(self: *Context, node: syn.NodeIndex) anyerror!entities.ModuleBlockId {
+        return self.lowerBlockWithDefaults(node, null);
+    }
+
+    fn lowerBlockWithDefaults(self: *Context, node: syn.NodeIndex, defaults: ?OutputDefaults) anyerror!entities.ModuleBlockId {
         // Else-if syntax is a nested statement, but branch semantics use blocks.
         const source_statements = if (self.tree.codeBlock(node)) |block|
             block.statements
@@ -286,6 +295,22 @@ const Context = struct {
         const previous_temporaries = self.temporary_declarations;
         self.temporary_declarations = &temporaries;
         defer self.temporary_declarations = previous_temporaries;
+        // Defaults execute in the same lexical scope as the body. In particular,
+        // pipe/handle temporaries need ordinary declarations and scope cleanup.
+        if (defaults) |entry| {
+            const fields = (self.tree.structTypeLiteral(entry.syntax) orelse return error.ExpectedStructType).fields;
+            if (fields.len != entry.bindings.len) return error.InterfaceFieldCountMismatch;
+            for (fields, entry.bindings) |field_node, binding| {
+                const field = self.tree.structTypeField(field_node) orelse return error.InvalidStructField;
+                const initializer = field.default_value orelse continue;
+                temporaries.clearRetainingCapacity();
+                const ty = self.graph.semantic.bindings.items[@intFromEnum(binding)].ty;
+                const value = try self.valuePosition(initializer, try self.lowerNode(initializer, ty));
+                try nodes.appendSlice(temporaries.items);
+                const write = try self.resolved(initializer, ty, .{ .assignment = .{ .binding = binding, .value = value.node } });
+                try nodes.append(write.node);
+            }
+        }
         var ret_val: ?entities.ModuleNodeId = null;
         for (source_statements) |statement| {
             temporaries.clearRetainingCapacity();

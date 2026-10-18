@@ -13739,3 +13739,17 @@ test "feature_tests/execution/58_output_default_reference" {
     try runExpect("tests/feature_tests/execution/58_output_default_reference", 42);
     try vmExpect("tests/feature_tests/execution/58_output_default_reference", 42, null);
 }
+
+test "feature_tests/execution/59_output_default_scope" {
+    try expectSuccessfulBuild("tests/feature_tests/execution/59_output_default_scope");
+    try runExpect("tests/feature_tests/execution/59_output_default_scope", 42);
+    try vmExpect("tests/feature_tests/execution/59_output_default_scope", 42, null);
+}
+
+test "feature_tests/execution/60X_concrete_output_default_consumption" {
+    try buildExpectFail("tests/feature_tests/execution/60X_concrete_output_default_consumption", "consumption requires an initialized owner");
+}
+
+test "feature_tests/execution/61X_output_default_implicit_copy" {
+    try buildExpectFail("tests/feature_tests/execution/61X_output_default_implicit_copy", "cannot be copied implicitly");
+}
