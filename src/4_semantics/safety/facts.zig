@@ -208,6 +208,12 @@ pub const Tracker = struct {
     pub const RootNamespace = struct {
         next_id: u32 = 0,
         initial_storage: std.ArrayList(struct { storage: Place, root: ValidityRootId }) = .empty,
+
+        /// Independent session candidates copy allocation state; branches of
+        /// one proof still share it. Immutable Place paths retain their arena.
+        pub fn clone(self: *const RootNamespace, allocator: std.mem.Allocator) !RootNamespace {
+            return .{ .next_id = self.next_id, .initial_storage = try self.initial_storage.clone(allocator) };
+        }
     };
     namespace: ?*RootNamespace = null,
     allocator: std.mem.Allocator,
@@ -227,6 +233,7 @@ pub const Tracker = struct {
             .fresh => blk: {
                 const index = if (self.namespace) |namespace| identity: {
                     const next = namespace.next_id;
+                    if (next == std.math.maxInt(u32)) return error.SafetyRootIdentityLimit;
                     namespace.next_id += 1;
                     break :identity next;
                 } else @as(u32, @intCast(self.roots.items.len));
@@ -334,4 +341,35 @@ test "empty safety values retain explicit scalar and structural facts" {
     try std.testing.expect(!isEmptyValue(ValueEffect{ .input_places = &.{.{ .input_index = 0 }} }));
     try std.testing.expect(!isEmptyValue(ValueEffect{ .input_storage_capabilities = &.{.{ .input_index = 0 }} }));
     try std.testing.expect(!isEmptyValue(ValueEffect{ .fields = &.{.{ .index = 0, .value = &empty_value_effect }} }));
+}
+
+fn cloneRootNamespace(allocator: std.mem.Allocator) !void {
+    const a = std.testing.allocator;
+    var original: Tracker.RootNamespace = .{ .next_id = 2 };
+    defer original.initial_storage.deinit(a);
+    try original.initial_storage.append(a, .{ .storage = .{ .root = @enumFromInt(3) }, .root = @enumFromInt(1) });
+    var candidate = try original.clone(allocator);
+    defer candidate.initial_storage.deinit(allocator);
+    var tracker = Tracker.init(allocator);
+    defer tracker.deinit();
+    tracker.namespace = &candidate;
+    try std.testing.expectEqual(@as(u32, 2), @intFromEnum(try tracker.establish(.fresh)));
+    candidate.initial_storage.items[0].root = @enumFromInt(2);
+    try std.testing.expectEqual(@as(u32, 2), original.next_id);
+    try std.testing.expectEqual(@as(u32, 1), @intFromEnum(original.initial_storage.items[0].root));
+    try std.testing.expectEqual(@as(u32, 3), candidate.next_id);
+}
+
+test "safety root namespaces fork candidate identities without changing accepted state" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, cloneRootNamespace, .{});
+}
+
+test "safety root identity exhaustion cannot wrap into retained roots" {
+    var namespace: Tracker.RootNamespace = .{ .next_id = std.math.maxInt(u32) };
+    var tracker = Tracker.init(std.testing.allocator);
+    defer tracker.deinit();
+    tracker.namespace = &namespace;
+    try std.testing.expectError(error.SafetyRootIdentityLimit, tracker.establish(.fresh));
+    try std.testing.expectEqual(std.math.maxInt(u32), namespace.next_id);
+    try std.testing.expectEqual(@as(usize, 0), tracker.roots.items.len);
 }

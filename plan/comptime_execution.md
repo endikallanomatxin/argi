@@ -477,3 +477,9 @@ match the compiler's shape. Initialized session declarations now publish their v
 cleanup directly rather than introducing a local owner. Deferred publication is
 rejected until vacant binding plans exist. Owning session replacement and the
 cross-command safety environment still require complete checked transfer plans.
+
+Cross-command safety must retain the checker state and its immutable fact arena.
+Branch clones share a validity-root namespace; independent submission candidates
+copy that namespace and its initial-storage associations instead. Root IDs cannot
+wrap into accepted identities. Retaining this namespace alone does not retain
+loans: the complete temporal state still needs submission-level integration.
